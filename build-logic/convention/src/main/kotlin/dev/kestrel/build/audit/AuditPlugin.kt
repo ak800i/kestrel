@@ -10,10 +10,11 @@ import org.gradle.api.Task
 import org.gradle.api.file.RegularFile
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.TaskProvider
+import org.gradle.language.base.plugins.LifecycleBasePlugin
 
 /**
- * Registers `kestrelAudit` and the checks it runs (design spec, section 13.2). Exceptions live in
- * `audit/rules.txt`, each with a written justification.
+ * Registers `kestrelAudit` and the checks it runs (design spec, section 13.2), for every build variant,
+ * and makes `check` run it. Exceptions live in `audit/rules.txt`, each with a written justification.
  */
 class AuditPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -21,6 +22,9 @@ class AuditPlugin : Plugin<Project> {
         val audit = project.tasks.register("kestrelAudit") {
             group = "verification"
             description = "Runs Kestrel's privacy audit for this module."
+        }
+        project.plugins.withType(LifecycleBasePlugin::class.java) {
+            project.tasks.named(LifecycleBasePlugin.CHECK_TASK_NAME) { dependsOn(audit) }
         }
         project.pluginManager.withPlugin("com.android.application") {
             configureAndroid(project, rules, audit, isApplication = true)
@@ -41,7 +45,8 @@ class AuditPlugin : Plugin<Project> {
 
     private fun configureAndroid(project: Project, rules: RegularFile, audit: TaskProvider<Task>, isApplication: Boolean) {
         val components = project.extensions.getByType(AndroidComponentsExtension::class.java)
-        components.onVariants(components.selector().withBuildType("release")) { variant ->
+        // Debug builds are what the scripts install, so they are audited too.
+        components.onVariants(components.selector().all()) { variant ->
             val suffix = variant.name.replaceFirstChar { it.uppercase() }
             val reports = project.layout.buildDirectory.dir("reports/kestrel-audit")
             val scan = project.tasks.register("kestrelScanNetworkApis$suffix", ScanNetworkApisTask::class.java) {

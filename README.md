@@ -21,9 +21,11 @@ Kestrel builds on Windows with PowerShell. You need:
 
 ```powershell
 scripts\gradle.ps1 assembleDebug                    # build the app
-scripts\gradle.ps1 check kestrelAudit               # unit tests, lint and the privacy audit
+scripts\gradle.ps1 check                            # unit tests, lint and the privacy audit
 scripts\gradle.ps1 :build-logic:convention:check    # tests of the audit itself
 ```
+
+`check` runs the privacy audit (`kestrelAudit`) for every build variant, so the debug build that the scripts install is audited too.
 
 To open the project in Android Studio, use Android Studio Rabbit 2 (2026.2.2) or newer, which supports version 9.5 of the Android Gradle plugin.
 
@@ -35,7 +37,7 @@ Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The 
 scripts\create-avd.ps1                    # once: installs Android 17 and creates kestrel-api37
 $serial = scripts\start-emulator.ps1      # starts the emulator and prints its adb serial
 scripts\connected-test.ps1 -Serial $serial :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest
-scripts\install.ps1 -Serial $serial       # installs the debug build with adb install -r
+scripts\install.ps1 -Serial $serial       # runs the privacy audit, then installs the debug build with adb install -r
 ```
 
 Kestrel is installed with `adb install`, which avoids Android's block on accessibility access for apps from unknown sources. On a Samsung phone, Auto Blocker must be off while USB debugging is in use.
