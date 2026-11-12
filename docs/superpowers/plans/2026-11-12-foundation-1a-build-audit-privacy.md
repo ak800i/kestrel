@@ -93,6 +93,8 @@
 .gradle/
 .kotlin/
 build/
+# Source folders named "build", such as the package dev.kestrel.build in build-logic
+!**/src/**/build/
 
 # Android Studio
 .idea/
