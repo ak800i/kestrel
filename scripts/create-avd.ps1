@@ -13,7 +13,8 @@ $tools = Join-Path $env:ANDROID_HOME 'cmdline-tools\latest\bin'
 $missing = @()
 if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'system-images\android-37.0\google_apis_playstore\x86_64'))) { $missing += $image }
 if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'platforms\android-37.0'))) { $missing += 'platforms;android-37.0' }
-$emulatorRevision = Select-String -Path (Join-Path $env:ANDROID_HOME 'emulator\source.properties') -Pattern '^Pkg\.Revision=(.+)$' -ErrorAction SilentlyContinue
+$emulatorProperties = Join-Path $env:ANDROID_HOME 'emulator\source.properties'
+$emulatorRevision = if (Test-Path $emulatorProperties) { Select-String -Path $emulatorProperties -Pattern '^Pkg\.Revision=(.+)$' }
 if (-not $emulatorRevision -or [version]$emulatorRevision.Matches[0].Groups[1].Value -lt [version]'37.2.11') { $missing += 'emulator' }
 if ($missing) {
     & "$tools\sdkmanager.bat" --install @missing
