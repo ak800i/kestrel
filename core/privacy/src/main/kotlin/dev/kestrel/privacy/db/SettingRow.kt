@@ -24,4 +24,7 @@ interface SettingsDao {
 
     @Upsert
     suspend fun put(row: SettingRow)
+
+    @Query("DELETE FROM settings WHERE name = :name")
+    suspend fun delete(name: String): Int
 }
