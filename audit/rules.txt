@@ -31,6 +31,9 @@ deny com.datadoghq:* monitoring
 deny com.newrelic.agent.android:* monitoring
 deny io.branch.sdk.android:* attribution tracking
 deny com.onesignal:* push notifications and analytics
+# AndroidX also publishes advertising libraries, which "allow androidx.*:*" below would otherwise approve.
+deny androidx.ads:* advertising ID
+deny androidx.privacysandbox*:* Privacy Sandbox advertising APIs
 
 # ONNX Runtime 1.31 turns telemetry on by default on Android (B14).
 pin com.microsoft.onnxruntime:* 1.28.*

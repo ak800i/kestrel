@@ -22,6 +22,11 @@ dependencies {
     testImplementation(libs.junit)
 }
 
+tasks.test {
+    // AuditRulesTest also reads the project's own rules.
+    inputs.file("../../audit/rules.txt").withPathSensitivity(PathSensitivity.NONE).withPropertyName("auditRules")
+}
+
 gradlePlugin {
     plugins {
         register("androidApplication") {

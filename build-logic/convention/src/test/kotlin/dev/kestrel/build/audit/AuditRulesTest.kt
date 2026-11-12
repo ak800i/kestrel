@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class AuditRulesTest {
     private val rules = AuditRules.parse(
@@ -29,6 +30,25 @@ class AuditRulesTest {
     fun deniedDependencyFailsEvenWithoutAnAllowRule() {
         val problems = rules.checkDependencies(listOf(Coordinates("com.google.firebase", "firebase-analytics", "23.0.0")))
         assertEquals(listOf("com.google.firebase:firebase-analytics:23.0.0 is denied: Firebase sends analytics to Google"), problems)
+    }
+
+    @Test
+    fun projectRulesDenyAndroidxAdvertisingLibrariesThatTheAndroidxAllowRuleMatches() {
+        // Gradle runs the tests in build-logic/convention.
+        val projectRules = AuditRules.parse(File("../../audit/rules.txt").readText())
+        val advertising = listOf(
+            Coordinates("androidx.ads", "ads-identifier", "1.0.0-alpha05"),
+            Coordinates("androidx.privacysandbox.ads", "ads-adservices", "1.1.0"),
+        )
+
+        assertTrue(advertising.all { dependency -> projectRules.allows.any { it.pattern.matches(dependency) } })
+        assertEquals(
+            listOf(
+                "androidx.ads:ads-identifier:1.0.0-alpha05 is denied: advertising ID",
+                "androidx.privacysandbox.ads:ads-adservices:1.1.0 is denied: Privacy Sandbox advertising APIs",
+            ),
+            projectRules.checkDependencies(advertising),
+        )
     }
 
     @Test
