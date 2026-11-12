@@ -1,10 +1,13 @@
 package dev.kestrel.build.audit
 
+import com.android.build.api.artifact.ScopedArtifact
 import com.android.build.api.variant.AndroidComponentsExtension
+import com.android.build.api.variant.ScopedArtifacts
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.file.RegularFile
+import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.TaskProvider
 
 /**
@@ -24,6 +27,15 @@ class AuditPlugin : Plugin<Project> {
         project.pluginManager.withPlugin("com.android.library") {
             configureAndroid(project, rules, audit, isApplication = false)
         }
+        project.pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
+            val classes = project.extensions.getByType(SourceSetContainer::class.java).getByName("main").output.classesDirs
+            val scan = project.tasks.register("kestrelScanNetworkApis", ScanNetworkApisTask::class.java) {
+                extraClassDirectories.from(classes)
+                rulesFile.set(rules)
+                report.set(project.layout.buildDirectory.file("reports/kestrel-audit/network-apis.txt"))
+            }
+            audit.configure { dependsOn(scan) }
+        }
     }
 
     private fun configureAndroid(project: Project, rules: RegularFile, audit: TaskProvider<Task>, isApplication: Boolean) {
@@ -31,6 +43,14 @@ class AuditPlugin : Plugin<Project> {
         components.onVariants(components.selector().withBuildType("release")) { variant ->
             val suffix = variant.name.replaceFirstChar { it.uppercase() }
             val reports = project.layout.buildDirectory.dir("reports/kestrel-audit")
+            val scan = project.tasks.register("kestrelScanNetworkApis$suffix", ScanNetworkApisTask::class.java) {
+                rulesFile.set(rules)
+                report.set(reports.map { it.file("network-apis-${variant.name}.txt") })
+            }
+            variant.artifacts.forScope(ScopedArtifacts.Scope.PROJECT)
+                .use(scan)
+                .toGet(ScopedArtifact.CLASSES, ScanNetworkApisTask::classJars, ScanNetworkApisTask::classDirectories)
+            audit.configure { dependsOn(scan) }
             if (isApplication) {
                 val dependencies = project.tasks.register("kestrelCheckDependencies$suffix", CheckDependenciesTask::class.java) {
                     rootComponent.set(variant.runtimeConfiguration.incoming.resolutionResult.rootComponent)
