@@ -3779,7 +3779,7 @@ allow com.squareup.okhttp3:* Apache-2.0
 allow com.squareup.okio:* Apache-2.0
 ```
 
-OkHttp and Okio use the Apache License 2.0 (https://github.com/square/okhttp/blob/master/LICENSE.txt, https://github.com/square/okio/blob/master/LICENSE.txt).
+OkHttp and Okio use the Apache License 2.0 (https://github.com/square/okhttp/blob/master/LICENSE.txt, https://github.com/square/okio/blob/master/LICENSE.txt). OkHttp's Android library also bundles a copy of the Public Suffix List as `assets/PublicSuffixDatabase.list`. The list uses the Mozilla Public License 2.0, which is compatible with GPL-3.0; Task 14 names it in the third-party notices.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -4628,11 +4628,22 @@ git commit -m "feat(app): wire encrypted storage, allowlist and network gateway 
 - Consumes: the dependency report from Task 13.
 - Produces: a green build on `kestrel-api37` and in CI; plan 1A is complete.
 
-- [ ] **Step 1: List the dependencies that ship**
+- [ ] **Step 1: List the dependencies and the files that ship**
 
-Run: `scripts\gradle.ps1 :app:kestrelAudit`, then open `app/build/reports/kestrel-audit/dependencies-release.txt`.
+Run: `scripts\gradle.ps1 :app:kestrelAudit :app:assembleRelease`, then open `app/build/reports/kestrel-audit/dependencies-release.txt`.
 
 Expected: every listed group belongs to one of the rows of the table in Step 2. If a group is missing from the table, add a row for it, with its licence from its project page.
+
+A library can also bundle files whose licence differs from the library's own licence, and the dependency report cannot show them. List the files in the release APK that are not compiled code or compiled resources:
+
+```powershell
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$apk = [IO.Compression.ZipFile]::OpenRead("$PWD\app\build\outputs\apk\release\app-release-unsigned.apk")
+$apk.Entries.FullName | Where-Object { $_ -notmatch '^(classes\d*\.dex|res/.+|AndroidManifest\.xml|resources\.arsc)$' }
+$apk.Dispose()
+```
+
+Expected: the list holds AndroidX version and licence files under `META-INF/`, `kotlinx.coroutines` version and service files and `DebugProbesKt.bin`, Kotlin `.kotlin_builtins` files, `lib/*/libandroidx.graphics.path.so`, the baseline profiles under `assets/dexopt/`, and two files that the Android Gradle plugin writes: `META-INF/com/android/build/gradle/app-metadata.properties` (the plugin version) and `META-INF/version-control-info.textproto` (the Git commit). The list also holds `assets/PublicSuffixDatabase.list`. All of these come from the build or from the Apache-2.0 libraries in the table, except `assets/PublicSuffixDatabase.list`. That file is OkHttp's copy of the Public Suffix List, which uses the Mozilla Public License 2.0 and has its own row. If any other file comes from somewhere else, find its licence and add a row for it.
 
 - [ ] **Step 2: Write the notices**
 
@@ -4641,9 +4652,9 @@ Expected: every listed group belongs to one of the rows of the table in Step 2. 
 ```markdown
 # Third-party notices
 
-Kestrel's release build includes the libraries below. All of them use the Apache License 2.0, which is compatible with Kestrel's licence, GPL-3.0-or-later. The exact versions are in `app/build/reports/kestrel-audit/dependencies-release.txt` after `scripts\gradle.ps1 kestrelAudit` runs.
+Kestrel's release build includes the libraries below, which use the Apache License 2.0. OkHttp also bundles a copy of the Public Suffix List, which uses the Mozilla Public License 2.0. Both licences are compatible with Kestrel's licence, GPL-3.0-or-later. The exact library versions are in `app/build/reports/kestrel-audit/dependencies-release.txt` after `scripts\gradle.ps1 kestrelAudit` runs.
 
-| Libraries | Licence | Project |
+| Component | Licence | Project |
 |---|---|---|
 | AndroidX, including Jetpack Compose, Room, Activity, Core, Lifecycle and Startup (`androidx.*`) | Apache-2.0 | https://developer.android.com/jetpack/androidx |
 | Kotlin standard library (`org.jetbrains.kotlin`) | Apache-2.0 | https://github.com/JetBrains/kotlin |
@@ -4653,8 +4664,9 @@ Kestrel's release build includes the libraries below. All of them use the Apache
 | Okio (`com.squareup.okio`) | Apache-2.0 | https://github.com/square/okio |
 | Guava ListenableFuture (`com.google.guava:listenablefuture`) | Apache-2.0 | https://github.com/google/guava |
 | JSpecify (`org.jspecify:jspecify`) | Apache-2.0 | https://github.com/jspecify/jspecify |
+| Public Suffix List, bundled by OkHttp as `assets/PublicSuffixDatabase.list` | MPL-2.0 | https://publicsuffix.org (source: https://github.com/publicsuffix/list) |
 
-The text of the Apache License 2.0 is at https://www.apache.org/licenses/LICENSE-2.0.
+The text of the Apache License 2.0 is at https://www.apache.org/licenses/LICENSE-2.0. The text of the Mozilla Public License 2.0 is at https://mozilla.org/MPL/2.0/.
 
 Later sub-projects add speech models, voices, and code and data derived from OpenClaw and android_world. Their notices are added here when they arrive.
 ```
