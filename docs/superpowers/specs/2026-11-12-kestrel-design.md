@@ -611,7 +611,7 @@ The real values stay in an in-memory vault for the duration of the task, and Kes
 
 - All network traffic from Kotlin code goes through one OkHttp client in `:core:privacy`.
 - Its allowlist contains the hosts of the configured profiles, including the hosts they need for token refresh. A provider's other sign-in hosts are added only while a sign-in runs. Requests to any other host are refused and logged.
-- HTTPS is required, except for local-network or localhost servers that the owner adds. Kestrel shows a warning for those.
+- HTTPS is required, except for local-network or localhost servers that the owner adds. Kestrel shows a warning for those. The app's network security config lifts Android's own block on plain HTTP, so the gateway's rule is the one that decides. From Android 17, a server on the local network also needs the runtime permission `ACCESS_LOCAL_NETWORK` (B34). In plan 1A's device tests on the Android 17 emulator, a localhost server worked without it.
 - Sign-in pages open in the owner's browser, outside Kestrel.
 - Kestrel has no WebView, no analytics, no crash reporting and no ads, and it does not use Google Play services, Firebase or ML Kit. ML Kit, for example, sends usage metrics to Google with no documented way to turn this off (B20).
 - Kestrel does not use Android's geocoder, which sends locations to Google.
@@ -657,6 +657,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 | `RECORD_AUDIO`, `POST_NOTIFICATIONS` | Runtime | Setup |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `INTERNET`, `ACCESS_NETWORK_STATE`, `SET_ALARM` | Normal | Granted at install |
 | `READ_CONTACTS`, `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_CALENDAR`, `READ_SMS`, `READ_CALL_LOG`, `READ_PHONE_STATE`, `ANSWER_PHONE_CALLS`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Runtime | First use |
+| `ACCESS_LOCAL_NETWORK` (the "Nearby devices" group, Android 17 and later) | Runtime | When the owner adds a server on the local network (B34) |
 | Notification access | Special access | First use |
 | Default digital assistant | Role | Optional, during setup |
 | Unrestricted battery use | Setting | Setup checklist |
@@ -977,3 +978,4 @@ The facts below were gathered on 11–12 November 2026. "✔" means that the sou
 | B31 | Anthropic setup-token requests identify as the Claude Code client. Since Anthropic's update of 15 June 2026, third-party app usage draws from the subscription's usage limits. | OpenClaw `docs/providers/anthropic.md` and `docs/providers/claude-max-api-proxy.md` (secondary sources) | ✔ |
 | B32 | The OpenAI and Anthropic APIs keep request logs for up to 30 days, and Google's paid Gemini API for up to 55 days. | https://developers.openai.com/api/docs/guides/your-data.md, https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data and https://aistudio.google.com/docs/logs-policy.md | † |
 | B33 | LabelDroid, a research model that names unlabeled icons, is GPL-3.0 and was last updated in November 2023. | https://github.com/chenjshnn/LabelDroid | ✔ |
+| B34 | From Android 17, apps that target API 37 need the runtime permission `ACCESS_LOCAL_NETWORK` (in the "Nearby devices" group) for traffic to a local-network address. This applies to every networking API, including OkHttp, and a blocked TCP connection usually times out. | https://developer.android.com/privacy-and-security/local-network-permission | ✔ |
