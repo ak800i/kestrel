@@ -3,9 +3,13 @@ package dev.kestrel.privacy.settings
 import dev.kestrel.privacy.crypto.FieldCipher
 import dev.kestrel.privacy.db.SettingRow
 import dev.kestrel.privacy.db.SettingsDao
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
@@ -14,12 +18,16 @@ import javax.crypto.AEADBadTagException
 /** Names a setting, its JSON serializer and the value to use until the owner changes it. */
 class SettingKey<T>(val name: String, val serializer: KSerializer<T>, val default: T)
 
-/** Settings stored as encrypted JSON in Room (design spec, section 13.4). */
+/**
+ * Settings stored as encrypted JSON in Room (design spec, section 13.4).
+ * Its functions are safe to call from the main thread, because they encrypt, decrypt and query on [dispatcher].
+ */
 class SettingsStore(
     private val dao: SettingsDao,
     private val cipher: FieldCipher,
     /** Called once per setting and process when a stored value cannot be read and its default is used instead. */
     private val onUnreadable: suspend (name: String) -> Unit = {},
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -27,13 +35,16 @@ class SettingsStore(
     }
     private val reported = ConcurrentHashMap.newKeySet<String>()
 
-    suspend fun <T> get(key: SettingKey<T>): T = valueOf(key, dao.get(key.name))
+    suspend fun <T> get(key: SettingKey<T>): T = withContext(dispatcher) { valueOf(key, dao.get(key.name)) }
 
-    fun <T> observe(key: SettingKey<T>): Flow<T> = dao.observe(key.name).map { row -> valueOf(key, row) }.distinctUntilChanged()
+    fun <T> observe(key: SettingKey<T>): Flow<T> =
+        dao.observe(key.name).map { row -> valueOf(key, row) }.flowOn(dispatcher).distinctUntilChanged()
 
     suspend fun <T> set(key: SettingKey<T>, value: T) {
-        val plaintext = json.encodeToString(key.serializer, value).encodeToByteArray()
-        dao.put(SettingRow(key.name, cipher.encrypt(plaintext, associatedData(key.name))))
+        withContext(dispatcher) {
+            val plaintext = json.encodeToString(key.serializer, value).encodeToByteArray()
+            dao.put(SettingRow(key.name, cipher.encrypt(plaintext, associatedData(key.name))))
+        }
     }
 
     /**

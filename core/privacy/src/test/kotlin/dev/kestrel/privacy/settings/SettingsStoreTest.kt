@@ -3,16 +3,21 @@ package dev.kestrel.privacy.settings
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.SettingRow
 import dev.kestrel.privacy.db.SettingsDao
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
 
 class SettingsStoreTest {
@@ -22,7 +27,12 @@ class SettingsStoreTest {
     private val dao = FakeSettingsDao()
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
     private val unreadable = mutableListOf<String>()
-    private val store = SettingsStore(dao, AesGcmFieldCipher { key }) { unreadable += it }
+    private val store = SettingsStore(
+        dao,
+        AesGcmFieldCipher { key },
+        onUnreadable = { unreadable += it },
+        dispatcher = Dispatchers.Unconfined,
+    )
     private val volume = SettingKey("volume", Volume.serializer(), Volume(level = 5))
     private val otherVolume = SettingKey("other-volume", Volume.serializer(), Volume(level = 1))
 
@@ -47,6 +57,20 @@ class SettingsStoreTest {
         val stored = dao.rows.value.getValue("volume").payload.decodeToString(throwOnInvalidSequence = false)
 
         assertFalse(stored.contains("level"))
+    }
+
+    @Test
+    fun runsTheCipherOnTheStoreDispatcher() = runTest {
+        val threads = CopyOnWriteArrayList<Thread>()
+        val cipher = AesGcmFieldCipher { key.also { threads += Thread.currentThread() } }
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
+            val store = SettingsStore(dao, cipher, dispatcher = dispatcher)
+            store.set(volume, Volume(level = 9))
+            store.get(volume)
+            store.observe(volume).first()
+
+            assertEquals(setOf(withContext(dispatcher) { Thread.currentThread() }), threads.toSet())
+        }
     }
 
     @Test

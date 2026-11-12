@@ -19,7 +19,11 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
     private val database = KestrelDatabase.get(context)
 
     val logs = LogStore(database.logDao(), cipher, clock)
-    val settings = SettingsStore(database.settingsDao(), cipher) { name ->
-        logs.append(ActivityEvent(ActivityKind.ERROR, "The setting '$name' could not be read, so Kestrel uses its default"))
-    }
+    val settings = SettingsStore(
+        database.settingsDao(),
+        cipher,
+        onUnreadable = { name ->
+            logs.append(ActivityEvent(ActivityKind.ERROR, "The setting '$name' could not be read, so Kestrel uses its default"))
+        },
+    )
 }

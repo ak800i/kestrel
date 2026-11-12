@@ -3,45 +3,54 @@ package dev.kestrel.privacy.logs
 import dev.kestrel.privacy.crypto.FieldCipher
 import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import javax.crypto.AEADBadTagException
 
 data class LogEntry<T>(val id: Long, val timestampMillis: Long, val event: T)
 
-/** The encrypted activity log and network log, which keep entries for 7 days (design spec, section 13.5). */
+/**
+ * The encrypted activity log and network log, which keep entries for 7 days (design spec, section 13.5).
+ * Its functions are safe to call from the main thread, because they encrypt, decrypt and query on [dispatcher].
+ */
 class LogStore(
     private val dao: LogDao,
     private val cipher: FieldCipher,
     private val clock: () -> Long,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     @Volatile
     private var lastPurgeMillis: Long? = null
 
-    suspend fun append(event: ActivityEvent) = append(ACTIVITY, ActivityEvent.serializer(), event)
+    suspend fun append(event: ActivityEvent) =
+        withContext(dispatcher) { append(ACTIVITY, ActivityEvent.serializer(), event) }
 
-    suspend fun append(event: NetworkEvent) = append(NETWORK, NetworkEvent.serializer(), event)
+    suspend fun append(event: NetworkEvent) =
+        withContext(dispatcher) { append(NETWORK, NetworkEvent.serializer(), event) }
 
     suspend fun activity(limit: Int = DEFAULT_LIMIT): List<LogEntry<ActivityEvent>> =
-        read(ACTIVITY, ActivityEvent.serializer(), limit)
+        withContext(dispatcher) { read(ACTIVITY, ActivityEvent.serializer(), limit) }
 
     suspend fun network(limit: Int = DEFAULT_LIMIT): List<LogEntry<NetworkEvent>> =
-        read(NETWORK, NetworkEvent.serializer(), limit)
+        withContext(dispatcher) { read(NETWORK, NetworkEvent.serializer(), limit) }
 
     /**
      * Deletes the entries of both logs that are older than 7 days. It also deletes entries dated more than a
      * day ahead, which were written while the clock was wrong and would otherwise outlive the 7 days.
      */
-    suspend fun purgeExpired(): Int {
+    suspend fun purgeExpired(): Int = withContext(dispatcher) {
         val now = clock()
         lastPurgeMillis = now
-        return dao.deleteOutside(oldestMillis = now - RETENTION_MILLIS, newestMillis = now + FUTURE_TOLERANCE_MILLIS)
+        dao.deleteOutside(oldestMillis = now - RETENTION_MILLIS, newestMillis = now + FUTURE_TOLERANCE_MILLIS)
     }
 
     /** "Delete history" wipes both logs (design spec, section 13.5). */
-    suspend fun deleteHistory(): Int = dao.deleteAll()
+    suspend fun deleteHistory(): Int = withContext(dispatcher) { dao.deleteAll() }
 
     private suspend fun <T> append(log: String, serializer: KSerializer<T>, event: T) {
         val now = clock()

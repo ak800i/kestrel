@@ -3,17 +3,22 @@ package dev.kestrel.privacy.logs
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
 
 class LogStoreTest {
     private val dao = FakeLogDao()
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
     private var now = 1_000_000_000_000L
-    private val store = LogStore(dao, AesGcmFieldCipher { key }) { now }
+    private val store = LogStore(dao, AesGcmFieldCipher { key }, clock = { now }, dispatcher = Dispatchers.Unconfined)
 
     @Test
     fun readsActivityBackNewestFirst() = runTest {
@@ -96,6 +101,19 @@ class LogStoreTest {
         store.deleteHistory()
 
         assertEquals(0, dao.rows.size)
+    }
+
+    @Test
+    fun runsTheCipherOnTheStoreDispatcher() = runTest {
+        val threads = CopyOnWriteArrayList<Thread>()
+        val cipher = AesGcmFieldCipher { key.also { threads += Thread.currentThread() } }
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
+            val store = LogStore(dao, cipher, clock = { now }, dispatcher = dispatcher)
+            store.append(ActivityEvent(ActivityKind.NOTE, "note"))
+            store.activity()
+
+            assertEquals(setOf(withContext(dispatcher) { Thread.currentThread() }), threads.toSet())
+        }
     }
 
     @Test
