@@ -4706,3 +4706,21 @@ gh run watch $run[0].databaseId --exit-status
 ```
 
 Expected: the `CI` run is green. Plan 1A is complete; the next step is to write plan 1B (screen layer).
+
+## After the final review
+
+The final whole-branch review found problems that the tasks above did not cover. They were fixed after Task 14, so the code in the repository differs from some of the code in this plan. The repository is the source of truth. The fixes:
+
+| Commit | Change |
+|---|---|
+| `409080c` | `AesGcmFieldCipher` refuses a value that is too short to hold the 16-byte GCM tag. Android Keystore would otherwise throw `IllegalBlockSizeException`, which the stores do not handle. |
+| `a732cd6` | `KestrelDatabase.get(context)` returns one Room database for each process, so that observers see the writes of every `PrivacyStore`. |
+| `4fdb560` | The purge also deletes log entries dated more than a day ahead, and it runs again after the clock goes back. `LogStoreTest` checks that unreadable rows are deleted. |
+| `6dcf146` | `LogStore` and `SettingsStore` do their encryption on `Dispatchers.IO`, so they are safe to call from the main thread. |
+| `f3c4bfc`, `38204ab` | A network security config lets the gateway use plain HTTP to the local servers that the owner adds, and Kestrel's manifest declares `INTERNET`. Device tests send allowed requests to loopback and to the device's own local-network address. |
+| `f38f315` | `kestrelAudit` checks every build variant, `check` runs it, and `scripts\install.ps1` runs it before it installs. |
+| `0638606` | `audit/rules.txt` denies `androidx.ads` and every `androidx.privacysandbox` group. |
+| `6a09b59` | `scripts\connected-test.ps1` refuses Gradle's `--serial` option, which would bypass the device guard. |
+| `15dc4f1` | The spec says that, from Android 17, local-network servers also need the runtime permission `ACCESS_LOCAL_NETWORK` (sections 13.1 and 13.6, B34). Sub-project 4 requests it. |
+
+After these fixes, the unit tests total 24 in `build-logic`, 2 in `:core:safety` and 37 in `:core:privacy`, and the device tests total 7 in `:core:privacy` and 4 in `:app`.
