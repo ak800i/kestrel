@@ -14,7 +14,18 @@ abstract class KestrelDatabase : RoomDatabase() {
     companion object {
         const val FILE_NAME = "kestrel.db"
 
-        fun create(context: Context): KestrelDatabase =
-            Room.databaseBuilder(context, KestrelDatabase::class.java, FILE_NAME).build()
+        @Volatile
+        private var instance: KestrelDatabase? = null
+
+        /**
+         * The database of this process. Room tells observers only about writes made through the same
+         * instance, so a second instance would hide changes from them.
+         */
+        fun get(context: Context): KestrelDatabase =
+            instance ?: synchronized(this) {
+                instance ?: Room.databaseBuilder(context.applicationContext, KestrelDatabase::class.java, FILE_NAME)
+                    .build()
+                    .also { instance = it }
+            }
     }
 }

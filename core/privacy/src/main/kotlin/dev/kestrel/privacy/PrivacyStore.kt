@@ -9,11 +9,14 @@ import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogStore
 import dev.kestrel.privacy.settings.SettingsStore
 
-/** Kestrel's encrypted storage: the activity log, the network log and the settings (design spec, section 13.4). */
+/**
+ * Kestrel's encrypted storage: the activity log, the network log and the settings (design spec, section 13.4).
+ * App code should get the stores from `KestrelApplication.graph` instead of creating another `PrivacyStore`.
+ */
 class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMillis) {
     private val dataKey by lazy { KeystoreKeys.getOrCreate(KeystoreKeys.DATA_KEY) }
     private val cipher = AesGcmFieldCipher { dataKey }
-    private val database = KestrelDatabase.create(context)
+    private val database = KestrelDatabase.get(context)
 
     val logs = LogStore(database.logDao(), cipher, clock)
     val settings = SettingsStore(database.settingsDao(), cipher) { name ->
