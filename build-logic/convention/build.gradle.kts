@@ -28,6 +28,10 @@ gradlePlugin {
             id = "kestrel.android.application"
             implementationClass = "dev.kestrel.build.AndroidApplicationConventionPlugin"
         }
+        register("androidLibrary") {
+            id = "kestrel.android.library"
+            implementationClass = "dev.kestrel.build.AndroidLibraryConventionPlugin"
+        }
         register("jvmLibrary") {
             id = "kestrel.jvm.library"
             implementationClass = "dev.kestrel.build.JvmLibraryConventionPlugin"
