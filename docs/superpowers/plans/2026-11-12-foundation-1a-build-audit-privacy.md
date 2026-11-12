@@ -172,21 +172,18 @@ function Find-EmulatorSerial([string]$AvdName) {
     return $null
 }
 
-# Kestrel is tested only on kestrel-api37 and the Galaxy A71. The S23+ is the owner's daily phone (design spec, D20).
+# Kestrel is tested only on kestrel-api37 and the Galaxy A71 (SM-A715F). The Galaxy S23+ (SM-S916*) is the
+# owner's daily phone and is accepted only with -AllowDailyPhone (design spec, D20). Every other device is refused.
 function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
     $adb = Get-Adb
     $state = & $adb -s $Serial get-state 2>$null
     if ($state -ne 'device') { throw "Device $Serial is not connected." }
-    $model = (& $adb -s $Serial shell getprop ro.product.model).Trim()
-    if ($model -like 'SM-S916*' -and -not $AllowDailyPhone) {
-        throw "Refusing to use the Galaxy S23+ ($Serial). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
-    }
-    if ($Serial -like 'emulator-*') {
-        $avd = & $adb -s $Serial emu avd name 2>$null | Select-Object -First 1
-        if (-not $avd -or $avd.Trim() -ne 'kestrel-api37') {
-            throw "Refusing to use emulator '$avd' ($Serial). Only kestrel-api37 is used for testing."
-        }
-    }
+    $model = "$(& $adb -s $Serial shell getprop ro.product.model)".Trim()
+    # Emulators report their AVD name here, however adb reaches them.
+    $avd = "$(& $adb -s $Serial shell getprop ro.boot.qemu.avd_name)".Trim()
+    if ($avd -eq 'kestrel-api37' -or $model -like 'SM-A715F*') { return }
+    if ($model -like 'SM-S916*' -and $AllowDailyPhone) { return }
+    throw "Refusing to use $Serial (model '$model', AVD '$avd'). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
 }
 ```
 
@@ -820,8 +817,9 @@ The owner approved updating the shared emulator package from 35.3.11 to 37.2.13 
 
 ```powershell
 # Installs the Android 17 system image and creates the kestrel-api37 emulator (design spec, section 6).
-# The image needs emulator 37.2.11 or newer, so sdkmanager also updates the shared emulator package;
-# the owner approved this on 12 November 2026. Other AVDs, such as zoran, are never changed.
+# The image needs emulator 37.2.11 or newer. The owner approved one update of the shared emulator package
+# (35.3.11 to 37.2.13) on 12 November 2026, so this script installs only what is missing or too old and
+# never upgrades a package that already works. Other AVDs, such as zoran, are never changed.
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
@@ -830,8 +828,17 @@ $name = 'kestrel-api37'
 $image = 'system-images;android-37.0;google_apis_playstore;x86_64'
 $tools = Join-Path $env:ANDROID_HOME 'cmdline-tools\latest\bin'
 
-& "$tools\sdkmanager.bat" --install $image 'platforms;android-37.0' 'emulator'
-if ($LASTEXITCODE -ne 0) { throw 'sdkmanager failed' }
+$missing = @()
+if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'system-images\android-37.0\google_apis_playstore\x86_64'))) { $missing += $image }
+if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'platforms\android-37.0'))) { $missing += 'platforms;android-37.0' }
+$emulatorRevision = Select-String -Path (Join-Path $env:ANDROID_HOME 'emulator\source.properties') -Pattern '^Pkg\.Revision=(.+)$' -ErrorAction SilentlyContinue
+if (-not $emulatorRevision -or [version]$emulatorRevision.Matches[0].Groups[1].Value -lt [version]'37.2.11') { $missing += 'emulator' }
+if ($missing) {
+    & "$tools\sdkmanager.bat" --install @missing
+    if ($LASTEXITCODE -ne 0) { throw 'sdkmanager failed' }
+} else {
+    Write-Host 'The system image, the platform and the emulator are already installed.'
+}
 
 $avdHome = Get-AvdHome
 $avdDir = Join-Path $avdHome "$name.avd"
@@ -870,12 +877,17 @@ if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
+    $started = $null
     if (-not $running) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
-        Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized
+        $started = Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized -PassThru
+        $null = $started.Handle  # Keeps the exit code readable after the process ends.
     }
     do {
         Start-Sleep -Seconds 5
+        if ($started -and $started.HasExited -and $started.ExitCode -ne 0) {
+            throw "The emulator exited with code $($started.ExitCode) before $name appeared in adb"
+        }
         $serial = Find-EmulatorSerial $name
     } until ($serial -or (Get-Date) -gt $deadline)
     if (-not $serial) { throw "$name did not appear in adb within 5 minutes" }
@@ -941,7 +953,7 @@ Expected: `zoran`, and `Pkg.Revision=35.3.11`.
 
 Run: `scripts\create-avd.ps1`
 
-This downloads about 1.5 GB. Expected: the last line is `AVDs: kestrel-api37, zoran` (in either order), and no error.
+This downloads about 1.5 GB. Expected: the last line is `AVDs: kestrel-api37, zoran` (in either order), and no error. Two kinds of tool noise are known and harmless: `sdkmanager` warns that it is deprecated, and `avdmanager` prints six lines that start with `Error: Could not load devices from …\devices.xml` and still exits with code 0. A later run of the script installs nothing, because the packages are already there, and says `kestrel-api37 already exists`.
 
 - [ ] **Step 4: Check the emulator update and `zoran`**
 
