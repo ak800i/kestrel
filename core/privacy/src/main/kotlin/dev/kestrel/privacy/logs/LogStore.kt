@@ -5,6 +5,7 @@ import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import javax.crypto.AEADBadTagException
 
 data class LogEntry<T>(val id: Long, val timestampMillis: Long, val event: T)
 
@@ -47,13 +48,39 @@ class LogStore(
         dao.insert(LogEntryRow(log = log, timestampMillis = now, payload = cipher.encrypt(plaintext, associatedData(log))))
     }
 
+    /**
+     * Returns the newest entries. An entry that can never be read is deleted, so that it cannot block the
+     * whole log, and the activity log says how many were deleted.
+     */
     private suspend fun <T> read(log: String, serializer: KSerializer<T>, limit: Int): List<LogEntry<T>> {
         purgeExpired()
-        return dao.newest(log, limit).map { row ->
-            val plaintext = cipher.decrypt(row.payload, associatedData(log)).decodeToString()
-            LogEntry(row.id, row.timestampMillis, json.decodeFromString(serializer, plaintext))
+        val entries = mutableListOf<LogEntry<T>>()
+        var unreadable = 0
+        for (row in dao.newest(log, limit)) {
+            val event = decodeOrNull(log, serializer, row)
+            if (event == null) {
+                dao.delete(row.id)
+                unreadable++
+            } else {
+                entries += LogEntry(row.id, row.timestampMillis, event)
+            }
         }
+        if (unreadable > 0) {
+            append(ACTIVITY, ActivityEvent.serializer(), ActivityEvent(ActivityKind.ERROR, "Deleted $unreadable unreadable $log log entries"))
+        }
+        return entries
     }
+
+    /** Returns null for a payload that is damaged, was encrypted for another place or with a lost key, or has an old format. */
+    private fun <T> decodeOrNull(log: String, serializer: KSerializer<T>, row: LogEntryRow): T? =
+        try {
+            json.decodeFromString(serializer, cipher.decrypt(row.payload, associatedData(log)).decodeToString())
+        } catch (e: AEADBadTagException) {
+            null
+        } catch (e: IllegalArgumentException) {
+            // Also covers kotlinx.serialization's SerializationException, which extends IllegalArgumentException.
+            null
+        }
 
     private fun associatedData(log: String) = "log_entries/$log".encodeToByteArray()
 

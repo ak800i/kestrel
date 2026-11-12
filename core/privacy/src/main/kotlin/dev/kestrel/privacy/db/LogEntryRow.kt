@@ -9,7 +9,10 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 
 /** One entry of the activity log or the network log. Only the payload is sensitive, and it is encrypted. */
-@Entity(tableName = "log_entries", indices = [Index(value = ["log", "timestamp_millis"])])
+@Entity(
+    tableName = "log_entries",
+    indices = [Index(value = ["log", "timestamp_millis"]), Index(value = ["timestamp_millis"])],
+)
 class LogEntryRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val log: String,
@@ -27,6 +30,9 @@ interface LogDao {
 
     @Query("DELETE FROM log_entries WHERE timestamp_millis < :cutoffMillis")
     suspend fun deleteOlderThan(cutoffMillis: Long): Int
+
+    @Query("DELETE FROM log_entries WHERE id = :id")
+    suspend fun delete(id: Long): Int
 
     @Query("DELETE FROM log_entries")
     suspend fun deleteAll(): Int

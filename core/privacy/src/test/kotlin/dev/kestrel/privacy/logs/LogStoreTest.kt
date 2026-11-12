@@ -77,6 +77,23 @@ class LogStoreTest {
         assertEquals(0, dao.rows.size)
     }
 
+    @Test
+    fun deletesEntriesThatCanNeverBeReadAndSaysSo() = runTest {
+        store.append(ActivityEvent(ActivityKind.NOTE, "good"))
+        val cipher = AesGcmFieldCipher { key }
+        val activityPlace = "log_entries/activity".encodeToByteArray()
+        val networkPlace = "log_entries/network".encodeToByteArray()
+        val damaged = byteArrayOf(1, 2, 3)
+        val oldFormat = cipher.encrypt("""{"text":"written before 'kind' existed"}""".encodeToByteArray(), activityPlace)
+        val movedFromNetworkLog = cipher.encrypt("""{"kind":"NOTE","text":"moved"}""".encodeToByteArray(), networkPlace)
+        listOf(damaged, oldFormat, movedFromNetworkLog).forEachIndexed { index, payload ->
+            dao.rows += LogEntryRow(id = 100L + index, log = "activity", timestampMillis = now, payload = payload)
+        }
+
+        assertEquals(listOf("good"), store.activity().map { it.event.text })
+        assertEquals(listOf("Deleted 3 unreadable activity log entries", "good"), store.activity().map { it.event.text })
+    }
+
     private fun networkEvent(host: String) = NetworkEvent(
         method = "GET",
         host = host,
@@ -109,6 +126,8 @@ private class FakeLogDao : LogDao {
         rows.removeAll(expired)
         return expired.size
     }
+
+    override suspend fun delete(id: Long): Int = if (rows.removeIf { it.id == id }) 1 else 0
 
     override suspend fun deleteAll(): Int {
         val count = rows.size

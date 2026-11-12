@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "1b0cbcdf324280494231c56429c6fe72",
+    "identityHash": "86efda654c37c022d91b2c9a7764722d",
     "entities": [
       {
         "tableName": "log_entries",
@@ -49,13 +49,22 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_log_entries_log_timestamp_millis` ON `${TABLE_NAME}` (`log`, `timestamp_millis`)"
+          },
+          {
+            "name": "index_log_entries_timestamp_millis",
+            "unique": false,
+            "columnNames": [
+              "timestamp_millis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_log_entries_timestamp_millis` ON `${TABLE_NAME}` (`timestamp_millis`)"
           }
         ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '1b0cbcdf324280494231c56429c6fe72')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '86efda654c37c022d91b2c9a7764722d')"
     ]
   }
 }
