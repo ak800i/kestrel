@@ -14,6 +14,7 @@ room {
 }
 
 dependencies {
+    api(libs.okhttp)
     api(libs.kotlinx.coroutines.core)
     api(libs.kotlinx.serialization.json)
     implementation(libs.androidx.room.runtime)

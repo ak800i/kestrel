@@ -40,5 +40,7 @@ allow androidx.*:* Apache-2.0
 allow org.jetbrains.kotlin:* Apache-2.0
 allow org.jetbrains.kotlinx:* Apache-2.0
 allow org.jetbrains:annotations Apache-2.0
+allow com.squareup.okhttp3:* Apache-2.0
+allow com.squareup.okio:* Apache-2.0
 allow com.google.guava:listenablefuture Apache-2.0
 allow org.jspecify:jspecify Apache-2.0
