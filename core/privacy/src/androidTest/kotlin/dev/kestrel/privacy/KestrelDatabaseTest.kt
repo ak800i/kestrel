@@ -42,13 +42,16 @@ class KestrelDatabaseTest {
     }
 
     @Test
-    fun deleteOlderThanKeepsEntriesAtTheCutoff() = runBlocking {
+    fun deleteOutsideKeepsEntriesAtBothLimits() = runBlocking {
         val dao = db.logDao()
         dao.insert(LogEntryRow(log = "activity", timestampMillis = 99, payload = byteArrayOf(1)))
         dao.insert(LogEntryRow(log = "network", timestampMillis = 100, payload = byteArrayOf(2)))
+        dao.insert(LogEntryRow(log = "network", timestampMillis = 200, payload = byteArrayOf(3)))
+        dao.insert(LogEntryRow(log = "activity", timestampMillis = 201, payload = byteArrayOf(4)))
 
-        assertEquals(1, dao.deleteOlderThan(100))
-        assertEquals(listOf(100L), dao.newest("network", 10).map { it.timestampMillis })
+        assertEquals(2, dao.deleteOutside(oldestMillis = 100, newestMillis = 200))
+        assertEquals(listOf(200L, 100L), dao.newest("network", 10).map { it.timestampMillis })
+        assertEquals(emptyList<Long>(), dao.newest("activity", 10).map { it.timestampMillis })
     }
 
     @Test

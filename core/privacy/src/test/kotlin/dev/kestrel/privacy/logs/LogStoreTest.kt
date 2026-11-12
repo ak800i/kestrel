@@ -68,6 +68,27 @@ class LogStoreTest {
     }
 
     @Test
+    fun keepsEntriesUpToOneDayInTheFuture() = runTest {
+        store.append(ActivityEvent(ActivityKind.NOTE, "ahead"))
+        now -= LogStore.FUTURE_TOLERANCE_MILLIS
+
+        assertEquals(listOf("ahead"), store.activity().map { it.event.text })
+
+        now -= 1
+        assertEquals(emptyList<String>(), store.activity().map { it.event.text })
+    }
+
+    @Test
+    fun appendingAfterTheClockWentBackRemovesEntriesFromTheFuture() = runTest {
+        store.append(ActivityEvent(ActivityKind.NOTE, "written while the clock was two days ahead"))
+        now -= 2 * 24 * 60 * 60 * 1000L
+
+        store.append(ActivityEvent(ActivityKind.NOTE, "new"))
+
+        assertEquals(listOf(now), dao.rows.map { it.timestampMillis })
+    }
+
+    @Test
     fun deleteHistoryWipesBothLogs() = runTest {
         store.append(ActivityEvent(ActivityKind.NOTE, "note"))
         store.append(networkEvent("api.example.com"))
@@ -91,6 +112,7 @@ class LogStoreTest {
         }
 
         assertEquals(listOf("good"), store.activity().map { it.event.text })
+        assertEquals(emptyList<Long>(), dao.rows.map { it.id }.filter { it in 100L..102L })
         assertEquals(listOf("Deleted 3 unreadable activity log entries", "good"), store.activity().map { it.event.text })
     }
 
@@ -121,10 +143,10 @@ private class FakeLogDao : LogDao {
             .sortedWith(compareByDescending<LogEntryRow> { it.timestampMillis }.thenByDescending { it.id })
             .take(limit)
 
-    override suspend fun deleteOlderThan(cutoffMillis: Long): Int {
-        val expired = rows.filter { it.timestampMillis < cutoffMillis }
-        rows.removeAll(expired)
-        return expired.size
+    override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int {
+        val outside = rows.filter { it.timestampMillis < oldestMillis || it.timestampMillis > newestMillis }
+        rows.removeAll(outside)
+        return outside.size
     }
 
     override suspend fun delete(id: Long): Int = if (rows.removeIf { it.id == id }) 1 else 0

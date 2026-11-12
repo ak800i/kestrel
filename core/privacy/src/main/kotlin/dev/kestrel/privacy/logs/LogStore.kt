@@ -30,11 +30,14 @@ class LogStore(
     suspend fun network(limit: Int = DEFAULT_LIMIT): List<LogEntry<NetworkEvent>> =
         read(NETWORK, NetworkEvent.serializer(), limit)
 
-    /** Deletes the entries of both logs that are older than 7 days. */
+    /**
+     * Deletes the entries of both logs that are older than 7 days. It also deletes entries dated more than a
+     * day ahead, which were written while the clock was wrong and would otherwise outlive the 7 days.
+     */
     suspend fun purgeExpired(): Int {
         val now = clock()
         lastPurgeMillis = now
-        return dao.deleteOlderThan(now - RETENTION_MILLIS)
+        return dao.deleteOutside(oldestMillis = now - RETENTION_MILLIS, newestMillis = now + FUTURE_TOLERANCE_MILLIS)
     }
 
     /** "Delete history" wipes both logs (design spec, section 13.5). */
@@ -43,7 +46,8 @@ class LogStore(
     private suspend fun <T> append(log: String, serializer: KSerializer<T>, event: T) {
         val now = clock()
         val lastPurge = lastPurgeMillis
-        if (lastPurge == null || now - lastPurge >= PURGE_INTERVAL_MILLIS) purgeExpired()
+        // After the clock went back, the interval check alone would wait until the clock caught up again.
+        if (lastPurge == null || now < lastPurge || now - lastPurge >= PURGE_INTERVAL_MILLIS) purgeExpired()
         val plaintext = json.encodeToString(serializer, event).encodeToByteArray()
         dao.insert(LogEntryRow(log = log, timestampMillis = now, payload = cipher.encrypt(plaintext, associatedData(log))))
     }
@@ -86,6 +90,10 @@ class LogStore(
 
     companion object {
         const val RETENTION_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+        /** An entry dated further ahead than this was written while the clock was wrong. */
+        const val FUTURE_TOLERANCE_MILLIS = 24L * 60 * 60 * 1000
+
         const val PURGE_INTERVAL_MILLIS = 60L * 60 * 1000
         const val DEFAULT_LIMIT = 500
         private const val ACTIVITY = "activity"

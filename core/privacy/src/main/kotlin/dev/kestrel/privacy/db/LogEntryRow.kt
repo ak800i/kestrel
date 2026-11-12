@@ -28,8 +28,9 @@ interface LogDao {
     @Query("SELECT * FROM log_entries WHERE log = :log ORDER BY timestamp_millis DESC, id DESC LIMIT :limit")
     suspend fun newest(log: String, limit: Int): List<LogEntryRow>
 
-    @Query("DELETE FROM log_entries WHERE timestamp_millis < :cutoffMillis")
-    suspend fun deleteOlderThan(cutoffMillis: Long): Int
+    /** Deletes the entries dated before [oldestMillis] or after [newestMillis]. */
+    @Query("DELETE FROM log_entries WHERE timestamp_millis < :oldestMillis OR timestamp_millis > :newestMillis")
+    suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int
 
     @Query("DELETE FROM log_entries WHERE id = :id")
     suspend fun delete(id: Long): Int
