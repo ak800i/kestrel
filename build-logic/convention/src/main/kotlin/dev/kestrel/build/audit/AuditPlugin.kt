@@ -1,6 +1,7 @@
 package dev.kestrel.build.audit
 
 import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.AndroidComponentsExtension
 import com.android.build.api.variant.ScopedArtifacts
 import org.gradle.api.Plugin
@@ -57,7 +58,13 @@ class AuditPlugin : Plugin<Project> {
                     rulesFile.set(rules)
                     report.set(reports.map { it.file("dependencies-${variant.name}.txt") })
                 }
-                audit.configure { dependsOn(dependencies) }
+                val native = project.tasks.register("kestrelScanNativeLibs$suffix", ScanNativeLibsTask::class.java) {
+                    apkDirectory.set(variant.artifacts.get(SingleArtifact.APK))
+                    builtArtifactsLoader.set(variant.artifacts.getBuiltArtifactsLoader())
+                    rulesFile.set(rules)
+                    report.set(reports.map { it.file("native-libs-${variant.name}.txt") })
+                }
+                audit.configure { dependsOn(dependencies, native) }
             }
         }
     }
