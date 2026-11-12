@@ -5,9 +5,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.db.LogEntryRow
+import dev.kestrel.privacy.db.SettingRow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -45,5 +49,17 @@ class KestrelDatabaseTest {
 
         assertEquals(1, dao.deleteOlderThan(100))
         assertEquals(listOf(100L), dao.newest("network", 10).map { it.timestampMillis })
+    }
+
+    @Test
+    fun settingsUpsertReplacesTheValue() = runBlocking {
+        val dao = db.settingsDao()
+        assertNull(dao.observe("volume").first())
+
+        dao.put(SettingRow("volume", byteArrayOf(1)))
+        dao.put(SettingRow("volume", byteArrayOf(2)))
+
+        assertArrayEquals(byteArrayOf(2), dao.get("volume")!!.payload)
+        assertArrayEquals(byteArrayOf(2), dao.observe("volume").first()!!.payload)
     }
 }
