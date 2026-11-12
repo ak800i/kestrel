@@ -32,5 +32,9 @@ gradlePlugin {
             id = "kestrel.jvm.library"
             implementationClass = "dev.kestrel.build.JvmLibraryConventionPlugin"
         }
+        register("audit") {
+            id = "kestrel.audit"
+            implementationClass = "dev.kestrel.build.audit.AuditPlugin"
+        }
     }
 }

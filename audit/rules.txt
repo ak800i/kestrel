@@ -1,0 +1,44 @@
+# Kestrel build-time audit rules (design spec, section 13.2).
+# Rule forms:
+#   deny <group:name> <reason>
+#   pin <group:name> <version glob>
+#   allow <group:name> <SPDX licence>
+#   allow-network-class <internal class prefix> <justification>
+#   allow-native-symbol <library.so> <symbol> <justification>
+# "*" matches any run of characters. Deny rules win over allow rules.
+# Every exception needs a written justification.
+
+# Telemetry, advertising and Google services (design spec, sections 13.1 and 13.2)
+deny com.google.firebase:* Firebase sends analytics and crash reports to Google
+deny com.google.android.gms:* Google Play services
+deny com.google.android.play:* Google Play libraries
+deny com.google.mlkit:* ML Kit sends usage metrics to Google (B20)
+deny com.google.android.datatransport:* Google telemetry transport
+deny com.google.android.ump:* Google advertising consent SDK
+deny com.google.android.libraries.ads*:* advertising
+deny *:*analytics* analytics SDK
+deny *:*crashlytics* crash reporting
+deny io.sentry:* crash reporting
+deny com.bugsnag:* crash reporting
+deny ch.acra:* crash reporting
+deny com.instabug*:* crash reporting
+deny com.facebook.android:* Facebook SDK
+deny com.appsflyer:* attribution tracking
+deny com.adjust.sdk:* attribution tracking
+deny com.amplitude:* analytics
+deny com.mixpanel.android:* analytics
+deny com.datadoghq:* monitoring
+deny com.newrelic.agent.android:* monitoring
+deny io.branch.sdk.android:* attribution tracking
+deny com.onesignal:* push notifications and analytics
+
+# ONNX Runtime 1.31 turns telemetry on by default on Android (B14).
+pin com.microsoft.onnxruntime:* 1.28.*
+
+# Reviewed licences
+allow androidx.*:* Apache-2.0
+allow org.jetbrains.kotlin:* Apache-2.0
+allow org.jetbrains.kotlinx:* Apache-2.0
+allow org.jetbrains:annotations Apache-2.0
+allow com.google.guava:listenablefuture Apache-2.0
+allow org.jspecify:jspecify Apache-2.0

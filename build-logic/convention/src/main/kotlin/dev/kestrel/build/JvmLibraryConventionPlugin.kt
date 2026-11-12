@@ -1,5 +1,6 @@
 package dev.kestrel.build
 
+import dev.kestrel.build.audit.AuditPlugin
 import org.gradle.api.JavaVersion
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -8,7 +9,7 @@ import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
-/** For the plain Kotlin modules under `core/`. */
+/** For the plain Kotlin modules under `core/`. It also applies the privacy audit. */
 class JvmLibraryConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
@@ -20,6 +21,7 @@ class JvmLibraryConventionPlugin : Plugin<Project> {
             extensions.configure<KotlinJvmProjectExtension> {
                 compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
             }
+            pluginManager.apply(AuditPlugin::class.java)
         }
     }
 }
