@@ -1975,7 +1975,7 @@ git commit -m "build: scan compiled code for network APIs in the privacy audit" 
 
 **Interfaces:**
 - Consumes: `AuditRules.isNativeSymbolExcepted(libraryName, symbol)` from Task 4.
-- Produces: `ElfReader.importedSymbols(bytes: ByteArray): Set<String>`, which throws `IllegalArgumentException` for input that is not a little-endian ELF file or has no dynamic symbol table, and `NativeLibraryRules.NETWORK_SYMBOLS`.
+- Produces: `ElfReader.importedSymbols(bytes: ByteArray): Set<String>`, which throws `IllegalArgumentException` for input that is not a little-endian ELF file, has no dynamic symbol table, or is truncated or malformed. Also produces `NativeLibraryRules.NETWORK_SYMBOLS`: the public lookup and resolver functions of the NDK's libc and libandroid, plus `socket` and `connect`.
 - Produces: the task `kestrelScanNativeLibsRelease` in `:app`, with the report `app/build/reports/kestrel-audit/native-libs-release.txt`.
 
 The scan opens the release APK and reads the imported symbols of every `lib/*/*.so` file. A library that imports `socket`, `connect`, `getaddrinfo` or another name-lookup function fails the build, unless `audit/rules.txt` has an `allow-native-symbol` exception for it. Sub-project 2 adds sherpa-onnx, the first large native library.
@@ -2054,12 +2054,16 @@ package dev.kestrel.build.audit
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ElfReaderTest {
     private fun library(name: String): ByteArray =
         javaClass.getResourceAsStream("/elf/$name")!!.use { it.readBytes() }
+
+    private fun rejectionOf(bytes: ByteArray): String? =
+        assertThrows(IllegalArgumentException::class.java) { ElfReader.importedSymbols(bytes) }.message
 
     @Test
     fun readsImportsFrom64BitLibrary() {
@@ -2076,6 +2080,7 @@ class ElfReaderTest {
     @Test
     fun doesNotReportExportedFunctions() {
         assertFalse(ElfReader.importedSymbols(library("libnet-arm64.so")).contains("kestrel_open"))
+        assertFalse(ElfReader.importedSymbols(library("libnet-arm32.so")).contains("kestrel_open"))
     }
 
     @Test
@@ -2087,8 +2092,28 @@ class ElfReaderTest {
 
     @Test
     fun rejectsFilesThatAreNotElf() {
-        val error = runCatching { ElfReader.importedSymbols(ByteArray(64)) }.exceptionOrNull()
-        assertEquals("Not an ELF file", error?.message)
+        assertEquals("Not an ELF file", rejectionOf(ByteArray(64)))
+    }
+
+    @Test
+    fun rejectsUnknownClassesAndBigEndianFiles() {
+        assertEquals("Unknown ELF class 3", rejectionOf(library("libquiet-arm64.so").also { it[4] = 3 }))
+        assertEquals("Only little-endian ELF files are supported", rejectionOf(library("libquiet-arm64.so").also { it[5] = 2 }))
+    }
+
+    @Test
+    fun rejectsLibrariesWithoutDynamicSymbolTable() {
+        // Setting the section count to zero hides every section, as some packers do.
+        val withoutSections = library("libquiet-arm64.so").also {
+            it[0x3C] = 0
+            it[0x3D] = 0
+        }
+        assertEquals("No dynamic symbol table", rejectionOf(withoutSections))
+    }
+
+    @Test
+    fun rejectsTruncatedFiles() {
+        assertEquals("Truncated or malformed ELF file", rejectionOf(library("libnet-arm64.so").copyOf(1024)))
     }
 }
 ```
@@ -2115,6 +2140,7 @@ object ElfReader {
 
     private data class Section(val type: Int, val offset: Long, val size: Long, val link: Int, val entrySize: Long)
 
+    /** Throws [IllegalArgumentException] for input that is not a readable little-endian ELF library. */
     fun importedSymbols(bytes: ByteArray): Set<String> {
         require(
             bytes.size >= 64 && bytes[0] == 0x7F.toByte() && bytes[1] == 'E'.code.toByte() &&
@@ -2126,6 +2152,14 @@ object ElfReader {
             else -> throw IllegalArgumentException("Unknown ELF class ${bytes[4]}")
         }
         require(bytes[5].toInt() == 1) { "Only little-endian ELF files are supported" }
+        return try {
+            readImports(bytes, is64)
+        } catch (e: IndexOutOfBoundsException) {
+            throw IllegalArgumentException("Truncated or malformed ELF file", e)
+        }
+    }
+
+    private fun readImports(bytes: ByteArray, is64: Boolean): Set<String> {
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val sectionTable = if (is64) buffer.getLong(0x28) else buffer.getInt(0x20).toUInt().toLong()
         val sectionHeaderSize = buffer.getShort(if (is64) 0x3A else 0x2E).toInt() and 0xFFFF
@@ -2174,11 +2208,17 @@ object ElfReader {
     }
 }
 
-/** Native functions that open network connections or resolve host names. */
+/**
+ * Native functions that open network connections, resolve host names or addresses, or send DNS queries:
+ * the public lookup and resolver functions of the NDK's libc and libandroid.
+ */
 object NativeLibraryRules {
     val NETWORK_SYMBOLS = setOf(
-        "socket", "connect", "getaddrinfo", "gethostbyname", "gethostbyname2", "gethostbyname_r",
-        "gethostbyname2_r", "android_getaddrinfofornetwork", "android_res_nquery", "res_query", "res_search",
+        "socket", "connect",
+        "getaddrinfo", "getnameinfo", "gethostbyname", "gethostbyname_r", "gethostbyname2", "gethostbyname2_r",
+        "gethostbyaddr", "gethostbyaddr_r", "res_query", "res_search",
+        "__res_send", "__res_nsend", "__res_nquery", "__res_nsearch", "__res_querydomain", "__res_nquerydomain",
+        "android_getaddrinfofornetwork", "android_res_nquery", "android_res_nsend",
     )
 }
 ```
@@ -2187,7 +2227,7 @@ object NativeLibraryRules {
 
 Run: `scripts\gradle.ps1 :build-logic:convention:test`
 
-Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.build.audit.ElfReaderTest.xml` reports `tests="5" failures="0" errors="0"`.
+Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.build.audit.ElfReaderTest.xml` reports `tests="8" failures="0" errors="0"`.
 
 - [ ] **Step 6: Add the scan task and wire it into the plugin**
 
@@ -4470,7 +4510,7 @@ scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:co
 git status --porcelain
 ```
 
-Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 20 in `build-logic`, 2 in `:core:safety` and 29 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
+Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 29 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
 
 - [ ] **Step 4: Commit and push**
 
