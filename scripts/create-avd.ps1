@@ -1,6 +1,7 @@
 # Installs the Android 17 system image and creates the kestrel-api37 emulator (design spec, section 6).
-# The image needs emulator 37.2.11 or newer, so sdkmanager also updates the shared emulator package;
-# the owner approved this on 12 November 2026. Other AVDs, such as zoran, are never changed.
+# The image needs emulator 37.2.11 or newer. The owner approved one update of the shared emulator package
+# (35.3.11 to 37.2.13) on 12 November 2026, so this script installs only what is missing or too old and
+# never upgrades a package that already works. Other AVDs, such as zoran, are never changed.
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
@@ -9,8 +10,17 @@ $name = 'kestrel-api37'
 $image = 'system-images;android-37.0;google_apis_playstore;x86_64'
 $tools = Join-Path $env:ANDROID_HOME 'cmdline-tools\latest\bin'
 
-& "$tools\sdkmanager.bat" --install $image 'platforms;android-37.0' 'emulator'
-if ($LASTEXITCODE -ne 0) { throw 'sdkmanager failed' }
+$missing = @()
+if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'system-images\android-37.0\google_apis_playstore\x86_64'))) { $missing += $image }
+if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'platforms\android-37.0'))) { $missing += 'platforms;android-37.0' }
+$emulatorRevision = Select-String -Path (Join-Path $env:ANDROID_HOME 'emulator\source.properties') -Pattern '^Pkg\.Revision=(.+)$' -ErrorAction SilentlyContinue
+if (-not $emulatorRevision -or [version]$emulatorRevision.Matches[0].Groups[1].Value -lt [version]'37.2.11') { $missing += 'emulator' }
+if ($missing) {
+    & "$tools\sdkmanager.bat" --install @missing
+    if ($LASTEXITCODE -ne 0) { throw 'sdkmanager failed' }
+} else {
+    Write-Host 'The system image, the platform and the emulator are already installed.'
+}
 
 $avdHome = Get-AvdHome
 $avdDir = Join-Path $avdHome "$name.avd"

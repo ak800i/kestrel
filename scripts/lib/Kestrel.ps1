@@ -38,19 +38,16 @@ function Find-EmulatorSerial([string]$AvdName) {
     return $null
 }
 
-# Kestrel is tested only on kestrel-api37 and the Galaxy A71. The S23+ is the owner's daily phone (design spec, D20).
+# Kestrel is tested only on kestrel-api37 and the Galaxy A71 (SM-A715F). The Galaxy S23+ (SM-S916*) is the
+# owner's daily phone and is accepted only with -AllowDailyPhone (design spec, D20). Every other device is refused.
 function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
     $adb = Get-Adb
     $state = & $adb -s $Serial get-state 2>$null
     if ($state -ne 'device') { throw "Device $Serial is not connected." }
-    $model = (& $adb -s $Serial shell getprop ro.product.model).Trim()
-    if ($model -like 'SM-S916*' -and -not $AllowDailyPhone) {
-        throw "Refusing to use the Galaxy S23+ ($Serial). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
-    }
-    if ($Serial -like 'emulator-*') {
-        $avd = & $adb -s $Serial emu avd name 2>$null | Select-Object -First 1
-        if (-not $avd -or $avd.Trim() -ne 'kestrel-api37') {
-            throw "Refusing to use emulator '$avd' ($Serial). Only kestrel-api37 is used for testing."
-        }
-    }
+    $model = "$(& $adb -s $Serial shell getprop ro.product.model)".Trim()
+    # Emulators report their AVD name here, however adb reaches them.
+    $avd = "$(& $adb -s $Serial shell getprop ro.boot.qemu.avd_name)".Trim()
+    if ($avd -eq 'kestrel-api37' -or $model -like 'SM-A715F*') { return }
+    if ($model -like 'SM-S916*' -and $AllowDailyPhone) { return }
+    throw "Refusing to use $Serial (model '$model', AVD '$avd'). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
 }

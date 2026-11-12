@@ -12,12 +12,17 @@ if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
+    $started = $null
     if (-not $running) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
-        Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized
+        $started = Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized -PassThru
+        $null = $started.Handle  # Keeps the exit code readable after the process ends.
     }
     do {
         Start-Sleep -Seconds 5
+        if ($started -and $started.HasExited -and $started.ExitCode -ne 0) {
+            throw "The emulator exited with code $($started.ExitCode) before $name appeared in adb"
+        }
         $serial = Find-EmulatorSerial $name
     } until ($serial -or (Get-Date) -gt $deadline)
     if (-not $serial) { throw "$name did not appear in adb within 5 minutes" }
