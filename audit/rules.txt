@@ -35,6 +35,9 @@ deny com.onesignal:* push notifications and analytics
 # ONNX Runtime 1.31 turns telemetry on by default on Android (B14).
 pin com.microsoft.onnxruntime:* 1.28.*
 
+# Network API exceptions
+allow-network-class dev/kestrel/privacy/network/ The network gateway is the only HTTP client in Kestrel (design spec, section 13.1).
+
 # Reviewed licences
 allow androidx.*:* Apache-2.0
 allow org.jetbrains.kotlin:* Apache-2.0
