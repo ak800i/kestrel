@@ -3842,9 +3842,9 @@ git commit -m "feat(privacy): add host allowlist with HTTPS rule and local serve
 
 The gateway checks the allowlist in an application interceptor, before OkHttp looks up the host or opens a connection. It does not follow redirects on its own, because a redirect could lead to a host that was never checked, and it ignores system proxies. An event listener writes one network-log entry per call. Other modules get only the `Call.Factory`; the audit refuses an `OkHttpClient` anywhere outside `dev/kestrel/privacy/network/`.
 
-- [ ] **Step 1: Add MockWebServer for the tests**
+- [ ] **Step 1: Add MockWebServer for the tests, and default return values for OkHttp**
 
-`core/privacy/build.gradle.kts` (final version):
+`core/privacy/build.gradle.kts` (final version). Besides MockWebServer, it turns on default return values for this module's unit tests only. When the gateway's OkHttp client starts, OkHttp's Android build calls `android.util.Log`, and on the PC that call would fail and print a stack trace into the test report. All other modules keep failing loudly on Android calls that are not mocked (owner decision during the Task 2 review).
 
 ```kotlin
 plugins {
@@ -3856,6 +3856,11 @@ plugins {
 
 android {
     namespace = "dev.kestrel.privacy"
+    testOptions {
+        // OkHttp's Android build calls android.util.Log when it starts. On the PC that call would
+        // fail and print a stack trace, so this module's unit tests get default return values.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 room {
@@ -4096,7 +4101,7 @@ private class NetworkLogListener(private val record: (NetworkEvent) -> Unit) : E
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest`
 
-Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.privacy.network.NetworkGatewayTest.xml` reports `tests="5" failures="0" errors="0"`.
+Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.privacy.network.NetworkGatewayTest.xml` reports `tests="5" failures="0" errors="0"`, and its `<system-err>` section is empty.
 
 - [ ] **Step 6: See the audit refuse the gateway without an exception**
 
