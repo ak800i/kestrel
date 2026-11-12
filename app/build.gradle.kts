@@ -16,10 +16,15 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:privacy"))
+    implementation(project(":core:safety"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.startup.runtime)
+    implementation(libs.kotlinx.coroutines.android)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
