@@ -9,6 +9,7 @@ object ElfReader {
 
     private data class Section(val type: Int, val offset: Long, val size: Long, val link: Int, val entrySize: Long)
 
+    /** Throws [IllegalArgumentException] for input that is not a readable little-endian ELF library. */
     fun importedSymbols(bytes: ByteArray): Set<String> {
         require(
             bytes.size >= 64 && bytes[0] == 0x7F.toByte() && bytes[1] == 'E'.code.toByte() &&
@@ -20,6 +21,14 @@ object ElfReader {
             else -> throw IllegalArgumentException("Unknown ELF class ${bytes[4]}")
         }
         require(bytes[5].toInt() == 1) { "Only little-endian ELF files are supported" }
+        return try {
+            readImports(bytes, is64)
+        } catch (e: IndexOutOfBoundsException) {
+            throw IllegalArgumentException("Truncated or malformed ELF file", e)
+        }
+    }
+
+    private fun readImports(bytes: ByteArray, is64: Boolean): Set<String> {
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val sectionTable = if (is64) buffer.getLong(0x28) else buffer.getInt(0x20).toUInt().toLong()
         val sectionHeaderSize = buffer.getShort(if (is64) 0x3A else 0x2E).toInt() and 0xFFFF
@@ -68,10 +77,16 @@ object ElfReader {
     }
 }
 
-/** Native functions that open network connections or resolve host names. */
+/**
+ * Native functions that open network connections, resolve host names or addresses, or send DNS queries:
+ * the public lookup and resolver functions of the NDK's libc and libandroid.
+ */
 object NativeLibraryRules {
     val NETWORK_SYMBOLS = setOf(
-        "socket", "connect", "getaddrinfo", "gethostbyname", "gethostbyname2", "gethostbyname_r",
-        "gethostbyname2_r", "android_getaddrinfofornetwork", "android_res_nquery", "res_query", "res_search",
+        "socket", "connect",
+        "getaddrinfo", "getnameinfo", "gethostbyname", "gethostbyname_r", "gethostbyname2", "gethostbyname2_r",
+        "gethostbyaddr", "gethostbyaddr_r", "res_query", "res_search",
+        "__res_send", "__res_nsend", "__res_nquery", "__res_nsearch", "__res_querydomain", "__res_nquerydomain",
+        "android_getaddrinfofornetwork", "android_res_nquery", "android_res_nsend",
     )
 }
