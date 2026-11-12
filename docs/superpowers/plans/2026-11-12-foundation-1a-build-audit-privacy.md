@@ -4325,16 +4325,17 @@ git commit -m "feat(privacy): add network gateway that enforces the allowlist an
 - Create: `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`, `KestrelApplication.kt`
 - Modify: `app/build.gradle.kts`, `app/src/main/AndroidManifest.xml`
 - Test (device): `app/src/androidTest/kotlin/dev/kestrel/app/AppGraphTest.kt`
+- Test (device): `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/PrivacyStoreTest.kt`
 
 **Interfaces:**
 - Consumes: `LogStore` (Task 9), `SettingsStore` and `SettingKey` (Task 10), `NetworkPolicy` (Task 11), `NetworkGateway` (Task 12) and `SafetySettings` (Task 1).
 - Produces: `class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMillis)` with `val logs: LogStore` and `val settings: SettingsStore`. A setting that cannot be read is recorded as an ERROR entry in the activity log.
 - Produces: `object SettingKeys { val SAFETY: SettingKey<SafetySettings> }`.
-- Produces: `class AppGraph(context: Context)` with `scope: CoroutineScope`, `logs: LogStore`, `settings: SettingsStore`, `networkPolicy: NetworkPolicy` and `network: NetworkGateway`, reachable as `(context.applicationContext as KestrelApplication).graph`. Plans 1B and 1C add the screen layer and the settings app to it.
+- Produces: `class AppGraph(context: Context)` with `scope: CoroutineScope`, `logs: LogStore`, `settings: SettingsStore`, `networkPolicy: NetworkPolicy` and `network: NetworkGateway`, reachable as `(context.applicationContext as KestrelApplication).graph`. A job on `scope` that fails is written to logcat instead of ending the app's process. Plans 1B and 1C add the screen layer and the settings app to it.
 
-`PrivacyStore` keeps Room inside `:core:privacy`, so the app never sees Room's types. The app starts a purge of expired log entries when its process starts.
+`PrivacyStore` keeps Room inside `:core:privacy`, so the app never sees Room's types. The app starts a purge of expired log entries when its process starts. The device test round-trips a test-only setting, so that the real safety settings keep test mode on during all testing (D25).
 
-- [ ] **Step 1: Write the failing device test**
+- [ ] **Step 1: Write the failing device tests**
 
 `app/src/androidTest/kotlin/dev/kestrel/app/AppGraphTest.kt`:
 
@@ -4345,6 +4346,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.logs.NetworkOutcome
 import dev.kestrel.privacy.network.BlockedRequestException
+import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -4379,15 +4381,48 @@ class AppGraphTest {
     }
 
     @Test
-    fun safetySettingsSurviveTheEncryptedStore() = runBlocking {
-        val original = graph.settings.get(SettingKeys.SAFETY)
-        try {
-            graph.settings.set(SettingKeys.SAFETY, SafetySettings(testMode = false))
+    fun settingsSurviveTheEncryptedStore() = runBlocking {
+        // A test-only key, so that the real safety settings keep test mode on during all testing (D25).
+        val key = SettingKey("test.safety", SafetySettings.serializer(), SafetySettings())
 
-            assertEquals(SafetySettings(testMode = false), graph.settings.get(SettingKeys.SAFETY))
-        } finally {
-            graph.settings.set(SettingKeys.SAFETY, original)
-        }
+        graph.settings.set(key, SafetySettings(testMode = false))
+
+        assertEquals(SafetySettings(testMode = false), graph.settings.get(key))
+    }
+}
+```
+
+`core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/PrivacyStoreTest.kt`:
+
+```kotlin
+package dev.kestrel.privacy
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.kestrel.privacy.logs.ActivityKind
+import dev.kestrel.privacy.settings.SettingKey
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.builtins.serializer
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class PrivacyStoreTest {
+    private val store = PrivacyStore(InstrumentationRegistry.getInstrumentation().targetContext)
+
+    @Test
+    fun anUnreadableSettingIsRecordedInTheActivityLog() = runBlocking {
+        val name = "test.unreadable.${System.nanoTime()}"
+        store.logs.deleteHistory()
+        store.settings.set(SettingKey(name, Int.serializer(), 0), 7)
+
+        // The stored JSON is the number 7, which cannot be read as text.
+        assertEquals("fallback", store.settings.get(SettingKey(name, String.serializer(), "fallback")))
+
+        val entry = store.logs.activity().single()
+        assertEquals(ActivityKind.ERROR, entry.event.kind)
+        assertEquals("The setting '$name' could not be read, so Kestrel uses its default", entry.event.text)
     }
 }
 ```
@@ -4427,11 +4462,11 @@ dependencies {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify that it fails**
+- [ ] **Step 2: Run the tests to verify that they fail**
 
-Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
+Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD FAILED`, with unresolved references to `KestrelApplication` and `SettingKeys`.
+Expected: `BUILD FAILED`, with unresolved references to `PrivacyStore` in `:core:privacy` and to `KestrelApplication` in `:app`.
 
 - [ ] **Step 3: Write the storage entry point and the app wiring**
 
@@ -4468,11 +4503,13 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
 package dev.kestrel.app
 
 import android.content.Context
+import android.util.Log
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -4485,13 +4522,20 @@ object SettingKeys {
 
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
 class AppGraph(context: Context) {
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Background work. A failed job is written to logcat instead of ending the app's process. */
+    val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed", error) },
+    )
 
     private val store = PrivacyStore(context)
     val logs = store.logs
     val settings = store.settings
     val networkPolicy = NetworkPolicy()
     val network = NetworkGateway(networkPolicy) { event -> scope.launch { logs.append(event) } }
+
+    private companion object {
+        const val TAG = "Kestrel"
+    }
 }
 ```
 
@@ -4553,11 +4597,11 @@ class KestrelApplication : Application() {
 </manifest>
 ```
 
-- [ ] **Step 4: Run the test to verify that it passes**
+- [ ] **Step 4: Run the tests to verify that they pass**
 
-Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
+Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 2 tests passed on `kestrel-api37`.
+Expected: `BUILD SUCCESSFUL`, with 5 tests passed in `:core:privacy` and 2 in `:app`, all on `kestrel-api37`.
 
 - [ ] **Step 5: Run lint and the audit**
 
@@ -4631,7 +4675,7 @@ scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:co
 git status --porcelain
 ```
 
-Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 32 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
+Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 32 in `:core:privacy`; the device tests total 5 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
 
 - [ ] **Step 4: Commit and push**
 
