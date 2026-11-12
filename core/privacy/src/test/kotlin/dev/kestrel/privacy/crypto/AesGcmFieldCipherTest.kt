@@ -55,6 +55,13 @@ class AesGcmFieldCipherTest {
     }
 
     @Test
+    fun valueTooShortToHoldTheTagIsRejected() {
+        val truncated = cipher.encrypt(ByteArray(0), place).copyOf(1 + 12 + 15)
+        val error = assertThrows(IllegalArgumentException::class.java) { cipher.decrypt(truncated, place) }
+        assertEquals("Unknown ciphertext format", error.message)
+    }
+
+    @Test
     fun emptyValueRoundTrips() {
         assertArrayEquals(ByteArray(0), cipher.decrypt(cipher.encrypt(ByteArray(0), place), place))
     }

@@ -26,7 +26,8 @@ class AesGcmFieldCipher(private val key: () -> SecretKey) : FieldCipher {
     }
 
     override fun decrypt(ciphertext: ByteArray, associatedData: ByteArray): ByteArray {
-        require(ciphertext.size > HEADER_BYTES && ciphertext[0] == VERSION) { "Unknown ciphertext format" }
+        // Keystore would report a too-short value as IllegalBlockSizeException, which also signals temporary failures.
+        require(ciphertext.size >= HEADER_BYTES + TAG_BYTES && ciphertext[0] == VERSION) { "Unknown ciphertext format" }
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, ciphertext, 1, IV_BYTES))
         cipher.updateAAD(associatedData)
@@ -39,5 +40,6 @@ class AesGcmFieldCipher(private val key: () -> SecretKey) : FieldCipher {
         const val IV_BYTES = 12
         const val HEADER_BYTES = 1 + IV_BYTES
         const val TAG_BITS = 128
+        const val TAG_BYTES = TAG_BITS / 8
     }
 }
