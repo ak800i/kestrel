@@ -50,8 +50,11 @@ class AppGraphTest {
     }
 
     @Test
-    fun plainHttpRequestReachesALocalNetworkServerAndIsLogged() = runBlocking {
-        // Android 17 allows plain HTTP to loopback by default, but not to the local network.
+    fun cleartextPolicyAllowsPlainHttpToALocalNetworkAddress() = runBlocking {
+        // Android 17 allows plain HTTP to loopback by default, but not to local-network addresses, so this
+        // test needs the network security config. The server listens on the device's own address, so the
+        // request never leaves the device. Servers on other machines also need the runtime permission
+        // ACCESS_LOCAL_NETWORK (design spec, section 13.6), which Kestrel does not request yet.
         val address = NetworkInterface.getNetworkInterfaces().asSequence()
             .filter { it.isUp && !it.isLoopback }
             .flatMap { it.inetAddresses.asSequence() }
