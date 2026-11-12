@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Package and application ID `dev.kestrel`; repository `H:\Code\kestrel`, published as `github.com/ak800i/kestrel` (D21).
-- Licence GPL-3.0-or-later for all of Kestrel; every dependency must have a licence that is compatible with GPL-3.0, such as Apache-2.0, MIT or BSD (D28, section 17).
+- Licence GPL-3.0-or-later for all of Kestrel; every dependency that ships in the app must have a licence that is compatible with GPL-3.0, such as Apache-2.0, MIT or BSD. Tools used only to build or test Kestrel, such as JUnit, are exempt (D28, section 17).
 - `minSdk 33`, `targetSdk 37` and `compileSdk 37` (section 6).
 - Gradle with the Kotlin DSL and a version catalog; Android Gradle plugin 9.5.1 and Kotlin 2.4.21 (section 17). The plugin has Kotlin built in: never apply `org.jetbrains.kotlin.android`, and use KSP instead of kapt.
 - Libraries in this plan: Jetpack Compose, Kotlin coroutines, kotlinx.serialization, OkHttp and Room. There is no dependency-injection framework; one `AppGraph` class wires the parts together by hand (section 17).

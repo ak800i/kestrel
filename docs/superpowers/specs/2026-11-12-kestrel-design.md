@@ -621,7 +621,7 @@ The real values stay in an in-memory vault for the duration of the task, and Kes
 A Gradle task fails the build when:
 
 - a dependency matches the denylist (Firebase, Play services, ML Kit, and analytics, crash-reporting or advertising SDKs);
-- a dependency's licence is not on the list of licences that are compatible with GPL-3.0;
+- a dependency that ships in the app has a licence that is not on the list of licences that are compatible with GPL-3.0;
 - compiled code outside `:core:privacy` refers to network APIs such as `java.net.Socket`, `URL.openConnection`, `HttpURLConnection` or an OkHttp client;
 - a bundled native library imports socket functions such as `socket`, `connect` or `getaddrinfo`;
 - the ONNX Runtime version differs from the pinned version that was audited. This is currently 1.28.x, which has no Android telemetry. ONNX Runtime 1.31 turns telemetry on by default on Android (B14).
@@ -800,7 +800,7 @@ kestrel/
 - **Scripts** are PowerShell, to match the Windows development machine. `create-avd.ps1` installs the API 37 platform and system image and creates `kestrel-api37`.
 - **CI:** GitHub Actions runs the unit tests, Android lint, the build-time audit and a check that `providers.json` matches `openclaw.lock`. It does not run emulator tests at first.
 - **Documentation:** the README explains what Kestrel is, its privacy rules, how to build and install it, and the setup checklist. `THIRD_PARTY_NOTICES.md` lists every dependency and model with its licence, including the CC-BY attribution for Parakeet, the MIT notice for code and data derived from OpenClaw, the Apache-2.0 notice for prompts derived from android_world, and espeak-ng's GPL-3.0.
-- **Licence:** GPL-3.0-or-later for all of Kestrel (D28). Every dependency must have a licence that is compatible with GPL-3.0, such as Apache-2.0, MIT or BSD.
+- **Licence:** GPL-3.0-or-later for all of Kestrel (D28). Every dependency that ships in the app must have a licence that is compatible with GPL-3.0, such as Apache-2.0, MIT or BSD. Tools that are used only to build or test Kestrel, such as JUnit, are not distributed with it and are exempt.
 
 ## 18. Delivery plan
 
