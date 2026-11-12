@@ -16,4 +16,7 @@ internal fun CommonExtension.applyKestrelAndroidDefaults() {
     }
     testOptions.unitTests.isReturnDefaultValues = true
     packaging.resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*", "/META-INF/NOTICE*")
+    // Kestrel has no native code of its own. Libraries from dependencies arrive stripped,
+    // and stripping them again would need an NDK on every machine that builds Kestrel.
+    packaging.jniLibs.keepDebugSymbols += "**/*.so"
 }
