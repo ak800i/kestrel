@@ -50,7 +50,7 @@
 | `scripts/create-avd.ps1`, `scripts/start-emulator.ps1` | Create and start `kestrel-api37` |
 | `scripts/connected-test.ps1`, `scripts/install.ps1` | Run on-device tests and install the app on one allowed device |
 | `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml` | The root build and the version catalog |
-| `build-logic/convention/.../*ConventionPlugin.kt`, `KestrelSdk.kt` | Shared module settings: SDK levels, Java 17, and the audit |
+| `build-logic/convention/.../*ConventionPlugin.kt`, `KestrelSdk.kt`, `AndroidDefaults.kt` | Shared module settings: SDK levels, Java 17, and the audit |
 | `build-logic/convention/.../audit/*` | The `kestrel.audit` plugin: dependency rules, network-API scan and native-library scan |
 | `audit/rules.txt` | The audit's deny, pin and allow rules and its justified exceptions |
 | `.github/workflows/ci.yml` | CI: unit tests, lint and the audit |
@@ -499,6 +499,7 @@ git commit -m "build: add Gradle build, script helpers and :core:safety" -m "Co-
 
 **Files:**
 - Create: `build-logic/convention/src/main/kotlin/dev/kestrel/build/KestrelSdk.kt`
+- Create: `build-logic/convention/src/main/kotlin/dev/kestrel/build/AndroidDefaults.kt`
 - Create: `build-logic/convention/src/main/kotlin/dev/kestrel/build/AndroidApplicationConventionPlugin.kt`
 - Modify: `build-logic/convention/build.gradle.kts` (register `kestrel.android.application`)
 - Modify: `settings.gradle.kts` (include `:app`)
@@ -510,6 +511,7 @@ git commit -m "build: add Gradle build, script helpers and :core:safety" -m "Co-
 **Interfaces:**
 - Consumes: the version catalog and `scripts\gradle.ps1` from Task 1.
 - Produces: the plugin ID `kestrel.android.application`, and `internal fun Project.applyKestrelApplicationDefaults()`, which plan 1B reuses for `:testapp`.
+- Produces: `internal fun CommonExtension.applyKestrelAndroidDefaults()`, the settings that every Android module shares. Task 8 reuses it for library modules.
 - Produces: the app `dev.kestrel` with the launcher activity `dev.kestrel.app.MainActivity`.
 
 - [ ] **Step 1: Add the SDK levels and the application convention**
@@ -527,13 +529,38 @@ internal object KestrelSdk {
 }
 ```
 
+`build-logic/convention/src/main/kotlin/dev/kestrel/build/AndroidDefaults.kt`:
+
+```kotlin
+package dev.kestrel.build
+
+import com.android.build.api.dsl.CommonExtension
+import org.gradle.api.JavaVersion
+
+/** Settings that every Kestrel Android module shares: SDK levels (design spec, section 6), Java 17 and packaging. */
+internal fun CommonExtension.applyKestrelAndroidDefaults() {
+    compileSdk { version = release(KestrelSdk.COMPILE) }
+    defaultConfig.apply {
+        minSdk { version = release(KestrelSdk.MIN) }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    compileOptions.apply {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    testOptions.unitTests.isReturnDefaultValues = true
+    packaging.resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*", "/META-INF/NOTICE*")
+}
+```
+
+`compileSdk { version = release(37) }` is the new SDK syntax of the Android Gradle plugin 9.5. It resolves the installed `platforms/android-37.0` package.
+
 `build-logic/convention/src/main/kotlin/dev/kestrel/build/AndroidApplicationConventionPlugin.kt` (Task 4 adds the audit):
 
 ```kotlin
 package dev.kestrel.build
 
 import com.android.build.api.dsl.ApplicationExtension
-import org.gradle.api.JavaVersion
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
@@ -549,27 +576,13 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
 internal fun Project.applyKestrelApplicationDefaults() {
     pluginManager.apply("com.android.application")
     extensions.configure<ApplicationExtension> {
-        compileSdk { version = release(KestrelSdk.COMPILE) }
+        applyKestrelAndroidDefaults()
         defaultConfig {
-            minSdk { version = release(KestrelSdk.MIN) }
             targetSdk { version = release(KestrelSdk.TARGET) }
-            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        }
-        compileOptions {
-            sourceCompatibility = JavaVersion.VERSION_17
-            targetCompatibility = JavaVersion.VERSION_17
-        }
-        testOptions {
-            unitTests.isReturnDefaultValues = true
-        }
-        packaging {
-            resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*", "/META-INF/NOTICE*")
         }
     }
 }
 ```
-
-`compileSdk { version = release(37) }` is the new SDK syntax of the Android Gradle plugin 9.5. It resolves the installed `platforms/android-37.0` package.
 
 In `build-logic/convention/build.gradle.kts`, replace the `gradlePlugin` block with:
 
@@ -1351,7 +1364,6 @@ package dev.kestrel.build
 
 import com.android.build.api.dsl.ApplicationExtension
 import dev.kestrel.build.audit.AuditPlugin
-import org.gradle.api.JavaVersion
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
@@ -1364,25 +1376,13 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
     }
 }
 
-/** Shared by `:app` and `:testapp`. Only `:app` is audited, because `:testapp` is never shipped. */
+/** Shared by `:app` and, from plan 1B, `:testapp`. Only `:app` is audited, because `:testapp` is never shipped. */
 internal fun Project.applyKestrelApplicationDefaults() {
     pluginManager.apply("com.android.application")
     extensions.configure<ApplicationExtension> {
-        compileSdk { version = release(KestrelSdk.COMPILE) }
+        applyKestrelAndroidDefaults()
         defaultConfig {
-            minSdk { version = release(KestrelSdk.MIN) }
             targetSdk { version = release(KestrelSdk.TARGET) }
-            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        }
-        compileOptions {
-            sourceCompatibility = JavaVersion.VERSION_17
-            targetCompatibility = JavaVersion.VERSION_17
-        }
-        testOptions {
-            unitTests.isReturnDefaultValues = true
-        }
-        packaging {
-            resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*", "/META-INF/NOTICE*")
         }
     }
 }
@@ -1539,13 +1539,11 @@ class MentionsSocketClass {
 }
 
 object SocketTools {
-    fun closeQuietly(socket: Socket) {
-        runCatching { socket.close() }
-    }
+    fun close(socket: Socket) = socket.close()
 }
 
 class PassesSocket {
-    fun finish(socket: Socket) = SocketTools.closeQuietly(socket)
+    fun finish(socket: Socket) = SocketTools.close(socket)
 }
 
 class Harmless {
@@ -1612,7 +1610,7 @@ class NetworkApiScannerTest {
     @Test
     fun findsCallsWhoseSignatureMentionsANetworkType() {
         assertEquals(
-            listOf("dev/kestrel/build/audit/fixtures/SocketTools.closeQuietly"),
+            listOf("dev/kestrel/build/audit/fixtures/SocketTools.close"),
             referencesIn(PassesSocket::class.java),
         )
     }
@@ -2504,7 +2502,7 @@ Expected: the `CI` run finishes with a green check, and the command exits with c
 - Test (device): `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KeystoreCipherTest.kt`
 
 **Interfaces:**
-- Consumes: `KestrelSdk` (Task 2), `AuditPlugin` (Task 4), and `scripts\connected-test.ps1` and `scripts\start-emulator.ps1` (Task 3).
+- Consumes: `KestrelSdk` and `applyKestrelAndroidDefaults()` (Task 2), `AuditPlugin` (Task 4), and `scripts\connected-test.ps1` and `scripts\start-emulator.ps1` (Task 3).
 - Produces: the plugin ID `kestrel.android.library`.
 - Produces: `interface FieldCipher { fun encrypt(plaintext: ByteArray, associatedData: ByteArray): ByteArray; fun decrypt(ciphertext: ByteArray, associatedData: ByteArray): ByteArray }` and `class AesGcmFieldCipher(key: () -> SecretKey) : FieldCipher`.
 - Produces: `KeystoreKeys.getOrCreate(alias: String): SecretKey` and `KeystoreKeys.DATA_KEY = "kestrel.data"`.
@@ -2520,7 +2518,6 @@ package dev.kestrel.build
 
 import com.android.build.api.dsl.LibraryExtension
 import dev.kestrel.build.audit.AuditPlugin
-import org.gradle.api.JavaVersion
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
@@ -2530,23 +2527,7 @@ class AndroidLibraryConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
             pluginManager.apply("com.android.library")
-            extensions.configure<LibraryExtension> {
-                compileSdk { version = release(KestrelSdk.COMPILE) }
-                defaultConfig {
-                    minSdk { version = release(KestrelSdk.MIN) }
-                    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-                }
-                compileOptions {
-                    sourceCompatibility = JavaVersion.VERSION_17
-                    targetCompatibility = JavaVersion.VERSION_17
-                }
-                testOptions {
-                    unitTests.isReturnDefaultValues = true
-                }
-                packaging {
-                    resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*", "/META-INF/NOTICE*")
-                }
-            }
+            extensions.configure<LibraryExtension> { applyKestrelAndroidDefaults() }
             pluginManager.apply(AuditPlugin::class.java)
         }
     }
