@@ -867,8 +867,13 @@ $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
 if (-not $serial) {
-    $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
-    Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized
+    # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
+    $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
+        Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
+    if (-not $running) {
+        $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
+        Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized
+    }
     do {
         Start-Sleep -Seconds 5
         $serial = Find-EmulatorSerial $name
