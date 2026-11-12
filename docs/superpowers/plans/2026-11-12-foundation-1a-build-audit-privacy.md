@@ -3415,11 +3415,13 @@ git commit -m "feat(privacy): add encrypted activity and network logs with 7-day
 
 **Interfaces:**
 - Consumes: `FieldCipher` (Task 8) and `KestrelDatabase` (Task 9).
-- Produces: the Room entity `SettingRow(name: String, payload: ByteArray)` and `SettingsDao` with `get(name)`, `observe(name): Flow<SettingRow?>` and `put(row)`.
+- Produces: the Room entity `SettingRow(name: String, payload: ByteArray)` and `SettingsDao` with `get(name)`, `observe(name): Flow<SettingRow?>`, `put(row)` and `delete(name)`.
 - Produces: `class SettingKey<T>(name: String, serializer: KSerializer<T>, default: T)`.
-- Produces: `class SettingsStore(dao: SettingsDao, cipher: FieldCipher)` with `suspend fun <T> get(key: SettingKey<T>): T`, `fun <T> observe(key: SettingKey<T>): Flow<T>` and `suspend fun <T> set(key: SettingKey<T>, value: T)`.
+- Produces: `class SettingsStore(dao: SettingsDao, cipher: FieldCipher, onUnreadable: suspend (name: String) -> Unit = {})` with `suspend fun <T> get(key: SettingKey<T>): T`, `fun <T> observe(key: SettingKey<T>): Flow<T>` and `suspend fun <T> set(key: SettingKey<T>, value: T)`.
 
 The database stays at version 1, because no build has been released yet. From the first release on, every schema change needs a new version and a migration.
+
+A stored setting that cannot be read gives its default, and `observe` keeps running; every default in Kestrel is the safe choice, for example test mode on. A value that fails authentication can never be read again, so it is deleted. A value in a format that this version cannot decode is kept, because a later version may read it. `onUnreadable` hears about each such setting once per process, and Task 13 records it in the activity log.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3439,6 +3441,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.crypto.KeyGenerator
 
@@ -3448,8 +3451,10 @@ class SettingsStoreTest {
 
     private val dao = FakeSettingsDao()
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-    private val store = SettingsStore(dao, AesGcmFieldCipher { key })
+    private val unreadable = mutableListOf<String>()
+    private val store = SettingsStore(dao, AesGcmFieldCipher { key }) { unreadable += it }
     private val volume = SettingKey("volume", Volume.serializer(), Volume(level = 5))
+    private val otherVolume = SettingKey("other-volume", Volume.serializer(), Volume(level = 1))
 
     @Test
     fun returnsTheDefaultUntilSet() = runTest {
@@ -3473,6 +3478,27 @@ class SettingsStoreTest {
 
         assertFalse(stored.contains("level"))
     }
+
+    @Test
+    fun deletesAValueCopiedFromAnotherSettingAndUsesTheDefault() = runTest {
+        store.set(otherVolume, Volume(level = 2))
+        dao.rows.value += "volume" to SettingRow("volume", dao.rows.value.getValue("other-volume").payload)
+
+        assertEquals(Volume(5), store.get(volume))
+        assertFalse(dao.rows.value.containsKey("volume"))
+        assertEquals(listOf("volume"), unreadable)
+    }
+
+    @Test
+    fun keepsAValueInAnUnknownFormatAndUsesTheDefault() = runTest {
+        val newerFormat = AesGcmFieldCipher { key }.encrypt("""{"level":"loud"}""".encodeToByteArray(), "settings/volume".encodeToByteArray())
+        dao.rows.value += "volume" to SettingRow("volume", newerFormat)
+
+        assertEquals(Volume(5), store.get(volume))
+        assertEquals(Volume(5), store.observe(volume).first())
+        assertTrue(dao.rows.value.containsKey("volume"))
+        assertEquals(listOf("volume"), unreadable)
+    }
 }
 
 /** Mimics the SQL in [SettingsDao]; KestrelDatabaseTest checks the real queries on a device. */
@@ -3485,6 +3511,12 @@ private class FakeSettingsDao : SettingsDao {
 
     override suspend fun put(row: SettingRow) {
         rows.value = rows.value + (row.name to row)
+    }
+
+    override suspend fun delete(name: String): Int {
+        val existed = name in rows.value
+        rows.value = rows.value - name
+        return if (existed) 1 else 0
     }
 }
 ```
@@ -3526,6 +3558,9 @@ interface SettingsDao {
 
     @Upsert
     suspend fun put(row: SettingRow)
+
+    @Query("DELETE FROM settings WHERE name = :name")
+    suspend fun delete(name: String): Int
 }
 ```
 
@@ -3563,9 +3598,12 @@ import dev.kestrel.privacy.crypto.FieldCipher
 import dev.kestrel.privacy.db.SettingRow
 import dev.kestrel.privacy.db.SettingsDao
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.AEADBadTagException
 
 /** Names a setting, its JSON serializer and the value to use until the owner changes it. */
 class SettingKey<T>(val name: String, val serializer: KSerializer<T>, val default: T)
@@ -3574,23 +3612,47 @@ class SettingKey<T>(val name: String, val serializer: KSerializer<T>, val defaul
 class SettingsStore(
     private val dao: SettingsDao,
     private val cipher: FieldCipher,
+    /** Called once per setting and process when a stored value cannot be read and its default is used instead. */
+    private val onUnreadable: suspend (name: String) -> Unit = {},
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
+    private val reported = ConcurrentHashMap.newKeySet<String>()
 
-    suspend fun <T> get(key: SettingKey<T>): T = dao.get(key.name)?.let { decode(key, it) } ?: key.default
+    suspend fun <T> get(key: SettingKey<T>): T = valueOf(key, dao.get(key.name))
 
-    fun <T> observe(key: SettingKey<T>): Flow<T> = dao.observe(key.name).map { row -> row?.let { decode(key, it) } ?: key.default }
+    fun <T> observe(key: SettingKey<T>): Flow<T> = dao.observe(key.name).map { row -> valueOf(key, row) }.distinctUntilChanged()
 
     suspend fun <T> set(key: SettingKey<T>, value: T) {
         val plaintext = json.encodeToString(key.serializer, value).encodeToByteArray()
         dao.put(SettingRow(key.name, cipher.encrypt(plaintext, associatedData(key.name))))
     }
 
-    private fun <T> decode(key: SettingKey<T>, row: SettingRow): T =
-        json.decodeFromString(key.serializer, cipher.decrypt(row.payload, associatedData(key.name)).decodeToString())
+    /**
+     * Returns the stored value, or the default when nothing is stored or the stored value cannot be read.
+     * A value that fails authentication can never be read again, so it is deleted. A value in a format
+     * that this version cannot decode is kept, because a later version of Kestrel may read it.
+     */
+    private suspend fun <T> valueOf(key: SettingKey<T>, row: SettingRow?): T {
+        if (row == null) return key.default
+        return try {
+            json.decodeFromString(key.serializer, cipher.decrypt(row.payload, associatedData(key.name)).decodeToString())
+        } catch (e: AEADBadTagException) {
+            dao.delete(key.name)
+            report(key.name)
+            key.default
+        } catch (e: IllegalArgumentException) {
+            // Also covers kotlinx.serialization's SerializationException, which extends IllegalArgumentException.
+            report(key.name)
+            key.default
+        }
+    }
+
+    private suspend fun report(name: String) {
+        if (reported.add(name)) onUnreadable(name)
+    }
 
     private fun associatedData(name: String) = "settings/$name".encodeToByteArray()
 }
@@ -3600,7 +3662,7 @@ class SettingsStore(
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest`
 
-Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.privacy.settings.SettingsStoreTest.xml` reports `tests="3" failures="0" errors="0"`, and `1.json` now also describes the `settings` table.
+Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.privacy.settings.SettingsStoreTest.xml` reports `tests="5" failures="0" errors="0"`, and `1.json` now also describes the `settings` table.
 
 - [ ] **Step 5: Check the settings SQL on the emulator**
 
@@ -4266,7 +4328,7 @@ git commit -m "feat(privacy): add network gateway that enforces the allowlist an
 
 **Interfaces:**
 - Consumes: `LogStore` (Task 9), `SettingsStore` and `SettingKey` (Task 10), `NetworkPolicy` (Task 11), `NetworkGateway` (Task 12) and `SafetySettings` (Task 1).
-- Produces: `class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMillis)` with `val logs: LogStore` and `val settings: SettingsStore`.
+- Produces: `class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMillis)` with `val logs: LogStore` and `val settings: SettingsStore`. A setting that cannot be read is recorded as an ERROR entry in the activity log.
 - Produces: `object SettingKeys { val SAFETY: SettingKey<SafetySettings> }`.
 - Produces: `class AppGraph(context: Context)` with `scope: CoroutineScope`, `logs: LogStore`, `settings: SettingsStore`, `networkPolicy: NetworkPolicy` and `network: NetworkGateway`, reachable as `(context.applicationContext as KestrelApplication).graph`. Plans 1B and 1C add the screen layer and the settings app to it.
 
@@ -4382,6 +4444,8 @@ import android.content.Context
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.crypto.KeystoreKeys
 import dev.kestrel.privacy.db.KestrelDatabase
+import dev.kestrel.privacy.logs.ActivityEvent
+import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogStore
 import dev.kestrel.privacy.settings.SettingsStore
 
@@ -4392,7 +4456,9 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
     private val database = KestrelDatabase.create(context)
 
     val logs = LogStore(database.logDao(), cipher, clock)
-    val settings = SettingsStore(database.settingsDao(), cipher)
+    val settings = SettingsStore(database.settingsDao(), cipher) { name ->
+        logs.append(ActivityEvent(ActivityKind.ERROR, "The setting '$name' could not be read, so Kestrel uses its default"))
+    }
 }
 ```
 
@@ -4565,7 +4631,7 @@ scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:co
 git status --porcelain
 ```
 
-Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 30 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
+Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 32 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
 
 - [ ] **Step 4: Commit and push**
 
