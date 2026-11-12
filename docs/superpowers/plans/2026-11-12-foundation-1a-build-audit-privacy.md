@@ -2934,13 +2934,13 @@ git commit -m "feat(privacy): add AES-GCM field encryption with Android Keystore
 
 **Interfaces:**
 - Consumes: `FieldCipher` and `AesGcmFieldCipher` from Task 8.
-- Produces: the Room entity `LogEntryRow(id: Long = 0, log: String, timestampMillis: Long, payload: ByteArray)` and `LogDao` with `insert(row)`, `newest(log, limit)`, `deleteOlderThan(cutoffMillis)` and `deleteAll()`.
+- Produces: the Room entity `LogEntryRow(id: Long = 0, log: String, timestampMillis: Long, payload: ByteArray)` and `LogDao` with `insert(row)`, `newest(log, limit)`, `deleteOlderThan(cutoffMillis)`, `delete(id)` and `deleteAll()`.
 - Produces: `abstract class KestrelDatabase : RoomDatabase` with `logDao()` and `KestrelDatabase.create(context)`.
 - Produces: `ActivityEvent(kind: ActivityKind, text: String, taskId: String? = null)` with `enum class ActivityKind { ACTION, NOTE, ERROR }`, and `NetworkEvent(method, host, path, requestBytes, responseBytes, status: Int? = null, outcome: NetworkOutcome, taskId: String? = null, detail: String? = null)` with `enum class NetworkOutcome { COMPLETED, FAILED, BLOCKED }`.
 - Produces: `class LogStore(dao: LogDao, cipher: FieldCipher, clock: () -> Long)` with `suspend fun append(event: ActivityEvent)`, `suspend fun append(event: NetworkEvent)`, `suspend fun activity(limit: Int = 500): List<LogEntry<ActivityEvent>>`, `suspend fun network(limit: Int = 500): List<LogEntry<NetworkEvent>>`, `suspend fun purgeExpired(): Int`, `suspend fun deleteHistory(): Int`, and `LogStore.RETENTION_MILLIS` (7 days).
 - Produces: `data class LogEntry<T>(id: Long, timestampMillis: Long, event: T)`.
 
-Both logs share one table. Only the timestamp and the log's name are stored in plain text, because retention and ordering need them; the event itself is encrypted JSON. The network log never stores a query string, headers or bodies, because a query string can contain an API key. Later sub-projects add more `ActivityKind` values, such as prompts and replies.
+Both logs share one table. Only the timestamp and the log's name are stored in plain text, because retention and ordering need them; the event itself is encrypted JSON. The network log never stores a query string, headers or bodies, because a query string can contain an API key. An entry that can never be read again (damaged, encrypted for another place or with a lost key, or in an old format) is deleted when a log is read, so that it cannot block the whole log, and the activity log records how many were deleted. Later sub-projects add more `ActivityKind` values, such as prompts and replies.
 
 - [ ] **Step 1: Add Room and kotlinx.serialization to the module**
 
@@ -3058,6 +3058,23 @@ class LogStoreTest {
         assertEquals(0, dao.rows.size)
     }
 
+    @Test
+    fun deletesEntriesThatCanNeverBeReadAndSaysSo() = runTest {
+        store.append(ActivityEvent(ActivityKind.NOTE, "good"))
+        val cipher = AesGcmFieldCipher { key }
+        val activityPlace = "log_entries/activity".encodeToByteArray()
+        val networkPlace = "log_entries/network".encodeToByteArray()
+        val damaged = byteArrayOf(1, 2, 3)
+        val oldFormat = cipher.encrypt("""{"text":"written before 'kind' existed"}""".encodeToByteArray(), activityPlace)
+        val movedFromNetworkLog = cipher.encrypt("""{"kind":"NOTE","text":"moved"}""".encodeToByteArray(), networkPlace)
+        listOf(damaged, oldFormat, movedFromNetworkLog).forEachIndexed { index, payload ->
+            dao.rows += LogEntryRow(id = 100L + index, log = "activity", timestampMillis = now, payload = payload)
+        }
+
+        assertEquals(listOf("good"), store.activity().map { it.event.text })
+        assertEquals(listOf("Deleted 3 unreadable activity log entries", "good"), store.activity().map { it.event.text })
+    }
+
     private fun networkEvent(host: String) = NetworkEvent(
         method = "GET",
         host = host,
@@ -3091,6 +3108,8 @@ private class FakeLogDao : LogDao {
         return expired.size
     }
 
+    override suspend fun delete(id: Long): Int = if (rows.removeIf { it.id == id }) 1 else 0
+
     override suspend fun deleteAll(): Int {
         val count = rows.size
         rows.clear()
@@ -3121,7 +3140,10 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 
 /** One entry of the activity log or the network log. Only the payload is sensitive, and it is encrypted. */
-@Entity(tableName = "log_entries", indices = [Index(value = ["log", "timestamp_millis"])])
+@Entity(
+    tableName = "log_entries",
+    indices = [Index(value = ["log", "timestamp_millis"]), Index(value = ["timestamp_millis"])],
+)
 class LogEntryRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val log: String,
@@ -3139,6 +3161,9 @@ interface LogDao {
 
     @Query("DELETE FROM log_entries WHERE timestamp_millis < :cutoffMillis")
     suspend fun deleteOlderThan(cutoffMillis: Long): Int
+
+    @Query("DELETE FROM log_entries WHERE id = :id")
+    suspend fun delete(id: Long): Int
 
     @Query("DELETE FROM log_entries")
     suspend fun deleteAll(): Int
@@ -3214,6 +3239,7 @@ import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import javax.crypto.AEADBadTagException
 
 data class LogEntry<T>(val id: Long, val timestampMillis: Long, val event: T)
 
@@ -3256,13 +3282,39 @@ class LogStore(
         dao.insert(LogEntryRow(log = log, timestampMillis = now, payload = cipher.encrypt(plaintext, associatedData(log))))
     }
 
+    /**
+     * Returns the newest entries. An entry that can never be read is deleted, so that it cannot block the
+     * whole log, and the activity log says how many were deleted.
+     */
     private suspend fun <T> read(log: String, serializer: KSerializer<T>, limit: Int): List<LogEntry<T>> {
         purgeExpired()
-        return dao.newest(log, limit).map { row ->
-            val plaintext = cipher.decrypt(row.payload, associatedData(log)).decodeToString()
-            LogEntry(row.id, row.timestampMillis, json.decodeFromString(serializer, plaintext))
+        val entries = mutableListOf<LogEntry<T>>()
+        var unreadable = 0
+        for (row in dao.newest(log, limit)) {
+            val event = decodeOrNull(log, serializer, row)
+            if (event == null) {
+                dao.delete(row.id)
+                unreadable++
+            } else {
+                entries += LogEntry(row.id, row.timestampMillis, event)
+            }
         }
+        if (unreadable > 0) {
+            append(ACTIVITY, ActivityEvent.serializer(), ActivityEvent(ActivityKind.ERROR, "Deleted $unreadable unreadable $log log entries"))
+        }
+        return entries
     }
+
+    /** Returns null for a payload that is damaged, was encrypted for another place or with a lost key, or has an old format. */
+    private fun <T> decodeOrNull(log: String, serializer: KSerializer<T>, row: LogEntryRow): T? =
+        try {
+            json.decodeFromString(serializer, cipher.decrypt(row.payload, associatedData(log)).decodeToString())
+        } catch (e: AEADBadTagException) {
+            null
+        } catch (e: IllegalArgumentException) {
+            // Also covers kotlinx.serialization's SerializationException, which extends IllegalArgumentException.
+            null
+        }
 
     private fun associatedData(log: String) = "log_entries/$log".encodeToByteArray()
 
@@ -3280,7 +3332,7 @@ class LogStore(
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest`
 
-Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.privacy.logs.LogStoreTest.xml` reports `tests="6" failures="0" errors="0"`, and the Room schema `core/privacy/schemas/dev.kestrel.privacy.db.KestrelDatabase/1.json` exists.
+Expected: `BUILD SUCCESSFUL`. `TEST-dev.kestrel.privacy.logs.LogStoreTest.xml` reports `tests="7" failures="0" errors="0"`, and the Room schema `core/privacy/schemas/dev.kestrel.privacy.db.KestrelDatabase/1.json` exists.
 
 - [ ] **Step 6: Check the real SQL on the emulator**
 
@@ -4513,7 +4565,7 @@ scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:co
 git status --porcelain
 ```
 
-Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 29 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
+Expected: both Gradle runs end with `BUILD SUCCESSFUL`. The unit tests total 23 in `build-logic`, 2 in `:core:safety` and 30 in `:core:privacy`; the device tests total 4 in `:core:privacy` and 2 in `:app`. `git status --porcelain` lists only `THIRD_PARTY_NOTICES.md` and `README.md`.
 
 - [ ] **Step 4: Commit and push**
 
