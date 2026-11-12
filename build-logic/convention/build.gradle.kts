@@ -24,6 +24,10 @@ dependencies {
 
 gradlePlugin {
     plugins {
+        register("androidApplication") {
+            id = "kestrel.android.application"
+            implementationClass = "dev.kestrel.build.AndroidApplicationConventionPlugin"
+        }
         register("jvmLibrary") {
             id = "kestrel.jvm.library"
             implementationClass = "dev.kestrel.build.JvmLibraryConventionPlugin"

@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A plain letter K, drawn inside the 66 dp safe zone of an adaptive icon. -->
+    <path
+        android:pathData="M42,34 V74 M68,34 L44,56 M53,48 L69,74"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="square"
+        android:strokeWidth="8" />
+</vector>

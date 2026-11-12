@@ -17,4 +17,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "kestrel"
 
+include(":app")
 include(":core:safety")
