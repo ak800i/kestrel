@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.logs.NetworkOutcome
 import dev.kestrel.privacy.network.BlockedRequestException
+import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -38,14 +39,12 @@ class AppGraphTest {
     }
 
     @Test
-    fun safetySettingsSurviveTheEncryptedStore() = runBlocking {
-        val original = graph.settings.get(SettingKeys.SAFETY)
-        try {
-            graph.settings.set(SettingKeys.SAFETY, SafetySettings(testMode = false))
+    fun settingsSurviveTheEncryptedStore() = runBlocking {
+        // A test-only key, so that the real safety settings keep test mode on during all testing (D25).
+        val key = SettingKey("test.safety", SafetySettings.serializer(), SafetySettings())
 
-            assertEquals(SafetySettings(testMode = false), graph.settings.get(SettingKeys.SAFETY))
-        } finally {
-            graph.settings.set(SettingKeys.SAFETY, original)
-        }
+        graph.settings.set(key, SafetySettings(testMode = false))
+
+        assertEquals(SafetySettings(testMode = false), graph.settings.get(key))
     }
 }
