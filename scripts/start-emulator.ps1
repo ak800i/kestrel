@@ -15,7 +15,9 @@ if (-not $serial) {
     $started = $null
     if (-not $running) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
-        $started = Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim' -WindowStyle Minimized -PassThru
+        # Software rendering: with the computer's graphics card, the emulator slowed down after a few hours of tests,
+        # and once the graphics driver crashed (plan 1B).
+        $started = Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader' -WindowStyle Minimized -PassThru
         $null = $started.Handle  # Keeps the exit code readable after the process ends.
     }
     do {
