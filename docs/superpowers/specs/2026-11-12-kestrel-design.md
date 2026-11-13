@@ -325,7 +325,7 @@ All overlays are accessibility overlay windows, so Kestrel needs no "display ove
 | Numbers | Badges on actionable elements. They stay until "hide numbers" and refresh when the screen changes. A setting chooses between all elements and only unlabeled ones, as in Voice Access. |
 | Labels | Suggested names next to elements, hidden when the content changes. A name comes from the element's text, description or hint, or is derived from its view ID (for example `compose_button` becomes "compose"). |
 | Grid | Numbered cells for tapping, swiping, dragging and pinching, with "more squares" and "fewer squares". |
-| Which one? | When "tap X" matches several elements, numbers appear on those elements only. |
+| Which one? | When "tap X" matches several elements, numbers appear on those elements only. They go when the screen changes. If "show numbers" is on, its numbers then come back. |
 | Feedback bar | Section 8.9. |
 | Confirmation card | Section 12.4. Its Confirm and Cancel buttons accept touches. |
 | Touch watcher | An invisible window of 1×1 pixel that reports touches anywhere else on the screen (section 14.1). |

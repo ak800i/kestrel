@@ -69,6 +69,7 @@ The code below already handles all of these. They are written down so that nobod
 - The emulator process once closed during the zoom test, while its rendering was slow in this way. The Windows Application log showed a timeout in the NVIDIA graphics driver (a TDR). After a fresh start, all the device tests passed. If the emulator closes during the tests, start it again and run the tests again.
 - Android's magnification moves every node on the screen without sending an accessibility event, so Kestrel invalidates its snapshot cache after a zoom.
 - A fixture's layout may still move by a few pixels just after the screen opens. Tests that compare an element before and after an action compare its size, not its position.
+- On a screen that never stops changing, such as a stopwatch, a watcher that restarts its check on every change (`collectLatest`) never finishes a check. The session's watcher handles the changes one after another (`collect`).
 
 ## File map
 
@@ -5098,19 +5099,21 @@ git commit -m "feat(screen): add gestures, zoom, global actions and intents" -m 
 - Create: `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/Numbering.kt`
 - Test: `core/screen/src/test/kotlin/dev/kestrel/screen/overlay/NumberingTest.kt`
 - Create: `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/OverlayHost.kt`, `TagsView.kt`, `NumbersOverlay.kt`, `LabelsOverlay.kt`
-- Modify: `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt` (overlays, the content watcher and `close()`)
-- Modify: `app/src/main/kotlin/dev/kestrel/app/KestrelAccessibilityService.kt` (close the session)
+- Modify: `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt` (overlays, the content watcher, the error handler and `close()`)
+- Modify: `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` (share the background work's error handler as `errors`)
+- Modify: `app/src/main/kotlin/dev/kestrel/app/KestrelAccessibilityService.kt` (give the session `graph.errors`, and close the session)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/ScreenServiceRule.kt` (add `showsWindow` and the constant `KESTREL`)
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/screen/OverlayTest.kt`
 
 **Interfaces:**
-- Consumes: `ScreenSession`, `ScreenChangeTracker` and the model from earlier tasks.
+- Consumes: `ScreenSession`, `ScreenChangeTracker` and the model from earlier tasks; `AppGraph` and its error handler from plan 1A.
 - Produces: `enum class NumbersMode { ALL, UNLABELED }`, `data class Badge(number: Int, key: String, bounds: IntRect)` and `object Numbering` with `forScreen(snapshot, mode): List<Badge>` and `forCandidates(candidates: List<ScreenElement>): List<Badge>`.
 - Produces: `class OverlayHost(service)` with `context`, `show(view, params)`, `hide(view)`, `hideAll()` and `fullScreen(title): LayoutParams`, and the internal `TagsView`, `NumbersOverlay` and `LabelsOverlay`.
 - Produces: on `ScreenSession`: `numberBadges: List<Badge>`, `labelsShowing: Boolean`, `suspend showNumbers(mode = NumbersMode.ALL)`, `suspend showWhichOne(keys: Collection<String>)`, `suspend hideNumbers()`, `suspend showLabels()`, `suspend hideLabels()` and `close()`.
+- Produces: the constructor `ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHandler)`, and `AppGraph.errors: CoroutineExceptionHandler`, which `AppGraph.scope` also uses.
 - Produces: `ScreenServiceRule.showsWindow(title: String): Boolean` and the constant `ScreenServiceRule.KESTREL` (`"dev.kestrel"`).
 
-Numbers go on the actionable elements, except the keyboard's keys, in reading order: top to bottom, then left to right. In `UNLABELED` mode, only elements without a label get numbers. The session watches the screen: after each change it waits for 150 ms of quiet and compares the actionable elements' keys and bounds with the last ones. Numbers then follow the new screen, while labels and the "Which one?" numbers go away, because they belong to the screen on which they were asked for (spec section 9.4). The overlays are plain Views in full-screen accessibility overlay windows that take no touches, so touches reach the app below. Each window has a title, such as "Kestrel numbers", by which tests find it in `dumpsys window windows`. `close()` removes every overlay; the service calls it when Android disconnects it. Android attaches a new overlay's view only on the next frame, so `OverlayHost.hide` removes the window without checking whether the view is attached yet; it ignores only the error that Android gives for a window that it has already removed, as it does when the service disconnects. The overlays' state is `@Volatile`, because tests and the session read it from other threads.
+Numbers go on the actionable elements, except the keyboard's keys, in reading order: top to bottom, then left to right. In `UNLABELED` mode, only elements without a label get numbers. The session watches the screen: after each change it takes the current snapshot, which waits for 150 ms of quiet but never longer than 3 s, and compares the actionable elements' keys and bounds with the last ones. It handles the changes one after another with `collect`. It does not use `collectLatest`, because on a screen that changes all the time, such as a stopwatch, `collectLatest` would cancel every check before it finished. Numbers then follow the new screen, while labels and the "Which one?" numbers go away, because they belong to the screen on which they were asked for (spec section 9.4). "Which one?" does not switch off "show numbers": when its numbers go, the numbers of "show numbers" come back. The session's background work sends its failures to `AppGraph.errors`, which writes only the error's classes and stack frames to logcat. A failure therefore neither ends Kestrel's process nor writes screen text to the log. The overlays are plain Views in full-screen accessibility overlay windows that take no touches, so touches reach the app below. Each window has a title, such as "Kestrel numbers", by which tests find it in `dumpsys window windows`. `close()` removes every overlay; the service calls it when Android disconnects it. Android attaches a new overlay's view only on the next frame, so `OverlayHost.hide` removes the window without checking whether the view is attached yet; it ignores only the error that Android gives for a window that it has already removed, as it does when the service disconnects. The overlays' state is `@Volatile`, because tests and the session read it from other threads.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5174,6 +5177,7 @@ class NumberingTest {
 ```kotlin
 package dev.kestrel.app.screen
 
+import android.view.accessibility.AccessibilityEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
@@ -5182,6 +5186,7 @@ import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.overlay.NumbersMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -5198,7 +5203,7 @@ class OverlayTest {
 
     private val session get() = screen.session
 
-    private suspend fun eventually(check: suspend () -> Boolean) = withTimeout(5_000) {
+    private suspend fun eventually(timeoutMillis: Long = 5_000, check: suspend () -> Boolean) = withTimeout(timeoutMillis) {
         while (!check()) delay(100)
     }
 
@@ -5285,6 +5290,22 @@ class OverlayTest {
     }
 
     @Test
+    fun numbersComeBackWhenWhichOneGoes() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        session.showNumbers()
+        val send = keyOf("SEND")
+        val rebuild = keyOf("REBUILD")
+
+        session.showWhichOne(listOf(rebuild, send))
+        assertEquals(2, session.numberBadges.size)
+        showDialog()
+
+        // "Which one?" belonged to the old screen; "show numbers" is still on, so numbers follow the new screen.
+        val keep = keyOf("KEEP")
+        eventually { session.numberBadges.any { it.key == keep } }
+    }
+
+    @Test
     fun labelsGoWhenTheScreenChanges() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 
@@ -5294,6 +5315,29 @@ class OverlayTest {
         eventually { screen.showsWindow("Kestrel labels") }
         showDialog()
         eventually { !session.labelsShowing && !screen.showsWindow("Kestrel labels") }
+    }
+
+    @Test
+    fun labelsGoWhenTheScreenChangesEvenIfItIsNeverQuiet() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val showDialog = keyOf("SHOW DIALOG")
+        session.showLabels()
+        eventually { screen.showsWindow("Kestrel labels") }
+
+        // From now on the screen reports a change every 50 ms, as a stopwatch or a progress bar would. Every snapshot
+        // and every action then waits the full 3 s for quiet, so this test waits longer.
+        val busy = launch(Dispatchers.Default) {
+            while (true) {
+                session.onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED))
+                delay(50)
+            }
+        }
+        try {
+            session.actions.tap(showDialog)
+            eventually(timeoutMillis = 20_000) { !session.labelsShowing }
+        } finally {
+            busy.cancel()
+        }
     }
 
     @Test
@@ -5658,18 +5702,22 @@ import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.ScreenEvents
 import dev.kestrel.screen.read.ScreenReader
 import dev.kestrel.screen.read.SnapshotCache
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Kestrel's screen layer while its accessibility service is connected (design spec, section 9). */
-class ScreenSession(service: AccessibilityService) {
+/**
+ * Kestrel's screen layer while its accessibility service is connected (design spec, section 9). [errors] handles the
+ * failures of the session's background work, and it may write only class names and stack frames (design spec, section
+ * 13.5).
+ */
+class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
     private val labels = LabelsOverlay(overlays)
@@ -5682,7 +5730,7 @@ class ScreenSession(service: AccessibilityService) {
     val actions = ScreenActions(service, snapshots, gestures, tracker)
 
     // These fields change only on the main thread.
-    /** Set while "show numbers" is on: the numbers then follow the screen. */
+    /** Set while "show numbers" is on: the numbers then follow the screen. "Which one?" leaves it set. */
     private var numbersMode: NumbersMode? = null
 
     /** The screen content when the labels appeared. They go when it changes. */
@@ -5698,9 +5746,11 @@ class ScreenSession(service: AccessibilityService) {
 
     init {
         scope.launch {
-            tracker.version.collectLatest {
-                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collectLatest
-                tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS)
+            // collect, not collectLatest: on a screen that changes all the time, such as a stopwatch, collectLatest would
+            // cancel every check before it ran. The version is a state, so the check after a slow one sees the latest
+            // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
+            tracker.version.collect {
+                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
                 onScreenSettled(snapshots.current().snapshot)
             }
         }
@@ -5713,10 +5763,12 @@ class ScreenSession(service: AccessibilityService) {
         numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
     }
 
-    /** Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes. */
+    /**
+     * Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes, and
+     * then the numbers of "show numbers" come back if it is on.
+     */
     suspend fun showWhichOne(keys: Collection<String>) = withContext(Dispatchers.Main) {
         val snapshot = snapshots.current().snapshot
-        numbersMode = null
         whichOneShownOn = contentOf(snapshot)
         numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys }))
     }
@@ -5756,9 +5808,11 @@ class ScreenSession(service: AccessibilityService) {
             labelsShownOn = null
             labels.hide()
         }
-        if (whichOneShownOn != null && content != whichOneShownOn) {
+        if (whichOneShownOn != null) {
+            if (content == whichOneShownOn) return
+            // The candidates belong to the screen on which "Which one?" was asked.
             whichOneShownOn = null
-            numbers.hide()
+            if (numbersMode == null) numbers.hide()
         }
         numbersMode?.let { mode ->
             val badges = Numbering.forScreen(snapshot, mode)
@@ -5768,6 +5822,70 @@ class ScreenSession(service: AccessibilityService) {
 
     /** What the overlays depend on: the actionable elements and where they are. Kestrel's own overlays are not part of it. */
     private fun contentOf(snapshot: ScreenSnapshot) = snapshot.elements.filter { it.isActionable }.map { it.key to it.bounds }
+}
+```
+
+Replace the whole content of `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` with:
+
+```kotlin
+package dev.kestrel.app
+
+import android.content.Context
+import android.util.Log
+import dev.kestrel.privacy.PrivacyStore
+import dev.kestrel.privacy.logs.describeWithoutMessages
+import dev.kestrel.privacy.network.NetworkGateway
+import dev.kestrel.privacy.network.NetworkPolicy
+import dev.kestrel.privacy.settings.SettingKey
+import dev.kestrel.safety.SafetySettings
+import dev.kestrel.screen.ScreenSession
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/** Every setting that Kestrel stores. */
+object SettingKeys {
+    val SAFETY = SettingKey("safety", SafetySettings.serializer(), SafetySettings())
+}
+
+/** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
+class AppGraph(context: Context) {
+    /**
+     * Handles the failures of background work: a failed job is written to logcat instead of ending the app's process.
+     * Only the error's classes and stack frames are written, because a message can contain screen text.
+     */
+    val errors = CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed: ${error.describeWithoutMessages()}") }
+
+    /** Background work, whose failures go to [errors]. */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + errors)
+
+    private val store = PrivacyStore(context)
+    val logs = store.logs
+    val settings = store.settings
+    val networkPolicy = NetworkPolicy()
+    val network = NetworkGateway(networkPolicy) { event -> scope.launch { logs.append(event) } }
+
+    private val screens = MutableStateFlow<ScreenSession?>(null)
+
+    /** Kestrel's screen layer while its accessibility service is connected, otherwise null. */
+    val screen: StateFlow<ScreenSession?> = screens.asStateFlow()
+
+    internal fun attachScreen(session: ScreenSession) {
+        screens.value = session
+    }
+
+    internal fun detachScreen(session: ScreenSession) {
+        screens.compareAndSet(session, null)
+    }
+
+    private companion object {
+        const val TAG = "Kestrel"
+    }
 }
 ```
 
@@ -5792,7 +5910,7 @@ class KestrelAccessibilityService : AccessibilityService() {
     private var purging: Job? = null
 
     override fun onServiceConnected() {
-        val connected = ScreenSession(this)
+        val connected = ScreenSession(this, graph.errors)
         session = connected
         graph.attachScreen(connected)
         // The service runs for days at a time, so it also keeps the logs within their 7 days (design spec, section 13.5).
@@ -5840,7 +5958,7 @@ class KestrelAccessibilityService : AccessibilityService() {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 47 test cases (`OverlayTest` 8) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 49 test cases (`OverlayTest` 10) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6515,18 +6633,22 @@ import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.ScreenEvents
 import dev.kestrel.screen.read.ScreenReader
 import dev.kestrel.screen.read.SnapshotCache
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Kestrel's screen layer while its accessibility service is connected (design spec, section 9). */
-class ScreenSession(service: AccessibilityService) {
+/**
+ * Kestrel's screen layer while its accessibility service is connected (design spec, section 9). [errors] handles the
+ * failures of the session's background work, and it may write only class names and stack frames (design spec, section
+ * 13.5).
+ */
+class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
     private val labels = LabelsOverlay(overlays)
@@ -6542,7 +6664,7 @@ class ScreenSession(service: AccessibilityService) {
     val actions = ScreenActions(service, snapshots, gestures, tracker)
 
     // These fields change only on the main thread.
-    /** Set while "show numbers" is on: the numbers then follow the screen. */
+    /** Set while "show numbers" is on: the numbers then follow the screen. "Which one?" leaves it set. */
     private var numbersMode: NumbersMode? = null
 
     /** The screen content when the labels appeared. They go when it changes. */
@@ -6564,9 +6686,11 @@ class ScreenSession(service: AccessibilityService) {
 
     init {
         scope.launch {
-            tracker.version.collectLatest {
-                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collectLatest
-                tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS)
+            // collect, not collectLatest: on a screen that changes all the time, such as a stopwatch, collectLatest would
+            // cancel every check before it ran. The version is a state, so the check after a slow one sees the latest
+            // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
+            tracker.version.collect {
+                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
                 onScreenSettled(snapshots.current().snapshot)
             }
         }
@@ -6579,10 +6703,12 @@ class ScreenSession(service: AccessibilityService) {
         numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
     }
 
-    /** Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes. */
+    /**
+     * Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes, and
+     * then the numbers of "show numbers" come back if it is on.
+     */
     suspend fun showWhichOne(keys: Collection<String>) = withContext(Dispatchers.Main) {
         val snapshot = snapshots.current().snapshot
-        numbersMode = null
         whichOneShownOn = contentOf(snapshot)
         numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys }))
     }
@@ -6639,9 +6765,11 @@ class ScreenSession(service: AccessibilityService) {
             labelsShownOn = null
             labels.hide()
         }
-        if (whichOneShownOn != null && content != whichOneShownOn) {
+        if (whichOneShownOn != null) {
+            if (content == whichOneShownOn) return
+            // The candidates belong to the screen on which "Which one?" was asked.
             whichOneShownOn = null
-            numbers.hide()
+            if (numbersMode == null) numbers.hide()
         }
         numbersMode?.let { mode ->
             val badges = Numbering.forScreen(snapshot, mode)
@@ -6658,7 +6786,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 52 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 54 test cases (`GridBarAndCardTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -7180,19 +7308,23 @@ import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.ScreenEvents
 import dev.kestrel.screen.read.ScreenReader
 import dev.kestrel.screen.read.SnapshotCache
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Kestrel's screen layer while its accessibility service is connected (design spec, section 9). */
-class ScreenSession(service: AccessibilityService) {
+/**
+ * Kestrel's screen layer while its accessibility service is connected (design spec, section 9). [errors] handles the
+ * failures of the session's background work, and it may write only class names and stack frames (design spec, section
+ * 13.5).
+ */
+class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
     private val labels = LabelsOverlay(overlays)
@@ -7209,7 +7341,7 @@ class ScreenSession(service: AccessibilityService) {
     val actions = ScreenActions(service, snapshots, gestures, tracker)
 
     // These fields change only on the main thread.
-    /** Set while "show numbers" is on: the numbers then follow the screen. */
+    /** Set while "show numbers" is on: the numbers then follow the screen. "Which one?" leaves it set. */
     private var numbersMode: NumbersMode? = null
 
     /** The screen content when the labels appeared. They go when it changes. */
@@ -7234,9 +7366,11 @@ class ScreenSession(service: AccessibilityService) {
 
     init {
         scope.launch {
-            tracker.version.collectLatest {
-                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collectLatest
-                tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS)
+            // collect, not collectLatest: on a screen that changes all the time, such as a stopwatch, collectLatest would
+            // cancel every check before it ran. The version is a state, so the check after a slow one sees the latest
+            // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
+            tracker.version.collect {
+                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
                 onScreenSettled(snapshots.current().snapshot)
             }
         }
@@ -7249,10 +7383,12 @@ class ScreenSession(service: AccessibilityService) {
         numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
     }
 
-    /** Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes. */
+    /**
+     * Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes, and
+     * then the numbers of "show numbers" come back if it is on.
+     */
     suspend fun showWhichOne(keys: Collection<String>) = withContext(Dispatchers.Main) {
         val snapshot = snapshots.current().snapshot
-        numbersMode = null
         whichOneShownOn = contentOf(snapshot)
         numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys }))
     }
@@ -7314,9 +7450,11 @@ class ScreenSession(service: AccessibilityService) {
             labelsShownOn = null
             labels.hide()
         }
-        if (whichOneShownOn != null && content != whichOneShownOn) {
+        if (whichOneShownOn != null) {
+            if (content == whichOneShownOn) return
+            // The candidates belong to the screen on which "Which one?" was asked.
             whichOneShownOn = null
-            numbers.hide()
+            if (numbersMode == null) numbers.hide()
         }
         numbersMode?.let { mode ->
             val badges = Numbering.forScreen(snapshot, mode)
@@ -7339,7 +7477,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 55 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 57 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -8175,7 +8313,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 61 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 63 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -8236,13 +8374,13 @@ object SettingKeys {
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
 class AppGraph(context: Context) {
     /**
-     * Background work. A failed job is written to logcat instead of ending the app's process. Only the error's
-     * classes and stack frames are written, because a message can contain screen text.
+     * Handles the failures of background work: a failed job is written to logcat instead of ending the app's process.
+     * Only the error's classes and stack frames are written, because a message can contain screen text.
      */
-    val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO +
-            CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed: ${error.describeWithoutMessages()}") },
-    )
+    val errors = CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed: ${error.describeWithoutMessages()}") }
+
+    /** Background work, whose failures go to [errors]. */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + errors)
 
     private val store = PrivacyStore(context)
     val logs = store.logs
@@ -8343,7 +8481,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 61 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 63 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 
