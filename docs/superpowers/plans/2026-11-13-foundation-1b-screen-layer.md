@@ -22,7 +22,7 @@
 - Screenshots, audio and credentials are never logged (section 13.5). Errors go to logcat only as class names and stack frames, never with their messages, because a message can contain screen text.
 - Accessibility service: all event types (`typeAllMask`); include views that are not important for accessibility, report view IDs, retrieve interactive windows, request the accessibility button, and act as an input method; retrieve window content, perform gestures, take screenshots and control magnification; `isAccessibilityTool="true"` (section 9.1, D19).
 - Snapshots: Kestrel reads all interactive windows and ignores its own overlay windows. Each element gets a stable key built from the window's package, the view ID, the label and the element's position among similar siblings. Snapshots are cached and rebuilt after the screen has been quiet for about 150 ms (section 9.2).
-- A text field is named by its description or hint, never by the text typed into it, so that its label and its key stay the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty (sections 9.2 and 9.7).
+- A text field is never named by the text typed into it, and its key uses only its own description or hint, so that the key stays the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty (sections 9.2 and 9.7).
 - Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press, drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
 - If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on (section 9.7).
 - All overlays are accessibility overlay windows, so Kestrel needs no "display over other apps" permission (section 9.4). The feedback bar never receives touches (section 8.9). The confirmation card's Confirm and Cancel buttons accept touches (section 12.4).
@@ -53,7 +53,7 @@
 The code below already handles all of these. They are written down so that nobody "fixes" them back.
 
 - Platform buttons show their text in capitals (`textAllCaps`), so accessibility services read "Send" as "SEND".
-- Android reports the hint of an empty text field as the field's text, and marks the node with `isShowingHintText`. A Compose text field shows its label as a text inside the field instead of as a hint.
+- Android reports the hint of an empty text field as the field's text, and marks the node with `isShowingHintText`. A Compose text field shows its label as a text inside the field instead of as a hint. Its placeholder, its character counter and a clear button are texts inside the field too, and they change while the owner types.
 - A clickable Compose button takes the text of its child as its own label, so the button and its text share a label. Tests match `clickable && label == ...`.
 - `am start -W -n` may only bring the fixture app's existing task to the front. The tests use `am start -W -S`, which stops the app first.
 - Android ends a continued gesture stroke at its last change of position: a hold that does not move ends at once. The hold of a drag therefore drifts by 10 pixels.
@@ -375,7 +375,7 @@ git commit -m "feat(screen): add the screen model and its JSON form" -m "Co-auth
 
 **Interfaces:**
 - Consumes: the model from Task 1.
-- Produces: `object Labels` with `clean(text: CharSequence?): String?`, `join(pieces: List<String>): String?` (at most 80 characters) and `suggestedName(viewId: String?): String?`.
+- Produces: `object Labels` with `clean(text: CharSequence?): String?`, `join(pieces: List<String>): String?` (at most 80 characters), `shorten(text: String, maxLength: Int): String` and `suggestedName(viewId: String?): String?`.
 - Produces: `interface NodeData` (the node's texts, view ID, bounds, visibility, states, `actions: Set<ElementAction>`, `childCount` and `child(index)`) and `interface WindowData` (`id`, `kind`, `isOverlay`, `title`, `bounds`, `layer`, `active`, `focused`, `root`).
 - Produces: `class SnapshotBuilder(clock: () -> Long = System::currentTimeMillis)` with `build(windows: List<WindowData>): SnapshotBuilder.Result`, where `Result(snapshot: ScreenSnapshot, nodes: Map<String, NodeData>)` maps each key back to its node.
 
@@ -385,10 +385,10 @@ The builder works on two small interfaces instead of Android's classes, so that 
 - Invisible nodes and their subtrees are left out, and bounds are clipped to the window.
 - A node becomes an element when it is actionable or scrollable, or has a label or a state description. Layouts without either are left out.
 - Password text never appears; the hint names the field.
-- A text field is named by its description or hint, or by a text inside it (Compose shows a text field's label that way), never by what was typed into it. Its label and its key therefore stay the same while the owner types, which routines, retries and the undo history of spec section 9.7 rely on.
+- A text field is named by its description or hint, or else by the texts inside it (Compose shows a text field's label that way), never by what was typed into it. Its key uses only its own description or hint, because the texts inside a field, such as a placeholder or a character counter, can change while the owner types. Routines, retries and the undo history of spec section 9.7 rely on keys that stay the same.
 - An actionable element without its own label gets up to three texts of its descendants as its label, so a tappable row is named after its text.
 - An element without a label gets a suggested name from its view ID, such as "compose" for `compose_button`.
-- Keys are `package|view ID name|label (40 characters)|class|position among similar siblings`. A key that still repeats gets `~2`, `~3` and so on.
+- Keys are `package|view ID name|label (40 characters)|class|position among similar siblings`. A key that still repeats gets `~2`, `~3` and so on. Labels are cut without splitting a character that takes two UTF-16 units, such as most emoji, because half a character would not survive saving, and a saved key would no longer match.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -469,6 +469,16 @@ class LabelsTest {
         assertNull(Labels.clean(" \t "))
         assertEquals(80, Labels.join(listOf("a".repeat(50), "b".repeat(50)))!!.length)
     }
+
+    @Test
+    fun shortenNeverSplitsAnEmoji() {
+        val emoji = "\uD83D\uDE00"
+
+        assertEquals("ab", Labels.shorten("ab${emoji}c", 3))
+        assertEquals("ab$emoji", Labels.shorten("ab${emoji}c", 4))
+        assertEquals("abc", Labels.shorten("abc", 5))
+        assertEquals("a".repeat(79), Labels.join(listOf("a".repeat(79) + emoji)))
+    }
 }
 ```
 
@@ -524,9 +534,9 @@ class SnapshotBuilderTest {
     fun aTextFieldKeepsItsNameAndItsKeyWhileTheOwnerTypes() {
         fun field(text: String?) = FakeNode(text = text, hint = "Message", className = "android.widget.EditText", editable = true)
 
-        // Compose shows the label of a text field as a text inside the field.
-        fun composeField(text: String?) =
-            FakeNode(text = text, className = "android.widget.EditText", editable = true, children = listOf(FakeNode(text = "Name")))
+        // Compose shows a text field's label, placeholder and character counter as texts inside the field.
+        fun composeField(text: String?, vararg inside: String) =
+            FakeNode(text = text, className = "android.widget.EditText", editable = true, children = inside.map { FakeNode(text = it) })
 
         fun element(node: FakeNode) = build(FakeWindow(node)).snapshot.elements.first()
 
@@ -535,8 +545,8 @@ class SnapshotBuilderTest {
         assertEquals("Message", typed.label)
         assertEquals("Hello Ana", typed.text)
         assertEquals(element(field(null)).key, typed.key)
-        assertEquals("Name", element(composeField("Ana")).label)
-        assertEquals(element(composeField(null)).key, element(composeField("Ana")).key)
+        assertEquals("Name", element(composeField("Ana", "Name")).label)
+        assertEquals(element(composeField(null, "Type a message", "0/160")).key, element(composeField("Hello", "Clear", "5/160")).key)
     }
 
     @Test
@@ -645,7 +655,17 @@ object Labels {
     fun clean(text: CharSequence?): String? = text?.toString()?.replace(whitespace, " ")?.trim()?.takeIf { it.isNotEmpty() }
 
     /** Joins texts found inside an element into one label of at most 80 characters. */
-    fun join(pieces: List<String>): String? = clean(pieces.joinToString(" "))?.take(MAX_LENGTH)?.trimEnd()
+    fun join(pieces: List<String>): String? = clean(pieces.joinToString(" "))?.let { shorten(it, MAX_LENGTH) }?.trimEnd()
+
+    /**
+     * Returns the first [maxLength] UTF-16 units of [text], or one fewer when the cut would split a character that
+     * takes two units, such as most emoji. Half a character turns into "?" when the text is saved, and a saved key
+     * would then no longer match.
+     */
+    fun shorten(text: String, maxLength: Int): String {
+        if (text.length <= maxLength) return text
+        return text.substring(0, if (text[maxLength - 1].isHighSurrogate()) maxLength - 1 else maxLength)
+    }
 
     /** Derives a name from a view ID: `dev.app:id/compose_button` becomes "compose", and `btnSendMessage` "send message". */
     fun suggestedName(viewId: String?): String? {
@@ -754,8 +774,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         if (!node.visible || depth > MAX_DEPTH || out.size >= MAX_ELEMENTS) return emptyList()
         val text = if (node.password) null else Labels.clean(node.text)
         val name = Labels.clean(node.contentDescription) ?: Labels.clean(node.hint)
-        // A text field is named by its description or hint, never by what was typed into it, so that its label and
-        // its key stay the same while the owner types.
+        // A text field is named by its description or hint, never by what was typed into it.
         val ownLabel = if (node.editable) name else text ?: name
         val bounds = node.bounds.intersect(window.bounds)
         val actionable = node.clickable || node.longClickable || node.editable || node.checkable
@@ -825,10 +844,13 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         private val used = mutableMapOf<String, Int>()
 
         fun next(draft: Draft): String {
+            // A text field's key uses only its own description or hint, because the texts inside a field, such as
+            // a placeholder or a character counter, can change while the owner types.
+            val name = if (draft.node.editable) draft.ownLabel else draft.label
             val base = listOf(
                 draft.node.packageName.orEmpty(),
                 draft.node.viewId?.substringAfter(":id/").orEmpty(),
-                draft.label?.take(KEY_LABEL_LENGTH).orEmpty(),
+                name?.let { Labels.shorten(it, KEY_LABEL_LENGTH) }.orEmpty(),
                 draft.node.className?.substringAfterLast('.').orEmpty(),
             ).joinToString("|")
             val group = Triple(draft.windowId, draft.parent, base)
@@ -855,7 +877,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
 
 Run: `scripts\gradle.ps1 :core:screen:check`
 
-Expected: `BUILD SUCCESSFUL`. The test results report `LabelsTest` with `tests="2"` and `SnapshotBuilderTest` with `tests="8"`, all without failures.
+Expected: `BUILD SUCCESSFUL`. The test results report `LabelsTest` with `tests="3"` and `SnapshotBuilderTest` with `tests="8"`, all without failures.
 
 - [ ] **Step 5: Commit**
 
