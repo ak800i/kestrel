@@ -83,10 +83,11 @@ class ScreenActions internal constructor(
     }
 
     /**
-     * Scrolls the element with [key] or, when [key] is null, a list in the top app window that has one: the largest
-     * list that can scroll in [direction], or else the largest list. Kestrel uses the scroll action of the element or
-     * of its nearest parent that can scroll in [direction], and otherwise swipes across the list (design spec,
-     * section 9.3).
+     * Scrolls the element with [key] or, when [key] is null, a list in the top app window that has one. Kestrel uses
+     * the scroll action of the element or of its nearest parent that can scroll in [direction]. Otherwise it swipes
+     * across the nearest list that moves along that axis. A sideways swipe across a row can archive a message or
+     * start a call, so Kestrel swipes sideways only across a list that moves sideways. Up and down, it swipes across
+     * the window when no list moves that way (design spec, section 9.3).
      */
     suspend fun scroll(direction: ScrollDirection, key: String? = null): ActionResult {
         val live = snapshots.current()
@@ -100,11 +101,11 @@ class ScreenActions internal constructor(
         if (target != null && action != null && target.node.performAction(action)) {
             return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
-        // No action scrolls this way, so swipe across the list, or across the window when there is no list.
         val window = live.snapshot.windowBounds(element?.windowId)
-        val list = (target ?: node?.selfOrParent { it.isScrollable })?.node?.screenBounds()
-        val area = (if (list != null && window != null) list.intersect(window) else list) ?: window
-            ?: return ActionResult.Failed("There is nothing to scroll")
+        val list = (target ?: node?.selfOrParent { it.isScrollable && it.movesAlong(direction) })?.node?.screenBounds()
+        val area = (if (list != null && window != null) list.intersect(window) else list)
+            ?: window?.takeIf { direction.isVertical }
+            ?: return ActionResult.Failed("Nothing on the screen scrolls that way")
         val (from, to) = SwipePaths.forScroll(area, direction)
         return gesture(Gestures.swipe(from, to))
     }
@@ -222,10 +223,18 @@ class ScreenActions internal constructor(
     /** The first action that scrolls this node in [direction], if the node offers one and is enabled. */
     private fun AccessibilityNodeInfo.scrollAction(direction: ScrollDirection): Int? {
         if (!isEnabled) return null
-        val offered = actionList.mapTo(HashSet()) { it.id }
-        val axis = ScrollActions.axis(offered, className?.toString(), collectionInfo?.rowCount, collectionInfo?.columnCount)
-        return ScrollActions.forDirection(direction, axis).firstOrNull { it in offered }
+        val offered = offeredActions()
+        return ScrollActions.forDirection(direction, scrollAxis(offered)).firstOrNull { it in offered }
     }
+
+    /** Whether a swipe in [direction] may cross this list (see [ScrollActions.movesAlong]). */
+    private fun AccessibilityNodeInfo.movesAlong(direction: ScrollDirection): Boolean =
+        ScrollActions.movesAlong(scrollAxis(offeredActions()), direction)
+
+    private fun AccessibilityNodeInfo.offeredActions(): Set<Int> = actionList.mapTo(HashSet()) { it.id }
+
+    private fun AccessibilityNodeInfo.scrollAxis(offered: Set<Int>): ScrollAxis =
+        ScrollActions.axis(offered, className?.toString(), collectionInfo?.rowCount, collectionInfo?.columnCount)
 
     private fun AccessibilityNodeInfo.screenBounds(): IntRect = Rect().also(::getBoundsInScreen).let {
         IntRect(it.left, it.top, it.right, it.bottom)
@@ -233,14 +242,16 @@ class ScreenActions internal constructor(
 
     /**
      * The list to scroll when the owner names none: in the top app window that has a list, the largest list that can
-     * scroll in [direction], or else the largest list. The snapshot lists its windows from the top down.
+     * scroll in [direction], or else the largest that moves along that axis, or else the largest list. The snapshot
+     * lists its windows from the top down.
      */
     private fun LiveSnapshot.scrollableFor(direction: ScrollDirection): ScreenElement? {
         for (window in snapshot.windows.filter { it.kind == WindowKind.APPLICATION }) {
             val lists = snapshot.elements.filter { it.scrollable && it.enabled && it.windowId == window.id }
             if (lists.isEmpty()) continue
-            val fitting = lists.filter { node(it.key)?.scrollAction(direction) != null }
-            return fitting.ifEmpty { lists }.maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+            val canScroll = lists.filter { node(it.key)?.scrollAction(direction) != null }
+            val alongTheAxis = lists.filter { node(it.key)?.movesAlong(direction) == true }
+            return canScroll.ifEmpty { alongTheAxis }.ifEmpty { lists }.maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
         }
         return null
     }

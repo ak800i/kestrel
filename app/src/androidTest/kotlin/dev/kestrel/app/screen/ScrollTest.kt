@@ -54,6 +54,13 @@ class ScrollTest {
     }
 
     @Test
+    fun scrollRightNeverSwipesAcrossAListThatMovesUpAndDown() = runBlocking {
+        screen.open("ScrollActivity", "Scroll fixture")
+
+        assertEquals(ActionResult.Failed("Nothing on the screen scrolls that way"), actions.scroll(ScrollDirection.RIGHT))
+    }
+
+    @Test
     fun scrollDownScrollsTheListInsideAPagerAndNotThePager() = runBlocking {
         screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
 

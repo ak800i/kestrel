@@ -5,8 +5,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 /** Which way to scroll. "Down" shows what is further down, as in Voice Access. */
 enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }
 
+internal val ScrollDirection.isVertical: Boolean get() = this == ScrollDirection.UP || this == ScrollDirection.DOWN
+
 /** The axis along which a list moves, as far as its accessibility node tells. */
-internal enum class ScrollAxis { VERTICAL, HORIZONTAL, UNKNOWN }
+internal enum class ScrollAxis { VERTICAL, HORIZONTAL, BOTH, UNKNOWN }
 
 /**
  * Which accessibility actions scroll a list in a direction. Android's forward and backward actions do not say which
@@ -27,7 +29,11 @@ internal object ScrollActions {
 
     private val verticalActions = setOf(UP, DOWN, PAGE_UP, PAGE_DOWN)
     private val horizontalActions = setOf(LEFT, RIGHT, PAGE_LEFT, PAGE_RIGHT)
-    private val horizontalClasses = setOf("android.widget.HorizontalScrollView", "androidx.viewpager.widget.ViewPager")
+    private val horizontalClasses = setOf(
+        "android.widget.HorizontalScrollView",
+        "androidx.viewpager.widget.ViewPager",
+        "android.support.v4.view.ViewPager",
+    )
 
     /**
      * The axis of a list: from the directional actions that it offers, then from its class, and then from the shape of
@@ -37,9 +43,9 @@ internal object ScrollActions {
         val vertical = offered.any { it in verticalActions }
         val horizontal = offered.any { it in horizontalActions }
         return when {
-            vertical && !horizontal -> ScrollAxis.VERTICAL
-            horizontal && !vertical -> ScrollAxis.HORIZONTAL
-            vertical -> ScrollAxis.UNKNOWN
+            vertical && horizontal -> ScrollAxis.BOTH
+            vertical -> ScrollAxis.VERTICAL
+            horizontal -> ScrollAxis.HORIZONTAL
             className in horizontalClasses -> ScrollAxis.HORIZONTAL
             rows == 1 && columns != 1 -> ScrollAxis.HORIZONTAL
             columns == 1 && rows != 1 -> ScrollAxis.VERTICAL
@@ -48,16 +54,32 @@ internal object ScrollActions {
     }
 
     /**
-     * The actions that scroll a list with [axis] in [direction], in the order to try them. When the axis is unknown,
-     * forward and backward count as vertical, because most lists scroll vertically.
+     * The actions that scroll a list with [axis] in [direction], in the order to try them. Forward and backward are
+     * used only along the list's own axis, and count as vertical when the axis is unknown, because most lists scroll
+     * vertically. A list that scrolls both ways offers directional actions, so it never needs forward or backward.
      */
     fun forDirection(direction: ScrollDirection, axis: ScrollAxis): List<Int> {
-        val horizontal = axis == ScrollAxis.HORIZONTAL
-        return when (direction) {
-            ScrollDirection.DOWN -> listOf(DOWN, PAGE_DOWN) + if (horizontal) emptyList() else listOf(FORWARD)
-            ScrollDirection.UP -> listOf(UP, PAGE_UP) + if (horizontal) emptyList() else listOf(BACKWARD)
-            ScrollDirection.RIGHT -> listOf(RIGHT, PAGE_RIGHT) + if (horizontal) listOf(FORWARD) else emptyList()
-            ScrollDirection.LEFT -> listOf(LEFT, PAGE_LEFT) + if (horizontal) listOf(BACKWARD) else emptyList()
+        val alongTheAxis = when (axis) {
+            ScrollAxis.BOTH -> false
+            ScrollAxis.HORIZONTAL -> !direction.isVertical
+            ScrollAxis.VERTICAL, ScrollAxis.UNKNOWN -> direction.isVertical
         }
+        return when (direction) {
+            ScrollDirection.DOWN -> listOf(DOWN, PAGE_DOWN) + if (alongTheAxis) listOf(FORWARD) else emptyList()
+            ScrollDirection.UP -> listOf(UP, PAGE_UP) + if (alongTheAxis) listOf(BACKWARD) else emptyList()
+            ScrollDirection.RIGHT -> listOf(RIGHT, PAGE_RIGHT) + if (alongTheAxis) listOf(FORWARD) else emptyList()
+            ScrollDirection.LEFT -> listOf(LEFT, PAGE_LEFT) + if (alongTheAxis) listOf(BACKWARD) else emptyList()
+        }
+    }
+
+    /**
+     * Whether a swipe in [direction] may cross a list with [axis]: a list that moves along that axis, or both ways. A
+     * list whose axis is unknown counts as vertical, because a sideways swipe across a row can archive a message or
+     * start a call.
+     */
+    fun movesAlong(axis: ScrollAxis, direction: ScrollDirection): Boolean = when (axis) {
+        ScrollAxis.BOTH -> true
+        ScrollAxis.HORIZONTAL -> !direction.isVertical
+        ScrollAxis.VERTICAL, ScrollAxis.UNKNOWN -> direction.isVertical
     }
 }
