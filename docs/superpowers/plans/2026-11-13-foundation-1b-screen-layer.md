@@ -60,6 +60,7 @@ The code below already handles all of these. They are written down so that nobod
 - UiAutomation must be connected with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, or it turns off every accessibility service, Kestrel's included.
 - UiAutomation's list of windows contains Kestrel's touchable overlays, such as the confirmation card, but not the overlays that take no touches. Tests find those in `dumpsys window windows` by their titles.
 - A new overlay window gets touches only after Android's input dispatcher lists it, a moment after it was added.
+- Android attaches a new overlay's view only on the next frame. Hiding the overlay before then must still remove its window, or the next `show` fails with "has already been added to the window manager".
 - Touches from `adb shell input` come from a virtual device and skip Android's accessibility input filter. A virtual touchscreen made with the `uinput` tool behaves like a finger. The tool on Android 13 reads only numbers, has no `sync` command, and ends its replies without a line break.
 - In `am broadcast -n dev.kestrel/.x.Y`, the short class name is relative to the package `dev.kestrel`, not to the namespace `dev.kestrel.app`, so the hooks use the full class name.
 - Android lets an app use its own components even when they require a permission that the app lacks. A test that "another app is refused" must therefore send from another app.
@@ -5109,7 +5110,7 @@ git commit -m "feat(screen): add gestures, zoom, global actions and intents" -m 
 - Produces: on `ScreenSession`: `numberBadges: List<Badge>`, `labelsShowing: Boolean`, `suspend showNumbers(mode = NumbersMode.ALL)`, `suspend showWhichOne(keys: Collection<String>)`, `suspend hideNumbers()`, `suspend showLabels()`, `suspend hideLabels()` and `close()`.
 - Produces: `ScreenServiceRule.showsWindow(title: String): Boolean` and the constant `ScreenServiceRule.KESTREL` (`"dev.kestrel"`).
 
-Numbers go on the actionable elements, except the keyboard's keys, in reading order: top to bottom, then left to right. In `UNLABELED` mode, only elements without a label get numbers. The session watches the screen: after each change it waits for 150 ms of quiet and compares the actionable elements' keys and bounds with the last ones. Numbers then follow the new screen, while labels and the "Which one?" numbers go away, because they belong to the screen on which they were asked for (spec section 9.4). The overlays are plain Views in full-screen accessibility overlay windows that take no touches, so touches reach the app below. Each window has a title, such as "Kestrel numbers", by which tests find it in `dumpsys window windows`. `close()` removes every overlay; the service calls it when Android disconnects it.
+Numbers go on the actionable elements, except the keyboard's keys, in reading order: top to bottom, then left to right. In `UNLABELED` mode, only elements without a label get numbers. The session watches the screen: after each change it waits for 150 ms of quiet and compares the actionable elements' keys and bounds with the last ones. Numbers then follow the new screen, while labels and the "Which one?" numbers go away, because they belong to the screen on which they were asked for (spec section 9.4). The overlays are plain Views in full-screen accessibility overlay windows that take no touches, so touches reach the app below. Each window has a title, such as "Kestrel numbers", by which tests find it in `dumpsys window windows`. `close()` removes every overlay; the service calls it when Android disconnects it. Android attaches a new overlay's view only on the next frame, so `OverlayHost.hide` removes the window without checking whether the view is attached yet; it ignores only the error that Android gives for a window that it has already removed, as it does when the service disconnects. The overlays' state is `@Volatile`, because tests and the session read it from other threads.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5179,8 +5180,10 @@ import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.overlay.NumbersMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -5217,6 +5220,21 @@ class OverlayTest {
         assertEquals((1..badges.size).toList(), badges.map { it.number })
         eventually { screen.showsWindow("Kestrel numbers") }
         assertTrue(session.snapshots.current().snapshot.windows.none { it.packageName == KESTREL })
+    }
+
+    @Test
+    fun numbersCanBeHiddenRightAfterTheyAreShown() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+
+        // Android attaches a new overlay's view only on the next frame. Showing and hiding the numbers in one go on the
+        // main thread hides them before that frame, and the window must still go.
+        repeat(2) {
+            withContext(Dispatchers.Main) {
+                session.showNumbers()
+                session.hideNumbers()
+            }
+        }
+        eventually { !screen.showsWindow("Kestrel numbers") }
     }
 
     @Test
@@ -5461,8 +5479,13 @@ class OverlayHost(private val service: AccessibilityService) {
     }
 
     fun hide(view: View) {
-        // Android removes the windows itself when the service disconnects.
-        if (shown.remove(view) && view.isAttachedToWindow) windowManager.removeView(view)
+        if (!shown.remove(view)) return
+        // Remove the window even when Android has not attached its view yet, which it does only on the next frame.
+        try {
+            windowManager.removeView(view)
+        } catch (e: IllegalArgumentException) {
+            // Android has removed the window already, as it does when the service disconnects.
+        }
     }
 
     fun hideAll() {
@@ -5559,6 +5582,7 @@ internal class NumbersOverlay(private val host: OverlayHost) {
     private val view = TagsView(host.context).apply { fillColor = NUMBER_COLOR }
 
     /** The numbers on the screen now; empty while the overlay is hidden. */
+    @Volatile
     var badges: List<Badge> = emptyList()
         private set
 
@@ -5591,6 +5615,7 @@ internal class LabelsOverlay(private val host: OverlayHost) {
     private val view = TagsView(host.context).apply { fillColor = LABEL_COLOR }
 
     /** Whether the labels are on the screen now. */
+    @Volatile
     var isShowing: Boolean = false
         private set
 
@@ -5815,7 +5840,7 @@ class KestrelAccessibilityService : AccessibilityService() {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 46 test cases (`OverlayTest` 7) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 47 test cases (`OverlayTest` 8) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6426,8 +6451,13 @@ class OverlayHost(private val service: AccessibilityService) {
     }
 
     fun hide(view: View) {
-        // Android removes the windows itself when the service disconnects.
-        if (shown.remove(view) && view.isAttachedToWindow) windowManager.removeView(view)
+        if (!shown.remove(view)) return
+        // Remove the window even when Android has not attached its view yet, which it does only on the next frame.
+        try {
+            windowManager.removeView(view)
+        } catch (e: IllegalArgumentException) {
+            // Android has removed the window already, as it does when the service disconnects.
+        }
     }
 
     /** The whole screen, system bars included, in screen pixels. */
@@ -6628,7 +6658,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 51 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 52 test cases (`GridBarAndCardTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -7309,7 +7339,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 54 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 55 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -8145,7 +8175,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 60 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 61 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -8313,7 +8343,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 60 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 61 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 
