@@ -1232,9 +1232,9 @@ git commit -m "feat(screen): rebuild snapshots only after the screen is quiet" -
 **Interfaces:**
 - Consumes: `applyKestrelApplicationDefaults()` from plan 1A.
 - Produces: the plugin ID `kestrel.android.testapp` and the app `dev.kestrel.testapp`, whose activities later tasks start with `am start -W -S -n dev.kestrel.testapp/.<Activity>`.
-- Produces: these fixtures, with the labels that the tests look for:
-  - `FixturesActivity` ("Kestrel fixtures"), the launcher, also opened by links with the scheme `kestrel-fixtures://`.
-  - `ViewsActivity` ("Views fixture"): a status line that starts as "Ready"; the button "Send" (read as "SEND"), which reports "Clicked Send" and "Long-pressed Send"; an icon button without a name, view ID `compose_button`; the check box "Remember me"; a tappable row "Ana Petrović" / "Online"; a view "Touch target" that reacts only to touches and reports "Touched target"; the text field "Message"; a field `strict_field` that refuses set-text; a password field; "Show dialog", which opens the dialog "Delete draft?" with Delete and Keep; and "Rebuild", which recreates the views.
+- Produces: these fixtures, with the labels that the tests look for. Platform buttons are read in capitals, so the tests look for "SEND", "SHOW DIALOG", "REBUILD", "SECRET ACTION" and "VIEWS".
+  - `FixturesActivity` ("Kestrel fixtures"), the launcher, also opened by links with the scheme `kestrel-fixtures://`. It has a button for each fixture, starting with "Views". Its title is also the app's name, which an icon on the home screen can show, so tests recognise this screen by its "VIEWS" button.
+  - `ViewsActivity` ("Views fixture"): a status line that starts as "Ready"; the button "Send", which reports "Clicked Send" and "Long-pressed Send"; an icon button without a name, view ID `compose_button`; the check box "Remember me"; a tappable row "Ana Petrović" / "Online"; a view "Touch target" that reacts only to touches and reports "Touched target"; the text field "Message"; a field `strict_field` that refuses set-text; a password field; "Show dialog", which opens the dialog "Delete draft?" with Delete and Keep; and "Rebuild", which replaces the Send button with an identical new one and reports "Rebuilt".
   - `ScrollActivity` ("Scroll fixture"): 60 rows; with `--ez swipeOnly true`, a list that offers no scroll actions.
   - `GesturesActivity` ("Gestures fixture"): a "Gesture pad" that reports "Tap", "Long press", "Swipe left/right/up/down", "Drag left/right/up/down", "Pinch in" and "Pinch out".
   - `ComposeActivity`, `WebActivity` ("Web button", "Web field", "Web link") and `SecureActivity` (`FLAG_SECURE`, with "Secret action").
@@ -1990,7 +1990,7 @@ Run:
 $serial = scripts\start-emulator.ps1
 $adb = 'D:\AndroidVMs\SDK\platform-tools\adb.exe'
 & $adb -s $serial install -r testapp\build\outputs\apk\debug\testapp-debug.apk
-& $adb -s $serial shell am start -W -n dev.kestrel.testapp/.FixturesActivity
+& $adb -s $serial shell am start -W -S -n dev.kestrel.testapp/.FixturesActivity
 ```
 
 Expected: `Success`, then `Status: ok`, and the emulator shows "Kestrel fixtures" with a button for each fixture. Install with adb and the serial as shown; Gradle's `:testapp:installDebug` alone would install on every connected device. From Task 5 on, `scripts\connected-test.ps1` installs the fixture app on the chosen device before the device tests.
@@ -3763,6 +3763,14 @@ class SystemActionsTest {
         }
     }
 
+    /**
+     * Waits for the first button of the fixture app's launcher screen. The screen's title is also the app's name, and an
+     * icon on the home screen can show that name too.
+     */
+    private suspend fun launcherScreenIsShown() {
+        screen.awaitElement { it.label == "VIEWS" }
+    }
+
     @Test
     fun backClosesADialog() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
@@ -3785,19 +3793,19 @@ class SystemActionsTest {
     @Test
     fun openAppStartsAnAppAtItsLauncherScreen() = runBlocking {
         screen.shell("am force-stop $FIXTURES")
+        fixturesAreGone()
 
         assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openApp(FIXTURES))
-        screen.awaitElement { it.label == "Kestrel fixtures" }
-        Unit
+        launcherScreenIsShown()
     }
 
     @Test
     fun openUriOpensTheAppForALink() = runBlocking {
         screen.shell("am force-stop $FIXTURES")
+        fixturesAreGone()
 
         assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openUri("kestrel-fixtures://start"))
-        screen.awaitElement { it.label == "Kestrel fixtures" }
-        Unit
+        launcherScreenIsShown()
     }
 
     @Test
