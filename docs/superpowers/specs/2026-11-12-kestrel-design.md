@@ -297,7 +297,7 @@ A thin overlay at the top of the screen shows the listening mode, the last thing
 
 - Kestrel reads all interactive windows: the app (or both apps in split screen), the system bars, the keyboard and dialogs. It ignores its own overlay windows.
 - A `ScreenSnapshot` is a list of elements. Each element records its role (class), text, content description, hint, state description, view ID, bounds and available actions. It also records whether it is clickable, editable, checkable, checked, scrollable, focused, selected, a password field or data-sensitive.
-- Each element gets a stable key, built from the window's package, the view ID, the label and the element's position among similar siblings. Routines and retries use these keys to find an element again.
+- Each element gets a stable key, built from the window's package, the view ID, the label and the element's position among similar siblings. Routines and retries use these keys to find an element again. A text field's label comes from its description or hint, never from the text typed into it, so that its key stays the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty.
 - Kestrel caches snapshots and rebuilds them after the screen has been quiet for about 150 ms.
 
 ### 9.3 Actions and fallbacks

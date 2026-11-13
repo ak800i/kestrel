@@ -22,6 +22,7 @@
 - Screenshots, audio and credentials are never logged (section 13.5). Errors go to logcat only as class names and stack frames, never with their messages, because a message can contain screen text.
 - Accessibility service: all event types (`typeAllMask`); include views that are not important for accessibility, report view IDs, retrieve interactive windows, request the accessibility button, and act as an input method; retrieve window content, perform gestures, take screenshots and control magnification; `isAccessibilityTool="true"` (section 9.1, D19).
 - Snapshots: Kestrel reads all interactive windows and ignores its own overlay windows. Each element gets a stable key built from the window's package, the view ID, the label and the element's position among similar siblings. Snapshots are cached and rebuilt after the screen has been quiet for about 150 ms (section 9.2).
+- A text field is named by its description or hint, never by the text typed into it, so that its label and its key stay the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty (sections 9.2 and 9.7).
 - Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press, drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
 - If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on (section 9.7).
 - All overlays are accessibility overlay windows, so Kestrel needs no "display over other apps" permission (section 9.4). The feedback bar never receives touches (section 8.9). The confirmation card's Confirm and Cancel buttons accept touches (section 12.4).
@@ -52,6 +53,7 @@
 The code below already handles all of these. They are written down so that nobody "fixes" them back.
 
 - Platform buttons show their text in capitals (`textAllCaps`), so accessibility services read "Send" as "SEND".
+- Android reports the hint of an empty text field as the field's text, and marks the node with `isShowingHintText`. A Compose text field shows its label as a text inside the field instead of as a hint.
 - A clickable Compose button takes the text of its child as its own label, so the button and its text share a label. Tests match `clickable && label == ...`.
 - `am start -W -n` may only bring the fixture app's existing task to the front. The tests use `am start -W -S`, which stops the app first.
 - Android ends a continued gesture stroke at its last change of position: a hold that does not move ends at once. The hold of a drag therefore drifts by 10 pixels.
@@ -383,6 +385,7 @@ The builder works on two small interfaces instead of Android's classes, so that 
 - Invisible nodes and their subtrees are left out, and bounds are clipped to the window.
 - A node becomes an element when it is actionable or scrollable, or has a label or a state description. Layouts without either are left out.
 - Password text never appears; the hint names the field.
+- A text field is named by its description or hint, or by a text inside it (Compose shows a text field's label that way), never by what was typed into it. Its label and its key therefore stay the same while the owner types, which routines, retries and the undo history of spec section 9.7 rely on.
 - An actionable element without its own label gets up to three texts of its descendants as its label, so a tappable row is named after its text.
 - An element without a label gets a suggested name from its view ID, such as "compose" for `compose_button`.
 - Keys are `package|view ID name|label (40 characters)|class|position among similar siblings`. A key that still repeats gets `~2`, `~3` and so on.
@@ -515,6 +518,25 @@ class SnapshotBuilderTest {
         assertNull(snapshot.elements.single().text)
         assertEquals("Password", snapshot.elements.single().label)
         assertFalse(ScreenJson.encode(snapshot).contains("hunter2"))
+    }
+
+    @Test
+    fun aTextFieldKeepsItsNameAndItsKeyWhileTheOwnerTypes() {
+        fun field(text: String?) = FakeNode(text = text, hint = "Message", className = "android.widget.EditText", editable = true)
+
+        // Compose shows the label of a text field as a text inside the field.
+        fun composeField(text: String?) =
+            FakeNode(text = text, className = "android.widget.EditText", editable = true, children = listOf(FakeNode(text = "Name")))
+
+        fun element(node: FakeNode) = build(FakeWindow(node)).snapshot.elements.first()
+
+        val typed = element(field("Hello Ana"))
+
+        assertEquals("Message", typed.label)
+        assertEquals("Hello Ana", typed.text)
+        assertEquals(element(field(null)).key, typed.key)
+        assertEquals("Name", element(composeField("Ana")).label)
+        assertEquals(element(composeField(null)).key, element(composeField("Ana")).key)
     }
 
     @Test
@@ -731,7 +753,10 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
     private fun visit(node: NodeData, window: WindowData, depth: Int, parent: Int?, out: MutableList<Draft>): List<String> {
         if (!node.visible || depth > MAX_DEPTH || out.size >= MAX_ELEMENTS) return emptyList()
         val text = if (node.password) null else Labels.clean(node.text)
-        val ownLabel = text ?: Labels.clean(node.contentDescription) ?: Labels.clean(node.hint)
+        val name = Labels.clean(node.contentDescription) ?: Labels.clean(node.hint)
+        // A text field is named by its description or hint, never by what was typed into it, so that its label and
+        // its key stay the same while the owner types.
+        val ownLabel = if (node.editable) name else text ?: name
         val bounds = node.bounds.intersect(window.bounds)
         val actionable = node.clickable || node.longClickable || node.editable || node.checkable
         val described = ownLabel != null || Labels.clean(node.stateDescription) != null
@@ -830,7 +855,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
 
 Run: `scripts\gradle.ps1 :core:screen:check`
 
-Expected: `BUILD SUCCESSFUL`. The test results report `LabelsTest` with `tests="2"` and `SnapshotBuilderTest` with `tests="7"`, all without failures.
+Expected: `BUILD SUCCESSFUL`. The test results report `LabelsTest` with `tests="2"` and `SnapshotBuilderTest` with `tests="8"`, all without failures.
 
 - [ ] **Step 5: Commit**
 
@@ -1947,11 +1972,12 @@ git commit -m "test: add the :testapp fixture screens" -m "Co-authored-by: Copil
 - Consumes: `SnapshotBuilder`, `NodeData`, `WindowData`, `ScreenChangeTracker`, `ScreenEvents` and `SnapshotCache` from Tasks 2 and 3; the fixtures from Task 4; `AppGraph` and `KestrelApplication.graph` from plan 1A.
 - Produces: `fun Throwable.describeWithoutMessages(): String` in `dev.kestrel.privacy.logs`.
 - Produces: `class LiveSnapshot`, which the reader builds, with `snapshot: ScreenSnapshot` and `node(key): AccessibilityNodeInfo?`, and `class ScreenReader(service)` with `read(): LiveSnapshot`.
+- Produces: `internal fun AccessibilityNodeInfo.shownText(): String?`, the node's text, or null while a text field shows its hint.
 - Produces: `class ScreenSession(service: AccessibilityService)` with `snapshots: SnapshotCache<LiveSnapshot>` and `onAccessibilityEvent(event)`, and the internal `tracker`.
 - Produces: `AppGraph.screen: StateFlow<ScreenSession?>`, which holds the session while the service is connected, and the internal `attachScreen(session)` and `detachScreen(session)`.
 - Produces: the test rule `ScreenServiceRule` with `session`, `automation`, `shell(command): String`, `open(activity, title, extras = ""): ScreenElement` and `suspend awaitElement(timeoutMillis = 5_000, predicate): ScreenElement`, and the constants `FIXTURES` and `KESTREL`.
 
-The service stays thin: it creates a `ScreenSession` when Android connects it, passes every accessibility event to the session, and hands the session to `AppGraph`, from which the rest of the app reaches the screen layer. Because the service runs for days, it also purges expired log entries once a day (spec section 13.5). `AppGraph`'s error handler now writes only class names and stack frames to logcat, because an error's message can contain screen text.
+The service stays thin: it creates a `ScreenSession` when Android connects it, passes every accessibility event to the session, and hands the session to `AppGraph`, from which the rest of the app reaches the screen layer. Because the service runs for days, it also purges expired log entries once a day (spec section 13.5). `AppGraph`'s error handler now writes only class names and stack frames to logcat, because an error's message can contain screen text. Android reports the hint of an empty text field as its text, so the adapter reports no text while a field shows its hint; otherwise a snapshot would claim that an empty field contains "Message".
 
 The test rule gives every test a new session: it turns the service off, waits until `AppGraph.screen` is empty, turns the service on and waits for the new session. It connects UiAutomation with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, because otherwise UiAutomation turns off every accessibility service. The service stays on after the last test; the test devices are only `kestrel-api37` and the A71.
 
@@ -2135,6 +2161,7 @@ class SnapshotTest {
         val compose = snapshot.elements.single { it.viewId == "$FIXTURES:id/compose_button" }
         val row = snapshot.elements.single { it.viewId == "$FIXTURES:id/contact_row" }
         val password = snapshot.elements.single { it.viewId == "$FIXTURES:id/password_field" }
+        val message = snapshot.elements.single { it.viewId == "$FIXTURES:id/message_field" }
 
         assertEquals("SEND", send.label)
         assertTrue(send.clickable && ElementAction.CLICK in send.actions)
@@ -2144,6 +2171,8 @@ class SnapshotTest {
         assertTrue(password.password && password.editable)
         assertNull(password.text)
         assertEquals("Password", password.label)
+        assertNull("An empty field's hint is not its text", message.text)
+        assertEquals("Message", message.label)
         assertTrue(snapshot.elements.single { it.label == "Remember me" }.checkable)
         assertTrue(snapshot.windows.any { it.kind == WindowKind.APPLICATION && it.packageName == FIXTURES })
     }
@@ -2230,7 +2259,7 @@ import dev.kestrel.screen.model.WindowKind
 internal class AccessibilityNodeData(val info: AccessibilityNodeInfo) : NodeData {
     override val packageName: String? get() = info.packageName?.toString()
     override val className: String? get() = info.className?.toString()
-    override val text: String? get() = info.text?.toString()
+    override val text: String? get() = info.shownText()
     override val contentDescription: String? get() = info.contentDescription?.toString()
     override val hint: String? get() = info.hintText?.toString()
     override val stateDescription: String? get() = info.stateDescription?.toString()
@@ -2304,6 +2333,12 @@ private fun AccessibilityNodeInfo.isCheckedCompat(): Boolean =
         @Suppress("DEPRECATION")
         isChecked
     }
+
+/**
+ * The node's text, or null while a text field shows its hint: Android then reports the hint as the text and sets
+ * `isShowingHintText`, and an empty field must not seem to contain its hint.
+ */
+internal fun AccessibilityNodeInfo.shownText(): String? = if (isShowingHintText) null else text?.toString()
 ```
 
 `core/screen/src/main/kotlin/dev/kestrel/screen/read/ScreenReader.kt`:
@@ -2990,12 +3025,12 @@ git commit -m "feat(screen): tap and long press with fallbacks" -m "Co-authored-
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TypeTest.kt`, `ScrollTest.kt`
 
 **Interfaces:**
-- Consumes: `ScreenActions`, `GestureRunner` and `Gestures` from Task 6.
+- Consumes: `ScreenActions`, `GestureRunner` and `Gestures` from Task 6, and `shownText()` from Task 5.
 - Produces: `enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }`, the internal `ScreenPoint(x, y)` and `SwipePaths.forScroll(area: IntRect, direction): Pair<ScreenPoint, ScreenPoint>`.
 - Produces: `ScreenActions.setText(key: String, text: String, seen: LiveSnapshot? = null): ActionResult` and `ScreenActions.scroll(direction: ScrollDirection, key: String? = null, seen: LiveSnapshot? = null): ActionResult`.
 - Produces: `ActionMethod.INPUT_METHOD`.
 
-`setText` first uses the set-text action and reads the text back, up to 5 times 50 ms apart; it never reads back a password field. If the app refuses set-text, or the text does not read back, Kestrel types through its accessibility input method: it waits for the input to start in the field, selects all and commits the new text. It remembers the app and uses the input method for it from then on (spec section 9.7). `scroll` uses the element's scroll action, or its parent's, and otherwise swipes from 70% to 30% of the scroll area, across its middle. Without a key, it scrolls the largest scrollable element of the app in front, or swipes over the app's window.
+`setText` first uses the set-text action and reads the text back, up to 5 times 50 ms apart; it never reads back a password field. The read-back uses the text that the field shows, without its hint, so that clearing a field with an empty text reads back as empty. If the app refuses set-text, or the text does not read back, Kestrel types through its accessibility input method: it waits for the input to start in the field, selects all and commits the new text. It remembers the app and uses the input method for it from then on (spec section 9.7). `scroll` uses the element's scroll action, or its parent's, and otherwise swipes from 70% to 30% of the scroll area, across its middle. Without a key, it scrolls the largest scrollable element of the app in front, or swipes over the app's window.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3057,6 +3092,17 @@ class TypeTest {
 
         assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(field("message_field").key, "Hello Ana"))
         screen.awaitElement { it.viewId == "$FIXTURES:id/message_field" && it.text == "Hello Ana" }
+        Unit
+    }
+
+    @Test
+    fun aFieldKeepsItsKeyWhileTypingAndCanBeCleared() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val key = field("message_field").key
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(key, "Hello Ana"))
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(key, ""))
+        screen.awaitElement { it.key == key && it.text == null }
         Unit
     }
 
@@ -3276,6 +3322,7 @@ import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.SnapshotCache
+import dev.kestrel.screen.read.shownText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -3430,7 +3477,7 @@ class ScreenActions internal constructor(
     private suspend fun AccessibilityNodeInfo.shows(expected: String, password: Boolean): Boolean {
         if (password) return true
         repeat(READ_BACK_TRIES) {
-            if (refresh() && text?.toString() == expected) return true
+            if (refresh() && shownText().orEmpty() == expected) return true
             delay(POLL_MILLIS)
         }
         return false
@@ -3519,7 +3566,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 23 test cases (`TypeTest` 4 and `ScrollTest` 3) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 24 test cases (`TypeTest` 5 and `ScrollTest` 3) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -3912,6 +3959,7 @@ import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.SnapshotCache
+import dev.kestrel.screen.read.shownText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -4126,7 +4174,7 @@ class ScreenActions internal constructor(
     private suspend fun AccessibilityNodeInfo.shows(expected: String, password: Boolean): Boolean {
         if (password) return true
         repeat(READ_BACK_TRIES) {
-            if (refresh() && text?.toString() == expected) return true
+            if (refresh() && shownText().orEmpty() == expected) return true
             delay(POLL_MILLIS)
         }
         return false
@@ -4180,7 +4228,7 @@ class ScreenActions internal constructor(
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 32 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 33 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
 
 - [ ] **Step 5: Run the checks**
 
@@ -4921,7 +4969,7 @@ class KestrelAccessibilityService : AccessibilityService() {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 39 test cases (`OverlayTest` 7) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 40 test cases (`OverlayTest` 7) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -5734,7 +5782,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 44 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 45 test cases (`GridBarAndCardTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6415,7 +6463,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 47 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 48 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -7251,7 +7299,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 53 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 54 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -7419,7 +7467,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 53 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 54 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 
