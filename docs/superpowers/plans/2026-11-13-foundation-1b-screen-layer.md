@@ -23,7 +23,7 @@
 - Accessibility service: all event types (`typeAllMask`); include views that are not important for accessibility, report view IDs, retrieve interactive windows, request the accessibility button, and act as an input method; retrieve window content, perform gestures, take screenshots and control magnification; `isAccessibilityTool="true"` (section 9.1, D19).
 - Snapshots: Kestrel reads all interactive windows and ignores its own overlay windows. Each element gets a stable key built from the window's package, the view ID, the label and the element's position among similar siblings. Snapshots are cached and rebuilt after the screen has been quiet for about 150 ms (section 9.2).
 - A text field is never named by the text typed into it, and its key uses only its own description or hint, so that the key stays the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty (sections 9.2 and 9.7).
-- Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press with the long-click action, falling back to a gesture; drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. An action looks up its element in the current snapshot, and Kestrel never taps, long-presses or types into a disabled element. Scrolling uses forward and backward only along a list's own axis, its swipe goes across the list, and it never swipes sideways across a list that moves up and down. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
+- Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press with the long-click action, falling back to a gesture; drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. An action looks up its element in the current snapshot, and Kestrel never taps, long-presses or types into a disabled element. Scrolling uses forward and backward only along a list's known axis, its swipe goes across the list, and it never swipes sideways across a list that moves up and down. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
 - If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on. A field that is disabled or has gone does not count as a rejection (section 9.7).
 - All overlays are accessibility overlay windows, so Kestrel needs no "display over other apps" permission (section 9.4). The feedback bar never receives touches (section 8.9). The confirmation card's Confirm and Cancel buttons accept touches (section 12.4).
 - The touch watcher reports the owner's touches, and Kestrel ignores the touches that it injects itself (section 14.1).
@@ -3260,11 +3260,11 @@ git commit -m "feat(screen): tap and long press with fallbacks" -m "Co-authored-
 - Produces: `enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }`, the internal `ScreenPoint(x, y)` and `SwipePaths.forScroll(area: IntRect, direction): Pair<ScreenPoint, ScreenPoint>`, and the internal `ScrollActions` with `axis(offered, className, rows, columns): ScrollAxis` (`VERTICAL`, `HORIZONTAL`, `BOTH` or `UNKNOWN`), `forDirection(direction, axis): List<Int>` and `movesAlong(axis, direction): Boolean`.
 - Produces: `ScreenActions.setText(key: String, text: String): ActionResult` and `ScreenActions.scroll(direction: ScrollDirection, key: String? = null): ActionResult`. Like a tap, both look up the key in the current snapshot.
 - Produces: `ActionMethod.INPUT_METHOD`.
-- Produces: in the Views fixture, the disabled text field "Disabled field". In the Scroll fixture with `--ez pages true`, the "Pager scroll fixture": two pages side by side in a horizontal scroll view, with the rows "Row 1" to "Row 60" and "Second page row 1" to "Second page row 60". With `--ez swipeOnly true`, the list fills only the upper half of the page, above the text "Below the list".
+- Produces: in the Views fixture, the disabled text field "Disabled field". In the Scroll fixture with `--ez pages true`, the "Pager scroll fixture": two pages side by side in a horizontal scroll view, with the rows "Row 1" to "Row 60" and "Second page row 1" to "Second page row 60". With `--ez swipeOnly true`, the list fills only the upper half of the page, above the text "Below the list". With `--ez opaquePager true`, the "Opaque pager scroll fixture": the same two pages in a pager that hides its axis, as Flutter's pagers do.
 
 `setText` first uses the set-text action and reads the text back, up to 5 times 50 ms apart; it never reads back a password field. The read-back uses the text that the field shows, without its hint, so that clearing a field with an empty text reads back as empty. If the app refuses set-text, or the text does not read back, Kestrel types through its accessibility input method: it waits for the input to start in the field, checks that the field still has the focus, selects all and commits the new text. It remembers the app and uses the input method for it from then on (spec section 9.7). Only a refusal counts: Kestrel does not type into a disabled field, and when the field has gone, it looks for the field once more in a fresh snapshot instead of remembering the app.
 
-`scroll` uses the scroll action of the element or of its nearest parent that can scroll in the direction. Android's forward and backward actions do not say which way they move, so Kestrel uses them only along the list's own axis: on a horizontal pager, forward would show the next tab instead of more of the list. `ScrollActions` works out the axis from the list's directional actions, its class, or the shape of its collection. A list that offers directional actions for both axes never needs forward or backward. Without a key, `scroll` takes a list in the top app window that has one: the largest list that can scroll in the direction, or else the largest that moves along that axis, or else the largest list. When no action scrolls that way, Kestrel swipes from 70% to 30% across the nearest list that moves along that axis, across its middle. A sideways swipe across a row can archive a message or start a call, so Kestrel swipes sideways only across a list that moves sideways, and otherwise fails with "Nothing on the screen scrolls that way". Up and down, it swipes across the window when no list moves that way. A list whose axis is unknown counts as vertical.
+`scroll` uses the scroll action of the element or of its nearest parent that can scroll in the direction. Android's forward and backward actions do not say which way they move, so Kestrel uses them only when it knows the list's axis and the axis matches: on a horizontal pager, forward would show the next tab instead of more of the list. `ScrollActions` works out the axis from the list's directional actions, its class, or the shape of its collection; for the count that a single-row or single-column list does not use, Flutter reports 0 and Compose reports -1. Flutter's pagers hide their axis, so a list whose axis stays unknown never gets forward or backward, and a list that offers directional actions for both axes never needs them. Without a key, `scroll` takes a list in the top app window that has one: the largest list that can scroll in the direction, or else the largest that moves along that axis, or else the largest list. When no action scrolls that way, Kestrel swipes from 70% to 30% across the nearest list that moves along that axis, across its middle. A sideways swipe across a row can archive a message or start a call, so Kestrel swipes sideways only across a list that moves sideways, and otherwise fails with "Nothing on the screen scrolls that way". Up and down, it swipes across the window when no list moves that way. A list whose axis is unknown counts as vertical.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3431,6 +3431,7 @@ package dev.kestrel.testapp
 import android.app.Activity
 import android.content.Context
 import android.os.Bundle
+import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
@@ -3443,17 +3444,20 @@ import android.widget.TextView
 /**
  * A long list of rows. With the extra `swipeOnly`, the list offers no scroll actions to accessibility services, so
  * that Kestrel has to scroll it with a swipe gesture, and it fills only the upper half of the page. With the extra
- * `pages`, the list is the first of two pages side by side in a horizontal scroll view, like tabs.
+ * `pages`, the list is the first of two pages side by side in a horizontal scroll view, like tabs. With the extra
+ * `opaquePager`, the same pager hides its axis from accessibility services, as Flutter's pagers do.
  */
 class ScrollActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val swipeOnly = intent.getBooleanExtra(EXTRA_SWIPE_ONLY, false)
         val pages = intent.getBooleanExtra(EXTRA_PAGES, false)
+        val opaquePager = intent.getBooleanExtra(EXTRA_OPAQUE_PAGER, false)
         val page = fixturePage(
             when {
                 swipeOnly -> "Swipe-only scroll fixture"
                 pages -> "Pager scroll fixture"
+                opaquePager -> "Opaque pager scroll fixture"
                 else -> "Scroll fixture"
             },
         )
@@ -3463,14 +3467,15 @@ class ScrollActivity : Activity() {
                 // Below the list, so that a swipe across the whole window would start outside the list.
                 page.addView(TextView(this).apply { text = "Below the list" }, restOfThePage())
             }
-            pages -> {
+            pages || opaquePager -> {
                 val strip = LinearLayout(this)
                 for (prefix in listOf("Row", "Second page row")) {
                     // Each page is as wide as the screen, so the second page starts outside the screen.
                     val width = resources.displayMetrics.widthPixels
                     strip.addView(ScrollView(this).apply { addView(rows(prefix)) }, LinearLayout.LayoutParams(width, MATCH))
                 }
-                page.addView(HorizontalScrollView(this).apply { addView(strip, FrameLayout.LayoutParams(WRAP, MATCH)) }, restOfThePage())
+                val pager = if (opaquePager) OpaquePager(this) else HorizontalScrollView(this)
+                page.addView(pager.apply { addView(strip, FrameLayout.LayoutParams(WRAP, MATCH)) }, restOfThePage())
             }
             else -> page.addView(ScrollView(this).apply { addView(rows("Row")) }, restOfThePage())
         }
@@ -3492,6 +3497,7 @@ class ScrollActivity : Activity() {
     companion object {
         const val EXTRA_SWIPE_ONLY = "swipeOnly"
         const val EXTRA_PAGES = "pages"
+        const val EXTRA_OPAQUE_PAGER = "opaquePager"
         private const val ROWS = 60
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3517,6 +3523,20 @@ class SwipeOnlyScrollView(context: Context) : ScrollView(context) {
 
     override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean =
         scrollActions.none { it.id == action } && super.performAccessibilityAction(action, arguments)
+}
+
+/**
+ * A horizontal pager that hides its axis from accessibility services, as Flutter's pagers do: it reports a plain view
+ * that offers only the forward and backward scroll actions.
+ */
+class OpaquePager(context: Context) : HorizontalScrollView(context) {
+    override fun getAccessibilityClassName(): CharSequence = View::class.java.name
+
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.removeAction(AccessibilityAction.ACTION_SCROLL_LEFT)
+        info.removeAction(AccessibilityAction.ACTION_SCROLL_RIGHT)
+    }
 }
 ```
 
@@ -3580,16 +3600,27 @@ class ScrollActionsTest {
         assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "android.support.v4.view.ViewPager", null, null))
         assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 1, 12))
         assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 12, 1))
+        assertEquals(ScrollAxis.UNKNOWN, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 12, 3))
         assertEquals(ScrollAxis.UNKNOWN, ScrollActions.axis(setOf(forward, backward), "android.view.View", null, null))
     }
 
     @Test
-    fun forwardAndBackwardAreUsedOnlyAlongTheListsAxis() {
+    fun flutterAndComposeListsTellTheirAxisInTheirOwnWays() {
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "android.widget.ScrollView", null, null))
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "android.view.View", 0, 8))
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "android.view.View", 8, 0))
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "android.view.View", 1, -1))
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "android.view.View", -1, 1))
+    }
+
+    @Test
+    fun forwardAndBackwardAreUsedOnlyAlongAKnownAxis() {
         assertEquals(listOf(down, pageDown, forward), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.VERTICAL))
         assertEquals(listOf(down, pageDown), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.HORIZONTAL))
         assertEquals(listOf(right, pageRight, forward), ScrollActions.forDirection(ScrollDirection.RIGHT, ScrollAxis.HORIZONTAL))
         assertEquals(listOf(right, pageRight), ScrollActions.forDirection(ScrollDirection.RIGHT, ScrollAxis.UNKNOWN))
-        assertEquals(listOf(up, pageUp, backward), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.UNKNOWN))
+        assertEquals(listOf(up, pageUp, backward), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.VERTICAL))
+        assertEquals(listOf(up, pageUp), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.UNKNOWN))
         assertEquals(listOf(down, pageDown), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.BOTH))
     }
 
@@ -3763,6 +3794,14 @@ class ScrollTest {
     }
 
     @Test
+    fun scrollDownNeverTurnsAPagerThatHidesItsAxis() = runBlocking {
+        screen.open("ScrollActivity", "Opaque pager scroll fixture", extras = "--ez opaquePager true")
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.scroll(ScrollDirection.DOWN))
+        firstRowIsHidden()
+    }
+
+    @Test
     fun scrollRightShowsThePagersNextPage() = runBlocking {
         screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
 
@@ -3825,8 +3864,8 @@ internal enum class ScrollAxis { VERTICAL, HORIZONTAL, BOTH, UNKNOWN }
 
 /**
  * Which accessibility actions scroll a list in a direction. Android's forward and backward actions do not say which
- * way they move, so Kestrel uses them only along the list's own axis: on a horizontal pager, forward shows the next
- * tab instead of more of the list (design spec, section 9.3).
+ * way they move, so Kestrel uses them only when it knows the list's axis and the axis matches: on a horizontal pager,
+ * forward shows the next tab instead of more of the list (design spec, section 9.3).
  */
 internal object ScrollActions {
     private const val UP = android.R.id.accessibilityActionScrollUp
@@ -3848,9 +3887,13 @@ internal object ScrollActions {
         "android.support.v4.view.ViewPager",
     )
 
+    // Flutter gives its vertical scrollers this class, with only the forward and backward actions.
+    private val verticalClasses = setOf("android.widget.ScrollView")
+
     /**
      * The axis of a list: from the directional actions that it offers, then from its class, and then from the shape of
-     * its collection, such as a list with a single row.
+     * its collection: a single row or a single column. For the count that such a list does not use, Flutter reports 0
+     * and Compose reports -1.
      */
     fun axis(offered: Set<Int>, className: String?, rows: Int?, columns: Int?): ScrollAxis {
         val vertical = offered.any { it in verticalActions }
@@ -3860,22 +3903,27 @@ internal object ScrollActions {
             vertical -> ScrollAxis.VERTICAL
             horizontal -> ScrollAxis.HORIZONTAL
             className in horizontalClasses -> ScrollAxis.HORIZONTAL
-            rows == 1 && columns != 1 -> ScrollAxis.HORIZONTAL
-            columns == 1 && rows != 1 -> ScrollAxis.VERTICAL
+            className in verticalClasses -> ScrollAxis.VERTICAL
+            rows.isOne() && columns.isMany() -> ScrollAxis.HORIZONTAL
+            columns.isOne() && rows.isMany() -> ScrollAxis.VERTICAL
             else -> ScrollAxis.UNKNOWN
         }
     }
 
+    private fun Int?.isOne() = this == 0 || this == 1
+
+    private fun Int?.isMany() = this != null && this != 0 && this != 1
+
     /**
      * The actions that scroll a list with [axis] in [direction], in the order to try them. Forward and backward are
-     * used only along the list's own axis, and count as vertical when the axis is unknown, because most lists scroll
-     * vertically. A list that scrolls both ways offers directional actions, so it never needs forward or backward.
+     * used only when the list's axis is known and matches: Flutter's pagers hide their axis, and on them forward would
+     * turn the page. A list that scrolls both ways offers directional actions, so it never needs forward or backward.
      */
     fun forDirection(direction: ScrollDirection, axis: ScrollAxis): List<Int> {
         val alongTheAxis = when (axis) {
-            ScrollAxis.BOTH -> false
+            ScrollAxis.VERTICAL -> direction.isVertical
             ScrollAxis.HORIZONTAL -> !direction.isVertical
-            ScrollAxis.VERTICAL, ScrollAxis.UNKNOWN -> direction.isVertical
+            ScrollAxis.BOTH, ScrollAxis.UNKNOWN -> false
         }
         return when (direction) {
             ScrollDirection.DOWN -> listOf(DOWN, PAGE_DOWN) + if (alongTheAxis) listOf(FORWARD) else emptyList()
@@ -3900,7 +3948,7 @@ internal object ScrollActions {
 
 Run: `scripts\gradle.ps1 :core:screen:testDebugUnitTest`
 
-Expected: `BUILD SUCCESSFUL`. `SwipePathsTest` reports `tests="2"` and `ScrollActionsTest` reports `tests="4"`, without failures.
+Expected: `BUILD SUCCESSFUL`. `SwipePathsTest` reports `tests="2"` and `ScrollActionsTest` reports `tests="5"`, without failures.
 
 - [ ] **Step 4: Run the device tests to verify that they fail**
 
@@ -4288,7 +4336,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 29 test cases (`TypeTest` 6 and `ScrollTest` 6) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 30 test cases (`TypeTest` 6 and `ScrollTest` 7) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -5007,7 +5055,7 @@ class ScreenActions internal constructor(
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 38 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 39 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
 
 - [ ] **Step 5: Run the checks**
 
@@ -5748,7 +5796,7 @@ class KestrelAccessibilityService : AccessibilityService() {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 45 test cases (`OverlayTest` 7) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 46 test cases (`OverlayTest` 7) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6561,7 +6609,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 50 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 51 test cases (`GridBarAndCardTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -7242,7 +7290,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 53 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 54 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -8078,7 +8126,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 59 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 60 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -8246,7 +8294,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 59 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 60 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 
