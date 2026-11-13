@@ -65,6 +65,7 @@ The code below already handles all of these. They are written down so that nobod
 - Android lets an app use its own components even when they require a permission that the app lacks. A test that "another app is refused" must therefore send from another app.
 - AndroidX's `ProfileInstallReceiver` also requires `android.permission.DUMP`, so the release check looks only at Kestrel's own components.
 - After many hours, the emulator's host-side rendering slows down: Android's graphics composer spends most of its time in the kernel, apps start in 3 s instead of 1 s, and Android's watchdog may restart the system. Restarting the emulator process fixes it.
+- The emulator process once closed during the zoom test, while its rendering was slow in this way. The Windows Application log showed a timeout in the NVIDIA graphics driver (a TDR). After a fresh start, all the device tests passed. If the emulator closes during the tests, start it again and run the tests again.
 
 ## File map
 
@@ -901,7 +902,7 @@ git commit -m "feat(screen): build snapshots with labels and stable keys" -m "Co
 - Produces: `object ScreenEvents` with `changesScreen(eventType: Int): Boolean`.
 - Produces: `class SnapshotCache<T : Any>(tracker: ScreenChangeTracker, build: suspend () -> T)` with `suspend current(): T` and `invalidate()`.
 
-Every window event that can change the screen raises the tracker's version. The cache builds a new snapshot only when the version has changed, and only after 150 ms without changes, so that Kestrel does not read a screen in the middle of an animation. `awaitQuiet` is also how an action waits for the screen to settle: 200 ms of quiet, counted from the action, and never more than 3 s. The tests use virtual time, so they run instantly.
+Every window event that can change the screen raises the tracker's version. The cache builds a new snapshot only when the version has changed, and only after 150 ms without changes, so that Kestrel does not read a screen in the middle of an animation. `invalidate()` makes the next `current()` build a new snapshot. The cache counts these calls, so that a call that arrives while a build is running is not lost: that build's snapshot goes to its caller, but the cache does not keep it. `awaitQuiet` is also how an action waits for the screen to settle: 200 ms of quiet, counted from the end of the action, and never more than 3 s. The tests use virtual time, so they run instantly.
 
 - [ ] **Step 1: Add the coroutine libraries**
 
@@ -1034,6 +1035,22 @@ class SnapshotCacheTest {
     }
 
     @Test
+    fun anInvalidateDuringABuildIsNotLost() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        var builds = 0
+        lateinit var cache: SnapshotCache<Int>
+        cache = SnapshotCache(tracker) {
+            builds++
+            // Another caller invalidates the cache while this snapshot is being built.
+            if (builds == 1) cache.invalidate()
+            builds
+        }
+
+        assertEquals(1, cache.current())
+        assertEquals(2, cache.current())
+    }
+
+    @Test
     fun invalidateMakesTheNextCallBuildAgain() = runTest {
         val tracker = ScreenChangeTracker { testScheduler.currentTime }
         var builds = 0
@@ -1148,6 +1165,7 @@ package dev.kestrel.screen.read
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Keeps the last snapshot until the screen changes. After a change, it builds a new snapshot once the screen
@@ -1160,18 +1178,27 @@ class SnapshotCache<T : Any>(private val tracker: ScreenChangeTracker, private v
     @Volatile
     private var cachedVersion = -1L
 
+    // Counts the calls of invalidate(), so that a snapshot whose build was already running is not kept.
+    private val invalidations = AtomicLong()
+
     suspend fun current(): T = mutex.withLock {
         cached?.takeIf { cachedVersion == tracker.version.value }?.let { return it }
         tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS)
         val version = tracker.version.value
+        val invalidated = invalidations.get()
         build().also {
             cached = it
             cachedVersion = version
+            if (invalidations.get() != invalidated) cachedVersion = -1L
         }
     }
 
-    /** Makes the next [current] call build a new snapshot, for example before an action is retried. */
+    /**
+     * Makes the next [current] call build a new snapshot, for example before an action is retried. This also holds
+     * when another caller is building a snapshot at the same moment.
+     */
     fun invalidate() {
+        invalidations.incrementAndGet()
         cachedVersion = -1L
     }
 }
@@ -1181,7 +1208,7 @@ class SnapshotCache<T : Any>(private val tracker: ScreenChangeTracker, private v
 
 Run: `scripts\gradle.ps1 :core:screen:check`
 
-Expected: `BUILD SUCCESSFUL`. The test results report `ScreenChangeTrackerTest` with `tests="4"` and `SnapshotCacheTest` with `tests="3"`, all without failures.
+Expected: `BUILD SUCCESSFUL`. The test results report `ScreenChangeTrackerTest` with `tests="4"` and `SnapshotCacheTest` with `tests="4"`, all without failures.
 
 - [ ] **Step 6: Commit**
 
@@ -2709,7 +2736,7 @@ git commit -m "feat(screen): add the accessibility service and read snapshots" -
 - Produces: `enum class GestureOutcome { COMPLETED, CANCELLED, REJECTED }` and `class GestureRunner(service)` with `suspend perform(gesture): GestureOutcome`, which runs one gesture at a time.
 - Produces: `class ScreenActions` with `suspend tap(key: String, seen: LiveSnapshot? = null)`, `longPress(key, seen)`, `tapAt(x, y)` and `longPressAt(x, y)`, all returning `ActionResult`. `ScreenSession.actions` gives access to them.
 
-A tap tries, in order: the element's own click action; the click action of its nearest parent that offers one, up to 20 levels up; the same in a fresh snapshot, when the old node has gone (spec section 14.3); and finally a tap gesture at the element's centre. A long press works the same way with the long-click action. Each action then waits until the screen has been quiet for 200 ms, counted from the action, but never longer than 3 s. A gesture that a touch cancels fails with "A touch on the screen cancelled the gesture".
+A tap tries, in order: the element's own click action; the click action of its nearest parent that offers one, up to 20 levels up; the same in a fresh snapshot, when the old node has gone (spec section 14.3); and finally a tap gesture at the element's centre. A long press works the same way with the long-click action. Each action then waits until the screen has been quiet for 200 ms, counted from the end of the action (for a gesture, from the moment the finger is lifted), but never longer than 3 s. A gesture that a touch cancels fails with "A touch on the screen cancelled the gesture".
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2922,43 +2949,46 @@ class ScreenActions internal constructor(
     suspend fun longPress(key: String, seen: LiveSnapshot? = null): ActionResult =
         press(key, seen, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
-    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y), clock())
+    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
-    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y), clock())
+    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y))
 
     private suspend fun press(key: String, seen: LiveSnapshot?, action: Int, gesture: (Int, Int) -> GestureDescription): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
         val target = node.selfOrParentOffering(action)
         if (target != null) {
             if (target.node.performAction(action)) {
-                return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION, startedAt)
+                return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh()) {
             // The element is still there, but neither it nor a parent offers the action.
             val bounds = live.snapshot.element(key)!!.bounds
-            return gesture(gesture(bounds.centerX, bounds.centerY), startedAt)
+            return gesture(gesture(bounds.centerX, bounds.centerY))
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
         val freshTarget = fresh.node(key)?.selfOrParentOffering(action)
-        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION, startedAt)
-        return gesture(gesture(element.bounds.centerX, element.bounds.centerY), startedAt)
+        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION)
+        return gesture(gesture(element.bounds.centerX, element.bounds.centerY))
     }
 
-    private suspend fun gesture(description: GestureDescription, startedAt: Long): ActionResult =
+    private suspend fun gesture(description: GestureDescription): ActionResult =
         when (gestures.perform(description)) {
-            GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE, startedAt)
+            GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
             GestureOutcome.CANCELLED -> ActionResult.Failed("A touch on the screen cancelled the gesture")
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture")
         }
 
-    /** Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3). */
-    private suspend fun settled(method: ActionMethod, startedAt: Long): ActionResult {
-        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = startedAt)
+    /**
+     * Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3).
+     * Call it right after the action: the quiet time counts from the call, so that it cannot run out before the app
+     * has reacted. Gestures call it once the finger has been lifted.
+     */
+    private suspend fun settled(method: ActionMethod): ActionResult {
+        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = clock())
         return ActionResult.Done(method)
     }
 
@@ -3374,9 +3404,9 @@ class ScreenActions internal constructor(
     suspend fun longPress(key: String, seen: LiveSnapshot? = null): ActionResult =
         press(key, seen, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
-    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y), clock())
+    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
-    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y), clock())
+    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y))
 
     /**
      * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
@@ -3384,7 +3414,6 @@ class ScreenActions internal constructor(
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
      */
     suspend fun setText(key: String, text: String, seen: LiveSnapshot? = null): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val element = live.snapshot.element(key) ?: return ActionResult.Failed("No element has the key $key")
         val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
@@ -3395,11 +3424,11 @@ class ScreenActions internal constructor(
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
-                return settled(ActionMethod.ACTION, startedAt)
+                return settled(ActionMethod.ACTION)
             }
             if (app != null) inputMethodApps += app
         }
-        return typeWithInputMethod(element, node, text, startedAt)
+        return typeWithInputMethod(element, node, text)
     }
 
     /**
@@ -3408,7 +3437,6 @@ class ScreenActions internal constructor(
      * across it (design spec, section 9.3).
      */
     suspend fun scroll(direction: ScrollDirection, key: String? = null, seen: LiveSnapshot? = null): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val element = when (key) {
             null -> live.snapshot.largestScrollable()
@@ -3417,40 +3445,39 @@ class ScreenActions internal constructor(
         val actions = direction.actionIds()
         val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
         if (target != null && actions.any { target.node.performAction(it) }) {
-            return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION, startedAt)
+            return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
         val window = live.snapshot.windowBounds(element?.windowId)
         val area = target?.node?.screenBounds()?.let { bounds -> window?.let(bounds::intersect) ?: bounds } ?: window
             ?: return ActionResult.Failed("There is nothing to scroll")
         val (from, to) = SwipePaths.forScroll(area, direction)
-        return gesture(Gestures.swipe(from, to), startedAt)
+        return gesture(Gestures.swipe(from, to))
     }
 
     private suspend fun press(key: String, seen: LiveSnapshot?, action: Int, gesture: (Int, Int) -> GestureDescription): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
         val target = node.selfOrParentOffering(listOf(action))
         if (target != null) {
             if (target.node.performAction(action)) {
-                return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION, startedAt)
+                return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh()) {
             // The element is still there, but neither it nor a parent offers the action.
             val bounds = live.snapshot.element(key)!!.bounds
-            return gesture(gesture(bounds.centerX, bounds.centerY), startedAt)
+            return gesture(gesture(bounds.centerX, bounds.centerY))
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
         val freshTarget = fresh.node(key)?.selfOrParentOffering(listOf(action))
-        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION, startedAt)
-        return gesture(gesture(element.bounds.centerX, element.bounds.centerY), startedAt)
+        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION)
+        return gesture(gesture(element.bounds.centerX, element.bounds.centerY))
     }
 
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
-    private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String, startedAt: Long): ActionResult {
+    private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String): ActionResult {
         val inputMethod = service.inputMethod ?: return ActionResult.Failed("Kestrel's input method is not available")
         val connection = withContext(Dispatchers.Main) {
             val before = inputMethod.currentInputEditorInfo
@@ -3473,22 +3500,26 @@ class ScreenActions internal constructor(
             connection.commitText(text, 1, null)
         }
         return if (node.shows(text, element.password)) {
-            settled(ActionMethod.INPUT_METHOD, startedAt)
+            settled(ActionMethod.INPUT_METHOD)
         } else {
             ActionResult.Failed("The text field did not take the text")
         }
     }
 
-    private suspend fun gesture(description: GestureDescription, startedAt: Long): ActionResult =
+    private suspend fun gesture(description: GestureDescription): ActionResult =
         when (gestures.perform(description)) {
-            GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE, startedAt)
+            GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
             GestureOutcome.CANCELLED -> ActionResult.Failed("A touch on the screen cancelled the gesture")
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture")
         }
 
-    /** Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3). */
-    private suspend fun settled(method: ActionMethod, startedAt: Long): ActionResult {
-        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = startedAt)
+    /**
+     * Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3).
+     * Call it right after the action: the quiet time counts from the call, so that it cannot run out before the app
+     * has reacted. Gestures call it once the finger has been lifted.
+     */
+    private suspend fun settled(method: ActionMethod): ActionResult {
+        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = clock())
         return ActionResult.Done(method)
     }
 
@@ -4011,9 +4042,9 @@ class ScreenActions internal constructor(
     suspend fun longPress(key: String, seen: LiveSnapshot? = null): ActionResult =
         press(key, seen, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
-    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(clock(), Gestures.tap(x, y))
+    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
-    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(clock(), Gestures.longPress(x, y))
+    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y))
 
     /**
      * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
@@ -4021,7 +4052,6 @@ class ScreenActions internal constructor(
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
      */
     suspend fun setText(key: String, text: String, seen: LiveSnapshot? = null): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val element = live.snapshot.element(key) ?: return ActionResult.Failed("No element has the key $key")
         val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
@@ -4032,11 +4062,11 @@ class ScreenActions internal constructor(
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
-                return settled(ActionMethod.ACTION, startedAt)
+                return settled(ActionMethod.ACTION)
             }
             if (app != null) inputMethodApps += app
         }
-        return typeWithInputMethod(element, node, text, startedAt)
+        return typeWithInputMethod(element, node, text)
     }
 
     /**
@@ -4045,7 +4075,6 @@ class ScreenActions internal constructor(
      * across it (design spec, section 9.3).
      */
     suspend fun scroll(direction: ScrollDirection, key: String? = null, seen: LiveSnapshot? = null): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val element = when (key) {
             null -> live.snapshot.largestScrollable()
@@ -4054,25 +4083,25 @@ class ScreenActions internal constructor(
         val actions = direction.actionIds()
         val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
         if (target != null && actions.any { target.node.performAction(it) }) {
-            return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION, startedAt)
+            return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
         val window = live.snapshot.windowBounds(element?.windowId)
         val area = target?.node?.screenBounds()?.let { bounds -> window?.let(bounds::intersect) ?: bounds } ?: window
             ?: return ActionResult.Failed("There is nothing to scroll")
         val (from, to) = SwipePaths.forScroll(area, direction)
-        return gesture(startedAt, Gestures.swipe(from, to))
+        return gesture(Gestures.swipe(from, to))
     }
 
     suspend fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult =
-        gesture(clock(), Gestures.swipe(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
+        gesture(Gestures.swipe(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
 
     /** Presses and holds at the first point, then moves to the second point, as when moving an icon. */
     suspend fun drag(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult =
-        gesture(clock(), *Gestures.drag(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
+        gesture(*Gestures.drag(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
 
     /** Moves two fingers apart (when [endSpan] is larger than [startSpan]) or together around a point. */
     suspend fun pinch(centerX: Int, centerY: Int, startSpan: Int, endSpan: Int): ActionResult =
-        gesture(clock(), Gestures.pinch(ScreenPoint(centerX, centerY), startSpan, endSpan))
+        gesture(Gestures.pinch(ScreenPoint(centerX, centerY), startSpan, endSpan))
 
     /** How many times Android's magnification enlarges the screen; 1 when it does not. */
     val zoomScale: Float get() = service.magnificationController.magnificationConfig?.scale ?: 1f
@@ -4095,9 +4124,8 @@ class ScreenActions internal constructor(
     }
 
     suspend fun global(action: GlobalAction): ActionResult {
-        val startedAt = clock()
         return if (service.performGlobalAction(action.id)) {
-            settled(ActionMethod.GLOBAL_ACTION, startedAt)
+            settled(ActionMethod.GLOBAL_ACTION)
         } else {
             ActionResult.Failed("Android refused the action ${action.name}")
         }
@@ -4105,49 +4133,46 @@ class ScreenActions internal constructor(
 
     /** Opens the app with [packageName] as its launcher icon would. */
     suspend fun openApp(packageName: String): ActionResult {
-        val startedAt = clock()
         val intent = service.packageManager.getLaunchIntentForPackage(packageName)
             ?: return ActionResult.Failed("No app with the package $packageName can be opened")
         service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        return settled(ActionMethod.INTENT, startedAt)
+        return settled(ActionMethod.INTENT)
     }
 
     /** Opens a link or a deep link in the app that handles it. */
     suspend fun openUri(uri: String): ActionResult {
-        val startedAt = clock()
         return try {
             service.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            settled(ActionMethod.INTENT, startedAt)
+            settled(ActionMethod.INTENT)
         } catch (e: ActivityNotFoundException) {
             ActionResult.Failed("No app can open the link")
         }
     }
 
     private suspend fun press(key: String, seen: LiveSnapshot?, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
-        val startedAt = clock()
         val live = seen ?: snapshots.current()
         val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
         val target = node.selfOrParentOffering(listOf(action))
         if (target != null) {
             if (target.node.performAction(action)) {
-                return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION, startedAt)
+                return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh()) {
             // The element is still there, but neither it nor a parent offers the action.
             val bounds = live.snapshot.element(key)!!.bounds
-            return gesture(startedAt, fallback(bounds.centerX, bounds.centerY))
+            return gesture(fallback(bounds.centerX, bounds.centerY))
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
         val freshTarget = fresh.node(key)?.selfOrParentOffering(listOf(action))
-        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION, startedAt)
-        return gesture(startedAt, fallback(element.bounds.centerX, element.bounds.centerY))
+        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION)
+        return gesture(fallback(element.bounds.centerX, element.bounds.centerY))
     }
 
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
-    private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String, startedAt: Long): ActionResult {
+    private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String): ActionResult {
         val inputMethod = service.inputMethod ?: return ActionResult.Failed("Kestrel's input method is not available")
         val connection = withContext(Dispatchers.Main) {
             val before = inputMethod.currentInputEditorInfo
@@ -4170,22 +4195,26 @@ class ScreenActions internal constructor(
             connection.commitText(text, 1, null)
         }
         return if (node.shows(text, element.password)) {
-            settled(ActionMethod.INPUT_METHOD, startedAt)
+            settled(ActionMethod.INPUT_METHOD)
         } else {
             ActionResult.Failed("The text field did not take the text")
         }
     }
 
-    private suspend fun gesture(startedAt: Long, vararg parts: GestureDescription): ActionResult =
+    private suspend fun gesture(vararg parts: GestureDescription): ActionResult =
         when (gestures.perform(*parts)) {
-            GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE, startedAt)
+            GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
             GestureOutcome.CANCELLED -> ActionResult.Failed("A touch on the screen cancelled the gesture")
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture")
         }
 
-    /** Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3). */
-    private suspend fun settled(method: ActionMethod, startedAt: Long): ActionResult {
-        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = startedAt)
+    /**
+     * Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3).
+     * Call it right after the action: the quiet time counts from the call, so that it cannot run out before the app
+     * has reacted. Gestures call it once the finger has been lifted.
+     */
+    private suspend fun settled(method: ActionMethod): ActionResult {
+        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = clock())
         return ActionResult.Done(method)
     }
 
