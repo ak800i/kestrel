@@ -4,7 +4,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.ScrollDirection
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
@@ -41,10 +43,30 @@ class ScrollTest {
     }
 
     @Test
-    fun scrollSwipesWhenTheListOffersNoScrollActions() = runBlocking {
+    fun scrollSwipesAcrossTheListWhenTheListOffersNoScrollActions() = runBlocking {
         screen.open("ScrollActivity", "Swipe-only scroll fixture", extras = "--ez swipeOnly true")
 
         assertEquals(ActionResult.Done(ActionMethod.GESTURE), actions.scroll(ScrollDirection.DOWN))
+        // The list fills only the upper half of the page, so a swipe across the whole window would miss it.
+        withTimeout(5_000) {
+            while (screen.session.snapshots.current().snapshot.elements.any { it.label == "Row 1" }) delay(100)
+        }
+    }
+
+    @Test
+    fun scrollDownScrollsTheListInsideAPagerAndNotThePager() = runBlocking {
+        screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.scroll(ScrollDirection.DOWN))
         firstRowIsHidden()
+    }
+
+    @Test
+    fun scrollRightShowsThePagersNextPage() = runBlocking {
+        screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.scroll(ScrollDirection.RIGHT))
+        screen.awaitElement { it.label == "Second page row 1" }
+        Unit
     }
 }

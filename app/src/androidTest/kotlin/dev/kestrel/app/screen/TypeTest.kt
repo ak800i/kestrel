@@ -62,6 +62,15 @@ class TypeTest {
     }
 
     @Test
+    fun aDisabledFieldIsNotTypedIntoAndDoesNotSwitchTheAppToTheInputMethod() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val disabled = screen.awaitElement { it.editable && it.label == "Disabled field" }
+
+        assertEquals(ActionResult.Failed("The element is disabled"), actions.setText(disabled.key, "Hello"))
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(field("message_field").key, "Hello"))
+    }
+
+    @Test
     fun setTextRefusesAnElementThatIsNotATextField() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 

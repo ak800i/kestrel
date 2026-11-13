@@ -2,9 +2,6 @@ package dev.kestrel.screen.act
 
 import dev.kestrel.screen.model.IntRect
 
-/** Which way to scroll. "Down" shows what is further down, as in Voice Access. */
-enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }
-
 internal data class ScreenPoint(val x: Int, val y: Int)
 
 /** Where a swipe that scrolls an area starts and ends. It stays clear of the screen edges, where swipes mean "back" or "home". */

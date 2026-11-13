@@ -3,40 +3,77 @@ package dev.kestrel.testapp
 import android.app.Activity
 import android.content.Context
 import android.os.Bundle
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * A long list of rows. With the extra `swipeOnly`, the list offers no scroll actions to accessibility services,
- * so that Kestrel has to scroll it with a swipe gesture.
+ * A long list of rows. With the extra `swipeOnly`, the list offers no scroll actions to accessibility services, so
+ * that Kestrel has to scroll it with a swipe gesture, and it fills only the upper half of the page. With the extra
+ * `pages`, the list is the first of two pages side by side in a horizontal scroll view, like tabs.
  */
 class ScrollActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val swipeOnly = intent.getBooleanExtra(EXTRA_SWIPE_ONLY, false)
-        val page = fixturePage(if (swipeOnly) "Swipe-only scroll fixture" else "Scroll fixture")
-        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val pages = intent.getBooleanExtra(EXTRA_PAGES, false)
+        val page = fixturePage(
+            when {
+                swipeOnly -> "Swipe-only scroll fixture"
+                pages -> "Pager scroll fixture"
+                else -> "Scroll fixture"
+            },
+        )
+        when {
+            swipeOnly -> {
+                page.addView(SwipeOnlyScrollView(this).apply { addView(rows("Row")) }, restOfThePage())
+                // Below the list, so that a swipe across the whole window would start outside the list.
+                page.addView(TextView(this).apply { text = "Below the list" }, restOfThePage())
+            }
+            pages -> {
+                val strip = LinearLayout(this)
+                for (prefix in listOf("Row", "Second page row")) {
+                    // Each page is as wide as the screen, so the second page starts outside the screen.
+                    val width = resources.displayMetrics.widthPixels
+                    strip.addView(ScrollView(this).apply { addView(rows(prefix)) }, LinearLayout.LayoutParams(width, MATCH))
+                }
+                page.addView(HorizontalScrollView(this).apply { addView(strip, FrameLayout.LayoutParams(WRAP, MATCH)) }, restOfThePage())
+            }
+            else -> page.addView(ScrollView(this).apply { addView(rows("Row")) }, restOfThePage())
+        }
+    }
+
+    /** Shares the rest of the page equally with the page's other children that use it. */
+    private fun restOfThePage() = LinearLayout.LayoutParams(MATCH, 0, 1f)
+
+    private fun rows(prefix: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
         for (row in 1..ROWS) {
-            rows.addView(TextView(this).apply {
-                text = "Row $row"
+            addView(TextView(context).apply {
+                text = "$prefix $row"
                 setPadding(0, dp(12), 0, dp(12))
             })
         }
-        val list = if (swipeOnly) SwipeOnlyScrollView(this) else ScrollView(this)
-        list.addView(rows)
-        page.addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
     companion object {
         const val EXTRA_SWIPE_ONLY = "swipeOnly"
+        const val EXTRA_PAGES = "pages"
         private const val ROWS = 60
+        private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+        private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
     }
 }
 
-/** Scrolls with touch but hides its scroll actions from accessibility services and refuses them. */
+/**
+ * Scrolls with touch but hides its scroll actions from accessibility services and refuses them. It still says that it
+ * can scroll, as such lists do, so Kestrel knows where to swipe.
+ */
 class SwipeOnlyScrollView(context: Context) : ScrollView(context) {
     private val scrollActions = listOf(
         AccessibilityAction.ACTION_SCROLL_FORWARD,
@@ -47,7 +84,6 @@ class SwipeOnlyScrollView(context: Context) : ScrollView(context) {
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
-        info.isScrollable = false
         scrollActions.forEach(info::removeAction)
     }
 

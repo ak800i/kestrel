@@ -17,8 +17,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * Classic Views: buttons, an unlabeled icon, a check box, a tappable row, text fields, a dialog, and a disabled button
- * inside a tappable card.
+ * Classic Views: buttons, an unlabeled icon, a check box, a tappable row, text fields (one of them disabled), a dialog,
+ * and a disabled button inside a tappable card.
  */
 class ViewsActivity : Activity() {
     private lateinit var page: LinearLayout
@@ -70,6 +70,11 @@ class ViewsActivity : Activity() {
             id = R.id.password_field
             hint = "Password"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        })
+        page.addView(EditText(this).apply {
+            hint = "Disabled field"
+            // Disabled on purpose: Kestrel must not type into it, nor switch the app to its input method because of it.
+            isEnabled = false
         })
         page.addView(Button(this).apply {
             id = R.id.show_dialog
