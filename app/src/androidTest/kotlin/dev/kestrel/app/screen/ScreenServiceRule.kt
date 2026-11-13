@@ -50,6 +50,9 @@ class ScreenServiceRule : ExternalResource() {
         return runBlocking { awaitElement { it.label == title } }
     }
 
+    /** Whether Android's window list has a window with [title], such as "Kestrel numbers". */
+    fun showsWindow(title: String): Boolean = shell("dumpsys window windows").contains("$title}")
+
     /** Waits until an element that matches [predicate] is on the screen. */
     suspend fun awaitElement(timeoutMillis: Long = 5_000, predicate: (ScreenElement) -> Boolean): ScreenElement {
         var labels: List<String?> = emptyList()
@@ -67,6 +70,7 @@ class ScreenServiceRule : ExternalResource() {
 
     companion object {
         const val FIXTURES = "dev.kestrel.testapp"
+        const val KESTREL = "dev.kestrel"
         private const val SERVICE = "dev.kestrel/dev.kestrel.app.KestrelAccessibilityService"
 
         // Connecting UiAutomation without this flag would turn off every accessibility service, Kestrel's included.

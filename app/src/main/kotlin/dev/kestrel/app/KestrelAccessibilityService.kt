@@ -47,7 +47,10 @@ class KestrelAccessibilityService : AccessibilityService() {
     private fun disconnect() {
         purging?.cancel()
         purging = null
-        session?.let(graph::detachScreen)
+        session?.let {
+            graph.detachScreen(it)
+            it.close()
+        }
         session = null
     }
 
