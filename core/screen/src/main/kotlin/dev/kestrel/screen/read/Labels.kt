@@ -13,7 +13,17 @@ object Labels {
     fun clean(text: CharSequence?): String? = text?.toString()?.replace(whitespace, " ")?.trim()?.takeIf { it.isNotEmpty() }
 
     /** Joins texts found inside an element into one label of at most 80 characters. */
-    fun join(pieces: List<String>): String? = clean(pieces.joinToString(" "))?.take(MAX_LENGTH)?.trimEnd()
+    fun join(pieces: List<String>): String? = clean(pieces.joinToString(" "))?.let { shorten(it, MAX_LENGTH) }?.trimEnd()
+
+    /**
+     * Returns the first [maxLength] UTF-16 units of [text], or one fewer when the cut would split a character that
+     * takes two units, such as most emoji. Half a character turns into "?" when the text is saved, and a saved key
+     * would then no longer match.
+     */
+    fun shorten(text: String, maxLength: Int): String {
+        if (text.length <= maxLength) return text
+        return text.substring(0, if (text[maxLength - 1].isHighSurrogate()) maxLength - 1 else maxLength)
+    }
 
     /** Derives a name from a view ID: `dev.app:id/compose_button` becomes "compose", and `btnSendMessage` "send message". */
     fun suggestedName(viewId: String?): String? {

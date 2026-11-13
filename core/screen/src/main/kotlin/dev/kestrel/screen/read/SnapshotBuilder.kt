@@ -38,8 +38,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         if (!node.visible || depth > MAX_DEPTH || out.size >= MAX_ELEMENTS) return emptyList()
         val text = if (node.password) null else Labels.clean(node.text)
         val name = Labels.clean(node.contentDescription) ?: Labels.clean(node.hint)
-        // A text field is named by its description or hint, never by what was typed into it, so that its label and
-        // its key stay the same while the owner types.
+        // A text field is named by its description or hint, never by what was typed into it.
         val ownLabel = if (node.editable) name else text ?: name
         val bounds = node.bounds.intersect(window.bounds)
         val actionable = node.clickable || node.longClickable || node.editable || node.checkable
@@ -109,10 +108,13 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         private val used = mutableMapOf<String, Int>()
 
         fun next(draft: Draft): String {
+            // A text field's key uses only its own description or hint, because the texts inside a field, such as
+            // a placeholder or a character counter, can change while the owner types.
+            val name = if (draft.node.editable) draft.ownLabel else draft.label
             val base = listOf(
                 draft.node.packageName.orEmpty(),
                 draft.node.viewId?.substringAfter(":id/").orEmpty(),
-                draft.label?.take(KEY_LABEL_LENGTH).orEmpty(),
+                name?.let { Labels.shorten(it, KEY_LABEL_LENGTH) }.orEmpty(),
                 draft.node.className?.substringAfterLast('.').orEmpty(),
             ).joinToString("|")
             val group = Triple(draft.windowId, draft.parent, base)

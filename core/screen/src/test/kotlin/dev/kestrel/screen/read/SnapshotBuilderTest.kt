@@ -47,9 +47,9 @@ class SnapshotBuilderTest {
     fun aTextFieldKeepsItsNameAndItsKeyWhileTheOwnerTypes() {
         fun field(text: String?) = FakeNode(text = text, hint = "Message", className = "android.widget.EditText", editable = true)
 
-        // Compose shows the label of a text field as a text inside the field.
-        fun composeField(text: String?) =
-            FakeNode(text = text, className = "android.widget.EditText", editable = true, children = listOf(FakeNode(text = "Name")))
+        // Compose shows a text field's label, placeholder and character counter as texts inside the field.
+        fun composeField(text: String?, vararg inside: String) =
+            FakeNode(text = text, className = "android.widget.EditText", editable = true, children = inside.map { FakeNode(text = it) })
 
         fun element(node: FakeNode) = build(FakeWindow(node)).snapshot.elements.first()
 
@@ -58,8 +58,8 @@ class SnapshotBuilderTest {
         assertEquals("Message", typed.label)
         assertEquals("Hello Ana", typed.text)
         assertEquals(element(field(null)).key, typed.key)
-        assertEquals("Name", element(composeField("Ana")).label)
-        assertEquals(element(composeField(null)).key, element(composeField("Ana")).key)
+        assertEquals("Name", element(composeField("Ana", "Name")).label)
+        assertEquals(element(composeField(null, "Type a message", "0/160")).key, element(composeField("Hello", "Clear", "5/160")).key)
     }
 
     @Test
