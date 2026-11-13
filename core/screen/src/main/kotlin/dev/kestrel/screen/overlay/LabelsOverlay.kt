@@ -7,6 +7,7 @@ internal class LabelsOverlay(private val host: OverlayHost) {
     private val view = TagsView(host.context).apply { fillColor = LABEL_COLOR }
 
     /** Whether the labels are on the screen now. */
+    @Volatile
     var isShowing: Boolean = false
         private set
 

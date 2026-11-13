@@ -6,8 +6,10 @@ import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.overlay.NumbersMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -44,6 +46,21 @@ class OverlayTest {
         assertEquals((1..badges.size).toList(), badges.map { it.number })
         eventually { screen.showsWindow("Kestrel numbers") }
         assertTrue(session.snapshots.current().snapshot.windows.none { it.packageName == KESTREL })
+    }
+
+    @Test
+    fun numbersCanBeHiddenRightAfterTheyAreShown() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+
+        // Android attaches a new overlay's view only on the next frame. Showing and hiding the numbers in one go on the
+        // main thread hides them before that frame, and the window must still go.
+        repeat(2) {
+            withContext(Dispatchers.Main) {
+                session.showNumbers()
+                session.hideNumbers()
+            }
+        }
+        eventually { !screen.showsWindow("Kestrel numbers") }
     }
 
     @Test

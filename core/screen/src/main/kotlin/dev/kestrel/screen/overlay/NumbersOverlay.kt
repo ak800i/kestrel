@@ -5,6 +5,7 @@ internal class NumbersOverlay(private val host: OverlayHost) {
     private val view = TagsView(host.context).apply { fillColor = NUMBER_COLOR }
 
     /** The numbers on the screen now; empty while the overlay is hidden. */
+    @Volatile
     var badges: List<Badge> = emptyList()
         private set
 

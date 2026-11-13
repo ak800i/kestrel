@@ -23,8 +23,13 @@ class OverlayHost(private val service: AccessibilityService) {
     }
 
     fun hide(view: View) {
-        // Android removes the windows itself when the service disconnects.
-        if (shown.remove(view) && view.isAttachedToWindow) windowManager.removeView(view)
+        if (!shown.remove(view)) return
+        // Remove the window even when Android has not attached its view yet, which it does only on the next frame.
+        try {
+            windowManager.removeView(view)
+        } catch (e: IllegalArgumentException) {
+            // Android has removed the window already, as it does when the service disconnects.
+        }
     }
 
     fun hideAll() {
