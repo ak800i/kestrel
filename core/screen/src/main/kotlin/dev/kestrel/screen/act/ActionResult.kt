@@ -11,6 +11,9 @@ enum class ActionMethod {
     /** The element's action in a fresh snapshot, after its node had gone or refused the action (design spec, section 14.3). */
     RETRY_ACTION,
     GESTURE,
+
+    /** Kestrel's accessibility input method, for apps that refuse the set-text action (design spec, section 9.7). */
+    INPUT_METHOD,
 }
 
 sealed interface ActionResult {

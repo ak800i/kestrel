@@ -21,7 +21,7 @@ class ScreenSession(service: AccessibilityService) {
     /** The current snapshot. A new one is built only after the screen has changed. */
     val snapshots = SnapshotCache(tracker) { withContext(Dispatchers.Default) { reader.read() } }
 
-    val actions = ScreenActions(snapshots, gestures, tracker)
+    val actions = ScreenActions(service, snapshots, gestures, tracker)
 
     /** Kestrel's accessibility service passes every event here. */
     fun onAccessibilityEvent(event: AccessibilityEvent) {

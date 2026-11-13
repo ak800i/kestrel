@@ -1,21 +1,38 @@
 package dev.kestrel.screen.act
 
+import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.InputMethod
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.SnapshotCache
+import dev.kestrel.screen.read.shownText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 
 /** Kestrel's actions on the screen. Each one has a fallback (design spec, sections 9.3 and 14.3). */
 class ScreenActions internal constructor(
+    private val service: AccessibilityService,
     private val snapshots: SnapshotCache<LiveSnapshot>,
     private val gestures: GestureRunner,
     private val tracker: ScreenChangeTracker,
     private val clock: () -> Long = SystemClock::uptimeMillis,
 ) {
+    /** Apps that refused the set-text action or did not show the text afterwards (design spec, section 9.7). */
+    private val inputMethodApps = ConcurrentHashMap.newKeySet<String>()
+
     /**
      * Taps the element with [key]. Kestrel looks the key up in the current snapshot, never in an older one, because a
      * list may have reused an old view for another item. It uses the click action of the element or of its nearest
@@ -31,6 +48,52 @@ class ScreenActions internal constructor(
     suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
     suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y))
+
+    /**
+     * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
+     * back. If the app refuses the action or the field does not show the text, Kestrel types through its
+     * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
+     */
+    suspend fun setText(key: String, text: String): ActionResult {
+        val live = snapshots.current()
+        val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        val node = live.node(key) ?: return NOT_ON_SCREEN
+        if (!element.editable) return ActionResult.Failed("The element is not a text field")
+        val app = element.packageName
+        if (app == null || app !in inputMethodApps) {
+            val arguments = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+            if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
+                return settled(ActionMethod.ACTION)
+            }
+            if (app != null) inputMethodApps += app
+        }
+        return typeWithInputMethod(element, node, text)
+    }
+
+    /**
+     * Scrolls the element with [key], or the largest scrollable element in an app window when [key] is null.
+     * Kestrel uses the scroll actions of the element or its nearest scrollable parent, and otherwise swipes
+     * across it (design spec, section 9.3).
+     */
+    suspend fun scroll(direction: ScrollDirection, key: String? = null): ActionResult {
+        val live = snapshots.current()
+        val element = when (key) {
+            null -> live.snapshot.largestScrollable()
+            else -> live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        }
+        val actions = direction.actionIds()
+        val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
+        if (target != null && actions.any { target.node.performAction(it) }) {
+            return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
+        }
+        val window = live.snapshot.windowBounds(element?.windowId)
+        val area = target?.node?.screenBounds()?.let { bounds -> window?.let(bounds::intersect) ?: bounds } ?: window
+            ?: return ActionResult.Failed("There is nothing to scroll")
+        val (from, to) = SwipePaths.forScroll(area, direction)
+        return gesture(Gestures.swipe(from, to))
+    }
 
     private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
         val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
@@ -57,6 +120,36 @@ class ScreenActions internal constructor(
         return gesture(fallback(element.bounds.centerX, element.bounds.centerY))
     }
 
+    /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
+    private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String): ActionResult {
+        val inputMethod = service.inputMethod ?: return ActionResult.Failed("Kestrel's input method is not available")
+        val connection = withContext(Dispatchers.Main) {
+            val before = inputMethod.currentInputEditorInfo
+            val wasFocused = node.isFocused
+            if (!wasFocused && !node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            withTimeoutOrNull(INPUT_START_MILLIS) {
+                var ready: InputMethod.AccessibilityInputConnection? = null
+                while (ready == null) {
+                    val editor = inputMethod.currentInputEditorInfo
+                    val started = inputMethod.currentInputStarted && editor?.packageName == element.packageName &&
+                        (wasFocused || editor !== before)
+                    ready = if (started) inputMethod.currentInputConnection else null
+                    if (ready == null) delay(POLL_MILLIS)
+                }
+                ready
+            }
+        } ?: return ActionResult.Failed("The text field did not connect to Kestrel's input method")
+        withContext(Dispatchers.Main) {
+            connection.performContextMenuAction(android.R.id.selectAll)
+            connection.commitText(text, 1, null)
+        }
+        return if (node.shows(text, element.password)) {
+            settled(ActionMethod.INPUT_METHOD)
+        } else {
+            ActionResult.Failed("The text field did not take the text")
+        }
+    }
+
     private suspend fun gesture(description: GestureDescription): ActionResult =
         when (gestures.perform(description)) {
             GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
@@ -72,6 +165,19 @@ class ScreenActions internal constructor(
     private suspend fun settled(method: ActionMethod): ActionResult {
         tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = clock())
         return ActionResult.Done(method)
+    }
+
+    /**
+     * Whether the field shows [expected] after a short wait. A password field shows only dots, so for it the
+     * action's own result has to do.
+     */
+    private suspend fun AccessibilityNodeInfo.shows(expected: String, password: Boolean): Boolean {
+        if (password) return true
+        repeat(READ_BACK_TRIES) {
+            if (refresh() && shownText().orEmpty() == expected) return true
+            delay(POLL_MILLIS)
+        }
+        return false
     }
 
     private class Target(val node: AccessibilityNodeInfo, val isSelf: Boolean)
@@ -93,13 +199,45 @@ class ScreenActions internal constructor(
 
     private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
 
+    private fun AccessibilityNodeInfo.selfOrParentOffering(actions: List<Int>): Target? {
+        var current: AccessibilityNodeInfo? = this
+        var depth = 0
+        while (current != null && depth <= MAX_PARENT_DEPTH) {
+            if (current.isEnabled && current.actionList.any { it.id in actions }) return Target(current, isSelf = depth == 0)
+            current = current.parent
+            depth++
+        }
+        return null
+    }
+
     private fun AccessibilityNodeInfo.screenBounds(): IntRect = Rect().also(::getBoundsInScreen).let {
         IntRect(it.left, it.top, it.right, it.bottom)
+    }
+
+    private fun ScreenSnapshot.largestScrollable(): ScreenElement? {
+        val appWindows = windows.filter { it.kind == WindowKind.APPLICATION }.map { it.id }.toSet()
+        return elements
+            .filter { it.scrollable && it.enabled && it.windowId in appWindows }
+            .maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+    }
+
+    /** The bounds of the window with [windowId], or of the top app window when there is no such window. */
+    private fun ScreenSnapshot.windowBounds(windowId: Int?): IntRect? =
+        (windows.firstOrNull { it.id == windowId } ?: windows.firstOrNull { it.kind == WindowKind.APPLICATION })?.bounds
+
+    private fun ScrollDirection.actionIds(): List<Int> = when (this) {
+        ScrollDirection.DOWN -> listOf(AccessibilityAction.ACTION_SCROLL_DOWN.id, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        ScrollDirection.UP -> listOf(AccessibilityAction.ACTION_SCROLL_UP.id, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        ScrollDirection.RIGHT -> listOf(AccessibilityAction.ACTION_SCROLL_RIGHT.id)
+        ScrollDirection.LEFT -> listOf(AccessibilityAction.ACTION_SCROLL_LEFT.id)
     }
 
     private companion object {
         const val MAX_PARENT_DEPTH = 20
         val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
         val DISABLED = ActionResult.Failed("The element is disabled")
+        const val INPUT_START_MILLIS = 2_000L
+        const val READ_BACK_TRIES = 5
+        const val POLL_MILLIS = 50L
     }
 }
