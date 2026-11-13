@@ -40,8 +40,8 @@ internal object ScrollActions {
 
     /**
      * The axis of a list: from the directional actions that it offers, then from its class, and then from the shape of
-     * its collection: a single row or a single column. For the count that such a list does not use, Flutter reports 0
-     * and Compose reports -1.
+     * its collection: a single row or a single column. Flutter reports 0 instead of 1 for the count that such a list
+     * does not use, and Compose reports -1 for the number of items when it does not know it.
      */
     fun axis(offered: Set<Int>, className: String?, rows: Int?, columns: Int?): ScrollAxis {
         val vertical = offered.any { it in verticalActions }
