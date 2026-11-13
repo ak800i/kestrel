@@ -48,16 +48,25 @@ class TapTest {
     }
 
     @Test
-    fun tapFindsTheElementAgainWhenItsNodeHasGone() = runBlocking {
+    fun aKeyFromAnOlderSnapshotTapsTheElementThatIsOnTheScreenNow() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val seen = screen.session.snapshots.current()
-        val send = seen.snapshot.elements.single { it.label == "SEND" }
-        actions.tap(seen.snapshot.elements.single { it.label == "REBUILD" }.key)
+        val old = screen.session.snapshots.current().snapshot
+        actions.tap(old.elements.single { it.label == "REBUILD" }.key)
         screen.awaitElement { it.label == "Rebuilt" }
 
-        assertEquals(ActionResult.Done(ActionMethod.RETRY_ACTION), actions.tap(send.key, seen))
+        // Rebuild has replaced the Send button, so the node in the old snapshot has gone.
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.tap(old.elements.single { it.label == "SEND" }.key))
         screen.awaitElement { it.label == "Clicked Send" }
         Unit
+    }
+
+    @Test
+    fun aDisabledElementIsNotTappedAndTheTapDoesNotReachItsParent() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val addToCart = screen.awaitElement { it.label == "ADD TO CART" }
+
+        assertEquals(ActionResult.Failed("The element is disabled"), actions.tap(addToCart.key))
+        assertTrue(screen.session.snapshots.current().snapshot.elements.any { it.label == "Ready" })
     }
 
     @Test

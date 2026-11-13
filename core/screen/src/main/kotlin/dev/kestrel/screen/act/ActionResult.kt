@@ -8,7 +8,7 @@ enum class ActionMethod {
     /** The action of the element's nearest parent that offers it. */
     PARENT_ACTION,
 
-    /** The element's action in a fresh snapshot, after the old node had gone (design spec, section 14.3). */
+    /** The element's action in a fresh snapshot, after its node had gone or refused the action (design spec, section 14.3). */
     RETRY_ACTION,
     GESTURE,
 }

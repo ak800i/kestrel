@@ -16,7 +16,10 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Classic Views: buttons, an unlabeled icon, a check box, a tappable row, text fields and a dialog. */
+/**
+ * Classic Views: buttons, an unlabeled icon, a check box, a tappable row, text fields, a dialog, and a disabled button
+ * inside a tappable card.
+ */
 class ViewsActivity : Activity() {
     private lateinit var page: LinearLayout
     private lateinit var status: TextView
@@ -83,6 +86,16 @@ class ViewsActivity : Activity() {
             id = R.id.rebuild
             text = "Rebuild"
             setOnClickListener { replaceSendButton() }
+        })
+        page.addView(LinearLayout(this).apply {
+            setPadding(0, dp(8), 0, dp(8))
+            setOnClickListener { report("Clicked product card") }
+            addView(TextView(context).apply { text = "Blue mug" })
+            addView(Button(context).apply {
+                text = "Add to cart"
+                // Disabled on purpose: a tap on it must not reach the card around it.
+                isEnabled = false
+            })
         })
     }
 
