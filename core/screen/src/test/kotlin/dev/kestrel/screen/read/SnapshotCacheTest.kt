@@ -38,6 +38,22 @@ class SnapshotCacheTest {
     }
 
     @Test
+    fun anInvalidateDuringABuildIsNotLost() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        var builds = 0
+        lateinit var cache: SnapshotCache<Int>
+        cache = SnapshotCache(tracker) {
+            builds++
+            // Another caller invalidates the cache while this snapshot is being built.
+            if (builds == 1) cache.invalidate()
+            builds
+        }
+
+        assertEquals(1, cache.current())
+        assertEquals(2, cache.current())
+    }
+
+    @Test
     fun invalidateMakesTheNextCallBuildAgain() = runTest {
         val tracker = ScreenChangeTracker { testScheduler.currentTime }
         var builds = 0
