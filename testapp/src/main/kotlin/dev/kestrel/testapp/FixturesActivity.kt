@@ -17,6 +17,7 @@ class FixturesActivity : Activity() {
             "Compose" to ComposeActivity::class.java,
             "Web" to WebActivity::class.java,
             "Secure" to SecureActivity::class.java,
+            "Hook probe" to HookProbeActivity::class.java,
         )
         for ((name, activity) in fixtures) {
             page.addView(Button(this).apply {

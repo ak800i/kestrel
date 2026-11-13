@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Test hooks for adb (design spec, section 16.1). Only callers that hold DUMP, in practice adb shell,
+             can send commands. Release builds do not contain this receiver, and the audit checks that. -->
+        <receiver
+            android:name=".debug.TestHookReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

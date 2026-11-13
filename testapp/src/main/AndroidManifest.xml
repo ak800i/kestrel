@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Lets the hook probe see Kestrel, so that only Kestrel's permission check can refuse it. -->
+    <queries>
+        <package android:name="dev.kestrel" />
+    </queries>
+
     <!-- Fixture screens for Kestrel's instrumented tests (design spec, section 16.3). This app is never shipped. -->
     <application
         android:icon="@android:drawable/sym_def_app_icon"
@@ -39,6 +44,9 @@
             android:exported="true" />
         <activity
             android:name=".SecureActivity"
+            android:exported="true" />
+        <activity
+            android:name=".HookProbeActivity"
             android:exported="true" />
     </application>
 </manifest>

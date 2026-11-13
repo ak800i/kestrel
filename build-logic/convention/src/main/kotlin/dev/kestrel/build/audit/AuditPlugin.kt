@@ -3,6 +3,7 @@ package dev.kestrel.build.audit
 import com.android.build.api.artifact.ScopedArtifact
 import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.AndroidComponentsExtension
+import com.android.build.api.variant.ApplicationVariant
 import com.android.build.api.variant.ScopedArtifacts
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -15,6 +16,7 @@ import org.gradle.language.base.plugins.LifecycleBasePlugin
 /**
  * Registers `kestrelAudit` and the checks it runs (design spec, section 13.2), for every build variant,
  * and makes `check` run it. Exceptions live in `audit/rules.txt`, each with a written justification.
+ * The audit also checks that release builds contain no test hooks (section 16.1).
  */
 class AuditPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -70,6 +72,14 @@ class AuditPlugin : Plugin<Project> {
                     report.set(reports.map { it.file("native-libs-${variant.name}.txt") })
                 }
                 audit.configure { dependsOn(dependencies, native) }
+                if (variant.buildType == "release") {
+                    val manifestCheck = project.tasks.register("kestrelCheckManifest$suffix", CheckManifestTask::class.java) {
+                        manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+                        applicationId.set((variant as ApplicationVariant).applicationId)
+                        report.set(reports.map { it.file("manifest-${variant.name}.txt") })
+                    }
+                    audit.configure { dependsOn(manifestCheck) }
+                }
             }
         }
     }
