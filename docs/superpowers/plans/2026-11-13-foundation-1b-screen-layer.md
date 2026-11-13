@@ -66,6 +66,8 @@ The code below already handles all of these. They are written down so that nobod
 - AndroidX's `ProfileInstallReceiver` also requires `android.permission.DUMP`, so the release check looks only at Kestrel's own components.
 - After many hours, the emulator's host-side rendering slows down: Android's graphics composer spends most of its time in the kernel, apps start in 3 s instead of 1 s, and Android's watchdog may restart the system. Restarting the emulator process fixes it.
 - The emulator process once closed during the zoom test, while its rendering was slow in this way. The Windows Application log showed a timeout in the NVIDIA graphics driver (a TDR). After a fresh start, all the device tests passed. If the emulator closes during the tests, start it again and run the tests again.
+- Android's magnification moves every node on the screen without sending an accessibility event, so Kestrel invalidates its snapshot cache after a zoom.
+- A fixture's layout may still move by a few pixels just after the screen opens. Tests that compare an element before and after an action compare its size, not its position.
 
 ## File map
 
@@ -4367,7 +4369,7 @@ git commit -m "feat(screen): type and scroll with fallbacks" -m "Co-authored-by:
 - Produces: on `ScreenActions`: `swipe(fromX, fromY, toX, toY)`, `drag(fromX, fromY, toX, toY)`, `pinch(centerX, centerY, startSpan, endSpan)`, `zoomScale: Float`, `zoom(scale: Float, centerX, centerY)`, `resetZoom()`, `global(action: GlobalAction)`, `openApp(packageName: String)` and `openUri(uri: String)`, all returning `ActionResult` except `zoomScale`.
 - Produces: `enum class GlobalAction { BACK, HOME, RECENT_APPS, NOTIFICATIONS, QUICK_SETTINGS, LOCK_SCREEN, SCREENSHOT, POWER_MENU, SPLIT_SCREEN, PLAY_PAUSE }` and `ActionMethod.GLOBAL_ACTION`, `INTENT` and `MAGNIFICATION`.
 
-A drag is a long press that continues into a move, so it is dispatched in two parts with Android's `continueStroke`. Android ends a continued stroke at its last change of position, so the press drifts slowly by 10 pixels, less than a touch slop, to last its whole 800 ms. Zoom uses the magnification controller with `MagnificationConfig`, because `setScale` and `setCenter` are deprecated from API 33. `openApp` starts an app's launcher screen; Android shows Kestrel only the apps that its manifest asks to see, so `:core:screen`'s manifest asks for apps with a launcher activity.
+A drag is a long press that continues into a move, so it is dispatched in two parts with Android's `continueStroke`. Android ends a continued stroke at its last change of position, so the press drifts slowly by 10 pixels, less than a touch slop, to last its whole 800 ms. Zoom uses the magnification controller with `MagnificationConfig`, because `setScale` and `setCenter` are deprecated from API 33. Magnification moves every element on the screen without an accessibility event, so `zoom` and `resetZoom` invalidate the snapshot cache and then wait like every other action; the zoom test checks that the next snapshot shows the pad at its magnified width. `openApp` starts an app's launcher screen; Android shows Kestrel only the apps that its manifest asks to see, so `:core:screen`'s manifest asks for apps with a launcher activity.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4382,6 +4384,7 @@ import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -4400,6 +4403,9 @@ class GestureTest {
     }
 
     private suspend fun padReports(gesture: String) = screen.awaitElement { it.label == gesture }
+
+    /** Where the current snapshot shows the pad, without waiting for the screen to change. */
+    private suspend fun padNow() = screen.session.snapshots.current().snapshot.elements.single { it.label == "Gesture pad" }.bounds
 
     @Test
     fun tapAndLongPressAtAPoint() = runBlocking {
@@ -4440,8 +4446,12 @@ class GestureTest {
 
         assertEquals(ActionResult.Done(ActionMethod.MAGNIFICATION), actions.zoom(2f, pad.centerX, pad.centerY))
         assertEquals(2f, actions.zoomScale)
+        // Magnification moves every element, so the next snapshot must show the pad at its magnified size. The width
+        // is compared because the fixture's layout may still move the pad up or down a little after it opens.
+        assertNotEquals(pad.width, padNow().width)
         assertEquals(ActionResult.Done(ActionMethod.MAGNIFICATION), actions.resetZoom())
         assertEquals(1f, actions.zoomScale)
+        assertEquals(pad.width, padNow().width)
     }
 }
 ```
@@ -4855,12 +4865,21 @@ class ScreenActions internal constructor(
             .setCenterY(centerY.toFloat())
             .build()
         val done = withContext(Dispatchers.Main) { service.magnificationController.setMagnificationConfig(config, false) }
-        return if (done) ActionResult.Done(ActionMethod.MAGNIFICATION) else ActionResult.Failed("Android refused to magnify the screen")
+        return if (done) magnified() else ActionResult.Failed("Android refused to magnify the screen")
     }
 
     suspend fun resetZoom(): ActionResult {
         val done = withContext(Dispatchers.Main) { service.magnificationController.resetCurrentMagnification(false) }
-        return if (done) ActionResult.Done(ActionMethod.MAGNIFICATION) else ActionResult.Failed("Android refused to reset the magnification")
+        return if (done) magnified() else ActionResult.Failed("Android refused to reset the magnification")
+    }
+
+    /**
+     * Magnification moves every element on the screen, and Android need not send an accessibility event for it, so
+     * the next snapshot is built anew.
+     */
+    private suspend fun magnified(): ActionResult {
+        snapshots.invalidate()
+        return settled(ActionMethod.MAGNIFICATION)
     }
 
     suspend fun global(action: GlobalAction): ActionResult {
