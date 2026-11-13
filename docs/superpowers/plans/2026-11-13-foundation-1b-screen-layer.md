@@ -23,7 +23,7 @@
 - Accessibility service: all event types (`typeAllMask`); include views that are not important for accessibility, report view IDs, retrieve interactive windows, request the accessibility button, and act as an input method; retrieve window content, perform gestures, take screenshots and control magnification; `isAccessibilityTool="true"` (section 9.1, D19).
 - Snapshots: Kestrel reads all interactive windows and ignores its own overlay windows. Each element gets a stable key built from the window's package, the view ID, the label and the element's position among similar siblings. Snapshots are cached and rebuilt after the screen has been quiet for about 150 ms (section 9.2).
 - A text field is never named by the text typed into it, and its key uses only its own description or hint, so that the key stays the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty (sections 9.2 and 9.7).
-- Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press, drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
+- Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press with the long-click action, falling back to a gesture; drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. An action looks up its element in the current snapshot, and a tap or long press never acts on a disabled element. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
 - If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on (section 9.7).
 - All overlays are accessibility overlay windows, so Kestrel needs no "display over other apps" permission (section 9.4). The feedback bar never receives touches (section 8.9). The confirmation card's Confirm and Cancel buttons accept touches (section 12.4).
 - The touch watcher reports the owner's touches, and Kestrel ignores the touches that it injects itself (section 14.1).
@@ -2728,17 +2728,169 @@ git commit -m "feat(screen): add the accessibility service and read snapshots" -
 **Files:**
 - Create: `core/screen/src/main/kotlin/dev/kestrel/screen/act/ActionResult.kt`, `GestureRunner.kt`, `Gestures.kt`, `ScreenActions.kt`
 - Modify: `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt` (add `actions`)
+- Modify: `testapp/src/main/kotlin/dev/kestrel/testapp/ViewsActivity.kt` (a disabled button inside a tappable card)
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TapTest.kt`
 
 **Interfaces:**
 - Consumes: `ScreenSession`, `LiveSnapshot` and `ScreenChangeTracker` from Tasks 3 and 5.
 - Produces: `enum class ActionMethod { ACTION, PARENT_ACTION, RETRY_ACTION, GESTURE }` (later tasks add more) and `sealed interface ActionResult` with `Done(method: ActionMethod)` and `Failed(reason: String)`.
 - Produces: `enum class GestureOutcome { COMPLETED, CANCELLED, REJECTED }` and `class GestureRunner(service)` with `suspend perform(gesture): GestureOutcome`, which runs one gesture at a time.
-- Produces: `class ScreenActions` with `suspend tap(key: String, seen: LiveSnapshot? = null)`, `longPress(key, seen)`, `tapAt(x, y)` and `longPressAt(x, y)`, all returning `ActionResult`. `ScreenSession.actions` gives access to them.
+- Produces: `class ScreenActions` with `suspend tap(key: String)`, `longPress(key: String)`, `tapAt(x, y)` and `longPressAt(x, y)`, all returning `ActionResult`. `ScreenSession.actions` gives access to them.
+- Produces: in the Views fixture, the card "Blue mug", which reports "Clicked product card", with the disabled button "Add to cart" (read as "ADD TO CART") inside it.
 
-A tap tries, in order: the element's own click action; the click action of its nearest parent that offers one, up to 20 levels up; the same in a fresh snapshot, when the old node has gone (spec section 14.3); and finally a tap gesture at the element's centre. A long press works the same way with the long-click action. Each action then waits until the screen has been quiet for 200 ms, counted from the end of the action (for a gesture, from the moment the finger is lifted), but never longer than 3 s. A gesture that a touch cancels fails with "A touch on the screen cancelled the gesture".
+A tap looks up its key in the current snapshot, never in an older one: a list may have reused an old row's view for another item, and a tap on that view would hit the wrong item. The snapshot cache returns the same snapshot while the screen has not changed, so the lookup costs nothing then. The tap then finds the node that a finger's touch on the element would reach: the element itself or its nearest parent that handles touches, up to 20 levels up. If that node is disabled, the tap fails with "The element is disabled", because a finger's touch would stop there too. Otherwise the tap tries, in order: that node's click action; the same in a fresh snapshot, when the node has gone or refused the action (spec section 14.3); and finally a tap gesture at the element's centre, where it is now. A long press works the same way with the long-click action. Failure messages never contain the key, because a key contains screen text. Each action then waits until the screen has been quiet for 200 ms, counted from the end of the action (for a gesture, from the moment the finger is lifted), but never longer than 3 s. A gesture that a touch cancels fails with "A touch on the screen cancelled the gesture".
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the disabled button and write the failing test**
+
+Replace the whole content of `testapp/src/main/kotlin/dev/kestrel/testapp/ViewsActivity.kt` with:
+
+```kotlin
+package dev.kestrel.testapp
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.os.Bundle
+import android.text.InputType
+import android.view.MotionEvent
+import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.TextView
+
+/**
+ * Classic Views: buttons, an unlabeled icon, a check box, a tappable row, text fields, a dialog, and a disabled button
+ * inside a tappable card.
+ */
+class ViewsActivity : Activity() {
+    private lateinit var page: LinearLayout
+    private lateinit var status: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        page = fixturePage("Views fixture")
+        status = page.addStatus()
+        page.addView(sendButton())
+        page.addView(ImageButton(this).apply {
+            id = R.id.compose_button
+            setImageResource(android.R.drawable.ic_menu_edit)
+            // No content description on purpose: Kestrel has to name this button from its view ID.
+            setOnClickListener { report("Clicked compose") }
+        })
+        page.addView(CheckBox(this).apply {
+            id = R.id.remember_me
+            text = "Remember me"
+            setOnCheckedChangeListener { _, checked -> report(if (checked) "Checked Remember me" else "Unchecked Remember me") }
+        })
+        page.addView(LinearLayout(this).apply {
+            id = R.id.contact_row
+            setPadding(0, dp(12), 0, dp(12))
+            setOnClickListener { report("Clicked contact row") }
+            addView(TextView(context).apply { text = "Ana Petrović" })
+            addView(TextView(context).apply {
+                text = "Online"
+                setPadding(dp(16), 0, 0, 0)
+            })
+        })
+        page.addView(
+            TouchOnlyView(this).apply {
+                id = R.id.touch_target
+                contentDescription = "Touch target"
+                onTouched = { report("Touched target") }
+            },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)),
+        )
+        page.addView(EditText(this).apply {
+            id = R.id.message_field
+            hint = "Message"
+        })
+        page.addView(RejectingEditText(this).apply {
+            id = R.id.strict_field
+            hint = "Strict field"
+        })
+        page.addView(EditText(this).apply {
+            id = R.id.password_field
+            hint = "Password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        })
+        page.addView(Button(this).apply {
+            id = R.id.show_dialog
+            text = "Show dialog"
+            setOnClickListener {
+                AlertDialog.Builder(context)
+                    .setTitle("Delete draft?")
+                    .setPositiveButton("Delete", null)
+                    .setNegativeButton("Keep", null)
+                    .show()
+            }
+        })
+        page.addView(Button(this).apply {
+            id = R.id.rebuild
+            text = "Rebuild"
+            setOnClickListener { replaceSendButton() }
+        })
+        page.addView(LinearLayout(this).apply {
+            setPadding(0, dp(8), 0, dp(8))
+            setOnClickListener { report("Clicked product card") }
+            addView(TextView(context).apply { text = "Blue mug" })
+            addView(Button(context).apply {
+                text = "Add to cart"
+                // Disabled on purpose: a tap on it must not reach the card around it.
+                isEnabled = false
+            })
+        })
+    }
+
+    private fun sendButton() = Button(this).apply {
+        id = R.id.send_button
+        text = "Send"
+        setOnClickListener { report("Clicked Send") }
+        setOnLongClickListener {
+            report("Long-pressed Send")
+            true
+        }
+    }
+
+    /** Replaces the Send button with an identical new one, so that a test can hold the node of a view that is gone. */
+    private fun replaceSendButton() {
+        val index = page.indexOfChild(page.findViewById(R.id.send_button))
+        page.removeViewAt(index)
+        page.addView(sendButton(), index)
+        report("Rebuilt")
+    }
+
+    private fun report(text: String) {
+        status.text = text
+    }
+}
+
+/** Reacts to touches but offers no click action, so that Kestrel has to tap it with a gesture. */
+class TouchOnlyView(context: Context) : View(context) {
+    var onTouched: () -> Unit = {}
+
+    init {
+        setBackgroundColor(0xFFE0E0E0.toInt())
+    }
+
+    // On purpose: this view must not offer a click action to accessibility services.
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_UP) onTouched()
+        return true
+    }
+}
+
+/** Refuses the set-text action, as some messaging apps do, so that Kestrel has to type through its input method. */
+class RejectingEditText(context: Context) : EditText(context) {
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean =
+        action != AccessibilityNodeInfo.ACTION_SET_TEXT && super.performAccessibilityAction(action, arguments)
+}
+```
 
 `app/src/androidTest/kotlin/dev/kestrel/app/screen/TapTest.kt`:
 
@@ -2793,16 +2945,25 @@ class TapTest {
     }
 
     @Test
-    fun tapFindsTheElementAgainWhenItsNodeHasGone() = runBlocking {
+    fun aKeyFromAnOlderSnapshotTapsTheElementThatIsOnTheScreenNow() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val seen = screen.session.snapshots.current()
-        val send = seen.snapshot.elements.single { it.label == "SEND" }
-        actions.tap(seen.snapshot.elements.single { it.label == "REBUILD" }.key)
+        val old = screen.session.snapshots.current().snapshot
+        actions.tap(old.elements.single { it.label == "REBUILD" }.key)
         screen.awaitElement { it.label == "Rebuilt" }
 
-        assertEquals(ActionResult.Done(ActionMethod.RETRY_ACTION), actions.tap(send.key, seen))
+        // Rebuild has replaced the Send button, so the node in the old snapshot has gone.
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.tap(old.elements.single { it.label == "SEND" }.key))
         screen.awaitElement { it.label == "Clicked Send" }
         Unit
+    }
+
+    @Test
+    fun aDisabledElementIsNotTappedAndTheTapDoesNotReachItsParent() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val addToCart = screen.awaitElement { it.label == "ADD TO CART" }
+
+        assertEquals(ActionResult.Failed("The element is disabled"), actions.tap(addToCart.key))
+        assertTrue(screen.session.snapshots.current().snapshot.elements.any { it.label == "Ready" })
     }
 
     @Test
@@ -2845,7 +3006,7 @@ enum class ActionMethod {
     /** The action of the element's nearest parent that offers it. */
     PARENT_ACTION,
 
-    /** The element's action in a fresh snapshot, after the old node had gone (design spec, section 14.3). */
+    /** The element's action in a fresh snapshot, after its node had gone or refused the action (design spec, section 14.3). */
     RETRY_ACTION,
     GESTURE,
 }
@@ -2924,8 +3085,10 @@ internal object Gestures {
 package dev.kestrel.screen.act
 
 import android.accessibilityservice.GestureDescription
+import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.SnapshotCache
@@ -2938,41 +3101,44 @@ class ScreenActions internal constructor(
     private val clock: () -> Long = SystemClock::uptimeMillis,
 ) {
     /**
-     * Taps the element with [key] in [seen], or in the current snapshot. Kestrel uses the element's click action,
-     * or the click action of its nearest clickable parent. If the element's node has gone or the click fails, it
-     * looks for the element again in a fresh snapshot. If nothing offers a click, it taps the element's centre.
+     * Taps the element with [key]. Kestrel looks the key up in the current snapshot, never in an older one, because a
+     * list may have reused an old view for another item. It uses the click action of the element or of its nearest
+     * parent that handles touches. If that node has gone or refuses the click, Kestrel looks for the element again in
+     * a fresh snapshot, and if nothing offers a click, it taps the element's centre. It does not tap a disabled
+     * element, because a finger's touch would stop there too.
      */
-    suspend fun tap(key: String, seen: LiveSnapshot? = null): ActionResult =
-        press(key, seen, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
+    suspend fun tap(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
 
     /** Long-presses the element with [key], in the same way as [tap]. */
-    suspend fun longPress(key: String, seen: LiveSnapshot? = null): ActionResult =
-        press(key, seen, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
+    suspend fun longPress(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
     suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
     suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y))
 
-    private suspend fun press(key: String, seen: LiveSnapshot?, action: Int, gesture: (Int, Int) -> GestureDescription): ActionResult {
-        val live = seen ?: snapshots.current()
-        val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
-        val target = node.selfOrParentOffering(action)
-        if (target != null) {
+    private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
+        val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
+        val target = node.touchTarget(action)
+        if (target != null && !target.node.isEnabled) return DISABLED
+        if (target != null && target.node.offers(action)) {
             if (target.node.performAction(action)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh()) {
-            // The element is still there, but neither it nor a parent offers the action.
-            val bounds = live.snapshot.element(key)!!.bounds
-            return gesture(gesture(bounds.centerX, bounds.centerY))
+            // The element is still there, but what a touch on it reaches does not offer the action.
+            val bounds = node.screenBounds()
+            return gesture(fallback(bounds.centerX, bounds.centerY))
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
-        val freshTarget = fresh.node(key)?.selfOrParentOffering(action)
-        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION)
-        return gesture(gesture(element.bounds.centerX, element.bounds.centerY))
+        val freshTarget = fresh.node(key)?.touchTarget(action)
+        if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
+        if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
+            return settled(ActionMethod.RETRY_ACTION)
+        }
+        return gesture(fallback(element.bounds.centerX, element.bounds.centerY))
     }
 
     private suspend fun gesture(description: GestureDescription): ActionResult =
@@ -2994,19 +3160,31 @@ class ScreenActions internal constructor(
 
     private class Target(val node: AccessibilityNodeInfo, val isSelf: Boolean)
 
-    private fun AccessibilityNodeInfo.selfOrParentOffering(action: Int): Target? {
+    /**
+     * The element's node, or its nearest parent up to [MAX_PARENT_DEPTH] levels up, that handles touches. A finger's
+     * touch stops at that view even when it is disabled, so Kestrel's action stops there too.
+     */
+    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? {
         var current: AccessibilityNodeInfo? = this
         var depth = 0
         while (current != null && depth <= MAX_PARENT_DEPTH) {
-            if (current.isEnabled && current.actionList.any { it.id == action }) return Target(current, isSelf = depth == 0)
+            if (current.isClickable || current.isLongClickable || current.offers(action)) return Target(current, isSelf = depth == 0)
             current = current.parent
             depth++
         }
         return null
     }
 
+    private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
+
+    private fun AccessibilityNodeInfo.screenBounds(): IntRect = Rect().also(::getBoundsInScreen).let {
+        IntRect(it.left, it.top, it.right, it.bottom)
+    }
+
     private companion object {
         const val MAX_PARENT_DEPTH = 20
+        val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
+        val DISABLED = ActionResult.Failed("The element is disabled")
     }
 }
 ```
@@ -3050,7 +3228,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 16 test cases (`TapTest` 6) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 17 test cases (`TapTest` 7) and no failures.
 
 - [ ] **Step 5: Run the checks**
 
@@ -3061,7 +3239,7 @@ Expected: `BUILD SUCCESSFUL`.
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add core/screen app/src/androidTest
+git add core/screen app/src/androidTest testapp
 git commit -m "feat(screen): tap and long press with fallbacks" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -3079,7 +3257,7 @@ git commit -m "feat(screen): tap and long press with fallbacks" -m "Co-authored-
 **Interfaces:**
 - Consumes: `ScreenActions`, `GestureRunner` and `Gestures` from Task 6, and `shownText()` from Task 5.
 - Produces: `enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }`, the internal `ScreenPoint(x, y)` and `SwipePaths.forScroll(area: IntRect, direction): Pair<ScreenPoint, ScreenPoint>`.
-- Produces: `ScreenActions.setText(key: String, text: String, seen: LiveSnapshot? = null): ActionResult` and `ScreenActions.scroll(direction: ScrollDirection, key: String? = null, seen: LiveSnapshot? = null): ActionResult`.
+- Produces: `ScreenActions.setText(key: String, text: String): ActionResult` and `ScreenActions.scroll(direction: ScrollDirection, key: String? = null): ActionResult`. Like a tap, both look up the key in the current snapshot.
 - Produces: `ActionMethod.INPUT_METHOD`.
 
 `setText` first uses the set-text action and reads the text back, up to 5 times 50 ms apart; it never reads back a password field. The read-back uses the text that the field shows, without its hint, so that clearing a field with an empty text reads back as empty. If the app refuses set-text, or the text does not read back, Kestrel types through its accessibility input method: it waits for the input to start in the field, selects all and commits the new text. It remembers the app and uses the input method for it from then on (spec section 9.7). `scroll` uses the element's scroll action, or its parent's, and otherwise swipes from 70% to 30% of the scroll area, across its middle. Without a key, it scrolls the largest scrollable element of the app in front, or swipes over the app's window.
@@ -3305,7 +3483,7 @@ enum class ActionMethod {
     /** The action of the element's nearest parent that offers it. */
     PARENT_ACTION,
 
-    /** The element's action in a fresh snapshot, after the old node had gone (design spec, section 14.3). */
+    /** The element's action in a fresh snapshot, after its node had gone or refused the action (design spec, section 14.3). */
     RETRY_ACTION,
     GESTURE,
 
@@ -3393,16 +3571,16 @@ class ScreenActions internal constructor(
     private val inputMethodApps = ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * Taps the element with [key] in [seen], or in the current snapshot. Kestrel uses the element's click action,
-     * or the click action of its nearest clickable parent. If the element's node has gone or the click fails, it
-     * looks for the element again in a fresh snapshot. If nothing offers a click, it taps the element's centre.
+     * Taps the element with [key]. Kestrel looks the key up in the current snapshot, never in an older one, because a
+     * list may have reused an old view for another item. It uses the click action of the element or of its nearest
+     * parent that handles touches. If that node has gone or refuses the click, Kestrel looks for the element again in
+     * a fresh snapshot, and if nothing offers a click, it taps the element's centre. It does not tap a disabled
+     * element, because a finger's touch would stop there too.
      */
-    suspend fun tap(key: String, seen: LiveSnapshot? = null): ActionResult =
-        press(key, seen, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
+    suspend fun tap(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
 
     /** Long-presses the element with [key], in the same way as [tap]. */
-    suspend fun longPress(key: String, seen: LiveSnapshot? = null): ActionResult =
-        press(key, seen, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
+    suspend fun longPress(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
     suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
@@ -3413,10 +3591,10 @@ class ScreenActions internal constructor(
      * back. If the app refuses the action or the field does not show the text, Kestrel types through its
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
      */
-    suspend fun setText(key: String, text: String, seen: LiveSnapshot? = null): ActionResult {
-        val live = seen ?: snapshots.current()
-        val element = live.snapshot.element(key) ?: return ActionResult.Failed("No element has the key $key")
-        val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
+    suspend fun setText(key: String, text: String): ActionResult {
+        val live = snapshots.current()
+        val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!element.editable) return ActionResult.Failed("The element is not a text field")
         val app = element.packageName
         if (app == null || app !in inputMethodApps) {
@@ -3436,11 +3614,11 @@ class ScreenActions internal constructor(
      * Kestrel uses the scroll actions of the element or its nearest scrollable parent, and otherwise swipes
      * across it (design spec, section 9.3).
      */
-    suspend fun scroll(direction: ScrollDirection, key: String? = null, seen: LiveSnapshot? = null): ActionResult {
-        val live = seen ?: snapshots.current()
+    suspend fun scroll(direction: ScrollDirection, key: String? = null): ActionResult {
+        val live = snapshots.current()
         val element = when (key) {
             null -> live.snapshot.largestScrollable()
-            else -> live.snapshot.element(key) ?: return ActionResult.Failed("No element has the key $key")
+            else -> live.snapshot.element(key) ?: return NOT_ON_SCREEN
         }
         val actions = direction.actionIds()
         val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
@@ -3454,26 +3632,29 @@ class ScreenActions internal constructor(
         return gesture(Gestures.swipe(from, to))
     }
 
-    private suspend fun press(key: String, seen: LiveSnapshot?, action: Int, gesture: (Int, Int) -> GestureDescription): ActionResult {
-        val live = seen ?: snapshots.current()
-        val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
-        val target = node.selfOrParentOffering(listOf(action))
-        if (target != null) {
+    private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
+        val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
+        val target = node.touchTarget(action)
+        if (target != null && !target.node.isEnabled) return DISABLED
+        if (target != null && target.node.offers(action)) {
             if (target.node.performAction(action)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh()) {
-            // The element is still there, but neither it nor a parent offers the action.
-            val bounds = live.snapshot.element(key)!!.bounds
-            return gesture(gesture(bounds.centerX, bounds.centerY))
+            // The element is still there, but what a touch on it reaches does not offer the action.
+            val bounds = node.screenBounds()
+            return gesture(fallback(bounds.centerX, bounds.centerY))
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
-        val freshTarget = fresh.node(key)?.selfOrParentOffering(listOf(action))
-        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION)
-        return gesture(gesture(element.bounds.centerX, element.bounds.centerY))
+        val freshTarget = fresh.node(key)?.touchTarget(action)
+        if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
+        if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
+            return settled(ActionMethod.RETRY_ACTION)
+        }
+        return gesture(fallback(element.bounds.centerX, element.bounds.centerY))
     }
 
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
@@ -3538,6 +3719,23 @@ class ScreenActions internal constructor(
 
     private class Target(val node: AccessibilityNodeInfo, val isSelf: Boolean)
 
+    /**
+     * The element's node, or its nearest parent up to [MAX_PARENT_DEPTH] levels up, that handles touches. A finger's
+     * touch stops at that view even when it is disabled, so Kestrel's action stops there too.
+     */
+    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? {
+        var current: AccessibilityNodeInfo? = this
+        var depth = 0
+        while (current != null && depth <= MAX_PARENT_DEPTH) {
+            if (current.isClickable || current.isLongClickable || current.offers(action)) return Target(current, isSelf = depth == 0)
+            current = current.parent
+            depth++
+        }
+        return null
+    }
+
+    private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
+
     private fun AccessibilityNodeInfo.selfOrParentOffering(actions: List<Int>): Target? {
         var current: AccessibilityNodeInfo? = this
         var depth = 0
@@ -3573,6 +3771,8 @@ class ScreenActions internal constructor(
 
     private companion object {
         const val MAX_PARENT_DEPTH = 20
+        val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
+        val DISABLED = ActionResult.Failed("The element is disabled")
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L
@@ -3619,7 +3819,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 24 test cases (`TypeTest` 5 and `ScrollTest` 3) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 25 test cases (`TypeTest` 5 and `ScrollTest` 3) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -3876,7 +4076,7 @@ enum class ActionMethod {
     /** The action of the element's nearest parent that offers it. */
     PARENT_ACTION,
 
-    /** The element's action in a fresh snapshot, after the old node had gone (design spec, section 14.3). */
+    /** The element's action in a fresh snapshot, after its node had gone or refused the action (design spec, section 14.3). */
     RETRY_ACTION,
     GESTURE,
 
@@ -4039,16 +4239,16 @@ class ScreenActions internal constructor(
     private val inputMethodApps = ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * Taps the element with [key] in [seen], or in the current snapshot. Kestrel uses the element's click action,
-     * or the click action of its nearest clickable parent. If the element's node has gone or the click fails, it
-     * looks for the element again in a fresh snapshot. If nothing offers a click, it taps the element's centre.
+     * Taps the element with [key]. Kestrel looks the key up in the current snapshot, never in an older one, because a
+     * list may have reused an old view for another item. It uses the click action of the element or of its nearest
+     * parent that handles touches. If that node has gone or refuses the click, Kestrel looks for the element again in
+     * a fresh snapshot, and if nothing offers a click, it taps the element's centre. It does not tap a disabled
+     * element, because a finger's touch would stop there too.
      */
-    suspend fun tap(key: String, seen: LiveSnapshot? = null): ActionResult =
-        press(key, seen, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
+    suspend fun tap(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
 
     /** Long-presses the element with [key], in the same way as [tap]. */
-    suspend fun longPress(key: String, seen: LiveSnapshot? = null): ActionResult =
-        press(key, seen, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
+    suspend fun longPress(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
     suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
 
@@ -4059,10 +4259,10 @@ class ScreenActions internal constructor(
      * back. If the app refuses the action or the field does not show the text, Kestrel types through its
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
      */
-    suspend fun setText(key: String, text: String, seen: LiveSnapshot? = null): ActionResult {
-        val live = seen ?: snapshots.current()
-        val element = live.snapshot.element(key) ?: return ActionResult.Failed("No element has the key $key")
-        val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
+    suspend fun setText(key: String, text: String): ActionResult {
+        val live = snapshots.current()
+        val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!element.editable) return ActionResult.Failed("The element is not a text field")
         val app = element.packageName
         if (app == null || app !in inputMethodApps) {
@@ -4082,11 +4282,11 @@ class ScreenActions internal constructor(
      * Kestrel uses the scroll actions of the element or its nearest scrollable parent, and otherwise swipes
      * across it (design spec, section 9.3).
      */
-    suspend fun scroll(direction: ScrollDirection, key: String? = null, seen: LiveSnapshot? = null): ActionResult {
-        val live = seen ?: snapshots.current()
+    suspend fun scroll(direction: ScrollDirection, key: String? = null): ActionResult {
+        val live = snapshots.current()
         val element = when (key) {
             null -> live.snapshot.largestScrollable()
-            else -> live.snapshot.element(key) ?: return ActionResult.Failed("No element has the key $key")
+            else -> live.snapshot.element(key) ?: return NOT_ON_SCREEN
         }
         val actions = direction.actionIds()
         val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
@@ -4157,25 +4357,28 @@ class ScreenActions internal constructor(
         }
     }
 
-    private suspend fun press(key: String, seen: LiveSnapshot?, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
-        val live = seen ?: snapshots.current()
-        val node = live.node(key) ?: return ActionResult.Failed("No element has the key $key")
-        val target = node.selfOrParentOffering(listOf(action))
-        if (target != null) {
+    private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
+        val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
+        val target = node.touchTarget(action)
+        if (target != null && !target.node.isEnabled) return DISABLED
+        if (target != null && target.node.offers(action)) {
             if (target.node.performAction(action)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh()) {
-            // The element is still there, but neither it nor a parent offers the action.
-            val bounds = live.snapshot.element(key)!!.bounds
+            // The element is still there, but what a touch on it reaches does not offer the action.
+            val bounds = node.screenBounds()
             return gesture(fallback(bounds.centerX, bounds.centerY))
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
-        val freshTarget = fresh.node(key)?.selfOrParentOffering(listOf(action))
-        if (freshTarget != null && freshTarget.node.performAction(action)) return settled(ActionMethod.RETRY_ACTION)
+        val freshTarget = fresh.node(key)?.touchTarget(action)
+        if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
+        if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
+            return settled(ActionMethod.RETRY_ACTION)
+        }
         return gesture(fallback(element.bounds.centerX, element.bounds.centerY))
     }
 
@@ -4241,6 +4444,23 @@ class ScreenActions internal constructor(
 
     private class Target(val node: AccessibilityNodeInfo, val isSelf: Boolean)
 
+    /**
+     * The element's node, or its nearest parent up to [MAX_PARENT_DEPTH] levels up, that handles touches. A finger's
+     * touch stops at that view even when it is disabled, so Kestrel's action stops there too.
+     */
+    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? {
+        var current: AccessibilityNodeInfo? = this
+        var depth = 0
+        while (current != null && depth <= MAX_PARENT_DEPTH) {
+            if (current.isClickable || current.isLongClickable || current.offers(action)) return Target(current, isSelf = depth == 0)
+            current = current.parent
+            depth++
+        }
+        return null
+    }
+
+    private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
+
     private fun AccessibilityNodeInfo.selfOrParentOffering(actions: List<Int>): Target? {
         var current: AccessibilityNodeInfo? = this
         var depth = 0
@@ -4276,6 +4496,8 @@ class ScreenActions internal constructor(
 
     private companion object {
         const val MAX_PARENT_DEPTH = 20
+        val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
+        val DISABLED = ActionResult.Failed("The element is disabled")
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L
@@ -4287,7 +4509,7 @@ class ScreenActions internal constructor(
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 33 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 34 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
 
 - [ ] **Step 5: Run the checks**
 
@@ -5028,7 +5250,7 @@ class KestrelAccessibilityService : AccessibilityService() {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 40 test cases (`OverlayTest` 7) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 41 test cases (`OverlayTest` 7) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -5841,7 +6063,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 45 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 46 test cases (`GridBarAndCardTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6522,7 +6744,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 48 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 49 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -7358,7 +7580,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 54 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 55 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -7526,7 +7748,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 54 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 55 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 

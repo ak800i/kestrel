@@ -307,11 +307,14 @@ A thin overlay at the top of the screen shows the listening mode, the last thing
 | Tap | The element's click action, or the click action of its nearest clickable parent | A tap gesture at the element's centre |
 | Type | The set-text action (section 9.7) | The accessibility input method (API 33) |
 | Scroll | The element's scroll actions | Swipe gestures |
-| Long-press, drag, pinch and zoom | Gestures, and Android's magnification controller for zoom | – |
+| Long-press | The element's long-click action, or the long-click action of its nearest parent that handles touches | A long-press gesture at the element's centre |
+| Drag, pinch and zoom | Gestures, and Android's magnification controller for zoom | – |
 | Back, home, recent apps, notifications, Quick Settings, lock, screenshot, power menu, split screen, play and pause | Android's global actions | – |
 | Open an app, a link or a deep link | Intents | – |
 
 After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s.
+
+An action looks up its element in the current snapshot, never in an older one, because a list may have reused an old row's view for another item. A tap or long press goes to the node that a finger's touch would reach: the element itself or its nearest parent that handles touches. If that node is disabled, Kestrel does not act and reports it, because a finger's touch would stop there too.
 
 ### 9.4 Overlays
 
