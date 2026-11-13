@@ -22,6 +22,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Reads the screen and acts on it (design spec, sections 7.2 and 9.1). -->
+        <service
+            android:name=".KestrelAccessibilityService"
+            android:exported="true"
+            android:label="Kestrel"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
         <!-- EmojiCompat would ask Google Play services for a downloadable emoji font. -->
         <provider
             android:name="androidx.startup.InitializationProvider"

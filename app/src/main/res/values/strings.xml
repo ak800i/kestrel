@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Kestrel reads the screen and acts on it when you ask, so that you can use the phone by voice. What it reads stays on the phone, except what you choose to send to your own AI provider.</string>
+</resources>
