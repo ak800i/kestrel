@@ -14,7 +14,7 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
     }
 }
 
-/** Shared by `:app` and, from plan 1B, `:testapp`. Only `:app` is audited, because `:testapp` is never shipped. */
+/** Shared by `:app` and `:testapp`. Only `:app` is audited, because `:testapp` is never shipped. */
 internal fun Project.applyKestrelApplicationDefaults() {
     pluginManager.apply("com.android.application")
     extensions.configure<ApplicationExtension> {

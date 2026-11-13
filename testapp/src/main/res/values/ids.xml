@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- View IDs give Kestrel's snapshots resource names such as dev.kestrel.testapp:id/send_button. -->
+<resources>
+    <item name="status" type="id" />
+    <item name="send_button" type="id" />
+    <item name="compose_button" type="id" />
+    <item name="remember_me" type="id" />
+    <item name="contact_row" type="id" />
+    <item name="touch_target" type="id" />
+    <item name="message_field" type="id" />
+    <item name="strict_field" type="id" />
+    <item name="password_field" type="id" />
+    <item name="show_dialog" type="id" />
+    <item name="rebuild" type="id" />
+    <item name="gesture_pad" type="id" />
+</resources>

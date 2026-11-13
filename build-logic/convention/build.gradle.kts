@@ -37,6 +37,10 @@ gradlePlugin {
             id = "kestrel.android.library"
             implementationClass = "dev.kestrel.build.AndroidLibraryConventionPlugin"
         }
+        register("androidTestApp") {
+            id = "kestrel.android.testapp"
+            implementationClass = "dev.kestrel.build.AndroidTestAppConventionPlugin"
+        }
         register("jvmLibrary") {
             id = "kestrel.jvm.library"
             implementationClass = "dev.kestrel.build.JvmLibraryConventionPlugin"

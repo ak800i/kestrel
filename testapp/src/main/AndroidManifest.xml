@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Fixture screens for Kestrel's instrumented tests (design spec, section 16.3). This app is never shipped. -->
+    <application
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="Kestrel fixtures"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".FixturesActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Lets tests open the app with a link, as Kestrel opens links and deep links. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="kestrel-fixtures" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ViewsActivity"
+            android:exported="true" />
+        <activity
+            android:name=".ScrollActivity"
+            android:exported="true" />
+        <activity
+            android:name=".GesturesActivity"
+            android:exported="true" />
+        <activity
+            android:name=".ComposeActivity"
+            android:exported="true" />
+        <activity
+            android:name=".WebActivity"
+            android:exported="true" />
+        <activity
+            android:name=".SecureActivity"
+            android:exported="true" />
+    </application>
+</manifest>
