@@ -65,7 +65,7 @@ The code below already handles all of these. They are written down so that nobod
 - In `am broadcast -n dev.kestrel/.x.Y`, the short class name is relative to the package `dev.kestrel`, not to the namespace `dev.kestrel.app`, so the hooks use the full class name.
 - Android lets an app use its own components even when they require a permission that the app lacks. A test that "another app is refused" must therefore send from another app.
 - AndroidX's `ProfileInstallReceiver` also requires `android.permission.DUMP`, so the release check looks only at Kestrel's own components.
-- After many hours, the emulator's host-side rendering slows down: Android's graphics composer spends most of its time in the kernel, apps start in 3 s instead of 1 s, and Android's watchdog may restart the system. Restarting the emulator process fixes it.
+- After many hours, the emulator's host-side rendering slows down: Android's graphics composer spends most of its time in the kernel, apps start in 3 s instead of 1 s, and Android's watchdog may restart the system. Restarting the emulator process fixes it. With software rendering (`-gpu swiftshader`), the emulator ran six hours of device tests without slowing down, so `scripts\start-emulator.ps1` starts it that way (Task 13).
 - The emulator process once closed during the zoom test, while its rendering was slow in this way. The Windows Application log showed a timeout in the NVIDIA graphics driver (a TDR). After a fresh start, all the device tests passed. If the emulator closes during the tests, start it again and run the tests again.
 - Android's magnification moves every node on the screen without sending an accessibility event, so Kestrel invalidates its snapshot cache after a zoom.
 - A fixture's layout may still move by a few pixels just after the screen opens. Tests that compare an element before and after an action compare its size, not its position.
@@ -8360,6 +8360,7 @@ git commit -m "feat: add adb test hooks to debug builds" -m "Co-authored-by: Cop
 
 **Files:**
 - Modify: `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` (build the network gateway on first use)
+- Modify: `scripts/start-emulator.ps1` (start the emulator with software rendering)
 - Modify: `README.md` (testing on a device, test hooks)
 - Modify: `docs/superpowers/specs/2026-11-12-kestrel-design.md` (sections 14.1, 16.1 and 19.1, and Appendix B)
 
@@ -8367,7 +8368,9 @@ git commit -m "feat: add adb test hooks to debug builds" -m "Co-authored-by: Cop
 - Consumes: everything above.
 - Produces: `AppGraph.network` is now built on first use; its type and behaviour do not change.
 
-While this plan was checked on a freshly booted emulator, Android stopped Kestrel's process during start-up ("failed to complete startup"), because building OkHttp's client on the main thread took too long while the CPU was busy. Nothing uses the network gateway before sub-project 4, so `AppGraph` now builds it on first use. The release build ships the same 110 libraries as at the end of plan 1A, so `THIRD_PARTY_NOTICES.md` does not change; Step 4 checks that.
+While this plan was checked on a freshly booted emulator, Android stopped Kestrel's process during start-up ("failed to complete startup"), because building OkHttp's client on the main thread took too long while the CPU was busy. Nothing uses the network gateway before sub-project 4, so `AppGraph` now builds it on first use. The release build ships the same 110 libraries as at the end of plan 1A, so `THIRD_PARTY_NOTICES.md` does not change; Step 5 checks that.
+
+While this plan was executed, the emulator's rendering slowed down after 1.5 to 2.5 hours of device tests with the computer's graphics card, and once the NVIDIA graphics driver crashed. With software rendering (`-gpu swiftshader`), it ran six hours of device tests without slowing down, and a full run of the device tests took 3 to 4 minutes instead of 2 to 3. So `start-emulator.ps1` now starts the emulator that way.
 
 - [ ] **Step 1: Build the network gateway on first use**
 
@@ -8438,21 +8441,84 @@ class AppGraph(context: Context) {
 }
 ```
 
-- [ ] **Step 2: Document the device tests and the test hooks in the README**
+- [ ] **Step 2: Start the emulator with software rendering**
+
+Replace the whole content of `scripts/start-emulator.ps1` with:
+
+```powershell
+# Starts kestrel-api37 if it is not running, waits until Android has booted and prints its adb serial.
+# The emulator keeps running in its own window after this script ends.
+$ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\lib\Kestrel.ps1"
+Use-KestrelToolchain
+
+$name = 'kestrel-api37'
+$adb = Get-Adb
+$deadline = (Get-Date).AddMinutes(5)
+$serial = Find-EmulatorSerial $name
+if (-not $serial) {
+    # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
+    $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
+        Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
+    $started = $null
+    if (-not $running) {
+        $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
+        # Software rendering: with the computer's graphics card, the emulator slowed down after a few hours of tests,
+        # and once the graphics driver crashed (plan 1B).
+        $started = Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader' -WindowStyle Minimized -PassThru
+        $null = $started.Handle  # Keeps the exit code readable after the process ends.
+    }
+    do {
+        Start-Sleep -Seconds 5
+        if ($started -and $started.HasExited -and $started.ExitCode -ne 0) {
+            throw "The emulator exited with code $($started.ExitCode) before $name appeared in adb"
+        }
+        $serial = Find-EmulatorSerial $name
+    } until ($serial -or (Get-Date) -gt $deadline)
+    if (-not $serial) { throw "$name did not appear in adb within 5 minutes" }
+}
+do {
+    Start-Sleep -Seconds 3
+    $booted = & $adb -s $serial shell getprop sys.boot_completed 2>$null
+} until ("$booted".Trim() -eq '1' -or (Get-Date) -gt $deadline)
+if ("$booted".Trim() -ne '1') { throw "$name ($serial) did not finish booting within 5 minutes" }
+Write-Output $serial
+```
+
+The flag takes effect when the script starts the emulator, so close a running emulator and let the script start it again:
+
+```powershell
+. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb
+$serial = scripts\start-emulator.ps1
+& $adb -s $serial emu kill
+while (Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" | Where-Object CommandLine -Match '-avd\s+kestrel-api37(\s|$)') { Start-Sleep -Seconds 2 }
+$serial = scripts\start-emulator.ps1
+(Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" | Where-Object CommandLine -Match '-avd\s+kestrel-api37(\s|$)').CommandLine
+```
+
+Expected: the script prints the emulator's serial again, and the command line ends with `-avd kestrel-api37 -no-boot-anim -gpu swiftshader`.
+
+- [ ] **Step 3: Document the device tests and the test hooks in the README**
 
 In `README.md`, after the paragraph that ends with "Auto Blocker must be off while USB debugging is in use.", add:
 
 ````markdown
-The device tests of `:app` use the fixture screens of `:testapp`, a separate app that `connected-test.ps1` installs first. Each test turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so they also switch off any other service on the device. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates, because touches from `adb shell input` do not reach Android the way a finger's touches do.
+The device tests of `:app` use the fixture screens of `:testapp`, a separate app that Gradle installs before the tests. Each test that uses the screen turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so they also switch off any other service on the device. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates: touches from `adb shell input` skip Android's accessibility input filter, while a virtual touchscreen behaves like a finger.
 
-If the device tests become slow, or Android restarts while they run, restart the emulator: run `adb -s $serial emu kill`, then `scripts\start-emulator.ps1`. Restarting Android inside the emulator is not enough.
+The scripts use the adb of the Android SDK. To use the same adb for the commands below, run this in your PowerShell window; it changes only that window's environment:
+
+```powershell
+. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb
+```
+
+`start-emulator.ps1` starts the emulator with software rendering (`-gpu swiftshader`), because with the computer's graphics card the emulator slowed down after a few hours of tests. If the device tests still become slow, or Android restarts while they run, restart the emulator: run `& $adb -s $serial emu kill`, wait until the emulator has closed, and then run `$serial = scripts\start-emulator.ps1`. Restarting Android inside the emulator is not enough.
 
 ### Test hooks
 
 Debug builds contain test hooks that only adb can use (design spec, section 16.1). `scripts\hook.ps1` sends a command and prints the answer, and the comment at the top of the script lists every command. The screen commands need Kestrel's accessibility service, which you can turn on in Settings > Accessibility, or with adb (this replaces the list of enabled services):
 
 ```powershell
-adb -s $serial shell settings put secure enabled_accessibility_services dev.kestrel/dev.kestrel.app.KestrelAccessibilityService
+& $adb -s $serial shell settings put secure enabled_accessibility_services dev.kestrel/dev.kestrel.app.KestrelAccessibilityService
 scripts\hook.ps1 -Serial $serial state                       # is the screen layer running, and is test mode on?
 scripts\hook.ps1 -Serial $serial snapshot -Out screen.json   # what Kestrel reads on the screen, as JSON
 scripts\hook.ps1 -Serial $serial overlay -Show numbers       # numbers on the screen's elements
@@ -8463,14 +8529,14 @@ scripts\hook.ps1 -Serial $serial test-mode -On false
 Release builds do not contain the hooks, and the privacy audit fails a release build that does.
 ````
 
-- [ ] **Step 3: Write the spike result into the spec**
+- [ ] **Step 4: Write the spike result into the spec**
 
 In `docs/superpowers/specs/2026-11-12-kestrel-design.md`, make these five changes.
 
 In section 14.1, replace the two bullets that start with "**Detection.**" and "If spike S3 shows" with:
 
 ```markdown
-- **Detection.** The touch watcher (section 9.4) is an accessibility overlay of 1×1 pixel that asks Android to report touches outside it (`FLAG_WATCH_OUTSIDE_TOUCH`). Android injects Kestrel's own gestures from its virtual input device, while the owner's finger comes from the touchscreen. So the watcher ignores touches from the virtual device while one of Kestrel's gestures runs, and reports every other touch. On Android 13 to 16, the owner's touch also cancels Kestrel's running gesture. From Android 16 QPR2, Android lets the gesture finish, and Kestrel stops after it (section 19.1, B35).
+- **Detection.** The touch watcher (section 9.4) is an accessibility overlay of 1×1 pixel that asks Android to report touches outside it (`FLAG_WATCH_OUTSIDE_TOUCH`). Android injects Kestrel's own gestures from its virtual input device, while the owner's finger comes from the touchscreen. So the watcher ignores touches from the virtual device while one of Kestrel's gestures runs and for 100 ms after it, and reports every other touch. On Android 13 to 15, the owner's touch also cancels Kestrel's running gesture. From Android 16 QPR2, Kestrel is told that the gesture completed, but Android cancels the app's copy of it, so the gesture may have had no effect. Android 16 before QPR2 can behave either way, because a feature flag decides. In every case Kestrel stops after the gesture, and its report (section 14.5) does not count that gesture as done (section 19.1, B35).
 - If the A71 shows that the watcher does not receive a real finger's touches, Kestrel uses screen events that it did not cause (clicks, scrolls and text changes) as the signal instead.
 ```
 
@@ -8486,22 +8552,22 @@ In section 19, after the table of spikes (after the row for S8), add:
 
 ### 19.1 Results
 
-- **S3 on the emulator (plan 1B).** The touch watcher receives a touch on another app's window as `ACTION_OUTSIDE`, without coordinates. This works for all three test sources: `adb shell input tap`, a virtual touchscreen made with Android's `uinput` tool, and the emulator's own touchscreen. The watcher receives nothing for a touch on a window above it, such as an overlay that Kestrel shows later. Kestrel's own gestures reach the watcher too, but they come from the virtual input device with ID -1, and touchscreens have positive IDs. This difference holds on every version from Android 13 to 17 (B35), so the watcher uses it. On Android 17, a finger on the touchscreen does not cancel one of Kestrel's gestures: Kestrel is told that the gesture completed, while the app receives the finger's touch. On Android 13 to 16, a real touch cancels the gesture, and Android marks the real touch as an accessibility event, so that mark cannot tell the owner from Kestrel. The check with a real finger on the A71 is still open (plan 1C).
+- **S3 on the emulator (plan 1B).** The touch watcher receives a touch on another app's window as `ACTION_OUTSIDE`, without coordinates. This works for all three test sources: `adb shell input tap`, a virtual touchscreen made with Android's `uinput` tool, and the emulator's own touchscreen. The watcher receives nothing for a touch on a window above it, such as an overlay that Kestrel shows later. Kestrel's own gestures reach the watcher too, but they come from the virtual input device with ID -1, and touchscreens have positive IDs. This difference holds on every version from Android 13 to 17 (B35), so the watcher uses it. On Android 17, a finger on the touchscreen does not cancel one of Kestrel's gestures: Kestrel is told that the gesture completed, while Android cancels the app's copy of the gesture and the app receives the finger's touch. On Android 13 to 15, a real touch cancels the gesture, and Android marks the real touch as an accessibility event, so that mark cannot tell the owner from Kestrel. On Android 16 before QPR2, feature flags choose between these two behaviours. The check with a real finger on the A71 is still open (plan 1C).
 ```
 
 In Appendix B, change "The facts below were gathered on 11–12 November 2026." to "The facts below were gathered on 11–13 November 2026.", and add this row after the row for B34:
 
 ```markdown
-| B35 | On Android 13 to 16, `MotionEventInjector` cancels an accessibility service's injected gesture when a real touch arrives, and marks the real touch as an accessibility event. From Android 16 QPR2, it passes real touches on unchanged, and only the app's copy of the injected gesture is cancelled. Injected gestures come from the virtual input device -1 in every version. | https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android16-release/services/accessibility/java/com/android/server/accessibility/MotionEventInjector.java and the same file on the `android13-release`, `android15-release` and `android16-qpr2-release` branches | ✔ |
+| B35 | On Android 13 to 15, `MotionEventInjector` cancels an accessibility service's injected gesture when a real touch arrives, and marks the real touch as an accessibility event. On Android 16, the feature flag `motionEventInjectorCancelFix` turns both off, and the flag `preventA11yNontoolFromInjectingIntoSensitiveViews` also turns off the mark. From Android 16 QPR2, `MotionEventInjector` always passes real touches on unchanged, and only the app's copy of the injected gesture is cancelled. Injected gestures come from the virtual input device -1 in every version. | https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android16-release/services/accessibility/java/com/android/server/accessibility/MotionEventInjector.java and the same file on the `android13-release`, `android15-release` and `android16-qpr2-release` branches | ✔ |
 ```
 
-- [ ] **Step 4: Check that the shipped libraries did not change**
+- [ ] **Step 5: Check that the shipped libraries did not change**
 
 Run: `scripts\gradle.ps1 :app:kestrelCheckDependenciesRelease`
 
 Expected: `BUILD SUCCESSFUL`. `app/build/reports/kestrel-audit/dependencies-release.txt` lists 110 libraries, the same as at the end of plan 1A, so `THIRD_PARTY_NOTICES.md` stays as it is. If the list differs, add the new libraries to the notices with their licences before you continue.
 
-- [ ] **Step 5: Run every check**
+- [ ] **Step 6: Run every check**
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -8511,15 +8577,15 @@ Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:priv
 
 Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 64 for `:app`, all without failures.
 
-- [ ] **Step 6: Commit and push**
+- [ ] **Step 7: Commit and push**
 
 ```powershell
-git add app/src/main/kotlin/dev/kestrel/app/AppGraph.kt README.md docs/superpowers/specs/2026-11-12-kestrel-design.md
+git add app/src/main/kotlin/dev/kestrel/app/AppGraph.kt scripts/start-emulator.ps1 README.md docs/superpowers/specs/2026-11-12-kestrel-design.md
 git commit -m "docs: record spike S3 and document the device tests and test hooks" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 git push
 ```
 
-- [ ] **Step 7: Watch CI**
+- [ ] **Step 8: Watch CI**
 
 ```powershell
 $run = gh run list --limit 1 --json databaseId | ConvertFrom-Json
