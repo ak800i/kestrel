@@ -57,6 +57,16 @@ class ScreenServiceRule : ExternalResource() {
     fun showsWindow(title: String): Boolean = shell("dumpsys window windows").contains("$title}")
 
     /**
+     * Waits until Android's input dispatcher knows the window with [title], such as "Kestrel touch watcher". A new
+     * window gets touches only from then on, a moment after it was added.
+     */
+    suspend fun awaitInputWindow(title: String) {
+        withTimeoutOrNull(5_000) {
+            while (shell("dumpsys input").lineSequence().none { title in it && "displayId=" in it }) delay(50)
+        } ?: throw AssertionError("Android's input dispatcher did not list the window $title within 5 s")
+    }
+
+    /**
      * The bounds of a button on one of Kestrel's touchable overlays, such as the confirmation card, as another
      * accessibility client sees it. Overlays that take no touches are not in the list of interactive windows.
      */

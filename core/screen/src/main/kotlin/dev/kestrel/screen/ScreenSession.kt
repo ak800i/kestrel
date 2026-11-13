@@ -17,6 +17,7 @@ import dev.kestrel.screen.overlay.Numbering
 import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.screen.overlay.NumbersOverlay
 import dev.kestrel.screen.overlay.OverlayHost
+import dev.kestrel.screen.overlay.TouchWatcher
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.ScreenEvents
 import dev.kestrel.screen.read.ScreenReader
@@ -26,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -45,6 +47,7 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
     private val card = ConfirmationCard(overlays)
     internal val tracker = ScreenChangeTracker(SystemClock::uptimeMillis)
     internal val gestures = GestureRunner(service)
+    private val watcher = TouchWatcher(overlays, gestures)
 
     /** The current snapshot. A new one is built only after the screen has changed. */
     val snapshots = SnapshotCache(tracker) { withContext(Dispatchers.Default) { reader.read() } }
@@ -71,6 +74,9 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
 
     /** The feedback bar's text now, or null while the bar is hidden. */
     val feedbackText: String? get() = feedback.text
+
+    /** Emits when the owner touches the screen while the touch watcher runs (design spec, section 14.1). */
+    val ownerTouches: SharedFlow<Unit> get() = watcher.ownerTouches
 
     init {
         scope.launch {
@@ -134,6 +140,11 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
      * listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call (design spec, section 12.4).
      */
     suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) { card.ask(question) }
+
+    /** Starts reporting the owner's touches in [ownerTouches], for example while a task runs. */
+    suspend fun startTouchWatcher() = withContext(Dispatchers.Main) { watcher.start() }
+
+    suspend fun stopTouchWatcher() = withContext(Dispatchers.Main) { watcher.stop() }
 
     /** Kestrel's accessibility service passes every event here. */
     fun onAccessibilityEvent(event: AccessibilityEvent) {
