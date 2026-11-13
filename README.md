@@ -42,6 +42,25 @@ scripts\install.ps1 -Serial $serial       # runs the privacy audit, then install
 
 Kestrel is installed with `adb install`, which avoids Android's block on accessibility access for apps from unknown sources. On a Samsung phone, Auto Blocker must be off while USB debugging is in use.
 
+The device tests of `:app` use the fixture screens of `:testapp`, a separate app that `connected-test.ps1` installs first. Each test turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so they also switch off any other service on the device. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates, because touches from `adb shell input` do not reach Android the way a finger's touches do.
+
+If the device tests become slow, or Android restarts while they run, restart the emulator: run `adb -s $serial emu kill`, then `scripts\start-emulator.ps1`. Restarting Android inside the emulator is not enough.
+
+### Test hooks
+
+Debug builds contain test hooks that only adb can use (design spec, section 16.1). `scripts\hook.ps1` sends a command and prints the answer, and the comment at the top of the script lists every command. The screen commands need Kestrel's accessibility service, which you can turn on in Settings > Accessibility, or with adb (this replaces the list of enabled services):
+
+```powershell
+adb -s $serial shell settings put secure enabled_accessibility_services dev.kestrel/dev.kestrel.app.KestrelAccessibilityService
+scripts\hook.ps1 -Serial $serial state                       # is the screen layer running, and is test mode on?
+scripts\hook.ps1 -Serial $serial snapshot -Out screen.json   # what Kestrel reads on the screen, as JSON
+scripts\hook.ps1 -Serial $serial overlay -Show numbers       # numbers on the screen's elements
+scripts\hook.ps1 -Serial $serial tap -Number 3               # taps the element with the number 3
+scripts\hook.ps1 -Serial $serial test-mode -On false
+```
+
+Release builds do not contain the hooks, and the privacy audit fails a release build that does.
+
 ## Licence
 
 Kestrel is free software under the GNU General Public License, version 3 or (at your option) any later version. See [LICENSE](LICENSE). The licences of the libraries that Kestrel uses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

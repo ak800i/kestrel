@@ -38,7 +38,10 @@ class AppGraph(context: Context) {
     val logs = store.logs
     val settings = store.settings
     val networkPolicy = NetworkPolicy()
-    val network = NetworkGateway(networkPolicy) { event -> scope.launch { logs.append(event) } }
+
+    // Built on first use: building the HTTP client on the main thread made Kestrel miss Android's start-up deadline
+    // on a busy emulator just after it booted.
+    val network: NetworkGateway by lazy { NetworkGateway(networkPolicy) { event -> scope.launch { logs.append(event) } } }
 
     private val screens = MutableStateFlow<ScreenSession?>(null)
 

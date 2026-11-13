@@ -677,8 +677,8 @@ Kestrel always says what happened and what it already did. It never fails silent
 
 - Any touch on the screen cancels a running task, a routine replay, a pending confirmation or an open question from the agent. Kestrel stops at once, removes its task overlays, says "Cancelled", and reports what it had already done (section 14.5). This way, Kestrel never races with the owner, and changes that it did not make never confuse it.
 - Touches on Kestrel's own confirmation card act on the card. During a hand-over, Kestrel is not acting, so touches are expected and do not cancel the task (section 12.4).
-- **Detection.** The touch watcher (section 9.4) is an accessibility overlay of 1×1 pixel that asks Android to report touches outside it (`FLAG_WATCH_OUTSIDE_TOUCH`). Kestrel ignores the touches that it injects itself, because it knows when its own gestures run. If the owner touches the screen during one of Kestrel's gestures, Android cancels that gesture, and Kestrel treats the cancellation as a touch.
-- If spike S3 shows that the watcher does not receive these touches, Kestrel uses screen events that it did not cause (clicks, scrolls and text changes) as the signal instead.
+- **Detection.** The touch watcher (section 9.4) is an accessibility overlay of 1×1 pixel that asks Android to report touches outside it (`FLAG_WATCH_OUTSIDE_TOUCH`). Android injects Kestrel's own gestures from its virtual input device, while the owner's finger comes from the touchscreen. So the watcher ignores touches from the virtual device while one of Kestrel's gestures runs, and reports every other touch. On Android 13 to 16, the owner's touch also cancels Kestrel's running gesture. From Android 16 QPR2, Android lets the gesture finish, and Kestrel stops after it (section 19.1, B35).
+- If the A71 shows that the watcher does not receive a real finger's touches, Kestrel uses screen events that it did not cause (clicks, scrolls and text changes) as the signal instead.
 
 ### 14.2 LLM and network errors
 
@@ -740,7 +740,7 @@ The setup checklist stays visible until everything is done:
 
 ### 16.1 Test hooks
 
-Debug builds contain a broadcast receiver that accepts commands only from callers that hold `android.permission.DUMP`, which in practice means `adb shell`. It can inject a transcript or a task, read the Orchestrator's state and switch test mode. Release builds do not contain it.
+Debug builds contain a broadcast receiver that accepts commands only from callers that hold `android.permission.DUMP`, which in practice means `adb shell`. It can inject a transcript or a task, read the Orchestrator's state and switch test mode. It can also read the screen, perform actions and show the overlays, for checks on real apps. Release builds do not contain it, and the build-time audit fails a release build that does.
 
 ### 16.2 Unit tests
 
@@ -855,6 +855,10 @@ These spikes check assumptions that could change the design. Each has a fallback
 | S7 | Does `adb push` into `Android/data/dev.kestrel/files` work on Android 13 and 17? | A71, emulator | Importing the models from a folder that the owner picks with the system file picker |
 | S8 | Can the sherpa-onnx library (with ONNX Runtime linked statically) and onnxruntime-android load together without conflicts? | Emulator | A sherpa-onnx build that shares the same ONNX Runtime library |
 
+### 19.1 Results
+
+- **S3 on the emulator (plan 1B).** The touch watcher receives a touch on another app's window as `ACTION_OUTSIDE`, without coordinates. This works for all three test sources: `adb shell input tap`, a virtual touchscreen made with Android's `uinput` tool, and the emulator's own touchscreen. The watcher receives nothing for a touch on a window above it, such as an overlay that Kestrel shows later. Kestrel's own gestures reach the watcher too, but they come from the virtual input device with ID -1, and touchscreens have positive IDs. This difference holds on every version from Android 13 to 17 (B35), so the watcher uses it. On Android 17, a finger on the touchscreen does not cancel one of Kestrel's gestures: Kestrel is told that the gesture completed, while the app receives the finger's touch. On Android 13 to 16, a real touch cancels the gesture, and Android marks the real touch as an accessibility event, so that mark cannot tell the owner from Kestrel. The check with a real finger on the A71 is still open (plan 1C).
+
 ## 20. Risks and open questions
 
 1. **Copilot policy.** Copilot access from a client that is not a GitHub product depends on GitHub's policies and, for organisation seats, on the organisation's settings. A change could block Kestrel. Other providers and profiles are the mitigation.
@@ -944,7 +948,7 @@ Kestrel adds these commands, which use its name:
 
 ## Appendix B. Key facts and sources
 
-The facts below were gathered on 11–12 November 2026. "✔" means that the source was read directly. "†" means that a research agent reported the fact with the cited source and nobody re-read it; check those before relying on them.
+The facts below were gathered on 11–13 November 2026. "✔" means that the source was read directly. "†" means that a research agent reported the fact with the cited source and nobody re-read it; check those before relying on them.
 
 | ID | Fact | Source | Check |
 |---|---|---|---|
@@ -982,3 +986,4 @@ The facts below were gathered on 11–12 November 2026. "✔" means that the sou
 | B32 | The OpenAI and Anthropic APIs keep request logs for up to 30 days, and Google's paid Gemini API for up to 55 days. | https://developers.openai.com/api/docs/guides/your-data.md, https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data and https://aistudio.google.com/docs/logs-policy.md | † |
 | B33 | LabelDroid, a research model that names unlabeled icons, is GPL-3.0 and was last updated in November 2023. | https://github.com/chenjshnn/LabelDroid | ✔ |
 | B34 | From Android 17, apps that target API 37 need the runtime permission `ACCESS_LOCAL_NETWORK` (in the "Nearby devices" group) for traffic to a local-network address. This applies to every networking API, including OkHttp, and a blocked TCP connection usually times out. | https://developer.android.com/privacy-and-security/local-network-permission | ✔ |
+| B35 | On Android 13 to 16, `MotionEventInjector` cancels an accessibility service's injected gesture when a real touch arrives, and marks the real touch as an accessibility event. From Android 16 QPR2, it passes real touches on unchanged, and only the app's copy of the injected gesture is cancelled. Injected gestures come from the virtual input device -1 in every version. | https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android16-release/services/accessibility/java/com/android/server/accessibility/MotionEventInjector.java and the same file on the `android13-release`, `android15-release` and `android16-qpr2-release` branches | ✔ |
