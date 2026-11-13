@@ -13,7 +13,7 @@ import android.widget.TextView
  * A thin bar at the top of the screen with what Kestrel heard and does. It never takes touches, and its text
  * fades after a few seconds without a new one (design spec, section 8.9). Use it on the main thread.
  */
-internal class FeedbackBar(private val host: OverlayHost, private val fadeAfterMillis: Long = FADE_AFTER_MILLIS) {
+internal class FeedbackBar(private val host: OverlayHost) {
     private val handler = Handler(Looper.getMainLooper())
     private val fade = Runnable { view.animate().alpha(0f).setDuration(FADE_MILLIS).withEndAction(::hide) }
     private val view = TextView(host.context).apply {
@@ -25,6 +25,7 @@ internal class FeedbackBar(private val host: OverlayHost, private val fadeAfterM
     }
 
     /** The text on the bar now, or null while the bar is hidden. */
+    @Volatile
     var text: String? = null
         private set
 
@@ -35,7 +36,7 @@ internal class FeedbackBar(private val host: OverlayHost, private val fadeAfterM
         view.alpha = 1f
         view.text = text
         host.show(view, params())
-        handler.postDelayed(fade, fadeAfterMillis)
+        handler.postDelayed(fade, FADE_AFTER_MILLIS)
     }
 
     fun hide() {

@@ -1,6 +1,8 @@
 package dev.kestrel.app.screen
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.WindowSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -65,6 +67,24 @@ class GridBarAndCardTest {
         answer.cancel()
 
         eventually { !screen.showsWindow("Kestrel confirmation") }
+    }
+
+    @Test
+    fun snapshotsLeaveTheCardOut() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val answer = async { session.confirm("Send a test message?") }
+        try {
+            eventually { screen.overlayButton("Confirm") != null }
+
+            // The card is now in Android's list of interactive windows. A snapshot read after this point must still
+            // leave it out, or Kestrel could tap its own Confirm button.
+            session.snapshots.invalidate()
+            val snapshot = session.snapshots.current().snapshot
+            assertEquals(emptyList<WindowSummary>(), snapshot.windows.filter { it.packageName == ScreenServiceRule.KESTREL })
+            assertEquals(emptyList<ScreenElement>(), snapshot.elements.filter { it.packageName == ScreenServiceRule.KESTREL })
+        } finally {
+            answer.cancel()
+        }
     }
 
     private suspend fun CoroutineScope.answerWith(button: String, expected: Boolean) {

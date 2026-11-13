@@ -28,12 +28,18 @@ internal class ConfirmationCard(private val host: OverlayHost) {
         lateinit var card: LinearLayout
         fun answer(confirmed: Boolean) {
             host.hide(card)
-            pending = null
+            // A newer question may have replaced this one while its card was still on the screen.
+            if (pending === continuation) pending = null
             if (continuation.isActive) continuation.resume(confirmed)
         }
         card = build(question, onConfirm = { answer(true) }, onCancel = { answer(false) })
         // Cancellation can arrive on any thread, and the window must be removed on the main thread.
-        continuation.invokeOnCancellation { card.post { host.hide(card) } }
+        continuation.invokeOnCancellation {
+            card.post {
+                host.hide(card)
+                if (pending === continuation) pending = null
+            }
+        }
         pending = continuation
         host.show(card, params())
     }

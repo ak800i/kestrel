@@ -13,6 +13,7 @@ internal class GridOverlay(private val host: OverlayHost) {
     private val view = GridView(host.context)
 
     /** The grid on the screen now, or null while it is hidden. */
+    @Volatile
     var grid: Grid? = null
         private set
 
