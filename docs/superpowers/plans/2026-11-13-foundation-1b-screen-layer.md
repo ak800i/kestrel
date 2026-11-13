@@ -23,8 +23,8 @@
 - Accessibility service: all event types (`typeAllMask`); include views that are not important for accessibility, report view IDs, retrieve interactive windows, request the accessibility button, and act as an input method; retrieve window content, perform gestures, take screenshots and control magnification; `isAccessibilityTool="true"` (section 9.1, D19).
 - Snapshots: Kestrel reads all interactive windows and ignores its own overlay windows. Each element gets a stable key built from the window's package, the view ID, the label and the element's position among similar siblings. Snapshots are cached and rebuilt after the screen has been quiet for about 150 ms (section 9.2).
 - A text field is never named by the text typed into it, and its key uses only its own description or hint, so that the key stays the same while the owner types. While an empty field shows its hint, Kestrel treats the field as empty (sections 9.2 and 9.7).
-- Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press with the long-click action, falling back to a gesture; drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. An action looks up its element in the current snapshot, and a tap or long press never acts on a disabled element. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
-- If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on (section 9.7).
+- Actions: tap with the element's click action or its nearest clickable parent's, falling back to a gesture at the element's centre; type with set-text, falling back to the accessibility input method; scroll with scroll actions, falling back to swipes; long-press with the long-click action, falling back to a gesture; drag, pinch and zoom with gestures and the magnification controller; global actions; apps and links with intents. An action looks up its element in the current snapshot, and Kestrel never taps, long-presses or types into a disabled element. Scrolling uses forward and backward only along a list's own axis, and its swipe goes across the list. After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s (section 9.3).
+- If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on. A field that is disabled or has gone does not count as a rejection (section 9.7).
 - All overlays are accessibility overlay windows, so Kestrel needs no "display over other apps" permission (section 9.4). The feedback bar never receives touches (section 8.9). The confirmation card's Confirm and Cancel buttons accept touches (section 12.4).
 - The touch watcher reports the owner's touches, and Kestrel ignores the touches that it injects itself (section 14.1).
 - Test hooks: debug builds contain a broadcast receiver that accepts commands only from callers that hold `android.permission.DUMP`, which in practice means `adb shell`. Release builds do not contain it (section 16.1).
@@ -3248,21 +3248,277 @@ git commit -m "feat(screen): tap and long press with fallbacks" -m "Co-authored-
 ### Task 7: Typing and scrolling, with their fallbacks
 
 **Files:**
-- Create: `core/screen/src/main/kotlin/dev/kestrel/screen/act/SwipePaths.kt`
-- Test: `core/screen/src/test/kotlin/dev/kestrel/screen/act/SwipePathsTest.kt`
+- Create: `core/screen/src/main/kotlin/dev/kestrel/screen/act/SwipePaths.kt`, `ScrollActions.kt`
+- Test: `core/screen/src/test/kotlin/dev/kestrel/screen/act/SwipePathsTest.kt`, `ScrollActionsTest.kt`
 - Modify: `core/screen/src/main/kotlin/dev/kestrel/screen/act/ActionResult.kt` (add `INPUT_METHOD`), `Gestures.kt` (add `swipe`), `ScreenActions.kt` (add `setText` and `scroll`)
 - Modify: `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt` (pass the service to `ScreenActions`)
+- Modify: `testapp/src/main/kotlin/dev/kestrel/testapp/ViewsActivity.kt` (a disabled text field) and `ScrollActivity.kt` (a pager, and a swipe-only list with room below it)
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TypeTest.kt`, `ScrollTest.kt`
 
 **Interfaces:**
 - Consumes: `ScreenActions`, `GestureRunner` and `Gestures` from Task 6, and `shownText()` from Task 5.
-- Produces: `enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }`, the internal `ScreenPoint(x, y)` and `SwipePaths.forScroll(area: IntRect, direction): Pair<ScreenPoint, ScreenPoint>`.
+- Produces: `enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }`, the internal `ScreenPoint(x, y)` and `SwipePaths.forScroll(area: IntRect, direction): Pair<ScreenPoint, ScreenPoint>`, and the internal `ScrollActions` with `axis(offered, className, rows, columns): ScrollAxis` and `forDirection(direction, axis): List<Int>`.
 - Produces: `ScreenActions.setText(key: String, text: String): ActionResult` and `ScreenActions.scroll(direction: ScrollDirection, key: String? = null): ActionResult`. Like a tap, both look up the key in the current snapshot.
 - Produces: `ActionMethod.INPUT_METHOD`.
+- Produces: in the Views fixture, the disabled text field "Disabled field". In the Scroll fixture with `--ez pages true`, the "Pager scroll fixture": two pages side by side in a horizontal scroll view, with the rows "Row 1" to "Row 60" and "Second page row 1" to "Second page row 60". With `--ez swipeOnly true`, the list fills only the upper half of the page, above the text "Below the list".
 
-`setText` first uses the set-text action and reads the text back, up to 5 times 50 ms apart; it never reads back a password field. The read-back uses the text that the field shows, without its hint, so that clearing a field with an empty text reads back as empty. If the app refuses set-text, or the text does not read back, Kestrel types through its accessibility input method: it waits for the input to start in the field, selects all and commits the new text. It remembers the app and uses the input method for it from then on (spec section 9.7). `scroll` uses the element's scroll action, or its parent's, and otherwise swipes from 70% to 30% of the scroll area, across its middle. Without a key, it scrolls the largest scrollable element of the app in front, or swipes over the app's window.
+`setText` first uses the set-text action and reads the text back, up to 5 times 50 ms apart; it never reads back a password field. The read-back uses the text that the field shows, without its hint, so that clearing a field with an empty text reads back as empty. If the app refuses set-text, or the text does not read back, Kestrel types through its accessibility input method: it waits for the input to start in the field, checks that the field still has the focus, selects all and commits the new text. It remembers the app and uses the input method for it from then on (spec section 9.7). Only a refusal counts: Kestrel does not type into a disabled field, and when the field has gone, it looks for the field once more in a fresh snapshot instead of remembering the app.
+
+`scroll` uses the scroll action of the element or of its nearest parent that can scroll in the direction. Android's forward and backward actions do not say which way they move, so Kestrel uses them only along the list's own axis: on a horizontal pager, forward would show the next tab instead of more of the list. `ScrollActions` works out the axis from the list's directional actions, its class, or the shape of its collection. Without a key, `scroll` takes a list in the top app window that has one: the largest list that can scroll in the direction, or else the largest list. When no action scrolls that way, Kestrel swipes from 70% to 30% of the list's area, across its middle, or of the window when there is no list.
 
 - [ ] **Step 1: Write the failing tests**
+
+The new tests need two fixtures. Replace the whole content of `testapp/src/main/kotlin/dev/kestrel/testapp/ViewsActivity.kt` with:
+
+```kotlin
+package dev.kestrel.testapp
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.os.Bundle
+import android.text.InputType
+import android.view.MotionEvent
+import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.TextView
+
+/**
+ * Classic Views: buttons, an unlabeled icon, a check box, a tappable row, text fields (one of them disabled), a dialog,
+ * and a disabled button inside a tappable card.
+ */
+class ViewsActivity : Activity() {
+    private lateinit var page: LinearLayout
+    private lateinit var status: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        page = fixturePage("Views fixture")
+        status = page.addStatus()
+        page.addView(sendButton())
+        page.addView(ImageButton(this).apply {
+            id = R.id.compose_button
+            setImageResource(android.R.drawable.ic_menu_edit)
+            // No content description on purpose: Kestrel has to name this button from its view ID.
+            setOnClickListener { report("Clicked compose") }
+        })
+        page.addView(CheckBox(this).apply {
+            id = R.id.remember_me
+            text = "Remember me"
+            setOnCheckedChangeListener { _, checked -> report(if (checked) "Checked Remember me" else "Unchecked Remember me") }
+        })
+        page.addView(LinearLayout(this).apply {
+            id = R.id.contact_row
+            setPadding(0, dp(12), 0, dp(12))
+            setOnClickListener { report("Clicked contact row") }
+            addView(TextView(context).apply { text = "Ana Petrović" })
+            addView(TextView(context).apply {
+                text = "Online"
+                setPadding(dp(16), 0, 0, 0)
+            })
+        })
+        page.addView(
+            TouchOnlyView(this).apply {
+                id = R.id.touch_target
+                contentDescription = "Touch target"
+                onTouched = { report("Touched target") }
+            },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)),
+        )
+        page.addView(EditText(this).apply {
+            id = R.id.message_field
+            hint = "Message"
+        })
+        page.addView(RejectingEditText(this).apply {
+            id = R.id.strict_field
+            hint = "Strict field"
+        })
+        page.addView(EditText(this).apply {
+            id = R.id.password_field
+            hint = "Password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        })
+        page.addView(EditText(this).apply {
+            hint = "Disabled field"
+            // Disabled on purpose: Kestrel must not type into it, nor switch the app to its input method because of it.
+            isEnabled = false
+        })
+        page.addView(Button(this).apply {
+            id = R.id.show_dialog
+            text = "Show dialog"
+            setOnClickListener {
+                AlertDialog.Builder(context)
+                    .setTitle("Delete draft?")
+                    .setPositiveButton("Delete", null)
+                    .setNegativeButton("Keep", null)
+                    .show()
+            }
+        })
+        page.addView(Button(this).apply {
+            id = R.id.rebuild
+            text = "Rebuild"
+            setOnClickListener { replaceSendButton() }
+        })
+        page.addView(LinearLayout(this).apply {
+            setPadding(0, dp(8), 0, dp(8))
+            setOnClickListener { report("Clicked product card") }
+            addView(TextView(context).apply { text = "Blue mug" })
+            addView(Button(context).apply {
+                text = "Add to cart"
+                // Disabled on purpose: a tap on it must not reach the card around it.
+                isEnabled = false
+            })
+        })
+    }
+
+    private fun sendButton() = Button(this).apply {
+        id = R.id.send_button
+        text = "Send"
+        setOnClickListener { report("Clicked Send") }
+        setOnLongClickListener {
+            report("Long-pressed Send")
+            true
+        }
+    }
+
+    /** Replaces the Send button with an identical new one, so that a test can hold the node of a view that is gone. */
+    private fun replaceSendButton() {
+        val index = page.indexOfChild(page.findViewById(R.id.send_button))
+        page.removeViewAt(index)
+        page.addView(sendButton(), index)
+        report("Rebuilt")
+    }
+
+    private fun report(text: String) {
+        status.text = text
+    }
+}
+
+/** Reacts to touches but offers no click action, so that Kestrel has to tap it with a gesture. */
+class TouchOnlyView(context: Context) : View(context) {
+    var onTouched: () -> Unit = {}
+
+    init {
+        setBackgroundColor(0xFFE0E0E0.toInt())
+    }
+
+    // On purpose: this view must not offer a click action to accessibility services.
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_UP) onTouched()
+        return true
+    }
+}
+
+/** Refuses the set-text action, as some messaging apps do, so that Kestrel has to type through its input method. */
+class RejectingEditText(context: Context) : EditText(context) {
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean =
+        action != AccessibilityNodeInfo.ACTION_SET_TEXT && super.performAccessibilityAction(action, arguments)
+}
+```
+
+Replace the whole content of `testapp/src/main/kotlin/dev/kestrel/testapp/ScrollActivity.kt` with:
+
+```kotlin
+package dev.kestrel.testapp
+
+import android.app.Activity
+import android.content.Context
+import android.os.Bundle
+import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+
+/**
+ * A long list of rows. With the extra `swipeOnly`, the list offers no scroll actions to accessibility services, so
+ * that Kestrel has to scroll it with a swipe gesture, and it fills only the upper half of the page. With the extra
+ * `pages`, the list is the first of two pages side by side in a horizontal scroll view, like tabs.
+ */
+class ScrollActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val swipeOnly = intent.getBooleanExtra(EXTRA_SWIPE_ONLY, false)
+        val pages = intent.getBooleanExtra(EXTRA_PAGES, false)
+        val page = fixturePage(
+            when {
+                swipeOnly -> "Swipe-only scroll fixture"
+                pages -> "Pager scroll fixture"
+                else -> "Scroll fixture"
+            },
+        )
+        when {
+            swipeOnly -> {
+                page.addView(SwipeOnlyScrollView(this).apply { addView(rows("Row")) }, restOfThePage())
+                // Below the list, so that a swipe across the whole window would start outside the list.
+                page.addView(TextView(this).apply { text = "Below the list" }, restOfThePage())
+            }
+            pages -> {
+                val strip = LinearLayout(this)
+                for (prefix in listOf("Row", "Second page row")) {
+                    // Each page is as wide as the screen, so the second page starts outside the screen.
+                    val width = resources.displayMetrics.widthPixels
+                    strip.addView(ScrollView(this).apply { addView(rows(prefix)) }, LinearLayout.LayoutParams(width, MATCH))
+                }
+                page.addView(HorizontalScrollView(this).apply { addView(strip, FrameLayout.LayoutParams(WRAP, MATCH)) }, restOfThePage())
+            }
+            else -> page.addView(ScrollView(this).apply { addView(rows("Row")) }, restOfThePage())
+        }
+    }
+
+    /** Shares the rest of the page equally with the page's other children that use it. */
+    private fun restOfThePage() = LinearLayout.LayoutParams(MATCH, 0, 1f)
+
+    private fun rows(prefix: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        for (row in 1..ROWS) {
+            addView(TextView(context).apply {
+                text = "$prefix $row"
+                setPadding(0, dp(12), 0, dp(12))
+            })
+        }
+    }
+
+    companion object {
+        const val EXTRA_SWIPE_ONLY = "swipeOnly"
+        const val EXTRA_PAGES = "pages"
+        private const val ROWS = 60
+        private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+        private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+    }
+}
+
+/**
+ * Scrolls with touch but hides its scroll actions from accessibility services and refuses them. It still says that it
+ * can scroll, as such lists do, so Kestrel knows where to swipe.
+ */
+class SwipeOnlyScrollView(context: Context) : ScrollView(context) {
+    private val scrollActions = listOf(
+        AccessibilityAction.ACTION_SCROLL_FORWARD,
+        AccessibilityAction.ACTION_SCROLL_BACKWARD,
+        AccessibilityAction.ACTION_SCROLL_DOWN,
+        AccessibilityAction.ACTION_SCROLL_UP,
+    )
+
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        scrollActions.forEach(info::removeAction)
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean =
+        scrollActions.none { it.id == action } && super.performAccessibilityAction(action, arguments)
+}
+```
 
 `core/screen/src/test/kotlin/dev/kestrel/screen/act/SwipePathsTest.kt`:
 
@@ -3286,6 +3542,50 @@ class SwipePathsTest {
     fun scrollingRightMovesTheFingerLeft() {
         assertEquals(ScreenPoint(800, 1200) to ScreenPoint(400, 1200), SwipePaths.forScroll(area, ScrollDirection.RIGHT))
         assertEquals(ScreenPoint(400, 1200) to ScreenPoint(800, 1200), SwipePaths.forScroll(area, ScrollDirection.LEFT))
+    }
+}
+```
+
+`core/screen/src/test/kotlin/dev/kestrel/screen/act/ScrollActionsTest.kt`:
+
+```kotlin
+package dev.kestrel.screen.act
+
+import android.view.accessibility.AccessibilityNodeInfo
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class ScrollActionsTest {
+    private val forward = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+    private val backward = AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+    private val up = android.R.id.accessibilityActionScrollUp
+    private val down = android.R.id.accessibilityActionScrollDown
+    private val right = android.R.id.accessibilityActionScrollRight
+    private val pageUp = android.R.id.accessibilityActionPageUp
+    private val pageDown = android.R.id.accessibilityActionPageDown
+    private val pageRight = android.R.id.accessibilityActionPageRight
+
+    @Test
+    fun theDirectionalActionsTellTheAxis() {
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward, down), "android.widget.ScrollView", null, null))
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward, right), "android.widget.HorizontalScrollView", null, null))
+    }
+
+    @Test
+    fun withoutDirectionalActionsTheClassOrTheShapeOfTheListTellsTheAxis() {
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "androidx.viewpager.widget.ViewPager", null, null))
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 1, 12))
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 12, 1))
+        assertEquals(ScrollAxis.UNKNOWN, ScrollActions.axis(setOf(forward, backward), "android.view.View", null, null))
+    }
+
+    @Test
+    fun forwardAndBackwardAreUsedOnlyAlongTheListsAxis() {
+        assertEquals(listOf(down, pageDown, forward), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.VERTICAL))
+        assertEquals(listOf(down, pageDown), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.HORIZONTAL))
+        assertEquals(listOf(right, pageRight, forward), ScrollActions.forDirection(ScrollDirection.RIGHT, ScrollAxis.HORIZONTAL))
+        assertEquals(listOf(right, pageRight), ScrollActions.forDirection(ScrollDirection.RIGHT, ScrollAxis.UNKNOWN))
+        assertEquals(listOf(up, pageUp, backward), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.UNKNOWN))
     }
 }
 ```
@@ -3357,6 +3657,15 @@ class TypeTest {
     }
 
     @Test
+    fun aDisabledFieldIsNotTypedIntoAndDoesNotSwitchTheAppToTheInputMethod() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val disabled = screen.awaitElement { it.editable && it.label == "Disabled field" }
+
+        assertEquals(ActionResult.Failed("The element is disabled"), actions.setText(disabled.key, "Hello"))
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(field("message_field").key, "Hello"))
+    }
+
+    @Test
     fun setTextRefusesAnElementThatIsNotATextField() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 
@@ -3374,7 +3683,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.ScrollDirection
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
@@ -3411,22 +3722,42 @@ class ScrollTest {
     }
 
     @Test
-    fun scrollSwipesWhenTheListOffersNoScrollActions() = runBlocking {
+    fun scrollSwipesAcrossTheListWhenTheListOffersNoScrollActions() = runBlocking {
         screen.open("ScrollActivity", "Swipe-only scroll fixture", extras = "--ez swipeOnly true")
 
         assertEquals(ActionResult.Done(ActionMethod.GESTURE), actions.scroll(ScrollDirection.DOWN))
+        // The list fills only the upper half of the page, so a swipe across the whole window would miss it.
+        withTimeout(5_000) {
+            while (screen.session.snapshots.current().snapshot.elements.any { it.label == "Row 1" }) delay(100)
+        }
+    }
+
+    @Test
+    fun scrollDownScrollsTheListInsideAPagerAndNotThePager() = runBlocking {
+        screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.scroll(ScrollDirection.DOWN))
         firstRowIsHidden()
+    }
+
+    @Test
+    fun scrollRightShowsThePagersNextPage() = runBlocking {
+        screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.scroll(ScrollDirection.RIGHT))
+        screen.awaitElement { it.label == "Second page row 1" }
+        Unit
     }
 }
 ```
 
-- [ ] **Step 2: Run the unit test to verify that it fails**
+- [ ] **Step 2: Run the unit tests to verify that they fail**
 
 Run: `scripts\gradle.ps1 :core:screen:testDebugUnitTest`
 
-Expected: `BUILD FAILED`, with `Unresolved reference 'SwipePaths'` from `:core:screen:compileDebugUnitTestKotlin`.
+Expected: `BUILD FAILED`, with `Unresolved reference` errors, for example for `SwipePaths` and `ScrollActions`, from `:core:screen:compileDebugUnitTestKotlin`.
 
-- [ ] **Step 3: Write the swipe paths and run the unit test**
+- [ ] **Step 3: Write the swipe paths and the scroll actions, and run the unit tests**
 
 `core/screen/src/main/kotlin/dev/kestrel/screen/act/SwipePaths.kt`:
 
@@ -3434,9 +3765,6 @@ Expected: `BUILD FAILED`, with `Unresolved reference 'SwipePaths'` from `:core:s
 package dev.kestrel.screen.act
 
 import dev.kestrel.screen.model.IntRect
-
-/** Which way to scroll. "Down" shows what is further down, as in Voice Access. */
-enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }
 
 internal data class ScreenPoint(val x: Int, val y: Int)
 
@@ -3458,9 +3786,77 @@ internal object SwipePaths {
 }
 ```
 
+`core/screen/src/main/kotlin/dev/kestrel/screen/act/ScrollActions.kt`:
+
+```kotlin
+package dev.kestrel.screen.act
+
+import android.view.accessibility.AccessibilityNodeInfo
+
+/** Which way to scroll. "Down" shows what is further down, as in Voice Access. */
+enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }
+
+/** The axis along which a list moves, as far as its accessibility node tells. */
+internal enum class ScrollAxis { VERTICAL, HORIZONTAL, UNKNOWN }
+
+/**
+ * Which accessibility actions scroll a list in a direction. Android's forward and backward actions do not say which
+ * way they move, so Kestrel uses them only along the list's own axis: on a horizontal pager, forward shows the next
+ * tab instead of more of the list (design spec, section 9.3).
+ */
+internal object ScrollActions {
+    private const val UP = android.R.id.accessibilityActionScrollUp
+    private const val DOWN = android.R.id.accessibilityActionScrollDown
+    private const val LEFT = android.R.id.accessibilityActionScrollLeft
+    private const val RIGHT = android.R.id.accessibilityActionScrollRight
+    private const val PAGE_UP = android.R.id.accessibilityActionPageUp
+    private const val PAGE_DOWN = android.R.id.accessibilityActionPageDown
+    private const val PAGE_LEFT = android.R.id.accessibilityActionPageLeft
+    private const val PAGE_RIGHT = android.R.id.accessibilityActionPageRight
+    private const val FORWARD = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+    private const val BACKWARD = AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+
+    private val verticalActions = setOf(UP, DOWN, PAGE_UP, PAGE_DOWN)
+    private val horizontalActions = setOf(LEFT, RIGHT, PAGE_LEFT, PAGE_RIGHT)
+    private val horizontalClasses = setOf("android.widget.HorizontalScrollView", "androidx.viewpager.widget.ViewPager")
+
+    /**
+     * The axis of a list: from the directional actions that it offers, then from its class, and then from the shape of
+     * its collection, such as a list with a single row.
+     */
+    fun axis(offered: Set<Int>, className: String?, rows: Int?, columns: Int?): ScrollAxis {
+        val vertical = offered.any { it in verticalActions }
+        val horizontal = offered.any { it in horizontalActions }
+        return when {
+            vertical && !horizontal -> ScrollAxis.VERTICAL
+            horizontal && !vertical -> ScrollAxis.HORIZONTAL
+            vertical -> ScrollAxis.UNKNOWN
+            className in horizontalClasses -> ScrollAxis.HORIZONTAL
+            rows == 1 && columns != 1 -> ScrollAxis.HORIZONTAL
+            columns == 1 && rows != 1 -> ScrollAxis.VERTICAL
+            else -> ScrollAxis.UNKNOWN
+        }
+    }
+
+    /**
+     * The actions that scroll a list with [axis] in [direction], in the order to try them. When the axis is unknown,
+     * forward and backward count as vertical, because most lists scroll vertically.
+     */
+    fun forDirection(direction: ScrollDirection, axis: ScrollAxis): List<Int> {
+        val horizontal = axis == ScrollAxis.HORIZONTAL
+        return when (direction) {
+            ScrollDirection.DOWN -> listOf(DOWN, PAGE_DOWN) + if (horizontal) emptyList() else listOf(FORWARD)
+            ScrollDirection.UP -> listOf(UP, PAGE_UP) + if (horizontal) emptyList() else listOf(BACKWARD)
+            ScrollDirection.RIGHT -> listOf(RIGHT, PAGE_RIGHT) + if (horizontal) listOf(FORWARD) else emptyList()
+            ScrollDirection.LEFT -> listOf(LEFT, PAGE_LEFT) + if (horizontal) listOf(BACKWARD) else emptyList()
+        }
+    }
+}
+```
+
 Run: `scripts\gradle.ps1 :core:screen:testDebugUnitTest`
 
-Expected: `BUILD SUCCESSFUL`, and `SwipePathsTest` reports `tests="2"` without failures.
+Expected: `BUILD SUCCESSFUL`. `SwipePathsTest` reports `tests="2"` and `ScrollActionsTest` reports `tests="3"`, without failures.
 
 - [ ] **Step 4: Run the device tests to verify that they fail**
 
@@ -3544,7 +3940,6 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -3590,12 +3985,16 @@ class ScreenActions internal constructor(
      * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
      * back. If the app refuses the action or the field does not show the text, Kestrel types through its
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
+     * Kestrel does not type into a disabled field, and a field that has gone does not count as a refusal.
      */
-    suspend fun setText(key: String, text: String): ActionResult {
+    suspend fun setText(key: String, text: String): ActionResult = setText(key, text, retry = true)
+
+    private suspend fun setText(key: String, text: String, retry: Boolean): ActionResult {
         val live = snapshots.current()
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
         val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!element.editable) return ActionResult.Failed("The element is not a text field")
+        if (!element.enabled) return DISABLED
         val app = element.packageName
         if (app == null || app !in inputMethodApps) {
             val arguments = Bundle().apply {
@@ -3604,29 +4003,40 @@ class ScreenActions internal constructor(
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
                 return settled(ActionMethod.ACTION)
             }
+            if (!node.refresh()) {
+                // The field has gone, so the app refused nothing: look for it again once (design spec, section 14.3).
+                if (!retry) return GONE
+                snapshots.invalidate()
+                return setText(key, text, retry = false)
+            }
+            if (!node.isEnabled) return DISABLED
             if (app != null) inputMethodApps += app
         }
         return typeWithInputMethod(element, node, text)
     }
 
     /**
-     * Scrolls the element with [key], or the largest scrollable element in an app window when [key] is null.
-     * Kestrel uses the scroll actions of the element or its nearest scrollable parent, and otherwise swipes
-     * across it (design spec, section 9.3).
+     * Scrolls the element with [key] or, when [key] is null, a list in the top app window that has one: the largest
+     * list that can scroll in [direction], or else the largest list. Kestrel uses the scroll action of the element or
+     * of its nearest parent that can scroll in [direction], and otherwise swipes across the list (design spec,
+     * section 9.3).
      */
     suspend fun scroll(direction: ScrollDirection, key: String? = null): ActionResult {
         val live = snapshots.current()
         val element = when (key) {
-            null -> live.snapshot.largestScrollable()
+            null -> live.scrollableFor(direction)
             else -> live.snapshot.element(key) ?: return NOT_ON_SCREEN
         }
-        val actions = direction.actionIds()
-        val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
-        if (target != null && actions.any { target.node.performAction(it) }) {
+        val node = element?.let { live.node(it.key) ?: return NOT_ON_SCREEN }
+        val target = node?.selfOrParent { it.scrollAction(direction) != null }
+        val action = target?.node?.scrollAction(direction)
+        if (target != null && action != null && target.node.performAction(action)) {
             return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
+        // No action scrolls this way, so swipe across the list, or across the window when there is no list.
         val window = live.snapshot.windowBounds(element?.windowId)
-        val area = target?.node?.screenBounds()?.let { bounds -> window?.let(bounds::intersect) ?: bounds } ?: window
+        val list = (target ?: node?.selfOrParent { it.isScrollable })?.node?.screenBounds()
+        val area = (if (list != null && window != null) list.intersect(window) else list) ?: window
             ?: return ActionResult.Failed("There is nothing to scroll")
         val (from, to) = SwipePaths.forScroll(area, direction)
         return gesture(Gestures.swipe(from, to))
@@ -3648,7 +4058,7 @@ class ScreenActions internal constructor(
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
-        val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
+        val element = fresh.snapshot.element(key) ?: return GONE
         val freshTarget = fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
         if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
@@ -3660,10 +4070,10 @@ class ScreenActions internal constructor(
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
     private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String): ActionResult {
         val inputMethod = service.inputMethod ?: return ActionResult.Failed("Kestrel's input method is not available")
+        val before = withContext(Dispatchers.Main) { inputMethod.currentInputEditorInfo }
+        val wasFocused = node.isFocused
+        if (!wasFocused && !node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         val connection = withContext(Dispatchers.Main) {
-            val before = inputMethod.currentInputEditorInfo
-            val wasFocused = node.isFocused
-            if (!wasFocused && !node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             withTimeoutOrNull(INPUT_START_MILLIS) {
                 var ready: InputMethod.AccessibilityInputConnection? = null
                 while (ready == null) {
@@ -3676,6 +4086,8 @@ class ScreenActions internal constructor(
                 ready
             }
         } ?: return ActionResult.Failed("The text field did not connect to Kestrel's input method")
+        // If the app has moved the focus to another field, the input would replace that field's text instead.
+        if (!(node.refresh() && node.isFocused)) return ActionResult.Failed("The text field lost the focus")
         withContext(Dispatchers.Main) {
             connection.performContextMenuAction(android.R.id.selectAll)
             connection.commitText(text, 1, null)
@@ -3719,60 +4131,62 @@ class ScreenActions internal constructor(
 
     private class Target(val node: AccessibilityNodeInfo, val isSelf: Boolean)
 
-    /**
-     * The element's node, or its nearest parent up to [MAX_PARENT_DEPTH] levels up, that handles touches. A finger's
-     * touch stops at that view even when it is disabled, so Kestrel's action stops there too.
-     */
-    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? {
+    /** This node or its nearest parent, up to [MAX_PARENT_DEPTH] levels up, that [matches]. */
+    private fun AccessibilityNodeInfo.selfOrParent(matches: (AccessibilityNodeInfo) -> Boolean): Target? {
         var current: AccessibilityNodeInfo? = this
         var depth = 0
         while (current != null && depth <= MAX_PARENT_DEPTH) {
-            if (current.isClickable || current.isLongClickable || current.offers(action)) return Target(current, isSelf = depth == 0)
+            if (matches(current)) return Target(current, isSelf = depth == 0)
             current = current.parent
             depth++
         }
         return null
     }
 
+    /**
+     * The element's node or its nearest parent that handles touches. A finger's touch stops at that view even when it
+     * is disabled, so Kestrel's action stops there too.
+     */
+    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? =
+        selfOrParent { it.isClickable || it.isLongClickable || it.offers(action) }
+
     private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
 
-    private fun AccessibilityNodeInfo.selfOrParentOffering(actions: List<Int>): Target? {
-        var current: AccessibilityNodeInfo? = this
-        var depth = 0
-        while (current != null && depth <= MAX_PARENT_DEPTH) {
-            if (current.isEnabled && current.actionList.any { it.id in actions }) return Target(current, isSelf = depth == 0)
-            current = current.parent
-            depth++
-        }
-        return null
+    /** The first action that scrolls this node in [direction], if the node offers one and is enabled. */
+    private fun AccessibilityNodeInfo.scrollAction(direction: ScrollDirection): Int? {
+        if (!isEnabled) return null
+        val offered = actionList.mapTo(HashSet()) { it.id }
+        val axis = ScrollActions.axis(offered, className?.toString(), collectionInfo?.rowCount, collectionInfo?.columnCount)
+        return ScrollActions.forDirection(direction, axis).firstOrNull { it in offered }
     }
 
     private fun AccessibilityNodeInfo.screenBounds(): IntRect = Rect().also(::getBoundsInScreen).let {
         IntRect(it.left, it.top, it.right, it.bottom)
     }
 
-    private fun ScreenSnapshot.largestScrollable(): ScreenElement? {
-        val appWindows = windows.filter { it.kind == WindowKind.APPLICATION }.map { it.id }.toSet()
-        return elements
-            .filter { it.scrollable && it.enabled && it.windowId in appWindows }
-            .maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+    /**
+     * The list to scroll when the owner names none: in the top app window that has a list, the largest list that can
+     * scroll in [direction], or else the largest list. The snapshot lists its windows from the top down.
+     */
+    private fun LiveSnapshot.scrollableFor(direction: ScrollDirection): ScreenElement? {
+        for (window in snapshot.windows.filter { it.kind == WindowKind.APPLICATION }) {
+            val lists = snapshot.elements.filter { it.scrollable && it.enabled && it.windowId == window.id }
+            if (lists.isEmpty()) continue
+            val fitting = lists.filter { node(it.key)?.scrollAction(direction) != null }
+            return fitting.ifEmpty { lists }.maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+        }
+        return null
     }
 
     /** The bounds of the window with [windowId], or of the top app window when there is no such window. */
     private fun ScreenSnapshot.windowBounds(windowId: Int?): IntRect? =
         (windows.firstOrNull { it.id == windowId } ?: windows.firstOrNull { it.kind == WindowKind.APPLICATION })?.bounds
 
-    private fun ScrollDirection.actionIds(): List<Int> = when (this) {
-        ScrollDirection.DOWN -> listOf(AccessibilityAction.ACTION_SCROLL_DOWN.id, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-        ScrollDirection.UP -> listOf(AccessibilityAction.ACTION_SCROLL_UP.id, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
-        ScrollDirection.RIGHT -> listOf(AccessibilityAction.ACTION_SCROLL_RIGHT.id)
-        ScrollDirection.LEFT -> listOf(AccessibilityAction.ACTION_SCROLL_LEFT.id)
-    }
-
     private companion object {
         const val MAX_PARENT_DEPTH = 20
         val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
         val DISABLED = ActionResult.Failed("The element is disabled")
+        val GONE = ActionResult.Failed("The element is no longer on the screen")
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L
@@ -3819,7 +4233,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 25 test cases (`TypeTest` 5 and `ScrollTest` 3) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 28 test cases (`TypeTest` 6 and `ScrollTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -3830,7 +4244,7 @@ Expected: `BUILD SUCCESSFUL`.
 - [ ] **Step 8: Commit**
 
 ```powershell
-git add core/screen app/src/androidTest
+git add core/screen app/src/androidTest testapp
 git commit -m "feat(screen): type and scroll with fallbacks" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -4212,7 +4626,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -4258,12 +4671,16 @@ class ScreenActions internal constructor(
      * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
      * back. If the app refuses the action or the field does not show the text, Kestrel types through its
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
+     * Kestrel does not type into a disabled field, and a field that has gone does not count as a refusal.
      */
-    suspend fun setText(key: String, text: String): ActionResult {
+    suspend fun setText(key: String, text: String): ActionResult = setText(key, text, retry = true)
+
+    private suspend fun setText(key: String, text: String, retry: Boolean): ActionResult {
         val live = snapshots.current()
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
         val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!element.editable) return ActionResult.Failed("The element is not a text field")
+        if (!element.enabled) return DISABLED
         val app = element.packageName
         if (app == null || app !in inputMethodApps) {
             val arguments = Bundle().apply {
@@ -4272,29 +4689,40 @@ class ScreenActions internal constructor(
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
                 return settled(ActionMethod.ACTION)
             }
+            if (!node.refresh()) {
+                // The field has gone, so the app refused nothing: look for it again once (design spec, section 14.3).
+                if (!retry) return GONE
+                snapshots.invalidate()
+                return setText(key, text, retry = false)
+            }
+            if (!node.isEnabled) return DISABLED
             if (app != null) inputMethodApps += app
         }
         return typeWithInputMethod(element, node, text)
     }
 
     /**
-     * Scrolls the element with [key], or the largest scrollable element in an app window when [key] is null.
-     * Kestrel uses the scroll actions of the element or its nearest scrollable parent, and otherwise swipes
-     * across it (design spec, section 9.3).
+     * Scrolls the element with [key] or, when [key] is null, a list in the top app window that has one: the largest
+     * list that can scroll in [direction], or else the largest list. Kestrel uses the scroll action of the element or
+     * of its nearest parent that can scroll in [direction], and otherwise swipes across the list (design spec,
+     * section 9.3).
      */
     suspend fun scroll(direction: ScrollDirection, key: String? = null): ActionResult {
         val live = snapshots.current()
         val element = when (key) {
-            null -> live.snapshot.largestScrollable()
+            null -> live.scrollableFor(direction)
             else -> live.snapshot.element(key) ?: return NOT_ON_SCREEN
         }
-        val actions = direction.actionIds()
-        val target = element?.let { live.node(it.key) }?.selfOrParentOffering(actions)
-        if (target != null && actions.any { target.node.performAction(it) }) {
+        val node = element?.let { live.node(it.key) ?: return NOT_ON_SCREEN }
+        val target = node?.selfOrParent { it.scrollAction(direction) != null }
+        val action = target?.node?.scrollAction(direction)
+        if (target != null && action != null && target.node.performAction(action)) {
             return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
+        // No action scrolls this way, so swipe across the list, or across the window when there is no list.
         val window = live.snapshot.windowBounds(element?.windowId)
-        val area = target?.node?.screenBounds()?.let { bounds -> window?.let(bounds::intersect) ?: bounds } ?: window
+        val list = (target ?: node?.selfOrParent { it.isScrollable })?.node?.screenBounds()
+        val area = (if (list != null && window != null) list.intersect(window) else list) ?: window
             ?: return ActionResult.Failed("There is nothing to scroll")
         val (from, to) = SwipePaths.forScroll(area, direction)
         return gesture(Gestures.swipe(from, to))
@@ -4373,7 +4801,7 @@ class ScreenActions internal constructor(
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
-        val element = fresh.snapshot.element(key) ?: return ActionResult.Failed("The element is no longer on the screen")
+        val element = fresh.snapshot.element(key) ?: return GONE
         val freshTarget = fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
         if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
@@ -4385,10 +4813,10 @@ class ScreenActions internal constructor(
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
     private suspend fun typeWithInputMethod(element: ScreenElement, node: AccessibilityNodeInfo, text: String): ActionResult {
         val inputMethod = service.inputMethod ?: return ActionResult.Failed("Kestrel's input method is not available")
+        val before = withContext(Dispatchers.Main) { inputMethod.currentInputEditorInfo }
+        val wasFocused = node.isFocused
+        if (!wasFocused && !node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         val connection = withContext(Dispatchers.Main) {
-            val before = inputMethod.currentInputEditorInfo
-            val wasFocused = node.isFocused
-            if (!wasFocused && !node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             withTimeoutOrNull(INPUT_START_MILLIS) {
                 var ready: InputMethod.AccessibilityInputConnection? = null
                 while (ready == null) {
@@ -4401,6 +4829,8 @@ class ScreenActions internal constructor(
                 ready
             }
         } ?: return ActionResult.Failed("The text field did not connect to Kestrel's input method")
+        // If the app has moved the focus to another field, the input would replace that field's text instead.
+        if (!(node.refresh() && node.isFocused)) return ActionResult.Failed("The text field lost the focus")
         withContext(Dispatchers.Main) {
             connection.performContextMenuAction(android.R.id.selectAll)
             connection.commitText(text, 1, null)
@@ -4444,60 +4874,62 @@ class ScreenActions internal constructor(
 
     private class Target(val node: AccessibilityNodeInfo, val isSelf: Boolean)
 
-    /**
-     * The element's node, or its nearest parent up to [MAX_PARENT_DEPTH] levels up, that handles touches. A finger's
-     * touch stops at that view even when it is disabled, so Kestrel's action stops there too.
-     */
-    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? {
+    /** This node or its nearest parent, up to [MAX_PARENT_DEPTH] levels up, that [matches]. */
+    private fun AccessibilityNodeInfo.selfOrParent(matches: (AccessibilityNodeInfo) -> Boolean): Target? {
         var current: AccessibilityNodeInfo? = this
         var depth = 0
         while (current != null && depth <= MAX_PARENT_DEPTH) {
-            if (current.isClickable || current.isLongClickable || current.offers(action)) return Target(current, isSelf = depth == 0)
+            if (matches(current)) return Target(current, isSelf = depth == 0)
             current = current.parent
             depth++
         }
         return null
     }
 
+    /**
+     * The element's node or its nearest parent that handles touches. A finger's touch stops at that view even when it
+     * is disabled, so Kestrel's action stops there too.
+     */
+    private fun AccessibilityNodeInfo.touchTarget(action: Int): Target? =
+        selfOrParent { it.isClickable || it.isLongClickable || it.offers(action) }
+
     private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
 
-    private fun AccessibilityNodeInfo.selfOrParentOffering(actions: List<Int>): Target? {
-        var current: AccessibilityNodeInfo? = this
-        var depth = 0
-        while (current != null && depth <= MAX_PARENT_DEPTH) {
-            if (current.isEnabled && current.actionList.any { it.id in actions }) return Target(current, isSelf = depth == 0)
-            current = current.parent
-            depth++
-        }
-        return null
+    /** The first action that scrolls this node in [direction], if the node offers one and is enabled. */
+    private fun AccessibilityNodeInfo.scrollAction(direction: ScrollDirection): Int? {
+        if (!isEnabled) return null
+        val offered = actionList.mapTo(HashSet()) { it.id }
+        val axis = ScrollActions.axis(offered, className?.toString(), collectionInfo?.rowCount, collectionInfo?.columnCount)
+        return ScrollActions.forDirection(direction, axis).firstOrNull { it in offered }
     }
 
     private fun AccessibilityNodeInfo.screenBounds(): IntRect = Rect().also(::getBoundsInScreen).let {
         IntRect(it.left, it.top, it.right, it.bottom)
     }
 
-    private fun ScreenSnapshot.largestScrollable(): ScreenElement? {
-        val appWindows = windows.filter { it.kind == WindowKind.APPLICATION }.map { it.id }.toSet()
-        return elements
-            .filter { it.scrollable && it.enabled && it.windowId in appWindows }
-            .maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+    /**
+     * The list to scroll when the owner names none: in the top app window that has a list, the largest list that can
+     * scroll in [direction], or else the largest list. The snapshot lists its windows from the top down.
+     */
+    private fun LiveSnapshot.scrollableFor(direction: ScrollDirection): ScreenElement? {
+        for (window in snapshot.windows.filter { it.kind == WindowKind.APPLICATION }) {
+            val lists = snapshot.elements.filter { it.scrollable && it.enabled && it.windowId == window.id }
+            if (lists.isEmpty()) continue
+            val fitting = lists.filter { node(it.key)?.scrollAction(direction) != null }
+            return fitting.ifEmpty { lists }.maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+        }
+        return null
     }
 
     /** The bounds of the window with [windowId], or of the top app window when there is no such window. */
     private fun ScreenSnapshot.windowBounds(windowId: Int?): IntRect? =
         (windows.firstOrNull { it.id == windowId } ?: windows.firstOrNull { it.kind == WindowKind.APPLICATION })?.bounds
 
-    private fun ScrollDirection.actionIds(): List<Int> = when (this) {
-        ScrollDirection.DOWN -> listOf(AccessibilityAction.ACTION_SCROLL_DOWN.id, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-        ScrollDirection.UP -> listOf(AccessibilityAction.ACTION_SCROLL_UP.id, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
-        ScrollDirection.RIGHT -> listOf(AccessibilityAction.ACTION_SCROLL_RIGHT.id)
-        ScrollDirection.LEFT -> listOf(AccessibilityAction.ACTION_SCROLL_LEFT.id)
-    }
-
     private companion object {
         const val MAX_PARENT_DEPTH = 20
         val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
         val DISABLED = ActionResult.Failed("The element is disabled")
+        val GONE = ActionResult.Failed("The element is no longer on the screen")
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L
@@ -4509,7 +4941,7 @@ class ScreenActions internal constructor(
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 34 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 37 test cases (`GestureTest` 4 and `SystemActionsTest` 5) and no failures.
 
 - [ ] **Step 5: Run the checks**
 
@@ -5250,7 +5682,7 @@ class KestrelAccessibilityService : AccessibilityService() {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 41 test cases (`OverlayTest` 7) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 44 test cases (`OverlayTest` 7) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6063,7 +6495,7 @@ class ScreenSession(service: AccessibilityService) {
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 46 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 49 test cases (`GridBarAndCardTest` 5) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -6744,7 +7176,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 49 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 52 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -7580,7 +8012,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 55 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 58 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -7748,7 +8180,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 55 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 58 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 

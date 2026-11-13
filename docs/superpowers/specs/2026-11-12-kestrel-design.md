@@ -314,7 +314,7 @@ A thin overlay at the top of the screen shows the listening mode, the last thing
 
 After each action, Kestrel waits until the window events have been quiet for 150–300 ms, but never longer than 3 s.
 
-An action looks up its element in the current snapshot, never in an older one, because a list may have reused an old row's view for another item. A tap or long press goes to the node that a finger's touch would reach: the element itself or its nearest parent that handles touches. If that node is disabled, Kestrel does not act and reports it, because a finger's touch would stop there too.
+An action looks up its element in the current snapshot, never in an older one, because a list may have reused an old row's view for another item. A tap or long press goes to the node that a finger's touch would reach: the element itself or its nearest parent that handles touches. If that node is disabled, Kestrel does not act and reports it, because a finger's touch would stop there too. Kestrel does not type into a disabled field either. Scrolling uses Android's forward and backward actions only along the list's own axis, so that "scroll down" never flips a horizontal pager, and the swipe fallback swipes across the list, not across the whole window.
 
 ### 9.4 Overlays
 
@@ -350,7 +350,7 @@ Before Kestrel takes a screenshot for OCR or for the LLM, it hides its overlays.
 
 - "Start editing", or a focused text field, starts editing. "Stop editing" ends it.
 - While editing, speech that is not a command is typed at the cursor. Spoken punctuation is converted ("comma", "new line", "exclamation mark"), and spoken characters work ("capital p", "one two three"), as in Voice Access.
-- Kestrel types with the set-text action, computing the new text from the field's current text and selection. If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on.
+- Kestrel types with the set-text action, computing the new text from the field's current text and selection. If an app rejects set-text, or the text does not read back correctly, Kestrel uses the accessibility input method for that app from then on. A field that is disabled or has gone does not count as a rejection.
 - Undo and redo use Kestrel's own history of its edits in each field.
 - "Show password" makes a password field readable, so the owner can check dictated characters.
 
