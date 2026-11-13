@@ -14,6 +14,9 @@ enum class ActionMethod {
 
     /** Kestrel's accessibility input method, for apps that refuse the set-text action (design spec, section 9.7). */
     INPUT_METHOD,
+    GLOBAL_ACTION,
+    INTENT,
+    MAGNIFICATION,
 }
 
 sealed interface ActionResult {

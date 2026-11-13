@@ -9,13 +9,38 @@ internal object Gestures {
     private const val TAP_MILLIS = 50L
     private const val LONG_PRESS_MILLIS = 800L
     private const val SWIPE_MILLIS = 500L
+    private const val DRAG_MOVE_MILLIS = 600L
+    private const val PINCH_MILLIS = 600L
+    private const val DRAG_DRIFT_PIXELS = 10
 
-    fun tap(x: Int, y: Int): GestureDescription = stroke(point(x, y), TAP_MILLIS)
+    fun tap(x: Int, y: Int): GestureDescription = gesture(StrokeDescription(point(x, y), 0, TAP_MILLIS))
 
-    fun longPress(x: Int, y: Int): GestureDescription = stroke(point(x, y), LONG_PRESS_MILLIS)
+    fun longPress(x: Int, y: Int): GestureDescription = gesture(StrokeDescription(point(x, y), 0, LONG_PRESS_MILLIS))
 
     fun swipe(from: ScreenPoint, to: ScreenPoint, durationMillis: Long = SWIPE_MILLIS): GestureDescription =
-        stroke(line(from, to), durationMillis)
+        gesture(StrokeDescription(line(from, to), 0, durationMillis))
+
+    /**
+     * A drag is a long press that continues into a move, so it is dispatched in two parts. Android ends a
+     * continuing stroke at its last change of position, so the press drifts slowly by a few pixels, less than a
+     * touch slop, to last its whole time.
+     */
+    fun drag(from: ScreenPoint, to: ScreenPoint): Array<GestureDescription> {
+        val pressed = ScreenPoint(from.x + DRAG_DRIFT_PIXELS, from.y)
+        val hold = StrokeDescription(line(from, pressed), 0, LONG_PRESS_MILLIS, true)
+        val move = hold.continueStroke(line(pressed, to), 0, DRAG_MOVE_MILLIS, false)
+        return arrayOf(gesture(hold), gesture(move))
+    }
+
+    /** Two fingers that move apart ([endSpan] larger than [startSpan]) or together, side by side around [center]. */
+    fun pinch(center: ScreenPoint, startSpan: Int, endSpan: Int): GestureDescription {
+        fun finger(side: Int) = StrokeDescription(
+            line(ScreenPoint(center.x + side * startSpan / 2, center.y), ScreenPoint(center.x + side * endSpan / 2, center.y)),
+            0,
+            PINCH_MILLIS,
+        )
+        return GestureDescription.Builder().addStroke(finger(-1)).addStroke(finger(1)).build()
+    }
 
     private fun point(x: Int, y: Int) = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
 
@@ -24,6 +49,5 @@ internal object Gestures {
         lineTo(to.x.toFloat(), to.y.toFloat())
     }
 
-    private fun stroke(path: Path, durationMillis: Long): GestureDescription =
-        GestureDescription.Builder().addStroke(StrokeDescription(path, 0, durationMillis)).build()
+    private fun gesture(stroke: StrokeDescription): GestureDescription = GestureDescription.Builder().addStroke(stroke).build()
 }

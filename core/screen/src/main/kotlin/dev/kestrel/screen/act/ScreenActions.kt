@@ -3,7 +3,11 @@ package dev.kestrel.screen.act
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.accessibilityservice.InputMethod
+import android.accessibilityservice.MagnificationConfig
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
@@ -110,6 +114,63 @@ class ScreenActions internal constructor(
         return gesture(Gestures.swipe(from, to))
     }
 
+    suspend fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult =
+        gesture(Gestures.swipe(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
+
+    /** Presses and holds at the first point, then moves to the second point, as when moving an icon. */
+    suspend fun drag(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult =
+        gesture(*Gestures.drag(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
+
+    /** Moves two fingers apart (when [endSpan] is larger than [startSpan]) or together around a point. */
+    suspend fun pinch(centerX: Int, centerY: Int, startSpan: Int, endSpan: Int): ActionResult =
+        gesture(Gestures.pinch(ScreenPoint(centerX, centerY), startSpan, endSpan))
+
+    /** How many times Android's magnification enlarges the screen; 1 when it does not. */
+    val zoomScale: Float get() = service.magnificationController.magnificationConfig?.scale ?: 1f
+
+    /** Magnifies the whole screen [scale] times around a point, with Android's magnification (design spec, section 9.3). */
+    suspend fun zoom(scale: Float, centerX: Int, centerY: Int): ActionResult {
+        val config = MagnificationConfig.Builder()
+            .setMode(MagnificationConfig.MAGNIFICATION_MODE_FULLSCREEN)
+            .setScale(scale)
+            .setCenterX(centerX.toFloat())
+            .setCenterY(centerY.toFloat())
+            .build()
+        val done = withContext(Dispatchers.Main) { service.magnificationController.setMagnificationConfig(config, false) }
+        return if (done) ActionResult.Done(ActionMethod.MAGNIFICATION) else ActionResult.Failed("Android refused to magnify the screen")
+    }
+
+    suspend fun resetZoom(): ActionResult {
+        val done = withContext(Dispatchers.Main) { service.magnificationController.resetCurrentMagnification(false) }
+        return if (done) ActionResult.Done(ActionMethod.MAGNIFICATION) else ActionResult.Failed("Android refused to reset the magnification")
+    }
+
+    suspend fun global(action: GlobalAction): ActionResult {
+        return if (service.performGlobalAction(action.id)) {
+            settled(ActionMethod.GLOBAL_ACTION)
+        } else {
+            ActionResult.Failed("Android refused the action ${action.name}")
+        }
+    }
+
+    /** Opens the app with [packageName] as its launcher icon would. */
+    suspend fun openApp(packageName: String): ActionResult {
+        val intent = service.packageManager.getLaunchIntentForPackage(packageName)
+            ?: return ActionResult.Failed("No app with the package $packageName can be opened")
+        service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return settled(ActionMethod.INTENT)
+    }
+
+    /** Opens a link or a deep link in the app that handles it. */
+    suspend fun openUri(uri: String): ActionResult {
+        return try {
+            service.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            settled(ActionMethod.INTENT)
+        } catch (e: ActivityNotFoundException) {
+            ActionResult.Failed("No app can open the link")
+        }
+    }
+
     private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
         val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
         val target = node.touchTarget(action)
@@ -167,8 +228,8 @@ class ScreenActions internal constructor(
         }
     }
 
-    private suspend fun gesture(description: GestureDescription): ActionResult =
-        when (gestures.perform(description)) {
+    private suspend fun gesture(vararg parts: GestureDescription): ActionResult =
+        when (gestures.perform(*parts)) {
             GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
             GestureOutcome.CANCELLED -> ActionResult.Failed("A touch on the screen cancelled the gesture")
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture")

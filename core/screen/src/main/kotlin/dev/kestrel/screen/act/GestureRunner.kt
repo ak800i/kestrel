@@ -16,7 +16,15 @@ enum class GestureOutcome { COMPLETED, CANCELLED, REJECTED }
 class GestureRunner(private val service: AccessibilityService) {
     private val mutex = Mutex()
 
-    suspend fun perform(gesture: GestureDescription): GestureOutcome = mutex.withLock { dispatch(gesture) }
+    /** Runs the [parts] of one gesture in order, such as the hold and the move of a drag, and stops at a failed part. */
+    suspend fun perform(vararg parts: GestureDescription): GestureOutcome = mutex.withLock {
+        var outcome = GestureOutcome.COMPLETED
+        for (part in parts) {
+            outcome = dispatch(part)
+            if (outcome != GestureOutcome.COMPLETED) break
+        }
+        outcome
+    }
 
     private suspend fun dispatch(gesture: GestureDescription): GestureOutcome = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { continuation ->
