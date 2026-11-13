@@ -2024,11 +2024,11 @@ git commit -m "test: add the :testapp fixture screens" -m "Co-authored-by: Copil
 - Produces: `internal fun AccessibilityNodeInfo.shownText(): String?`, the node's text, or null while a text field shows its hint.
 - Produces: `class ScreenSession(service: AccessibilityService)` with `snapshots: SnapshotCache<LiveSnapshot>` and `onAccessibilityEvent(event)`, and the internal `tracker`.
 - Produces: `AppGraph.screen: StateFlow<ScreenSession?>`, which holds the session while the service is connected, and the internal `attachScreen(session)` and `detachScreen(session)`.
-- Produces: the test rule `ScreenServiceRule` with `session`, `automation`, `shell(command): String`, `open(activity, title, extras = ""): ScreenElement` and `suspend awaitElement(timeoutMillis = 5_000, predicate): ScreenElement`, and the constants `FIXTURES` and `KESTREL`.
+- Produces: the test rule `ScreenServiceRule` with `session`, `automation`, `shell(command): String`, `open(activity, title, extras = ""): ScreenElement` and `suspend awaitElement(timeoutMillis = 5_000, predicate): ScreenElement`, and the constant `FIXTURES`.
 
 The service stays thin: it creates a `ScreenSession` when Android connects it, passes every accessibility event to the session, and hands the session to `AppGraph`, from which the rest of the app reaches the screen layer. Because the service runs for days, it also purges expired log entries once a day (spec section 13.5). `AppGraph`'s error handler now writes only class names and stack frames to logcat, because an error's message can contain screen text. Android reports the hint of an empty text field as its text, so the adapter reports no text while a field shows its hint; otherwise a snapshot would claim that an empty field contains "Message".
 
-The test rule gives every test a new session: it turns the service off, waits until `AppGraph.screen` is empty, turns the service on and waits for the new session. It connects UiAutomation with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, because otherwise UiAutomation turns off every accessibility service. The service stays on after the last test; the test devices are only `kestrel-api37` and the A71.
+The test rule gives every test a new session: it turns the service off, waits until `AppGraph.screen` is empty, turns the service on and waits for the new session. It connects UiAutomation with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, because otherwise UiAutomation turns off every accessibility service. The rule replaces the whole list of enabled accessibility services, so it also switches off any other service on the test device; the test devices are only `kestrel-api37` and the A71. After the last test, Gradle uninstalls Kestrel, and Android then removes its service from the list.
 
 - [ ] **Step 1: Write the failing unit test for error summaries**
 
@@ -4312,7 +4312,7 @@ git commit -m "feat(screen): add gestures, zoom, global actions and intents" -m 
 - Create: `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/OverlayHost.kt`, `TagsView.kt`, `NumbersOverlay.kt`, `LabelsOverlay.kt`
 - Modify: `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt` (overlays, the content watcher and `close()`)
 - Modify: `app/src/main/kotlin/dev/kestrel/app/KestrelAccessibilityService.kt` (close the session)
-- Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/ScreenServiceRule.kt` (add `showsWindow`)
+- Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/ScreenServiceRule.kt` (add `showsWindow` and the constant `KESTREL`)
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/screen/OverlayTest.kt`
 
 **Interfaces:**
@@ -4320,7 +4320,7 @@ git commit -m "feat(screen): add gestures, zoom, global actions and intents" -m 
 - Produces: `enum class NumbersMode { ALL, UNLABELED }`, `data class Badge(number: Int, key: String, bounds: IntRect)` and `object Numbering` with `forScreen(snapshot, mode): List<Badge>` and `forCandidates(candidates: List<ScreenElement>): List<Badge>`.
 - Produces: `class OverlayHost(service)` with `context`, `show(view, params)`, `hide(view)`, `hideAll()` and `fullScreen(title): LayoutParams`, and the internal `TagsView`, `NumbersOverlay` and `LabelsOverlay`.
 - Produces: on `ScreenSession`: `numberBadges: List<Badge>`, `labelsShowing: Boolean`, `suspend showNumbers(mode = NumbersMode.ALL)`, `suspend showWhichOne(keys: Collection<String>)`, `suspend hideNumbers()`, `suspend showLabels()`, `suspend hideLabels()` and `close()`.
-- Produces: `ScreenServiceRule.showsWindow(title: String): Boolean`.
+- Produces: `ScreenServiceRule.showsWindow(title: String): Boolean` and the constant `ScreenServiceRule.KESTREL` (`"dev.kestrel"`).
 
 Numbers go on the actionable elements, except the keyboard's keys, in reading order: top to bottom, then left to right. In `UNLABELED` mode, only elements without a label get numbers. The session watches the screen: after each change it waits for 150 ms of quiet and compares the actionable elements' keys and bounds with the last ones. Numbers then follow the new screen, while labels and the "Which one?" numbers go away, because they belong to the screen on which they were asked for (spec section 9.4). The overlays are plain Views in full-screen accessibility overlay windows that take no touches, so touches reach the app below. Each window has a title, such as "Kestrel numbers", by which tests find it in `dumpsys window windows`. `close()` removes every overlay; the service calls it when Android disconnects it.
 
@@ -7460,7 +7460,7 @@ class AppGraph(context: Context) {
 In `README.md`, after the paragraph that ends with "Auto Blocker must be off while USB debugging is in use.", add:
 
 ````markdown
-The device tests of `:app` use the fixture screens of `:testapp`, a separate app that `connected-test.ps1` installs first. Each test turns Kestrel's accessibility service off and on again, and the service stays on after the last test. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates, because touches from `adb shell input` do not reach Android the way a finger's touches do.
+The device tests of `:app` use the fixture screens of `:testapp`, a separate app that `connected-test.ps1` installs first. Each test turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so they also switch off any other service on the device. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates, because touches from `adb shell input` do not reach Android the way a finger's touches do.
 
 If the device tests become slow, or Android restarts while they run, restart the emulator: run `adb -s $serial emu kill`, then `scripts\start-emulator.ps1`. Restarting Android inside the emulator is not enough.
 
