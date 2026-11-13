@@ -12,8 +12,8 @@ internal enum class ScrollAxis { VERTICAL, HORIZONTAL, BOTH, UNKNOWN }
 
 /**
  * Which accessibility actions scroll a list in a direction. Android's forward and backward actions do not say which
- * way they move, so Kestrel uses them only along the list's own axis: on a horizontal pager, forward shows the next
- * tab instead of more of the list (design spec, section 9.3).
+ * way they move, so Kestrel uses them only when it knows the list's axis and the axis matches: on a horizontal pager,
+ * forward shows the next tab instead of more of the list (design spec, section 9.3).
  */
 internal object ScrollActions {
     private const val UP = android.R.id.accessibilityActionScrollUp
@@ -35,9 +35,13 @@ internal object ScrollActions {
         "android.support.v4.view.ViewPager",
     )
 
+    // Flutter gives its vertical scrollers this class, with only the forward and backward actions.
+    private val verticalClasses = setOf("android.widget.ScrollView")
+
     /**
      * The axis of a list: from the directional actions that it offers, then from its class, and then from the shape of
-     * its collection, such as a list with a single row.
+     * its collection: a single row or a single column. For the count that such a list does not use, Flutter reports 0
+     * and Compose reports -1.
      */
     fun axis(offered: Set<Int>, className: String?, rows: Int?, columns: Int?): ScrollAxis {
         val vertical = offered.any { it in verticalActions }
@@ -47,22 +51,27 @@ internal object ScrollActions {
             vertical -> ScrollAxis.VERTICAL
             horizontal -> ScrollAxis.HORIZONTAL
             className in horizontalClasses -> ScrollAxis.HORIZONTAL
-            rows == 1 && columns != 1 -> ScrollAxis.HORIZONTAL
-            columns == 1 && rows != 1 -> ScrollAxis.VERTICAL
+            className in verticalClasses -> ScrollAxis.VERTICAL
+            rows.isOne() && columns.isMany() -> ScrollAxis.HORIZONTAL
+            columns.isOne() && rows.isMany() -> ScrollAxis.VERTICAL
             else -> ScrollAxis.UNKNOWN
         }
     }
 
+    private fun Int?.isOne() = this == 0 || this == 1
+
+    private fun Int?.isMany() = this != null && this != 0 && this != 1
+
     /**
      * The actions that scroll a list with [axis] in [direction], in the order to try them. Forward and backward are
-     * used only along the list's own axis, and count as vertical when the axis is unknown, because most lists scroll
-     * vertically. A list that scrolls both ways offers directional actions, so it never needs forward or backward.
+     * used only when the list's axis is known and matches: Flutter's pagers hide their axis, and on them forward would
+     * turn the page. A list that scrolls both ways offers directional actions, so it never needs forward or backward.
      */
     fun forDirection(direction: ScrollDirection, axis: ScrollAxis): List<Int> {
         val alongTheAxis = when (axis) {
-            ScrollAxis.BOTH -> false
+            ScrollAxis.VERTICAL -> direction.isVertical
             ScrollAxis.HORIZONTAL -> !direction.isVertical
-            ScrollAxis.VERTICAL, ScrollAxis.UNKNOWN -> direction.isVertical
+            ScrollAxis.BOTH, ScrollAxis.UNKNOWN -> false
         }
         return when (direction) {
             ScrollDirection.DOWN -> listOf(DOWN, PAGE_DOWN) + if (alongTheAxis) listOf(FORWARD) else emptyList()

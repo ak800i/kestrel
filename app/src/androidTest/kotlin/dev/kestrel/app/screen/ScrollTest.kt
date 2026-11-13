@@ -69,6 +69,14 @@ class ScrollTest {
     }
 
     @Test
+    fun scrollDownNeverTurnsAPagerThatHidesItsAxis() = runBlocking {
+        screen.open("ScrollActivity", "Opaque pager scroll fixture", extras = "--ez opaquePager true")
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.scroll(ScrollDirection.DOWN))
+        firstRowIsHidden()
+    }
+
+    @Test
     fun scrollRightShowsThePagersNextPage() = runBlocking {
         screen.open("ScrollActivity", "Pager scroll fixture", extras = "--ez pages true")
 

@@ -29,16 +29,27 @@ class ScrollActionsTest {
         assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "android.support.v4.view.ViewPager", null, null))
         assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 1, 12))
         assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 12, 1))
+        assertEquals(ScrollAxis.UNKNOWN, ScrollActions.axis(setOf(forward), "androidx.recyclerview.widget.RecyclerView", 12, 3))
         assertEquals(ScrollAxis.UNKNOWN, ScrollActions.axis(setOf(forward, backward), "android.view.View", null, null))
     }
 
     @Test
-    fun forwardAndBackwardAreUsedOnlyAlongTheListsAxis() {
+    fun flutterAndComposeListsTellTheirAxisInTheirOwnWays() {
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "android.widget.ScrollView", null, null))
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "android.view.View", 0, 8))
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "android.view.View", 8, 0))
+        assertEquals(ScrollAxis.HORIZONTAL, ScrollActions.axis(setOf(forward), "android.view.View", 1, -1))
+        assertEquals(ScrollAxis.VERTICAL, ScrollActions.axis(setOf(forward), "android.view.View", -1, 1))
+    }
+
+    @Test
+    fun forwardAndBackwardAreUsedOnlyAlongAKnownAxis() {
         assertEquals(listOf(down, pageDown, forward), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.VERTICAL))
         assertEquals(listOf(down, pageDown), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.HORIZONTAL))
         assertEquals(listOf(right, pageRight, forward), ScrollActions.forDirection(ScrollDirection.RIGHT, ScrollAxis.HORIZONTAL))
         assertEquals(listOf(right, pageRight), ScrollActions.forDirection(ScrollDirection.RIGHT, ScrollAxis.UNKNOWN))
-        assertEquals(listOf(up, pageUp, backward), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.UNKNOWN))
+        assertEquals(listOf(up, pageUp, backward), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.VERTICAL))
+        assertEquals(listOf(up, pageUp), ScrollActions.forDirection(ScrollDirection.UP, ScrollAxis.UNKNOWN))
         assertEquals(listOf(down, pageDown), ScrollActions.forDirection(ScrollDirection.DOWN, ScrollAxis.BOTH))
     }
 
