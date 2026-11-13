@@ -19,4 +19,5 @@ rootProject.name = "kestrel"
 
 include(":app")
 include(":core:privacy")
+include(":core:screen")
 include(":core:safety")
