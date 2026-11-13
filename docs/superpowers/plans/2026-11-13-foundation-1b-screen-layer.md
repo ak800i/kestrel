@@ -5994,7 +5994,7 @@ git commit -m "feat(screen): add the numbers and labels overlays" -m "Co-authore
 - Produces: on `ScreenSession`: `grid: Grid?`, `feedbackText: String?`, `suspend showGrid(grid: Grid? = null)`, `suspend hideGrid()`, `suspend showFeedback(text: String)` and `suspend confirm(question: String): Boolean`.
 - Produces: `ScreenServiceRule.overlayButton(text: String): Rect?`.
 
-The grid's cells are roughly square, numbered row by row, and together they cover the whole area. The feedback bar is a thin overlay at the top of the screen; it never takes touches, and its text fades after 4 s (spec section 8.9). The confirmation card is the only overlay that takes touches, and only on itself: touches elsewhere reach the app. `confirm` suspends until the owner taps Confirm (true) or Cancel (false); cancelling the call removes the card. The 15 s timeout of spec section 12.4 belongs to the caller, which sub-project 5 adds. Tests find the card's buttons through UiAutomation's list of interactive windows, which contains touchable accessibility overlays.
+The grid's cells are roughly square, numbered row by row, and together they cover the whole area. The feedback bar is a thin overlay at the top of the screen; it never takes touches, and its text fades after 4 s (spec section 8.9). The confirmation card is the only overlay that takes touches, and only on itself: touches elsewhere reach the app. `confirm` suspends until the owner taps Confirm (true) or Cancel (false); cancelling the call removes the card. A new question replaces an open one, and the old card's buttons then no longer affect the new question. The 15 s timeout of spec section 12.4 belongs to the caller, which sub-project 5 adds. Tests find the card's buttons through UiAutomation's list of interactive windows, which contains touchable accessibility overlays. Kestrel's own list contains the card too, so a test checks that snapshots still leave it out: otherwise Kestrel could tap its own Confirm button. The grid's and the bar's state is `@Volatile`, like the state of Task 9's overlays, because tests and commands read it from other threads.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6046,6 +6046,8 @@ class GridTest {
 package dev.kestrel.app.screen
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.WindowSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -6110,6 +6112,24 @@ class GridBarAndCardTest {
         answer.cancel()
 
         eventually { !screen.showsWindow("Kestrel confirmation") }
+    }
+
+    @Test
+    fun snapshotsLeaveTheCardOut() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val answer = async { session.confirm("Send a test message?") }
+        try {
+            eventually { screen.overlayButton("Confirm") != null }
+
+            // The card is now in Android's list of interactive windows. A snapshot read after this point must still
+            // leave it out, or Kestrel could tap its own Confirm button.
+            session.snapshots.invalidate()
+            val snapshot = session.snapshots.current().snapshot
+            assertEquals(emptyList<WindowSummary>(), snapshot.windows.filter { it.packageName == ScreenServiceRule.KESTREL })
+            assertEquals(emptyList<ScreenElement>(), snapshot.elements.filter { it.packageName == ScreenServiceRule.KESTREL })
+        } finally {
+            answer.cancel()
+        }
     }
 
     private suspend fun CoroutineScope.answerWith(button: String, expected: Boolean) {
@@ -6325,6 +6345,7 @@ internal class GridOverlay(private val host: OverlayHost) {
     private val view = GridView(host.context)
 
     /** The grid on the screen now, or null while it is hidden. */
+    @Volatile
     var grid: Grid? = null
         private set
 
@@ -6394,7 +6415,7 @@ import android.widget.TextView
  * A thin bar at the top of the screen with what Kestrel heard and does. It never takes touches, and its text
  * fades after a few seconds without a new one (design spec, section 8.9). Use it on the main thread.
  */
-internal class FeedbackBar(private val host: OverlayHost, private val fadeAfterMillis: Long = FADE_AFTER_MILLIS) {
+internal class FeedbackBar(private val host: OverlayHost) {
     private val handler = Handler(Looper.getMainLooper())
     private val fade = Runnable { view.animate().alpha(0f).setDuration(FADE_MILLIS).withEndAction(::hide) }
     private val view = TextView(host.context).apply {
@@ -6406,6 +6427,7 @@ internal class FeedbackBar(private val host: OverlayHost, private val fadeAfterM
     }
 
     /** The text on the bar now, or null while the bar is hidden. */
+    @Volatile
     var text: String? = null
         private set
 
@@ -6416,7 +6438,7 @@ internal class FeedbackBar(private val host: OverlayHost, private val fadeAfterM
         view.alpha = 1f
         view.text = text
         host.show(view, params())
-        handler.postDelayed(fade, fadeAfterMillis)
+        handler.postDelayed(fade, FADE_AFTER_MILLIS)
     }
 
     fun hide() {
@@ -6476,12 +6498,18 @@ internal class ConfirmationCard(private val host: OverlayHost) {
         lateinit var card: LinearLayout
         fun answer(confirmed: Boolean) {
             host.hide(card)
-            pending = null
+            // A newer question may have replaced this one while its card was still on the screen.
+            if (pending === continuation) pending = null
             if (continuation.isActive) continuation.resume(confirmed)
         }
         card = build(question, onConfirm = { answer(true) }, onCancel = { answer(false) })
         // Cancellation can arrive on any thread, and the window must be removed on the main thread.
-        continuation.invokeOnCancellation { card.post { host.hide(card) } }
+        continuation.invokeOnCancellation {
+            card.post {
+                host.hide(card)
+                if (pending === continuation) pending = null
+            }
+        }
         pending = continuation
         host.show(card, params())
     }
@@ -6786,7 +6814,7 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 54 test cases (`GridBarAndCardTest` 5) and no failures.
+Expected: `BUILD SUCCESSFUL`, with 55 test cases (`GridBarAndCardTest` 6) and no failures.
 
 - [ ] **Step 7: Run the checks**
 
@@ -7477,7 +7505,7 @@ Expected: `BUILD SUCCESSFUL`, with 3 test cases and no failures. `aFingerDuringK
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 57 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
+Expected: `BUILD SUCCESSFUL`, with 58 test cases and no failures. `GestureRunner` changed, so every gesture test runs again.
 
 Run: `scripts\gradle.ps1 check`
 
@@ -8313,7 +8341,7 @@ Then turn the service off again: `& $adb -s $serial shell settings delete secure
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`, with 63 test cases and no failures.
+Expected: `BUILD SUCCESSFUL`, with 64 test cases and no failures.
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
 
@@ -8481,7 +8509,7 @@ Expected: `BUILD SUCCESSFUL`.
 
 Run: `scripts\connected-test.ps1 -Serial (scripts\start-emulator.ps1) :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest`
 
-Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 63 for `:app`, all without failures.
+Expected: `BUILD SUCCESSFUL`: 7 test cases for `:core:privacy` and 64 for `:app`, all without failures.
 
 - [ ] **Step 6: Commit and push**
 
