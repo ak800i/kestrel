@@ -7,6 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
+import dev.kestrel.screen.model.IntRect
 
 /**
  * Shows Kestrel's overlay windows. They are accessibility overlays, so Kestrel needs no "display over other apps"
@@ -31,6 +32,9 @@ class OverlayHost(private val service: AccessibilityService) {
             // Android has removed the window already, as it does when the service disconnects.
         }
     }
+
+    /** The whole screen, system bars included, in screen pixels. */
+    fun screenBounds(): IntRect = windowManager.maximumWindowMetrics.bounds.let { IntRect(it.left, it.top, it.right, it.bottom) }
 
     fun hideAll() {
         shown.toList().forEach(::hide)

@@ -8,6 +8,10 @@ import dev.kestrel.screen.act.ScreenActions
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.overlay.Badge
+import dev.kestrel.screen.overlay.ConfirmationCard
+import dev.kestrel.screen.overlay.FeedbackBar
+import dev.kestrel.screen.overlay.Grid
+import dev.kestrel.screen.overlay.GridOverlay
 import dev.kestrel.screen.overlay.LabelsOverlay
 import dev.kestrel.screen.overlay.Numbering
 import dev.kestrel.screen.overlay.NumbersMode
@@ -36,6 +40,9 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
     private val labels = LabelsOverlay(overlays)
+    private val gridOverlay = GridOverlay(overlays)
+    private val feedback = FeedbackBar(overlays)
+    private val card = ConfirmationCard(overlays)
     internal val tracker = ScreenChangeTracker(SystemClock::uptimeMillis)
     internal val gestures = GestureRunner(service)
 
@@ -58,6 +65,12 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
     val numberBadges: List<Badge> get() = numbers.badges
 
     val labelsShowing: Boolean get() = labels.isShowing
+
+    /** The grid on the screen now, or null. "Tap 5" taps the centre of the grid's cell 5. */
+    val grid: Grid? get() = gridOverlay.grid
+
+    /** The feedback bar's text now, or null while the bar is hidden. */
+    val feedbackText: String? get() = feedback.text
 
     init {
         scope.launch {
@@ -106,6 +119,22 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
         labels.hide()
     }
 
+    /** Shows [grid], by default one over the whole screen. "More squares" shows `grid.more()` (design spec, section 9.4). */
+    suspend fun showGrid(grid: Grid? = null) = withContext(Dispatchers.Main) {
+        gridOverlay.show(grid ?: Grid.over(overlays.screenBounds()))
+    }
+
+    suspend fun hideGrid() = withContext(Dispatchers.Main) { gridOverlay.hide() }
+
+    /** Shows [text] on the feedback bar, which fades after a few seconds (design spec, section 8.9). */
+    suspend fun showFeedback(text: String) = withContext(Dispatchers.Main) { feedback.show(text) }
+
+    /**
+     * Asks [question] on a confirmation card and returns true when the owner taps Confirm. A caller that also
+     * listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call (design spec, section 12.4).
+     */
+    suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) { card.ask(question) }
+
     /** Kestrel's accessibility service passes every event here. */
     fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged()
@@ -114,6 +143,7 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
     /** Removes the overlays and stops the session's work. The service calls it on the main thread when it disconnects. */
     fun close() {
         scope.cancel()
+        card.dismiss()
         overlays.hideAll()
     }
 

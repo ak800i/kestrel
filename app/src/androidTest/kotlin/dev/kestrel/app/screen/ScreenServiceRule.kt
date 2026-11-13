@@ -1,7 +1,10 @@
 package dev.kestrel.app.screen
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
+import android.graphics.Rect
 import android.os.ParcelFileDescriptor
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.screen.ScreenSession
@@ -53,6 +56,19 @@ class ScreenServiceRule : ExternalResource() {
     /** Whether Android's window list has a window with [title], such as "Kestrel numbers". */
     fun showsWindow(title: String): Boolean = shell("dumpsys window windows").contains("$title}")
 
+    /**
+     * The bounds of a button on one of Kestrel's touchable overlays, such as the confirmation card, as another
+     * accessibility client sees it. Overlays that take no touches are not in the list of interactive windows.
+     */
+    fun overlayButton(text: String): Rect? {
+        for (window in automation.windows) {
+            if (window.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue
+            val button = window.root?.findAccessibilityNodeInfosByText(text)?.firstOrNull() ?: continue
+            return Rect().also(button::getBoundsInScreen)
+        }
+        return null
+    }
+
     /** Waits until an element that matches [predicate] is on the screen. */
     suspend fun awaitElement(timeoutMillis: Long = 5_000, predicate: (ScreenElement) -> Boolean): ScreenElement {
         var labels: List<String?> = emptyList()
@@ -75,7 +91,9 @@ class ScreenServiceRule : ExternalResource() {
 
         // Connecting UiAutomation without this flag would turn off every accessibility service, Kestrel's included.
         private val automation: UiAutomation by lazy {
-            InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+            InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).apply {
+                serviceInfo = serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
+            }
         }
     }
 }
