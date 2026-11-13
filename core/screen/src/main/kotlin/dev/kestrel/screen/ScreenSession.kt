@@ -17,18 +17,22 @@ import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.ScreenEvents
 import dev.kestrel.screen.read.ScreenReader
 import dev.kestrel.screen.read.SnapshotCache
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Kestrel's screen layer while its accessibility service is connected (design spec, section 9). */
-class ScreenSession(service: AccessibilityService) {
+/**
+ * Kestrel's screen layer while its accessibility service is connected (design spec, section 9). [errors] handles the
+ * failures of the session's background work, and it may write only class names and stack frames (design spec, section
+ * 13.5).
+ */
+class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
     private val labels = LabelsOverlay(overlays)
@@ -41,7 +45,7 @@ class ScreenSession(service: AccessibilityService) {
     val actions = ScreenActions(service, snapshots, gestures, tracker)
 
     // These fields change only on the main thread.
-    /** Set while "show numbers" is on: the numbers then follow the screen. */
+    /** Set while "show numbers" is on: the numbers then follow the screen. "Which one?" leaves it set. */
     private var numbersMode: NumbersMode? = null
 
     /** The screen content when the labels appeared. They go when it changes. */
@@ -57,9 +61,11 @@ class ScreenSession(service: AccessibilityService) {
 
     init {
         scope.launch {
-            tracker.version.collectLatest {
-                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collectLatest
-                tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS)
+            // collect, not collectLatest: on a screen that changes all the time, such as a stopwatch, collectLatest would
+            // cancel every check before it ran. The version is a state, so the check after a slow one sees the latest
+            // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
+            tracker.version.collect {
+                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
                 onScreenSettled(snapshots.current().snapshot)
             }
         }
@@ -72,10 +78,12 @@ class ScreenSession(service: AccessibilityService) {
         numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
     }
 
-    /** Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes. */
+    /**
+     * Shows numbers on the elements with [keys] only, for "Which one?". They go when the screen content changes, and
+     * then the numbers of "show numbers" come back if it is on.
+     */
     suspend fun showWhichOne(keys: Collection<String>) = withContext(Dispatchers.Main) {
         val snapshot = snapshots.current().snapshot
-        numbersMode = null
         whichOneShownOn = contentOf(snapshot)
         numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys }))
     }
@@ -115,9 +123,11 @@ class ScreenSession(service: AccessibilityService) {
             labelsShownOn = null
             labels.hide()
         }
-        if (whichOneShownOn != null && content != whichOneShownOn) {
+        if (whichOneShownOn != null) {
+            if (content == whichOneShownOn) return
+            // The candidates belong to the screen on which "Which one?" was asked.
             whichOneShownOn = null
-            numbers.hide()
+            if (numbersMode == null) numbers.hide()
         }
         numbersMode?.let { mode ->
             val badges = Numbering.forScreen(snapshot, mode)

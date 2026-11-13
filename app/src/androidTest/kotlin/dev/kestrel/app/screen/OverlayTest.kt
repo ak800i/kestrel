@@ -1,5 +1,6 @@
 package dev.kestrel.app.screen
 
+import android.view.accessibility.AccessibilityEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
@@ -8,6 +9,7 @@ import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.overlay.NumbersMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -24,7 +26,7 @@ class OverlayTest {
 
     private val session get() = screen.session
 
-    private suspend fun eventually(check: suspend () -> Boolean) = withTimeout(5_000) {
+    private suspend fun eventually(timeoutMillis: Long = 5_000, check: suspend () -> Boolean) = withTimeout(timeoutMillis) {
         while (!check()) delay(100)
     }
 
@@ -111,6 +113,22 @@ class OverlayTest {
     }
 
     @Test
+    fun numbersComeBackWhenWhichOneGoes() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        session.showNumbers()
+        val send = keyOf("SEND")
+        val rebuild = keyOf("REBUILD")
+
+        session.showWhichOne(listOf(rebuild, send))
+        assertEquals(2, session.numberBadges.size)
+        showDialog()
+
+        // "Which one?" belonged to the old screen; "show numbers" is still on, so numbers follow the new screen.
+        val keep = keyOf("KEEP")
+        eventually { session.numberBadges.any { it.key == keep } }
+    }
+
+    @Test
     fun labelsGoWhenTheScreenChanges() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 
@@ -120,6 +138,29 @@ class OverlayTest {
         eventually { screen.showsWindow("Kestrel labels") }
         showDialog()
         eventually { !session.labelsShowing && !screen.showsWindow("Kestrel labels") }
+    }
+
+    @Test
+    fun labelsGoWhenTheScreenChangesEvenIfItIsNeverQuiet() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val showDialog = keyOf("SHOW DIALOG")
+        session.showLabels()
+        eventually { screen.showsWindow("Kestrel labels") }
+
+        // From now on the screen reports a change every 50 ms, as a stopwatch or a progress bar would. Every snapshot
+        // and every action then waits the full 3 s for quiet, so this test waits longer.
+        val busy = launch(Dispatchers.Default) {
+            while (true) {
+                session.onAccessibilityEvent(AccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED))
+                delay(50)
+            }
+        }
+        try {
+            session.actions.tap(showDialog)
+            eventually(timeoutMillis = 20_000) { !session.labelsShowing }
+        } finally {
+            busy.cancel()
+        }
     }
 
     @Test

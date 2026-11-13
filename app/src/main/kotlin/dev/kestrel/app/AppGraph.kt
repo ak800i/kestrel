@@ -26,13 +26,13 @@ object SettingKeys {
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
 class AppGraph(context: Context) {
     /**
-     * Background work. A failed job is written to logcat instead of ending the app's process. Only the error's
-     * classes and stack frames are written, because a message can contain screen text.
+     * Handles the failures of background work: a failed job is written to logcat instead of ending the app's process.
+     * Only the error's classes and stack frames are written, because a message can contain screen text.
      */
-    val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO +
-            CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed: ${error.describeWithoutMessages()}") },
-    )
+    val errors = CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed: ${error.describeWithoutMessages()}") }
+
+    /** Background work, whose failures go to [errors]. */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + errors)
 
     private val store = PrivacyStore(context)
     val logs = store.logs

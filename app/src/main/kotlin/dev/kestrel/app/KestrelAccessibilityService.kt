@@ -16,7 +16,7 @@ class KestrelAccessibilityService : AccessibilityService() {
     private var purging: Job? = null
 
     override fun onServiceConnected() {
-        val connected = ScreenSession(this)
+        val connected = ScreenSession(this, graph.errors)
         session = connected
         graph.attachScreen(connected)
         // The service runs for days at a time, so it also keeps the logs within their 7 days (design spec, section 13.5).
