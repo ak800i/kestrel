@@ -8496,7 +8496,7 @@ $serial = scripts\start-emulator.ps1
 (Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" | Where-Object CommandLine -Match '-avd\s+kestrel-api37(\s|$)').CommandLine
 ```
 
-Expected: the script prints the emulator's serial again, and the command line ends with `-avd kestrel-api37 -no-boot-anim -gpu swiftshader`.
+Expected: `$serial` holds the emulator's serial again, for example `emulator-5554`, and the last command prints a command line that ends with `-avd kestrel-api37 -no-boot-anim -gpu swiftshader`.
 
 - [ ] **Step 3: Document the device tests and the test hooks in the README**
 
