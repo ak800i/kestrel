@@ -137,12 +137,21 @@ class ScreenActions internal constructor(
             .setCenterY(centerY.toFloat())
             .build()
         val done = withContext(Dispatchers.Main) { service.magnificationController.setMagnificationConfig(config, false) }
-        return if (done) ActionResult.Done(ActionMethod.MAGNIFICATION) else ActionResult.Failed("Android refused to magnify the screen")
+        return if (done) magnified() else ActionResult.Failed("Android refused to magnify the screen")
     }
 
     suspend fun resetZoom(): ActionResult {
         val done = withContext(Dispatchers.Main) { service.magnificationController.resetCurrentMagnification(false) }
-        return if (done) ActionResult.Done(ActionMethod.MAGNIFICATION) else ActionResult.Failed("Android refused to reset the magnification")
+        return if (done) magnified() else ActionResult.Failed("Android refused to reset the magnification")
+    }
+
+    /**
+     * Magnification moves every element on the screen, and Android need not send an accessibility event for it, so
+     * the next snapshot is built anew.
+     */
+    private suspend fun magnified(): ActionResult {
+        snapshots.invalidate()
+        return settled(ActionMethod.MAGNIFICATION)
     }
 
     suspend fun global(action: GlobalAction): ActionResult {

@@ -6,6 +6,7 @@ import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +25,9 @@ class GestureTest {
     }
 
     private suspend fun padReports(gesture: String) = screen.awaitElement { it.label == gesture }
+
+    /** Where the current snapshot shows the pad, without waiting for the screen to change. */
+    private suspend fun padNow() = screen.session.snapshots.current().snapshot.elements.single { it.label == "Gesture pad" }.bounds
 
     @Test
     fun tapAndLongPressAtAPoint() = runBlocking {
@@ -64,7 +68,11 @@ class GestureTest {
 
         assertEquals(ActionResult.Done(ActionMethod.MAGNIFICATION), actions.zoom(2f, pad.centerX, pad.centerY))
         assertEquals(2f, actions.zoomScale)
+        // Magnification moves every element, so the next snapshot must show the pad at its magnified size. The width
+        // is compared because the fixture's layout may still move the pad up or down a little after it opens.
+        assertNotEquals(pad.width, padNow().width)
         assertEquals(ActionResult.Done(ActionMethod.MAGNIFICATION), actions.resetZoom())
         assertEquals(1f, actions.zoomScale)
+        assertEquals(pad.width, padNow().width)
     }
 }
