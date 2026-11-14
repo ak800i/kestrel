@@ -32,6 +32,7 @@ try {
         if ($null -ne $services -and $services -notlike '*dev.kestrel/*') { break }
         Start-Sleep -Milliseconds 500
     }
-    Restore-AccessibilitySettings -Serial $Serial -Saved $saved
+    # A run whose tests passed still fails when the device keeps changed settings.
+    if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $saved) -and $code -eq 0) { $code = 1 }
 }
 exit $code

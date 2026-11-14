@@ -52,18 +52,20 @@ function Get-SecureSetting([string]$Serial, [string]$Name) {
     (Invoke-SettingsCommand -Serial $Serial -Command "settings get secure $Name") -join "`n"
 }
 
-# Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and warns when the device did not take
-# it, with a command that puts it back when it is pasted into PowerShell.
+# Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and returns whether the device took it.
+# When it did not, it warns with a command that puts the setting back when it is pasted into PowerShell.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $adb = Get-Adb
     $ErrorActionPreference = 'Continue'
-    $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
+    # A single quote would end the device shell's quoting, so it becomes '\''.
+    $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$($Value -replace "'", "'\''")'" }
     & $adb -s $Serial shell $command 2>$null | Out-Null
-    $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
-    if ($now -cne $Value) {
-        $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
-        Write-Warning "Could not put back the setting $Name of $Serial. Run: & $(& $literal $adb) -s $Serial shell $(& $literal $command)"
-    }
+    $reason = ''
+    $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $reason = " ($($_.Exception.Message))"; $null }
+    if ($now -ceq $Value) { return $true }
+    $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
+    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: & $(& $literal $adb) -s $Serial shell $(& $literal $command)"
+    $false
 }
 
 # Reads the secure settings that belong to accessibility: the list of enabled services, the accessibility switch, and
@@ -77,24 +79,29 @@ function Get-AccessibilitySettings([string]$Serial) {
 }
 
 # Puts back the settings that Get-AccessibilitySettings read, and deletes those that were not there. The list of enabled
-# services goes first, so that the shortcuts point to services that are on again.
+# services goes first, so that the shortcuts point to services that are on again. Returns whether everything is back.
 function Restore-AccessibilitySettings([string]$Serial, $Saved) {
-    $now = try { Get-AccessibilitySettings -Serial $Serial } catch { $null }
-    if ($null -eq $now) {
+    try {
+        $now = Get-AccessibilitySettings -Serial $Serial
+    } catch {
         $before = @($Saved.Keys | ForEach-Object { "$_=$($Saved[$_])" }) -join "`n"
-        Write-Warning "Could not read the accessibility settings of $Serial, so they were not put back. Before, they were:`n$before"
-        return
+        Write-Warning "Could not read the accessibility settings of $Serial ($($_.Exception.Message)), so they were not put back. Before, they were:`n$before"
+        return $false
     }
+    $back = $true
     $names = @('enabled_accessibility_services', 'accessibility_enabled') + @(@($Saved.Keys) + @($now.Keys) | Sort-Object -Unique)
     foreach ($name in ($names | Select-Object -Unique)) {
         $value = if ($Saved.Contains($name)) { $Saved[$name] } else { 'null' }
         $current = if ($now.Contains($name)) { $now[$name] } else { 'null' }
-        if ($value -cne $current) { Set-SecureSetting -Serial $Serial -Name $name -Value $value }
+        if ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $value)) { $back = $false }
     }
+    $back
 }
 
 function Find-EmulatorSerial([string]$AvdName) {
     $adb = Get-Adb
+    # Windows PowerShell 5.1 would stop at adb's first error line.
+    $ErrorActionPreference = 'Continue'
     foreach ($line in (& $adb devices | Select-Object -Skip 1)) {
         if ($line -match '^(emulator-\d+)\s+device') {
             $serial = $Matches[1]
@@ -109,6 +116,8 @@ function Find-EmulatorSerial([string]$AvdName) {
 # owner's daily phone and is accepted only with -AllowDailyPhone (design spec, D20). Every other device is refused.
 function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
     $adb = Get-Adb
+    # Windows PowerShell 5.1 would stop at adb's first error line, before the second and third check.
+    $ErrorActionPreference = 'Continue'
     # A busy emulator sometimes answers a query with nothing, so a refusal is checked twice more before it counts.
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
