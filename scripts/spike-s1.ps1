@@ -469,7 +469,13 @@ try {
             Write-Warning "Could not put back $($restore.What) on $Serial ($($restore.Reason)). $($restore.ByHand)"
         }
         # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its error.
-        if (-not ($completed -or $failed) -or $pending.Reason -contains $stopReason) { exit 1 }
+        if (-not ($completed -or $failed) -or $pending.Reason -contains $stopReason) {
+            # pwsh -File ends a stopped script that declares parameters with exit code 0, even after 'exit 1', unless the
+            # script gives the host its exit code. Run from a prompt, that would close the window, so the script does it
+            # only when nothing called it.
+            if (@(Get-PSCallStack).Count -eq 1) { $Host.SetShouldExit(1) }
+            exit 1
+        }
     }
 }
 $results.GetEnumerator() | ForEach-Object { '{0,-30} {1}' -f $_.Key, $_.Value }
