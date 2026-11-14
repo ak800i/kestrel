@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST, SAFETY, ACTIVITY_LOG, NETWORK_LOG }
+enum class SettingsPage { HOME, CHECKLIST, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
 
 /** What the button of a checklist step does. */
 enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS }
@@ -39,7 +39,9 @@ enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS }
 @Composable
 fun SettingsApp(status: SetupStatus, data: SettingsData, onAction: (SetupAction) -> Unit, onExportLogs: () -> Unit) {
     var page by rememberSaveable { mutableStateOf(SettingsPage.HOME) }
-    BackHandler(enabled = page != SettingsPage.HOME) { page = SettingsPage.HOME }
+    // A licence text opens on top of the About page, and Back returns there.
+    var licence by rememberSaveable { mutableStateOf<Licence?>(null) }
+    BackHandler(enabled = page != SettingsPage.HOME) { if (licence != null) licence = null else page = SettingsPage.HOME }
     val states = SetupChecklist.states(status)
     val home = { page = SettingsPage.HOME }
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -49,6 +51,10 @@ fun SettingsApp(status: SetupStatus, data: SettingsData, onAction: (SetupAction)
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
+            SettingsPage.ABOUT -> when (val shown = licence) {
+                null -> ScrollingPage { AboutPage(data, { licence = it }, home) }
+                else -> LicencePage(shown, data) { licence = null }
+            }
         }
     }
 }
@@ -72,6 +78,9 @@ private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOp
     PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
     PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }
     PageEntry(stringResource(R.string.settings_network_log), logsSummary) { onOpen(SettingsPage.NETWORK_LOG) }
+    PageEntry(stringResource(R.string.settings_about), stringResource(R.string.settings_about_summary, data.version)) {
+        onOpen(SettingsPage.ABOUT)
+    }
 }
 
 @Composable
@@ -82,7 +91,7 @@ private fun testModeSummary(on: Boolean?): String = when (on) {
 }
 
 @Composable
-private fun PageEntry(title: String, summary: String, onClick: () -> Unit) {
+internal fun PageEntry(title: String, summary: String, onClick: () -> Unit) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)

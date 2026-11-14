@@ -16,6 +16,22 @@
     <string name="settings_activity_log">Activity log</string>
     <string name="settings_network_log">Network log</string>
     <string name="settings_logs_summary">Encrypted, and kept for 7 days</string>
+    <string name="settings_about">About</string>
+    <string name="settings_about_summary">Version %1$s, and the licences</string>
+
+    <string name="about_version">Kestrel %1$s</string>
+    <string name="about_android">Android %1$s (API %2$d)</string>
+    <string name="about_models">The status of the voice model files comes with Kestrel\'s voice features.</string>
+    <string name="about_licences">Licences</string>
+    <string name="about_licence_kestrel">Kestrel\'s licence</string>
+    <string name="about_licence_kestrel_summary">GNU General Public License, version 3 or later</string>
+    <string name="about_licence_notices">Third-party notices</string>
+    <string name="about_licence_notices_summary">The libraries in Kestrel and their licences</string>
+    <string name="about_licence_apache">Apache License 2.0</string>
+    <string name="about_licence_apache_summary">The licence of most of these libraries</string>
+    <string name="about_licence_mpl">Mozilla Public License 2.0</string>
+    <string name="about_licence_mpl_summary">The licence of the Public Suffix List in OkHttp</string>
+    <string name="about_reading">Reading the text…</string>
 
     <string name="safety_test_mode">Test mode</string>
     <string name="safety_test_mode_detail">While test mode is on, Kestrel sends and shares only to Telegram\'s Saved Messages, WhatsApp\'s Message yourself, Viber\'s My Notes and your own email address, and it makes no calls. Keep it on while you test Kestrel.</string>

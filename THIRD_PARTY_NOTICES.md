@@ -14,6 +14,6 @@ Kestrel's release build includes the libraries below, which use the Apache Licen
 | JSpecify (`org.jspecify:jspecify`) | Apache-2.0 | https://github.com/jspecify/jspecify |
 | Public Suffix List, bundled by OkHttp as `assets/PublicSuffixDatabase.list` | MPL-2.0 | https://publicsuffix.org (source: https://github.com/publicsuffix/list) |
 
-The text of the Apache License 2.0 is at https://www.apache.org/licenses/LICENSE-2.0. The text of the Mozilla Public License 2.0 is at https://mozilla.org/MPL/2.0/.
+The texts of the Apache License 2.0 and the Mozilla Public License 2.0 are in the `licences` folder, copied from https://www.apache.org/licenses/LICENSE-2.0.txt and https://www.mozilla.org/media/MPL/2.0/index.txt. Kestrel's About page shows them, together with this file and Kestrel's own licence.
 
 Later sub-projects add speech models, voices, and code and data derived from OpenClaw and android_world. Their notices are added here when they arrive.

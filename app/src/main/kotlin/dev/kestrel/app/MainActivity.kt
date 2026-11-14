@@ -29,7 +29,7 @@ import java.time.LocalDate
 /** Kestrel's settings app (design spec, section 15). */
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as KestrelApplication).graph }
-    private val data by lazy { StoredSettingsData(graph) }
+    private val data by lazy { StoredSettingsData(graph, applicationContext) }
     private var status by mutableStateOf<SetupStatus?>(null)
 
     private val exportLogs = registerForActivityResult(CreateDocument("application/json")) { uri -> uri?.let(::export) }

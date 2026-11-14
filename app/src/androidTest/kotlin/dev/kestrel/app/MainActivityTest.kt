@@ -7,6 +7,7 @@ import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.SemanticsMatcher
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
@@ -47,6 +48,22 @@ class MainActivityTest {
 
         compose.waitUntil(5_000) { runBlocking { !graph.settings.get(SettingKeys.SAFETY).testMode } }
         compose.onNodeWithText(text(R.string.safety_test_mode)).assertIsOff()
+    }
+
+    @Test
+    fun theAboutPageShowsTheTextsThatTheBuildBundles() {
+        compose.onNodeWithText(text(R.string.settings_about)).performScrollTo().performClick()
+        val expected = mapOf(
+            R.string.about_licence_kestrel to "GNU GENERAL PUBLIC LICENSE",
+            R.string.about_licence_notices to "Kestrel's release build includes the libraries below",
+            R.string.about_licence_apache to "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION",
+            R.string.about_licence_mpl to "Mozilla Public License Version 2.0",
+        )
+        for ((title, start) in expected) {
+            compose.onNodeWithText(text(title)).performScrollTo().performClick()
+            await(hasText(start, substring = true))
+            compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        }
     }
 
     @Test

@@ -160,11 +160,34 @@ class SettingsAppTest {
         assertEquals(1, data.deletions)
     }
 
+    @Test
+    fun theAboutPageShowsTheVersionAndOpensALicence() {
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.about_version, "9.9.9 (99)")).assertIsDisplayed()
+
+        compose.onNodeWithText(text(R.string.about_licence_apache)).performScrollTo().performClick()
+
+        compose.onNodeWithText("The first paragraph, wrapped.").assertIsDisplayed()
+        assertEquals(listOf(Licence.APACHE), data.opened)
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        compose.onNodeWithText(text(R.string.about_version, "9.9.9 (99)")).assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithText(progress(2)).assertIsDisplayed()
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
+        override val version = "9.9.9 (99)"
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
         var deletions = 0
+        val opened = mutableListOf<Licence>()
+
+        override suspend fun licenceText(licence: Licence): String {
+            opened += licence
+            return "The first paragraph,\nwrapped.\n\nThe second paragraph."
+        }
 
         override suspend fun setTestMode(on: Boolean) {
             testMode.value = on
