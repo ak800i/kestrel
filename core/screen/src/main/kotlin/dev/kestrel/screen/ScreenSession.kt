@@ -27,16 +27,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Kestrel's screen layer while its accessibility service is connected (design spec, section 9). [errors] handles the
  * failures of the session's background work, and it may write only class names and stack frames (design spec, section
  * 13.5).
  */
-class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHandler) {
+class ScreenSession(service: AccessibilityService, private val errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
@@ -85,7 +87,15 @@ class ScreenSession(service: AccessibilityService, errors: CoroutineExceptionHan
             // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
             tracker.version.collect {
                 if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
-                onScreenSettled(snapshots.current().snapshot)
+                // A failed check must not end the watcher, or the numbers and labels would stop following the screen.
+                // The next screen change runs the next check.
+                try {
+                    onScreenSettled(snapshots.current().snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    errors.handleException(currentCoroutineContext(), e)
+                }
             }
         }
     }
