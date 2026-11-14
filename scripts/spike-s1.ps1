@@ -5,7 +5,8 @@
 # test provider with a made-up place, which replaces the fused provider while the scenario runs.
 # On a phone, the ringing scenario asks you to call the phone, to end the call and, if it has a PIN, to unlock it.
 # Afterwards, also when it fails or is interrupted, it puts back what it changed on the device. If it cannot put something
-# back, it says what and ends with exit code 1.
+# back, also because Ctrl+C interrupted it while it put things back, it says at the end what is left and how to put it
+# back by hand. Then, and after Ctrl+C, it ends with exit code 1. With -Verbose, it names each thing that it puts back.
 # Example: scripts\spike-s1.ps1 -Serial emulator-5554 -Scenario accessibility, no-service
 #Requires -Version 7.3
 param(
@@ -54,12 +55,17 @@ function Wait-Result([string]$Pattern, [int]$TimeoutSeconds) {
 
 # With the shade open, the screen includes other apps' notifications, so the dump goes where only the shell can read it.
 function Get-ScreenLayout {
+    $restores = @(
+        Register-Restore 'the folder /data/local/tmp' (Format-DeviceCommand 'rm -f /data/local/tmp/spike-ui.xml') {
+            Invoke-Checked 'rm -f /data/local/tmp/spike-ui.xml'
+        }
+    )
     try {
         Invoke-Shell 'uiautomator dump /data/local/tmp/spike-ui.xml' | Out-Null
         [xml]$ui = (& $adb -s $Serial exec-out cat /data/local/tmp/spike-ui.xml) -join "`n"
         $ui
     } finally {
-        Invoke-Shell 'rm -f /data/local/tmp/spike-ui.xml' | Out-Null
+        Invoke-Restore $restores
     }
 }
 
@@ -133,6 +139,30 @@ function Get-GrantedPermissions([string[]]$Permissions) {
     @($Permissions | Where-Object { $package -match "android\.permission\.$_`: granted=true" })
 }
 
+# Returns the shell's mock-location mode: allow, ignore, deny, foreground or default.
+function Get-MockLocationMode {
+    $answer = (Invoke-Checked 'appops get com.android.shell android:mock_location') -join "`n"
+    if ($answer -match '(?m)^\s*MOCK_LOCATION: (\w+)') { return $Matches[1] }
+    # For an app-op that the shell has never used, Android names the mode that it then has.
+    if ($answer -match '(?m)^Default mode: (\w+)') { return $Matches[1] }
+    throw "Could not read the shell's mock-location mode from: $answer"
+}
+
+# Waits until no call rings, for at most 5 s.
+function Wait-CallEnd {
+    for ($i = 0; $i -lt 5; $i++) {
+        if (-not (Test-Ringing)) { return }
+        Start-Sleep -Seconds 1
+    }
+    throw 'a call still rings'
+}
+
+# Counts the calls from the test number in the call log since the given time, in milliseconds.
+function Get-TestCallCount([long]$Since) {
+    $rows = Invoke-Checked "content query --uri content://call_log/calls --projection _id --where `"number='$caller' and date>=$Since`""
+    @($rows | Where-Object { $_ -like 'Row: *' }).Count
+}
+
 # Waits until the device has started again after a reboot, which a new boot ID shows, for at most 5 minutes.
 function Wait-Reboot([string]$BootId) {
     # adb complains while the device is offline, and that must not stop the wait.
@@ -146,22 +176,79 @@ function Wait-Reboot([string]$BootId) {
     if (-not $booted) { throw "$Serial did not start again within 5 minutes of the reboot." }
 }
 
-# Runs one step that puts the device back. A step that fails warns and lets the steps after it run, and the script then
-# ends with exit code 1.
-$restoreFailed = $false
-function Restore-Step([string]$What, [scriptblock]$Step) {
+# What the script has still to put back. Each restore enters this list before the change that it undoes is made, and it
+# leaves the list when it has worked. At the end, the script names the restores that are left and how to do them by hand.
+$pending = [System.Collections.Generic.List[object]]::new()
+$stopReason = 'the script was stopped'
+
+function Register-Restore([string]$What, [string]$ByHand, [scriptblock]$Action) {
+    $restore = [pscustomobject]@{ What = $What; ByHand = $ByHand; Action = $Action; Reason = $stopReason }
+    $pending.Add($restore)
+    $restore
+}
+
+# Runs the restores in order. A stop, such as Ctrl+C, that comes while a finally block runs ends that block at once, and
+# PowerShell then runs the finally blocks around it in full and ignores further stops. So each restore runs in the
+# finally block of the one before it, and a stop ends only the restore that is running.
+function Invoke-Restore([object[]]$Steps, [int]$Index = 0) {
+    if ($Index -ge $Steps.Count) { return }
+    $restore = $Steps[$Index]
     try {
-        & $Step | Out-Null
+        Write-Verbose "Putting back $($restore.What)"
+        & $restore.Action | Out-Null
+        $pending.Remove($restore) | Out-Null
     } catch {
-        Write-Warning "Could not put back $What on $Serial`: $($_.Exception.Message)"
-        $script:restoreFailed = $true
+        $restore.Reason = $_.Exception.Message
+    } finally {
+        Invoke-Restore $Steps ($Index + 1)
     }
+}
+
+# Returns a PowerShell command that runs the given command on the device, for the warnings.
+function Format-DeviceCommand([string]$Command) {
+    "Run: & '$($adb -replace "'", "''")' -s $Serial shell '$($Command -replace "'", "''")'"
 }
 
 $results = [ordered]@{}
 $permissions = 'RECORD_AUDIO', 'POST_NOTIFICATIONS', 'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION'
 $savedAccessibility = Get-AccessibilitySettings -Serial $Serial
 $grantedBefore = Get-GrantedPermissions $permissions
+$notGrantedBefore = @($permissions | Where-Object { $_ -notin $grantedBefore })
+$revokeByHand = @($notGrantedBefore | ForEach-Object { "pm revoke dev.kestrel android.permission.$_" }) -join '; '
+# The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
+# list of services first, and they delete the list and the switch if these were not there before.
+$accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($savedAccessibility.Keys) | Select-Object -Unique) {
+        $value = if ($savedAccessibility.Contains($setting)) { $savedAccessibility[$setting] } else { 'null' }
+        if ($value -ne 'null') {
+            "settings put secure $setting '$($value -replace "'", "'\''")'"
+        } elseif ($setting -in 'enabled_accessibility_services', 'accessibility_enabled') {
+            "settings delete secure $setting"
+        }
+    }) -join '; '
+$flagFile = 'no_backup/spike-listen-at-next-start'
+$flagRequested = $false
+$completed = $false
+$failed = $false
+$restoresAtEnd = @(
+    # Without a reboot, the request to record at the next start would stay, and a later start of Kestrel would record.
+    if ($Scenario -contains 'boot') {
+        Register-Restore "Kestrel's request to record at its next start" (Format-DeviceCommand "run-as dev.kestrel rm -f $flagFile") {
+            if ($flagRequested) { Invoke-Checked "run-as dev.kestrel rm -f $flagFile" }
+        }
+    }
+    Register-Restore 'the accessibility settings' (Format-DeviceCommand $accessibilityByHand) {
+        if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility)) { throw 'see the warning above' }
+    }
+    # Revoking a permission stops Kestrel's process, so this comes last.
+    if ($notGrantedBefore) {
+        Register-Restore "Kestrel's permissions" (Format-DeviceCommand $revokeByHand) {
+            $granted = @(Get-GrantedPermissions $notGrantedBefore)
+            foreach ($permission in $granted) { Invoke-Checked "pm revoke dev.kestrel android.permission.$permission" | Out-Null }
+            $still = if ($granted) { @(Get-GrantedPermissions $granted) } else { @() }
+            if ($still) { throw "$($still -join ', ') still granted" }
+        }
+    }
+)
 try {
     foreach ($permission in $permissions) { Invoke-Checked "pm grant dev.kestrel android.permission.$permission" | Out-Null }
     Invoke-Hook spike-results -Clear | Out-Null
@@ -187,25 +274,28 @@ try {
                 Set-KestrelService $false
                 Invoke-Shell 'input keyevent KEYCODE_HOME' | Out-Null
                 Invoke-Hook listen-notification | Out-Null
-                Invoke-Shell 'cmd statusbar expand-notifications' | Out-Null
-                Start-Sleep -Seconds 2
-                Expand-Notification 'Kestrel spike'
-                Invoke-TapText 'Start listening'
-                $results[$name] = Wait-Result 'source=notification ' 20
                 # The notification removes itself after a minute; the shell cannot remove another app's notification.
-                Invoke-Shell 'cmd statusbar collapse' | Out-Null
+                $restores = @(
+                    Register-Restore 'the notification shade' (Format-DeviceCommand 'cmd statusbar collapse') {
+                        Invoke-Shell 'cmd statusbar collapse'
+                    }
+                )
+                try {
+                    Invoke-Shell 'cmd statusbar expand-notifications' | Out-Null
+                    Start-Sleep -Seconds 2
+                    Expand-Notification 'Kestrel spike'
+                    Invoke-TapText 'Start listening'
+                    $results[$name] = Wait-Result 'source=notification ' 20
+                } finally {
+                    Invoke-Restore $restores
+                }
             }
             'tile' {
                 Set-KestrelService $false
                 Invoke-Shell 'input keyevent KEYCODE_HOME' | Out-Null
                 $tilesBefore = Get-SecureSetting -Serial $Serial -Name sysui_qs_tiles
-                try {
-                    Invoke-Checked "cmd statusbar add-tile $tile" | Out-Null
-                    Start-Sleep -Seconds 2
-                    Invoke-Checked "cmd statusbar click-tile $tile" | Out-Null
-                    $results[$name] = Wait-Result 'source=tile ' 20
-                } finally {
-                    Restore-Step 'the Quick Settings tiles' {
+                $restores = @(
+                    Register-Restore 'the Quick Settings tiles' (Format-DeviceCommand "cmd statusbar remove-tile $tile") {
                         Invoke-Checked "cmd statusbar remove-tile $tile"
                         Start-Sleep -Seconds 2
                         if ((Get-SecureSetting -Serial $Serial -Name sysui_qs_tiles) -cne $tilesBefore -and
@@ -213,22 +303,70 @@ try {
                             throw 'the list of tiles differs from before'
                         }
                     }
-                    Invoke-Shell 'cmd statusbar collapse' | Out-Null
+                    Register-Restore 'the notification shade' (Format-DeviceCommand 'cmd statusbar collapse') {
+                        Invoke-Shell 'cmd statusbar collapse'
+                    }
+                )
+                try {
+                    Invoke-Checked "cmd statusbar add-tile $tile" | Out-Null
+                    Start-Sleep -Seconds 2
+                    Invoke-Checked "cmd statusbar click-tile $tile" | Out-Null
+                    $results[$name] = Wait-Result 'source=tile ' 20
+                } finally {
+                    Invoke-Restore $restores
                 }
             }
             'ringing' {
                 # First Kestrel records while the screen is locked and a call starts to ring; then it starts recording
-                # while a call rings. An emulator has no lock screen until it is turned on.
-                $lockDisabled = (Invoke-Checked 'cmd lock_settings get-disabled') -join ''
+                # while a call rings. An emulator has no lock screen until it is turned on. A phone with a PIN, pattern
+                # or password has one, and Android 13 refuses to read the setting there without the credential, so the
+                # script changes the setting only when it answers that there is no lock screen.
+                $noLockScreen = "$(& $adb -s $Serial shell cmd lock_settings get-disabled 2>$null)".Trim() -eq 'true'
                 $callsSince = [long]((Invoke-Checked 'date +%s') -join '') * 1000
+                $callLogCommand = "content delete --uri content://call_log/calls --where `"number='$caller' and date>=$callsSince`""
+                $calls = 0
                 $calling = $false
+                $lockChanged = $false
+                $restores = @(
+                    Register-Restore 'the call' $(if ($isEmulator) { "Run: & '$($adb -replace "'", "''")' -s $Serial emu gsm cancel $caller" } else { 'End the call.' }) {
+                        if ($calling) {
+                            Stop-Call
+                            Wait-CallEnd
+                        }
+                    }
+                    Register-Restore 'the unlocked screen' $(if ($isEmulator) { Format-DeviceCommand 'wm dismiss-keyguard' } else { 'Unlock the phone.' }) {
+                        Unlock-Screen
+                    }
+                    if ($noLockScreen) {
+                        Register-Restore 'the lock-screen setting' (Format-DeviceCommand 'cmd lock_settings set-disabled true') {
+                            if ($lockChanged) {
+                                Invoke-Checked 'cmd lock_settings set-disabled true'
+                                if (((Invoke-Checked 'cmd lock_settings get-disabled') -join '') -ne 'true') { throw 'it is not true' }
+                            }
+                        }
+                    }
+                    # The emulator's calls end up in its call log as missed calls.
+                    if ($isEmulator) {
+                        Register-Restore 'the call log' (Format-DeviceCommand $callLogCommand) {
+                            # The phone app writes a call to the call log only after the call has ended.
+                            if (Test-Ringing) { throw 'a call still rings' }
+                            for ($i = 0; $i -lt 10 -and (Get-TestCallCount $callsSince) -lt $calls; $i++) { Start-Sleep -Seconds 1 }
+                            Invoke-Checked $callLogCommand
+                            if ((Get-TestCallCount $callsSince) -gt 0) { throw "this run's calls are still in the call log" }
+                        }
+                    }
+                )
                 try {
-                    Invoke-Checked 'cmd lock_settings set-disabled false' | Out-Null
+                    if ($noLockScreen) {
+                        $lockChanged = $true
+                        Invoke-Checked 'cmd lock_settings set-disabled false' | Out-Null
+                    }
                     Set-KestrelService $true
                     Lock-Screen
                     $locked = Test-LockScreen
                     Invoke-Hook listen -Source ringing-already -DelaySeconds 0 -Seconds 20 | Out-Null
                     Start-Sleep -Seconds 5
+                    $calls++
                     $calling = $true
                     Start-Call
                     Start-Sleep -Seconds 3
@@ -238,6 +376,7 @@ try {
                     $calling = $false
                     $line = Wait-Result 'source=ringing-already ' 30
                     $results['ringing, already recording'] = "locked=$locked ringing=$rang $line"
+                    $calls++
                     $calling = $true
                     Start-Call
                     Start-Sleep -Seconds 3
@@ -247,34 +386,40 @@ try {
                     $line = Wait-Result 'source=ringing-start ' 20
                     $results['ringing, start'] = "locked=$locked ringing=$rang $line"
                 } finally {
-                    Restore-Step 'the call' {
-                        if ($calling) {
-                            Stop-Call
-                            # Gives the phone app time to write the call to the call log.
-                            Start-Sleep -Seconds 3
-                            if (Test-Ringing) { throw 'a call still rings' }
-                        }
-                    }
-                    Restore-Step 'the unlocked screen' { Unlock-Screen }
-                    Restore-Step 'the lock-screen setting' {
-                        Invoke-Checked "cmd lock_settings set-disabled $lockDisabled"
-                        if (((Invoke-Checked 'cmd lock_settings get-disabled') -join '') -ne $lockDisabled) { throw "it is not $lockDisabled" }
-                    }
-                    # The emulator's calls end up in its call log as missed calls.
-                    if ($isEmulator) {
-                        Restore-Step 'the call log' {
-                            Invoke-Checked "content delete --uri content://call_log/calls --where `"number='$caller' and date>=$callsSince`""
-                        }
-                    }
+                    Invoke-Restore $restores
                 }
             }
             'location' {
                 # The shell may add a test provider only with the mock-location permission.
-                $mockMode = if ((Invoke-Checked 'appops get com.android.shell android:mock_location') -match 'mock_location: allow') { 'allow' } else { 'default' }
+                $mockMode = Get-MockLocationMode
                 $locationOn = (Invoke-Checked 'cmd location is-location-enabled') -join ''
                 # Android records in this setting who switched location last.
                 $locationChanger = Get-SecureSetting -Serial $Serial -Name location_changer
+                $changerCommand = if ($locationChanger -eq 'null') { 'settings delete secure location_changer' } else { "settings put secure location_changer '$locationChanger'" }
+                # Android removes the test provider only while the shell has the mock-location permission.
+                $removeProvider = 'appops set com.android.shell android:mock_location allow; cmd location providers remove-test-provider fused; ' +
+                "appops set com.android.shell android:mock_location $mockMode"
                 $providerAdded = $false
+                $restores = @(
+                    Register-Restore 'the home screen' (Format-DeviceCommand 'input keyevent KEYCODE_HOME') {
+                        Invoke-Shell 'input keyevent KEYCODE_HOME'
+                    }
+                    Register-Restore 'the fused location provider' (Format-DeviceCommand $removeProvider) {
+                        if ($providerAdded) { Invoke-Checked 'cmd location providers remove-test-provider fused' }
+                    }
+                    Register-Restore 'the mock-location permission of the shell' (Format-DeviceCommand "appops set com.android.shell android:mock_location $mockMode") {
+                        Invoke-Checked "appops set com.android.shell android:mock_location $mockMode"
+                        if ((Get-MockLocationMode) -ne $mockMode) { throw "it is not $mockMode" }
+                    }
+                    Register-Restore 'the location switch' (Format-DeviceCommand "cmd location set-location-enabled $locationOn; $changerCommand") {
+                        Invoke-Checked "cmd location set-location-enabled $locationOn"
+                        if (((Invoke-Checked 'cmd location is-location-enabled') -join '') -ne $locationOn) { throw "it is not $locationOn" }
+                        if ((Get-SecureSetting -Serial $Serial -Name location_changer) -cne $locationChanger -and
+                            -not (Set-SecureSetting -Serial $Serial -Name location_changer -Value $locationChanger)) {
+                            throw 'the setting location_changer differs from before'
+                        }
+                    }
+                )
                 try {
                     Invoke-Checked 'appops set com.android.shell android:mock_location allow' | Out-Null
                     Invoke-Checked 'cmd location set-location-enabled true' | Out-Null
@@ -289,26 +434,13 @@ try {
                     Set-KestrelService $false
                     $results['location, service off'] = Get-SpikeLocation 'service-off'
                 } finally {
-                    Invoke-Shell 'input keyevent KEYCODE_HOME' | Out-Null
-                    if ($providerAdded) {
-                        Restore-Step 'the fused location provider' { Invoke-Checked 'cmd location providers remove-test-provider fused' }
-                    }
-                    Restore-Step 'the mock-location permission of the shell' {
-                        Invoke-Checked "appops set com.android.shell android:mock_location $mockMode"
-                    }
-                    Restore-Step 'the location switch' {
-                        Invoke-Checked "cmd location set-location-enabled $locationOn"
-                        if (((Invoke-Checked 'cmd location is-location-enabled') -join '') -ne $locationOn) { throw "it is not $locationOn" }
-                        if ((Get-SecureSetting -Serial $Serial -Name location_changer) -cne $locationChanger -and
-                            -not (Set-SecureSetting -Serial $Serial -Name location_changer -Value $locationChanger)) {
-                            throw 'the setting location_changer differs from before'
-                        }
-                    }
+                    Invoke-Restore $restores
                 }
             }
             'boot' {
                 Set-KestrelService $true
                 $bootId = (Invoke-Checked 'cat /proc/sys/kernel/random/boot_id') -join ''
+                $flagRequested = $true
                 Invoke-Hook listen-after-boot | Out-Null
                 & $adb -s $Serial reboot
                 Wait-Reboot $bootId
@@ -316,24 +448,23 @@ try {
             }
         }
     }
+    $completed = $true
+} catch {
+    $failed = $true
+    throw
 } finally {
-    # Without a reboot, the request to record at the next start would stay, and a later start of Kestrel would record.
-    if ($Scenario -contains 'boot') {
-        Restore-Step "Kestrel's files" { Invoke-Checked 'run-as dev.kestrel rm -f no_backup/spike-listen-at-next-start' }
-    }
-    Restore-Step 'the accessibility settings' {
-        if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility)) { throw 'see the warning above' }
-    }
-    # Revoking a permission stops Kestrel's process, so this comes last.
-    foreach ($permission in $permissions | Where-Object { $_ -notin $grantedBefore }) {
-        Restore-Step "Kestrel's permission $permission" {
-            Invoke-Checked "pm revoke dev.kestrel android.permission.$permission"
-            if (Get-GrantedPermissions $permission) { throw 'it is still granted' }
+    try {
+        Invoke-Restore $restoresAtEnd
+    } finally {
+        foreach ($restore in $pending) {
+            Write-Warning "Could not put back $($restore.What) on $Serial ($($restore.Reason)). $($restore.ByHand)"
         }
+        # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its error.
+        if (-not ($completed -or $failed) -or $pending.Reason -contains $stopReason) { exit 1 }
     }
 }
 $results.GetEnumerator() | ForEach-Object { '{0,-30} {1}' -f $_.Key, $_.Value }
-if ($restoreFailed) {
-    Write-Warning 'The device is not as it was before. The warnings above say what to put back.'
+if ($pending.Count -gt 0) {
+    Write-Warning 'The device is not as it was before. The warnings above say how to put it back.'
     exit 1
 }
