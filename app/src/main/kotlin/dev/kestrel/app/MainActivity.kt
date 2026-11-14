@@ -22,10 +22,8 @@ import dev.kestrel.app.settings.SetupAction
 import dev.kestrel.app.settings.SetupStatus
 import dev.kestrel.app.settings.SetupStatusReader
 import dev.kestrel.app.settings.StoredSettingsData
-import kotlinx.coroutines.Dispatchers
+import dev.kestrel.app.settings.writeLogExport
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.time.LocalDate
 
 /** Kestrel's settings app (design spec, section 15). */
@@ -88,17 +86,7 @@ class MainActivity : ComponentActivity() {
     /** Writes both logs to the file that the owner chose. The logs leave the phone only this way (design spec, 13.5). */
     private fun export(uri: Uri) {
         lifecycleScope.launch(graph.errors) {
-            val written = withContext(Dispatchers.IO) {
-                try {
-                    val output = contentResolver.openOutputStream(uri, "w") ?: return@withContext false
-                    output.use { graph.logs.export(it) }
-                    true
-                } catch (e: IOException) {
-                    false
-                } catch (e: SecurityException) {
-                    false
-                }
-            }
+            val written = writeLogExport(contentResolver, uri, graph.logs)
             val message = if (written) R.string.logs_exported else R.string.logs_export_failed
             Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
         }
