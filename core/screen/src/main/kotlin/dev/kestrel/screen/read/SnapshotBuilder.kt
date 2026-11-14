@@ -102,7 +102,14 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         )
     }
 
-    /** Builds keys from the element's package, view ID, label and class and its position among similar siblings. */
+    /**
+     * Builds keys of the form `package|viewId|label|class|position` from the element's package, the part of its view
+     * ID after `:id/`, its label cut to 40 characters and its class name without the package. Look-alikes are elements
+     * whose first four parts are the same, and the position counts the look-alikes before the element under the same
+     * parent in the same window. Look-alikes under different parents, such as the "Delete" buttons of a list's rows,
+     * can get the same key, so a key that is already taken gets the suffix `~n`, where n counts the elements with that
+     * key across the whole snapshot: the second one gets `~2`, the third `~3`, and so on.
+     */
     private class Keys {
         private val siblings = mutableMapOf<Triple<Int, Int?, String>, Int>()
         private val used = mutableMapOf<String, Int>()

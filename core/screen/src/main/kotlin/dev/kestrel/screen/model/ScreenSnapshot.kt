@@ -37,8 +37,12 @@ enum class ElementAction {
 }
 
 /**
- * One element of a [ScreenSnapshot] (design spec, section 9.2). Its [key] stays the same as long as the
- * element's package, view ID, label and class and its position among similar siblings stay the same.
+ * One element of a [ScreenSnapshot] (design spec, section 9.2). Its [key] is built from the element's package, view
+ * ID, label and class and its position among look-alike siblings, the elements with the same four parts under the
+ * same parent. Look-alikes under different parents, such as the "Delete" buttons of a list's rows, can get the same
+ * key, so the second element with that key in the snapshot gets the suffix `~2`, the third `~3`, and so on. The key
+ * changes when any of these change, for example when a look-alike before the element appears or goes, so a key names
+ * a position, not an identity.
  */
 @Serializable
 data class ScreenElement(
