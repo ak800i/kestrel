@@ -101,19 +101,19 @@ The code below already handles all of these. They are written down so that nobod
 **Files:**
 - Modify: `scripts/connected-test.ps1` (save and restore the enabled accessibility services)
 - Modify: `scripts/lib/Kestrel.ps1` (`Assert-TestDevice` checks a refusal twice more; `Get-SecureSetting` and `Set-SecureSetting`)
-- Modify: `scripts/start-emulator.ps1` (`-ColdBoot`)
+- Modify: `scripts/start-emulator.ps1` (`-ColdBoot`, with a warning when it cannot take effect)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/ScreenServiceRule.kt` (`overlayButton` matches whole texts; new `overlayShows`)
-- Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TestFinger.kt` (reports the `uinput` tool's errors and closes its pipes)
+- Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TestFinger.kt` (reports the `uinput` tool's log lines and closes its pipes)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/GridBarAndCardTest.kt` (uses `overlayShows`)
 - Modify: `README.md`
 
 **Interfaces:**
 - Consumes: plan 1B's test tools.
-- Produces: `Get-SecureSetting -Serial <serial> -Name <setting>` reads a secure setting and asks twice more before it fails, and `Set-SecureSetting -Serial <serial> -Name <setting> -Value <value>` puts back what it read, deleting the setting for `null`; the spike scripts of Tasks 11 and 12 use both. `ScreenServiceRule.overlayButton(text: String): Rect?` returns only a clickable node whose whole text is `text`, ignoring case; `ScreenServiceRule.overlayShows(text: String): Boolean` says whether a touchable overlay shows `text` as a whole text. `scripts\start-emulator.ps1 -ColdBoot` starts the emulator with `-no-snapshot-load`.
+- Produces: `Get-SecureSetting -Serial <serial> -Name <setting>` reads a secure setting, which may be `null` or empty, and asks twice more before it fails; `Set-SecureSetting -Serial <serial> -Name <setting> -Value <value>` puts back what it read, deleting the setting for `null`, and warns when the device did not take it; the spike scripts of Tasks 11 and 12 use both. `ScreenServiceRule.overlayButton(text: String): Rect?` returns only a clickable node whose whole text is `text`, ignoring case; `ScreenServiceRule.overlayShows(text: String): Boolean` says whether a touchable overlay shows `text` as a whole text. `scripts\start-emulator.ps1 -ColdBoot` starts the emulator with `-no-snapshot-load`.
 
 Closes (5d), (10g) and (11d), and a problem found while this plan was built.
 
-The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. Android answers `null` for a setting that is not set, while a busy device sometimes answers with nothing; an empty answer is therefore asked again, and if the setting still cannot be read, the tests do not start, instead of deleting the owner's list afterwards. `TestFinger` now reads the `uinput` tool's error output, which Android 13 uses for its error messages, and closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
+The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, so `Get-SecureSetting` reads with a marker after the answer and asks again while the marker is missing; if the setting still cannot be read, the tests do not start, instead of deleting the owner's list afterwards. `Set-SecureSetting` reads the value back and warns, with the command that puts it back, when the device did not take it. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's recent log lines, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
 
 This task changes test tools only, so it has no failing test of its own; Step 4 checks the tools.
 
@@ -147,6 +147,8 @@ try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
 } finally {
+    # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop first.
+    & (Get-Adb) -s $Serial shell am force-stop dev.kestrel | Out-Null
     foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
 }
 exit $code
@@ -183,26 +185,26 @@ function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
 }
 
-# Reads a secure setting of a device. A busy device sometimes answers with nothing, so the query is repeated before it
-# fails. Android answers 'null' for a setting that is not set.
+# Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
+# an empty value, so a marker after the answer tells an empty value from no answer at all. A busy device sometimes gives
+# no answer, so the query is repeated before it fails.
 function Get-SecureSetting([string]$Serial, [string]$Name) {
     $adb = Get-Adb
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $value = "$(& $adb -s $Serial shell settings get secure $Name)".Trim()
-        if ($value) { return $value }
+        $answer = "$(& $adb -s $Serial shell "settings get secure $Name; echo kestrel-end")"
+        if ($answer -match '^\s*(.*?)\s*kestrel-end\s*$') { return $Matches[1] }
     }
     throw "Could not read the setting $Name of $Serial."
 }
 
-# Puts back a secure setting that Get-SecureSetting read.
+# Puts back a secure setting that Get-SecureSetting read, and warns when the device did not take it.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $adb = Get-Adb
-    if ($Value -eq 'null') {
-        & $adb -s $Serial shell settings delete secure $Name | Out-Null
-    } else {
-        & $adb -s $Serial shell settings put secure $Name "'$Value'" | Out-Null
-    }
+    $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
+    & $adb -s $Serial shell $command | Out-Null
+    $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
+    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell $command" }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {
@@ -253,11 +255,13 @@ $name = 'kestrel-api37'
 $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
+if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: adb -s $serial emu kill" }
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
     $started = $null
+    if ($ColdBoot -and $running) { Write-Warning "$name is still starting or closing, so -ColdBoot does nothing." }
     if (-not $running) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
         # Software rendering: with the computer's graphics card, the emulator slowed down after a few hours of tests,
@@ -431,7 +435,7 @@ import kotlinx.coroutines.delay
  * Unlike `input tap`, its touches come from a touchscreen device and pass through Android's accessibility input
  * filter. The commands use numbers rather than names, because the tool on Android 13 reads only numbers.
  */
-class TestFinger(automation: UiAutomation) : AutoCloseable {
+class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     // The tool's output, its input and its errors.
     private val pipes = automation.executeShellCommandRwe("uinput -")
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
@@ -446,12 +450,16 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
             val deadline = SystemClock.uptimeMillis() + 5_000
             while (input.inputDeviceIds.none { input.getInputDevice(it)?.name == NAME }) {
                 check(SystemClock.uptimeMillis() < deadline) {
-                    "The virtual touchscreen did not appear within 5 s. The uinput tool said: ${errors()}"
+                    "The virtual touchscreen did not appear within 5 s. The uinput tool said: ${toolMessages()}"
                 }
                 Thread.sleep(50)
             }
         } catch (e: Throwable) {
-            close()
+            try {
+                close()
+            } catch (closeError: Throwable) {
+                e.addSuppressed(closeError)
+            }
             throw e
         }
     }
@@ -476,10 +484,20 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
         }
     }
 
-    /** What the tool has written to its error output so far, without waiting for more. */
-    private fun errors(): String {
-        val stream = ParcelFileDescriptor.AutoCloseInputStream(pipes[2].dup())
-        return stream.use { String(it.readNBytes(it.available())).trim() }
+    /**
+     * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
+     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines,
+     * without the log's stack frames.
+     */
+    private fun toolMessages(): String {
+        val output = listOf(pipes[0], pipes[2]).map { pipe ->
+            ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
+        }
+        val log = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(LOG_COMMAND)).bufferedReader()
+            .use { it.readLines() }
+            .filter { it.isNotBlank() && !it.startsWith("-") && "\tat " !in it }
+            .takeLast(LOG_LINES)
+        return (output + log).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "nothing" }
     }
 
     private fun inject(vararg events: Int) = send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
@@ -493,6 +511,8 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
     private companion object {
         const val NAME = "Kestrel test finger"
         const val LIFT_MILLIS = 50L
+        const val LOG_COMMAND = "logcat -d -s UINPUT:* UinputEvent:* UinputDevice:*"
+        const val LOG_LINES = 10
 
         // Linux input event codes, from linux/input-event-codes.h and linux/uinput.h.
         const val EV_SYN = 0
@@ -708,10 +728,21 @@ $watch.Elapsed.TotalSeconds
 
 Expected: the message `Device emulator-9999 is not connected.` and about 4 seconds.
 
-The device tests put back the list of accessibility services. Turn on a harmless system service first, run all device tests, and read the list afterwards:
+A setting can be empty, which is different from no answer:
 
 ```powershell
-$adb = Get-Adb   # after: . scripts\lib\Kestrel.ps1; Use-KestrelToolchain
+. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb
+& $adb -s <serial> shell settings put secure kestrel_probe_empty "''"
+"[$(Get-SecureSetting -Serial <serial> -Name kestrel_probe_empty)]"
+& $adb -s <serial> shell settings delete secure kestrel_probe_empty
+"[$(Get-SecureSetting -Serial <serial> -Name kestrel_probe_empty)]"
+```
+
+Expected: `[]`, then `[null]`.
+
+The device tests put back the list of accessibility services. Turn on a harmless system service first, run all device tests, and read the list afterwards (in the same PowerShell window):
+
+```powershell
 $probe = 'com.android.systemui.accessibility.accessibilitymenu/com.android.systemui.accessibility.accessibilitymenu.AccessibilityMenuService'
 & $adb -s <serial> shell settings put secure enabled_accessibility_services $probe
 scripts\connected-test.ps1 -Serial <serial> :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest
