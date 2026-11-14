@@ -32,22 +32,33 @@ internal object Uncovered {
 
     /**
      * [area] without the parts that [covers] hide on the line along which a swipe crosses it: the middle line from top
-     * to bottom when [vertical], otherwise the one from side to side. Each cover on that line cuts the area at its
-     * edge, and the larger part is kept. Null when nothing is left.
+     * to bottom when [vertical], otherwise the one from side to side. The longest stretch of that line that no cover
+     * hides is kept, whatever the order of [covers]. Null when that stretch is shorter than [minLength].
      */
-    fun area(area: IntRect, covers: List<IntRect>, vertical: Boolean): IntRect? {
-        var start = if (vertical) area.top else area.left
-        var end = if (vertical) area.bottom else area.right
-        for (cover in covers) {
-            val onTheLine = if (vertical) area.centerX in cover.left until cover.right else area.centerY in cover.top until cover.bottom
-            if (!onTheLine) continue
-            val coverStart = maxOf(if (vertical) cover.top else cover.left, start)
-            val coverEnd = minOf(if (vertical) cover.bottom else cover.right, end)
-            if (coverStart >= coverEnd) continue
-            if (coverStart - start >= end - coverEnd) end = coverStart else start = coverEnd
+    fun area(area: IntRect, covers: List<IntRect>, vertical: Boolean, minLength: Int = 1): IntRect? {
+        val lineStart = if (vertical) area.top else area.left
+        val lineEnd = if (vertical) area.bottom else area.right
+        val hidden = covers
+            .filter { if (vertical) area.centerX in it.left until it.right else area.centerY in it.top until it.bottom }
+            .map { maxOf(if (vertical) it.top else it.left, lineStart) to minOf(if (vertical) it.bottom else it.right, lineEnd) }
+            .filter { (start, end) -> start < end }
+            .sortedBy { it.first }
+        var bestStart = lineStart
+        var bestEnd = lineStart
+        var free = lineStart
+        for ((start, end) in hidden) {
+            if (start - free > bestEnd - bestStart) {
+                bestStart = free
+                bestEnd = start
+            }
+            free = maxOf(free, end)
         }
-        val clear = if (vertical) IntRect(area.left, start, area.right, end) else IntRect(start, area.top, end, area.bottom)
-        return clear.takeUnless { it.isEmpty }
+        if (lineEnd - free > bestEnd - bestStart) {
+            bestStart = free
+            bestEnd = lineEnd
+        }
+        if (bestEnd - bestStart < maxOf(1, minLength)) return null
+        return if (vertical) IntRect(area.left, bestStart, area.right, bestEnd) else IntRect(bestStart, area.top, bestEnd, area.bottom)
     }
 
     private fun IntRect.contains(point: ScreenPoint) = point.x in left until right && point.y in top until bottom

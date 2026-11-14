@@ -45,4 +45,29 @@ class UncoveredTest {
     fun aWindowInTheMiddleOfTheLineLeavesTheLargerPart() {
         assertEquals(IntRect(0, 900, 1080, 2000), Uncovered.area(IntRect(0, 200, 1080, 2000), listOf(IntRect(0, 600, 1080, 900)), vertical = true))
     }
+
+    @Test
+    fun theLongestFreeStretchWinsWhateverTheOrderOfTheWindows() {
+        val area = IntRect(0, 0, 1080, 1000)
+        val bar = IntRect(0, 300, 1080, 320)
+        val popup = IntRect(0, 600, 1080, 980)
+
+        assertEquals(IntRect(0, 0, 1080, 300), Uncovered.area(area, listOf(bar, popup), vertical = true))
+        assertEquals(IntRect(0, 0, 1080, 300), Uncovered.area(area, listOf(popup, bar), vertical = true))
+    }
+
+    @Test
+    fun nothingWhenTheFreeStretchIsShorterThanTheMinimum() {
+        val area = IntRect(0, 1300, 1080, 2000)
+
+        assertEquals(IntRect(0, 1300, 1080, 1400), Uncovered.area(area, listOf(keyboard), vertical = true, minLength = 100))
+        assertNull(Uncovered.area(area, listOf(keyboard), vertical = true, minLength = 101))
+    }
+
+    @Test
+    fun aWindowThatOnlyTouchesTheAreaHidesNothing() {
+        val area = IntRect(0, 200, 1080, 1400)
+
+        assertEquals(area, Uncovered.area(area, listOf(keyboard), vertical = true))
+    }
 }
