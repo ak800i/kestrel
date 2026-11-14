@@ -16,7 +16,7 @@ The full design is in [docs/superpowers/specs/2026-11-12-kestrel-design.md](docs
 
 Kestrel builds on Windows with PowerShell. You need:
 
-- the JDK that comes with Android Studio, in `C:\Program Files\Android\Android Studio\jbr` (if it is not there, set `JAVA_HOME` to JDK 17 or newer);
+- the JDK that comes with Android Studio, in `C:\Program Files\Android\Android Studio\jbr` (if it is not there, set `JAVA_HOME` to a JDK 21);
 - the Android SDK with the `platforms;android-37.0` package, in the folder that `ANDROID_HOME` names (`D:\AndroidVMs\SDK` if the variable is not set).
 
 ```powershell
@@ -29,7 +29,7 @@ scripts\gradle.ps1 :build-logic:convention:check    # tests of the audit itself
 
 `scripts\test-scripts.ps1` tests the PowerShell scripts with Pester in Windows PowerShell 5.1 and in PowerShell 7, and checks them with PSScriptAnalyzer; the comment at its top lists the modules that it needs.
 
-Gradle and the Kotlin compiler keep running in the background between builds. During a build they use about 3 GB and 2 GB of memory. They stop by themselves 15 minutes after the last build, and `scripts\gradle.ps1 --stop` stops them at once. Run Gradle only through `scripts\gradle.ps1`: a Gradle that runs on another JDK, such as the one that `JAVA_HOME` names, starts a second pair of these processes.
+Gradle and the Kotlin compiler keep running in the background between builds. During a build they use about 3 GB and 2 GB of memory. They stop by themselves 15 minutes after the last build, and `scripts\gradle.ps1 --stop` stops them at once. Gradle runs them on Java 21, as `gradle/gradle-daemon-jvm.properties` asks, so a Gradle that you start from another JDK, such as the one that `JAVA_HOME` names, uses the same processes as `scripts\gradle.ps1`.
 
 To open the project in Android Studio, use Android Studio Rabbit 2 (2026.2.2) or newer, which supports version 9.5 of the Android Gradle plugin.
 

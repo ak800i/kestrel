@@ -6,7 +6,7 @@ function Use-KestrelToolchain {
     if (Test-Path $studioJdk) {
         $env:JAVA_HOME = $studioJdk
     } elseif (-not $env:JAVA_HOME) {
-        throw 'Set JAVA_HOME to a JDK 17 or newer.'
+        throw 'Set JAVA_HOME to a JDK 21.'
     }
     if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = 'D:\AndroidVMs\SDK' }
     if (-not (Test-Path $env:ANDROID_HOME)) { throw "Android SDK not found at $env:ANDROID_HOME" }
