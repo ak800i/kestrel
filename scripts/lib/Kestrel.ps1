@@ -55,16 +55,19 @@ function Get-SecureSetting([string]$Serial, [string]$Name) {
 # Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and returns whether the device took it.
 # When it did not, it warns with a command that puts the setting back when it is pasted into PowerShell.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
-    $adb = Get-Adb
-    $ErrorActionPreference = 'Continue'
     # A single quote would end the device shell's quoting, so it becomes '\''.
     $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$($Value -replace "'", "'\''")'" }
-    & $adb -s $Serial shell $command 2>$null | Out-Null
     $reason = ''
-    $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $reason = " ($($_.Exception.Message))"; $null }
+    $now = try {
+        Invoke-SettingsCommand -Serial $Serial -Command $command | Out-Null
+        Get-SecureSetting -Serial $Serial -Name $Name
+    } catch {
+        $reason = " ($($_.Exception.Message))"
+        $null
+    }
     if ($now -ceq $Value) { return $true }
     $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
-    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: & $(& $literal $adb) -s $Serial shell $(& $literal $command)"
+    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: & $(& $literal (Get-Adb)) -s $Serial shell $(& $literal $command)"
     $false
 }
 

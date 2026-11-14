@@ -22,6 +22,8 @@ try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
 } finally {
+    # The restore must run even when a command before it fails.
+    $ErrorActionPreference = 'Continue'
     # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop first.
     # Android then removes Kestrel's service from the list itself, and the restore waits for that, so that Android's
     # change does not overwrite it.

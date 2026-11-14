@@ -2,6 +2,7 @@ package dev.kestrel.app.screen
 
 import android.app.UiAutomation
 import android.hardware.input.InputManager
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.WindowManager
@@ -17,8 +18,13 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     // toolMessages() reports only the log lines that the tool wrote after this time.
     private val startMillis = System.currentTimeMillis()
 
-    // The tool's output, its input and its errors.
-    private val pipes = automation.executeShellCommandRwe("uinput -")
+    // The tool's output and its input, and from Android 14 on also its errors. Android 13 has no public way to read the
+    // errors, but there the tool writes them to Android's log as well.
+    private val pipes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        automation.executeShellCommandRwe("uinput -")
+    } else {
+        automation.executeShellCommandRw("uinput -")
+    }
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
     private var touches = 0
 
@@ -61,17 +67,18 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
             commands.close()
         } finally {
             pipes[0].close()
-            pipes[2].close()
+            pipes.getOrNull(2)?.close()
         }
     }
 
     /**
      * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
-     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines
-     * since this finger was made, without the log's stack frames. When they cannot be read, it says so instead.
+     * Android's log and only some of them to its output, so this reads its output, its error output where Android gives
+     * it, and its log lines since this finger was made, without the log's stack frames. When they cannot be read, it says
+     * so instead.
      */
     private fun toolMessages(): String = try {
-        val output = listOf(pipes[0], pipes[2]).map { pipe ->
+        val output = listOfNotNull(pipes[0], pipes.getOrNull(2)).map { pipe ->
             ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
         }
         val since = "${startMillis / 1000}.${(startMillis % 1000).toString().padStart(3, '0')}"

@@ -36,6 +36,8 @@ if (-not $serial) {
     } until ($serial -or (Get-Date) -gt $deadline)
     if (-not $serial) { throw "$name did not appear in adb within 5 minutes" }
 }
+# Windows PowerShell 5.1 would stop at adb's first error line, such as "device offline" while Android starts.
+$ErrorActionPreference = 'Continue'
 do {
     Start-Sleep -Seconds 3
     $booted = & $adb -s $serial shell getprop sys.boot_completed 2>$null
