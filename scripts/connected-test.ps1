@@ -13,11 +13,10 @@ Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
 # The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
 $env:ANDROID_SERIAL = $Serial
-# The device tests replace the list of enabled accessibility services, so it is put back afterwards, even when the
-# tests fail or are interrupted. If the list cannot be read, the tests do not start.
-$saved = foreach ($name in 'enabled_accessibility_services', 'accessibility_enabled') {
-    [pscustomobject]@{ Name = $name; Value = Get-SecureSetting -Serial $Serial -Name $name }
-}
+# The device tests replace the list of enabled accessibility services, and Android then clears the shortcuts of the
+# services that it turns off. So the accessibility settings are put back afterwards, even when the tests fail or are
+# interrupted. If they cannot be read, the tests do not start.
+$saved = Get-AccessibilitySettings -Serial $Serial
 $code = 1
 try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
@@ -29,10 +28,10 @@ try {
     & (Get-Adb) -s $Serial shell am force-stop dev.kestrel | Out-Null
     $deadline = (Get-Date).AddSeconds(5)
     while ((Get-Date) -lt $deadline) {
-        $services = try { Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services } catch { '' }
-        if ($services -notlike '*dev.kestrel/*') { break }
+        $services = try { Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services } catch { $null }
+        if ($null -ne $services -and $services -notlike '*dev.kestrel/*') { break }
         Start-Sleep -Milliseconds 500
     }
-    foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
+    Restore-AccessibilitySettings -Serial $Serial -Saved $saved
 }
 exit $code

@@ -11,7 +11,7 @@ $name = 'kestrel-api37'
 $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
-if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: adb -s $serial emu kill" }
+if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: & '$adb' -s $serial emu kill" }
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |

@@ -21,8 +21,8 @@ import org.junit.rules.ExternalResource
 /**
  * Gives each test a new screen session by turning Kestrel's accessibility service off and on again, so that
  * nothing one test leaves behind affects the next. It replaces the whole list of enabled accessibility services, so
- * other services are off while the tests run; `scripts\connected-test.ps1` saves the list before the tests and puts it
- * back afterwards.
+ * other services are off while the tests run, and Android clears their shortcuts; `scripts\connected-test.ps1` saves the
+ * accessibility settings before the tests and puts them back afterwards.
  */
 class ScreenServiceRule : ExternalResource() {
     private val graph = (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as KestrelApplication).graph

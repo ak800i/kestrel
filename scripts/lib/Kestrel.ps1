@@ -26,26 +26,71 @@ function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
 }
 
-# Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
-# an empty value, so a marker that follows only a successful answer tells an empty value from a failed query. A busy
-# device, or one whose system is still starting, sometimes fails the query, so it is repeated before it fails for good.
-function Get-SecureSetting([string]$Serial, [string]$Name) {
+# Runs a settings command on a device and returns the lines that it printed. The device prints a marker only after a
+# command that worked, which tells an empty answer from a failed command. A busy device, or one whose system is still
+# starting, sometimes fails the command, so it is repeated before it fails for good with the device's last complaint.
+function Invoke-SettingsCommand([string]$Serial, [string]$Command) {
     $adb = Get-Adb
+    # Keeps adb's error lines as part of the answer, so that they neither stop the script nor fill the console.
+    $ErrorActionPreference = 'Continue'
+    $complaint = ''
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $answer = "$(& $adb -s $Serial shell "settings get secure $Name && echo kestrel-end")"
-        if ($answer -match '^\s*(.*?)\s*kestrel-end\s*$') { return $Matches[1] }
+        $answer = @(& $adb -s $Serial shell "$Command && echo kestrel-end" 2>&1)
+        $errors = @($answer | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $lines = @($answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".TrimEnd("`r") })
+        if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-end') { return $lines | Select-Object -First ($lines.Count - 1) }
+        $complaint = (@($errors | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) -join ' ')
     }
-    throw "Could not read the setting $Name of $Serial."
+    if ($complaint) { throw "Could not run '$Command' on ${Serial}: $complaint" }
+    throw "Could not run '$Command' on $Serial."
 }
 
-# Puts back a secure setting that Get-SecureSetting read, and warns when the device did not take it.
+# Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
+# an empty value.
+function Get-SecureSetting([string]$Serial, [string]$Name) {
+    (Invoke-SettingsCommand -Serial $Serial -Command "settings get secure $Name") -join "`n"
+}
+
+# Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and warns when the device did not take
+# it, with a command that puts it back when it is pasted into PowerShell.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $adb = Get-Adb
+    $ErrorActionPreference = 'Continue'
     $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
-    & $adb -s $Serial shell $command | Out-Null
+    & $adb -s $Serial shell $command 2>$null | Out-Null
     $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
-    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell `"$command`"" }
+    if ($now -cne $Value) {
+        $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
+        Write-Warning "Could not put back the setting $Name of $Serial. Run: & $(& $literal $adb) -s $Serial shell $(& $literal $command)"
+    }
+}
+
+# Reads the secure settings that belong to accessibility: the list of enabled services, the accessibility switch, and
+# the shortcuts that start a service, which Android clears for a service that it turns off. Returns names and values.
+function Get-AccessibilitySettings([string]$Serial) {
+    $settings = [ordered]@{}
+    foreach ($line in (Invoke-SettingsCommand -Serial $Serial -Command 'settings list secure')) {
+        if ($line -match '^([^=]*(accessibility|touch_exploration)[^=]*)=(.*)$') { $settings[$Matches[1]] = $Matches[3] }
+    }
+    $settings
+}
+
+# Puts back the settings that Get-AccessibilitySettings read, and deletes those that were not there. The list of enabled
+# services goes first, so that the shortcuts point to services that are on again.
+function Restore-AccessibilitySettings([string]$Serial, $Saved) {
+    $now = try { Get-AccessibilitySettings -Serial $Serial } catch { $null }
+    if ($null -eq $now) {
+        $before = @($Saved.Keys | ForEach-Object { "$_=$($Saved[$_])" }) -join "`n"
+        Write-Warning "Could not read the accessibility settings of $Serial, so they were not put back. Before, they were:`n$before"
+        return
+    }
+    $names = @('enabled_accessibility_services', 'accessibility_enabled') + @(@($Saved.Keys) + @($now.Keys) | Sort-Object -Unique)
+    foreach ($name in ($names | Select-Object -Unique)) {
+        $value = if ($Saved.Contains($name)) { $Saved[$name] } else { 'null' }
+        $current = if ($now.Contains($name)) { $now[$name] } else { 'null' }
+        if ($value -cne $current) { Set-SecureSetting -Serial $Serial -Name $name -Value $value }
+    }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {

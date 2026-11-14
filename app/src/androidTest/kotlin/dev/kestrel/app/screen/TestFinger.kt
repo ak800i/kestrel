@@ -68,9 +68,9 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     /**
      * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
      * Android's log and only some of them to its output, so this reads its output, its error output and its log lines
-     * since this finger was made, without the log's stack frames.
+     * since this finger was made, without the log's stack frames. When they cannot be read, it says so instead.
      */
-    private fun toolMessages(): String {
+    private fun toolMessages(): String = try {
         val output = listOf(pipes[0], pipes[2]).map { pipe ->
             ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
         }
@@ -80,7 +80,9 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
             .use { it.readLines() }
             .filter { it.isNotBlank() && !it.startsWith("-") && "\tat " !in it }
             .takeLast(LOG_LINES)
-        return (output + log).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "nothing" }
+        (output + log).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "nothing" }
+    } catch (e: Exception) {
+        "nothing that could be read (${e.javaClass.name})"
     }
 
     private fun inject(vararg events: Int) = send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
