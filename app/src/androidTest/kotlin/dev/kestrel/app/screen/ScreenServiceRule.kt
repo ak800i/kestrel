@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.graphics.Rect
 import android.os.ParcelFileDescriptor
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
@@ -19,8 +20,9 @@ import org.junit.rules.ExternalResource
 
 /**
  * Gives each test a new screen session by turning Kestrel's accessibility service off and on again, so that
- * nothing one test leaves behind affects the next. The tests run only on the test emulator and the A71
- * (design spec, D20), where the service may stay on afterwards.
+ * nothing one test leaves behind affects the next. It replaces the whole list of enabled accessibility services, so
+ * other services are off while the tests run; `scripts\connected-test.ps1` saves the list before the tests and puts it
+ * back afterwards.
  */
 class ScreenServiceRule : ExternalResource() {
     private val graph = (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as KestrelApplication).graph
@@ -67,14 +69,25 @@ class ScreenServiceRule : ExternalResource() {
     }
 
     /**
-     * The bounds of a button on one of Kestrel's touchable overlays, such as the confirmation card, as another
-     * accessibility client sees it. Overlays that take no touches are not in the list of interactive windows.
+     * The bounds of a button with [text] on one of Kestrel's touchable overlays, such as the confirmation card, as
+     * another accessibility client sees it.
      */
-    fun overlayButton(text: String): Rect? {
+    fun overlayButton(text: String): Rect? = overlayNode(text) { it.isClickable }?.let { Rect().also(it::getBoundsInScreen) }
+
+    /** Whether one of Kestrel's touchable overlays shows [text] as a whole text, such as a card's question. */
+    fun overlayShows(text: String): Boolean = overlayNode(text) { true } != null
+
+    /**
+     * Overlays that take no touches are not in the list of interactive windows. Android's search also finds texts that
+     * only contain [text], such as a question that contains a button's label, so only a whole text counts; platform
+     * buttons show their text in capitals.
+     */
+    private fun overlayNode(text: String, accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         for (window in automation.windows) {
             if (window.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue
-            val button = window.root?.findAccessibilityNodeInfosByText(text)?.firstOrNull() ?: continue
-            return Rect().also(button::getBoundsInScreen)
+            window.root?.findAccessibilityNodeInfosByText(text)
+                ?.firstOrNull { accept(it) && it.text?.toString().equals(text, ignoreCase = true) }
+                ?.let { return it }
         }
         return null
     }

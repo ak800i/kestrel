@@ -83,7 +83,7 @@ class GridBarAndCardTest {
 
         assertFalse(withTimeout(5_000) { first.await() })
         // Only the second card is left, so the tap reaches its Confirm button.
-        eventually { screen.overlayButton("Delete the draft?") != null && screen.overlayButton("Send a test message?") == null }
+        eventually { screen.overlayShows("Delete the draft?") && !screen.overlayShows("Send a test message?") }
         val confirm = screen.overlayButton("Confirm")!!
         screen.shell("input tap ${confirm.centerX()} ${confirm.centerY()}")
         assertTrue(withTimeout(5_000) { second.await() })
@@ -123,7 +123,8 @@ class GridBarAndCardTest {
 
     private suspend fun CoroutineScope.answerWith(button: String, expected: Boolean) {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.confirm("Send a test message?") }
+        // The question contains both buttons' labels, so the tests also check that the rule finds the buttons.
+        val answer = async { session.confirm("Confirm or cancel a test message?") }
         val bounds = withTimeout(5_000) {
             var found = screen.overlayButton(button)
             while (found == null) {

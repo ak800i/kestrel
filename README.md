@@ -44,7 +44,7 @@ scripts\install.ps1 -Serial $serial       # runs the privacy audit, then install
 
 Kestrel is installed with `adb install`, which avoids Android's block on accessibility access for apps from unknown sources. On a Samsung phone, Auto Blocker must be off while USB debugging is in use.
 
-The device tests of `:app` use the fixture screens of `:testapp`, a separate app that Gradle installs before the tests. Each test that uses the screen turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so they also switch off any other service on the device. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates: touches from `adb shell input` skip Android's accessibility input filter, while a virtual touchscreen behaves like a finger.
+The device tests of `:app` use the fixture screens of `:testapp`, a separate app that Gradle installs before the tests. Each test that uses the screen turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so other services are off while they run; `connected-test.ps1` puts the list back when the tests end. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates: touches from `adb shell input` skip Android's accessibility input filter, while a virtual touchscreen behaves like a finger.
 
 The scripts use the adb of the Android SDK. To use the same adb for the commands below, run this in your PowerShell window; it changes only that window's environment:
 
@@ -52,7 +52,7 @@ The scripts use the adb of the Android SDK. To use the same adb for the commands
 . scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb
 ```
 
-`start-emulator.ps1` starts the emulator with software rendering (`-gpu swiftshader`), because with the computer's graphics card the emulator slowed down after a few hours of tests. If the device tests still become slow, or Android restarts while they run, restart the emulator: run `& $adb -s $serial emu kill`, wait until the emulator has closed, and then run `$serial = scripts\start-emulator.ps1`. Restarting Android inside the emulator is not enough.
+`start-emulator.ps1` starts the emulator with software rendering (`-gpu swiftshader`), because with the computer's graphics card the emulator slowed down after a few hours of tests. Android inside the emulator can still slow down after many hours of tests. If the device tests become slow, or Android restarts while they run, restart the emulator with a cold boot: run `& $adb -s $serial emu kill`, wait until the emulator has closed, and then run `$serial = scripts\start-emulator.ps1 -ColdBoot`. A normal start would bring the slow state back from the emulator's Quick Boot snapshot, and restarting Android inside the emulator is not enough.
 
 ### Test hooks
 

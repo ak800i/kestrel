@@ -14,19 +14,27 @@ import kotlinx.coroutines.delay
  * filter. The commands use numbers rather than names, because the tool on Android 13 reads only numbers.
  */
 class TestFinger(automation: UiAutomation) : AutoCloseable {
-    private val pipes = automation.executeShellCommandRw("uinput -")
+    // The tool's output, its input and its errors.
+    private val pipes = automation.executeShellCommandRwe("uinput -")
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
     private var touches = 0
 
     init {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val screen = context.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
-        send(register(screen.width() - 1, screen.height() - 1))
-        val input = context.getSystemService(InputManager::class.java)
-        val deadline = SystemClock.uptimeMillis() + 5_000
-        while (input.inputDeviceIds.none { input.getInputDevice(it)?.name == NAME }) {
-            check(SystemClock.uptimeMillis() < deadline) { "The virtual touchscreen did not appear within 5 s" }
-            Thread.sleep(50)
+        try {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val screen = context.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+            send(register(screen.width() - 1, screen.height() - 1))
+            val input = context.getSystemService(InputManager::class.java)
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (input.inputDeviceIds.none { input.getInputDevice(it)?.name == NAME }) {
+                check(SystemClock.uptimeMillis() < deadline) {
+                    "The virtual touchscreen did not appear within 5 s. The uinput tool said: ${errors()}"
+                }
+                Thread.sleep(50)
+            }
+        } catch (e: Throwable) {
+            close()
+            throw e
         }
     }
 
@@ -42,8 +50,18 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
 
     /** Removes the virtual touchscreen: the tool removes its device when its input ends. */
     override fun close() {
-        commands.close()
-        pipes[0].close()
+        try {
+            commands.close()
+        } finally {
+            pipes[0].close()
+            pipes[2].close()
+        }
+    }
+
+    /** What the tool has written to its error output so far, without waiting for more. */
+    private fun errors(): String {
+        val stream = ParcelFileDescriptor.AutoCloseInputStream(pipes[2].dup())
+        return stream.use { String(it.readNBytes(it.available())).trim() }
     }
 
     private fun inject(vararg events: Int) = send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")

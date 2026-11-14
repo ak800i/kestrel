@@ -1,5 +1,8 @@
 # Starts kestrel-api37 if it is not running, waits until Android has booted and prints its adb serial.
 # The emulator keeps running in its own window after this script ends.
+# -ColdBoot starts Android afresh instead of from the emulator's Quick Boot snapshot. Use it after closing a slow
+# emulator, because the snapshot would bring the slow state back.
+param([switch]$ColdBoot)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
@@ -17,7 +20,9 @@ if (-not $serial) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
         # Software rendering: with the computer's graphics card, the emulator slowed down after a few hours of tests,
         # and once the graphics driver crashed (plan 1B).
-        $started = Start-Process -FilePath $emulator -ArgumentList '-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader' -WindowStyle Minimized -PassThru
+        $arguments = @('-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader')
+        if ($ColdBoot) { $arguments += '-no-snapshot-load' }
+        $started = Start-Process -FilePath $emulator -ArgumentList $arguments -WindowStyle Minimized -PassThru
         $null = $started.Handle  # Keeps the exit code readable after the process ends.
     }
     do {
