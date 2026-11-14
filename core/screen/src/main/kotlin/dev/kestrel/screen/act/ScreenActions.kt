@@ -9,6 +9,8 @@ import android.content.Intent
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
+import android.view.ViewConfiguration
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
@@ -53,9 +55,9 @@ class ScreenActions internal constructor(
     /** Long-presses the element with [key], in the same way as [tap]. */
     suspend fun longPress(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress)
 
-    suspend fun tapAt(x: Int, y: Int): ActionResult = gesture(Gestures.tap(x, y))
+    suspend fun tapAt(x: Int, y: Int): ActionResult = gestureAt(ScreenPoint(x, y), Gestures::tap)
 
-    suspend fun longPressAt(x: Int, y: Int): ActionResult = gesture(Gestures.longPress(x, y))
+    suspend fun longPressAt(x: Int, y: Int): ActionResult = gestureAt(ScreenPoint(x, y), Gestures::longPress)
 
     /**
      * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
@@ -116,19 +118,31 @@ class ScreenActions internal constructor(
             ?: window?.takeIf { direction.isVertical }
             ?: return ActionResult.Failed("Nothing on the screen scrolls that way")
         val (from, to) = SwipePaths.forScroll(area, direction)
-        return gesture(Gestures.swipe(from, to))
+        return gesture(listOf(from, to)) { arrayOf(Gestures.swipe(from, to)) }
     }
 
-    suspend fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult =
-        gesture(Gestures.swipe(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
+    suspend fun swipe(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult {
+        val from = ScreenPoint(fromX, fromY)
+        val to = ScreenPoint(toX, toY)
+        return gesture(listOf(from, to)) { arrayOf(Gestures.swipe(from, to)) }
+    }
 
     /** Presses and holds at the first point, then moves to the second point, as when moving an icon. */
-    suspend fun drag(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult =
-        gesture(*Gestures.drag(ScreenPoint(fromX, fromY), ScreenPoint(toX, toY)))
+    suspend fun drag(fromX: Int, fromY: Int, toX: Int, toY: Int): ActionResult {
+        val from = ScreenPoint(fromX, fromY)
+        val to = ScreenPoint(toX, toY)
+        // Half the touch slop, so that the press still counts as a press while it drifts.
+        val drift = maxOf(1, ViewConfiguration.get(service).scaledTouchSlop / 2)
+        return gesture(listOf(from, ScreenPoint(fromX + drift, fromY), to)) { Gestures.drag(from, to, drift) }
+    }
 
     /** Moves two fingers apart (when [endSpan] is larger than [startSpan]) or together around a point. */
-    suspend fun pinch(centerX: Int, centerY: Int, startSpan: Int, endSpan: Int): ActionResult =
-        gesture(Gestures.pinch(ScreenPoint(centerX, centerY), startSpan, endSpan))
+    suspend fun pinch(centerX: Int, centerY: Int, startSpan: Int, endSpan: Int): ActionResult {
+        val fingers = listOf(startSpan, endSpan).flatMap { span ->
+            listOf(ScreenPoint(centerX - span / 2, centerY), ScreenPoint(centerX + span / 2, centerY))
+        }
+        return gesture(fingers) { arrayOf(Gestures.pinch(ScreenPoint(centerX, centerY), startSpan, endSpan)) }
+    }
 
     /** How many times Android's magnification enlarges the screen; 1 when it does not. */
     val zoomScale: Float get() = service.magnificationController.magnificationConfig?.scale ?: 1f
@@ -200,7 +214,7 @@ class ScreenActions internal constructor(
         } else if (node.refresh()) {
             // The element is still there, but what a touch on it reaches does not offer the action.
             val bounds = node.screenBounds()
-            return gesture(fallback(bounds.centerX, bounds.centerY))
+            return gestureAt(ScreenPoint(bounds.centerX, bounds.centerY), fallback)
         }
         // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
@@ -211,7 +225,7 @@ class ScreenActions internal constructor(
         if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
             return settled(ActionMethod.RETRY_ACTION)
         }
-        return gesture(fallback(element.bounds.centerX, element.bounds.centerY))
+        return gestureAt(ScreenPoint(element.bounds.centerX, element.bounds.centerY), fallback)
     }
 
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
@@ -246,12 +260,25 @@ class ScreenActions internal constructor(
         }
     }
 
-    private suspend fun gesture(vararg parts: GestureDescription): ActionResult =
-        when (gestures.perform(*parts)) {
+    private suspend fun gestureAt(point: ScreenPoint, build: (Int, Int) -> GestureDescription): ActionResult =
+        gesture(listOf(point)) { arrayOf(build(point.x, point.y)) }
+
+    /**
+     * Runs the gesture that [build] makes, after checking that its [points] lie on the screen: Android's gesture builder
+     * throws for a negative point, and a gesture beyond the screen's edge reaches nothing.
+     */
+    private suspend fun gesture(points: List<ScreenPoint>, build: () -> Array<GestureDescription>): ActionResult {
+        val screen = service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+        if (points.any { it.x < screen.left || it.x >= screen.right || it.y < screen.top || it.y >= screen.bottom }) {
+            return OFF_SCREEN
+        }
+        return when (gestures.perform(*build())) {
             GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
             GestureOutcome.CANCELLED -> ActionResult.Failed("A touch on the screen cancelled the gesture")
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture")
+            GestureOutcome.TIMED_OUT -> ActionResult.Failed("Android did not report the end of the gesture")
         }
+    }
 
     /**
      * Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3).
@@ -344,6 +371,7 @@ class ScreenActions internal constructor(
         val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
         val DISABLED = ActionResult.Failed("The element is disabled")
         val GONE = ActionResult.Failed("The element is no longer on the screen")
+        val OFF_SCREEN = ActionResult.Failed("The point is outside the screen")
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L

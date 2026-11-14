@@ -41,6 +41,35 @@ class GestureTest {
     }
 
     @Test
+    fun aLongPressLastsLongerThanAndroidsTouchAndHoldDelay() = runBlocking {
+        val original = screen.shell("settings get secure long_press_timeout").trim()
+        try {
+            // The longest touch-and-hold delay that Android's accessibility settings offer.
+            screen.shell("settings put secure long_press_timeout 1500")
+            screen.open("ViewsActivity", "Views fixture")
+            val send = screen.awaitElement { it.label == "SEND" && it.clickable }.bounds
+
+            assertEquals(done, actions.longPressAt(send.centerX, send.centerY))
+
+            screen.awaitElement { it.label == "Long-pressed Send" }
+            Unit
+        } finally {
+            if (original == "null") {
+                screen.shell("settings delete secure long_press_timeout")
+            } else {
+                screen.shell("settings put secure long_press_timeout $original")
+            }
+        }
+    }
+
+    @Test
+    fun aPointOutsideTheScreenFailsInsteadOfThrowing() = runBlocking {
+        openPad()
+
+        assertEquals(ActionResult.Failed("The point is outside the screen"), actions.tapAt(-5, 100))
+    }
+
+    @Test
     fun swipeAndDragAreToldApart() = runBlocking {
         val pad = openPad().bounds
 
