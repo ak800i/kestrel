@@ -75,6 +75,10 @@ The code below already handles all of these. They are written down so that nobod
 - Chrome 145's first run on Android 17 shows "Stay signed out", then a notifications prompt with "No thanks". Firefox 160's shows "Continue", then Android's "Set Firefox as your default browser app?" with "Cancel", then "Not now".
 - Firefox restores what was typed into a page when the same address opens again, so the S4 script gives each opening its own address. A Firefox that has just started may refuse typed text for a few seconds.
 - In PowerShell, an `if` expression that returns `@()` gives `$null`, and splatting an array passes `-Name` as a plain value, so the scripts splat hashtables.
+- When Android turns off an accessibility service that asks for the accessibility button, it also removes the service from the accessibility shortcuts: `accessibility_button_targets` and `accessibility_shortcut_target_service`, and on Android 17 also `accessibility_gesture_targets` and `accessibility_qs_targets`. Putting the list of services back does not bring the shortcuts back, so the scripts save and restore every secure setting whose name contains `accessibility` or `touch_exploration`.
+- `am force-stop` on an app whose accessibility service is on makes Android remove that service from `enabled_accessibility_services` by itself, within about 60 ms on the emulator, and Android then writes the other names in their short form (`…/.AccessibilityMenuService`).
+- After Ctrl+C in a script that runs `gradlew.bat`, Windows asks "Terminate batch job (Y/N)?", and PowerShell 7 and Windows PowerShell 5.1 both wait for the answer before they run the script's `finally` block. A second Ctrl+C at that question changes nothing, and Ctrl+C during the `finally` block does not stop it.
+- In Windows PowerShell 5.1, an adb error line that is redirected with `2>$null` or `2>&1` stops a script whose `$ErrorActionPreference` is `Stop`; PowerShell 7 goes on. The settings functions therefore set `Continue` for themselves.
 
 ## File map
 
@@ -99,8 +103,8 @@ The code below already handles all of these. They are written down so that nobod
 ### Task 1: Test tools that restore the device and work on the A71
 
 **Files:**
-- Modify: `scripts/connected-test.ps1` (save and restore the enabled accessibility services)
-- Modify: `scripts/lib/Kestrel.ps1` (`Assert-TestDevice` checks a refusal twice more; `Get-SecureSetting` and `Set-SecureSetting`)
+- Modify: `scripts/connected-test.ps1` (save and restore the accessibility settings)
+- Modify: `scripts/lib/Kestrel.ps1` (`Assert-TestDevice` checks a refusal twice more; `Invoke-SettingsCommand`, `Get-SecureSetting`, `Set-SecureSetting`, `Get-AccessibilitySettings` and `Restore-AccessibilitySettings`)
 - Modify: `scripts/start-emulator.ps1` (`-ColdBoot`, with a warning when it cannot take effect)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/ScreenServiceRule.kt` (`overlayButton` matches whole texts; new `overlayShows`)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TestFinger.kt` (reports the `uinput` tool's log lines and closes its pipes)
@@ -109,11 +113,11 @@ The code below already handles all of these. They are written down so that nobod
 
 **Interfaces:**
 - Consumes: plan 1B's test tools.
-- Produces: `Get-SecureSetting -Serial <serial> -Name <setting>` reads a secure setting, which may be `null` or empty, and asks twice more before it fails; `Set-SecureSetting -Serial <serial> -Name <setting> -Value <value>` puts back what it read, deleting the setting for `null`, and warns when the device did not take it; the spike scripts of Tasks 11 and 12 use both. `ScreenServiceRule.overlayButton(text: String): Rect?` returns only a clickable node whose whole text is `text`, ignoring case; `ScreenServiceRule.overlayShows(text: String): Boolean` says whether a touchable overlay shows `text` as a whole text. `scripts\start-emulator.ps1 -ColdBoot` starts the emulator with `-no-snapshot-load`.
+- Produces: `Get-SecureSetting -Serial <serial> -Name <setting>` reads a secure setting, which may be `null` or empty, and asks twice more before it fails; `Set-SecureSetting -Serial <serial> -Name <setting> -Value <value>` puts back what it read, deleting the setting for `null`, and warns when the device did not take it. `Get-AccessibilitySettings -Serial <serial>` returns every secure setting whose name contains `accessibility` or `touch_exploration`, as an ordered dictionary of names and values; `Restore-AccessibilitySettings -Serial <serial> -Saved <dictionary>` puts back those that changed, the list of enabled services first, and deletes those that were not there before; the spike scripts of Tasks 11 and 12 use both. `ScreenServiceRule.overlayButton(text: String): Rect?` returns only a clickable node whose whole text is `text`, ignoring case; `ScreenServiceRule.overlayShows(text: String): Boolean` says whether a touchable overlay shows `text` as a whole text. `scripts\start-emulator.ps1 -ColdBoot` starts the emulator with `-no-snapshot-load`.
 
 Closes (5d), (10g) and (11d), and a problem found while this plan was built.
 
-The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, and while Android's system is still starting, the `settings` command fails. So `Get-SecureSetting` asks the device to print a marker only after a successful answer, and asks again while the marker is missing; if the setting still cannot be read, the tests do not start, instead of deleting the owner's list afterwards. `Set-SecureSetting` reads the value back and warns when the device did not take it, with a command that the owner can paste to put the value back. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. When Kestrel stops, Android removes Kestrel's service from the list by itself, within about 60 ms on the emulator, so the script waits up to 5 seconds until the list no longer contains Kestrel's service; otherwise Android could write its own copy of the list, without Kestrel, over the restored one. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's log lines since the finger was made, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
+The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off. Android also removes each service that it turns off from the accessibility shortcuts, and putting the list back does not bring the shortcuts back. So `connected-test.ps1` now saves every secure setting whose name contains `accessibility` or `touch_exploration` before Gradle runs, and puts back those that changed in a `finally` block, even when the tests fail or are interrupted. The list of services goes first, so that the shortcuts point to services that are on again. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, and while Android's system is still starting, the `settings` command fails. So `Invoke-SettingsCommand` asks the device to print a marker only after a command that worked, and asks again while the marker is missing; if the settings still cannot be read, the tests do not start, instead of deleting the owner's settings afterwards. Its error names the device's last complaint, and adb's error lines no longer fill the console. `Set-SecureSetting` reads the value back and warns when the device did not take it, with a command that the owner can paste into PowerShell to put the value back. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. When Kestrel stops, Android removes Kestrel's service from the list by itself, within about 60 ms on the emulator, so the script waits up to 5 seconds until the list no longer contains Kestrel's service; otherwise Android could write its own copy of the list, without Kestrel, over the restored one. After Ctrl+C, Windows asks "Terminate batch job (Y/N)?" before the restore can run, so the README tells the owner to answer it. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's log lines since the finger was made, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
 
 This task changes test tools only, so it has no failing test of its own; Step 4 checks the tools.
 
@@ -137,11 +141,10 @@ Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
 # The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
 $env:ANDROID_SERIAL = $Serial
-# The device tests replace the list of enabled accessibility services, so it is put back afterwards, even when the
-# tests fail or are interrupted. If the list cannot be read, the tests do not start.
-$saved = foreach ($name in 'enabled_accessibility_services', 'accessibility_enabled') {
-    [pscustomobject]@{ Name = $name; Value = Get-SecureSetting -Serial $Serial -Name $name }
-}
+# The device tests replace the list of enabled accessibility services, and Android then clears the shortcuts of the
+# services that it turns off. So the accessibility settings are put back afterwards, even when the tests fail or are
+# interrupted. If they cannot be read, the tests do not start.
+$saved = Get-AccessibilitySettings -Serial $Serial
 $code = 1
 try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
@@ -153,11 +156,11 @@ try {
     & (Get-Adb) -s $Serial shell am force-stop dev.kestrel | Out-Null
     $deadline = (Get-Date).AddSeconds(5)
     while ((Get-Date) -lt $deadline) {
-        $services = try { Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services } catch { '' }
-        if ($services -notlike '*dev.kestrel/*') { break }
+        $services = try { Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services } catch { $null }
+        if ($null -ne $services -and $services -notlike '*dev.kestrel/*') { break }
         Start-Sleep -Milliseconds 500
     }
-    foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
+    Restore-AccessibilitySettings -Serial $Serial -Saved $saved
 }
 exit $code
 ```
@@ -193,26 +196,71 @@ function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
 }
 
-# Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
-# an empty value, so a marker that follows only a successful answer tells an empty value from a failed query. A busy
-# device, or one whose system is still starting, sometimes fails the query, so it is repeated before it fails for good.
-function Get-SecureSetting([string]$Serial, [string]$Name) {
+# Runs a settings command on a device and returns the lines that it printed. The device prints a marker only after a
+# command that worked, which tells an empty answer from a failed command. A busy device, or one whose system is still
+# starting, sometimes fails the command, so it is repeated before it fails for good with the device's last complaint.
+function Invoke-SettingsCommand([string]$Serial, [string]$Command) {
     $adb = Get-Adb
+    # Keeps adb's error lines as part of the answer, so that they neither stop the script nor fill the console.
+    $ErrorActionPreference = 'Continue'
+    $complaint = ''
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $answer = "$(& $adb -s $Serial shell "settings get secure $Name && echo kestrel-end")"
-        if ($answer -match '^\s*(.*?)\s*kestrel-end\s*$') { return $Matches[1] }
+        $answer = @(& $adb -s $Serial shell "$Command && echo kestrel-end" 2>&1)
+        $errors = @($answer | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $lines = @($answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".TrimEnd("`r") })
+        if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-end') { return $lines | Select-Object -First ($lines.Count - 1) }
+        $complaint = (@($errors | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) -join ' ')
     }
-    throw "Could not read the setting $Name of $Serial."
+    if ($complaint) { throw "Could not run '$Command' on ${Serial}: $complaint" }
+    throw "Could not run '$Command' on $Serial."
 }
 
-# Puts back a secure setting that Get-SecureSetting read, and warns when the device did not take it.
+# Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
+# an empty value.
+function Get-SecureSetting([string]$Serial, [string]$Name) {
+    (Invoke-SettingsCommand -Serial $Serial -Command "settings get secure $Name") -join "`n"
+}
+
+# Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and warns when the device did not take
+# it, with a command that puts it back when it is pasted into PowerShell.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $adb = Get-Adb
+    $ErrorActionPreference = 'Continue'
     $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
-    & $adb -s $Serial shell $command | Out-Null
+    & $adb -s $Serial shell $command 2>$null | Out-Null
     $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
-    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell `"$command`"" }
+    if ($now -cne $Value) {
+        $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
+        Write-Warning "Could not put back the setting $Name of $Serial. Run: & $(& $literal $adb) -s $Serial shell $(& $literal $command)"
+    }
+}
+
+# Reads the secure settings that belong to accessibility: the list of enabled services, the accessibility switch, and
+# the shortcuts that start a service, which Android clears for a service that it turns off. Returns names and values.
+function Get-AccessibilitySettings([string]$Serial) {
+    $settings = [ordered]@{}
+    foreach ($line in (Invoke-SettingsCommand -Serial $Serial -Command 'settings list secure')) {
+        if ($line -match '^([^=]*(accessibility|touch_exploration)[^=]*)=(.*)$') { $settings[$Matches[1]] = $Matches[3] }
+    }
+    $settings
+}
+
+# Puts back the settings that Get-AccessibilitySettings read, and deletes those that were not there. The list of enabled
+# services goes first, so that the shortcuts point to services that are on again.
+function Restore-AccessibilitySettings([string]$Serial, $Saved) {
+    $now = try { Get-AccessibilitySettings -Serial $Serial } catch { $null }
+    if ($null -eq $now) {
+        $before = @($Saved.Keys | ForEach-Object { "$_=$($Saved[$_])" }) -join "`n"
+        Write-Warning "Could not read the accessibility settings of $Serial, so they were not put back. Before, they were:`n$before"
+        return
+    }
+    $names = @('enabled_accessibility_services', 'accessibility_enabled') + @(@($Saved.Keys) + @($now.Keys) | Sort-Object -Unique)
+    foreach ($name in ($names | Select-Object -Unique)) {
+        $value = if ($Saved.Contains($name)) { $Saved[$name] } else { 'null' }
+        $current = if ($now.Contains($name)) { $now[$name] } else { 'null' }
+        if ($value -cne $current) { Set-SecureSetting -Serial $Serial -Name $name -Value $value }
+    }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {
@@ -263,7 +311,7 @@ $name = 'kestrel-api37'
 $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
-if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: adb -s $serial emu kill" }
+if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: & '$adb' -s $serial emu kill" }
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
@@ -324,8 +372,8 @@ import org.junit.rules.ExternalResource
 /**
  * Gives each test a new screen session by turning Kestrel's accessibility service off and on again, so that
  * nothing one test leaves behind affects the next. It replaces the whole list of enabled accessibility services, so
- * other services are off while the tests run; `scripts\connected-test.ps1` saves the list before the tests and puts it
- * back afterwards.
+ * other services are off while the tests run, and Android clears their shortcuts; `scripts\connected-test.ps1` saves the
+ * accessibility settings before the tests and puts them back afterwards.
  */
 class ScreenServiceRule : ExternalResource() {
     private val graph = (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as KestrelApplication).graph
@@ -498,9 +546,9 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     /**
      * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
      * Android's log and only some of them to its output, so this reads its output, its error output and its log lines
-     * since this finger was made, without the log's stack frames.
+     * since this finger was made, without the log's stack frames. When they cannot be read, it says so instead.
      */
-    private fun toolMessages(): String {
+    private fun toolMessages(): String = try {
         val output = listOf(pipes[0], pipes[2]).map { pipe ->
             ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
         }
@@ -510,7 +558,9 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
             .use { it.readLines() }
             .filter { it.isNotBlank() && !it.startsWith("-") && "\tat " !in it }
             .takeLast(LOG_LINES)
-        return (output + log).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "nothing" }
+        (output + log).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "nothing" }
+    } catch (e: Exception) {
+        "nothing that could be read (${e.javaClass.name})"
     }
 
     private fun inject(vararg events: Int) = send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
@@ -719,7 +769,7 @@ class GridBarAndCardTest {
 In `README.md`, replace the paragraph that starts with "The device tests of `:app` use the fixture screens" with:
 
 ````markdown
-The device tests of `:app` use the fixture screens of `:testapp`, a separate app that Gradle installs before the tests. Each test that uses the screen turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so other services are off while they run; `connected-test.ps1` puts the list back when the tests end. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates: touches from `adb shell input` skip Android's accessibility input filter, while a virtual touchscreen behaves like a finger.
+The device tests of `:app` use the fixture screens of `:testapp`, a separate app that Gradle installs before the tests. Each test that uses the screen turns Kestrel's accessibility service off and on again. The tests replace the whole list of enabled accessibility services, so other services are off while they run, and Android clears the shortcuts that start those services. `connected-test.ps1` puts the accessibility settings back when the tests end. If you stop the tests with Ctrl+C, Windows asks "Terminate batch job (Y/N)?": answer it, and the script puts the settings back before it ends. After the tests, Gradle uninstalls Kestrel, which also switches its service off. Some tests touch the screen through a virtual touchscreen that Android's `uinput` tool creates: touches from `adb shell input` skip Android's accessibility input filter, while a virtual touchscreen behaves like a finger.
 ````
 
 Replace the paragraph that starts with "`start-emulator.ps1` starts the emulator with software rendering" with:
@@ -760,19 +810,25 @@ try { Get-SecureSetting -Serial <serial> -Name '' } catch { $_.Exception.Message
 $watch.Elapsed.TotalSeconds
 ```
 
-Expected: a message that starts with `Could not read the setting`, and about 4 seconds.
+Expected: the message `Could not run 'settings get secure ' on <serial>: Bad arguments`, and about 4 seconds.
 
-The device tests put back the list of accessibility services. Turn on a harmless system service first, run all device tests, and read the list afterwards (in the same PowerShell window):
+The device tests put back the accessibility settings. Turn on a harmless system service and give it the accessibility button, run all device tests, and compare the settings afterwards (in the same PowerShell window):
 
 ```powershell
 $probe = 'com.android.systemui.accessibility.accessibilitymenu/com.android.systemui.accessibility.accessibilitymenu.AccessibilityMenuService'
 & $adb -s <serial> shell settings put secure enabled_accessibility_services $probe
+& $adb -s <serial> shell settings put secure accessibility_button_targets $probe
+Start-Sleep -Seconds 3
+$before = Get-AccessibilitySettings -Serial <serial>
 scripts\connected-test.ps1 -Serial <serial> :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest
-& $adb -s <serial> shell settings get secure enabled_accessibility_services
+$after = Get-AccessibilitySettings -Serial <serial>
+@($before.Keys) + @($after.Keys) | Sort-Object -Unique | Where-Object { $before[$_] -cne $after[$_] }
+$before['accessibility_button_targets'] -eq $probe
 & $adb -s <serial> shell settings delete secure enabled_accessibility_services
+& $adb -s <serial> shell settings delete secure accessibility_button_targets
 ```
 
-Expected: `BUILD SUCCESSFUL` with 7 tests in `:core:privacy` and 66 in `:app`, and the `settings get` prints the probe service again.
+Expected: `BUILD SUCCESSFUL` with 7 tests in `:core:privacy` and 66 in `:app`; the comparison prints no setting name; and the last check prints `True`. While the tests run, Android clears the probe's button, so without the restore the comparison would print `accessibility_button_targets`.
 
 - [ ] **Step 5: Commit**
 
@@ -10280,8 +10336,7 @@ function Get-Granted([string]$Permission) {
 }
 
 $results = [ordered]@{}
-$savedServices = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
-$savedEnabled = Get-SecureSetting -Serial $Serial -Name accessibility_enabled
+$savedAccessibility = Get-AccessibilitySettings -Serial $Serial
 $locationGranted = Get-Granted 'android.permission.ACCESS_FINE_LOCATION'
 try {
     foreach ($permission in 'RECORD_AUDIO', 'POST_NOTIFICATIONS', 'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION') {
@@ -10390,8 +10445,7 @@ try {
         }
     }
 } finally {
-    Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $savedServices
-    Set-SecureSetting -Serial $Serial -Name accessibility_enabled -Value $savedEnabled
+    Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility
     # Revoking a permission stops Kestrel's process, so this comes last.
     if (-not $locationGranted) {
         Invoke-Shell 'pm revoke dev.kestrel android.permission.ACCESS_FINE_LOCATION' | Out-Null
@@ -11048,8 +11102,7 @@ $checks = [ordered]@{
 }
 $fields = @('Name', 'Email address', 'Message box', 'Notes')
 
-$savedServices = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
-$savedEnabled = Get-SecureSetting -Serial $Serial -Name accessibility_enabled
+$savedAccessibility = Get-AccessibilitySettings -Serial $Serial
 $server = Start-Process -FilePath (Join-Path $env:JAVA_HOME 'bin\jwebserver.exe') -PassThru -WindowStyle Hidden `
     -ArgumentList '-p', $port, '-b', '127.0.0.1', '-d', (Join-Path $PSScriptRoot 'spike-s4')
 try {
@@ -11105,8 +11158,7 @@ try {
         Invoke-Shell "am force-stop $package" | Out-Null
     }
 } finally {
-    Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $savedServices
-    Set-SecureSetting -Serial $Serial -Name accessibility_enabled -Value $savedEnabled
+    Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility
     & $adb -s $Serial reverse --remove "tcp:$port" 2>$null | Out-Null
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
 }
@@ -11272,14 +11324,17 @@ Expected: adb lists the A71 with `model:SM_A715F`, and `install.ps1` prints `Suc
 - [ ] **Step 2: Run all device tests on the A71**
 
 ```powershell
+$before = & (Get-Adb) -s <A71 serial> shell settings list secure
 scripts\connected-test.ps1 -Serial <A71 serial> :core:privacy:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+Compare-Object $before (& (Get-Adb) -s <A71 serial> shell settings list secure)
 ```
 
-Expected: 7 tests in `:core:privacy` and 91 in `:app`. These tests run Kestrel's virtual finger (`uinput`) and the zoom test `numbersFollowAZoom` on Android 13 for the first time. For each failure, find out whether the code or the test assumes Android 17 behaviour, fix it with a test, and run the tests on both devices again. `connected-test.ps1` puts the A71's accessibility services back afterwards; check that with `settings get secure enabled_accessibility_services`.
+Expected: 7 tests in `:core:privacy` and 91 in `:app`. These tests run Kestrel's virtual finger (`uinput`) and the zoom test `numbersFollowAZoom` on Android 13 for the first time. For each failure, find out whether the code or the test assumes Android 17 behaviour, fix it with a test, and run the tests on both devices again. `Compare-Object` shows the secure settings that differ after the tests. `connected-test.ps1` puts back every setting whose name contains `accessibility` or `touch_exploration`, so none of those may appear. If a setting appears that the tests changed, such as a Samsung shortcut setting with another name, put it back by hand, add its name to the filter in `Get-AccessibilitySettings` with a comment, and run this step again. Settings that change by themselves, such as time stamps, can be ignored.
 
 - [ ] **Step 3: Spike S3 with a real finger**
 
 ```powershell
+$saved = Get-AccessibilitySettings -Serial <A71 serial>
 & (Get-Adb) -s <A71 serial> shell settings put secure enabled_accessibility_services dev.kestrel/dev.kestrel.app.KestrelAccessibilityService
 & (Get-Adb) -s <A71 serial> shell am start -W -a android.settings.SETTINGS
 scripts\hook.ps1 -Serial <A71 serial> watch -Seconds 10
@@ -11291,7 +11346,11 @@ While the command runs, the owner taps the screen three times. Expected: `owner 
 scripts\hook.ps1 -Serial <A71 serial> tap -X 540 -Y 1200 -Long
 ```
 
-Write down Kestrel's answer. On Android 13, Android is expected to cancel Kestrel's gesture, so the answer is expected to be a failure (spec section 19.1, S3, and B35). Restore the list of accessibility services afterwards, as `connected-test.ps1` does.
+Write down Kestrel's answer. On Android 13, Android is expected to cancel Kestrel's gesture, so the answer is expected to be a failure (spec section 19.1, S3, and B35). Then put the A71's accessibility settings back:
+
+```powershell
+Restore-AccessibilitySettings -Serial <A71 serial> -Saved $saved
+```
 
 - [ ] **Step 4: Spikes S1 and S7 on the A71**
 
