@@ -23,6 +23,8 @@ try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
 } finally {
+    # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop first.
+    & (Get-Adb) -s $Serial shell am force-stop dev.kestrel | Out-Null
     foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
 }
 exit $code

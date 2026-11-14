@@ -11,11 +11,13 @@ $name = 'kestrel-api37'
 $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
+if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: adb -s $serial emu kill" }
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
     $started = $null
+    if ($ColdBoot -and $running) { Write-Warning "$name is still starting or closing, so -ColdBoot does nothing." }
     if (-not $running) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
         # Software rendering: with the computer's graphics card, the emulator slowed down after a few hours of tests,

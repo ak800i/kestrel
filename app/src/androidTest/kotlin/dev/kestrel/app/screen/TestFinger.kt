@@ -13,7 +13,7 @@ import kotlinx.coroutines.delay
  * Unlike `input tap`, its touches come from a touchscreen device and pass through Android's accessibility input
  * filter. The commands use numbers rather than names, because the tool on Android 13 reads only numbers.
  */
-class TestFinger(automation: UiAutomation) : AutoCloseable {
+class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     // The tool's output, its input and its errors.
     private val pipes = automation.executeShellCommandRwe("uinput -")
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
@@ -28,12 +28,16 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
             val deadline = SystemClock.uptimeMillis() + 5_000
             while (input.inputDeviceIds.none { input.getInputDevice(it)?.name == NAME }) {
                 check(SystemClock.uptimeMillis() < deadline) {
-                    "The virtual touchscreen did not appear within 5 s. The uinput tool said: ${errors()}"
+                    "The virtual touchscreen did not appear within 5 s. The uinput tool said: ${toolMessages()}"
                 }
                 Thread.sleep(50)
             }
         } catch (e: Throwable) {
-            close()
+            try {
+                close()
+            } catch (closeError: Throwable) {
+                e.addSuppressed(closeError)
+            }
             throw e
         }
     }
@@ -58,10 +62,20 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
         }
     }
 
-    /** What the tool has written to its error output so far, without waiting for more. */
-    private fun errors(): String {
-        val stream = ParcelFileDescriptor.AutoCloseInputStream(pipes[2].dup())
-        return stream.use { String(it.readNBytes(it.available())).trim() }
+    /**
+     * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
+     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines,
+     * without the log's stack frames.
+     */
+    private fun toolMessages(): String {
+        val output = listOf(pipes[0], pipes[2]).map { pipe ->
+            ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
+        }
+        val log = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(LOG_COMMAND)).bufferedReader()
+            .use { it.readLines() }
+            .filter { it.isNotBlank() && !it.startsWith("-") && "\tat " !in it }
+            .takeLast(LOG_LINES)
+        return (output + log).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "nothing" }
     }
 
     private fun inject(vararg events: Int) = send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
@@ -75,6 +89,8 @@ class TestFinger(automation: UiAutomation) : AutoCloseable {
     private companion object {
         const val NAME = "Kestrel test finger"
         const val LIFT_MILLIS = 50L
+        const val LOG_COMMAND = "logcat -d -s UINPUT:* UinputEvent:* UinputDevice:*"
+        const val LOG_LINES = 10
 
         // Linux input event codes, from linux/input-event-codes.h and linux/uinput.h.
         const val EV_SYN = 0

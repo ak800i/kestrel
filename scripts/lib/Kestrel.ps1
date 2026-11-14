@@ -26,26 +26,26 @@ function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
 }
 
-# Reads a secure setting of a device. A busy device sometimes answers with nothing, so the query is repeated before it
-# fails. Android answers 'null' for a setting that is not set.
+# Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
+# an empty value, so a marker after the answer tells an empty value from no answer at all. A busy device sometimes gives
+# no answer, so the query is repeated before it fails.
 function Get-SecureSetting([string]$Serial, [string]$Name) {
     $adb = Get-Adb
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $value = "$(& $adb -s $Serial shell settings get secure $Name)".Trim()
-        if ($value) { return $value }
+        $answer = "$(& $adb -s $Serial shell "settings get secure $Name; echo kestrel-end")"
+        if ($answer -match '^\s*(.*?)\s*kestrel-end\s*$') { return $Matches[1] }
     }
     throw "Could not read the setting $Name of $Serial."
 }
 
-# Puts back a secure setting that Get-SecureSetting read.
+# Puts back a secure setting that Get-SecureSetting read, and warns when the device did not take it.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $adb = Get-Adb
-    if ($Value -eq 'null') {
-        & $adb -s $Serial shell settings delete secure $Name | Out-Null
-    } else {
-        & $adb -s $Serial shell settings put secure $Name "'$Value'" | Out-Null
-    }
+    $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
+    & $adb -s $Serial shell $command | Out-Null
+    $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
+    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell $command" }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {
