@@ -75,6 +75,12 @@ class SystemActionsTest {
     }
 
     @Test
+    fun aFileLinkFailsInsteadOfThrowing() = runBlocking {
+        // Android does not let an app hand a file:// link to another app.
+        assertEquals(ActionResult.Failed("Android does not let Kestrel open the link"), actions.openUri("file:///sdcard/Download/note.txt"))
+    }
+
+    @Test
     fun openAppFailsForAnAppThatIsNotInstalled() = runBlocking {
         assertTrue(actions.openApp("dev.kestrel.missing") is ActionResult.Failed)
     }

@@ -8,6 +8,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Rect
 import android.net.Uri
+import android.os.FileUriExposedException
 import android.os.Bundle
 import android.view.ViewConfiguration
 import android.view.WindowManager
@@ -16,6 +17,7 @@ import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
+import dev.kestrel.screen.model.WindowSummary
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.SnapshotCache
@@ -112,12 +114,15 @@ class ScreenActions internal constructor(
         if (target != null && action != null && target.node.performAction(action)) {
             return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
-        val window = live.snapshot.windowBounds(element?.windowId)
+        val window = live.snapshot.windowOf(element?.windowId) ?: live.snapshot.windows.firstOrNull { it.kind == WindowKind.APPLICATION }
         val list = (target ?: node?.selfOrParent { it.isScrollable && it.movesAlong(direction) })?.node?.screenBounds()
-        val area = (if (list != null && window != null) list.intersect(window) else list)
-            ?: window?.takeIf { direction.isVertical }
+        val area = (if (list != null && window != null) list.intersect(window.bounds) else list)
+            ?: window?.bounds?.takeIf { direction.isVertical }
             ?: return ActionResult.Failed("Nothing on the screen scrolls that way")
-        val (from, to) = SwipePaths.forScroll(area, direction)
+        // A swipe that started on the keyboard or on a popup above the list would act on that instead.
+        val clear = Uncovered.area(area, live.snapshot.coversAbove(window), direction.isVertical)
+            ?: return ActionResult.Failed("Another window covers the list")
+        val (from, to) = SwipePaths.forScroll(clear, direction)
         return gesture(listOf(from, to)) { arrayOf(Gestures.swipe(from, to)) }
     }
 
@@ -189,8 +194,14 @@ class ScreenActions internal constructor(
     suspend fun openApp(packageName: String): ActionResult {
         val intent = service.packageManager.getLaunchIntentForPackage(packageName)
             ?: return ActionResult.Failed("No app with the package $packageName can be opened")
-        service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        return settled(ActionMethod.INTENT)
+        return try {
+            service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            settled(ActionMethod.INTENT)
+        } catch (e: ActivityNotFoundException) {
+            ActionResult.Failed("No app with the package $packageName can be opened")
+        } catch (e: SecurityException) {
+            ActionResult.Failed("Android does not let Kestrel open $packageName")
+        }
     }
 
     /** Opens a link or a deep link in the app that handles it. */
@@ -200,23 +211,31 @@ class ScreenActions internal constructor(
             settled(ActionMethod.INTENT)
         } catch (e: ActivityNotFoundException) {
             ActionResult.Failed("No app can open the link")
+        } catch (e: FileUriExposedException) {
+            // Android does not let an app hand a file:// link to another app.
+            ActionResult.Failed("Android does not let Kestrel open the link")
+        } catch (e: SecurityException) {
+            ActionResult.Failed("Android does not let Kestrel open the link")
         }
     }
 
     private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
-        val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
+        val live = snapshots.current()
+        val node = live.node(key) ?: return NOT_ON_SCREEN
         val target = node.touchTarget(action)
         if (target != null && !target.node.isEnabled) return DISABLED
         if (target != null && target.node.offers(action)) {
             if (target.node.performAction(action)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
-        } else if (node.refresh()) {
+        } else if (node.refresh() && node.isVisibleToUser) {
             // The element is still there, but what a touch on it reaches does not offer the action.
             val bounds = node.screenBounds()
-            return gestureAt(ScreenPoint(bounds.centerX, bounds.centerY), fallback)
+            if (!bounds.isEmpty) {
+                return fallbackAt(bounds, live.snapshot.coversAbove(live.snapshot.windowOf(live.snapshot.element(key)?.windowId)), fallback)
+            }
         }
-        // The node has gone or refused the action, so look for the element again (design spec, section 14.3).
+        // The node has gone, is hidden or refused the action, so look for the element again (design spec, section 14.3).
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return GONE
@@ -225,7 +244,13 @@ class ScreenActions internal constructor(
         if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
             return settled(ActionMethod.RETRY_ACTION)
         }
-        return gestureAt(ScreenPoint(element.bounds.centerX, element.bounds.centerY), fallback)
+        return fallbackAt(element.bounds, fresh.snapshot.coversAbove(fresh.snapshot.windowOf(element.windowId)), fallback)
+    }
+
+    /** A fallback gesture on the part of [bounds] that the windows above leave uncovered. */
+    private suspend fun fallbackAt(bounds: IntRect, covers: List<IntRect>, build: (Int, Int) -> GestureDescription): ActionResult {
+        val point = Uncovered.point(bounds, covers) ?: return COVERED
+        return gestureAt(point, build)
     }
 
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
@@ -363,8 +388,11 @@ class ScreenActions internal constructor(
     }
 
     /** The bounds of the window with [windowId], or of the top app window when there is no such window. */
-    private fun ScreenSnapshot.windowBounds(windowId: Int?): IntRect? =
-        (windows.firstOrNull { it.id == windowId } ?: windows.firstOrNull { it.kind == WindowKind.APPLICATION })?.bounds
+    private fun ScreenSnapshot.windowOf(windowId: Int?): WindowSummary? = windows.firstOrNull { it.id == windowId }
+
+    /** The bounds of the windows that lie above [window], such as the keyboard, a popup or the status bar. */
+    private fun ScreenSnapshot.coversAbove(window: WindowSummary?): List<IntRect> =
+        if (window == null) emptyList() else windows.filter { it.layer > window.layer }.map { it.bounds }
 
     private companion object {
         const val MAX_PARENT_DEPTH = 20
@@ -372,6 +400,7 @@ class ScreenActions internal constructor(
         val DISABLED = ActionResult.Failed("The element is disabled")
         val GONE = ActionResult.Failed("The element is no longer on the screen")
         val OFF_SCREEN = ActionResult.Failed("The point is outside the screen")
+        val COVERED = ActionResult.Failed("Other windows cover the element")
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L
