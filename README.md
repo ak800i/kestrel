@@ -58,10 +58,10 @@ Debug builds contain test hooks that only adb can use (design spec, section 16.1
 
 ```powershell
 & $adb -s $serial shell settings put secure enabled_accessibility_services dev.kestrel/dev.kestrel.app.KestrelAccessibilityService
-scripts\hook.ps1 -Serial $serial state                       # is the screen layer running, and is test mode on?
-scripts\hook.ps1 -Serial $serial snapshot -Out screen.json   # what Kestrel reads on the screen, as JSON
-scripts\hook.ps1 -Serial $serial overlay -Show numbers       # numbers on the screen's elements
-scripts\hook.ps1 -Serial $serial tap -Number 3               # taps the element with the number 3
+scripts\hook.ps1 -Serial $serial state                                 # is the screen layer running, and is test mode on?
+scripts\hook.ps1 -Serial $serial snapshot -Out $env:TEMP\screen.json   # what Kestrel reads on the screen, as JSON
+scripts\hook.ps1 -Serial $serial overlay -Show numbers                 # numbers on the screen's elements
+scripts\hook.ps1 -Serial $serial tap -Number 3                         # taps the element with the number 3
 scripts\hook.ps1 -Serial $serial test-mode -On false
 ```
 

@@ -14,3 +14,6 @@ captures/
 # Native builds
 .cxx/
 .externalNativeBuild/
+
+# Screen snapshots from scripts\hook.ps1, which hold real screen content
+/screen*.json
