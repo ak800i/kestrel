@@ -585,6 +585,7 @@ The last three rows form the security floor, which applies in every mode. Test m
 
 - The default list contains banking and payment apps, password managers, authenticator apps and Samsung Secure Folder. Kestrel ships a curated list of their package names. During setup, it also suggests installed apps whose names point to banking, payments, passwords or authentication, and the owner confirms which ones to add.
 - Kestrel matches apps by package name, and the owner can edit the list in settings.
+- Kestrel's own app is always agent-free and is not on the editable list, so that the agent cannot change Kestrel's settings, such as test mode or this list.
 - When an agent-free app is in front, the agent stops and explains why. `open_app` refuses to open such an app, Kestrel never takes a screenshot of it, and `list_notifications` hides its notifications.
 - Instant commands still work in these apps.
 
@@ -649,7 +650,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 | Network log | Time, host, path, request and response size, status, and the task it belongs to | 7 days |
 
 - Both logs are encrypted and can be viewed in settings. "Kestrel, delete history" (after a spoken confirmation) or a button wipes both.
-- The logs leave the phone only when the owner exports them to a file of their choice.
+- The logs leave the phone only when the owner exports them to a file of their choice. The export is one JSON file with both logs and all their entries, oldest first, with times in UTC.
 - Screenshots, audio and credentials are never logged.
 
 ### 13.6 Permissions
