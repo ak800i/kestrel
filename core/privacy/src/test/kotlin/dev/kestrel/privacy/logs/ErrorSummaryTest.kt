@@ -28,7 +28,11 @@ class ErrorSummaryTest {
         val copy = error.withoutMessages()
 
         val text = copy.stackTraceToString()
-        assertNull(copy.message)
+        // Android's crash report reads the message of the error and of every cause.
+        for (part in listOf(copy, copy.cause!!, copy.suppressed.single())) {
+            assertNull(part.toString(), part.message)
+            assertNull(part.toString(), part.localizedMessage)
+        }
         assertEquals(error.stackTrace.toList(), copy.stackTrace.toList())
         assertEquals("java.lang.IllegalStateException", text.lines().first())
         assertTrue(text, text.contains(error.stackTrace.first().methodName))
@@ -59,5 +63,23 @@ class ErrorSummaryTest {
         assertEquals("java.lang.IllegalStateException", text.lines().first())
         assertTrue(text, text.contains("Caused by: java.io.IOException"))
         assertFalse(text, text.contains("secret"))
+    }
+
+    @Test
+    fun theCrashHandlerPassesOnAPlaceholderWhenTheCopyFails() {
+        val passedOn = mutableListOf<Throwable>()
+        val handler = MessageFreeCrashHandler { _, error -> passedOn += error }
+        // The copy needs the error's stack frames, so it cannot be made.
+        val error = object : IllegalStateException("secret A") {
+            override fun getStackTrace(): Array<StackTraceElement> = throw UnsupportedOperationException("secret B")
+        }
+
+        handler.uncaughtException(Thread.currentThread(), error)
+
+        assertEquals(1, passedOn.size)
+        val text = passedOn[0].stackTraceToString()
+        assertNull(passedOn[0].message)
+        assertFalse(text, text.contains("secret"))
+        assertFalse(text, text.contains("UnsupportedOperationException"))
     }
 }
