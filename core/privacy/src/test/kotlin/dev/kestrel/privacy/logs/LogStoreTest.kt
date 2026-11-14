@@ -5,6 +5,9 @@ import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
@@ -134,6 +137,44 @@ class LogStoreTest {
         assertEquals(listOf("Deleted 3 unreadable activity log entries", "good"), store.activity().map { it.event.text })
     }
 
+    @Test
+    fun keepPurgingPurgesOnceADayByTheWallClock() = runTest {
+        val job = backgroundScope.launch { store.keepPurging { throw it } }
+        runCurrent()
+        assertEquals(1, dao.purges)
+
+        // The phone slept: an hour of the coroutine's time, but a whole day on the wall clock.
+        now += LogStore.DAILY_PURGE_MILLIS
+        advanceTimeBy(LogStore.PURGE_CHECK_MILLIS)
+        runCurrent()
+        assertEquals(2, dao.purges)
+
+        // A day of hourly checks without a day passing on the wall clock purges nothing more.
+        repeat(23) {
+            now += LogStore.PURGE_CHECK_MILLIS / 2
+            advanceTimeBy(LogStore.PURGE_CHECK_MILLIS)
+            runCurrent()
+        }
+        assertEquals(2, dao.purges)
+        job.cancel()
+    }
+
+    @Test
+    fun keepPurgingTriesAgainAfterAFailure() = runTest {
+        dao.failNextPurge = true
+        val failures = mutableListOf<Throwable>()
+        val job = backgroundScope.launch { store.keepPurging { failures += it } }
+        runCurrent()
+        assertEquals(listOf("the disk is full"), failures.map { it.message })
+
+        advanceTimeBy(LogStore.PURGE_CHECK_MILLIS)
+        runCurrent()
+
+        assertEquals(2, dao.purges)
+        assertEquals(1, failures.size)
+        job.cancel()
+    }
+
     private fun networkEvent(host: String) = NetworkEvent(
         method = "GET",
         host = host,
@@ -149,6 +190,8 @@ class LogStoreTest {
 private class FakeLogDao : LogDao {
     val rows = mutableListOf<LogEntryRow>()
     private var nextId = 1L
+    var purges = 0
+    var failNextPurge = false
 
     override suspend fun insert(row: LogEntryRow): Long {
         val id = nextId++
@@ -162,6 +205,11 @@ private class FakeLogDao : LogDao {
             .take(limit)
 
     override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int {
+        purges++
+        if (failNextPurge) {
+            failNextPurge = false
+            throw IllegalStateException("the disk is full")
+        }
         val outside = rows.filter { it.timestampMillis < oldestMillis || it.timestampMillis > newestMillis }
         rows.removeAll(outside)
         return outside.size

@@ -3,8 +3,10 @@ package dev.kestrel.privacy.logs
 import dev.kestrel.privacy.crypto.FieldCipher
 import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -47,6 +49,31 @@ class LogStore(
         val now = clock()
         lastPurgeMillis = now
         dao.deleteOutside(oldestMillis = now - RETENTION_MILLIS, newestMillis = now + FUTURE_TOLERANCE_MILLIS)
+    }
+
+    /**
+     * Purges the logs once a day for as long as it runs, for a service that runs for days (design spec, section 13.5).
+     * It checks every hour against [clock], because a coroutine's delay stops counting while the phone sleeps. A
+     * failed purge goes to [onFailure], and the next check tries again.
+     */
+    suspend fun keepPurging(onFailure: (Throwable) -> Unit): Nothing {
+        var lastPurge: Long? = null
+        while (true) {
+            val now = clock()
+            val last = lastPurge
+            // After the clock went back, the interval check alone would wait until the clock caught up again.
+            if (last == null || now < last || now - last >= DAILY_PURGE_MILLIS) {
+                try {
+                    purgeExpired()
+                    lastPurge = now
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    onFailure(e)
+                }
+            }
+            delay(PURGE_CHECK_MILLIS)
+        }
     }
 
     /** "Delete history" wipes both logs (design spec, section 13.5). */
@@ -104,6 +131,8 @@ class LogStore(
         const val FUTURE_TOLERANCE_MILLIS = 24L * 60 * 60 * 1000
 
         const val PURGE_INTERVAL_MILLIS = 60L * 60 * 1000
+        const val DAILY_PURGE_MILLIS = 24L * 60 * 60 * 1000
+        const val PURGE_CHECK_MILLIS = 60L * 60 * 1000
         const val DEFAULT_LIMIT = 500
         private const val ACTIVITY = "activity"
         private const val NETWORK = "network"

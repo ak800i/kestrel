@@ -5,8 +5,6 @@ import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import dev.kestrel.screen.ScreenSession
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /** Reads the screen and acts on it for Kestrel (design spec, sections 7.2 and 9). */
@@ -21,10 +19,8 @@ class KestrelAccessibilityService : AccessibilityService() {
         graph.attachScreen(connected)
         // The service runs for days at a time, so it also keeps the logs within their 7 days (design spec, section 13.5).
         purging = graph.scope.launch {
-            while (isActive) {
-                graph.logs.purgeExpired()
-                delay(PURGE_INTERVAL_MILLIS)
-            }
+            val context = coroutineContext
+            graph.logs.keepPurging { error -> graph.errors.handleException(context, error) }
         }
     }
 
@@ -52,9 +48,5 @@ class KestrelAccessibilityService : AccessibilityService() {
             it.close()
         }
         session = null
-    }
-
-    private companion object {
-        const val PURGE_INTERVAL_MILLIS = 24L * 60 * 60 * 1000
     }
 }

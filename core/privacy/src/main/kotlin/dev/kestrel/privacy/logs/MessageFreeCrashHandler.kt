@@ -11,8 +11,9 @@ package dev.kestrel.privacy.logs
  * `CrashCopyFailed`, which has no message and no stack frames. It never passes on the original error, and it always
  * calls [platform], which reports the crash and ends the process.
  *
- * Android's own pre-handler still logs an error that is thrown directly on a thread, with its message, before any of
- * Kestrel's code runs. Guarding Kestrel's main-thread entry points closes that gap later (plan 1C).
+ * Android's own pre-handler logs an error that is thrown directly on a thread, with its message, before this handler
+ * runs. [MainThreadErrors] closes that gap for the main thread; Kestrel's other work runs in coroutines, whose
+ * failures reach this handler directly.
  */
 class MessageFreeCrashHandler(private val platform: Thread.UncaughtExceptionHandler) : Thread.UncaughtExceptionHandler {
     // Made up front, because a copy can fail when the heap is full, and then there may be no memory left to make it.

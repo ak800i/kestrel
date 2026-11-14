@@ -9,6 +9,8 @@
 #   type -Key key | -Number n -Text 'text'
 #   scroll -Direction up|down|left|right [-Key key | -Number n]
 #   global -Action back|home|recent-apps|notifications|quick-settings|lock-screen|screenshot|power-menu|split-screen|play-pause
+#   crash -Text 'text'                      ends Kestrel's process with an error whose message is the text, to check
+#                                           that Android's crash records do not contain it
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -17,7 +19,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global')][string]$Command,
+    [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,

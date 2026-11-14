@@ -740,7 +740,7 @@ The setup checklist stays visible until everything is done:
 
 ### 16.1 Test hooks
 
-Debug builds contain a broadcast receiver that accepts commands only from callers that hold `android.permission.DUMP`, which in practice means `adb shell`. It can inject a transcript or a task, read the Orchestrator's state and switch test mode. It can also read the screen, perform actions and show the overlays, for checks on real apps. Release builds do not contain it, and the build-time audit fails a release build that does.
+Debug builds contain a broadcast receiver that accepts commands only from callers that hold `android.permission.DUMP`, which in practice means `adb shell`. It can inject a transcript or a task, read the Orchestrator's state and switch test mode. It can also read the screen, perform actions and show the overlays, for checks on real apps, and end Kestrel's process with an error, to check that Android's crash records contain no messages. Release builds do not contain it, and the build-time audit fails a release build that does.
 
 ### 16.2 Unit tests
 

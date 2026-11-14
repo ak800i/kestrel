@@ -66,6 +66,25 @@ class ErrorSummaryTest {
     }
 
     @Test
+    fun describesEachErrorOfTheChainSeparately() {
+        val error = IllegalStateException("secret A", IOException("secret B", RuntimeException("secret C")))
+
+        val parts = error.describeWithoutMessagesByCause()
+
+        assertEquals(listOf("java.lang.IllegalStateException", "Caused by: java.io.IOException", "Caused by: java.lang.RuntimeException"), parts.map { it.lines().first() })
+        assertFalse(parts.joinToString(), parts.any { it.contains("secret") })
+        assertEquals(error.describeWithoutMessages(), parts.joinToString("\n"))
+    }
+
+    @Test
+    fun aCopyOfACopyKeepsTheOriginalClassName() {
+        val copy = IllegalStateException("secret").withoutMessages().withoutMessages()
+
+        assertEquals("java.lang.IllegalStateException", copy.toString())
+        assertEquals("java.lang.IllegalStateException", copy.describeWithoutMessages().lines().first())
+    }
+
+    @Test
     fun theCrashHandlerPassesOnAPlaceholderWhenTheCopyFails() {
         val passedOn = mutableListOf<Throwable>()
         val handler = MessageFreeCrashHandler { _, error -> passedOn += error }

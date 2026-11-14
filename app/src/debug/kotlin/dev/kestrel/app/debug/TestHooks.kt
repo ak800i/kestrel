@@ -2,6 +2,8 @@ package dev.kestrel.app.debug
 
 import android.app.Activity
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.screen.ScreenSession
@@ -41,6 +43,7 @@ internal class TestHooks(private val graph: AppGraph, private val cacheDir: File
         val command = intent.action.orEmpty().removePrefix(ACTION_PREFIX)
         if (command == "STATE") return state()
         if (command == "TEST_MODE") return testMode(intent)
+        if (command == "CRASH") return crash(intent.requiredText())
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val actions = session.actions
         return when (command) {
@@ -65,6 +68,15 @@ internal class TestHooks(private val graph: AppGraph, private val cacheDir: File
     private suspend fun save(json: String): String = withContext(Dispatchers.IO) {
         File(cacheDir, SNAPSHOT_FILE).writeText(json)
         "${cacheDir.name}/$SNAPSHOT_FILE"
+    }
+
+    /**
+     * Ends Kestrel's process with an error whose message is [text], thrown on the main thread a moment after the answer,
+     * so that a check can look for [text] in Android's crash records (design spec, section 13.5).
+     */
+    private fun crash(text: String): String {
+        Handler(Looper.getMainLooper()).postDelayed({ throw IllegalStateException(text) }, CRASH_DELAY_MILLIS)
+        return "crashing"
     }
 
     private suspend fun state(): String {
@@ -143,6 +155,7 @@ internal class TestHooks(private val graph: AppGraph, private val cacheDir: File
     companion object {
         const val ACTION_PREFIX = "dev.kestrel.hook."
         const val SNAPSHOT_FILE = "hook-snapshot.json"
+        private const val CRASH_DELAY_MILLIS = 500L
         private const val EXTRA_KEY = "key"
         private const val EXTRA_NUMBER = "number"
         private const val EXTRA_X = "x"

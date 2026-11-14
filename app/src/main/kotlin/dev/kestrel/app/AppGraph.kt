@@ -3,7 +3,7 @@ package dev.kestrel.app
 import android.content.Context
 import android.util.Log
 import dev.kestrel.privacy.PrivacyStore
-import dev.kestrel.privacy.logs.describeWithoutMessages
+import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.settings.SettingKey
@@ -27,9 +27,14 @@ object SettingKeys {
 class AppGraph(context: Context) {
     /**
      * Handles the failures of background work: a failed job is written to logcat instead of ending the app's process.
-     * Only the error's classes and stack frames are written, because a message can contain screen text.
+     * Only the error's classes and stack frames are written, because a message can contain screen text, and each error
+     * of the chain of causes gets its own entry, because Android's log cuts an entry after about 4 KB.
      */
-    val errors = CoroutineExceptionHandler { _, error -> Log.e(TAG, "A background task failed: ${error.describeWithoutMessages()}") }
+    val errors = CoroutineExceptionHandler { _, error ->
+        for ((index, part) in error.describeWithoutMessagesByCause().withIndex()) {
+            Log.e(TAG, if (index == 0) "A background task failed: $part" else part)
+        }
+    }
 
     /** Background work, whose failures go to [errors]. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + errors)
