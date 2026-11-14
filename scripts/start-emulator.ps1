@@ -22,7 +22,10 @@ if (-not $serial) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
         # Software rendering: with the computer's graphics card, the emulator slowed down after a few hours of tests,
         # and once the graphics driver crashed (plan 1B).
-        $arguments = @('-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader')
+        # After a crash, the emulator would ask for consent to send a crash report and wait for the answer before it
+        # starts Android. Kestrel's tests send nothing to Google, so it neither asks nor sends, and it sends no usage
+        # metrics either.
+        $arguments = @('-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader', '-crash-report-mode', 'never', '-no-metrics')
         if ($ColdBoot) { $arguments += '-no-snapshot-load' }
         $started = Start-Process -FilePath $emulator -ArgumentList $arguments -WindowStyle Minimized -PassThru
         $null = $started.Handle  # Keeps the exit code readable after the process ends.
