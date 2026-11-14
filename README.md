@@ -27,6 +27,8 @@ scripts\gradle.ps1 :build-logic:convention:check    # tests of the audit itself
 
 `check` runs the privacy audit (`kestrelAudit`) for every build variant, so the debug build that the scripts install is audited too.
 
+`scripts\test-scripts.ps1` tests the PowerShell scripts with Pester in Windows PowerShell 5.1 and in PowerShell 7, and checks them with PSScriptAnalyzer; the comment at its top lists the modules that it needs.
+
 Gradle and the Kotlin compiler keep running in the background between builds. During a build they use about 3 GB and 2 GB of memory. They stop by themselves 15 minutes after the last build, and `scripts\gradle.ps1 --stop` stops them at once. Run Gradle only through `scripts\gradle.ps1`: a Gradle that runs on another JDK, such as the one that `JAVA_HOME` names, starts a second pair of these processes.
 
 To open the project in Android Studio, use Android Studio Rabbit 2 (2026.2.2) or newer, which supports version 9.5 of the Android Gradle plugin.
