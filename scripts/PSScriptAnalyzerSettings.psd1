@@ -3,7 +3,8 @@
 # test-scripts.ps1 applies those two rules only to the scripts that can run in 5.1.
 @{
     IncludeDefaultRules = $true
-    Severity = @('Error', 'Warning')
+    # ParseError: without it, PSScriptAnalyzer reports nothing for a script that does not parse.
+    Severity = @('Error', 'Warning', 'ParseError')
     ExcludeRules = @(
         # Get-AccessibilitySettings and Restore-AccessibilitySettings handle a group of settings, and later scripts call
         # them by these names.

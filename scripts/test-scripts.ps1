@@ -27,19 +27,18 @@ if ($Part -eq 'Analysis') {
     $settings = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1')
     $tests = Join-Path $PSScriptRoot 'tests'
     $findings = @(foreach ($file in Get-ChildItem $PSScriptRoot -Recurse -Filter *.ps1) {
-        $fileSettings = @{
-            IncludeDefaultRules = $settings.IncludeDefaultRules
-            Severity = $settings.Severity
-            ExcludeRules = $settings.ExcludeRules
-            Rules = @{}
-        }
+        $fileSettings = @{}
+        foreach ($key in $settings.Keys) { $fileSettings[$key] = $settings[$key] }
+        $rules = @{}
+        foreach ($key in $settings.Rules.Keys) { $rules[$key] = $settings.Rules[$key] }
+        $fileSettings.Rules = $rules
         # A script that declares '#Requires -Version 7' runs only in PowerShell 7, so the checks for 5.1 skip it.
-        if (-not (Select-String -LiteralPath $file.FullName -Pattern '^#Requires -Version 7' -Quiet)) {
-            $fileSettings.Rules.PSUseCompatibleSyntax = $settings.Rules.PSUseCompatibleSyntax
+        if (Select-String -LiteralPath $file.FullName -Pattern '^#Requires -Version 7' -Quiet) {
+            $rules.Remove('PSUseCompatibleSyntax')
+            $rules.Remove('PSUseCompatibleCommands')
+        } elseif ($file.FullName.StartsWith($tests + [IO.Path]::DirectorySeparatorChar)) {
             # The 5.1 profile knows only the Pester 3.4 that comes with Windows PowerShell, while the tests load Pester 6.2.0.
-            if (-not $file.FullName.StartsWith($tests + [IO.Path]::DirectorySeparatorChar)) {
-                $fileSettings.Rules.PSUseCompatibleCommands = $settings.Rules.PSUseCompatibleCommands
-            }
+            $rules.Remove('PSUseCompatibleCommands')
         }
         Invoke-ScriptAnalyzer -Path $file.FullName -Settings $fileSettings
     })

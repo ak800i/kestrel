@@ -7,6 +7,9 @@ param()
 
 Describe 'The settings helpers' {
     BeforeAll {
+        # The scripts run with 'Stop', under which Windows PowerShell 5.1 stops at adb's first error line unless the
+        # helpers protect themselves, so the tests run with it too.
+        $ErrorActionPreference = 'Stop'
         . "$PSScriptRoot\..\lib\Kestrel.ps1"
         $fakeAdb = Join-Path $PSScriptRoot 'fake-adb.cmd'
         Mock Get-Adb { $fakeAdb }
