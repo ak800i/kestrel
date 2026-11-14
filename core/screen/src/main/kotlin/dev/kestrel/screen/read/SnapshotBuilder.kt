@@ -102,7 +102,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         )
     }
 
-    /** Builds keys from the window's package, the view ID, the label and the position among similar siblings. */
+    /** Builds keys from the element's package, view ID, label and class and its position among similar siblings. */
     private class Keys {
         private val siblings = mutableMapOf<Triple<Int, Int?, String>, Int>()
         private val used = mutableMapOf<String, Int>()

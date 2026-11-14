@@ -38,7 +38,7 @@ enum class ElementAction {
 
 /**
  * One element of a [ScreenSnapshot] (design spec, section 9.2). Its [key] stays the same as long as the
- * window's package, the view ID, the label and the element's position among similar siblings stay the same.
+ * element's package, view ID, label and class and its position among similar siblings stay the same.
  */
 @Serializable
 data class ScreenElement(
