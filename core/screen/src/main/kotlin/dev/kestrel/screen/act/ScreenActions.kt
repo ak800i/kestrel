@@ -42,6 +42,10 @@ class ScreenActions internal constructor(
      * parent that handles touches. If that node has gone or refuses the click, Kestrel looks for the element again in
      * a fresh snapshot, and if nothing offers a click, it taps the element's centre. It does not tap a disabled
      * element, because a finger's touch would stop there too.
+     *
+     * A key names a position, not an identity. After a list has added, removed or scrolled rows, a key from an older
+     * snapshot can name a look-alike element in another row, so the caller must first check that the element is still
+     * the one it saw (design spec, section 9.2).
      */
     suspend fun tap(key: String): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap)
 

@@ -55,6 +55,7 @@ class TapTest {
         screen.awaitElement { it.label == "Rebuilt" }
 
         // Rebuild has replaced the Send button, so the node in the old snapshot has gone.
+        // The rebuilt button is the same element; for repeated look-alikes, an older key can name another row (design spec, section 9.2).
         assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.tap(old.elements.single { it.label == "SEND" }.key))
         screen.awaitElement { it.label == "Clicked Send" }
         Unit
