@@ -69,9 +69,9 @@ class ErrorSummaryTest {
     fun theCrashHandlerPassesOnAPlaceholderWhenTheCopyFails() {
         val passedOn = mutableListOf<Throwable>()
         val handler = MessageFreeCrashHandler { _, error -> passedOn += error }
-        // The copy needs the error's stack frames, so it cannot be made.
+        // The copy needs the error's stack frames, so it cannot be made. The failure is an Error, as when memory has run out.
         val error = object : IllegalStateException("secret A") {
-            override fun getStackTrace(): Array<StackTraceElement> = throw UnsupportedOperationException("secret B")
+            override fun getStackTrace(): Array<StackTraceElement> = throw StackOverflowError("secret B")
         }
 
         handler.uncaughtException(Thread.currentThread(), error)
@@ -80,6 +80,6 @@ class ErrorSummaryTest {
         val text = passedOn[0].stackTraceToString()
         assertNull(passedOn[0].message)
         assertFalse(text, text.contains("secret"))
-        assertFalse(text, text.contains("UnsupportedOperationException"))
+        assertFalse(text, text.contains("StackOverflowError"))
     }
 }
