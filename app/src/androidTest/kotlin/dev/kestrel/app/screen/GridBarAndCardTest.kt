@@ -4,9 +4,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.WindowSummary
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -85,6 +87,19 @@ class GridBarAndCardTest {
         val confirm = screen.overlayButton("Confirm")!!
         screen.shell("input tap ${confirm.centerX()} ${confirm.centerY()}")
         assertTrue(withTimeout(5_000) { second.await() })
+        eventually { !screen.showsWindow("Kestrel confirmation") }
+    }
+
+    @Test
+    fun closingTheSessionAnswersFalse() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val answer = async { session.confirm("Send a test message?") }
+        eventually { screen.overlayButton("Confirm") != null }
+
+        // As the service does when it disconnects. The rule's next start closes this session again.
+        withContext(Dispatchers.Main) { session.close() }
+
+        assertFalse(withTimeout(5_000) { answer.await() })
         eventually { !screen.showsWindow("Kestrel confirmation") }
     }
 

@@ -167,7 +167,10 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
         if (ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged()
     }
 
-    /** Removes the overlays and stops the session's work. The service calls it on the main thread when it disconnects. */
+    /**
+     * Removes the overlays and stops the session's work. The service calls it on the main thread when it disconnects.
+     * It may be called more than once.
+     */
     fun close() {
         scope.cancel()
         card.dismiss()
