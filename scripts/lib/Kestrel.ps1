@@ -26,6 +26,28 @@ function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
 }
 
+# Reads a secure setting of a device. A busy device sometimes answers with nothing, so the query is repeated before it
+# fails. Android answers 'null' for a setting that is not set.
+function Get-SecureSetting([string]$Serial, [string]$Name) {
+    $adb = Get-Adb
+    foreach ($try in 1..3) {
+        if ($try -gt 1) { Start-Sleep -Seconds 2 }
+        $value = "$(& $adb -s $Serial shell settings get secure $Name)".Trim()
+        if ($value) { return $value }
+    }
+    throw "Could not read the setting $Name of $Serial."
+}
+
+# Puts back a secure setting that Get-SecureSetting read.
+function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
+    $adb = Get-Adb
+    if ($Value -eq 'null') {
+        & $adb -s $Serial shell settings delete secure $Name | Out-Null
+    } else {
+        & $adb -s $Serial shell settings put secure $Name "'$Value'" | Out-Null
+    }
+}
+
 function Find-EmulatorSerial([string]$AvdName) {
     $adb = Get-Adb
     foreach ($line in (& $adb devices | Select-Object -Skip 1)) {

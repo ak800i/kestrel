@@ -14,22 +14,15 @@ Assert-TestDevice -Serial $Serial
 # The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
 $env:ANDROID_SERIAL = $Serial
 # The device tests replace the list of enabled accessibility services, so it is put back afterwards, even when the
-# tests fail or are interrupted.
-$adb = Get-Adb
+# tests fail or are interrupted. If the list cannot be read, the tests do not start.
 $saved = foreach ($name in 'enabled_accessibility_services', 'accessibility_enabled') {
-    [pscustomobject]@{ Name = $name; Value = "$(& $adb -s $Serial shell settings get secure $name)".Trim() }
+    [pscustomobject]@{ Name = $name; Value = Get-SecureSetting -Serial $Serial -Name $name }
 }
 $code = 1
 try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
 } finally {
-    foreach ($setting in $saved) {
-        if ($setting.Value -in '', 'null') {
-            & $adb -s $Serial shell settings delete secure $setting.Name | Out-Null
-        } else {
-            & $adb -s $Serial shell settings put secure $setting.Name "'$($setting.Value)'" | Out-Null
-        }
-    }
+    foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
 }
 exit $code
