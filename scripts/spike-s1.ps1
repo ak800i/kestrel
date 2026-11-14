@@ -3,7 +3,8 @@
 # the location while another app is in front? It needs Kestrel's debug build (scripts\install.ps1), and it prints what
 # Kestrel recorded in its results: whether each step worked, never the audio or the place. The location comes from a
 # test provider with a made-up place, which replaces the fused provider while the scenario runs.
-# On a phone, the ringing scenario asks you to call the phone, to end the call and, if it has a PIN, to unlock it.
+# On a phone, the ringing scenario asks you to call the phone, to end the call and, if it has a PIN, to unlock it. With a
+# PIN, the boot scenario also asks you to unlock it after the reboot.
 # Afterwards, also when it fails or is interrupted, it puts back what it changed on the device. If it cannot put something
 # back, also because Ctrl+C interrupted it while it put things back, it says at the end what is left and how to put it
 # back by hand. Then, and after Ctrl+C, it ends with exit code 1. With -Verbose, it names each thing that it puts back.
@@ -163,17 +164,25 @@ function Get-TestCallCount([long]$Since) {
     @($rows | Where-Object { $_ -like 'Row: *' }).Count
 }
 
-# Waits until the device has started again after a reboot, which a new boot ID shows, for at most 5 minutes.
+# Waits until the device has started again after a reboot, which a new boot ID shows, and until Android has unlocked the
+# user's storage, without which Kestrel cannot run. On a phone with a PIN, the owner has to unlock it first. It waits for
+# at most 5 minutes.
 function Wait-Reboot([string]$BootId) {
     # adb complains while the device is offline, and that must not stop the wait.
     $ErrorActionPreference = 'Continue'
     $deadline = (Get-Date).AddMinutes(5)
+    $lockedChecks = 0
     do {
         Start-Sleep -Seconds 3
         $id = "$(& $adb -s $Serial shell cat /proc/sys/kernel/random/boot_id 2>$null)".Trim()
         $booted = $id -and $id -ne $BootId -and "$(& $adb -s $Serial shell getprop sys.boot_completed 2>$null)".Trim() -eq '1'
-    } until ($booted -or (Get-Date) -gt $deadline)
-    if (-not $booted) { throw "$Serial did not start again within 5 minutes of the reboot." }
+        $unlocked = $booted -and "$(& $adb -s $Serial shell am get-started-user-state 0 2>$null)" -match 'RUNNING_UNLOCKED'
+        # Without a PIN, Android unlocks the storage a few seconds after the start.
+        if ($booted -and -not $unlocked -and ++$lockedChecks -eq 2 -and -not $isEmulator) {
+            Read-Host 'Unlock the phone, then press Enter' | Out-Null
+        }
+    } until ($unlocked -or (Get-Date) -gt $deadline)
+    if (-not $unlocked) { throw "$Serial did not start again within 5 minutes of the reboot." }
 }
 
 # What the script has still to put back. Each restore enters this list before the change that it undoes is made, and it
