@@ -40,3 +40,26 @@ jobs:
           path: |
             **/build/reports/
             **/build/test-results/
+
+  scripts:
+    # The PowerShell scripts must work in Windows PowerShell 5.1 and in PowerShell 7, which only Windows has together.
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Pester and PSScriptAnalyzer for PowerShell 7
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -SkipPublisherCheck -Force
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+      - name: Install Pester for Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Install-PackageProvider NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -SkipPublisherCheck -Force
+      - name: Script tests and script analysis
+        shell: pwsh
+        run: scripts\test-scripts.ps1
