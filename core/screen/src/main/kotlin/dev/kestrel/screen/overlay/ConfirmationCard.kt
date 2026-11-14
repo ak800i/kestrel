@@ -25,7 +25,7 @@ internal class ConfirmationCard(private val host: OverlayHost) {
     /**
      * Shows [question] and returns true when the owner taps Confirm, or false for Cancel. It also returns false when a
      * newer question replaces this one or [dismiss] ends it, and its card then goes at once. Cancelling the call
-     * removes the card too.
+     * removes the card too. When the card cannot be shown, because the session has closed, it returns false at once.
      */
     suspend fun ask(question: String): Boolean = suspendCancellableCoroutine { continuation ->
         dismiss()
@@ -33,7 +33,7 @@ internal class ConfirmationCard(private val host: OverlayHost) {
         // Cancellation can arrive on any thread, and the window must be removed on the main thread.
         continuation.invokeOnCancellation { open.card.post { open.end(false) } }
         pending = open
-        host.show(open.card, params())
+        if (!host.show(open.card, params())) open.end(false)
     }
 
     /** Ends an open question without the owner's answer: its card goes at once, and its [ask] returns false. */

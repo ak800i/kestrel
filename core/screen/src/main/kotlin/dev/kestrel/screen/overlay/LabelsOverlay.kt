@@ -13,8 +13,7 @@ internal class LabelsOverlay(private val host: OverlayHost) {
 
     fun show(elements: List<ScreenElement>) {
         view.tags = elements.mapNotNull { element -> (element.label ?: element.suggestedName)?.let { Tag(it, element.bounds) } }
-        host.show(view, OverlayHost.fullScreen("Kestrel labels"))
-        isShowing = true
+        isShowing = host.show(view, OverlayHost.fullScreen("Kestrel labels"))
     }
 
     fun hide() {

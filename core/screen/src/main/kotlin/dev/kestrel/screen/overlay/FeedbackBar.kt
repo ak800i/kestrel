@@ -30,13 +30,16 @@ internal class FeedbackBar(private val host: OverlayHost) {
         private set
 
     fun show(text: String) {
-        this.text = text
         handler.removeCallbacks(fade)
         view.animate().cancel()
         view.alpha = 1f
         view.text = text
-        host.show(view, params())
-        handler.postDelayed(fade, FADE_AFTER_MILLIS)
+        if (host.show(view, params())) {
+            this.text = text
+            handler.postDelayed(fade, FADE_AFTER_MILLIS)
+        } else {
+            this.text = null
+        }
     }
 
     fun hide() {

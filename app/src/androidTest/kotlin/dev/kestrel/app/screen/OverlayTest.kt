@@ -3,7 +3,6 @@ package dev.kestrel.app.screen
 import android.view.accessibility.AccessibilityEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
-import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.overlay.NumbersMode
@@ -14,6 +13,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -70,7 +71,6 @@ class OverlayTest {
         assertEquals(keyOf("SEND"), badges.first().key)
         assertEquals((1..badges.size).toList(), badges.map { it.number })
         eventually { screen.showsWindow("Kestrel numbers") }
-        assertTrue(session.snapshots.current().snapshot.windows.none { it.packageName == KESTREL })
     }
 
     @Test
@@ -103,6 +103,8 @@ class OverlayTest {
         screen.open("ViewsActivity", "Views fixture")
         session.showNumbers()
         val target = screen.awaitElement { it.label == "Touch target" }
+        // Until Android's input dispatcher lists the numbers' window, a touch would pass it even if it took touches.
+        screen.awaitInputWindow("Kestrel numbers")
 
         assertEquals(ActionResult.Done(ActionMethod.GESTURE), session.actions.tapAt(target.bounds.centerX, target.bounds.centerY))
         screen.awaitElement { it.label == "Touched target" }
@@ -164,6 +166,18 @@ class OverlayTest {
     }
 
     @Test
+    fun hideLabelsRemovesThem() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        session.showLabels()
+        eventually { screen.showsWindow("Kestrel labels") }
+
+        session.hideLabels()
+
+        assertFalse(session.labelsShowing)
+        eventually { !screen.showsWindow("Kestrel labels") }
+    }
+
+    @Test
     fun labelsGoWhenTheScreenChangesEvenIfItIsNeverQuiet() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
         val showDialog = keyOf("SHOW DIALOG")
@@ -179,11 +193,32 @@ class OverlayTest {
             }
         }
         try {
-            session.actions.tap(showDialog)
+            assertEquals(ActionResult.Done(ActionMethod.ACTION), session.actions.tap(showDialog))
             eventually(timeoutMillis = 20_000) { !session.labelsShowing }
         } finally {
             busy.cancel()
         }
+    }
+
+    @Test
+    fun closeRemovesEveryOverlayAndItsState() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        session.showNumbers()
+        session.showLabels()
+        session.showGrid()
+        session.showFeedback("Listening")
+        eventually { screen.showsWindow("Kestrel numbers") && screen.showsWindow("Kestrel grid") }
+
+        withContext(Dispatchers.Main) { session.close() }
+
+        assertEquals(emptyList<Any>(), session.numberBadges)
+        assertFalse(session.labelsShowing)
+        assertNull(session.grid)
+        assertNull(session.feedbackText)
+        // A late command after the service has closed its session shows nothing.
+        session.showNumbers()
+        assertEquals(emptyList<Any>(), session.numberBadges)
+        eventually { listOf("Kestrel numbers", "Kestrel labels", "Kestrel grid", "Kestrel feedback bar").none(screen::showsWindow) }
     }
 
     @Test

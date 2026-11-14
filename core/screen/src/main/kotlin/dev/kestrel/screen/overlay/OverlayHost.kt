@@ -16,11 +16,34 @@ import dev.kestrel.screen.model.IntRect
 class OverlayHost(private val service: AccessibilityService) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val shown = mutableSetOf<View>()
+    private var closed = false
 
     val context: Context get() = service
 
-    fun show(view: View, params: LayoutParams) {
-        if (shown.add(view)) windowManager.addView(view, params) else windowManager.updateViewLayout(view, params)
+    /**
+     * Shows [view], or updates its layout when it is on the screen already, and returns whether it is on the screen.
+     * After [close], or once Android has disconnected the service, it shows nothing.
+     */
+    fun show(view: View, params: LayoutParams): Boolean {
+        if (closed) return false
+        if (view in shown) {
+            return try {
+                windowManager.updateViewLayout(view, params)
+                true
+            } catch (e: IllegalArgumentException) {
+                // Android has removed the window already, as it does when the service disconnects.
+                shown -= view
+                false
+            }
+        }
+        return try {
+            windowManager.addView(view, params)
+            shown += view
+            true
+        } catch (e: WindowManager.BadTokenException) {
+            // The service has disconnected, so Android no longer lets it add windows.
+            false
+        }
     }
 
     fun hide(view: View) {
@@ -36,7 +59,9 @@ class OverlayHost(private val service: AccessibilityService) {
     /** The whole screen, system bars included, in screen pixels. */
     fun screenBounds(): IntRect = windowManager.maximumWindowMetrics.bounds.let { IntRect(it.left, it.top, it.right, it.bottom) }
 
-    fun hideAll() {
+    /** Removes every overlay for good. Later calls of [show] show nothing. */
+    fun close() {
+        closed = true
         shown.toList().forEach(::hide)
     }
 

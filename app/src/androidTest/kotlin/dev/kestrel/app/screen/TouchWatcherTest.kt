@@ -39,6 +39,27 @@ class TouchWatcherTest {
     }
 
     @Test
+    fun aStoppedWatcherReportsNothing() = runBlocking {
+        TestFinger(screen.automation).use { finger ->
+            screen.open("ViewsActivity", "Views fixture")
+            val target = screen.awaitElement { it.label == "Touch target" }.bounds
+            session.startTouchWatcher()
+            screen.awaitInputWindow(WATCHER)
+
+            session.stopTouchWatcher()
+
+            withTimeout(5_000) { while (screen.showsWindow(WATCHER)) delay(100) }
+            val touches = mutableListOf<Unit>()
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) { session.ownerTouches.collect { touches += it } }
+            finger.tap(target.centerX, target.centerY)
+            screen.awaitElement { it.label == "Touched target" }
+            delay(500)
+            collector.cancel()
+            assertTrue("touches: ${touches.size}", touches.isEmpty())
+        }
+    }
+
+    @Test
     fun kestrelsOwnGesturesAreNotReported() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
         val target = screen.awaitElement { it.label == "Touch target" }.bounds

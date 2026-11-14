@@ -18,9 +18,8 @@ internal class GridOverlay(private val host: OverlayHost) {
         private set
 
     fun show(grid: Grid) {
-        this.grid = grid
         view.grid = grid
-        host.show(view, OverlayHost.fullScreen("Kestrel grid"))
+        this.grid = grid.takeIf { host.show(view, OverlayHost.fullScreen("Kestrel grid")) }
     }
 
     fun hide() {

@@ -10,9 +10,8 @@ internal class NumbersOverlay(private val host: OverlayHost) {
         private set
 
     fun show(badges: List<Badge>) {
-        this.badges = badges
         view.tags = badges.map { Tag(it.number.toString(), it.bounds) }
-        host.show(view, OverlayHost.fullScreen("Kestrel numbers"))
+        this.badges = if (host.show(view, OverlayHost.fullScreen("Kestrel numbers"))) badges else emptyList()
     }
 
     fun hide() {

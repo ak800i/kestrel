@@ -42,18 +42,13 @@ internal class TouchWatcher(private val host: OverlayHost, private val gestures:
     /** Emits when the owner touches the screen while the watcher runs. */
     val ownerTouches: SharedFlow<Unit> = touches.asSharedFlow()
 
-    var isWatching: Boolean = false
-        private set
-
+    /** Starts watching. A second call only updates the window's layout. */
     fun start() {
-        if (isWatching) return
         host.show(view, params())
-        isWatching = true
     }
 
     fun stop() {
         host.hide(view)
-        isWatching = false
     }
 
     private fun params() = LayoutParams(

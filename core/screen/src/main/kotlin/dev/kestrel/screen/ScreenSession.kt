@@ -174,7 +174,13 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     fun close() {
         scope.cancel()
         card.dismiss()
-        overlays.hideAll()
+        // Each overlay's own hide() also clears its state, such as the numbers or the feedback bar's pending fade.
+        numbers.hide()
+        labels.hide()
+        gridOverlay.hide()
+        feedback.hide()
+        watcher.stop()
+        overlays.close()
     }
 
     private fun onScreenSettled(snapshot: ScreenSnapshot) {

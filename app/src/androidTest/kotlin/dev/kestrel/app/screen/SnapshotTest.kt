@@ -59,7 +59,7 @@ class SnapshotTest {
 
         val elements = screen.session.snapshots.current().snapshot.elements
 
-        assertTrue(elements.single { it.clickable && it.label == "Compose button" }.clickable)
+        assertEquals(1, elements.count { it.clickable && it.label == "Compose button" })
         assertTrue(elements.any { it.checkable && it.label == "Subscribe" })
         assertTrue(elements.any { it.editable })
     }
