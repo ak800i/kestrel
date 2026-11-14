@@ -27,13 +27,13 @@ function Get-Adb {
 }
 
 # Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
-# an empty value, so a marker after the answer tells an empty value from no answer at all. A busy device sometimes gives
-# no answer, so the query is repeated before it fails.
+# an empty value, so a marker that follows only a successful answer tells an empty value from a failed query. A busy
+# device, or one whose system is still starting, sometimes fails the query, so it is repeated before it fails for good.
 function Get-SecureSetting([string]$Serial, [string]$Name) {
     $adb = Get-Adb
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $answer = "$(& $adb -s $Serial shell "settings get secure $Name; echo kestrel-end")"
+        $answer = "$(& $adb -s $Serial shell "settings get secure $Name && echo kestrel-end")"
         if ($answer -match '^\s*(.*?)\s*kestrel-end\s*$') { return $Matches[1] }
     }
     throw "Could not read the setting $Name of $Serial."
@@ -45,7 +45,7 @@ function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
     & $adb -s $Serial shell $command | Out-Null
     $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
-    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell $command" }
+    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell `"$command`"" }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {

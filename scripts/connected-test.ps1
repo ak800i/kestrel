@@ -24,7 +24,15 @@ try {
     $code = $LASTEXITCODE
 } finally {
     # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop first.
+    # Android then removes Kestrel's service from the list itself, and the restore waits for that, so that Android's
+    # change does not overwrite it.
     & (Get-Adb) -s $Serial shell am force-stop dev.kestrel | Out-Null
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        $services = try { Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services } catch { '' }
+        if ($services -notlike '*dev.kestrel/*') { break }
+        Start-Sleep -Milliseconds 500
+    }
     foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
 }
 exit $code

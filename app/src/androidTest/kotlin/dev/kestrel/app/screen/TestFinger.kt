@@ -14,6 +14,9 @@ import kotlinx.coroutines.delay
  * filter. The commands use numbers rather than names, because the tool on Android 13 reads only numbers.
  */
 class TestFinger(private val automation: UiAutomation) : AutoCloseable {
+    // toolMessages() reports only the log lines that the tool wrote after this time.
+    private val startMillis = System.currentTimeMillis()
+
     // The tool's output, its input and its errors.
     private val pipes = automation.executeShellCommandRwe("uinput -")
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
@@ -64,14 +67,16 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
 
     /**
      * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
-     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines,
-     * without the log's stack frames.
+     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines
+     * since this finger was made, without the log's stack frames.
      */
     private fun toolMessages(): String {
         val output = listOf(pipes[0], pipes[2]).map { pipe ->
             ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
         }
-        val log = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(LOG_COMMAND)).bufferedReader()
+        val since = "${startMillis / 1000}.${(startMillis % 1000).toString().padStart(3, '0')}"
+        val command = "logcat -d -T $since -s UINPUT:* UinputEvent:* UinputDevice:*"
+        val log = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).bufferedReader()
             .use { it.readLines() }
             .filter { it.isNotBlank() && !it.startsWith("-") && "\tat " !in it }
             .takeLast(LOG_LINES)
@@ -89,7 +94,6 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     private companion object {
         const val NAME = "Kestrel test finger"
         const val LIFT_MILLIS = 50L
-        const val LOG_COMMAND = "logcat -d -s UINPUT:* UinputEvent:* UinputDevice:*"
         const val LOG_LINES = 10
 
         // Linux input event codes, from linux/input-event-codes.h and linux/uinput.h.
