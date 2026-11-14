@@ -100,19 +100,25 @@ Describe 'The settings helpers' {
         It 'writes back only the changed settings, the list of services first, and returns $true' {
             $reader = 'com.example.reader/com.example.reader.ReaderService'
             $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
-            $saved = [ordered]@{
+            # The settings are saved from the device, as connected-test.ps1 saves them. So the test also fails when
+            # Get-AccessibilitySettings misses a setting, such as the touch-and-hold delay.
+            Set-FakeDevice -Settings ([ordered]@{
                 accessibility_button_targets   = $reader
                 accessibility_enabled          = '1'
                 enabled_accessibility_services = $reader
+                long_press_timeout             = '400'
                 touch_exploration_enabled      = '0'
-            }
+            })
+            $saved = Get-AccessibilitySettings -Serial emulator-5554
             Set-FakeDevice -Settings ([ordered]@{
-                # Android cleared the shortcut when the tests turned the reader off, and the tests added a setting.
+                # Android cleared the shortcut when the tests turned the reader off, the tests added a setting, and
+                # GestureTest lengthened the touch-and-hold delay.
                 accessibility_button_targets   = ''
                 accessibility_enabled          = '0'
                 accessibility_qs_targets       = $kestrel
                 default_input_method           = 'com.example.keyboard/.Keyboard'
                 enabled_accessibility_services = $kestrel
+                long_press_timeout             = '1500'
                 touch_exploration_enabled      = '0'
             })
 
@@ -124,10 +130,12 @@ Describe 'The settings helpers' {
             $device.settings.accessibility_button_targets | Should -BeExactly $reader
             $device.settings.PSObject.Properties.Name | Should -Not -Contain 'accessibility_qs_targets'
             $device.settings.default_input_method | Should -BeExactly 'com.example.keyboard/.Keyboard'
+            $device.settings.long_press_timeout | Should -BeExactly '400'
             $written = @($device.calls | Where-Object { $_ -match '^settings (put|delete) ' } | ForEach-Object { ($_ -split ' ')[3] })
             $written[0..1] | Should -BeExactly @('enabled_accessibility_services', 'accessibility_enabled')
             $written | Sort-Object | Should -BeExactly @(
-                'accessibility_button_targets', 'accessibility_enabled', 'accessibility_qs_targets', 'enabled_accessibility_services')
+                'accessibility_button_targets', 'accessibility_enabled', 'accessibility_qs_targets', 'enabled_accessibility_services',
+                'long_press_timeout')
         }
 
         It 'returns $false and warns with the saved values when the device cannot be read' {

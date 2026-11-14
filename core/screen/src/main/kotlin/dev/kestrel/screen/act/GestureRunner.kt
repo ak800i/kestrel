@@ -2,6 +2,7 @@ package dev.kestrel.screen.act
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.os.RemoteException
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -58,7 +59,14 @@ class GestureRunner(private val service: AccessibilityService) {
 
                     override fun onCancelled(gestureDescription: GestureDescription) = continuation.resume(GestureOutcome.CANCELLED)
                 }
-                if (!service.dispatchGesture(gesture, callback, null)) continuation.resume(GestureOutcome.REJECTED)
+                val accepted = try {
+                    service.dispatchGesture(gesture, callback, null)
+                } catch (e: RuntimeException) {
+                    // A failed binder call reaches the app as a RuntimeException around a RemoteException.
+                    if (e.cause !is RemoteException) throw e
+                    false
+                }
+                if (!accepted) continuation.resume(GestureOutcome.REJECTED)
             }
         } ?: GestureOutcome.TIMED_OUT
     }

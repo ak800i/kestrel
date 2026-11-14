@@ -71,12 +71,15 @@ function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $false
 }
 
-# Reads the secure settings that belong to accessibility: the list of enabled services, the accessibility switch, and
-# the shortcuts that start a service, which Android clears for a service that it turns off. Returns names and values.
+# Reads the secure settings that belong to accessibility, and returns their names and values. They include the list of
+# enabled services and the accessibility switch. They include the shortcuts that start a service, which Android clears
+# for a service that it turns off. They also include the touch-and-hold delay (long_press_timeout), which GestureTest
+# changes, and which Android's Settings shows under Accessibility.
 function Get-AccessibilitySettings([string]$Serial) {
     $settings = [ordered]@{}
     foreach ($line in (Invoke-SettingsCommand -Serial $Serial -Command 'settings list secure')) {
-        if ($line -match '^([^=]*(accessibility|touch_exploration)[^=]*)=(.*)$') { $settings[$Matches[1]] = $Matches[3] }
+        $name, $value = $line -split '=', 2
+        if ($null -ne $value -and $name -match 'accessibility|touch_exploration|^long_press_timeout$') { $settings[$name] = $value }
     }
     $settings
 }
