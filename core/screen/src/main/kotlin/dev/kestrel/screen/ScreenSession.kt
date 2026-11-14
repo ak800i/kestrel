@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,7 +93,10 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
                 try {
                     onScreenSettled(snapshots.current().snapshot)
                 } catch (e: CancellationException) {
-                    throw e
+                    // Only the watcher's own cancellation ends it. A check that something inside it cancelled, such as
+                    // a timeout, failed like any other check.
+                    currentCoroutineContext().ensureActive()
+                    errors.handleException(currentCoroutineContext(), e)
                 } catch (e: Exception) {
                     errors.handleException(currentCoroutineContext(), e)
                 }
