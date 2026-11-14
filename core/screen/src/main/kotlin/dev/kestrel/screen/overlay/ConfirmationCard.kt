@@ -20,34 +20,37 @@ import kotlin.coroutines.resume
  * Unlike the other overlays it takes touches, but only on itself. Use it on the main thread.
  */
 internal class ConfirmationCard(private val host: OverlayHost) {
-    private var pending: CancellableContinuation<Boolean>? = null
+    private var pending: Question? = null
 
-    /** Shows [question] and returns true when the owner taps Confirm, or false for Cancel. */
+    /**
+     * Shows [question] and returns true when the owner taps Confirm, or false for Cancel. It also returns false when a
+     * newer question replaces this one or [dismiss] ends it, and its card then goes at once. Cancelling the call
+     * removes the card too.
+     */
     suspend fun ask(question: String): Boolean = suspendCancellableCoroutine { continuation ->
         dismiss()
-        lateinit var card: LinearLayout
-        fun answer(confirmed: Boolean) {
-            host.hide(card)
-            // A newer question may have replaced this one while its card was still on the screen.
-            if (pending === continuation) pending = null
-            if (continuation.isActive) continuation.resume(confirmed)
-        }
-        card = build(question, onConfirm = { answer(true) }, onCancel = { answer(false) })
+        val open = Question(question, continuation)
         // Cancellation can arrive on any thread, and the window must be removed on the main thread.
-        continuation.invokeOnCancellation {
-            card.post {
-                host.hide(card)
-                if (pending === continuation) pending = null
-            }
-        }
-        pending = continuation
-        host.show(card, params())
+        continuation.invokeOnCancellation { open.card.post { open.end(false) } }
+        pending = open
+        host.show(open.card, params())
     }
 
-    /** Ends an open question without an answer; the caller's [ask] is cancelled. */
+    /** Ends an open question without the owner's answer: its card goes at once, and its [ask] returns false. */
     fun dismiss() {
-        pending?.cancel()
-        pending = null
+        pending?.end(false)
+    }
+
+    private inner class Question(question: String, private val continuation: CancellableContinuation<Boolean>) {
+        val card = build(question, onConfirm = { end(true) }, onCancel = { end(false) })
+
+        /** Removes the card and returns [answer] to the caller, unless the caller already has an answer or has cancelled. */
+        fun end(answer: Boolean) {
+            host.hide(card)
+            // A late tap on this card, or its cancellation, may arrive after a newer question has replaced it.
+            if (pending === this) pending = null
+            if (continuation.isActive) continuation.resume(answer)
+        }
     }
 
     private fun build(question: String, onConfirm: () -> Unit, onCancel: () -> Unit): LinearLayout {

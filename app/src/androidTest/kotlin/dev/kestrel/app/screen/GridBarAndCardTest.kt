@@ -9,6 +9,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -66,6 +68,23 @@ class GridBarAndCardTest {
 
         answer.cancel()
 
+        eventually { !screen.showsWindow("Kestrel confirmation") }
+    }
+
+    @Test
+    fun aNewQuestionAnswersTheOldOneWithFalse() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val first = async { session.confirm("Send a test message?") }
+        eventually { screen.overlayButton("Confirm") != null }
+
+        val second = async { session.confirm("Delete the draft?") }
+
+        assertFalse(withTimeout(5_000) { first.await() })
+        // Only the second card is left, so the tap reaches its Confirm button.
+        eventually { screen.overlayButton("Delete the draft?") != null && screen.overlayButton("Send a test message?") == null }
+        val confirm = screen.overlayButton("Confirm")!!
+        screen.shell("input tap ${confirm.centerX()} ${confirm.centerY()}")
+        assertTrue(withTimeout(5_000) { second.await() })
         eventually { !screen.showsWindow("Kestrel confirmation") }
     }
 

@@ -146,8 +146,10 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     suspend fun showFeedback(text: String) = withContext(Dispatchers.Main) { feedback.show(text) }
 
     /**
-     * Asks [question] on a confirmation card and returns true when the owner taps Confirm. A caller that also
-     * listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call (design spec, section 12.4).
+     * Asks [question] on a confirmation card and returns true when the owner taps Confirm. It returns false when the
+     * owner taps Cancel, when a newer question replaces this one or when the session closes, and the card then goes at
+     * once. A caller that also listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call, which
+     * removes the card too (design spec, section 12.4).
      */
     suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) { card.ask(question) }
 
