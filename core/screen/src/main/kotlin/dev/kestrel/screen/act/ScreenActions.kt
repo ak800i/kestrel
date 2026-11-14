@@ -176,10 +176,16 @@ class ScreenActions internal constructor(
      * reports the change to the tracker itself: snapshots are built anew, and the numbers and labels follow the
      * elements. It reports it again after the wait, because a snapshot built during the wait may still show the old
      * positions.
+     *
+     * Before the second report, Kestrel also clears Android's node cache in its own process. Android clears that cache
+     * when the magnification changes, but before the window manager uses the new magnification, so a read at that
+     * moment puts the old positions back. A change of scale while the screen is already magnified adds no window, so
+     * no later event clears the cache, and every snapshot would keep the old positions.
      */
     private suspend fun magnified(): ActionResult {
         tracker.onScreenChanged()
         val result = settled(ActionMethod.MAGNIFICATION)
+        service.clearCache()
         tracker.onScreenChanged()
         return result
     }
