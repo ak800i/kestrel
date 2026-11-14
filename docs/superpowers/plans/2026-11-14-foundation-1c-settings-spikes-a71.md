@@ -100,7 +100,7 @@ The code below already handles all of these. They are written down so that nobod
 
 **Files:**
 - Modify: `scripts/connected-test.ps1` (save and restore the enabled accessibility services)
-- Modify: `scripts/lib/Kestrel.ps1` (`Assert-TestDevice` checks a refusal twice more)
+- Modify: `scripts/lib/Kestrel.ps1` (`Assert-TestDevice` checks a refusal twice more; `Get-SecureSetting` and `Set-SecureSetting`)
 - Modify: `scripts/start-emulator.ps1` (`-ColdBoot`)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/ScreenServiceRule.kt` (`overlayButton` matches whole texts; new `overlayShows`)
 - Modify: `app/src/androidTest/kotlin/dev/kestrel/app/screen/TestFinger.kt` (reports the `uinput` tool's errors and closes its pipes)
@@ -109,11 +109,11 @@ The code below already handles all of these. They are written down so that nobod
 
 **Interfaces:**
 - Consumes: plan 1B's test tools.
-- Produces: `ScreenServiceRule.overlayButton(text: String): Rect?` returns only a clickable node whose whole text is `text`, ignoring case; `ScreenServiceRule.overlayShows(text: String): Boolean` says whether a touchable overlay shows `text` as a whole text. `scripts\start-emulator.ps1 -ColdBoot` starts the emulator with `-no-snapshot-load`.
+- Produces: `Get-SecureSetting -Serial <serial> -Name <setting>` reads a secure setting and asks twice more before it fails, and `Set-SecureSetting -Serial <serial> -Name <setting> -Value <value>` puts back what it read, deleting the setting for `null`; the spike scripts of Tasks 11 and 12 use both. `ScreenServiceRule.overlayButton(text: String): Rect?` returns only a clickable node whose whole text is `text`, ignoring case; `ScreenServiceRule.overlayShows(text: String): Boolean` says whether a touchable overlay shows `text` as a whole text. `scripts\start-emulator.ps1 -ColdBoot` starts the emulator with `-no-snapshot-load`.
 
 Closes (5d), (10g) and (11d), and a problem found while this plan was built.
 
-The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. `TestFinger` now reads the `uinput` tool's error output, which Android 13 uses for its error messages, and closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
+The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. Android answers `null` for a setting that is not set, while a busy device sometimes answers with nothing; an empty answer is therefore asked again, and if the setting still cannot be read, the tests do not start, instead of deleting the owner's list afterwards. `TestFinger` now reads the `uinput` tool's error output, which Android 13 uses for its error messages, and closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
 
 This task changes test tools only, so it has no failing test of its own; Step 4 checks the tools.
 
@@ -138,23 +138,16 @@ Assert-TestDevice -Serial $Serial
 # The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
 $env:ANDROID_SERIAL = $Serial
 # The device tests replace the list of enabled accessibility services, so it is put back afterwards, even when the
-# tests fail or are interrupted.
-$adb = Get-Adb
+# tests fail or are interrupted. If the list cannot be read, the tests do not start.
 $saved = foreach ($name in 'enabled_accessibility_services', 'accessibility_enabled') {
-    [pscustomobject]@{ Name = $name; Value = "$(& $adb -s $Serial shell settings get secure $name)".Trim() }
+    [pscustomobject]@{ Name = $name; Value = Get-SecureSetting -Serial $Serial -Name $name }
 }
 $code = 1
 try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
 } finally {
-    foreach ($setting in $saved) {
-        if ($setting.Value -in '', 'null') {
-            & $adb -s $Serial shell settings delete secure $setting.Name | Out-Null
-        } else {
-            & $adb -s $Serial shell settings put secure $setting.Name "'$($setting.Value)'" | Out-Null
-        }
-    }
+    foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
 }
 exit $code
 ```
@@ -188,6 +181,28 @@ function Get-AvdHome {
 
 function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
+}
+
+# Reads a secure setting of a device. A busy device sometimes answers with nothing, so the query is repeated before it
+# fails. Android answers 'null' for a setting that is not set.
+function Get-SecureSetting([string]$Serial, [string]$Name) {
+    $adb = Get-Adb
+    foreach ($try in 1..3) {
+        if ($try -gt 1) { Start-Sleep -Seconds 2 }
+        $value = "$(& $adb -s $Serial shell settings get secure $Name)".Trim()
+        if ($value) { return $value }
+    }
+    throw "Could not read the setting $Name of $Serial."
+}
+
+# Puts back a secure setting that Get-SecureSetting read.
+function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
+    $adb = Get-Adb
+    if ($Value -eq 'null') {
+        & $adb -s $Serial shell settings delete secure $Name | Out-Null
+    } else {
+        & $adb -s $Serial shell settings put secure $Name "'$Value'" | Out-Null
+    }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {
@@ -10212,8 +10227,8 @@ function Get-Granted([string]$Permission) {
 }
 
 $results = [ordered]@{}
-$savedServices = (Invoke-Shell 'settings get secure enabled_accessibility_services').Trim()
-$savedEnabled = (Invoke-Shell 'settings get secure accessibility_enabled').Trim()
+$savedServices = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
+$savedEnabled = Get-SecureSetting -Serial $Serial -Name accessibility_enabled
 $locationGranted = Get-Granted 'android.permission.ACCESS_FINE_LOCATION'
 try {
     foreach ($permission in 'RECORD_AUDIO', 'POST_NOTIFICATIONS', 'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION') {
@@ -10322,12 +10337,8 @@ try {
         }
     }
 } finally {
-    if ($savedServices -eq 'null') {
-        Invoke-Shell 'settings delete secure enabled_accessibility_services' | Out-Null
-    } else {
-        Invoke-Shell "settings put secure enabled_accessibility_services '$savedServices'" | Out-Null
-    }
-    if ($savedEnabled -ne 'null') { Invoke-Shell "settings put secure accessibility_enabled $savedEnabled" | Out-Null }
+    Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $savedServices
+    Set-SecureSetting -Serial $Serial -Name accessibility_enabled -Value $savedEnabled
     # Revoking a permission stops Kestrel's process, so this comes last.
     if (-not $locationGranted) {
         Invoke-Shell 'pm revoke dev.kestrel android.permission.ACCESS_FINE_LOCATION' | Out-Null
@@ -10984,8 +10995,8 @@ $checks = [ordered]@{
 }
 $fields = @('Name', 'Email address', 'Message box', 'Notes')
 
-$savedServices = (Invoke-Shell 'settings get secure enabled_accessibility_services').Trim()
-$savedEnabled = (Invoke-Shell 'settings get secure accessibility_enabled').Trim()
+$savedServices = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
+$savedEnabled = Get-SecureSetting -Serial $Serial -Name accessibility_enabled
 $server = Start-Process -FilePath (Join-Path $env:JAVA_HOME 'bin\jwebserver.exe') -PassThru -WindowStyle Hidden `
     -ArgumentList '-p', $port, '-b', '127.0.0.1', '-d', (Join-Path $PSScriptRoot 'spike-s4')
 try {
@@ -11041,12 +11052,8 @@ try {
         Invoke-Shell "am force-stop $package" | Out-Null
     }
 } finally {
-    if ($savedServices -eq 'null') {
-        Invoke-Shell 'settings delete secure enabled_accessibility_services' | Out-Null
-    } else {
-        Invoke-Shell "settings put secure enabled_accessibility_services '$savedServices'" | Out-Null
-    }
-    if ($savedEnabled -ne 'null') { Invoke-Shell "settings put secure accessibility_enabled $savedEnabled" | Out-Null }
+    Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $savedServices
+    Set-SecureSetting -Serial $Serial -Name accessibility_enabled -Value $savedEnabled
     & $adb -s $Serial reverse --remove "tcp:$port" 2>$null | Out-Null
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
 }
