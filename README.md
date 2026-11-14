@@ -62,7 +62,7 @@ scripts\hook.ps1 -Serial $serial state                                 # is the 
 scripts\hook.ps1 -Serial $serial snapshot -Out $env:TEMP\screen.json   # what Kestrel reads on the screen, as JSON
 scripts\hook.ps1 -Serial $serial overlay -Show numbers                 # numbers on the screen's elements
 scripts\hook.ps1 -Serial $serial tap -Number 3                         # taps the element with the number 3
-scripts\hook.ps1 -Serial $serial test-mode -On false
+scripts\hook.ps1 -Serial $serial test-mode -On true                    # test mode stays on during all testing (design spec, D25)
 ```
 
 Release builds do not contain the hooks, and the privacy audit fails a release build that does.

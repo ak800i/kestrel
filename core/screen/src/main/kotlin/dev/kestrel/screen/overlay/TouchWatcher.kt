@@ -20,9 +20,10 @@ import kotlinx.coroutines.flow.asSharedFlow
  *
  * Android injects the touches of Kestrel's gestures from its virtual input device, while a finger's touches come
  * from the touchscreen, so the watcher leaves out touches from the virtual device while one of Kestrel's gestures
- * runs (spike S3). The device is the clue that works on every version: Android 13 to 16 mark a finger's touches as
- * accessibility events while a gesture service is on, and Android 17 no longer cancels Kestrel's gesture when a
- * finger touches the screen.
+ * runs (spike S3). The device is the clue that works on every version: Android 13 to 15, and Android 16 before QPR2
+ * depending on feature flags, mark a finger's touches as accessibility events while a gesture service is on, and from
+ * Android 16 QPR2, Android no longer cancels Kestrel's gesture when a finger touches the screen (design spec, section
+ * 14.1 and B35).
  */
 internal class TouchWatcher(private val host: OverlayHost, private val gestures: GestureRunner) {
     private val touches = MutableSharedFlow<Unit>(extraBufferCapacity = 16)

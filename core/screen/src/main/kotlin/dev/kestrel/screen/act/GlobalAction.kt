@@ -14,6 +14,6 @@ enum class GlobalAction(internal val id: Int) {
     POWER_MENU(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG),
     SPLIT_SCREEN(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN),
 
-    /** Plays or pauses media, like the button on a headset. */
+    /** Plays or pauses media, like the button on a headset. During a call, the same key answers or ends the call. */
     PLAY_PAUSE(AccessibilityService.GLOBAL_ACTION_KEYCODE_HEADSETHOOK),
 }

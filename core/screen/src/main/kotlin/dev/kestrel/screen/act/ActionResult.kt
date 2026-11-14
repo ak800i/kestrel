@@ -5,7 +5,7 @@ enum class ActionMethod {
     /** The element's own accessibility action. */
     ACTION,
 
-    /** The action of the element's nearest parent that offers it. */
+    /** The action of the element's nearest parent that handles touches, where a finger's touch would go. */
     PARENT_ACTION,
 
     /** The element's action in a fresh snapshot, after its node had gone or refused the action (design spec, section 14.3). */
