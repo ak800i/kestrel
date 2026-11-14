@@ -53,7 +53,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     private val watcher = TouchWatcher(overlays, gestures)
 
     /** The current snapshot. A new one is built only after the screen has changed. */
-    val snapshots = SnapshotCache(tracker) { withContext(Dispatchers.Default) { reader.read() } }
+    val snapshots = SnapshotCache(tracker) { withContext(Dispatchers.IO) { reader.read() } }
 
     val actions = ScreenActions(service, snapshots, gestures, tracker)
 

@@ -19,6 +19,9 @@ class ScreenChangeTracker(private val clock: () -> Long) {
     /** Counts the changes so far. A snapshot built at one version is stale at any later version. */
     val version: StateFlow<Long> = versions.asStateFlow()
 
+    /** The time on this tracker's clock, for [awaitQuiet]'s `since`. */
+    fun now(): Long = clock()
+
     fun onScreenChanged() {
         lastChangeAt = clock()
         versions.update { it + 1 }
@@ -26,7 +29,8 @@ class ScreenChangeTracker(private val clock: () -> Long) {
 
     /**
      * Waits until the screen has had no change for [quietMillis], counted from [since] at the earliest, and
-     * returns true. Returns false when that takes longer than [maxWaitMillis].
+     * returns true. Returns false when that takes longer than [maxWaitMillis]. [since] must come from [now], because
+     * only this tracker's clock fits its times.
      */
     suspend fun awaitQuiet(quietMillis: Long, since: Long = Long.MIN_VALUE, maxWaitMillis: Long = MAX_WAIT_MILLIS): Boolean {
         val deadline = clock() + maxWaitMillis

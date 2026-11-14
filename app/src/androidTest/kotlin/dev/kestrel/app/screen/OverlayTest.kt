@@ -38,6 +38,29 @@ class OverlayTest {
     }
 
     @Test
+    fun numbersFollowAZoom() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val send = keyOf("SEND")
+        session.showNumbers()
+        eventually { session.numberBadges.any { it.key == send } }
+        val before = session.numberBadges.first { it.key == send }.bounds
+
+        try {
+            assertEquals(ActionResult.Done(ActionMethod.MAGNIFICATION), session.actions.zoom(2f, before.centerX, before.centerY))
+            eventually { session.numberBadges.firstOrNull { it.key == send }?.let { it.bounds.height > before.height } == true }
+            val zoomed = session.numberBadges.first { it.key == send }.bounds
+
+            // A change of scale while the screen is magnified adds no window, so Android sends no event for it: only
+            // Kestrel's own report makes the numbers follow. The button is as wide as the screen, so the height is compared.
+            // The centre is given in the screen's own, unmagnified coordinates.
+            assertEquals(ActionResult.Done(ActionMethod.MAGNIFICATION), session.actions.zoom(3f, before.centerX, before.centerY))
+            eventually { session.numberBadges.firstOrNull { it.key == send }?.let { it.bounds.height > zoomed.height } == true }
+        } finally {
+            session.actions.resetZoom()
+        }
+    }
+
+    @Test
     fun numbersGoOnTheActionableElementsInReadingOrder() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 

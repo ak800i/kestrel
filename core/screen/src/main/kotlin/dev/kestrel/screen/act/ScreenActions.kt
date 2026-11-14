@@ -9,7 +9,6 @@ import android.content.Intent
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
-import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
@@ -25,13 +24,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 
-/** Kestrel's actions on the screen. Each one has a fallback (design spec, sections 9.3 and 14.3). */
+/**
+ * Kestrel's actions on the screen. Each one has a fallback (design spec, sections 9.3 and 14.3). They query and act on
+ * nodes with blocking binder calls on the caller's dispatcher, so callers run them on `Dispatchers.IO`.
+ */
 class ScreenActions internal constructor(
     private val service: AccessibilityService,
     private val snapshots: SnapshotCache<LiveSnapshot>,
     private val gestures: GestureRunner,
     private val tracker: ScreenChangeTracker,
-    private val clock: () -> Long = SystemClock::uptimeMillis,
 ) {
     /** Apps that refused the set-text action or did not show the text afterwards (design spec, section 9.7). */
     private val inputMethodApps = ConcurrentHashMap.newKeySet<String>()
@@ -150,12 +151,16 @@ class ScreenActions internal constructor(
     }
 
     /**
-     * Magnification moves every element on the screen, and Android need not send an accessibility event for it, so
-     * the next snapshot is built anew.
+     * Magnification moves every element on the screen, and Android sends no accessibility event for it, so Kestrel
+     * reports the change to the tracker itself: snapshots are built anew, and the numbers and labels follow the
+     * elements. It reports it again after the wait, because a snapshot built during the wait may still show the old
+     * positions.
      */
     private suspend fun magnified(): ActionResult {
-        snapshots.invalidate()
-        return settled(ActionMethod.MAGNIFICATION)
+        tracker.onScreenChanged()
+        val result = settled(ActionMethod.MAGNIFICATION)
+        tracker.onScreenChanged()
+        return result
     }
 
     suspend fun global(action: GlobalAction): ActionResult {
@@ -254,7 +259,7 @@ class ScreenActions internal constructor(
      * has reacted. Gestures call it once the finger has been lifted.
      */
     private suspend fun settled(method: ActionMethod): ActionResult {
-        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = clock())
+        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
         return ActionResult.Done(method)
     }
 
