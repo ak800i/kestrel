@@ -113,7 +113,7 @@ The code below already handles all of these. They are written down so that nobod
 
 Closes (5d), (10g) and (11d), and a problem found while this plan was built.
 
-The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, so `Get-SecureSetting` reads with a marker after the answer and asks again while the marker is missing; if the setting still cannot be read, the tests do not start, instead of deleting the owner's list afterwards. `Set-SecureSetting` reads the value back and warns, with the command that puts it back, when the device did not take it. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's recent log lines, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
+The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off, so `connected-test.ps1` now saves the list and the `accessibility_enabled` switch before Gradle runs and puts both back in a `finally` block, even when the tests fail or are interrupted. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, and while Android's system is still starting, the `settings` command fails. So `Get-SecureSetting` asks the device to print a marker only after a successful answer, and asks again while the marker is missing; if the setting still cannot be read, the tests do not start, instead of deleting the owner's list afterwards. `Set-SecureSetting` reads the value back and warns when the device did not take it, with a command that the owner can paste to put the value back. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. When Kestrel stops, Android removes Kestrel's service from the list by itself, within about 60 ms on the emulator, so the script waits up to 5 seconds until the list no longer contains Kestrel's service; otherwise Android could write its own copy of the list, without Kestrel, over the restored one. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's log lines since the finger was made, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
 
 This task changes test tools only, so it has no failing test of its own; Step 4 checks the tools.
 
@@ -148,7 +148,15 @@ try {
     $code = $LASTEXITCODE
 } finally {
     # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop first.
+    # Android then removes Kestrel's service from the list itself, and the restore waits for that, so that Android's
+    # change does not overwrite it.
     & (Get-Adb) -s $Serial shell am force-stop dev.kestrel | Out-Null
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        $services = try { Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services } catch { '' }
+        if ($services -notlike '*dev.kestrel/*') { break }
+        Start-Sleep -Milliseconds 500
+    }
     foreach ($setting in $saved) { Set-SecureSetting -Serial $Serial -Name $setting.Name -Value $setting.Value }
 }
 exit $code
@@ -186,13 +194,13 @@ function Get-Adb {
 }
 
 # Reads a secure setting of a device. Android answers 'null' for a setting that is not set, and a setting can also hold
-# an empty value, so a marker after the answer tells an empty value from no answer at all. A busy device sometimes gives
-# no answer, so the query is repeated before it fails.
+# an empty value, so a marker that follows only a successful answer tells an empty value from a failed query. A busy
+# device, or one whose system is still starting, sometimes fails the query, so it is repeated before it fails for good.
 function Get-SecureSetting([string]$Serial, [string]$Name) {
     $adb = Get-Adb
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $answer = "$(& $adb -s $Serial shell "settings get secure $Name; echo kestrel-end")"
+        $answer = "$(& $adb -s $Serial shell "settings get secure $Name && echo kestrel-end")"
         if ($answer -match '^\s*(.*?)\s*kestrel-end\s*$') { return $Matches[1] }
     }
     throw "Could not read the setting $Name of $Serial."
@@ -204,7 +212,7 @@ function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$Value'" }
     & $adb -s $Serial shell $command | Out-Null
     $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $null }
-    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell $command" }
+    if ($now -ne $Value) { Write-Warning "Could not put back the setting $Name of $Serial. Run: adb -s $Serial shell `"$command`"" }
 }
 
 function Find-EmulatorSerial([string]$AvdName) {
@@ -436,6 +444,9 @@ import kotlinx.coroutines.delay
  * filter. The commands use numbers rather than names, because the tool on Android 13 reads only numbers.
  */
 class TestFinger(private val automation: UiAutomation) : AutoCloseable {
+    // toolMessages() reports only the log lines that the tool wrote after this time.
+    private val startMillis = System.currentTimeMillis()
+
     // The tool's output, its input and its errors.
     private val pipes = automation.executeShellCommandRwe("uinput -")
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
@@ -486,14 +497,16 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
 
     /**
      * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
-     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines,
-     * without the log's stack frames.
+     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines
+     * since this finger was made, without the log's stack frames.
      */
     private fun toolMessages(): String {
         val output = listOf(pipes[0], pipes[2]).map { pipe ->
             ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
         }
-        val log = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(LOG_COMMAND)).bufferedReader()
+        val since = "${startMillis / 1000}.${(startMillis % 1000).toString().padStart(3, '0')}"
+        val command = "logcat -d -T $since -s UINPUT:* UinputEvent:* UinputDevice:*"
+        val log = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).bufferedReader()
             .use { it.readLines() }
             .filter { it.isNotBlank() && !it.startsWith("-") && "\tat " !in it }
             .takeLast(LOG_LINES)
@@ -511,7 +524,6 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     private companion object {
         const val NAME = "Kestrel test finger"
         const val LIFT_MILLIS = 50L
-        const val LOG_COMMAND = "logcat -d -s UINPUT:* UinputEvent:* UinputDevice:*"
         const val LOG_LINES = 10
 
         // Linux input event codes, from linux/input-event-codes.h and linux/uinput.h.
@@ -739,6 +751,16 @@ A setting can be empty, which is different from no answer:
 ```
 
 Expected: `[]`, then `[null]`.
+
+A failed query is not an empty value either. Android rejects a query without a name, and `Get-SecureSetting` gives up after it has asked three times:
+
+```powershell
+$watch = [Diagnostics.Stopwatch]::StartNew()
+try { Get-SecureSetting -Serial <serial> -Name '' } catch { $_.Exception.Message }
+$watch.Elapsed.TotalSeconds
+```
+
+Expected: a message that starts with `Could not read the setting`, and about 4 seconds.
 
 The device tests put back the list of accessibility services. Turn on a harmless system service first, run all device tests, and read the list afterwards (in the same PowerShell window):
 
