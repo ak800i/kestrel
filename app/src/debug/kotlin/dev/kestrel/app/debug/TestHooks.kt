@@ -1,11 +1,13 @@
 package dev.kestrel.app.debug
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.debug.spike.SpikeHooks
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
@@ -32,7 +34,9 @@ internal data class HookReply(val code: Int, val text: String) {
  * Runs the test-hook commands (design spec, section 16.1). The intent's action is [ACTION_PREFIX] followed by the
  * command, and its extras are the arguments; `scripts/hook.ps1` lists them.
  */
-internal class TestHooks(private val graph: AppGraph, private val cacheDir: File) {
+internal class TestHooks(private val graph: AppGraph, private val context: Context) {
+    private val cacheDir: File get() = context.cacheDir
+
     suspend fun run(intent: Intent): HookReply = try {
         HookReply.ok(answer(intent))
     } catch (error: HookError) {
@@ -44,6 +48,7 @@ internal class TestHooks(private val graph: AppGraph, private val cacheDir: File
         if (command == "STATE") return state()
         if (command == "TEST_MODE") return testMode(intent)
         if (command == "CRASH") return crash(intent.requiredText())
+        if (command in SpikeHooks.COMMANDS) return SpikeHooks(context, graph).run(command, intent)
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val actions = session.actions
         return when (command) {

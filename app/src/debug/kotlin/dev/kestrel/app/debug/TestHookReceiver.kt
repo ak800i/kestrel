@@ -20,7 +20,7 @@ class TestHookReceiver : BroadcastReceiver() {
         graph.scope.launch {
             try {
                 val reply = try {
-                    withTimeout(TIMEOUT_MILLIS) { TestHooks(graph, context.cacheDir).run(intent) }
+                    withTimeout(TIMEOUT_MILLIS) { TestHooks(graph, context.applicationContext).run(intent) }
                 } catch (error: Throwable) {
                     // Errors too, such as a StackOverflowError: without an answer, adb would wait 60 s for nothing.
                     HookReply.failed("the command failed: ${error.describeWithoutMessages()}")

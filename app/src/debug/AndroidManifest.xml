@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Spike S1 (design spec, section 19): the stand-in listening service and the location check. RECORD_AUDIO is in
+         the main manifest too; lint checks the microphone service type against this file alone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application>
         <!-- Test hooks for adb (design spec, section 16.1). Only callers that hold DUMP, in practice adb shell,
              can send commands. Release builds do not contain this receiver, and the audit checks that. -->
@@ -16,5 +25,30 @@
             android:name="androidx.activity.ComponentActivity"
             android:exported="false"
             tools:replace="android:exported" />
+
+        <!-- Spike S1. Sub-project 2 replaces these with the real ListeningService and tile. -->
+        <service
+            android:name=".debug.spike.SpikeListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback" />
+        <service
+            android:name=".debug.spike.SpikeTileService"
+            android:exported="true"
+            android:icon="@android:drawable/ic_btn_speak_now"
+            android:label="Kestrel spike"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="dev.kestrel.app.debug.spike.SpikeStartup"
+                android:value="androidx.startup" />
+        </provider>
     </application>
 </manifest>

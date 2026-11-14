@@ -71,6 +71,10 @@ scripts\hook.ps1 -Serial $serial test-mode -On true                    # test mo
 
 Release builds do not contain the hooks, and the privacy audit fails a release build that does.
 
+### Spike S1
+
+`scripts\spike-s1.ps1 -Serial $serial` checks whether Kestrel's listening service can start and record when the accessibility service, a notification, the Quick Settings tile or a reboot starts it, also while a call rings on the lock screen, and whether Kestrel can read the location while another app is in front (design spec, section 19). It uses a stand-in listening service and a tile that only debug builds contain, and it prints whether each step worked, never the audio or the place. While it runs, it changes the accessibility services, the lock-screen setting and the location provider, and it puts them back afterwards. The `boot` scenario reboots the device. On a phone, the `ringing` scenario asks you to call the phone and to end the call.
+
 ## Licence
 
 Kestrel is free software under the GNU General Public License, version 3 or (at your option) any later version. See [LICENSE](LICENSE). The licences of the libraries that Kestrel uses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

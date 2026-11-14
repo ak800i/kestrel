@@ -11,6 +11,15 @@
 #   global -Action back|home|recent-apps|notifications|quick-settings|lock-screen|screenshot|power-menu|split-screen|play-pause
 #   crash -Text 'text'                      ends Kestrel's process with an error whose message is the text, to check
 #                                           that Android's crash records do not contain it
+# Spike S1 (scripts\spike-s1.ps1 runs these):
+#   listen [-Source name] [-DelaySeconds n] [-Seconds n]
+#                                           starts the stand-in listening service after n seconds (15 by default)
+#   listen-notification                     posts a notification whose action starts it
+#   listen-after-boot                       starts it 15 s after the accessibility service connects at the next
+#                                           start of Kestrel's process, which a reboot causes
+#   location [-Source name] [-DelaySeconds n]
+#                                           asks Android for the current location
+#   spike-results [-Clear]                  what the spike found: whether each step worked, never the audio or the place
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -19,7 +28,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash')][string]$Command,
+    [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'listen',
+        'listen-notification', 'listen-after-boot', 'location', 'spike-results')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -30,7 +40,11 @@ param(
     [string]$Action,
     [string]$Show,
     [ValidateSet('true', 'false')][string]$On,
-    [string]$Out
+    [string]$Out,
+    [string]$Source,
+    [int]$DelaySeconds = -1,
+    [int]$Seconds = -1,
+    [switch]$Clear
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -62,6 +76,10 @@ if ($Direction) { $extras += "--es direction $(ConvertTo-ShellText $Direction)" 
 if ($Action) { $extras += "--es action $(ConvertTo-ShellText $Action)" }
 if ($Show) { $extras += "--es show $(ConvertTo-ShellText $Show)" }
 if ($On) { $extras += "--ez on $On" }
+if ($Source) { $extras += "--es source $(ConvertTo-ShellText $Source)" }
+if ($DelaySeconds -ge 0) { $extras += "--ei delay $DelaySeconds" }
+if ($Seconds -gt 0) { $extras += "--ei seconds $Seconds" }
+if ($Clear) { $extras += '--ez clear true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
