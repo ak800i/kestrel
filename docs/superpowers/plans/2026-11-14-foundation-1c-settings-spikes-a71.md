@@ -78,7 +78,7 @@ The code below already handles all of these. They are written down so that nobod
 - When Android turns off an accessibility service that asks for the accessibility button, it also removes the service from the accessibility shortcuts: `accessibility_button_targets` and `accessibility_shortcut_target_service`, and on Android 17 also `accessibility_gesture_targets` and `accessibility_qs_targets`. Putting the list of services back does not bring the shortcuts back, so the scripts save and restore every secure setting whose name contains `accessibility` or `touch_exploration`.
 - `am force-stop` on an app whose accessibility service is on makes Android remove that service from `enabled_accessibility_services` by itself, within about 60 ms on the emulator, and Android then writes the other names in their short form (`…/.AccessibilityMenuService`).
 - After Ctrl+C in a script that runs `gradlew.bat`, Windows asks "Terminate batch job (Y/N)?", and PowerShell 7 and Windows PowerShell 5.1 both wait for the answer before they run the script's `finally` block. A second Ctrl+C at that question changes nothing, and Ctrl+C during the `finally` block does not stop it.
-- In Windows PowerShell 5.1, an adb error line that is redirected with `2>$null` or `2>&1` stops a script whose `$ErrorActionPreference` is `Stop`; PowerShell 7 goes on. The settings functions and the device guard therefore set `Continue` for themselves.
+- In Windows PowerShell 5.1, an adb error line that is redirected with `2>$null` or `2>&1` stops a script whose `$ErrorActionPreference` is `Stop`; PowerShell 7 goes on. The settings functions, the device guard, the boot wait of `start-emulator.ps1` and the `finally` block of `connected-test.ps1` therefore set `Continue` for themselves.
 
 ## File map
 
@@ -117,7 +117,7 @@ The code below already handles all of these. They are written down so that nobod
 
 Closes (5d), (10g) and (11d), and a problem found while this plan was built.
 
-The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off. Android also removes each service that it turns off from the accessibility shortcuts, and putting the list back does not bring the shortcuts back. So `connected-test.ps1` now saves every secure setting whose name contains `accessibility` or `touch_exploration` before Gradle runs, and puts back those that changed in a `finally` block, even when the tests fail or are interrupted. The list of services goes first, so that the shortcuts point to services that are on again. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, and while Android's system is still starting, the `settings` command fails. So `Invoke-SettingsCommand` asks the device to print a marker only after a command that worked, and asks again while the marker is missing; if the settings still cannot be read, the tests do not start, instead of deleting the owner's settings afterwards. Its error names the device's last complaint, and adb's error lines no longer fill the console. `Set-SecureSetting` reads the value back and warns when the device did not take it, with the reason and a command that the owner can paste into PowerShell to put the value back. When a setting cannot be put back, `connected-test.ps1` ends with exit code 1, even if the tests passed. Windows PowerShell 5.1 stops a script at adb's first error line when that line is redirected, so the settings functions and the device guard set `$ErrorActionPreference` to `Continue` for themselves. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. When Kestrel stops, Android removes Kestrel's service from the list by itself, within about 60 ms on the emulator, so the script waits up to 5 seconds until the list no longer contains Kestrel's service; otherwise Android could write its own copy of the list, without Kestrel, over the restored one. After Ctrl+C, Windows asks "Terminate batch job (Y/N)?" before the restore can run, so the README tells the owner to answer it. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's log lines since the finger was made, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
+The device tests replace the whole list of enabled accessibility services. On the emulator that does not matter, but on the A71 it would leave the owner's other services off. Android also removes each service that it turns off from the accessibility shortcuts, and putting the list back does not bring the shortcuts back. So `connected-test.ps1` now saves every secure setting whose name contains `accessibility` or `touch_exploration` before Gradle runs, and puts back those that changed in a `finally` block, even when the tests fail or are interrupted. The list of services goes first, so that the shortcuts point to services that are on again. Android answers `null` for a setting that is not set, and a setting can also hold an empty value, which Android's Settings writes when the owner turns the last service off. A busy device sometimes gives no answer at all, and while Android's system is still starting, the `settings` command fails. So `Invoke-SettingsCommand` asks the device to print a marker only after a command that worked, and asks again while the marker is missing; if the settings still cannot be read, the tests do not start, instead of deleting the owner's settings afterwards. Its error names the device's last complaint, and adb's error lines no longer fill the console. `Set-SecureSetting` writes through `Invoke-SettingsCommand` too, so a failed write is also asked again, and it reads the value back and warns when the device did not take it, with the reason and a command that the owner can paste into PowerShell to put the value back. When a setting cannot be put back, `connected-test.ps1` ends with exit code 1, even if the tests passed. Windows PowerShell 5.1 stops a script at adb's first error line when that line is redirected, so the settings functions, the device guard, the boot wait of `start-emulator.ps1` and the `finally` block of `connected-test.ps1` set `$ErrorActionPreference` to `Continue` for themselves; in the `finally` block, this also lets the restore run when the force-stop fails. Before the restore, `connected-test.ps1` stops Kestrel, because tests that still run on the device after an interrupted Gradle would replace the list again. When Kestrel stops, Android removes Kestrel's service from the list by itself, within about 60 ms on the emulator, so the script waits up to 5 seconds until the list no longer contains Kestrel's service; otherwise Android could write its own copy of the list, without Kestrel, over the restored one. After Ctrl+C, Windows asks "Terminate batch job (Y/N)?" before the restore can run, so the README tells the owner to answer it. The `uinput` tool writes its errors to Android's log, on Android 13 as on 17, so `TestFinger` adds the tool's log lines since the finger was made, without their stack frames, to its message when the virtual touchscreen does not appear, and it closes its pipes when it fails. It reads the tool's error output only from Android 14 on, because `UiAutomation.executeShellCommandRwe` is a hidden test API on Android 13; there it uses `executeShellCommandRw`. Android's text search also finds a text that only contains the search text, such as a question that contains a button's label, so `overlayButton` accepts only a whole text. The emulator incident under "Things that surprised us" explains the device guard's second and third check and `-ColdBoot`.
 
 This task changes test tools only, so it has no failing test of its own; Step 4 checks the tools.
 
@@ -150,6 +150,8 @@ try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
 } finally {
+    # The restore must run even when a command before it fails.
+    $ErrorActionPreference = 'Continue'
     # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop first.
     # Android then removes Kestrel's service from the list itself, and the restore waits for that, so that Android's
     # change does not overwrite it.
@@ -226,16 +228,19 @@ function Get-SecureSetting([string]$Serial, [string]$Name) {
 # Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and returns whether the device took it.
 # When it did not, it warns with a command that puts the setting back when it is pasted into PowerShell.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
-    $adb = Get-Adb
-    $ErrorActionPreference = 'Continue'
     # A single quote would end the device shell's quoting, so it becomes '\''.
     $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$($Value -replace "'", "'\''")'" }
-    & $adb -s $Serial shell $command 2>$null | Out-Null
     $reason = ''
-    $now = try { Get-SecureSetting -Serial $Serial -Name $Name } catch { $reason = " ($($_.Exception.Message))"; $null }
+    $now = try {
+        Invoke-SettingsCommand -Serial $Serial -Command $command | Out-Null
+        Get-SecureSetting -Serial $Serial -Name $Name
+    } catch {
+        $reason = " ($($_.Exception.Message))"
+        $null
+    }
     if ($now -ceq $Value) { return $true }
     $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
-    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: & $(& $literal $adb) -s $Serial shell $(& $literal $command)"
+    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: & $(& $literal (Get-Adb)) -s $Serial shell $(& $literal $command)"
     $false
 }
 
@@ -346,6 +351,8 @@ if (-not $serial) {
     } until ($serial -or (Get-Date) -gt $deadline)
     if (-not $serial) { throw "$name did not appear in adb within 5 minutes" }
 }
+# Windows PowerShell 5.1 would stop at adb's first error line, such as "device offline" while Android starts.
+$ErrorActionPreference = 'Continue'
 do {
     Start-Sleep -Seconds 3
     $booted = & $adb -s $serial shell getprop sys.boot_completed 2>$null
@@ -490,6 +497,7 @@ package dev.kestrel.app.screen
 
 import android.app.UiAutomation
 import android.hardware.input.InputManager
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.WindowManager
@@ -505,8 +513,13 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     // toolMessages() reports only the log lines that the tool wrote after this time.
     private val startMillis = System.currentTimeMillis()
 
-    // The tool's output, its input and its errors.
-    private val pipes = automation.executeShellCommandRwe("uinput -")
+    // The tool's output and its input, and from Android 14 on also its errors. Android 13 has no public way to read the
+    // errors, but there the tool writes them to Android's log as well.
+    private val pipes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        automation.executeShellCommandRwe("uinput -")
+    } else {
+        automation.executeShellCommandRw("uinput -")
+    }
     private val commands = ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).bufferedWriter()
     private var touches = 0
 
@@ -549,17 +562,18 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
             commands.close()
         } finally {
             pipes[0].close()
-            pipes[2].close()
+            pipes.getOrNull(2)?.close()
         }
     }
 
     /**
      * What the tool has said so far, without waiting for more. On Android 13 as on 17, the tool writes its errors to
-     * Android's log and only some of them to its output, so this reads its output, its error output and its log lines
-     * since this finger was made, without the log's stack frames. When they cannot be read, it says so instead.
+     * Android's log and only some of them to its output, so this reads its output, its error output where Android gives
+     * it, and its log lines since this finger was made, without the log's stack frames. When they cannot be read, it says
+     * so instead.
      */
     private fun toolMessages(): String = try {
-        val output = listOf(pipes[0], pipes[2]).map { pipe ->
+        val output = listOfNotNull(pipes[0], pipes.getOrNull(2)).map { pipe ->
             ParcelFileDescriptor.AutoCloseInputStream(pipe.dup()).use { String(it.readNBytes(it.available())).trim() }
         }
         val since = "${startMillis / 1000}.${(startMillis % 1000).toString().padStart(3, '0')}"
