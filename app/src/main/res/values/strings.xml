@@ -1,4 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="accessibility_service_description">Kestrel reads the screen and acts on it when you ask, so that you can use the phone by voice. What it reads stays on the phone, except what you choose to send to your own AI provider.</string>
+
+    <string name="settings_title">Kestrel</string>
+    <string name="settings_checklist">Setup checklist</string>
+    <!-- The quantity is the number of steps in the checklist. -->
+    <plurals name="settings_checklist_progress">
+        <item quantity="one">%1$d of %2$d step done</item>
+        <item quantity="other">%1$d of %2$d steps done</item>
+    </plurals>
+    <string name="settings_back">Back</string>
+
+    <string name="setup_state_done">Done</string>
+    <string name="setup_state_to_do">To do</string>
+    <string name="setup_state_later">Comes later</string>
+    <string name="setup_state_optional">Optional</string>
+    <string name="setup_state_warning">Needs attention</string>
+
+    <string name="setup_install_title">Install Kestrel</string>
+    <string name="setup_install_detail">Kestrel is installed. scripts\\install.ps1 installs it with adb. On a Samsung phone, Auto Blocker must be off while USB debugging is on.</string>
+    <string name="setup_models_title">Copy the voice models</string>
+    <string name="setup_models_detail">scripts\\push-models.ps1 will copy the models from your computer. This step comes with Kestrel\'s voice features.</string>
+    <string name="setup_service_title">Turn on Kestrel\'s accessibility service</string>
+    <string name="setup_service_detail">Kestrel reads the screen and acts on it through this service.</string>
+    <string name="setup_permissions_title">Allow the microphone and notifications</string>
+    <string name="setup_permissions_detail">Kestrel listens for your voice and shows what it is doing in a notification.</string>
+    <string name="setup_battery_title">Allow unrestricted battery use</string>
+    <string name="setup_battery_detail">So that Android does not stop Kestrel. On a Samsung phone, also add Kestrel to \"Never sleeping apps\" in the battery settings.</string>
+    <string name="setup_assistant_title">Make Kestrel the default digital assistant</string>
+    <string name="setup_assistant_detail">Optional: for the side key and earbuds. This step comes with Kestrel\'s voice features.</string>
+    <string name="setup_provider_title">Sign in to an AI provider and choose the models</string>
+    <string name="setup_provider_detail">This step comes with Kestrel\'s provider settings.</string>
+    <string name="setup_voice_access_title">Turn off Voice Access</string>
+    <string name="setup_voice_access_detail">Optional: so that Voice Access and Kestrel do not react to the same words.</string>
+    <string name="setup_voice_access_warning">Voice Access and Kestrel are both on, so they may react to the same words.</string>
+
+    <string name="setup_open_accessibility">Open accessibility settings</string>
+    <string name="setup_allow">Allow</string>
+    <string name="setup_open_app_settings">Open app settings</string>
 </resources>

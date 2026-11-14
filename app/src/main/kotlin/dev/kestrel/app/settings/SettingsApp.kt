@@ -1,0 +1,73 @@
+package dev.kestrel.app.settings
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import dev.kestrel.app.R
+
+/** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
+enum class SettingsPage { HOME, CHECKLIST }
+
+/** What the button of a checklist step does. */
+enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS }
+
+/** Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture. */
+@Composable
+fun SettingsApp(status: SetupStatus, onAction: (SetupAction) -> Unit) {
+    var page by rememberSaveable { mutableStateOf(SettingsPage.HOME) }
+    BackHandler(enabled = page != SettingsPage.HOME) { page = SettingsPage.HOME }
+    val states = SetupChecklist.states(status)
+    Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        when (page) {
+            SettingsPage.HOME -> HomePage(states) { page = it }
+            SettingsPage.CHECKLIST -> ChecklistPage(states, onAction) { page = SettingsPage.HOME }
+        }
+    }
+}
+
+@Composable
+private fun HomePage(states: Map<SetupStep, StepState>, onOpen: (SettingsPage) -> Unit) {
+    val done = states.values.count { it == StepState.DONE }
+    Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineMedium)
+    PageEntry(
+        stringResource(R.string.settings_checklist),
+        pluralStringResource(R.plurals.settings_checklist_progress, states.size, done, states.size),
+    ) { onOpen(SettingsPage.CHECKLIST) }
+}
+
+@Composable
+private fun PageEntry(title: String, summary: String, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(summary, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+/** The Back button and the title at the top of every page except the home page. */
+@Composable
+internal fun PageHeader(title: String, onBack: () -> Unit) {
+    Column {
+        TextButton(onClick = onBack) { Text(stringResource(R.string.settings_back)) }
+        Text(title, style = MaterialTheme.typography.headlineSmall)
+    }
+}

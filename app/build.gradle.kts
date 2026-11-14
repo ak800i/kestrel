@@ -26,6 +26,12 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.startup.runtime)
     implementation(libs.kotlinx.coroutines.android)
+    testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    // Compose's test library brings Espresso 3.5, which fails on Android 17: it looks for InputManager.getInstance().
+    androidTestImplementation(libs.androidx.test.espresso.core)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.okhttp.mockwebserver3)
