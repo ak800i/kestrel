@@ -18,13 +18,17 @@ class TestHookReceiver : BroadcastReceiver() {
         val graph = (context.applicationContext as KestrelApplication).graph
         val pending = goAsync()
         graph.scope.launch {
-            val reply = try {
-                withTimeout(TIMEOUT_MILLIS) { TestHooks(graph).run(intent) }
-            } catch (error: Exception) {
-                HookReply.failed("the command failed: ${error.describeWithoutMessages()}")
+            try {
+                val reply = try {
+                    withTimeout(TIMEOUT_MILLIS) { TestHooks(graph, context.cacheDir).run(intent) }
+                } catch (error: Throwable) {
+                    // Errors too, such as a StackOverflowError: without an answer, adb would wait 60 s for nothing.
+                    HookReply.failed("the command failed: ${error.describeWithoutMessages()}")
+                }
+                pending.setResult(reply.code, reply.text, null)
+            } finally {
+                pending.finish()
             }
-            pending.setResult(reply.code, reply.text, null)
-            pending.finish()
         }
     }
 

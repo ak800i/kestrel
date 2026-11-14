@@ -11,6 +11,9 @@
 #   global -Action back|home|recent-apps|notifications|quick-settings|lock-screen|screenshot|power-menu|split-screen|play-pause
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
+# Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
+# 'type' types, so the script needs PowerShell 7.3 or newer.
+#Requires -Version 7.3
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
@@ -35,6 +38,17 @@ Assert-TestDevice -Serial $Serial
 # The device's shell reads the command line, so every text value is quoted for it.
 function ConvertTo-ShellText([string]$Value) { "'" + $Value.Replace("'", "'\''") + "'" }
 
+# Runs adb and reads its output as UTF-8, because screen text can be in any language.
+function Invoke-Adb {
+    $consoleEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    try {
+        (& (Get-Adb) -s $Serial @args) -join "`n"
+    } finally {
+        [Console]::OutputEncoding = $consoleEncoding
+    }
+}
+
 $extras = @()
 if ($Key) { $extras += "--es key $(ConvertTo-ShellText $Key)" }
 if ($PSBoundParameters.ContainsKey('Number')) { $extras += "--ei number $Number" }
@@ -49,20 +63,20 @@ if ($On) { $extras += "--ez on $On" }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
-# Screen text can be in any language, and adb passes it on as UTF-8.
-$consoleEncoding = [Console]::OutputEncoding
-[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-try {
-    $output = (& (Get-Adb) -s $Serial shell $broadcast) -join "`n"
-} finally {
-    [Console]::OutputEncoding = $consoleEncoding
-}
+$output = Invoke-Adb shell $broadcast
 
 $match = [regex]::Match($output, '(?s)Broadcast completed: result=(-?\d+)(?:, data="(.*)")?\s*$')
 if (-not $match.Success) { throw "Unexpected answer from the device:`n$output" }
 $data = $match.Groups[2].Value
 switch ([int]$match.Groups[1].Value) {
     -1 {
+        if ($Command -eq 'snapshot') {
+            # A snapshot can be larger than a broadcast's answer, so Kestrel answers with the path of a file in its own
+            # storage, which only a debug build lets adb read.
+            $file = $data
+            $data = Invoke-Adb exec-out run-as dev.kestrel cat $file
+            Invoke-Adb shell run-as dev.kestrel rm $file | Out-Null
+        }
         if ($Out) {
             $path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
             [IO.File]::WriteAllText($path, $data, [Text.UTF8Encoding]::new($false))

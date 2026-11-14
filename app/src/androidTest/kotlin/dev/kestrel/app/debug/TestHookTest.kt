@@ -6,20 +6,24 @@ import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.screen.model.ScreenJson
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class TestHookTest {
     @get:Rule
     val screen = ScreenServiceRule()
 
-    private val graph = (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as KestrelApplication).graph
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val graph = (context.applicationContext as KestrelApplication).graph
 
     @Test
     fun adbReadsTheState() {
@@ -43,9 +47,40 @@ class TestHookTest {
     fun adbReadsTheScreen() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 
-        val snapshot = ScreenJson.decode(answer(hook("SNAPSHOT")))
+        // The answer is the path of the snapshot's file in Kestrel's data folder, which hook.ps1 reads with run-as.
+        val file = File(context.dataDir, answer(hook("SNAPSHOT")))
 
-        assertTrue(snapshot.elements.any { it.label == "SEND" })
+        try {
+            assertTrue(ScreenJson.decode(file.readText()).elements.any { it.label == "SEND" })
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun adbScrollsAList() = runBlocking {
+        screen.open("ScrollActivity", "Scroll fixture")
+
+        assertEquals("done: action", answer(hook("SCROLL --es direction down")))
+
+        screen.awaitElement { it.label == "Row 25" }
+        Unit
+    }
+
+    @Test
+    fun adbAcceptsNamesWithHyphens() {
+        // Play/pause changes nothing on the screen while no media plays, so later tests find their fixtures.
+        assertEquals("done: global_action", answer(hook("GLOBAL --es action play-pause")))
+    }
+
+    @Test
+    fun screenCommandsSayWhenTheServiceIsOff() = runBlocking {
+        screen.shell("settings delete secure enabled_accessibility_services")
+        withTimeout(10_000) { graph.screen.first { it == null } }
+
+        val reply = hook("SNAPSHOT")
+
+        assertTrue(reply, reply.contains("result=1, data=\"error: Kestrel's accessibility service is off\""))
     }
 
     @Test

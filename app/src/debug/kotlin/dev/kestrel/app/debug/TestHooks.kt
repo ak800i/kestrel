@@ -12,6 +12,7 @@ import dev.kestrel.screen.model.ScreenJson
 import dev.kestrel.screen.overlay.NumbersMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /** A test hook's answer, which becomes the broadcast's result code and data. */
 internal data class HookReply(val code: Int, val text: String) {
@@ -29,7 +30,7 @@ internal data class HookReply(val code: Int, val text: String) {
  * Runs the test-hook commands (design spec, section 16.1). The intent's action is [ACTION_PREFIX] followed by the
  * command, and its extras are the arguments; `scripts/hook.ps1` lists them.
  */
-internal class TestHooks(private val graph: AppGraph) {
+internal class TestHooks(private val graph: AppGraph, private val cacheDir: File) {
     suspend fun run(intent: Intent): HookReply = try {
         HookReply.ok(answer(intent))
     } catch (error: HookError) {
@@ -43,7 +44,7 @@ internal class TestHooks(private val graph: AppGraph) {
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val actions = session.actions
         return when (command) {
-            "SNAPSHOT" -> ScreenJson.encode(session.snapshots.current().snapshot)
+            "SNAPSHOT" -> save(ScreenJson.encode(session.snapshots.current().snapshot))
             "TAP" -> done(tap(session, intent))
             "TYPE" -> done(actions.setText(target(session, intent), intent.requiredText()))
             "SCROLL" -> done(actions.scroll(intent.choice<ScrollDirection>(EXTRA_DIRECTION), optionalTarget(session, intent)))
@@ -54,6 +55,16 @@ internal class TestHooks(private val graph: AppGraph) {
             }
             else -> throw HookError("unknown command '$command'")
         }
+    }
+
+    /**
+     * Writes a snapshot to Kestrel's cache and answers with the file's path in Kestrel's data folder, because a
+     * broadcast's answer must stay under Android's limit of about 1 MB. `scripts/hook.ps1` reads the file with
+     * `run-as` and deletes it.
+     */
+    private suspend fun save(json: String): String = withContext(Dispatchers.IO) {
+        File(cacheDir, SNAPSHOT_FILE).writeText(json)
+        "${cacheDir.name}/$SNAPSHOT_FILE"
     }
 
     private suspend fun state(): String {
@@ -131,6 +142,7 @@ internal class TestHooks(private val graph: AppGraph) {
 
     companion object {
         const val ACTION_PREFIX = "dev.kestrel.hook."
+        const val SNAPSHOT_FILE = "hook-snapshot.json"
         private const val EXTRA_KEY = "key"
         private const val EXTRA_NUMBER = "number"
         private const val EXTRA_X = "x"
