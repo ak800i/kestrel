@@ -10,9 +10,11 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
@@ -104,6 +106,40 @@ class LogStoreTest {
         store.deleteHistory()
 
         assertEquals(0, dao.rows.size)
+    }
+
+    @Test
+    fun exportWritesBothLogsOldestFirstWithTimesInUtc() = runTest {
+        store.append(ActivityEvent(ActivityKind.NOTE, "first"))
+        now += 1_000
+        store.append(networkEvent("api.example.com"))
+        now += 1_000
+        store.append(ActivityEvent(ActivityKind.ACTION, "second", taskId = "task-1"))
+
+        val export = exported()
+
+        assertEquals("2001-09-09T01:46:42Z", export.exportedAt)
+        assertEquals(
+            listOf(
+                LogExport.Entry("2001-09-09T01:46:40Z", ActivityEvent(ActivityKind.NOTE, "first")),
+                LogExport.Entry("2001-09-09T01:46:42Z", ActivityEvent(ActivityKind.ACTION, "second", taskId = "task-1")),
+            ),
+            export.activity,
+        )
+        assertEquals(listOf(LogExport.Entry("2001-09-09T01:46:41Z", networkEvent("api.example.com"))), export.network)
+    }
+
+    @Test
+    fun exportIncludesMoreEntriesThanTheLogViewShows() = runTest {
+        repeat(LogStore.DEFAULT_LIMIT + 1) { store.append(ActivityEvent(ActivityKind.NOTE, "note $it")) }
+
+        assertEquals(LogStore.DEFAULT_LIMIT + 1, exported().activity.size)
+    }
+
+    private suspend fun exported(): LogExport {
+        val output = ByteArrayOutputStream()
+        store.export(output)
+        return Json.decodeFromString(LogExport.serializer(), output.toByteArray().decodeToString())
     }
 
     @Test

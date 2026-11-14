@@ -1,7 +1,9 @@
 package dev.kestrel.app.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,33 +27,58 @@ import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST }
+enum class SettingsPage { HOME, CHECKLIST, SAFETY, ACTIVITY_LOG, NETWORK_LOG }
 
 /** What the button of a checklist step does. */
 enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS }
 
-/** Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture. */
+/**
+ * Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture.
+ * [onExportLogs] asks the owner for a file to export both logs to.
+ */
 @Composable
-fun SettingsApp(status: SetupStatus, onAction: (SetupAction) -> Unit) {
+fun SettingsApp(status: SetupStatus, data: SettingsData, onAction: (SetupAction) -> Unit, onExportLogs: () -> Unit) {
     var page by rememberSaveable { mutableStateOf(SettingsPage.HOME) }
     BackHandler(enabled = page != SettingsPage.HOME) { page = SettingsPage.HOME }
     val states = SetupChecklist.states(status)
-    Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val home = { page = SettingsPage.HOME }
+    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {
-            SettingsPage.HOME -> HomePage(states) { page = it }
-            SettingsPage.CHECKLIST -> ChecklistPage(states, onAction) { page = SettingsPage.HOME }
+            SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
+            SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, onAction, home) }
+            SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
+            SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
+            SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
         }
     }
 }
 
+/** A page that scrolls as a whole. The log pages scroll their lists themselves. */
 @Composable
-private fun HomePage(states: Map<SetupStep, StepState>, onOpen: (SettingsPage) -> Unit) {
+private fun ScrollingPage(content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), content = content)
+}
+
+@Composable
+private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOpen: (SettingsPage) -> Unit) {
     val done = states.values.count { it == StepState.DONE }
+    val testMode by data.testMode.collectAsState(initial = null)
+    val logsSummary = stringResource(R.string.settings_logs_summary)
     Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineMedium)
     PageEntry(
         stringResource(R.string.settings_checklist),
         pluralStringResource(R.plurals.settings_checklist_progress, states.size, done, states.size),
     ) { onOpen(SettingsPage.CHECKLIST) }
+    PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
+    PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }
+    PageEntry(stringResource(R.string.settings_network_log), logsSummary) { onOpen(SettingsPage.NETWORK_LOG) }
+}
+
+@Composable
+private fun testModeSummary(on: Boolean?): String = when (on) {
+    true -> stringResource(R.string.settings_test_mode_on)
+    false -> stringResource(R.string.settings_test_mode_off)
+    null -> ""
 }
 
 @Composable

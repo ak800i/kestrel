@@ -6,22 +6,35 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.lifecycleScope
 import dev.kestrel.app.settings.SettingsApp
 import dev.kestrel.app.settings.SetupAction
 import dev.kestrel.app.settings.SetupStatus
 import dev.kestrel.app.settings.SetupStatusReader
+import dev.kestrel.app.settings.StoredSettingsData
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.time.LocalDate
 
 /** Kestrel's settings app (design spec, section 15). */
 class MainActivity : ComponentActivity() {
+    private val graph by lazy { (application as KestrelApplication).graph }
+    private val data by lazy { StoredSettingsData(graph) }
     private var status by mutableStateOf<SetupStatus?>(null)
+
+    private val exportLogs = registerForActivityResult(CreateDocument("application/json")) { uri -> uri?.let(::export) }
 
     /** The permissions that were missing when the request started, and for which Android would show no explanation. */
     private var missingWithoutRationale = emptySet<String>()
@@ -41,7 +54,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                status?.let { SettingsApp(it, ::perform) }
+                status?.let { SettingsApp(it, data, ::perform) { exportLogs.launch("kestrel-logs-${LocalDate.now()}.json") } }
             }
         }
     }
@@ -70,6 +83,25 @@ class MainActivity : ComponentActivity() {
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED && !shouldShowRequestPermissionRationale(it) }
             .toSet()
         permissions.launch(wanted)
+    }
+
+    /** Writes both logs to the file that the owner chose. The logs leave the phone only this way (design spec, 13.5). */
+    private fun export(uri: Uri) {
+        lifecycleScope.launch(graph.errors) {
+            val written = withContext(Dispatchers.IO) {
+                try {
+                    val output = contentResolver.openOutputStream(uri, "w") ?: return@withContext false
+                    output.use { graph.logs.export(it) }
+                    true
+                } catch (e: IOException) {
+                    false
+                } catch (e: SecurityException) {
+                    false
+                }
+            }
+            val message = if (written) R.string.logs_exported else R.string.logs_export_failed
+            Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun openAppSettings() {

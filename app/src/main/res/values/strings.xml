@@ -10,6 +10,35 @@
         <item quantity="other">%1$d of %2$d steps done</item>
     </plurals>
     <string name="settings_back">Back</string>
+    <string name="settings_safety">Safety</string>
+    <string name="settings_test_mode_on">Test mode is on</string>
+    <string name="settings_test_mode_off">Test mode is off</string>
+    <string name="settings_activity_log">Activity log</string>
+    <string name="settings_network_log">Network log</string>
+    <string name="settings_logs_summary">Encrypted, and kept for 7 days</string>
+
+    <string name="safety_test_mode">Test mode</string>
+    <string name="safety_test_mode_detail">While test mode is on, Kestrel sends and shares only to Telegram\'s Saved Messages, WhatsApp\'s Message yourself, Viber\'s My Notes and your own email address, and it makes no calls. Keep it on while you test Kestrel.</string>
+    <string name="safety_later">The safety mode, agent-free apps and screenshot approvals come with Kestrel\'s agent.</string>
+
+    <string name="logs_export">Export both logs</string>
+    <string name="logs_delete">Delete history</string>
+    <string name="logs_delete_question">Delete the activity log and the network log? This cannot be undone.</string>
+    <string name="logs_delete_confirm">Delete</string>
+    <string name="logs_delete_cancel">Cancel</string>
+    <string name="logs_loading">Reading the log…</string>
+    <string name="logs_empty">No entries in the last 7 days.</string>
+    <string name="logs_exported">Kestrel exported both logs.</string>
+    <string name="logs_export_failed">Kestrel could not write the file.</string>
+    <string name="log_kind_action">Action</string>
+    <string name="log_kind_note">Note</string>
+    <string name="log_kind_error">Error</string>
+    <string name="log_outcome_completed">Completed</string>
+    <string name="log_outcome_failed">Failed</string>
+    <string name="log_outcome_blocked">Blocked</string>
+    <string name="log_task">Task %1$s</string>
+    <string name="log_network_sizes">Sent %1$s, received %2$s</string>
+    <string name="log_network_status">Status %1$d</string>
 
     <string name="setup_state_done">Done</string>
     <string name="setup_state_to_do">To do</string>

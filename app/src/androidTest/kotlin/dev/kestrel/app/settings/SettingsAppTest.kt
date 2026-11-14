@@ -5,13 +5,22 @@ import androidx.annotation.StringRes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import dev.kestrel.app.R
+import dev.kestrel.privacy.logs.ActivityEvent
+import dev.kestrel.privacy.logs.ActivityKind
+import dev.kestrel.privacy.logs.LogEntry
+import dev.kestrel.privacy.logs.NetworkEvent
+import dev.kestrel.privacy.logs.NetworkOutcome
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 
@@ -20,12 +29,14 @@ class SettingsAppTest {
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val actions = mutableListOf<SetupAction>()
+    private val data = FakeSettingsData()
+    private var exports = 0
 
     private fun show(status: SetupStatus) {
-        compose.setContent { MaterialTheme { SettingsApp(status) { actions += it } } }
+        compose.setContent { MaterialTheme { SettingsApp(status, data, { actions += it }) { exports++ } } }
     }
 
-    private fun text(@StringRes id: Int): String = compose.activity.getString(id)
+    private fun text(@StringRes id: Int, vararg args: Any): String = compose.activity.getString(id, *args)
 
     private fun progress(done: Int): String =
         compose.activity.resources.getQuantityString(R.plurals.settings_checklist_progress, 8, done, 8)
@@ -91,6 +102,83 @@ class SettingsAppTest {
         openChecklist()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithText(progress).assertIsDisplayed()
+    }
+
+    @Test
+    fun theSafetyPageSwitchesTestMode() {
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_test_mode_on)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.settings_safety)).performClick()
+
+        compose.onNodeWithText(text(R.string.safety_test_mode)).assertIsOn().performClick()
+
+        compose.onNodeWithText(text(R.string.safety_test_mode)).assertIsOff()
+        assertFalse(data.testMode.value)
+    }
+
+    @Test
+    fun theLogPagesShowTheirEntries() {
+        data.activity = listOf(
+            LogEntry(2, 2_000, ActivityEvent(ActivityKind.ACTION, "Tapped Send", taskId = "task-1")),
+            LogEntry(1, 1_000, ActivityEvent(ActivityKind.NOTE, "Started")),
+        )
+        data.network = listOf(
+            LogEntry(3, 3_000, NetworkEvent("POST", "api.example.com", "/v1/chat", 2_048, 512, 200, NetworkOutcome.COMPLETED)),
+        )
+        show(NOTHING_SET_UP)
+
+        compose.onNodeWithText(text(R.string.settings_activity_log)).performClick()
+        compose.onNodeWithText("Tapped Send").assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.log_task, "task-1")).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.log_kind_note)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+
+        compose.onNodeWithText(text(R.string.settings_network_log)).performClick()
+        compose.onNodeWithText("POST api.example.com/v1/chat").assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.log_network_status, 200)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.log_outcome_completed)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.logs_export)).performClick()
+        assertEquals(1, exports)
+    }
+
+    @Test
+    fun deleteHistoryAsksFirst() {
+        data.activity = listOf(LogEntry(1, 1_000, ActivityEvent(ActivityKind.NOTE, "Started")))
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_activity_log)).performClick()
+
+        compose.onNodeWithText(text(R.string.logs_delete)).performClick()
+        compose.onNodeWithText(text(R.string.logs_delete_cancel)).performClick()
+        compose.onNodeWithText("Started").assertIsDisplayed()
+        assertEquals(0, data.deletions)
+
+        compose.onNodeWithText(text(R.string.logs_delete)).performClick()
+        compose.onNodeWithText(text(R.string.logs_delete_question)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.logs_delete_confirm)).performClick()
+
+        compose.onNodeWithText(text(R.string.logs_empty)).assertIsDisplayed()
+        assertEquals(1, data.deletions)
+    }
+
+    private class FakeSettingsData : SettingsData {
+        override val testMode = MutableStateFlow(true)
+        var activity = emptyList<LogEntry<ActivityEvent>>()
+        var network = emptyList<LogEntry<NetworkEvent>>()
+        var deletions = 0
+
+        override suspend fun setTestMode(on: Boolean) {
+            testMode.value = on
+        }
+
+        override suspend fun activityLog() = activity
+
+        override suspend fun networkLog() = network
+
+        override suspend fun deleteHistory() {
+            deletions++
+            activity = emptyList()
+            network = emptyList()
+        }
     }
 
     private companion object {

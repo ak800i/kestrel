@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import java.io.OutputStream
+import java.time.Instant
 import javax.crypto.AEADBadTagException
 
 data class LogEntry<T>(val id: Long, val timestampMillis: Long, val event: T)
@@ -25,6 +27,7 @@ class LogStore(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val exportJson = Json { prettyPrint = true }
 
     @Volatile
     private var lastPurgeMillis: Long? = null
@@ -75,6 +78,23 @@ class LogStore(
             delay(PURGE_CHECK_MILLIS)
         }
     }
+
+    /**
+     * Writes both logs to [output] as a [LogExport] in JSON, with every entry, not only the newest. The logs leave the
+     * phone only this way, when the owner exports them to a file of their choice (design spec, section 13.5).
+     */
+    suspend fun export(output: OutputStream) = withContext(dispatcher) {
+        val export = LogExport(
+            exportedAt = isoTime(clock()),
+            activity = read(ACTIVITY, ActivityEvent.serializer(), Int.MAX_VALUE).asReversed().map(::exported),
+            network = read(NETWORK, NetworkEvent.serializer(), Int.MAX_VALUE).asReversed().map(::exported),
+        )
+        output.write(exportJson.encodeToString(LogExport.serializer(), export).encodeToByteArray())
+    }
+
+    private fun <T> exported(entry: LogEntry<T>) = LogExport.Entry(isoTime(entry.timestampMillis), entry.event)
+
+    private fun isoTime(millis: Long) = Instant.ofEpochMilli(millis).toString()
 
     /** "Delete history" wipes both logs (design spec, section 13.5). */
     suspend fun deleteHistory(): Int = withContext(dispatcher) { dao.deleteAll() }
