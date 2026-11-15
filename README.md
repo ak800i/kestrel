@@ -90,7 +90,7 @@ Open Kestrel from the launcher. The first entry of its settings app is the setup
 5. Allow unrestricted battery use. The step's button opens Kestrel's app settings, where the battery setting is. On a Samsung phone, also add Kestrel to "Never sleeping apps" in the battery settings.
 6. Optionally, make Kestrel the default digital assistant, for the side key and earbuds. This step comes with Kestrel's voice features.
 7. Sign in to an AI provider and choose the models. This step comes with Kestrel's provider settings.
-8. Optionally, turn off Voice Access, so that it and Kestrel do not react to the same words. The checklist warns while both are on, and the step's button then opens Android's accessibility settings.
+8. Optionally, turn off Voice Access, so that it and Kestrel do not react to the same words. While Voice Access is on, the step's button opens Android's accessibility settings, and the checklist warns while both are on.
 
 The settings app also has these pages:
 
