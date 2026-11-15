@@ -10,15 +10,20 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.CancellationSignal
 import dev.kestrel.app.AppGraph
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import java.security.MessageDigest
 import kotlin.coroutines.resume
 
-/** The test-hook commands of spike S1. `scripts/hook.ps1` lists them. */
+/** The test-hook commands of spikes S1, S3 and S7. `scripts/hook.ps1` lists them. */
 internal class SpikeHooks(private val context: Context, private val graph: AppGraph) {
-    fun run(command: String, intent: Intent): String = when (command) {
+    suspend fun run(command: String, intent: Intent): String = when (command) {
+        "FILES" -> files(intent)
         "LISTEN" -> listen(intent)
         "LISTEN_NOTIFICATION" -> listenNotification()
         "LISTEN_AFTER_BOOT" -> {
@@ -26,6 +31,7 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
             "Kestrel records 15 s after its accessibility service connects at the next start of its process"
         }
         "LOCATION" -> location(intent)
+        "WATCH" -> watch(intent)
         else -> results(intent)
     }
 
@@ -89,6 +95,52 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
         }
     }
 
+    /**
+     * Lists the files in Kestrel's external files folder, where `adb push` puts the model files (spike S7), with their
+     * sizes and SHA-256 hashes, and the folders that Kestrel may not read. With `--es create <folder>`, Kestrel first
+     * creates that folder in it.
+     */
+    private suspend fun files(intent: Intent): String = withContext(Dispatchers.IO) {
+        intent.getStringExtra(EXTRA_CREATE)?.let { context.getExternalFilesDir(it) }
+        val root = context.getExternalFilesDir(null) ?: return@withContext "no external files folder"
+        val lines = mutableListOf<String>()
+        val files = root.walkTopDown().onFail { folder, _ -> lines += "${folder.relativeTo(root).invariantSeparatorsPath}/ unreadable" }
+        for (file in files) {
+            if (file.isFile) lines += "${file.relativeTo(root).invariantSeparatorsPath} ${file.length()} ${sha256(file)}"
+        }
+        lines.joinToString("\n").ifEmpty { "no files" }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(BUFFER_BYTES)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Counts the owner's touches that the touch watcher reports for a few seconds, so that spike S3 can be checked with
+     * a real finger. Kestrel's own gestures do not count.
+     */
+    private suspend fun watch(intent: Intent): String {
+        val session = graph.screen.value ?: return "Kestrel's accessibility service is off"
+        val seconds = intent.getIntExtra(EXTRA_SECONDS, DEFAULT_WATCH_SECONDS).coerceIn(1, MAX_WATCH_SECONDS)
+        session.startTouchWatcher()
+        try {
+            var touches = 0
+            withTimeoutOrNull(seconds * 1_000L) { session.ownerTouches.collect { touches++ } }
+            return "owner touches in $seconds s: $touches"
+        } finally {
+            session.stopTouchWatcher()
+        }
+    }
+
     private fun results(intent: Intent): String {
         if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
             SpikeListening.clearResults(context)
@@ -98,17 +150,23 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
     }
 
     companion object {
-        val COMMANDS = setOf("LISTEN", "LISTEN_NOTIFICATION", "LISTEN_AFTER_BOOT", "LOCATION", "SPIKE_RESULTS")
+        val COMMANDS = setOf("FILES", "LISTEN", "LISTEN_NOTIFICATION", "LISTEN_AFTER_BOOT", "LOCATION", "SPIKE_RESULTS", "WATCH")
+        private const val BUFFER_BYTES = 1 shl 16
         private const val CHANNEL = "spike"
         private const val NOTIFICATION_ID = 7_002
         private const val ACTION_LABEL = "Start listening"
         private const val NOTIFICATION_TIMEOUT_MILLIS = 60_000L
         private const val DEFAULT_DELAY_SECONDS = 15
         private const val DEFAULT_SECONDS = 3
+        private const val DEFAULT_WATCH_SECONDS = 10
+
+        // The hook's answer must come within the receiver's 20 s.
+        private const val MAX_WATCH_SECONDS = 15
         private const val LOCATION_TIMEOUT_MILLIS = 15_000L
         private const val EXTRA_SOURCE = "source"
         private const val EXTRA_DELAY = "delay"
         private const val EXTRA_SECONDS = "seconds"
         private const val EXTRA_CLEAR = "clear"
+        private const val EXTRA_CREATE = "create"
     }
 }

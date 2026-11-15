@@ -20,6 +20,13 @@
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
 #   spike-results [-Clear]                  what the spike found: whether each step worked, never the audio or the place
+# Spike S3 with a real finger:
+#   watch [-Seconds n]                      counts the touches of the owner that the touch watcher reports during n
+#                                           seconds (10 by default, at most 15); Kestrel's own gestures do not count
+# Spike S7 (scripts\spike-s7.ps1 runs it):
+#   files [-Create folder]                  the files in Kestrel's external files folder, with sizes and SHA-256
+#                                           hashes, and the folders that Kestrel may not read; -Create makes Kestrel
+#                                           create that folder in it first
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -29,7 +36,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'listen',
-        'listen-notification', 'listen-after-boot', 'location', 'spike-results')][string]$Command,
+        'listen-notification', 'listen-after-boot', 'location', 'spike-results', 'files', 'watch')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -44,7 +51,8 @@ param(
     [string]$Source,
     [int]$DelaySeconds = -1,
     [int]$Seconds = -1,
-    [switch]$Clear
+    [switch]$Clear,
+    [string]$Create
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -80,6 +88,7 @@ if ($Source) { $extras += "--es source $(ConvertTo-ShellText $Source)" }
 if ($DelaySeconds -ge 0) { $extras += "--ei delay $DelaySeconds" }
 if ($Seconds -gt 0) { $extras += "--ei seconds $Seconds" }
 if ($Clear) { $extras += '--ez clear true' }
+if ($Create) { $extras += "--es create $(ConvertTo-ShellText $Create)" }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
