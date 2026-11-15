@@ -1,6 +1,6 @@
 # Runs the device tests of Kestrel's speech engines (the package dev.kestrel.app.voice) on one test device (design spec,
 # section 16.4). They need the speech models, so the script installs Kestrel, copies the models with
-# scripts\push-models.ps1, and keeps Kestrel and its test app installed afterwards, because uninstalling Kestrel deletes
+# scripts\push-models.ps1, and keeps Kestrel and its test APK installed afterwards, because uninstalling Kestrel deletes
 # the models. The tests skip themselves when the models are missing, so a run with a skipped test fails. Afterwards the
 # script prints the timings and memory use that the tests logged. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554

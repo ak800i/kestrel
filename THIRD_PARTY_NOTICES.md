@@ -38,7 +38,7 @@ sherpa-onnx's build links these projects into its library `libsherpa-onnx-jni.so
 
 ## Speech models
 
-Kestrel's app does not contain its speech models. `scripts\push-models.ps1` downloads them from the projects below and copies them to the phone, and `models/manifest.json` lists every file with its SHA-256 hash.
+Kestrel's app does not contain its speech models. `scripts\push-models.ps1` downloads them from sherpa-onnx's releases on GitHub and from Hugging Face, at the addresses in `models/manifest.json`, and copies them to the phone. The manifest lists every file with its SHA-256 hash. The table below names the projects that created the models, and their licences.
 
 | Model | Licence | Project |
 |---|---|---|
