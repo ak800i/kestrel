@@ -42,7 +42,9 @@ function Get-Snapshot {
     }
 }
 
-function Get-Names($Element) { @($Element.label, $Element.text, $Element.contentDescription, $Element.hint) | Where-Object { $_ } }
+function Get-Names($Element) {
+    @($Element.label, $Element.text, $Element.contentDescription, $Element.hint, $Element.supplementalDescription) | Where-Object { $_ }
+}
 
 function Test-Name($Element, [string]$Name) { (Get-Names $Element) -contains $Name }
 
