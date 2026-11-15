@@ -92,19 +92,23 @@ class ScreenServiceRule : ExternalResource() {
         return null
     }
 
-    /** Waits until an element that matches [predicate] is on the screen. */
+    /**
+     * Waits until an element that matches [predicate] is on the screen. The failure message lists only the fixture app's
+     * labels, because on a phone the status bar's notification icons carry the text of the owner's notifications, such
+     * as login codes, and the message goes to logcat and to the test reports.
+     */
     suspend fun awaitElement(timeoutMillis: Long = 5_000, predicate: (ScreenElement) -> Boolean): ScreenElement {
         var labels: List<String?> = emptyList()
         return withTimeoutOrNull(timeoutMillis) {
             var found: ScreenElement? = null
             while (found == null) {
                 val elements = session.snapshots.current().snapshot.elements
-                labels = elements.map { it.label }
+                labels = elements.filter { it.packageName == FIXTURES }.map { it.label }
                 found = elements.firstOrNull(predicate)
                 if (found == null) delay(100)
             }
             found
-        } ?: throw AssertionError("No matching element appeared within $timeoutMillis ms. The screen showed $labels")
+        } ?: throw AssertionError("No matching element appeared within $timeoutMillis ms. The fixture app showed $labels")
     }
 
     companion object {
