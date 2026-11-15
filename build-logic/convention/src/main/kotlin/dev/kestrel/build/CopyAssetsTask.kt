@@ -20,7 +20,7 @@ import javax.inject.Inject
  */
 abstract class CopyAssetsTask : DefaultTask() {
     @get:InputFiles
-    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val files: ConfigurableFileCollection
 
     /** The folder in the assets, such as `licences`. */
@@ -35,9 +35,10 @@ abstract class CopyAssetsTask : DefaultTask() {
 
     @TaskAction
     fun copy() {
+        // Syncing the whole output folder removes everything else from it, such as the files of an earlier `folder`.
         fileSystem.sync {
-            from(files)
-            into(outputDirectory.dir(folder))
+            into(outputDirectory)
+            into(folder.get()) { from(files) }
         }
     }
 }
