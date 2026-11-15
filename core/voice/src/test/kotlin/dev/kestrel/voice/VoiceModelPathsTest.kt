@@ -25,4 +25,11 @@ class VoiceModelPathsTest {
         // The voice uses espeak-ng's voice "en".
         assertEquals(Engine.TTS, engineOf("${VoiceEngines.ESPEAK_DATA}/lang/gmw/en"))
     }
+
+    @Test
+    fun theKeywordSpottersFilesAreInTheManifest() {
+        for (path in listOf(VoiceEngines.KWS_ENCODER, VoiceEngines.KWS_DECODER, VoiceEngines.KWS_JOINER, VoiceEngines.KWS_TOKENS)) {
+            assertEquals(path, Engine.KWS, engineOf(path))
+        }
+    }
 }
