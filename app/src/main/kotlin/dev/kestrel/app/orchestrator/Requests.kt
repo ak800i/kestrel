@@ -2,8 +2,11 @@ package dev.kestrel.app.orchestrator
 
 /** What a transcript asks of Kestrel itself (design spec, sections 8.3, 8.5 and 11.10, and Appendix A). */
 sealed interface Request {
-    /** "Kestrel, [task]". [text] is the task as the owner said it, without the name. */
-    data class Task(val text: String) : Request {
+    /**
+     * "Kestrel, [task]". [text] is the task as the owner said it, without the name. [stopFirst]: the owner said "stop" or
+     * "cancel" before the task, as in "Stop. Kestrel, open Viber.", so a running task should be cancelled first.
+     */
+    data class Task(val text: String, val stopFirst: Boolean = false) : Request {
         override fun toString() = "Task(${text.length} characters)"
     }
 
@@ -13,7 +16,7 @@ sealed interface Request {
     /** "Kestrel, wake up": back from the paused mode to listening. */
     data object WakeUp : Request
 
-    /** "Stop" or "cancel"; [named] when the owner said "Kestrel" first. */
+    /** "Stop" or "cancel"; [named] when the owner also said "Kestrel", as in "Kestrel, stop" or "Stop it, Kestrel". */
     data class Stop(val named: Boolean) : Request
 
     /** "Stop listening": the paused mode. */
@@ -30,65 +33,127 @@ sealed interface Request {
 
 /**
  * Reads what a transcript asks of Kestrel (design spec, section 8.3). The recogniser may misspell the name, for example
- * as "Kestral", "Castrel" or "Kes trel", so a word counts as the name when it has at least five letters, starts with "k"
- * or "c" and is at most two letters away from "kestrel". When the keyword spotter heard the name at the start of the
- * utterance, three letters are allowed, and the name may also be the second word, as in "Hey Kestrel".
+ * as "Kestral", "Castrel" or "Kes trel", so a word, or two words together, count as the name when they have at least
+ * five letters, start with "k" or "c" and are at most two letters away from "kestrel". When the keyword spotter heard
+ * the name at the start of the utterance, three letters are allowed.
+ *
+ * The checks run in this order:
+ * 1. "Stop Kestrel", maybe followed by "please" or "now", turns Kestrel off.
+ * 2. "Stop" or "cancel" with only filler words, such as "No, stop!" or "Cancel the task", is a stop. The name may come
+ *    anywhere among them, as in "Stop it, Kestrel"; then the stop is named.
+ * 3. The name starts the utterance, or, when the spotter heard it, comes after one short word such as "hey", "okay" or
+ *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
+ *    "wake up", "stop listening", or a task. A task after "stop" or "cancel" asks to cancel a running task first.
+ * 4. Otherwise "stop listening" pauses, and "wake up" or "stop listening" followed by the name count too.
+ *    Everything else is for the instant commands.
+ *
+ * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up".
  */
 object Requests {
     private const val NAME = "kestrel"
     private const val HEARD_LIMIT = 2
     private const val SPOTTED_LIMIT = 3
-    private val WORD = Regex("""[\p{L}\p{N}']+""")
+    private val WORD = Regex("""[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*""")
     private val STOP_WORDS = setOf("stop", "cancel")
 
-    // Words that may come with "stop" or "cancel", as in "Okay, stop it".
-    private val FILLERS = setOf("it", "that", "this", "please", "now", "ok", "okay")
+    // Words that may come with "stop" or "cancel", as in "Okay, stop it" or "No, cancel the task".
+    private val FILLERS = setOf(
+        "it", "that", "this", "please", "now", "ok", "okay", "no", "wait", "hey", "oh", "just", "right", "all",
+        "everything", "the", "task",
+    )
+
+    // The words that may come before the name when the spotter heard it, as in "Hey Kestrel" or "Stop. Kestrel, ...".
+    private val BEFORE_NAME = setOf("hey", "hi", "hello", "ok", "okay", "oh", "so", "um", "uh", "well", "yo") + STOP_WORDS
+
+    // Words that Kestrel's own phrases may come with, as in "Kestrel, wake up, please".
+    private val POLITE = setOf("please", "now", "ok", "okay")
 
     /** Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start. */
     fun read(transcript: String, spotted: Boolean): Request? {
         val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
         if (words.isEmpty()) return null
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
-        // Before the name: the spotter also fires at the start of "Stop Kestrel".
-        if (words.size in 2..3 && words[0].text == "stop" && nameEnd(words.drop(1), limit, spotted = false) == words.size - 1) {
-            return Request.TurnOff
+        if (isStopKestrel(words, limit)) return Request.TurnOff
+        readStop(words, limit)?.let { return it }
+        val start = when {
+            nameAt(words, 0, limit) > 0 -> 0
+            spotted && words[0].text in BEFORE_NAME && nameAt(words, 1, limit) > 0 -> 1
+            else -> -1
         }
-        val name = nameEnd(words, limit, spotted)
-        if (name > 0) return named(transcript, words.drop(name))
+        if (start >= 0) {
+            var rest = words.drop(start + nameAt(words, start, limit))
+            var again = nameAt(rest, 0, limit)
+            while (again > 0) {
+                rest = rest.drop(again)
+                again = nameAt(rest, 0, limit)
+            }
+            return named(transcript, rest, limit, stopFirst = start == 1 && words[0].text in STOP_WORDS)
+        }
+        val phrase = phrase(words)
+        val trailingName = nameBefore(words, words.size, limit)
+        val beforeName = if (trailingName > 0) phrase(words.dropLast(trailingName)) else null
         return when {
-            isStop(words) -> Request.Stop(named = false)
-            words.joinToString(" ") { it.text } == "stop listening" -> Request.PauseListening
+            phrase == "stop listening" || beforeName == "stop listening" -> Request.PauseListening
+            beforeName == "wake up" -> Request.WakeUp
             else -> Request.Other(transcript.trim())
         }
     }
 
     private class Word(val text: String, val range: IntRange)
 
+    // "Stop Kestrel" is checked before the name, because the spotter also fires at its start.
+    private fun isStopKestrel(words: List<Word>, limit: Int): Boolean {
+        if (words.size < 2 || words[0].text != "stop") return false
+        val end = nameAt(words, 1, limit)
+        return end > 0 && words.drop(1 + end).all { it.text == "please" || it.text == "now" }
+    }
+
+    /** A stop when [words] are "stop" or "cancel" with only fillers and names; it is named when a name is among them. */
+    private fun readStop(words: List<Word>, limit: Int): Request.Stop? {
+        if (words.none { it.text in STOP_WORDS }) return null
+        var named = false
+        var i = 0
+        while (i < words.size) {
+            if (words[i].text in STOP_WORDS || words[i].text in FILLERS) {
+                i++
+                continue
+            }
+            val name = nameAt(words, i, limit)
+            if (name == 0) return null
+            named = true
+            i += name
+        }
+        return Request.Stop(named)
+    }
+
     /** What [rest], the words after the name, ask for. */
-    private fun named(transcript: String, rest: List<Word>): Request = when {
-        rest.isEmpty() -> Request.Name
-        isStop(rest) -> Request.Stop(named = true)
-        else -> when (rest.joinToString(" ") { it.text }) {
+    private fun named(transcript: String, rest: List<Word>, limit: Int, stopFirst: Boolean): Request {
+        if (rest.isEmpty()) return Request.Name
+        if (readStop(rest, limit) != null) return Request.Stop(named = true)
+        return when (phrase(rest)) {
             "wake up" -> Request.WakeUp
             "stop listening" -> Request.PauseListening
-            else -> Request.Task(transcript.substring(rest.first().range.first).trim())
+            else -> Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst)
         }
     }
 
-    private fun isStop(words: List<Word>): Boolean =
-        words.any { it.text in STOP_WORDS } && words.all { it.text in STOP_WORDS || it.text in FILLERS }
+    /** [words] without the polite words, with "wakeup" read as "wake up". */
+    private fun phrase(words: List<Word>): String =
+        words.filter { it.text !in POLITE }.joinToString(" ") { if (it.text == "wakeup") "wake up" else it.text }
 
-    /**
-     * How many of the first words end with the name, or 0. The name is one word or two that make it together, and it is
-     * the first word, or, when the spotter heard it, also the second.
-     */
-    private fun nameEnd(words: List<Word>, limit: Int, spotted: Boolean): Int {
-        for (first in 0..(if (spotted) 1 else 0)) {
-            if (first >= words.size) break
-            if (isName(words[first].text, limit)) return first + 1
-            if (first + 1 < words.size && isName(words[first].text + words[first + 1].text, limit)) return first + 2
-        }
-        return 0
+    /** How many words, one or two, make the name from [start], or 0. */
+    private fun nameAt(words: List<Word>, start: Int, limit: Int): Int = when {
+        start >= words.size -> 0
+        isName(words[start].text, limit) -> 1
+        start + 1 < words.size && isName(words[start].text + words[start + 1].text, limit) -> 2
+        else -> 0
+    }
+
+    /** How many words, one or two, make the name that ends just before [end], or 0. */
+    private fun nameBefore(words: List<Word>, end: Int, limit: Int): Int = when {
+        end >= 1 && isName(words[end - 1].text, limit) -> 1
+        end >= 2 && isName(words[end - 2].text + words[end - 1].text, limit) -> 2
+        else -> 0
     }
 
     private fun isName(word: String, limit: Int): Boolean =
