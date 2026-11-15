@@ -1,8 +1,8 @@
 # Tests and checks Kestrel's PowerShell scripts. It runs the Pester tests in scripts\tests in Windows PowerShell 5.1 and
 # in PowerShell 7, then checks every script with PSScriptAnalyzer and scripts\PSScriptAnalyzerSettings.psd1, and exits
 # with 1 if anything failed. CI runs it on every push. It needs these modules, installed once for the current user:
-#   in powershell and in pwsh:  Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -SkipPublisherCheck
-#   in pwsh:                    Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser
+#   in powershell and in pwsh:  Install-Module Pester -RequiredVersion 6.2.0 -Scope CurrentUser -SkipPublisherCheck -Force
+#   in pwsh:                    Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
 # Example: scripts\test-scripts.ps1
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseCompatibleCommands', 'Invoke-Pester/Configuration',
     Justification = 'The script loads Pester 6.2.0; the 5.1 profile knows only the Pester 3.4 that comes with Windows PowerShell.')]
@@ -16,10 +16,14 @@ if ($Part -eq 'Tests') {
     Import-Module Pester -RequiredVersion 6.2.0
     $configuration = New-PesterConfiguration
     $configuration.Run.Path = Join-Path $PSScriptRoot 'tests'
-    # Ends the shell with the number of failed tests as its exit code.
-    $configuration.Run.Exit = $true
-    Invoke-Pester -Configuration $configuration
-    exit 0
+    $configuration.Run.PassThru = $true
+    $result = Invoke-Pester -Configuration $configuration
+    # A run that finds no tests fails too, for example when a test file is no longer discovered.
+    if ($result.TotalCount -eq 0) {
+        'Pester found no tests.'
+        exit 1
+    }
+    exit $(if ($result.Result -eq 'Passed') { 0 } else { 1 })
 }
 
 if ($Part -eq 'Analysis') {
