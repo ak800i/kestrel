@@ -1,0 +1,180 @@
+package dev.kestrel.voice.listen
+
+import dev.kestrel.voice.Keyword
+import dev.kestrel.voice.KeywordSpotter
+import dev.kestrel.voice.Recognizer
+import dev.kestrel.voice.SAMPLE_RATE
+import dev.kestrel.voice.SpeechDetector
+import dev.kestrel.voice.Utterance
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
+import kotlin.coroutines.CoroutineContext
+
+/** Which utterances the pipeline transcribes (design spec, sections 8.4 and 8.5). */
+enum class Recognition {
+    /** Every utterance, while Kestrel listens. */
+    ALL,
+
+    /** Only the utterances that start with "Kestrel", while Kestrel is paused. */
+    NAMED,
+
+    /** None, while Kestrel speaks. The keyword spotter still listens. */
+    NONE,
+}
+
+/** What the pipeline heard. */
+sealed interface VoiceEvent {
+    /**
+     * The transcript of an utterance of [seconds] that took [millis] to transcribe; it may be empty. [named] is true when
+     * the keyword spotter heard "Kestrel" at its start.
+     */
+    data class Heard(val text: String, val named: Boolean, val seconds: Float, val millis: Long) : VoiceEvent {
+        override fun toString() = "Heard(${text.length} characters, named=$named, seconds=$seconds, millis=$millis)"
+    }
+
+    /** The keyword spotter heard [keyword], and it was not Kestrel's own voice. */
+    data class Spotted(val keyword: Keyword) : VoiceEvent
+
+    /** Transcribing an utterance failed; the pipeline goes on with the next one. */
+    data class Failed(val error: Exception) : VoiceEvent
+}
+
+/**
+ * Turns the microphone's frames into transcripts and keyword events (design spec, sections 7.5 and 8.1–8.4). The speech
+ * detector and the keyword spotter hear every frame; the endpointer decides when an utterance has ended, and the
+ * recogniser transcribes the utterances that [recognition] asks for, one at a time in [recognitionContext], with the
+ * boost words that [boostWords] returns at that moment. [isOwnVoice] tells which keyword hits came from Kestrel's own
+ * voice. The pipeline does not own the engines: whoever opened them closes them, after [close]. Call [accept] and
+ * [pause] from one thread only, the microphone's.
+ */
+class ListeningPipeline(
+    private val detector: SpeechDetector,
+    private val spotter: KeywordSpotter,
+    private val recognizer: Recognizer,
+    private val boostWords: suspend () -> List<String>,
+    private val isOwnVoice: (Keyword) -> Boolean,
+    scope: CoroutineScope,
+    recognitionContext: CoroutineContext,
+) {
+    private val output = Channel<VoiceEvent>(Channel.UNLIMITED)
+    private val queue = Channel<Speech>(Channel.UNLIMITED)
+    private val endpointer = Endpointer()
+    private val worker = scope.launch(recognitionContext) {
+        for (speech in queue) transcribe(speech)
+    }
+
+    // Only the microphone's thread uses these. Positions count samples since the audio started.
+    private var position = 0L
+    private var detectorStart = 0L
+    private var lastRecognition = Recognition.ALL
+    private var resumeFrom = 0L
+    private var interrupted = false
+    private var interruption: Long? = null
+
+    /** What the pipeline heard, in order. Collect it once. */
+    val events: Flow<VoiceEvent> = output.receiveAsFlow()
+
+    /** Which utterances to transcribe from the next frame on. Any thread may set it. */
+    @Volatile
+    var recognition: Recognition = Recognition.ALL
+
+    /** Feeds one frame of 16 kHz samples. */
+    fun accept(frame: FloatArray) {
+        val wanted = recognition
+        if (lastRecognition == Recognition.NONE && wanted != Recognition.NONE) resume()
+        lastRecognition = wanted
+        val utterances = detector.accept(frame).map { Utterance(detectorStart + it.startSample, it.samples) }
+        val hits = spotter.accept(frame).filterNot { isOwnVoice(it.keyword) }
+        position += frame.size
+        val names = mutableListOf<Long>()
+        for (hit in hits) {
+            if (hit.keyword == Keyword.KESTREL) {
+                names += position
+                // Section 8.4: "Kestrel" while Kestrel speaks interrupts it.
+                if (wanted == Recognition.NONE) interruption = position
+            }
+            output.trySend(VoiceEvent.Spotted(hit.keyword))
+        }
+        for (speech in endpointer.accept(utterances, names, detector.hearsSpeech, position)) {
+            val kept = afterResume(speech) ?: continue
+            val transcribe = when (wanted) {
+                Recognition.ALL -> true
+                Recognition.NAMED -> kept.named
+                Recognition.NONE -> false
+            }
+            if (transcribe) queue.trySend(kept)
+        }
+    }
+
+    /**
+     * Drops the utterance in progress after the microphone stopped, so that it does not run into the next audio. The
+     * microphone stops only when the screen turns off or locks or when Kestrel turns off, and no request should start
+     * then.
+     */
+    fun pause() {
+        detector.finish()
+        detectorStart = position
+        endpointer.finish()
+        interruption = null
+    }
+
+    /** Stops transcribing and drops the utterances that wait. Returns when the recogniser is no longer in use. */
+    suspend fun close() {
+        queue.cancel()
+        worker.cancelAndJoin()
+        output.close()
+    }
+
+    /**
+     * Recognition resumes after Kestrel spoke. What the microphone heard until now is Kestrel's own voice. When the owner
+     * broke in with "Kestrel", an utterance that starts with the name is the owner's and counts in full; one that began
+     * earlier began with Kestrel's voice, which also runs under and after the name, so it is dropped (section 8.4).
+     */
+    private fun resume() {
+        val hit = interruption
+        interruption = null
+        interrupted = hit != null && position - hit <= INTERRUPTION
+        resumeFrom = if (hit != null && interrupted) hit - NAME_LENGTH else position
+    }
+
+    /** [speech] without its part before [resumeFrom], or null when too little is left or the owner broke into it. */
+    private fun afterResume(speech: Speech): Speech? = when {
+        speech.startSample >= resumeFrom -> speech
+        interrupted || speech.endSample - resumeFrom < SHORTEST -> null
+        else -> Speech(
+            resumeFrom,
+            speech.samples.copyOfRange((resumeFrom - speech.startSample).toInt(), speech.samples.size),
+            speech.named,
+        )
+    }
+
+    private suspend fun transcribe(speech: Speech) {
+        val started = System.nanoTime()
+        val event = try {
+            val transcript = recognizer.transcribe(speech.samples, boostWords())
+            VoiceEvent.Heard(transcript.text, speech.named, speech.seconds, (System.nanoTime() - started) / 1_000_000)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            VoiceEvent.Failed(e)
+        }
+        output.trySend(event)
+    }
+
+    private companion object {
+        // A "Kestrel" that interrupts Kestrel's speech counts when recognition resumes at most 3 s later.
+        const val INTERRUPTION = 3L * SAMPLE_RATE
+
+        // An utterance that starts with the name that broke in starts at most this long before the hit: "Kestrel" takes
+        // about half a second, and the spotter reports it a little after it ends.
+        const val NAME_LENGTH = 3L * SAMPLE_RATE / 2
+
+        // A rest shorter than the speech detector's own minimum of 0.25 s is dropped.
+        const val SHORTEST = SAMPLE_RATE / 4L
+    }
+}
