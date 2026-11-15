@@ -55,7 +55,8 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
                 create().also { created = it }
             }
         } catch (e: CancellationException) {
-            created?.close()
+            // An exception from close() must not hide the cancellation.
+            runCatching { created?.close() }.exceptionOrNull()?.let(e::addSuppressed)
             throw e
         }
     }
@@ -67,22 +68,29 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
 
     /**
      * Writes [text] to [name] in [workFolder] through a temporary file of its own, so that two loads at once never read a
-     * file that the other is writing: sherpa-onnx ends the process on a torn word piece.
+     * file that the other is writing: sherpa-onnx ends the process on a torn word piece. A process that ended during a
+     * write left its temporary file behind, so this first deletes the temporary files of [name]. The writes take one lock,
+     * so that this never deletes the temporary file of a write that is going on in this process.
      */
-    private fun writeWorkFile(name: String, text: String): File {
+    internal fun writeWorkFile(name: String, text: String): File = synchronized(WORK_FILES) {
         workFolder.mkdirs()
+        val leftover = Regex(Regex.escape(name) + "-?[0-9]+" + Regex.escape(TEMPORARY))
+        workFolder.listFiles { file -> leftover.matches(file.name) }?.forEach { it.delete() }
         val file = File(workFolder, name)
-        val temporary = File.createTempFile(name, ".tmp", workFolder)
+        val temporary = File.createTempFile(name, TEMPORARY, workFolder)
         try {
             temporary.writeText(text)
             Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } finally {
             temporary.delete()
         }
-        return file
+        file
     }
 
     internal companion object {
+        // File.createTempFile names a temporary file after its prefix, a random number and this suffix.
+        private const val TEMPORARY = ".tmp"
+        private val WORK_FILES = Any()
         const val VAD_MODEL = "vad-silero/silero_vad.onnx"
         const val TTS_MODEL = "tts-piper-ljspeech/en_US-ljspeech-medium.onnx"
         const val TTS_TOKENS = "tts-piper-ljspeech/tokens.txt"

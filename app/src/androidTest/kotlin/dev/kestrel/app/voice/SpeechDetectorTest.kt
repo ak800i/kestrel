@@ -112,14 +112,18 @@ class SpeechDetectorTest {
         }
     }
 
-    @Test
-    fun longSpeechIsCutIntoUtterancesOfAtMost30Seconds() = runBlocking {
-        // Sentences back to back without silence between them, for about 40 s.
+    /** Sentences back to back without silence between them, for about 40 s. */
+    private fun continuousSpeech(): FloatArray {
         var speech = FloatArray(0)
         while (speech.size < 40 * SAMPLE_RATE) {
             for (text in SENTENCES) speech += withoutSilence(text)
         }
-        val audio = silence(0.5f) + speech + silence(1f)
+        return speech
+    }
+
+    @Test
+    fun longSpeechIsCutIntoUtterancesOfAtMost30Seconds() = runBlocking {
+        val audio = silence(0.5f) + continuousSpeech() + silence(1f)
         graph.voice.speechDetector().use { detector ->
             val utterances = frames(audio, detector::accept) + detector.finish()
             log("speech detector: ${"%.1f".format(audio.size / SAMPLE_RATE.toFloat())} s of speech gave utterances of ${utterances.joinToString { "%.2f".format(it.seconds) }} s")
@@ -132,6 +136,61 @@ class SpeechDetectorTest {
             assertTrue("${utterances[0].seconds} s", utterances[0].seconds > 29f)
             // The next utterance starts exactly where the cut was.
             assertEquals(utterances[0].startSample + utterances[0].samples.size, utterances[1].startSample)
+        }
+    }
+
+    @Test
+    fun speechThatEndsJustAfterACutGivesNoUtteranceShorterThanAQuarterSecond() = runBlocking {
+        val speech = silence(0.5f) + continuousSpeech()
+        val cut = graph.voice.speechDetector().use { detector ->
+            val first = (frames(speech + silence(1f), detector::accept) + detector.finish()).first()
+            (first.startSample + first.samples.size).toInt()
+        }
+        val started = SystemClock.elapsedRealtime()
+        val counts = mutableMapOf<Int, Int>()
+        var shortest = Int.MAX_VALUE
+        // The speech ends from 0.3 s before the cut to 0.6 s after it, one window of the model further in each run.
+        for (end in cut - (0.3f * SAMPLE_RATE).toInt()..cut + (0.6f * SAMPLE_RATE).toInt() step WINDOW) {
+            val audio = speech.copyOfRange(0, end) + silence(2f)
+            graph.voice.speechDetector().use { detector ->
+                val utterances = frames(audio, detector::accept) + detector.finish()
+                counts.merge(utterances.size, 1, Int::plus)
+                for (utterance in utterances) {
+                    shortest = minOf(shortest, utterance.samples.size)
+                    assertTrue("${end - cut} samples after the cut: ${utterance.seconds} s", utterance.samples.size >= SAMPLE_RATE / 4)
+                    assertTheAudioAt(audio, utterance)
+                }
+            }
+        }
+        log("speech detector: ${counts.values.sum()} runs around the cut in ${SystemClock.elapsedRealtime() - started} ms; utterances per run: ${counts.toSortedMap()}; shortest ${"%.2f".format(shortest / SAMPLE_RATE.toFloat())} s")
+        // Some runs end within a quarter second after the cut, and give only the first utterance.
+        assertTrue("$counts", (counts[1] ?: 0) > 0 && (counts[2] ?: 0) > 0)
+    }
+
+    @Test
+    fun anUtteranceThatEndsWhenTheHourlyResetComesIsKept() = runBlocking {
+        // The word starts 0.4 s before the hour mark, and its 0.7 s of silence ends after it, so the reset comes in the
+        // window in which sherpa-onnx queues the utterance.
+        val tenSeconds = silence(10f)
+        val before = 359L * tenSeconds.size
+        val pause = silence(9.6f)
+        val words = withoutSilence("Stop.") + silence(2f)
+        val tail = pause + words
+        val audio = speech("Stop.")
+        graph.voice.speechDetector().use { detector ->
+            val silent = (1..359).flatMap { detector.accept(tenSeconds) }
+            val atReset = detector.accept(pause) + frames(words, detector::accept)
+            val after = frames(audio, detector::accept) + detector.finish()
+
+            assertEquals(0, silent.size)
+            val kept = atReset.single()
+            assertEquals(3_599.6f, kept.startSample / SAMPLE_RATE.toFloat(), 0.3f)
+            assertTheAudioAt(tail, Utterance(kept.startSample - before, kept.samples))
+            // The count goes on after this reset too.
+            val next = after.single()
+            val offset = before + tail.size
+            assertEquals(0.5f, (next.startSample - offset) / SAMPLE_RATE.toFloat(), 0.3f)
+            assertTheAudioAt(audio, Utterance(next.startSample - offset, next.samples))
         }
     }
 
@@ -163,6 +222,9 @@ class SpeechDetectorTest {
     private companion object {
         // Below this, a sample of the voice counts as its own silence.
         const val QUIET = 0.02f
+
+        // The speech detector's model takes the audio in windows of 512 samples.
+        const val WINDOW = 512
 
         val SENTENCES = listOf(
             "Scroll down and tap the blue button.",

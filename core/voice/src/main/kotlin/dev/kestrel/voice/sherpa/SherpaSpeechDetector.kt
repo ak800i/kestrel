@@ -12,7 +12,8 @@ import java.io.File
  * Silero VAD through sherpa-onnx. The model takes the audio in windows of 512 samples, so this collects them.
  *
  * sherpa-onnx's own `maxSpeechDuration` does not cut an utterance; after 30 s it only lets a 0.1 s pause end it. So this
- * class cuts an utterance itself before it reaches 30 s. sherpa-onnx also counts samples in 32 bits, so during silence
+ * class cuts an utterance itself before it reaches 30 s. When the speech ends less than 0.25 s after a cut, it drops that
+ * rest, so that every utterance lasts at least 0.25 s. sherpa-onnx also counts samples in 32 bits, so during silence
  * this class restarts sherpa-onnx's count once an hour and keeps its own count in a `Long`.
  *
  * A call after [close] throws [IllegalStateException]; [close] waits for a call that is going on. Close the detector only
@@ -106,8 +107,9 @@ internal class SherpaSpeechDetector(model: File) : SpeechDetector {
         val utterances = mutableListOf<Utterance>()
         while (!vad.empty()) {
             val segment = vad.front()
-            // A cut that falls into the silence that ends an utterance makes sherpa-onnx queue a segment without samples.
-            if (segment.samples.isNotEmpty()) utterances += Utterance(beforeReset + segment.start, segment.samples)
+            // Only the rest after a cut can be shorter than the minimum: when the speech ends just after the cut,
+            // sherpa-onnx queues a segment of a few windows of silence, or one without samples. This drops it.
+            if (segment.samples.size >= MIN_SPEECH_SAMPLES) utterances += Utterance(beforeReset + segment.start, segment.samples)
             vad.pop()
         }
         return utterances
@@ -129,7 +131,7 @@ internal class SherpaSpeechDetector(model: File) : SpeechDetector {
         const val MAX_SPEECH_SAMPLES = 30 * SAMPLE_RATE
         // sherpa-onnx's default, passed explicitly because the cut at 30 s counts on it.
         const val MIN_SPEECH_SECONDS = 0.25f
-        const val MIN_SPEECH_SAMPLES = SAMPLE_RATE / 4
+        val MIN_SPEECH_SAMPLES = (MIN_SPEECH_SECONDS * SAMPLE_RATE).toInt()
         // An hour of audio, far below the 2^31 samples (about 37 hours) at which sherpa-onnx's count overflows.
         const val RESET_SAMPLES = 3_600L * SAMPLE_RATE
     }
