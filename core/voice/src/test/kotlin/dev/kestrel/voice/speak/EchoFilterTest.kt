@@ -1,7 +1,10 @@
 package dev.kestrel.voice.speak
 
 import dev.kestrel.voice.Keyword
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -83,5 +86,21 @@ class EchoFilterTest {
     @Test
     fun withNothingSpokenEveryHitIsTheOwners() {
         assertFalse(filter.isOwnVoice(Keyword.STOP, hitMillis = 1_600, spoken = emptyList()))
+    }
+
+    @Test
+    fun aSentenceCutWhilePlayingKeepsThePartThatPlayedAndItsTimes() {
+        // 26 characters in 2,600 ms, so 100 ms each: by 2,000 ms, "Stop the t" has played, and "Cancel" has not.
+        val sentence = Spoken("Stop the timer? Cancel it.", startMillis = 1_000, endMillis = 3_600)
+        val cut = sentence.playedBy(2_000)!!
+
+        assertEquals("Stop the t", cut.text)
+        assertEquals(2_000L, cut.endMillis)
+        // "Stop" still ends at 1,400 ms, so a hit 1,400 ms later is still its echo.
+        assertTrue(filter.isOwnVoice(Keyword.STOP, hitMillis = 2_800, spoken = listOf(cut)))
+        assertTrue(filter.isOwnVoice(Keyword.CANCEL, hitMillis = 3_000, spoken = listOf(sentence)))
+        assertFalse(filter.isOwnVoice(Keyword.CANCEL, hitMillis = 3_000, spoken = listOf(cut)))
+        assertNull(sentence.playedBy(1_050))
+        assertSame(sentence, sentence.playedBy(3_600))
     }
 }

@@ -9,6 +9,30 @@ import dev.kestrel.voice.Keyword
 class Spoken(val text: String, val startMillis: Long, val endMillis: Long)
 
 /**
+ * The part of this sentence that had played by [now], or null when none of it had; a reply that ends early plays only
+ * the start of its last sentence. The part keeps the characters that the [EchoFilter] places before [now] and ends when
+ * the last of them ends, so that the filter places them where it placed them in the whole sentence.
+ */
+internal fun Spoken.playedBy(now: Long): Spoken? {
+    if (now >= endMillis) return this
+    val span = endMillis - startMillis
+    val total = weight(text)
+    var characters = 0
+    var played = 0
+    while (characters < text.length && startMillis + span * (played + weight(text[characters])) / total <= now) {
+        played += weight(text[characters])
+        characters++
+    }
+    if (characters == 0) return null
+    return Spoken(text.substring(0, characters), startMillis, startMillis + span * played / total)
+}
+
+// A digit counts as three characters, because Piper speaks digits as words.
+private fun weight(character: Char): Int = if (character.isDigit()) 3 else 1
+
+private fun weight(text: CharSequence): Int = text.sumOf(::weight)
+
+/**
  * Tells whether a keyword hit came from Kestrel's own voice (design spec, section 8.4). Kestrel knows what it said and
  * roughly when it said it.
  *
@@ -58,10 +82,4 @@ class EchoFilter(private val lateMillis: Long = 1_500, private val earlyMillis: 
         sentence.startMillis +
             (sentence.endMillis - sentence.startMillis) * weight(sentence.text.subSequence(0, characters)) /
             weight(sentence.text)
-
-    private fun weight(text: CharSequence): Int = text.length + (DIGIT_WEIGHT - 1) * text.count(Char::isDigit)
-
-    private companion object {
-        const val DIGIT_WEIGHT = 3
-    }
 }

@@ -10,6 +10,7 @@ import android.media.AudioTrack
 import android.os.SystemClock
 import dev.kestrel.voice.Synthesizer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -23,6 +24,7 @@ import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -35,7 +37,7 @@ enum class Spoke {
     /** Kestrel spoke the whole reply. */
     FINISHED,
 
-    /** [VoicePlayer.stop] ended it early, or before it began. */
+    /** [VoicePlayer.stop] or [VoicePlayer.close] ended it early, or before it began. */
     STOPPED,
 
     /** Android refused audio focus, so Kestrel spoke nothing (B5). */
@@ -71,16 +73,19 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
 
     /** The sentences that Kestrel played in the last few seconds, for the echo filter. Any thread may call it. */
     fun recent(now: Long = SystemClock.elapsedRealtime()): List<Spoken> = synchronized(history) {
-        while (history.isNotEmpty() && history.first().endMillis < now - KEEP_MILLIS) history.removeFirst()
+        forget(now)
         history.toList()
     }
 
     /**
      * Speaks [text] after the replies that came before it, and completes when it has been spoken, stopped or refused, or
-     * with the error when synthesis failed. A [stop] after this call ends the reply, also when it has not begun yet. A
-     * reply whose sentences all lack letters and digits plays nothing and completes with [Spoke.FINISHED].
+     * with the error when synthesis or the audio output fails. A [stop] after this call ends the reply, also when it has
+     * not begun yet. A reply whose sentences all lack letters and digits plays nothing and completes with
+     * [Spoke.FINISHED]. After [close], the reply completes with [Spoke.STOPPED] at once.
      */
     fun speak(text: String): Deferred<Spoke> {
+        // A cancelled Deferred would throw CancellationException into a caller that is not cancelled itself.
+        if (!scope.isActive) return CompletableDeferred(Spoke.STOPPED)
         val mine = generation.get()
         // Undispatched, the caller's thread takes the turn or joins the queue for it, so replies keep the order of the calls.
         return scope.async(start = CoroutineStart.UNDISPATCHED) {
@@ -101,8 +106,10 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
 
     /** Stops the reply that plays and the replies that were asked for before. Any thread may call it. */
     fun stop() {
-        generation.incrementAndGet()
+        // A reply that reads the new generation hands over its channel and track only after this section, so the stop
+        // never ends a reply that was asked for after it.
         synchronized(lock) {
+            generation.incrementAndGet()
             clips?.close()
             track?.run {
                 pause()
@@ -111,7 +118,10 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
         }
     }
 
-    /** Stops speaking, and returns when the synthesizer is no longer in use, so that its owner can close it. */
+    /**
+     * Stops speaking, and returns when the synthesizer is no longer in use, so that its owner can close it. The player
+     * cannot speak afterwards: a later [speak] completes with [Spoke.STOPPED] and does not use the synthesizer.
+     */
     suspend fun close() {
         stop()
         scope.coroutineContext.job.cancelAndJoin()
@@ -156,9 +166,10 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
 
     private suspend fun play(output: AudioTrack, sentences: List<String>, mine: Int): Spoke {
         val rate = synthesizer.sampleRate
-        // One sentence is synthesized ahead of the one that plays. stop() closes the channel, so that the reply ends
-        // without waiting for the sentence in synthesis.
-        val ready = Channel<Clip>(capacity = 1)
+        // The synthesis job synthesizes the next sentence while one plays, and then waits until the player takes it, so
+        // it runs exactly one sentence ahead. stop() closes the channel, so that the reply ends without waiting for the
+        // sentence in synthesis.
+        val ready = Channel<Clip>(Channel.RENDEZVOUS)
         synchronized(lock) { clips = ready }
         if (generation.get() != mine) ready.close()
         synthesis = scope.launch {
@@ -178,13 +189,20 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
                 ready.close(failure)
             }
         }
+        val played = mutableListOf<Spoken>()
+        var finished = false
         try {
             output.play()
             var written = 0L
             for (clip in ready) {
                 if (generation.get() != mine) break
                 val start = playTime(output, written, rate)
-                synchronized(history) { history.addLast(Spoken(clip.text, start, start + clip.samples.size * 1_000L / rate)) }
+                val spoken = Spoken(clip.text, start, start + clip.samples.size * 1_000L / rate)
+                played += spoken
+                synchronized(history) {
+                    forget(SystemClock.elapsedRealtime())
+                    history.addLast(spoken)
+                }
                 written += write(output, clip.samples, mine)
             }
             if (generation.get() == mine) {
@@ -202,19 +220,40 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
                     delay(20)
                 }
             }
+            finished = generation.get() == mine
         } finally {
             synchronized(lock) { clips = null }
             // A synthesis job that waits to hand over a sentence must not wait for ever when the reply ends early.
             ready.cancel()
+            // A reply that was stopped, cancelled or failed did not play the rest of its sentences.
+            if (!finished) cut(played, SystemClock.elapsedRealtime())
         }
-        return if (generation.get() == mine) Spoke.FINISHED else Spoke.STOPPED
+        return if (finished) Spoke.FINISHED else Spoke.STOPPED
+    }
+
+    /** Drops the sentences that ended more than [KEEP_MILLIS] before [now]. The caller holds the lock on [history]. */
+    private fun forget(now: Long) {
+        while (history.isNotEmpty() && history.first().endMillis < now - KEEP_MILLIS) history.removeFirst()
+    }
+
+    /** Cuts the [played] sentences in the history at [now]: those that began keep the part that played, the rest go. */
+    private fun cut(played: List<Spoken>, now: Long) = synchronized(history) {
+        val entries = history.listIterator()
+        while (entries.hasNext()) {
+            val entry = entries.next()
+            if (played.none { it === entry }) continue
+            val part = entry.playedBy(now)
+            if (part == null) entries.remove() else entries.set(part)
+        }
     }
 
     /**
      * When the frame after the first [written] frames will play, on the elapsed-time clock. The playback head counts the
-     * frames that Android took from the track, and at the start it runs ahead of the speaker, so the time that it gives
-     * can be too early. The track's timestamp tells when a frame reached the speaker, and gives the later and truer time
-     * while the track plays without a gap. Both times are never later than the true one, so the later of the two counts.
+     * frames that Android took from the track, so it is always ahead of the speaker by the output latency, and further
+     * ahead at the start, while Android fills its buffers; the time that it gives is too early. The track's timestamp
+     * tells when a frame reached the speaker, so while the track plays without a gap it gives the true time, if the
+     * device reports it correctly. A wrong timestamp must not delay [speak] or move the echo filter's times by more than
+     * a real output latency, so the timestamp counts only up to [MAX_LATENCY_MILLIS] after the head's time.
      */
     private fun playTime(output: AudioTrack, written: Long, rate: Int): Long {
         val now = SystemClock.elapsedRealtime()
@@ -223,17 +262,23 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
         if (!output.getTimestamp(stamp)) return byHead
         // The timestamp uses the monotonic clock, which unlike the elapsed-time clock stops while the phone sleeps.
         val reached = now + (stamp.nanoTime - System.nanoTime()) / 1_000_000
-        return maxOf(byHead, reached + (written - stamp.framePosition) * 1_000 / rate)
+        val byStamp = reached + (written - stamp.framePosition) * 1_000 / rate
+        return byStamp.coerceIn(byHead, byHead + MAX_LATENCY_MILLIS)
     }
 
-    /** Writes [samples] in chunks of 0.1 s, so that a stop or a cancellation takes effect quickly, and returns how many it wrote. */
+    /**
+     * Writes [samples] in chunks of 0.1 s, so that a stop or a cancellation takes effect quickly, and returns how many it
+     * wrote. Throws [IllegalStateException] when the track reports an error.
+     */
     private suspend fun write(output: AudioTrack, samples: FloatArray, mine: Int): Int {
         val chunk = synthesizer.sampleRate / 10
         var offset = 0
         while (offset < samples.size && generation.get() == mine) {
             currentCoroutineContext().ensureActive()
             val count = output.write(samples, offset, minOf(chunk, samples.size - offset), AudioTrack.WRITE_BLOCKING)
-            if (count <= 0) break
+            check(count >= 0) { "AudioTrack.write failed with $count" }
+            // pause() interrupted the write.
+            if (count == 0) break
             offset += count
         }
         return offset
@@ -242,5 +287,8 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     private companion object {
         const val KEEP_MILLIS = 5_000L
         const val DRAIN_MARGIN_MILLIS = 2_000L
+
+        // Above the output latency of common Bluetooth earbuds, and below the echo filter's early margin of 1 s.
+        const val MAX_LATENCY_MILLIS = 500L
     }
 }

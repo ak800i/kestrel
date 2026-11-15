@@ -7,25 +7,31 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
+import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.speak.Spoke
 import dev.kestrel.voice.speak.VoicePlayer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
-/** Kestrel's voice output on the emulator's speaker (design spec, section 8.4). */
+/**
+ * Kestrel's voice output on the emulator's speaker (design spec, section 8.4). Some tests use a fake voice, so that they
+ * need no model and can hold the voice in a call.
+ */
 @RunWith(AndroidJUnit4::class)
 class VoicePlayerTest {
-    @Before
-    fun models() = VoiceTests.assumeModels(Engine.TTS)
-
     @Test
     fun speaksTheWholeReplySentenceBySentenceAsTheAssistant() = withPlayer { player ->
         val audio = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(AudioManager::class.java)
@@ -52,6 +58,7 @@ class VoicePlayerTest {
         val late = returned - spoken.last().endMillis
         VoiceTests.log("Voice output: finished $late ms after the estimated end")
         assertTrue("speak() returned $late ms after the reply ended", late < 700)
+        assertTrue("speak() returned $late ms before the reply ended", late > -30)
     }
 
     @Test
@@ -89,7 +96,7 @@ class VoicePlayerTest {
     }
 
     @Test
-    fun stopRightAfterSpeakEndsTheReplyBeforeItBegins() = withPlayer { player ->
+    fun stopRightAfterSpeakEndsTheReply() = withPlayer { player ->
         runBlocking {
             val reply = player.speak("Hello.")
             player.stop()
@@ -123,18 +130,106 @@ class VoicePlayerTest {
         }
     }
 
+    @Test
+    fun aSynthesisErrorEndsTheReplyWithItAndTheNextReplyPlays() {
+        val voice = FakeVoice()
+        withPlayer(voice) { player ->
+            runBlocking {
+                val failure = runCatching { player.speak("Hello. $FAILING Never said.").await() }.exceptionOrNull()
+
+                assertEquals(FakeVoice.FAILURE, failure?.message)
+                assertEquals(Spoke.FINISHED, player.speak("Done.").await())
+                assertEquals(listOf("Hello.", FAILING, "Done."), voice.said)
+                assertEquals("Done.", player.recent().last().text)
+            }
+        }
+    }
+
+    @Test
+    fun closeReturnsOnlyWhenTheSynthesisHasReturned() {
+        val voice = FakeVoice(CountDownLatch(1))
+        withPlayer(voice) { player ->
+            runBlocking {
+                val reply = player.speak("Hello.")
+                assertTrue("The voice was not used", voice.started.await(5, TimeUnit.SECONDS))
+                val closing = launch(Dispatchers.Default) { player.close() }
+                delay(300)
+
+                assertFalse("close() returned while the voice was in use", closing.isCompleted)
+                voice.gate!!.countDown()
+                withTimeout(5_000) { closing.join() }
+                assertFalse("The voice is still in use", voice.busy)
+                assertTrue(reply.isCompleted)
+            }
+        }
+    }
+
+    @Test
+    fun aReplyAfterCloseIsStoppedWithoutTheVoice() {
+        val voice = FakeVoice()
+        withPlayer(voice) { player ->
+            runBlocking {
+                player.close()
+
+                assertEquals(Spoke.STOPPED, player.speak("Hello.").await())
+                assertEquals(emptyList<String>(), voice.said)
+            }
+        }
+    }
+
     private fun withPlayer(test: (VoicePlayer) -> Unit) {
+        VoiceTests.assumeModels(Engine.TTS)
+        // Without variation, the voice and its timing are the same in every run.
+        val synthesizer = runBlocking { VoiceTests.graph.voice.synthesizer(VoiceOptions(variation = 0f)) }
+        synthesizer.use { withPlayer(it, test) }
+    }
+
+    private fun withPlayer(synthesizer: Synthesizer, test: (VoicePlayer) -> Unit) {
         // Android 17 lets an app play audio only while it is visible or runs a suitable foreground service (B5).
         ActivityScenario.launch(MainActivity::class.java).use {
-            // Without variation, the voice and its timing are the same in every run.
-            val synthesizer = runBlocking { VoiceTests.graph.voice.synthesizer(VoiceOptions(variation = 0f)) }
             val player = VoicePlayer(InstrumentationRegistry.getInstrumentation().targetContext, synthesizer)
             try {
                 test(player)
             } finally {
                 runBlocking { player.close() }
-                synthesizer.close()
             }
         }
+    }
+
+    /**
+     * A voice without a model: it says every sentence as 0.3 s of silence and fails on [FAILING]. With a [gate], it waits
+     * until the gate opens before it says anything.
+     */
+    private class FakeVoice(val gate: CountDownLatch? = null) : Synthesizer {
+        val started = CountDownLatch(1)
+        val said: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
+        @Volatile
+        var busy = false
+
+        override val sampleRate = 22_050
+
+        override fun synthesize(text: String): FloatArray {
+            busy = true
+            try {
+                said += text
+                started.countDown()
+                gate?.await()
+                if (text == FAILING) throw IllegalStateException(FAILURE)
+                return FloatArray(sampleRate * 3 / 10)
+            } finally {
+                busy = false
+            }
+        }
+
+        override fun close() = Unit
+
+        companion object {
+            const val FAILURE = "The fake voice failed"
+        }
+    }
+
+    private companion object {
+        const val FAILING = "This one fails."
     }
 }
