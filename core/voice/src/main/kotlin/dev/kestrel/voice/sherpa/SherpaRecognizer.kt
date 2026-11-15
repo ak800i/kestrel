@@ -10,11 +10,16 @@ import dev.kestrel.voice.SAMPLE_RATE
 import dev.kestrel.voice.Transcript
 import java.io.File
 
-/** Parakeet-TDT-0.6B-v3 through sherpa-onnx, with boost words (design spec, sections 8.2 and 8.3, B39). */
+/**
+ * Parakeet-TDT-0.6B-v3 through sherpa-onnx, with boost words (design spec, sections 8.2 and 8.3, B39). A call after
+ * [close] throws [IllegalStateException]; [close] waits for a call that is going on. Close the recogniser only after the
+ * last call has returned.
+ */
 internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, tokens: File, vocab: File) : Recognizer {
     private val recognizer = OfflineRecognizer(
         config = OfflineRecognizerConfig(
-            featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
+            // sherpa-onnx replaces the feature dimension with the model's own, 128 for Parakeet, so it stays at its default.
+            featConfig = FeatureConfig(sampleRate = SAMPLE_RATE),
             modelConfig = OfflineModelConfig(
                 transducer = OfflineTransducerModelConfig(encoder = encoder.path, decoder = decoder.path, joiner = joiner.path),
                 tokens = tokens.path,
@@ -31,11 +36,17 @@ internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, toke
         ),
     )
 
-    override fun transcribe(samples: FloatArray, boostWords: List<String>): Transcript {
+    private var closed = false
+
+    override fun transcribe(samples: FloatArray, boostWords: List<String>): Transcript = synchronized(this) {
+        check(!closed) { "The recognizer is closed" }
         val boost = BoostWords.format(boostWords)
         val first = decode(samples, boost)
-        if (boost.isEmpty()) return first
-        return TranscriptChoice.choose(samples.size / SAMPLE_RATE.toFloat(), first) { decode(samples, "") }
+        if (boost.isEmpty()) {
+            first
+        } else {
+            TranscriptChoice.choose(samples.size / SAMPLE_RATE.toFloat(), first) { decode(samples, "") }
+        }
     }
 
     private fun decode(samples: FloatArray, boost: String): Transcript {
@@ -51,7 +62,13 @@ internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, toke
         }
     }
 
-    override fun close() = recognizer.release()
+    override fun close() {
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            recognizer.release()
+        }
+    }
 
     private companion object {
         // Plan 2C measures whether more threads are faster on the A71 (spike S5).

@@ -8,7 +8,11 @@ import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceOptions
 import java.io.File
 
-/** A Piper voice through sherpa-onnx, which gets its phonemes from espeak-ng's data in [espeakData] (B38). */
+/**
+ * A Piper voice through sherpa-onnx, which gets its phonemes from espeak-ng's data in [espeakData] (B38). A call to
+ * [synthesize] after [close] throws [IllegalStateException]; [close] waits for a call that is going on. Close the voice
+ * only after the last call has returned. [sampleRate] is stored when the voice loads, so it can be read at any time.
+ */
 internal class SherpaSynthesizer(model: File, tokens: File, espeakData: File, private val options: VoiceOptions) : Synthesizer {
     private val tts = OfflineTts(
         config = OfflineTtsConfig(
@@ -27,9 +31,20 @@ internal class SherpaSynthesizer(model: File, tokens: File, espeakData: File, pr
 
     override val sampleRate: Int = tts.sampleRate()
 
-    override fun synthesize(text: String): FloatArray = tts.generate(text, sid = 0, speed = options.speed).samples
+    private var closed = false
 
-    override fun close() = tts.release()
+    override fun synthesize(text: String): FloatArray = synchronized(this) {
+        check(!closed) { "The voice is closed" }
+        tts.generate(text, sid = 0, speed = options.speed).samples
+    }
+
+    override fun close() {
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            tts.release()
+        }
+    }
 
     private companion object {
         // sherpa-onnx's defaults for VITS voices, such as Piper's.

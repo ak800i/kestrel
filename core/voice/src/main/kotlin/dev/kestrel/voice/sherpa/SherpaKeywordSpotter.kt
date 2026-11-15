@@ -10,7 +10,11 @@ import dev.kestrel.voice.SAMPLE_RATE
 import java.io.File
 import com.k2fsa.sherpa.onnx.KeywordSpotter as SherpaSpotter
 
-/** sherpa-onnx's English keyword model, listening to one continuous stream of audio (B37). */
+/**
+ * sherpa-onnx's English keyword model, listening to one continuous stream of audio (B37). A call after [close] throws
+ * [IllegalStateException]; [close] waits for a call that is going on. Close the spotter only after the last call has
+ * returned.
+ */
 internal class SherpaKeywordSpotter(encoder: File, decoder: File, joiner: File, tokens: File, keywords: File) : KeywordSpotter {
     private val spotter = SherpaSpotter(
         config = KeywordSpotterConfig(
@@ -28,8 +32,10 @@ internal class SherpaKeywordSpotter(encoder: File, decoder: File, joiner: File, 
     )
     private val stream = spotter.createStream()
     private var samplesSeen = 0L
+    private var closed = false
 
-    override fun accept(samples: FloatArray): List<KeywordHit> {
+    override fun accept(samples: FloatArray): List<KeywordHit> = synchronized(this) {
+        check(!closed) { "The keyword spotter is closed" }
         stream.acceptWaveform(samples, SAMPLE_RATE)
         samplesSeen += samples.size
         val hits = mutableListOf<KeywordHit>()
@@ -40,11 +46,15 @@ internal class SherpaKeywordSpotter(encoder: File, decoder: File, joiner: File, 
             // Listens afresh, so that one spoken keyword gives one hit.
             spotter.reset(stream)
         }
-        return hits
+        hits
     }
 
     override fun close() {
-        stream.release()
-        spotter.release()
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            stream.release()
+            spotter.release()
+        }
     }
 }

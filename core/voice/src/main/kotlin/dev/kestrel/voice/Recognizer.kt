@@ -11,7 +11,9 @@ data class Transcript(val text: String, val pieces: Int, val lastWordEnd: Float)
 
 /**
  * Transcribes utterances of 16 kHz audio (design spec, sections 8.2 and 8.3). Not thread-safe: use one instance from one
- * thread at a time, and close it when it is no longer needed, because it holds about 700 MB of model in native memory.
+ * thread at a time. Close it when it is no longer needed, because it holds about 700 MB of model in native memory, and
+ * only after the last call has returned; Kestrel's recogniser throws [IllegalStateException] when it is called after
+ * [close].
  */
 interface Recognizer : AutoCloseable {
     /** Transcribes one utterance. [boostWords] are words that the speaker is likely to say, such as labels on the screen. */

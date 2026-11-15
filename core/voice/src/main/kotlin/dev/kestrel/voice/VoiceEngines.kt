@@ -9,9 +9,12 @@ import dev.kestrel.voice.sherpa.SherpaKeywordSpotter
 import dev.kestrel.voice.sherpa.SherpaRecognizer
 import dev.kestrel.voice.sherpa.SherpaSpeechDetector
 import dev.kestrel.voice.sherpa.SherpaSynthesizer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Creates Kestrel's speech engines from the model files that [models] checks (design spec, section 8.2). Loading a model
@@ -21,36 +24,62 @@ import java.io.File
  * from the models.
  */
 class VoiceEngines(private val models: ModelFiles, private val workFolder: File) {
-    suspend fun synthesizer(options: VoiceOptions = VoiceOptions()): Synthesizer = withContext(Dispatchers.IO) {
-        requireReady(Engine.TTS)
+    suspend fun synthesizer(options: VoiceOptions = VoiceOptions()): Synthesizer = load(Engine.TTS) {
         SherpaSynthesizer(models.file(TTS_MODEL), models.file(TTS_TOKENS), models.file(ESPEAK_DATA), options)
     }
 
-    suspend fun speechDetector(): SpeechDetector = withContext(Dispatchers.IO) {
-        requireReady(Engine.VAD)
+    suspend fun speechDetector(): SpeechDetector = load(Engine.VAD) {
         SherpaSpeechDetector(models.file(VAD_MODEL))
     }
 
-    suspend fun keywordSpotter(): KeywordSpotter = withContext(Dispatchers.IO) {
-        requireReady(Engine.KWS)
+    suspend fun keywordSpotter(): KeywordSpotter = load(Engine.KWS) {
         // sherpa-onnx reads the keywords from a file.
-        val keywords = File(workFolder, "keywords.txt")
-        keywords.parentFile?.mkdirs()
-        keywords.writeText(KeywordLines.text())
+        val keywords = writeWorkFile("keywords.txt", KeywordLines.text())
         SherpaKeywordSpotter(models.file(KWS_ENCODER), models.file(KWS_DECODER), models.file(KWS_JOINER), models.file(KWS_TOKENS), keywords)
     }
 
-    suspend fun recognizer(): Recognizer = withContext(Dispatchers.IO) {
-        requireReady(Engine.ASR)
-        val vocab = File(workFolder, "parakeet-bpe.vocab")
-        vocab.parentFile?.mkdirs()
-        vocab.writeText(BpeVocab.fromTokens(models.file(ASR_TOKENS).readText()))
+    suspend fun recognizer(): Recognizer = load(Engine.ASR) {
+        val vocab = writeWorkFile("parakeet-bpe.vocab", BpeVocab.fromTokens(models.file(ASR_TOKENS).readText()))
         SherpaRecognizer(models.file(ASR_ENCODER), models.file(ASR_DECODER), models.file(ASR_JOINER), models.file(ASR_TOKENS), vocab)
+    }
+
+    /**
+     * Checks [engine]'s models and creates the engine on [Dispatchers.IO]. If the caller is cancelled while the engine
+     * loads, `withContext` drops the loaded engine, so this closes it before the cancellation goes on.
+     */
+    internal suspend fun <T : AutoCloseable> load(engine: Engine, create: () -> T): T {
+        var created: T? = null
+        try {
+            return withContext(Dispatchers.IO) {
+                requireReady(engine)
+                create().also { created = it }
+            }
+        } catch (e: CancellationException) {
+            created?.close()
+            throw e
+        }
     }
 
     private suspend fun requireReady(engine: Engine) {
         val notReady = models.check().filter { it.model.engine == engine && !it.ready }
         if (notReady.isNotEmpty()) throw ModelsNotReadyException(engine, notReady)
+    }
+
+    /**
+     * Writes [text] to [name] in [workFolder] through a temporary file of its own, so that two loads at once never read a
+     * file that the other is writing: sherpa-onnx ends the process on a torn word piece.
+     */
+    private fun writeWorkFile(name: String, text: String): File {
+        workFolder.mkdirs()
+        val file = File(workFolder, name)
+        val temporary = File.createTempFile(name, ".tmp", workFolder)
+        try {
+            temporary.writeText(text)
+            Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            temporary.delete()
+        }
+        return file
     }
 
     internal companion object {
