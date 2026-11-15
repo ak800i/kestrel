@@ -45,8 +45,10 @@ class ScreenActions internal constructor(
      * Taps the element with [key]. Kestrel looks the key up in the current snapshot, never in an older one, because a
      * list may have reused an old view for another item. It uses the click action of the element or of its nearest
      * parent that handles touches. If that node has gone or refuses the click, Kestrel looks for the element again in
-     * a fresh snapshot, and if nothing offers a click, it taps the element's centre. It does not tap a disabled
-     * element, because a finger's touch would stop there too.
+     * a fresh snapshot, and if nothing offers a click, it taps the element's centre. When windows above, such as the
+     * keyboard, cover the centre, it taps the point of a grid of 8 by 8 points over the element that is nearest to the
+     * centre and that they leave uncovered, and it fails when they cover every point of the grid. It does not tap a
+     * disabled element, because a finger's touch would stop there too.
      *
      * A key names a position, not an identity. After a list has added, removed or scrolled rows, a key from an older
      * snapshot can name a look-alike element in another row, so the caller must first check that the element is still
