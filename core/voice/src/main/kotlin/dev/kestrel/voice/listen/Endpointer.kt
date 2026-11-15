@@ -17,8 +17,9 @@ class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean)
  * Decides when an utterance has ended (design spec, section 8.3). The speech detector ends an utterance after 0.7 s of
  * silence. When the keyword spotter heard "Kestrel" at its start, the limit is 1.5 s instead: the endpointer holds the
  * utterance, and joins the next one to it when that one starts less than 1.5 s after its end, so that the owner can
- * pause while dictating a task. A joined utterance lasts at most 30 s, so the next part of speech that the detector cut
- * at 30 s stays separate. Not thread-safe: feed it from one thread.
+ * pause while dictating a task. A held utterance goes out at the latest 30 s after its start, also while the owner still
+ * speaks, and a joined utterance lasts at most 30 s. What comes after that, such as the next part of long speech that
+ * the detector cut at 30 s, is a separate utterance. Not thread-safe: feed it from one thread.
  */
 class Endpointer {
     private val names = ArrayDeque<Long>()
@@ -34,30 +35,32 @@ class Endpointer {
         val ready = mutableListOf<Speech>()
         for (utterance in utterances) {
             val speech = Speech(utterance.startSample, utterance.samples, startsWithName(utterance))
-            val earlier = held
-            val joined = earlier?.let { join(it, speech) }
-            held = when {
-                joined != null -> joined
-                speech.named -> speech
-                else -> null
-            }
-            if (joined == null) {
-                if (earlier != null) ready += earlier
+            val joined = held?.let { join(it, speech) }
+            if (joined != null) {
+                held = joined
+            } else {
+                held?.let { ready += it }
+                held = if (speech.named) speech else null
                 if (!speech.named) ready += speech
             }
         }
         val waiting = held
-        if (waiting != null &&
-            (!hearsSpeech && position - waiting.endSample >= RELEASE_AFTER || position - waiting.startSample >= LONGEST)
-        ) {
-            ready += waiting
-            held = null
+        if (waiting != null) {
+            val pauseIsOver = !hearsSpeech && position - waiting.endSample >= RELEASE_AFTER
+            val tooLong = position - waiting.startSample >= LONGEST
+            if (pauseIsOver || tooLong) {
+                ready += waiting
+                held = null
+            }
         }
-        while (names.isNotEmpty() && names.first() < position - LONGEST - RELEASE_AFTER) names.removeFirst()
+        while (names.isNotEmpty() && names.first() < position - KEEP_NAMES) names.removeFirst()
         return ready
     }
 
-    /** Ends the audio, and returns the utterance that the endpointer still holds, if any. */
+    /**
+     * Ends the audio: returns the utterance that the endpointer still holds, if any, and forgets the name hits, so that
+     * positions may start again from 0.
+     */
     fun finish(): List<Speech> {
         val last = listOfNotNull(held)
         held = null
@@ -84,12 +87,18 @@ class Endpointer {
         val NAMED_PAUSE = samples(1.5f)
         val LONGEST = samples(30f)
 
-        // The speech detector reports speech only after 0.25 s of it (sherpa-onnx's minimum speech duration) and up to
-        // two windows of 32 ms, so a held utterance waits that much longer than the pause that still joins utterances.
+        // The speech detector dates an utterance's start two windows of 512 samples and its minimum speech duration of
+        // 0.25 s (0.314 s in all) before the window in which it reports speech. So speech that starts less than 1.5 s
+        // after a held utterance's end shows in hearsSpeech less than 1.814 s after that end.
         val RELEASE_AFTER = NAMED_PAUSE + samples(0.35f)
 
-        // "Kestrel" takes about half a second, and the spotter reports it a little after the word ends.
-        val NAME_WINDOW = samples(1.5f)
+        // The name may follow a word and a short pause ("Hey, Kestrel, ..."). "Kestrel" takes about half a second, and
+        // the spotter reports it 0.3-0.55 s after the word ends, so its hit comes up to about 1.8 s after the start.
+        val NAME_WINDOW = samples(2f)
+
+        // An utterance arrives at most 30 s and the detector's 0.7 s of silence (plus the window that ends it) after its
+        // start, so a hit more than 31 s old can no longer name one.
+        val KEEP_NAMES = samples(31f)
 
         fun samples(seconds: Float): Long = (seconds * SAMPLE_RATE).roundToLong()
     }
