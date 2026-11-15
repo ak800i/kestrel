@@ -83,7 +83,7 @@ These scripts check assumptions of the design on a test device (design spec, sec
 
 ## Setting up Kestrel
 
-Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). Whenever Kestrel comes to the front, the checklist reads the state of steps 3, 4, 5 and 8 from Android, so it shows the changes that you make in Android's settings, and it checks the speech model files for step 2.
+Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). Whenever Kestrel comes to the front, the checklist reads the state of steps 3, 4, 5 and 8 from Android, so it shows the changes that you make in Android's settings. Kestrel checks the speech model files for step 2 then too, and also whenever the checklist or the About page opens.
 
 1. Install Kestrel with `scripts\install.ps1`. On a Samsung phone, Auto Blocker must be off while USB debugging is on.
 2. Copy the speech models with `scripts\push-models.ps1 -Serial $serial`. Kestrel must be installed first. The first run downloads about 760 MB from the models' projects into `%LOCALAPPDATA%\Kestrel\models` and checks each file's SHA-256 hash against `models\manifest.json`. Then it copies the files that the phone lacks, about 740 MB, into Kestrel's folder `Android/data/dev.kestrel/files/models`, and Kestrel checks them against the same hashes. Uninstalling Kestrel deletes the models from the phone.
