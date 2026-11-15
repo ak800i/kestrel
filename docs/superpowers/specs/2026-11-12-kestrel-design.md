@@ -152,7 +152,7 @@ The Orchestrator tracks three things:
 2. **The current activity:** idle, running an instant command, running a task (agent or routine), or waiting for the owner. Waiting covers a confirmation, an answer to Kestrel's question, and a hand-over.
 3. **Whether Kestrel is speaking.**
 
-Each transition is defined in one place and covered by unit tests. Section 11.10 describes which speech Kestrel accepts while a task runs.
+Each transition is defined in one place and covered by unit tests: the Orchestrator lives in `:app`, and its rules are one pure function from the state and an event to the new state and a list of effects, such as speaking or running a task. The microphone and recognition are not effects; they follow from the state, so they cannot drift from it. Section 11.10 describes which speech Kestrel accepts while a task runs.
 
 ### 7.4 Modules
 
@@ -206,7 +206,7 @@ flowchart TD
 - It never uses a privacy-sensitive source (`CAMCORDER`, `VOICE_COMMUNICATION` or `setPrivacySensitive(true)`), because such a source would silence other listeners such as Voice Access or a phone call (B2).
 - Android treats accessibility services as privileged when it shares the microphone between apps (B2, B3). Kestrel still registers an `AudioRecordingCallback`, and the feedback bar shows "mic busy" whenever Android silences Kestrel's recording.
 - Kestrel attaches Android's echo canceller (`AcousticEchoCanceler`) when the device supports it for this source.
-- A 2-second ring buffer keeps the most recent audio, so that recognition can start at the beginning of an utterance after a keyword hit.
+- The voice activity detector returns each utterance from its start, also when the keyword spotter hears "Kestrel" in the middle of it, so Kestrel needs no separate buffer of recent audio.
 
 ### 8.2 Engines and models
 
@@ -228,16 +228,17 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 
 ### 8.3 Endpointing, boost words and the task name
 
-- An utterance ends after 0.7 s of silence. When the keyword spotter hears "Kestrel" at the start of an utterance, the limit becomes 1.5 s, so that the owner can pause while dictating a task. An utterance can last at most 30 s.
+- An utterance ends after 0.7 s of silence. When the keyword spotter hears "Kestrel" at the start of an utterance, the limit becomes 1.5 s, so that the owner can pause while dictating a task: Kestrel holds the utterance and joins the next one to it when that one starts within 1.5 s, with the pause as silence between them. The voice activity detector notices speech only about 0.3 s after it starts, so Kestrel waits that much longer before it lets a held utterance go. An utterance can last at most 30 s.
 - Before each utterance is decoded, the recogniser receives boost words: the labels that are visible on screen, the names of installed apps, the command vocabulary, "Kestrel", the owner's aliases, and relevant contact names (names on screen, favourites and recent contacts). sherpa-onnx applies boost words to Parakeet-TDT only with modified beam search and a list of the model's word pieces, which Kestrel writes from the model's token list (B39). In tests on the emulator, boost words that the model cannot spell, such as emoji, were skipped without harm, and a strong boost once cut a transcript short. So Kestrel uses a moderate boost, and when the last word of a transcript ends more than 1 s before the audio does, it decodes the audio again without boost words and keeps the longer transcript. The matching of spoken words to the screen (section 9.6) still has to allow for near misses.
-- A transcript is a task when its first word matches "Kestrel", allowing near misses such as "Kestral", or when the keyword spotter fired at its start. Kestrel removes the name, and the rest is the task. "Kestrel" on its own makes Kestrel answer "Yes?" and treat the next utterance as the task.
+- A transcript is a task when its first word matches "Kestrel", allowing near misses such as "Kestral" or "Kes trel". When the keyword spotter heard the name at the start of the utterance, more distant spellings count, and the name may also be the second word, as in "Hey Kestrel". A transcript without a word like the name is not a task, even when the spotter fired, so that a false hit cannot start a task. Kestrel removes the name, and the rest is the task. "Kestrel" on its own makes Kestrel answer "Yes?" and treat the next utterance within 8 s as the task.
 - A few requests that start with "Kestrel" are handled on the phone without the LLM, such as "Kestrel, wake up" and "Kestrel, delete history". Appendix A lists them.
 - Everything else goes to the instant-command parser (section 9.5). Speech that is neither a task nor a command is ignored, except during dictation (section 9.7).
 
 ### 8.4 Voice output and interruptions
 
-- Kestrel speaks through its own voice engine, with the audio usage "assistant". When earbuds are connected, Android plays the audio through them.
-- While Kestrel speaks, recognition pauses and the keyword spotter listens for "stop", "cancel" and "Kestrel". Kestrel ignores a keyword hit that matches a word it is speaking at that moment, because it knows its own text and roughly when each word is spoken. Echo cancellation helps where the device has it, and earbuds remove the problem.
+- Kestrel speaks through its own voice engine, with the audio usage "assistant". When earbuds are connected, Android plays the audio through them. It speaks sentence by sentence and synthesizes the next sentence while one plays, so that it starts soon and stops at once. While it speaks, it holds transient audio focus that lets other apps lower their volume.
+- While Kestrel speaks, recognition pauses and the keyword spotter listens for "stop", "cancel" and "Kestrel". Kestrel ignores a keyword hit that matches a word it is speaking at that moment, because it knows its own text and roughly when each word is spoken: it places each word in its sentence's playing time in proportion to the characters before it. Echo cancellation helps where the device has it, and earbuds remove the problem.
+- What the microphone heard while Kestrel spoke is Kestrel's own voice, so when recognition resumes, an utterance that began earlier keeps only its part from that moment on. After an interruption with "Kestrel", the cut is 1 s before the keyword hit instead, so that the name and the request that follows it count.
 - "Stop" or "cancel" ends the speech and also cancels a running task. "Kestrel" ends the speech and listens for a new request.
 
 ### 8.5 Listening modes
@@ -538,7 +539,7 @@ Secure windows (`FLAG_SECURE`) cannot be captured, so only the tree and the numb
 
 ### 11.10 What Kestrel listens to while a task runs
 
-- While the agent or a routine is acting, or while Kestrel waits for a confirmation or for an answer to its question, Kestrel accepts only "stop", "cancel" and the answer it asked for. It ignores all other speech, so that a conversation or a TV cannot interfere. To start a different task, the owner first says "stop".
+- While the agent or a routine is acting, or while Kestrel waits for a confirmation or for an answer to its question, Kestrel accepts only "stop", "cancel" and the answer it asked for. "Stop" and "cancel" also count with a few filler words, as in "Stop it" or "Okay, cancel that". Kestrel ignores all other speech, so that a conversation or a TV cannot interfere. To start a different task, the owner first says "stop".
 - During a hand-over (section 12.4), Kestrel is not acting. All instant commands work as usual, so that the owner can do the step by voice, and "Kestrel, continue" resumes the task.
 
 ## 12. Safety
