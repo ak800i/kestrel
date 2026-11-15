@@ -34,8 +34,8 @@
     <string name="about_reading">Reading the text…</string>
 
     <string name="safety_test_mode">Test mode</string>
-    <string name="safety_test_mode_detail">While test mode is on, Kestrel sends and shares only to Telegram\'s Saved Messages, WhatsApp\'s Message yourself, Viber\'s My Notes and your own email address, and it makes no calls. Keep it on while you test Kestrel.</string>
-    <string name="safety_later">The safety mode, agent-free apps and screenshot approvals come with Kestrel\'s agent.</string>
+    <string name="safety_test_mode_detail">While test mode is on, Kestrel\'s agent and routines will send and share only to Telegram\'s Saved Messages, WhatsApp\'s Message yourself, Viber\'s My Notes and your own email address, and they will make no calls. Keep it on while you test Kestrel.</string>
+    <string name="safety_later">Kestrel\'s agent comes later. Until then, test mode changes nothing. The safety mode, agent-free apps and screenshot approvals come with the agent.</string>
 
     <string name="logs_export">Export both logs</string>
     <string name="logs_delete">Delete history</string>

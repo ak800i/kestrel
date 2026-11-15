@@ -81,20 +81,20 @@ These scripts check assumptions of the design on a test device (design spec, sec
 
 ## Setting up Kestrel
 
-Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). The checklist reads each step's state from Android whenever Kestrel comes to the front, so it shows the changes that you make in Android's settings.
+Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). The checklist reads the state of steps 3, 4, 5 and 8 from Android whenever Kestrel comes to the front, so it shows the changes that you make in Android's settings.
 
 1. Install Kestrel with `scripts\install.ps1`. On a Samsung phone, Auto Blocker must be off while USB debugging is on.
-2. Copy the voice models with `scripts\push-models.ps1`. This step comes with Kestrel's voice features.
+2. `scripts\push-models.ps1` will copy the voice models. This step comes with Kestrel's voice features.
 3. Turn on Kestrel's accessibility service. The step's button opens Android's accessibility settings.
 4. Allow the microphone and notifications. The step's button asks Android for both permissions. After you refuse twice, Android no longer asks, and the button opens Kestrel's app settings instead.
 5. Allow unrestricted battery use. The step's button opens Kestrel's app settings, where the battery setting is. On a Samsung phone, also add Kestrel to "Never sleeping apps" in the battery settings.
 6. Optionally, make Kestrel the default digital assistant, for the side key and earbuds. This step comes with Kestrel's voice features.
 7. Sign in to an AI provider and choose the models. This step comes with Kestrel's provider settings.
-8. Optionally, turn off Voice Access, so that it and Kestrel do not react to the same words. The checklist warns while both are on.
+8. Optionally, turn off Voice Access, so that it and Kestrel do not react to the same words. The checklist warns while both are on, and the step's button then opens Android's accessibility settings.
 
 The settings app also has these pages:
 
-- **Safety:** test mode. While it is on, Kestrel sends and shares only to your own self-chats and your own email address, and it makes no calls. Keep it on while you test Kestrel.
+- **Safety:** test mode, which is on until you turn it off. While it is on, Kestrel's agent and routines will send and share only to Telegram's Saved Messages, WhatsApp's Message yourself, Viber's My Notes and your own email address, and they will make no calls (design spec, section 12.7). Your own instant commands are not limited. Keep test mode on while you test Kestrel. The agent comes later, so in this version test mode changes nothing.
 - **Activity log** and **Network log:** what Kestrel did, and every request that it sent, encrypted and kept for 7 days. *Export both logs* writes both logs to a JSON file that you choose, which is the only way the logs leave the phone. *Delete history* wipes both logs after you confirm.
 - **About:** Kestrel's version, the Android version, and the licence texts.
 
