@@ -38,6 +38,8 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.okhttp.mockwebserver3)
+    // Spike S8: Kestrel's OCR will use onnxruntime-android beside sherpa-onnx's own ONNX Runtime (design spec, section 19).
+    androidTestImplementation(libs.onnxruntime.android)
 }
 
 androidComponents {

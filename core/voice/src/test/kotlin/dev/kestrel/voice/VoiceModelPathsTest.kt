@@ -32,4 +32,11 @@ class VoiceModelPathsTest {
             assertEquals(path, Engine.KWS, engineOf(path))
         }
     }
+
+    @Test
+    fun theRecognizersFilesAreInTheManifest() {
+        for (path in listOf(VoiceEngines.ASR_ENCODER, VoiceEngines.ASR_DECODER, VoiceEngines.ASR_JOINER, VoiceEngines.ASR_TOKENS)) {
+            assertEquals(path, Engine.ASR, engineOf(path))
+        }
+    }
 }

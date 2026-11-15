@@ -3,8 +3,10 @@ package dev.kestrel.voice
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelStatus
+import dev.kestrel.voice.sherpa.BpeVocab
 import dev.kestrel.voice.sherpa.KeywordLines
 import dev.kestrel.voice.sherpa.SherpaKeywordSpotter
+import dev.kestrel.voice.sherpa.SherpaRecognizer
 import dev.kestrel.voice.sherpa.SherpaSpeechDetector
 import dev.kestrel.voice.sherpa.SherpaSynthesizer
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,14 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
         SherpaKeywordSpotter(models.file(KWS_ENCODER), models.file(KWS_DECODER), models.file(KWS_JOINER), models.file(KWS_TOKENS), keywords)
     }
 
+    suspend fun recognizer(): Recognizer = withContext(Dispatchers.IO) {
+        requireReady(Engine.ASR)
+        val vocab = File(workFolder, "parakeet-bpe.vocab")
+        vocab.parentFile?.mkdirs()
+        vocab.writeText(BpeVocab.fromTokens(models.file(ASR_TOKENS).readText()))
+        SherpaRecognizer(models.file(ASR_ENCODER), models.file(ASR_DECODER), models.file(ASR_JOINER), models.file(ASR_TOKENS), vocab)
+    }
+
     private suspend fun requireReady(engine: Engine) {
         val notReady = models.check().filter { it.model.engine == engine && !it.ready }
         if (notReady.isNotEmpty()) throw ModelsNotReadyException(engine, notReady)
@@ -52,6 +62,10 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
         const val KWS_DECODER = "kws-gigaspeech/decoder-epoch-12-avg-2-chunk-16-left-64.onnx"
         const val KWS_JOINER = "kws-gigaspeech/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
         const val KWS_TOKENS = "kws-gigaspeech/tokens.txt"
+        const val ASR_ENCODER = "asr-parakeet-v3/encoder.int8.onnx"
+        const val ASR_DECODER = "asr-parakeet-v3/decoder.int8.onnx"
+        const val ASR_JOINER = "asr-parakeet-v3/joiner.int8.onnx"
+        const val ASR_TOKENS = "asr-parakeet-v3/tokens.txt"
     }
 }
 
