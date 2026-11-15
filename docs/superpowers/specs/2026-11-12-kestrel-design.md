@@ -238,7 +238,7 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 
 - Kestrel speaks through its own voice engine, with the audio usage "assistant". When earbuds are connected, Android plays the audio through them. It speaks sentence by sentence and synthesizes the next sentence while one plays, so that it starts soon and stops at once. While it speaks, it holds transient audio focus that lets other apps lower their volume.
 - While Kestrel speaks, recognition pauses and the keyword spotter listens for "stop", "cancel" and "Kestrel". Kestrel ignores a keyword hit that matches a word it is speaking at that moment, because it knows its own text and roughly when each word is spoken: it places each word in its sentence's playing time in proportion to the characters before it. Echo cancellation helps where the device has it, and earbuds remove the problem.
-- What the microphone heard while Kestrel spoke is Kestrel's own voice, so when recognition resumes, an utterance that began earlier keeps only its part from that moment on. After an interruption with "Kestrel", the cut is 1 s before the keyword hit instead, so that the name and the request that follows it count.
+- What the microphone heard while Kestrel spoke is Kestrel's own voice, so when recognition resumes, an utterance that began earlier keeps only its part from that moment on. After an interruption with "Kestrel", an utterance that starts with the name counts in full. One that began earlier began with Kestrel's voice, which also runs under and after the name, so Kestrel drops it and waits for the request that follows.
 - "Stop" or "cancel" ends the speech and also cancels a running task. "Kestrel" ends the speech and listens for a new request.
 
 ### 8.5 Listening modes
