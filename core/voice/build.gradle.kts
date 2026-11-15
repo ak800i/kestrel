@@ -32,8 +32,9 @@ tasks.withType<Test>().configureEach {
 
 dependencies {
     // sherpa-onnx's Android library with ONNX Runtime linked statically (design spec, section 8.2). It comes from the
-    // GitHub release that settings.gradle.kts names, and gradle/verification-metadata.xml checks its hash.
-    implementation("com.k2fsa.sherpa.onnx:sherpa-onnx-static-link-onnxruntime:${libs.versions.sherpaOnnx.get()}@aar")
+    // GitHub release that settings.gradle.kts names, and gradle/verification-metadata.xml checks its hash. The release has
+    // no metadata, so the dependency asks for the AAR.
+    implementation(libs.sherpa.onnx) { artifact { type = "aar" } }
     api(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)

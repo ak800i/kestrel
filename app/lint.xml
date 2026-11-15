@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- onnxruntime-android stays at 1.28, because ONNX Runtime 1.29 turns telemetry on (design spec, B14). -->
+    <issue id="NewerVersionAvailable">
+        <ignore regexp="onnxruntime-android" />
+    </issue>
+</lint>
