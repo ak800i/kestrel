@@ -86,7 +86,7 @@ These scripts check assumptions of the design on a test device (design spec, sec
 Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). Whenever Kestrel comes to the front, the checklist reads the state of steps 3, 4, 5 and 8 from Android, so it shows the changes that you make in Android's settings, and it checks the speech model files for step 2.
 
 1. Install Kestrel with `scripts\install.ps1`. On a Samsung phone, Auto Blocker must be off while USB debugging is on.
-2. `scripts\push-models.ps1` will copy the voice models. This step comes with Kestrel's voice features.
+2. Copy the speech models with `scripts\push-models.ps1 -Serial $serial`. Kestrel must be installed first. The first run downloads about 760 MB from the models' projects into `%LOCALAPPDATA%\Kestrel\models` and checks each file's SHA-256 hash against `models\manifest.json`. Then it copies the files that the phone lacks, about 740 MB, into Kestrel's folder `Android/data/dev.kestrel/files/models`, and Kestrel checks them against the same hashes. Uninstalling Kestrel deletes the models from the phone.
 3. Turn on Kestrel's accessibility service. The step's button opens Android's accessibility settings.
 4. Allow the microphone and notifications. The step's button asks Android for both permissions. After you refuse twice, Android no longer asks, and the button opens Kestrel's app settings instead.
 5. Allow unrestricted battery use. The step's button opens Kestrel's app settings, where the battery setting is. On a Samsung phone, also add Kestrel to "Never sleeping apps" in the battery settings.
