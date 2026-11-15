@@ -63,6 +63,19 @@ class SnapshotBuilderTest {
     }
 
     @Test
+    fun aSupplementalDescriptionNamesAFieldButDoesNotReplaceAText() {
+        // WebView and Chrome 157 give a web text field's aria-label only as a supplemental description, with an empty hint.
+        val field = FakeNode(text = "", hint = "", supplementalDescription = "Web field", className = "android.widget.EditText", editable = true)
+        val select = FakeNode(text = "Arial", supplementalDescription = "Font", className = "android.widget.Spinner", clickable = true)
+
+        val elements = build(FakeWindow(FakeNode(children = listOf(field, select)))).snapshot.elements
+
+        assertEquals(listOf("Web field", "Arial"), elements.map { it.label })
+        assertEquals(listOf("Web field", "Font"), elements.map { it.supplementalDescription })
+        assertEquals("dev.app||Web field|EditText|0", elements[0].key)
+    }
+
+    @Test
     fun anUnlabeledButtonGetsANameFromItsViewId() {
         val button = FakeNode(viewId = "dev.app:id/compose_button", className = "android.widget.ImageButton", clickable = true)
 

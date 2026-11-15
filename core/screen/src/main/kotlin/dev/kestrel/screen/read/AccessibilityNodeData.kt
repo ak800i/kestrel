@@ -16,6 +16,7 @@ internal class AccessibilityNodeData(val info: AccessibilityNodeInfo) : NodeData
     override val text: String? get() = info.shownText()
     override val contentDescription: String? get() = info.contentDescription?.toString()
     override val hint: String? get() = info.hintText?.toString()
+    override val supplementalDescription: String? get() = info.supplementalDescriptionCompat()
     override val stateDescription: String? get() = info.stateDescription?.toString()
     override val viewId: String? get() = info.viewIdResourceName
     override val bounds: IntRect get() = Rect().also(info::getBoundsInScreen).toIntRect()
@@ -87,6 +88,17 @@ private fun AccessibilityNodeInfo.isCheckedCompat(): Boolean =
         @Suppress("DEPRECATION")
         isChecked
     }
+
+/**
+ * Android 16 added the supplemental description to the node. Apps that set it through androidx on older versions, such
+ * as WebView, put it into the node's extras instead.
+ */
+private fun AccessibilityNodeInfo.supplementalDescriptionCompat(): String? {
+    if (Build.VERSION.SDK_INT >= 36) supplementalDescription?.let { return it.toString() }
+    return extras.getCharSequence(SUPPLEMENTAL_DESCRIPTION_KEY)?.toString()
+}
+
+private const val SUPPLEMENTAL_DESCRIPTION_KEY = "androidx.view.accessibility.AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY"
 
 /**
  * The node's text, or null while a text field shows its hint: Android then reports the hint as the text and sets

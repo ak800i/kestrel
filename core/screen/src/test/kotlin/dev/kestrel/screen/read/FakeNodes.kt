@@ -9,6 +9,7 @@ class FakeNode(
     override val text: String? = null,
     override val contentDescription: String? = null,
     override val hint: String? = null,
+    override val supplementalDescription: String? = null,
     override val stateDescription: String? = null,
     override val viewId: String? = null,
     override val className: String? = "android.view.View",

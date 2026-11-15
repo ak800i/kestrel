@@ -41,8 +41,9 @@ enum class ElementAction {
  * ID, label and class and its position among look-alike siblings, the elements with the same four parts under the
  * same parent. Look-alikes under different parents, such as the "Delete" buttons of a list's rows, can get the same
  * key, so the second element with that key in the snapshot gets the suffix `~2`, the third `~3`, and so on. A text
- * field's label part is only its own description or hint. The key can change when any of these parts change, for
- * example when a look-alike before the element appears or goes, so a key names a position, not an identity.
+ * field's label part is only its own description, hint or supplemental description. The key can change when any of
+ * these parts change, for example when a look-alike before the element appears or goes, so a key names a position, not
+ * an identity.
  */
 @Serializable
 data class ScreenElement(
@@ -56,9 +57,14 @@ data class ScreenElement(
     val text: String? = null,
     val contentDescription: String? = null,
     val hint: String? = null,
+    /** A short description that adds to the element's text, such as a field's purpose. */
+    val supplementalDescription: String? = null,
     val stateDescription: String? = null,
     val viewId: String? = null,
-    /** The name that Kestrel uses for the element: its text, description or hint, or the text inside it. */
+    /**
+     * The name that Kestrel uses for the element: its text, description, hint or supplemental description, or the text
+     * inside it.
+     */
     val label: String? = null,
     /** For an element without a [label], a name derived from its view ID, for example "compose" for `compose_button`. */
     val suggestedName: String? = null,
