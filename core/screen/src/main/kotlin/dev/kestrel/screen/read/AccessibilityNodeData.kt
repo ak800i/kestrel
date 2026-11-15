@@ -95,7 +95,12 @@ private fun AccessibilityNodeInfo.isCheckedCompat(): Boolean =
  */
 private fun AccessibilityNodeInfo.supplementalDescriptionCompat(): String? {
     if (Build.VERSION.SDK_INT >= 36) supplementalDescription?.let { return it.toString() }
-    return extras.getCharSequence(SUPPLEMENTAL_DESCRIPTION_KEY)?.toString()
+    // The extras come from the app, and reading them can fail, for example on a value that cannot be unparcelled.
+    return try {
+        extras.getCharSequence(SUPPLEMENTAL_DESCRIPTION_KEY)?.toString()
+    } catch (e: RuntimeException) {
+        null
+    }
 }
 
 private const val SUPPLEMENTAL_DESCRIPTION_KEY = "androidx.view.accessibility.AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY"
