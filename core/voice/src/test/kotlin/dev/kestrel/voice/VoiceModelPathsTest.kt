@@ -1,0 +1,28 @@
+package dev.kestrel.voice
+
+import dev.kestrel.voice.models.Engine
+import dev.kestrel.voice.models.ModelManifest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/** The engines find their files by the manifest's paths, so each path that they use must be in the manifest. */
+class VoiceModelPathsTest {
+    private val manifest = ModelManifest.parse(File("../../models/manifest.json").readText())
+
+    private fun engineOf(path: String): Engine = manifest.models.single { model -> model.files.any { it.path == path } }.engine
+
+    @Test
+    fun theSpeechDetectorsModelIsInTheManifest() {
+        assertEquals(Engine.VAD, engineOf(VoiceEngines.VAD_MODEL))
+    }
+
+    @Test
+    fun theVoicesFilesAreInTheManifest() {
+        assertEquals(Engine.TTS, engineOf(VoiceEngines.TTS_MODEL))
+        assertEquals(Engine.TTS, engineOf(VoiceEngines.TTS_TOKENS))
+        // The voice uses espeak-ng's voice "en".
+        assertEquals(Engine.TTS, engineOf("${VoiceEngines.ESPEAK_DATA}/lang/gmw/en"))
+    }
+}

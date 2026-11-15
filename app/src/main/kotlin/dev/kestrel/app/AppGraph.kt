@@ -9,6 +9,7 @@ import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.voice.VoiceEngines
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelManifest
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -65,6 +66,9 @@ class AppGraph(context: Context) {
             hashCache = File(appContext.noBackupFilesDir, "model-hashes.json"),
         )
     }
+
+    /** Kestrel's speech engines, which load their models from [models] (design spec, section 8.2). */
+    val voice: VoiceEngines by lazy { VoiceEngines(models, File(appContext.noBackupFilesDir, "voice")) }
 
     private val screens = MutableStateFlow<ScreenSession?>(null)
 

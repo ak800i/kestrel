@@ -180,3 +180,27 @@ Describe 'The settings helpers' {
         }
     }
 }
+
+Describe 'Get-TestResultCounts' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'adds up the suites of every result file below the folder' {
+        $folder = Join-Path $TestDrive 'results'
+        New-Item -ItemType Directory -Path (Join-Path $folder 'device') | Out-Null
+        Set-Content -LiteralPath (Join-Path $folder 'TEST-a.xml') -Value '<?xml version="1.0"?><testsuite name="a" tests="3" failures="1" errors="0" skipped="1"><testcase name="x"/></testsuite>'
+        Set-Content -LiteralPath (Join-Path $folder 'device\TEST-b.xml') -Value '<?xml version="1.0"?><testsuite name="b" tests="2" failures="0" errors="1" skipped="0"/>'
+
+        $counts = Get-TestResultCounts -Folder $folder
+
+        $counts.Tests | Should -Be 5
+        $counts.Failures | Should -Be 1
+        $counts.Errors | Should -Be 1
+        $counts.Skipped | Should -Be 1
+    }
+
+    It 'counts no tests in a folder that does not exist' {
+        (Get-TestResultCounts -Folder (Join-Path $TestDrive 'none')).Tests | Should -Be 0
+    }
+}

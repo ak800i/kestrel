@@ -145,3 +145,21 @@ function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
     if ($state -ne 'device') { throw "Device $Serial is not connected." }
     throw "Refusing to use $Serial (model '$model', AVD '$avd'). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
 }
+
+# Adds up the results that Gradle's connected tests wrote as JUnit XML files below a folder: the numbers of tests,
+# failures, errors and skipped tests. A folder that does not exist counts no tests.
+function Get-TestResultCounts([string]$Folder) {
+    $counts = [ordered]@{ Tests = 0; Failures = 0; Errors = 0; Skipped = 0 }
+    if (Test-Path -LiteralPath $Folder) {
+        foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -Filter 'TEST-*.xml') {
+            [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
+            foreach ($suite in @($xml.SelectNodes('//testsuite'))) {
+                $counts.Tests += [int]$suite.tests
+                $counts.Failures += [int]$suite.failures
+                $counts.Errors += [int]$suite.errors
+                $counts.Skipped += [int]$suite.skipped
+            }
+        }
+    }
+    return [pscustomobject]$counts
+}
