@@ -41,10 +41,10 @@ function Read-ModelManifest([string]$Path) {
 }
 
 # Whether a path from the manifest is relative and stays inside its folder: segments of letters, digits, '.', '_' and
-# '-', separated by '/', and none of them '.' or '..'.
+# '-', separated by '/'. Each segment starts with a letter, a digit or '_', so that none is '.' or '..', and tar.exe
+# never reads a member as an option. '\z' ends the match at the end of the path; '$' would also allow a final newline.
 function Test-PlainPath([string]$Path) {
-    $parts = $Path -split '/'
-    return $Path -match '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$' -and $parts -notcontains '.' -and $parts -notcontains '..'
+    return $Path -match '^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*\z'
 }
 
 function Assert-HttpsSource([string]$What, $Url) {

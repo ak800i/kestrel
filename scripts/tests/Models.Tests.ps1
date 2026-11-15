@@ -26,7 +26,7 @@ Describe 'Read-ModelManifest' {
         @($manifest.models).Count | Should -BeGreaterThan 0
     }
 
-    It 'refuses a path that leaves the models folder: <_>' -ForEach @('../a.onnx', 'm/../../a.onnx', '/sdcard/a.onnx', 'm\a.onnx', 'm/./a.onnx') {
+    It 'refuses a path that leaves the models folder: <_>' -ForEach @('../a.onnx', 'm/../../a.onnx', '/sdcard/a.onnx', 'm\a.onnx', 'm/./a.onnx', "m/a.onnx`n", 'm/-a.onnx') {
         $path = New-ManifestFile @(@{ path = $_; size = 1; sha256 = $hash; url = 'https://example.org/a' })
 
         { Read-ModelManifest -Path $path } | Should -Throw '*leaves the models folder*'
@@ -62,7 +62,7 @@ Describe 'Read-ModelManifest' {
         { Read-ModelManifest -Path $path } | Should -Throw '*archive*'
     }
 
-    It 'refuses a member that leaves the folder into which the archive is unpacked: <_>' -ForEach @('../a.onnx', 'pack/../../a.onnx', '/a.onnx', 'pack\a.onnx') {
+    It 'refuses a member that leaves the folder into which the archive is unpacked: <_>' -ForEach @('../a.onnx', 'pack/../../a.onnx', '/a.onnx', 'pack\a.onnx', "pack/a.onnx`n", '-P') {
         $archive = @{ id = 'pack'; url = 'https://example.org/pack.tar.bz2'; size = 1; sha256 = $hash }
         $path = New-ManifestFile @(@{ path = 'm/a.onnx'; size = 1; sha256 = $hash; archive = 'pack'; member = $_ }) @($archive)
 
