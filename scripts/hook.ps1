@@ -102,11 +102,13 @@ switch ([int]$match.Groups[1].Value) {
         if ($Command -eq 'snapshot') {
             # A snapshot can be larger than a broadcast's answer, so Kestrel answers with the path of a file in its own
             # storage, which only a debug build lets adb read. adb shell passes on the exit code of run-as; adb exec-out
-            # would answer with run-as's error text and exit code 0, as if the text were the snapshot.
-            $file = $data
-            $data = Invoke-Adb shell run-as dev.kestrel cat $file
+            # would answer with run-as's error text and exit code 0, as if the text were the snapshot. The answer goes into
+            # the device's command line, so only the path that Kestrel's hook writes is accepted.
+            $file = 'cache/hook-snapshot.json'
+            if ($data -cne $file) { throw "The device did not answer with the snapshot's path $file. Install a current debug build with scripts\install.ps1." }
+            $data = Invoke-Adb shell run-as dev.kestrel cat (ConvertTo-ShellText $file)
             $readCode = $LASTEXITCODE
-            Invoke-Adb shell run-as dev.kestrel rm -f $file | Out-Null
+            Invoke-Adb shell run-as dev.kestrel rm -f (ConvertTo-ShellText $file) | Out-Null
             if ($readCode -ne 0) { throw "Could not read the snapshot file $file from the device." }
         }
         if ($Out) {

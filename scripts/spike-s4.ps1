@@ -33,13 +33,8 @@ function Invoke-Shell([string]$Command) { (& $adb -s $Serial shell $Command) -jo
 function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join "`n" }
 
 function Get-Snapshot {
-    $file = Join-Path $env:TEMP "kestrel-spike-s4-$PID.json"
-    try {
-        Invoke-Hook snapshot -Out $file | Out-Null
-        Get-Content $file -Raw | ConvertFrom-Json
-    } finally {
-        Remove-Item $file -ErrorAction SilentlyContinue
-    }
+    # Without -Out, hook.ps1 returns the JSON, so the screen's text is not written to this computer's disk.
+    Invoke-Hook snapshot | ConvertFrom-Json
 }
 
 function Get-Names($Element) {

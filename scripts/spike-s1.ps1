@@ -445,6 +445,7 @@ try {
                 } finally {
                     Invoke-Restore $restores
                 }
+                Write-Host "Android may keep the made-up place as the device's last known location until the device gets a real one or restarts."
             }
             'boot' {
                 Set-KestrelService $true
