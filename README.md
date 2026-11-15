@@ -79,6 +79,25 @@ These scripts check assumptions of the design on a test device (design spec, sec
 - `scripts\spike-s4.ps1 -Serial $serial -Browser chrome, firefox` serves `scripts\spike-s4\page.html` from this computer with the JDK's `jwebserver`, opens it in each browser through `adb reverse`, and prints which of the page's elements Kestrel reads and whether Kestrel can type into its text fields. A browser that is not installed is skipped. The script taps through the browsers' first-run screens that it knows, and otherwise asks you to finish them.
 - `scripts\spike-s7.ps1 -Serial $serial` pushes a file of random bytes into Kestrel's external files folder with `adb push`, where the model files will live, and checks that Kestrel reads the same bytes. It deletes the file afterwards.
 
+## Setting up Kestrel
+
+Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). The checklist reads each step's state from Android whenever Kestrel comes to the front, so it shows the changes that you make in Android's settings.
+
+1. Install Kestrel with `scripts\install.ps1`. On a Samsung phone, Auto Blocker must be off while USB debugging is on.
+2. Copy the voice models with `scripts\push-models.ps1`. This step comes with Kestrel's voice features.
+3. Turn on Kestrel's accessibility service. The step's button opens Android's accessibility settings.
+4. Allow the microphone and notifications. The step's button asks Android for both permissions. After you refuse twice, Android no longer asks, and the button opens Kestrel's app settings instead.
+5. Allow unrestricted battery use. The step's button opens Kestrel's app settings, where the battery setting is. On a Samsung phone, also add Kestrel to "Never sleeping apps" in the battery settings.
+6. Optionally, make Kestrel the default digital assistant, for the side key and earbuds. This step comes with Kestrel's voice features.
+7. Sign in to an AI provider and choose the models. This step comes with Kestrel's provider settings.
+8. Optionally, turn off Voice Access, so that it and Kestrel do not react to the same words. The checklist warns while both are on.
+
+The settings app also has these pages:
+
+- **Safety:** test mode. While it is on, Kestrel sends and shares only to your own self-chats and your own email address, and it makes no calls. Keep it on while you test Kestrel.
+- **Activity log** and **Network log:** what Kestrel did, and every request that it sent, encrypted and kept for 7 days. *Export both logs* writes both logs to a JSON file that you choose, which is the only way the logs leave the phone. *Delete history* wipes both logs after you confirm.
+- **About:** Kestrel's version, the Android version, and the licence texts.
+
 ## Licence
 
-Kestrel is free software under the GNU General Public License, version 3 or (at your option) any later version. See [LICENSE](LICENSE). The licences of the libraries that Kestrel uses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Kestrel is free software under the GNU General Public License, version 3 or (at your option) any later version. See [LICENSE](LICENSE). The licences of the libraries that Kestrel uses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and the [licences](licences) folder holds the texts of those licences. Kestrel's About page shows all of these texts.
