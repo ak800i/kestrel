@@ -4,6 +4,7 @@ import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -19,6 +20,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class LogStoreTest {
     private val dao = FakeLogDao()
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
