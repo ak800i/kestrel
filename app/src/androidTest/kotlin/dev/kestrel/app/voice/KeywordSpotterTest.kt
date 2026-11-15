@@ -6,6 +6,7 @@ import dev.kestrel.app.voice.VoiceTests.frames
 import dev.kestrel.app.voice.VoiceTests.graph
 import dev.kestrel.app.voice.VoiceTests.log
 import dev.kestrel.app.voice.VoiceTests.speech
+import dev.kestrel.app.voice.VoiceTests.voice
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.KeywordSpotter
 import dev.kestrel.voice.SAMPLE_RATE
@@ -52,6 +53,9 @@ class KeywordSpotterTest {
         graph.voice.keywordSpotter().use { spotter ->
             val audio = speech("Stop.")
             val hit = frames(audio, spotter::accept).single()
+            // speech() puts 0.5 s of silence before the voice.
+            val voiceEnd = 0.5f + voice("Stop.").size / SAMPLE_RATE.toFloat()
+            log("keyword spotter: the hit came ${"%.2f".format(hit.seconds - voiceEnd)} s after the end of the voice")
 
             // The word starts after 0.5 s of silence, and the audio ends 1 s after the voice.
             assertTrue("${hit.seconds} s", hit.seconds in 0.5f..audio.size / SAMPLE_RATE.toFloat())

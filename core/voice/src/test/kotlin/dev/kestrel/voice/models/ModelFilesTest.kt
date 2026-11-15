@@ -1,5 +1,7 @@
 package dev.kestrel.voice.models
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,7 +11,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 class ModelFilesTest {
     @get:Rule
@@ -25,20 +29,17 @@ class ModelFilesTest {
         cache = File(folder.root, "private/model-hashes.json")
     }
 
-    private fun manifest(vararg files: Pair<String, String>) = ModelManifest(
-        format = 1,
-        models = listOf(
-            Model(
-                id = "m",
-                engine = Engine.ASR,
-                name = "M",
-                licence = "MIT",
-                project = "https://example.org",
-                files = files.map { (path, content) ->
-                    ModelFile(path, content.length.toLong(), hashOf(content), url = "https://example.org/$path")
-                },
-            ),
-        ),
+    private fun manifest(vararg files: Pair<String, String>) = ModelManifest(format = 1, models = listOf(model("m", *files)))
+
+    private fun model(id: String, vararg files: Pair<String, String>) = Model(
+        id = id,
+        engine = Engine.ASR,
+        name = id.uppercase(),
+        licence = "MIT",
+        project = "https://example.org",
+        files = files.map { (path, content) ->
+            ModelFile(path, content.length.toLong(), hashOf(content), url = "https://example.org/$path")
+        },
     )
 
     private fun modelFiles(manifest: ModelManifest) = ModelFiles(root, manifest, cache) { file ->
@@ -121,6 +122,42 @@ class ModelFilesTest {
         cache.writeText("not json")
 
         assertTrue(modelFiles(manifest("m/a.onnx" to "abc")).check().single().ready)
+    }
+
+    @Test
+    fun theModelsComeInTheManifestsOrder() = runTest {
+        write("b/b.onnx", "b")
+        val manifest = ModelManifest(format = 1, models = listOf(model("z", "z/z.onnx" to "z"), model("b", "b/b.onnx" to "b")))
+
+        val statuses = modelFiles(manifest).check()
+
+        assertEquals(listOf("z", "b"), statuses.map { it.model.id })
+        assertEquals(listOf(false, true), statuses.map { it.ready })
+    }
+
+    @Test
+    fun aFileThatCannotBeReadIsDamaged() = runTest {
+        write("m/a.onnx", "abc")
+        val files = ModelFiles(root, manifest("m/a.onnx" to "abc"), cache) { throw IOException("unreadable") }
+
+        assertEquals(listOf("m/a.onnx"), files.check().single().damaged)
+    }
+
+    @Test
+    fun twoChecksAtOnceHashAFileOnce() = runTest {
+        write("m/a.onnx", "abc")
+        val hashes = AtomicInteger()
+        val files = ModelFiles(root, manifest("m/a.onnx" to "abc"), cache) { file ->
+            hashes.incrementAndGet()
+            // Slow enough that the second check would hash the file too if the checks overlapped.
+            Thread.sleep(200)
+            sha256(file)
+        }
+
+        val statuses = listOf(async { files.check() }, async { files.check() }).awaitAll()
+
+        assertTrue(statuses.all { it.single().ready })
+        assertEquals(1, hashes.get())
     }
 
     @Test

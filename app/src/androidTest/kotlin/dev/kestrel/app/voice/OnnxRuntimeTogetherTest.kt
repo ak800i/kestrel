@@ -6,7 +6,9 @@ import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.voice.VoiceTests.graph
+import dev.kestrel.app.voice.VoiceTests.frames
 import dev.kestrel.app.voice.VoiceTests.silence
+import dev.kestrel.app.voice.VoiceTests.speech
 import dev.kestrel.voice.SherpaOnnx
 import dev.kestrel.voice.models.Engine
 import kotlinx.coroutines.runBlocking
@@ -23,7 +25,7 @@ import java.nio.FloatBuffer
 @RunWith(AndroidJUnit4::class)
 class OnnxRuntimeTogetherTest {
     @Before
-    fun needsTheModels() = VoiceTests.assumeModels(Engine.VAD)
+    fun needsTheModels() = VoiceTests.assumeModels(Engine.VAD, Engine.TTS)
 
     @Test
     fun bothOnnxRuntimesWorkInOneProcess() = runBlocking {
@@ -43,6 +45,7 @@ class OnnxRuntimeTogetherTest {
 
             // sherpa-onnx still works after the other ONNX Runtime ran.
             assertEquals(0, (detector.accept(silence(0.5f)) + detector.finish()).size)
+            assertEquals(1, (frames(speech("Stop."), detector::accept) + detector.finish()).size)
         }
         assertEquals("1.28.2", SherpaOnnx.onnxRuntimeVersion)
     }

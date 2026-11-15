@@ -5,8 +5,8 @@ import dev.kestrel.voice.Keyword
 /**
  * The keyword spotter's keywords, written in the word pieces of its model, one keyword spelling to a line:
  * `<pieces> :<boost> #<threshold> @<name>` (design spec, section 8.2, B37). With a single spelling, the spotter never heard
- * "Kestrel" in tests, so it knows nine. Every piece must be in the model's tokens.txt: one unknown piece makes the whole
- * spotter fail to load.
+ * "Kestrel" in tests, so it knows nine. Every piece must be in the model's tokens.txt: with one unknown piece, sherpa-onnx
+ * ends Kestrel's process (`_Exit`) while the spotter loads.
  */
 internal object KeywordLines {
     private val KESTREL = listOf(

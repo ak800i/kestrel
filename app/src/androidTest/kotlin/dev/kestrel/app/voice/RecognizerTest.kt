@@ -13,6 +13,8 @@ import dev.kestrel.voice.models.Engine
 import kotlinx.coroutines.runBlocking
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,6 +53,16 @@ class RecognizerTest {
         val boostWords = listOf("Viber", "日本語", "😀 smile", "مرحبا", "O'Brien", "Jean-Luc", "R2-D2", " / ", "a:b") + (1..100).map { "Contact $it" }
 
         assertEquals(words(transcribe(text).text), words(transcribe(text, boostWords).text))
+    }
+
+    @Test
+    fun aBoostWordChangesATranscript() {
+        // The voice has no variation, so this phrase gives the same audio in every run. Of 16 phrases with names that
+        // were tried on kestrel-api37, the boost word changed 5 transcripts; this is one of them.
+        val text = "Tap on Nextcloud."
+
+        assertFalse("nextcloud" in words(transcribe(text).text).split(' '))
+        assertTrue("nextcloud" in words(transcribe(text, listOf("Nextcloud")).text).split(' '))
     }
 
     @Test

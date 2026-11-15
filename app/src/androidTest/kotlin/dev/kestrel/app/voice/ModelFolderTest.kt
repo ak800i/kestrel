@@ -15,7 +15,8 @@ class ModelFolderTest {
     private val graph = (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as KestrelApplication).graph
 
     // scripts\push-models.ps1 copies the models into this folder. On Android 17, Kestrel can read a folder that adb
-    // creates only after a chmod, so Kestrel creates the folder itself (design spec, section 8.10).
+    // creates only after a chmod, so Kestrel creates the folder itself (design spec, section 8.10). The test also passes
+    // with a folder that an earlier install left, so it shows that the folder is there, not that Kestrel created it.
     @Test
     fun kestrelCreatesItsModelsFolder() {
         val folder = graph.models.root

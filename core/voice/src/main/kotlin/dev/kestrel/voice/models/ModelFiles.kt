@@ -69,9 +69,9 @@ class ModelFiles(
     private fun hashOf(file: File, path: String, cached: Map<String, CachedHash>, known: MutableMap<String, CachedHash>): String {
         val size = file.length()
         val modified = file.lastModified()
-        val hash = cached[path]?.takeIf { it.size == size && it.modified == modified }?.sha256 ?: hash(file)
-        known[path] = CachedHash(size, modified, hash)
-        return hash
+        val fileHash = cached[path]?.takeIf { it.size == size && it.modified == modified }?.sha256 ?: hash(file)
+        known[path] = CachedHash(size, modified, fileHash)
+        return fileHash
     }
 
     private fun readCache(): Map<String, CachedHash> = try {
