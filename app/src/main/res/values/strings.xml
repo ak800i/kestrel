@@ -26,11 +26,15 @@
     <string name="about_licence_kestrel">Kestrel\'s licence</string>
     <string name="about_licence_kestrel_summary">GNU General Public License, version 3 or later</string>
     <string name="about_licence_notices">Third-party notices</string>
-    <string name="about_licence_notices_summary">The libraries in Kestrel and their licences</string>
+    <string name="about_licence_notices_summary">The libraries and speech models in Kestrel and their licences</string>
     <string name="about_licence_apache">Apache License 2.0</string>
     <string name="about_licence_apache_summary">The licence of most of these libraries</string>
     <string name="about_licence_mpl">Mozilla Public License 2.0</string>
     <string name="about_licence_mpl_summary">The licence of the Public Suffix List in OkHttp</string>
+    <string name="about_licence_mit">MIT License</string>
+    <string name="about_licence_mit_summary">The licence of ONNX Runtime, JSON for Modern C++ and some speech models</string>
+    <string name="about_licence_hclust">hclust-cpp\'s BSD licence</string>
+    <string name="about_licence_hclust_summary">The licence of the clustering code in sherpa-onnx</string>
     <string name="about_reading">Reading the text…</string>
 
     <string name="safety_test_mode">Test mode</string>

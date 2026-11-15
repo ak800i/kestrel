@@ -57,6 +57,8 @@ class MainActivityTest {
             R.string.about_licence_kestrel to "GNU GENERAL PUBLIC LICENSE",
             R.string.about_licence_notices to "Kestrel's release build includes the libraries below",
             R.string.about_licence_apache to "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION",
+            R.string.about_licence_mit to "Permission is hereby granted, free of charge",
+            R.string.about_licence_hclust to "Redistribution and use in source and binary forms",
             R.string.about_licence_mpl to "Mozilla Public License Version 2.0",
         )
         for ((title, start) in expected) {

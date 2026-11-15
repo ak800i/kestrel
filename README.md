@@ -27,6 +27,8 @@ scripts\gradle.ps1 :build-logic:convention:check    # tests of the audit itself
 
 `check` runs the privacy audit (`kestrelAudit`) for every build variant, so the debug build that the scripts install is audited too.
 
+The first build downloads sherpa-onnx's Android library (39 MB), which contains the speech engines, from sherpa-onnx's GitHub release. Gradle checks its SHA-256 hash against `gradle/verification-metadata.xml`. The library contains its own copy of ONNX Runtime, so a new version of sherpa-onnx needs a new audit of that copy (`audit/rules.txt`) and a new hash.
+
 `scripts\test-scripts.ps1` tests the PowerShell scripts with Pester in Windows PowerShell 5.1 and in PowerShell 7, and checks them with PSScriptAnalyzer; the comment at its top lists the modules that it needs.
 
 Gradle and the Kotlin compiler keep running in the background between builds. During a build they use about 3 GB and 2 GB of memory. They stop by themselves 15 minutes after the last build, and `scripts\gradle.ps1 --stop` stops them at once. Gradle runs them on Java 21, as `gradle/gradle-daemon-jvm.properties` asks, so a Gradle that you start from another JDK, such as the one that `JAVA_HOME` names, uses the same processes as `scripts\gradle.ps1`, as long as Android Studio's JDK is the only Java 21 on the computer.
