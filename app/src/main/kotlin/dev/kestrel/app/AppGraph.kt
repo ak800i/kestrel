@@ -9,6 +9,8 @@ import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.voice.models.ModelFiles
+import dev.kestrel.voice.models.ModelManifest
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** Every setting that Kestrel stores. */
 object SettingKeys {
@@ -25,6 +28,8 @@ object SettingKeys {
 
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
 class AppGraph(context: Context) {
+    private val appContext: Context = context.applicationContext
+
     /**
      * Handles the failures of background work: a failed job is written to logcat instead of ending the app's process.
      * Only the error's classes and stack frames are written, because a message can contain screen text, and each error
@@ -47,6 +52,19 @@ class AppGraph(context: Context) {
     // Built on first use: building the HTTP client on the main thread made Kestrel miss Android's start-up deadline
     // on a busy emulator just after it booted.
     val network: NetworkGateway by lazy { NetworkGateway(networkPolicy) { event -> scope.launch { logs.append(event) } } }
+
+    /**
+     * Kestrel's speech model files, which scripts\push-models.ps1 copies into Kestrel's external files folder (design
+     * spec, section 8.10). Built on first use, because finding that folder touches the disk. If shared storage is not
+     * available, the models count as missing.
+     */
+    val models: ModelFiles by lazy {
+        ModelFiles(
+            root = File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, "models"),
+            manifest = ModelManifest.fromAssets(appContext.assets),
+            hashCache = File(appContext.noBackupFilesDir, "model-hashes.json"),
+        )
+    }
 
     private val screens = MutableStateFlow<ScreenSession?>(null)
 

@@ -35,7 +35,9 @@ dependencies {
     // GitHub release that settings.gradle.kts names, and gradle/verification-metadata.xml checks its hash.
     implementation("com.k2fsa.sherpa.onnx:sherpa-onnx-static-link-onnxruntime:${libs.versions.sherpaOnnx.get()}@aar")
     api(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }
