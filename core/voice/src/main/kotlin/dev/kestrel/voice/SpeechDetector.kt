@@ -10,7 +10,9 @@ class Utterance(val startSample: Long, val samples: FloatArray) {
 
 /**
  * Splits audio into utterances (design spec, sections 8.2 and 8.3). An utterance ends after 0.7 s of silence and lasts at
- * most 30 s. Not thread-safe: feed it from one thread, and close it when it is no longer needed.
+ * most 30 s: longer speech is cut into utterances of just under 30 s, and each one starts where the one before it ended.
+ * Not thread-safe: feed it from one thread. Close it when it is no longer needed, and only after the last call has
+ * returned; Kestrel's detector throws [IllegalStateException] when it is called after [close].
  */
 interface SpeechDetector : AutoCloseable {
     /** Feeds 16 kHz samples, any number at a time, and returns the utterances that ended in them. */
@@ -19,6 +21,6 @@ interface SpeechDetector : AutoCloseable {
     /** Ends the audio: returns the utterance that is still going on, if any, and counts samples from 0 again. */
     fun finish(): List<Utterance>
 
-    /** Whether the audio that came last sounds like speech. */
+    /** Whether an utterance is going on: from about 0.3 s after speech starts until the utterance ends. */
     val hearsSpeech: Boolean
 }
