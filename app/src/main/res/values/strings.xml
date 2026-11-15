@@ -81,6 +81,7 @@
     <string name="setup_install_title">Install Kestrel</string>
     <string name="setup_install_detail">Kestrel is installed. scripts\\install.ps1 installs it with adb. On a Samsung phone, Auto Blocker must be off while USB debugging is on.</string>
     <string name="setup_models_title">Copy the voice models</string>
+    <!-- Lint's Typos check reads "ps1 -Serial" as a typo for "ps! -Serial", so this suppression is on purpose. -->
     <string name="setup_models_detail" tools:ignore="Typos">Run scripts\\push-models.ps1 -Serial &lt;serial&gt; on your computer. It downloads the speech models once and copies them to this phone, and Kestrel checks them against the hashes that come with the app.</string>
     <string name="setup_models_checking">Checking the model files…</string>
     <string name="setup_models_missing">Missing: %1$s</string>

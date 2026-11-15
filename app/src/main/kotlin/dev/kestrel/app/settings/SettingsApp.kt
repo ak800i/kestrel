@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,11 +35,21 @@ enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS }
 
 /**
  * Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture.
- * [onExportLogs] asks the owner for a file to export both logs to.
+ * [onCheckModels] checks the model files again, which happens whenever the checklist or the About page opens
+ * (design spec, 8.10). [onExportLogs] asks the owner for a file to export both logs to.
  */
 @Composable
-fun SettingsApp(status: SetupStatus, data: SettingsData, onAction: (SetupAction) -> Unit, onExportLogs: () -> Unit) {
+fun SettingsApp(
+    status: SetupStatus,
+    data: SettingsData,
+    onAction: (SetupAction) -> Unit,
+    onCheckModels: () -> Unit,
+    onExportLogs: () -> Unit,
+) {
     var page by rememberSaveable { mutableStateOf(SettingsPage.HOME) }
+    LaunchedEffect(page) {
+        if (page == SettingsPage.CHECKLIST || page == SettingsPage.ABOUT) onCheckModels()
+    }
     // A licence text opens on top of the About page, and Back returns there.
     var licence by rememberSaveable { mutableStateOf<Licence?>(null) }
     BackHandler(enabled = page != SettingsPage.HOME) { if (licence != null) licence = null else page = SettingsPage.HOME }

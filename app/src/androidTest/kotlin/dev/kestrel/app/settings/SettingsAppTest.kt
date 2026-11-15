@@ -34,9 +34,10 @@ class SettingsAppTest {
     private val actions = mutableListOf<SetupAction>()
     private val data = FakeSettingsData()
     private var exports = 0
+    private var checks = 0
 
     private fun show(status: SetupStatus) {
-        compose.setContent { MaterialTheme { SettingsApp(status, data, { actions += it }) { exports++ } } }
+        compose.setContent { MaterialTheme { SettingsApp(status, data, { actions += it }, { checks++ }) { exports++ } } }
     }
 
     private fun text(@StringRes id: Int, vararg args: Any): String = compose.activity.getString(id, *args)
@@ -206,6 +207,25 @@ class SettingsAppTest {
         compose.onNodeWithText(text(R.string.about_model_ready, "Voice (MIT)")).performScrollTo().assertIsDisplayed()
         val missing = compose.activity.resources.getQuantityString(R.plurals.about_model_missing, 2, "Speech (CC-BY-4.0)", 2)
         compose.onNodeWithText(missing).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun theChecklistAndTheAboutPageCheckTheModelsWhenTheyOpen() {
+        show(NOTHING_SET_UP)
+        compose.waitForIdle()
+        assertEquals(0, checks)
+
+        openChecklist()
+        compose.waitForIdle()
+        assertEquals(1, checks)
+
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        compose.onNodeWithText(progress(2)).assertIsDisplayed()
+        assertEquals(1, checks)
+
+        compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.about_version, "9.9.9 (99)")).assertIsDisplayed()
+        assertEquals(2, checks)
     }
 
     private class FakeSettingsData : SettingsData {

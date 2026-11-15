@@ -52,7 +52,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                status?.let { SettingsApp(it, data, ::perform) { exportLogs.launch("kestrel-logs-${LocalDate.now()}.json") } }
+                status?.let {
+                    SettingsApp(it, data, ::perform, ::checkModels) {
+                        exportLogs.launch("kestrel-logs-${LocalDate.now()}.json")
+                    }
+                }
             }
         }
     }
@@ -67,6 +71,11 @@ class MainActivity : ComponentActivity() {
         // Checking the model files can take seconds the first time, so the other steps show at once, and the model
         // files keep their last known status until the check ends.
         status = SetupStatusReader(this).read().copy(models = status?.models)
+        checkModels()
+    }
+
+    /** The hash cache makes a check of unchanged files cost only a few stat calls, so pages may check often. */
+    private fun checkModels() {
         lifecycleScope.launch(graph.errors) {
             val models = graph.models.check()
             status = status?.copy(models = models)
