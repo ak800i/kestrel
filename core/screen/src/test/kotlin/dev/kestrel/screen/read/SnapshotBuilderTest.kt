@@ -64,7 +64,7 @@ class SnapshotBuilderTest {
 
     @Test
     fun aSupplementalDescriptionNamesAFieldBeforeItsHintButDoesNotReplaceAText() {
-        // WebView and Chrome 157 give a web element's name as its supplemental description, and keep only a field's
+        // WebView and Chrome 157 give a form field's name as its supplemental description, and keep only the field's
         // placeholder or help text, such as a character counter, in the hint.
         fun field(hint: String) =
             FakeNode(text = "", hint = hint, supplementalDescription = "Email", className = "android.widget.EditText", editable = true)
