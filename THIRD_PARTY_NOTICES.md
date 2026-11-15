@@ -35,3 +35,17 @@ sherpa-onnx's build links these projects into its library `libsherpa-onnx-jni.so
 | Eigen 5.0.1 | MPL-2.0 | https://gitlab.com/libeigen/eigen |
 | hclust-cpp, with fastcluster, Copyright 2011 Daniel Müllner and 2018 Christoph Dalitz | BSD-2-Clause | https://github.com/cdalitz/hclust-cpp |
 | JSON for Modern C++ 3.12.0, Copyright (c) 2013-2025 Niels Lohmann | MIT | https://github.com/nlohmann/json |
+
+## Speech models
+
+Kestrel's app does not contain its speech models. `scripts\push-models.ps1` downloads them from the projects below and copies them to the phone, and `models/manifest.json` lists every file with its SHA-256 hash.
+
+| Model | Licence | Project |
+|---|---|---|
+| Silero VAD, Copyright (c) 2020-present Silero Team | MIT | https://github.com/snakers4/silero-vad |
+| sherpa-onnx's English keyword model `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`, trained on GigaSpeech XL | Apache-2.0 | https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html |
+| Parakeet-TDT-0.6B-v3, int8 | CC-BY-4.0 | https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3 |
+| Piper's voice `en_US-ljspeech-medium`, trained on the LJ Speech data, which is in the public domain | MIT | https://huggingface.co/rhasspy/piper-voices |
+| espeak-ng's data for English, from the voice's sherpa-onnx package | GPL-3.0-or-later | https://github.com/espeak-ng/espeak-ng |
+
+Parakeet-TDT-0.6B-v3 was created by NVIDIA (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) and is licensed under the Creative Commons Attribution 4.0 International licence (https://creativecommons.org/licenses/by/4.0/). The sherpa-onnx project converted it to ONNX and quantised it to int8 (https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8); Kestrel uses that version unchanged.

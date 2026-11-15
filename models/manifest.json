@@ -1,0 +1,185 @@
+{
+  "format": 1,
+  "archives": [
+    {
+      "id": "kws-gigaspeech",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2",
+      "size": 17626723,
+      "sha256": "f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a"
+    },
+    {
+      "id": "tts-piper-ljspeech",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-medium.tar.bz2",
+      "size": 67169893,
+      "sha256": "3dfb4b759d8be032a4903a9538d128b0fda2a06ab1de6cbc2d93a97e2dd83dba"
+    }
+  ],
+  "models": [
+    {
+      "id": "vad-silero",
+      "engine": "vad",
+      "name": "Silero VAD",
+      "licence": "MIT",
+      "project": "https://github.com/snakers4/silero-vad",
+      "files": [
+        {
+          "path": "vad-silero/silero_vad.onnx",
+          "size": 643854,
+          "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+        }
+      ]
+    },
+    {
+      "id": "kws-gigaspeech",
+      "engine": "kws",
+      "name": "sherpa-onnx English keyword model (GigaSpeech, 3.3M)",
+      "licence": "Apache-2.0",
+      "project": "https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html",
+      "files": [
+        {
+          "path": "kws-gigaspeech/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+          "size": 4807159,
+          "sha256": "1e721676515bcd42a186979733981213c66c80db680e1cc582dfedf3be76e678",
+          "archive": "kws-gigaspeech",
+          "member": "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+        },
+        {
+          "path": "kws-gigaspeech/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+          "size": 1063189,
+          "sha256": "f61ebd3eed3773a44d088d53dfae92dbb6aec4839f4dcaee2d402414741663a3",
+          "archive": "kws-gigaspeech",
+          "member": "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/decoder-epoch-12-avg-2-chunk-16-left-64.onnx"
+        },
+        {
+          "path": "kws-gigaspeech/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+          "size": 163380,
+          "sha256": "eae9da0c7e1e6c6a3f4cc42d167899c388f6c6701b94cb96320e4f55df79624c",
+          "archive": "kws-gigaspeech",
+          "member": "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+        },
+        {
+          "path": "kws-gigaspeech/tokens.txt",
+          "size": 5006,
+          "sha256": "fd2ded4050a55d2b1578870ba8697d02371980217806b7558bd0a5cc60f3ba53",
+          "archive": "kws-gigaspeech",
+          "member": "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/tokens.txt"
+        }
+      ]
+    },
+    {
+      "id": "asr-parakeet-v3",
+      "engine": "asr",
+      "name": "Parakeet-TDT-0.6B-v3, int8",
+      "licence": "CC-BY-4.0",
+      "project": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+      "files": [
+        {
+          "path": "asr-parakeet-v3/encoder.int8.onnx",
+          "size": 652184281,
+          "sha256": "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247",
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/encoder.int8.onnx"
+        },
+        {
+          "path": "asr-parakeet-v3/decoder.int8.onnx",
+          "size": 11845275,
+          "sha256": "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e",
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/decoder.int8.onnx"
+        },
+        {
+          "path": "asr-parakeet-v3/joiner.int8.onnx",
+          "size": 6355277,
+          "sha256": "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3",
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/joiner.int8.onnx"
+        },
+        {
+          "path": "asr-parakeet-v3/tokens.txt",
+          "size": 93939,
+          "sha256": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/tokens.txt"
+        }
+      ]
+    },
+    {
+      "id": "tts-piper-ljspeech",
+      "engine": "tts",
+      "name": "Piper voice en_US-ljspeech-medium",
+      "licence": "MIT",
+      "project": "https://huggingface.co/rhasspy/piper-voices",
+      "files": [
+        {
+          "path": "tts-piper-ljspeech/en_US-ljspeech-medium.onnx",
+          "size": 63531507,
+          "sha256": "8ceba58a4b540d4e7e7e24ad079cf0d92762a4fd334e059f12940787c6c37b3d",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/en_US-ljspeech-medium.onnx"
+        },
+        {
+          "path": "tts-piper-ljspeech/tokens.txt",
+          "size": 940,
+          "sha256": "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/tokens.txt"
+        }
+      ]
+    },
+    {
+      "id": "tts-espeak-ng-data",
+      "engine": "tts",
+      "name": "espeak-ng's data for English",
+      "licence": "GPL-3.0-or-later",
+      "project": "https://github.com/espeak-ng/espeak-ng",
+      "files": [
+        {
+          "path": "espeak-ng-data/phontab",
+          "size": 55796,
+          "sha256": "886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/phontab"
+        },
+        {
+          "path": "espeak-ng-data/phonindex",
+          "size": 39074,
+          "sha256": "3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/phonindex"
+        },
+        {
+          "path": "espeak-ng-data/phondata",
+          "size": 550424,
+          "sha256": "4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/phondata"
+        },
+        {
+          "path": "espeak-ng-data/intonations",
+          "size": 2040,
+          "sha256": "3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/intonations"
+        },
+        {
+          "path": "espeak-ng-data/en_dict",
+          "size": 166944,
+          "sha256": "71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/en_dict"
+        },
+        {
+          "path": "espeak-ng-data/lang/gmw/en",
+          "size": 140,
+          "sha256": "4605d5330801de3641c6e366d15f129ea1f5ffbce8722642aba01ace07ab9c83",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/lang/gmw/en"
+        },
+        {
+          "path": "espeak-ng-data/lang/gmw/en-US",
+          "size": 257,
+          "sha256": "41534c2a22df5dd4f1052ff9e1a33a3ea7bff5a26b5c02bdad5ba8ddb7524704",
+          "archive": "tts-piper-ljspeech",
+          "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/lang/gmw/en-US"
+        }
+      ]
+    }
+  ]
+}

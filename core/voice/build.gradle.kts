@@ -1,5 +1,8 @@
+import dev.kestrel.build.CopyAssetsTask
+
 plugins {
     id("kestrel.android.library")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -9,10 +12,30 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        // The models' manifest, whose hashes Kestrel checks the model files against (design spec, section 8.10).
+        val manifest = tasks.register<CopyAssetsTask>("${variant.name}ModelManifestAsset") {
+            files.from(rootProject.layout.projectDirectory.file("models/manifest.json"))
+            folder.set("models")
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(manifest, CopyAssetsTask::outputDirectory)
+    }
+}
+
+// ModelManifestTest reads the repository's manifest.
+tasks.withType<Test>().configureEach {
+    inputs.file(rootProject.layout.projectDirectory.file("models/manifest.json"))
+        .withPathSensitivity(PathSensitivity.NONE)
+        .withPropertyName("modelManifest")
+}
+
 dependencies {
     // sherpa-onnx's Android library with ONNX Runtime linked statically (design spec, section 8.2). It comes from the
     // GitHub release that settings.gradle.kts names, and gradle/verification-metadata.xml checks its hash.
     implementation("com.k2fsa.sherpa.onnx:sherpa-onnx-static-link-onnxruntime:${libs.versions.sherpaOnnx.get()}@aar")
+    api(libs.kotlinx.serialization.json)
+    testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }

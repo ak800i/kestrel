@@ -1,4 +1,4 @@
-import javax.inject.Inject
+import dev.kestrel.build.CopyAssetsTask
 
 plugins {
     id("kestrel.android.application")
@@ -40,37 +40,16 @@ dependencies {
     androidTestImplementation(libs.okhttp.mockwebserver3)
 }
 
-/**
- * Copies Kestrel's licence, the third-party notices and the licence texts in `licences` into the app's assets, so that
- * the About page can show them (design spec, section 15).
- */
-abstract class LicenceAssets : DefaultTask() {
-    @get:InputFiles
-    @get:PathSensitive(PathSensitivity.NAME_ONLY)
-    abstract val texts: ConfigurableFileCollection
-
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
-
-    @get:Inject
-    abstract val files: FileSystemOperations
-
-    @TaskAction
-    fun copy() {
-        files.sync {
-            from(texts)
-            into(outputDirectory.dir("licences"))
-        }
-    }
-}
-
 androidComponents {
     onVariants { variant ->
-        val licences = tasks.register<LicenceAssets>("${variant.name}LicenceAssets") {
+        // Kestrel's licence, the third-party notices and the licence texts in `licences`, which the About page shows
+        // (design spec, section 15).
+        val licences = tasks.register<CopyAssetsTask>("${variant.name}LicenceAssets") {
             val root = rootProject.layout.projectDirectory
-            texts.from(root.file("LICENSE"), root.file("THIRD_PARTY_NOTICES.md"), root.dir("licences").asFileTree)
+            files.from(root.file("LICENSE"), root.file("THIRD_PARTY_NOTICES.md"), root.dir("licences").asFileTree)
+            folder.set("licences")
         }
-        variant.sources.assets?.addGeneratedSourceDirectory(licences, LicenceAssets::outputDirectory)
+        variant.sources.assets?.addGeneratedSourceDirectory(licences, CopyAssetsTask::outputDirectory)
     }
 }
 
