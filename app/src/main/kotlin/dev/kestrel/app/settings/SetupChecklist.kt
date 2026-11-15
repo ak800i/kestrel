@@ -1,5 +1,7 @@
 package dev.kestrel.app.settings
 
+import dev.kestrel.voice.models.ModelStatus
+
 /** The steps of the setup checklist, in order (design spec, section 15). */
 enum class SetupStep {
     INSTALL,
@@ -29,13 +31,14 @@ enum class StepState {
     WARNING,
 }
 
-/** What Kestrel can find out about its own setup on the phone. */
+/** What Kestrel can find out about its own setup on the phone. [models] is null until Kestrel has checked the model files. */
 data class SetupStatus(
     val serviceOn: Boolean,
     val microphoneAllowed: Boolean,
     val notificationsAllowed: Boolean,
     val batteryUnrestricted: Boolean,
     val voiceAccessOn: Boolean,
+    val models: List<ModelStatus>? = null,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -44,7 +47,8 @@ object SetupChecklist {
         when (step) {
             // Kestrel is running, so it is installed.
             SetupStep.INSTALL -> StepState.DONE
-            SetupStep.COPY_MODELS, SetupStep.DEFAULT_ASSISTANT, SetupStep.PROVIDER -> StepState.LATER
+            SetupStep.COPY_MODELS -> doneIf(status.models?.all { it.ready } == true)
+            SetupStep.DEFAULT_ASSISTANT, SetupStep.PROVIDER -> StepState.LATER
             SetupStep.ACCESSIBILITY_SERVICE -> doneIf(status.serviceOn)
             SetupStep.MICROPHONE_AND_NOTIFICATIONS -> doneIf(status.microphoneAllowed && status.notificationsAllowed)
             SetupStep.BATTERY -> doneIf(status.batteryUnrestricted)

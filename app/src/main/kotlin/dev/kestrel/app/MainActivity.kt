@@ -64,7 +64,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refresh() {
-        status = SetupStatusReader(this).read()
+        // Checking the model files can take seconds the first time, so the other steps show at once, and the model
+        // files keep their last known status until the check ends.
+        status = SetupStatusReader(this).read().copy(models = status?.models)
+        lifecycleScope.launch(graph.errors) {
+            val models = graph.models.check()
+            status = status?.copy(models = models)
+        }
     }
 
     private fun perform(action: SetupAction) {

@@ -83,7 +83,7 @@ These scripts check assumptions of the design on a test device (design spec, sec
 
 ## Setting up Kestrel
 
-Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). The checklist reads the state of steps 3, 4, 5 and 8 from Android whenever Kestrel comes to the front, so it shows the changes that you make in Android's settings.
+Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). Whenever Kestrel comes to the front, the checklist reads the state of steps 3, 4, 5 and 8 from Android, so it shows the changes that you make in Android's settings, and it checks the speech model files for step 2.
 
 1. Install Kestrel with `scripts\install.ps1`. On a Samsung phone, Auto Blocker must be off while USB debugging is on.
 2. `scripts\push-models.ps1` will copy the voice models. This step comes with Kestrel's voice features.
@@ -98,7 +98,7 @@ The settings app also has these pages:
 
 - **Safety:** test mode, which is on until you turn it off. While it is on, Kestrel's agent and routines will send and share only to Telegram's Saved Messages, WhatsApp's Message yourself, Viber's My Notes and your own email address, and they will make no calls (design spec, section 12.7). Your own instant commands are not limited. Keep test mode on while you test Kestrel. The agent comes later, so in this version test mode changes nothing.
 - **Activity log** and **Network log:** what Kestrel did, and every request that it sent, encrypted and kept for 7 days. *Export both logs* writes both logs to a JSON file that you choose, which is the only way the logs leave the phone. *Delete history* wipes both logs after you confirm.
-- **About:** Kestrel's version, the Android version, and the licence texts.
+- **About:** Kestrel's version, the Android version, whether each speech model is ready, and the licence texts.
 
 ## Licence
 

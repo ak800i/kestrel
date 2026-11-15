@@ -18,6 +18,9 @@ import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
 import dev.kestrel.privacy.logs.NetworkOutcome
+import dev.kestrel.voice.models.Engine
+import dev.kestrel.voice.models.Model
+import dev.kestrel.voice.models.ModelStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -176,6 +179,35 @@ class SettingsAppTest {
         compose.onNodeWithText(progress(2)).assertIsDisplayed()
     }
 
+    @Test
+    fun theModelStepSaysWhileKestrelChecks() {
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_models_checking)).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun theModelStepNamesTheFilesThatAreMissingOrDamaged() {
+        val speech = ModelStatus(SPEECH, missing = listOf("asr/encoder.onnx"), damaged = listOf("asr/tokens.txt"))
+        show(NOTHING_SET_UP.copy(models = listOf(READY_VOICE, speech)))
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_models_missing, "asr/encoder.onnx")).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.setup_models_damaged, "asr/tokens.txt")).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun theAboutPageShowsEachModel() {
+        val speech = ModelStatus(SPEECH, missing = listOf("asr/encoder.onnx", "asr/tokens.txt"), damaged = emptyList())
+        show(NOTHING_SET_UP.copy(models = listOf(READY_VOICE, speech)))
+        compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.about_model_ready, "Voice (MIT)")).performScrollTo().assertIsDisplayed()
+        val missing = compose.activity.resources.getQuantityString(R.plurals.about_model_missing, 2, "Speech (CC-BY-4.0)", 2)
+        compose.onNodeWithText(missing).performScrollTo().assertIsDisplayed()
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val version = "9.9.9 (99)"
@@ -205,6 +237,9 @@ class SettingsAppTest {
     }
 
     private companion object {
+        val VOICE = Model("tts", Engine.TTS, "Voice", "MIT", "https://example.org", emptyList())
+        val SPEECH = Model("asr", Engine.ASR, "Speech", "CC-BY-4.0", "https://example.org", emptyList())
+        val READY_VOICE = ModelStatus(VOICE, emptyList(), emptyList())
         val NOTHING_SET_UP = SetupStatus(
             serviceOn = false,
             microphoneAllowed = false,
@@ -218,6 +253,7 @@ class SettingsAppTest {
             notificationsAllowed = true,
             batteryUnrestricted = true,
             voiceAccessOn = false,
+            models = listOf(READY_VOICE),
         )
     }
 }

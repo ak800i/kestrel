@@ -16,9 +16,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
+import dev.kestrel.voice.models.ModelStatus
 
 /** The texts that the About page shows. The build copies them from the repository into the app's assets. */
 enum class Licence(val asset: String) {
@@ -33,15 +35,31 @@ enum class Licence(val asset: String) {
 
 /** The About page: versions, the status of the model files and the licences (design spec, section 15). */
 @Composable
-internal fun AboutPage(data: SettingsData, onOpen: (Licence) -> Unit, onBack: () -> Unit) {
+internal fun AboutPage(data: SettingsData, models: List<ModelStatus>?, onOpen: (Licence) -> Unit, onBack: () -> Unit) {
     PageHeader(stringResource(R.string.settings_about), onBack)
     Text(stringResource(R.string.about_version, data.version), style = MaterialTheme.typography.titleMedium)
     Text(stringResource(R.string.about_android, Build.VERSION.RELEASE, Build.VERSION.SDK_INT))
-    Text(stringResource(R.string.about_models), Modifier.padding(vertical = 8.dp))
+    Text(stringResource(R.string.about_models), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleMedium)
+    if (models == null) {
+        Text(stringResource(R.string.about_models_checking))
+    } else {
+        for (status in models) Text(modelLine(status))
+    }
     Text(stringResource(R.string.about_licences), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleMedium)
     for (licence in Licence.entries) {
         val texts = texts(licence)
         PageEntry(stringResource(texts.first), stringResource(texts.second)) { onOpen(licence) }
+    }
+}
+
+/** A model's name and licence, and whether its files are ready. */
+@Composable
+private fun modelLine(status: ModelStatus): String {
+    val name = "${status.model.name} (${status.model.licence})"
+    return when {
+        status.missing.isNotEmpty() -> pluralStringResource(R.plurals.about_model_missing, status.missing.size, name, status.missing.size)
+        status.damaged.isNotEmpty() -> pluralStringResource(R.plurals.about_model_damaged, status.damaged.size, name, status.damaged.size)
+        else -> stringResource(R.string.about_model_ready, name)
     }
 }
 

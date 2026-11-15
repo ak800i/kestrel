@@ -1,5 +1,8 @@
 package dev.kestrel.app.settings
 
+import dev.kestrel.voice.models.Engine
+import dev.kestrel.voice.models.Model
+import dev.kestrel.voice.models.ModelStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -17,7 +20,7 @@ class SetupChecklistTest {
         assertEquals(
             mapOf(
                 SetupStep.INSTALL to StepState.DONE,
-                SetupStep.COPY_MODELS to StepState.LATER,
+                SetupStep.COPY_MODELS to StepState.TO_DO,
                 SetupStep.ACCESSIBILITY_SERVICE to StepState.TO_DO,
                 SetupStep.MICROPHONE_AND_NOTIFICATIONS to StepState.TO_DO,
                 SetupStep.BATTERY to StepState.TO_DO,
@@ -52,5 +55,19 @@ class SetupChecklistTest {
 
         assertEquals(StepState.WARNING, state(nothingSetUp.copy(voiceAccessOn = true, serviceOn = true)))
         assertEquals(StepState.OPTIONAL, state(nothingSetUp.copy(voiceAccessOn = true)))
+    }
+
+    @Test
+    fun theModelStepIsDoneOnlyWhenEveryModelIsReady() {
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.COPY_MODELS)
+        val voice = Model("tts", Engine.TTS, "Voice", "MIT", "https://example.org", emptyList())
+        val speech = Model("asr", Engine.ASR, "Speech", "CC-BY-4.0", "https://example.org", emptyList())
+        val ready = ModelStatus(voice, emptyList(), emptyList())
+
+        // Kestrel has not checked the files yet.
+        assertEquals(StepState.TO_DO, state(nothingSetUp))
+        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = listOf(ready, ModelStatus(speech, listOf("a"), emptyList())))))
+        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = listOf(ready, ModelStatus(speech, emptyList(), listOf("a"))))))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(models = listOf(ready, ModelStatus(speech, emptyList(), emptyList())))))
     }
 }

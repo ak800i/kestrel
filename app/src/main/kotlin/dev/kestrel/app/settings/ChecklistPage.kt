@@ -13,16 +13,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
+import dev.kestrel.voice.models.ModelStatus
 
-/** The setup checklist (design spec, section 15). */
+/** The setup checklist (design spec, section 15). [models] is null until Kestrel has checked the model files. */
 @Composable
-internal fun ChecklistPage(states: Map<SetupStep, StepState>, onAction: (SetupAction) -> Unit, onBack: () -> Unit) {
+internal fun ChecklistPage(
+    states: Map<SetupStep, StepState>,
+    models: List<ModelStatus>?,
+    onAction: (SetupAction) -> Unit,
+    onBack: () -> Unit,
+) {
     PageHeader(stringResource(R.string.settings_checklist), onBack)
-    for (step in SetupStep.entries) StepCard(step, states.getValue(step), onAction)
+    for (step in SetupStep.entries) {
+        StepCard(step, states.getValue(step), onAction) {
+            if (step == SetupStep.COPY_MODELS) ModelProblems(models)
+        }
+    }
 }
 
 @Composable
-private fun StepCard(step: SetupStep, state: StepState, onAction: (SetupAction) -> Unit) {
+private fun StepCard(step: SetupStep, state: StepState, onAction: (SetupAction) -> Unit, details: @Composable () -> Unit) {
     val texts = texts(step)
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.padding(16.dp)) {
@@ -30,9 +40,27 @@ private fun StepCard(step: SetupStep, state: StepState, onAction: (SetupAction) 
             Text(stringResource(stateLabel(state)), style = MaterialTheme.typography.labelLarge)
             val detail = if (state == StepState.WARNING && texts.warning != null) texts.warning else texts.detail
             Text(stringResource(detail), style = MaterialTheme.typography.bodyMedium)
+            details()
             if (texts.action != null && texts.actionLabel != null && state in NEEDS_ACTION) {
                 Button(onClick = { onAction(texts.action) }) { Text(stringResource(texts.actionLabel)) }
             }
+        }
+    }
+}
+
+/** Names each model file that is missing or damaged (design spec, section 8.10). */
+@Composable
+private fun ModelProblems(models: List<ModelStatus>?) {
+    if (models == null) {
+        Text(stringResource(R.string.setup_models_checking), style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    for (status in models) {
+        for (path in status.missing) {
+            Text(stringResource(R.string.setup_models_missing, path), style = MaterialTheme.typography.bodySmall)
+        }
+        for (path in status.damaged) {
+            Text(stringResource(R.string.setup_models_damaged, path), style = MaterialTheme.typography.bodySmall)
         }
     }
 }

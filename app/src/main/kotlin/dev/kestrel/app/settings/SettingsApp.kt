@@ -47,12 +47,12 @@ fun SettingsApp(status: SetupStatus, data: SettingsData, onAction: (SetupAction)
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
-            SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, onAction, home) }
+            SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, onAction, home) }
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
             SettingsPage.ABOUT -> when (val shown = licence) {
-                null -> ScrollingPage { AboutPage(data, { licence = it }, home) }
+                null -> ScrollingPage { AboutPage(data, status.models, { licence = it }, home) }
                 else -> LicencePage(shown, data) { licence = null }
             }
         }
