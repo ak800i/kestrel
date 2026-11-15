@@ -17,6 +17,8 @@ $ErrorActionPreference = 'Stop'
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial -AllowDailyPhone:$AllowDailyPhone
 $manifest = Read-ModelManifest -Path (Join-Path $PSScriptRoot '..\models\manifest.json')
+# Before the first download, which takes a while, so that a missing Kestrel shows at once.
+Assert-KestrelInstalled -Serial $Serial
 Save-ModelFiles -Manifest $manifest -Cache $Cache
 Push-ModelFiles -Serial $Serial -Manifest $manifest -Cache $Cache
 Write-Host "The speech models are on $Serial."

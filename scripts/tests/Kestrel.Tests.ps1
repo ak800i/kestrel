@@ -203,4 +203,18 @@ Describe 'Get-TestResultCounts' {
     It 'counts no tests in a folder that does not exist' {
         (Get-TestResultCounts -Folder (Join-Path $TestDrive 'none')).Tests | Should -Be 0
     }
+
+    It 'counts each suite once in a file whose root holds the totals, as the Android Gradle plugin writes it' {
+        $folder = Join-Path $TestDrive 'agp'
+        New-Item -ItemType Directory -Path $folder | Out-Null
+        Set-Content -LiteralPath (Join-Path $folder 'TEST-device.xml') -Value ('<?xml version="1.0"?><testsuites tests="7" failures="1" errors="1" skipped="2">' +
+            '<testsuite name="a" tests="4" failures="1" errors="0" skipped="2"/><testsuite name="b" tests="3" failures="0" errors="1" skipped="0"/></testsuites>')
+
+        $counts = Get-TestResultCounts -Folder $folder
+
+        $counts.Tests | Should -Be 7
+        $counts.Failures | Should -Be 1
+        $counts.Errors | Should -Be 1
+        $counts.Skipped | Should -Be 2
+    }
 }

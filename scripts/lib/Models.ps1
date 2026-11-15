@@ -3,38 +3,48 @@
 # first: the device helpers use Get-Adb and Invoke-SettingsCommand.
 
 # Reads models\manifest.json and checks what the scripts rely on: every path stays inside the models folder and is listed
-# once, and every file and archive has an https source, a size and a SHA-256 hash, so that nothing unchecked reaches a
-# device.
+# once, every archive's id and every member is a plain name that stays inside the cache, and every file and archive has
+# an https source, a size and a SHA-256 hash, so that nothing unchecked reaches a device.
 function Read-ModelManifest([string]$Path) {
     $manifest = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($manifest.format -ne 1) { throw "${Path}: unknown format '$($manifest.format)'." }
     $archives = @{}
     foreach ($archive in @($manifest.archives | Where-Object { $null -ne $_ })) {
-        $what = "${Path}: the archive '$($archive.id)'"
+        $id = [string]$archive.id
+        $what = "${Path}: the archive '$id'"
+        # The cache names the archive after its id.
+        if (-not (Test-PlainPath $id) -or $id.Contains('/')) { throw "$what needs an id that is a plain file name." }
+        if ($archives.ContainsKey($id)) { throw "$what is listed twice." }
         Assert-HttpsSource -What $what -Url $archive.url
         Assert-SizeAndHash -What $what -Size $archive.size -Sha256 $archive.sha256
-        $archives[[string]$archive.id] = $true
+        $archives[$id] = $true
     }
     $paths = @{}
     foreach ($model in @($manifest.models)) {
         foreach ($file in @($model.files)) {
             $path = [string]$file.path
             $what = "${Path}: the file '$path'"
-            $parts = $path -split '/'
-            if ($path -notmatch '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$' -or $parts -contains '.' -or $parts -contains '..') {
-                throw "$what has a path that leaves the models folder."
-            }
+            if (-not (Test-PlainPath $path)) { throw "$what has a path that leaves the models folder." }
             if ($paths.ContainsKey($path)) { throw "$what is listed twice." }
             $paths[$path] = $true
             if ($file.url) {
                 Assert-HttpsSource -What $what -Url $file.url
             } elseif (-not ($file.archive -and $archives.ContainsKey([string]$file.archive) -and $file.member)) {
                 throw "$what needs a url, or an archive from the list of archives and a member of it."
+            } elseif (-not (Test-PlainPath ([string]$file.member))) {
+                throw "$what has a member that leaves the folder into which the archive is unpacked."
             }
             Assert-SizeAndHash -What $what -Size $file.size -Sha256 $file.sha256
         }
     }
     return $manifest
+}
+
+# Whether a path from the manifest is relative and stays inside its folder: segments of letters, digits, '.', '_' and
+# '-', separated by '/', and none of them '.' or '..'.
+function Test-PlainPath([string]$Path) {
+    $parts = $Path -split '/'
+    return $Path -match '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$' -and $parts -notcontains '.' -and $parts -notcontains '..'
 }
 
 function Assert-HttpsSource([string]$What, $Url) {
@@ -76,13 +86,21 @@ function Move-CheckedFile([string]$Source, [string]$Target, $Size, [string]$Sha2
     Move-Item -LiteralPath $Source -Destination $Target -Force
 }
 
-# Downloads one address into $Target through a temporary file, which it keeps only with this size and hash.
+# Downloads one address into $Target through a temporary file, which it keeps only with this size and hash. It deletes
+# the temporary file when the download fails or is interrupted.
 function Save-CheckedDownload([string]$Url, [string]$Target, $Size, [string]$Sha256) {
     Write-Host "Downloading $Url"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
     $temporary = "$Target.download"
-    Invoke-ModelDownload -Url $Url -Path $temporary
-    Move-CheckedFile -Source $temporary -Target $Target -Size $Size -Sha256 $Sha256 -What "The download of $Url"
+    $saved = $false
+    # A finally block, because Ctrl+C skips catch blocks.
+    try {
+        Invoke-ModelDownload -Url $Url -Path $temporary
+        Move-CheckedFile -Source $temporary -Target $Target -Size $Size -Sha256 $Sha256 -What "The download of $Url"
+        $saved = $true
+    } finally {
+        if (-not $saved) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # Unpacks the members that $Files name from an archive into the cache, with Windows' own tar.exe.
@@ -104,8 +122,9 @@ function Expand-ModelFiles([string]$Archive, $Files, [string]$Cache) {
 }
 
 # Fills the cache with every model file that it does not already hold with the right hash. An archive is downloaded once
-# into $Cache\archives, and the members that are needed are unpacked from it. A download or a member with the wrong size
-# or hash fails, and nothing of it stays in the cache.
+# into $Cache\archives, under its id, and the members that are needed are unpacked from it. A download that fails or is
+# interrupted, and a download or a member with the wrong size or hash, stop the function, and nothing of them stays in
+# the cache.
 function Save-ModelFiles($Manifest, [string]$Cache) {
     $archives = @{}
     foreach ($archive in @($Manifest.archives | Where-Object { $null -ne $_ })) { $archives[[string]$archive.id] = $archive }
@@ -123,7 +142,7 @@ function Save-ModelFiles($Manifest, [string]$Cache) {
     }
     foreach ($id in @($fromArchives.Keys)) {
         $archive = $archives[$id]
-        $archiveFile = Join-Path (Join-Path $Cache 'archives') (([string]$archive.url -split '/')[-1])
+        $archiveFile = Join-Path (Join-Path $Cache 'archives') $id
         if (-not (Test-FileHash -Path $archiveFile -Size $archive.size -Sha256 $archive.sha256)) {
             Save-CheckedDownload -Url $archive.url -Target $archiveFile -Size $archive.size -Sha256 $archive.sha256
         }
@@ -153,16 +172,22 @@ function Get-DeviceFileHash([string]$Serial, [string]$Path) {
     return ($answer -split '\s+')[0].ToLowerInvariant()
 }
 
+# Stops with an error when Kestrel is not installed on a device.
+function Assert-KestrelInstalled([string]$Serial) {
+    $installed = @(Invoke-SettingsCommand -Serial $Serial -Command 'pm path dev.kestrel || true') -match '^package:'
+    if (-not $installed) { throw "Kestrel is not installed on $Serial. Install it first with scripts\install.ps1 -Serial $Serial." }
+}
+
 # Copies the model files from the cache into Kestrel's models folder on a device, except those that the device already
 # holds with the right size and hash, and checks the hash of each copy on the device. Kestrel must be installed. It
 # creates its models folder when it starts, so the function starts Kestrel when the folder is missing. The folders below
-# it get the mode 2775, because on Android 17 Kestrel cannot read a folder that adb creates otherwise (spike S7).
+# it get the mode 2775 on every run, also when they exist already, because on Android 17 Kestrel cannot read a folder
+# that adb creates otherwise (spike S7).
 function Push-ModelFiles([string]$Serial, $Manifest, [string]$Cache) {
     # adb's progress and error lines must not stop the function; its own checks decide.
     $ErrorActionPreference = 'Continue'
     $root = Get-DeviceModelsFolder
-    $installed = @(Invoke-SettingsCommand -Serial $Serial -Command 'pm path dev.kestrel || true') -match '^package:'
-    if (-not $installed) { throw "Kestrel is not installed on $Serial. Install it first with scripts\install.ps1 -Serial $Serial." }
+    Assert-KestrelInstalled -Serial $Serial
     if (-not (Test-DeviceFolder -Serial $Serial -Path $root)) {
         Invoke-SettingsCommand -Serial $Serial -Command 'am start -n dev.kestrel/dev.kestrel.app.MainActivity' | Out-Null
         $deadline = (Get-Date).AddSeconds(15)
@@ -177,12 +202,11 @@ function Push-ModelFiles([string]$Serial, $Manifest, [string]$Cache) {
         $parts = ([string]$file.path) -split '/'
         for ($count = 1; $count -lt $parts.Count; $count++) { $folders[($parts[0..($count - 1)] -join '/')] = $true }
     }
-    # Each folder comes after the folder that holds it.
+    # Each folder comes after the folder that holds it. Invoke-SettingsCommand may run a command again, so the command
+    # must work on a folder that exists.
     foreach ($folder in @($folders.Keys | Sort-Object { ($_ -split '/').Count }, { $_ })) {
         $path = "$root/$folder"
-        if (-not (Test-DeviceFolder -Serial $Serial -Path $path)) {
-            Invoke-SettingsCommand -Serial $Serial -Command "mkdir '$path' && chmod 2775 '$path'" | Out-Null
-        }
+        Invoke-SettingsCommand -Serial $Serial -Command "mkdir -p '$path' && chmod 2775 '$path'" | Out-Null
     }
     $adb = Get-Adb
     foreach ($file in $files) {

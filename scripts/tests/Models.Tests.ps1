@@ -61,6 +61,27 @@ Describe 'Read-ModelManifest' {
 
         { Read-ModelManifest -Path $path } | Should -Throw '*archive*'
     }
+
+    It 'refuses a member that leaves the folder into which the archive is unpacked: <_>' -ForEach @('../a.onnx', 'pack/../../a.onnx', '/a.onnx', 'pack\a.onnx') {
+        $archive = @{ id = 'pack'; url = 'https://example.org/pack.tar.bz2'; size = 1; sha256 = $hash }
+        $path = New-ManifestFile @(@{ path = 'm/a.onnx'; size = 1; sha256 = $hash; archive = 'pack'; member = $_ }) @($archive)
+
+        { Read-ModelManifest -Path $path } | Should -Throw '*member that leaves*'
+    }
+
+    It 'refuses an archive whose id is not a plain file name: <_>' -ForEach @('..', 'a/b', '..\a', '') {
+        $archive = @{ id = $_; url = 'https://example.org/pack.tar.bz2'; size = 1; sha256 = $hash }
+        $path = New-ManifestFile @(@{ path = 'm/a.onnx'; size = 1; sha256 = $hash; url = 'https://example.org/a' }) @($archive)
+
+        { Read-ModelManifest -Path $path } | Should -Throw '*plain file name*'
+    }
+
+    It 'refuses an archive that is listed twice' {
+        $archive = @{ id = 'pack'; url = 'https://example.org/pack.tar.bz2'; size = 1; sha256 = $hash }
+        $path = New-ManifestFile @(@{ path = 'm/a.onnx'; size = 1; sha256 = $hash; url = 'https://example.org/a' }) @($archive, $archive)
+
+        { Read-ModelManifest -Path $path } | Should -Throw '*listed twice*'
+    }
 }
 
 Describe 'Save-ModelFiles' {
@@ -112,6 +133,8 @@ Describe 'Save-ModelFiles' {
         Get-Content -LiteralPath (Join-Path $cache 'files\m\data\b.txt') -Raw | Should -BeExactly 'member b'
         Get-Content -LiteralPath (Join-Path $cache 'files\m\c.txt') -Raw | Should -BeExactly 'member c'
         Should -Invoke Invoke-ModelDownload -Times 2 -Exactly
+        # The archive's name in the cache is its id, not a part of its address.
+        @(Get-ChildItem -LiteralPath (Join-Path $cache 'archives') | ForEach-Object { $_.Name }) | Should -Be @('pack')
     }
 
     It 'downloads nothing when the cache holds every file' {
@@ -148,6 +171,25 @@ Describe 'Save-ModelFiles' {
         { Save-ModelFiles -Manifest $wrong -Cache $cache } | Should -Throw '*SHA-256*'
         @(Get-ChildItem -LiteralPath $cache -Recurse -File) | Should -BeNullOrEmpty
     }
+
+    It 'deletes a download that fails partway' {
+        Mock Invoke-ModelDownload {
+            Set-Content -LiteralPath $Path -Value 'part of a' -NoNewline
+            throw 'The connection was closed.'
+        }
+
+        { Save-ModelFiles -Manifest $manifest -Cache $cache } | Should -Throw '*connection was closed*'
+        @(Get-ChildItem -LiteralPath $cache -Recurse -File) | Should -BeNullOrEmpty
+    }
+
+    It 'refuses a member with the wrong hash and keeps nothing of it' {
+        $files = @($manifest.models[0].files | ForEach-Object { $_.PSObject.Copy() })
+        $files[2].sha256 = '0' * 64
+        $wrong = [pscustomobject]@{ format = 1; archives = $manifest.archives; models = @([pscustomobject]@{ id = 'm'; engine = 'asr'; files = $files }) }
+
+        { Save-ModelFiles -Manifest $wrong -Cache $cache } | Should -Throw '*pack/c.txt*SHA-256*'
+        Test-Path -LiteralPath (Join-Path $cache 'files\m\c.txt') | Should -BeFalse
+    }
 }
 
 Describe 'Push-ModelFiles' {
@@ -180,14 +222,14 @@ Describe 'Push-ModelFiles' {
         $manifest = [pscustomobject]@{ format = 1; archives = @(); models = @([pscustomobject]@{ id = 'm'; engine = 'asr'; files = $files }) }
 
         # Starts a fake device, with or without Kestrel and with or without the models folder that Kestrel creates, and
-        # returns the folder that stands for the device's '/'.
-        function Set-FakeDevice([switch]$NotInstalled, [switch]$WithModelsFolder) {
+        # returns the folder that stands for the device's '/'. -Corrupt names the model files whose push goes wrong.
+        function Set-FakeDevice([switch]$NotInstalled, [switch]$WithModelsFolder, [string[]]$Corrupt = @()) {
             $root = Join-Path $TestDrive "device-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $root | Out-Null
             if ($WithModelsFolder) {
                 New-Item -ItemType Directory -Force -Path (Join-Path $root 'sdcard\Android\data\dev.kestrel\files\models') | Out-Null
             }
-            $state = [ordered]@{ root = $root; installed = -not $NotInstalled; modes = @{}; calls = @() }
+            $state = [ordered]@{ root = $root; installed = -not $NotInstalled; modes = @{}; corrupt = [string[]]@($Corrupt | ForEach-Object { "$models/$_" }); calls = @() }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
             $root
         }
@@ -225,7 +267,7 @@ Describe 'Push-ModelFiles' {
         (Get-FakeDevice).calls | Should -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo kestrel-end'
     }
 
-    It 'gives the folders that it creates the mode 2775, each after the folder that holds it' {
+    It 'gives every folder below the models folder the mode 2775, each after the folder that holds it' {
         Set-FakeDevice -WithModelsFolder | Out-Null
 
         Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache
@@ -234,6 +276,15 @@ Describe 'Push-ModelFiles' {
         @($device.modes.PSObject.Properties | ForEach-Object { $_.Name }) | Should -Be @("$models/m", "$models/n", "$models/m/data")
         @($device.modes.PSObject.Properties | ForEach-Object { $_.Value } | Select-Object -Unique) | Should -Be @('2775')
         $device.calls | Should -Not -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo kestrel-end'
+    }
+
+    It 'gives a folder that exists already the mode 2775 too' {
+        $root = Set-FakeDevice -WithModelsFolder
+        New-Item -ItemType Directory -Path (Get-DeviceCopy $root 'm') | Out-Null
+
+        Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache
+
+        (Get-FakeDevice).modes."$models/m" | Should -Be '2775'
     }
 
     It 'copies nothing that the device already has' {
@@ -254,5 +305,11 @@ Describe 'Push-ModelFiles' {
 
         Get-Content -LiteralPath (Get-DeviceCopy $root 'm/a.onnx') -Raw | Should -BeExactly 'model a'
         @((Get-FakeDevice).calls | Where-Object { $_ -like 'push */m/a.onnx' }).Count | Should -Be 2
+    }
+
+    It 'refuses a copy whose hash on the device is wrong after the push' {
+        Set-FakeDevice -WithModelsFolder -Corrupt 'm/data/b.txt' | Out-Null
+
+        { Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache } | Should -Throw '*m/data/b.txt*does not have the hash*'
     }
 }

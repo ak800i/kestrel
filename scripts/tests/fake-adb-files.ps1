@@ -5,13 +5,14 @@
 #   pm path dev.kestrel || true
 #   am start -n dev.kestrel/dev.kestrel.app.MainActivity    (creates Kestrel's models folder, as Kestrel does when it starts)
 #   test -d '<folder>' && echo yes || echo no
-#   mkdir '<folder>' && chmod 2775 '<folder>'               (fails when the folder exists or its parent does not)
+#   mkdir -p '<folder>' && chmod 2775 '<folder>'            (creates the folder and its parents, also when they exist)
 #   stat -c %s '<file>' 2>/dev/null || echo missing
 #   sha256sum '<file>'
 # The JSON file whose path is in the environment variable KESTREL_FAKE_ADB holds the device's state:
 #   root       the folder on this computer that stands for the device's '/'
 #   installed  whether Kestrel is installed
-#   modes      the mode that chmod gave each folder, in the order of the commands
+#   modes      the mode that chmod gave each folder, in the order in which it first gave one
+#   corrupt    the device paths whose push writes a copy with other content, as a broken transfer would
 #   calls      every command that it received, in order, with 'push <device path>' for a push
 # Error lines go to standard error, as adb's do.
 $statePath = $env:KESTREL_FAKE_ADB
@@ -24,9 +25,10 @@ $root = [string]$state.root
 $modes = [ordered]@{}
 foreach ($property in @($state.modes.PSObject.Properties)) { $modes[$property.Name] = [string]$property.Value }
 $calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
+$corrupt = @(@($state.corrupt) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
 
 function Save-State {
-    $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{ root = $root; installed = [bool]$state.installed; modes = $modes; calls = [string[]]$calls })
+    $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{ root = $root; installed = [bool]$state.installed; modes = $modes; corrupt = [string[]]$corrupt; calls = [string[]]$calls })
     [IO.File]::WriteAllText($statePath, $json)
 }
 
@@ -50,6 +52,7 @@ if ($args[2] -eq 'push') {
         Stop-WithError "adb: error: failed to copy '$($args[3])' to '$($args[4])': remote couldn't create file: No such file or directory"
     }
     Copy-Item -LiteralPath $args[3] -Destination $target -Force
+    if ($corrupt -contains $args[4]) { [IO.File]::AppendAllText($target, 'x') }
     Save-State
     "$($args[3]): 1 file pushed, 0 skipped."
     exit 0
@@ -69,13 +72,11 @@ if ($deviceCommand -eq 'pm path dev.kestrel || true') {
     $lines = @('Starting: Intent { cmp=dev.kestrel/.app.MainActivity }')
 } elseif ($deviceCommand -match "^test -d '([^']+)' && echo yes \|\| echo no$") {
     $lines = @(if (Test-Path -LiteralPath (Get-LocalPath $Matches[1]) -PathType Container) { 'yes' } else { 'no' })
-} elseif ($deviceCommand -match "^mkdir '([^']+)' && chmod 2775 '([^']+)'$" -and $Matches[1] -eq $Matches[2]) {
+} elseif ($deviceCommand -match "^mkdir -p '([^']+)' && chmod 2775 '([^']+)'$" -and $Matches[1] -eq $Matches[2]) {
     $folder = $Matches[1]
     $local = Get-LocalPath $folder
-    if ((Test-Path -LiteralPath $local) -or -not (Test-Path -LiteralPath (Split-Path -Parent $local) -PathType Container)) {
-        Stop-WithError "mkdir: '$folder': cannot create the folder"
-    }
-    New-Item -ItemType Directory -Path $local | Out-Null
+    if (Test-Path -LiteralPath $local -PathType Leaf) { Stop-WithError "mkdir: '$folder': File exists" }
+    New-Item -ItemType Directory -Force -Path $local | Out-Null
     $modes[$folder] = '2775'
     $lines = @()
 } elseif ($deviceCommand -match "^stat -c %s '([^']+)' 2>/dev/null \|\| echo missing$") {
