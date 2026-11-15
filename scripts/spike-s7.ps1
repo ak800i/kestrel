@@ -15,7 +15,8 @@ $ErrorActionPreference = 'Stop'
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
 $adb = Get-Adb
-$base = '/sdcard/Android/data/dev.kestrel/files'
+$app = '/sdcard/Android/data/dev.kestrel'
+$base = "$app/files"
 $name = 'spike-s7.bin'
 $apk = Join-Path $PSScriptRoot '..\app\build\outputs\apk\debug\app-debug.apk'
 $local = Join-Path $env:TEMP "kestrel-$name"
@@ -40,27 +41,51 @@ function Test-KestrelFile([string]$Folder, [string]$Create) {
     if (($line -split ' ', 2)[1] -eq $expected) { 'yes' } else { "no, Kestrel reads '$line'" }
 }
 
-$bytes = [byte[]]::new($SizeMegabytes * 1MB)
-[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-[IO.File]::WriteAllBytes($local, $bytes)
-$expected = "$($bytes.Length) $((Get-FileHash $local -Algorithm SHA256).Hash.ToLowerInvariant())"
+# Each change is put back in the finally block of its own try, in the reverse order, so that a failed restore or a stop
+# such as Ctrl+C does not skip the others. A restore that fails warns, and the script then ends with exit code 1. The
+# adb install -r stays, as after scripts\install.ps1.
+$restoreFailed = $false
+$failed = $false
 try {
-    Invoke-Shell "mkdir -p $base/spike-s7-adb" | Out-Null
-    $time = Send-File 'spike-s7-adb'
-    '{0,-40} {1:N1} MB/s' -f 'push speed', ($SizeMegabytes / $time.TotalSeconds)
-    '{0,-40} {1}' -f 'a folder that adb creates', (Test-KestrelFile 'spike-s7-adb')
-    Invoke-Shell "chmod 2775 $base/spike-s7-adb" | Out-Null
-    '{0,-40} {1}' -f 'the same folder after chmod 2775', (Test-KestrelFile 'spike-s7-adb')
-    Test-KestrelFile 'spike-s7-kestrel' -Create 'spike-s7-kestrel' | Out-Null
-    Send-File 'spike-s7-kestrel' | Out-Null
-    '{0,-40} {1}' -f 'a folder that Kestrel creates', (Test-KestrelFile 'spike-s7-kestrel')
-    if (Test-Path $apk) {
-        & $adb -s $Serial install -r $apk | Out-Null
-        '{0,-40} {1}' -f 'the same after adb install -r', (Test-KestrelFile 'spike-s7-kestrel')
-    } else {
-        '{0,-40} {1}' -f 'the same after adb install -r', "not checked: build $apk with scripts\install.ps1 first"
+    $bytes = [byte[]]::new($SizeMegabytes * 1MB)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    [IO.File]::WriteAllBytes($local, $bytes)
+    $expected = "$($bytes.Length) $((Get-FileHash $local -Algorithm SHA256).Hash.ToLowerInvariant())"
+    # The folders above the spike's folders that are not there yet, deepest first, so that the script deletes them too.
+    $created = @($base, $app | Where-Object { (Invoke-Shell "[ -d $_ ] && echo yes") -ne 'yes' })
+    try {
+        Invoke-Shell "mkdir -p $base/spike-s7-adb" | Out-Null
+        $time = Send-File 'spike-s7-adb'
+        '{0,-40} {1:N1} MB/s' -f 'push speed', ($SizeMegabytes / $time.TotalSeconds)
+        '{0,-40} {1}' -f 'a folder that adb creates', (Test-KestrelFile 'spike-s7-adb')
+        Invoke-Shell "chmod 2775 $base/spike-s7-adb" | Out-Null
+        '{0,-40} {1}' -f 'the same folder after chmod 2775', (Test-KestrelFile 'spike-s7-adb')
+        Test-KestrelFile 'spike-s7-kestrel' -Create 'spike-s7-kestrel' | Out-Null
+        Send-File 'spike-s7-kestrel' | Out-Null
+        '{0,-40} {1}' -f 'a folder that Kestrel creates', (Test-KestrelFile 'spike-s7-kestrel')
+        if (Test-Path $apk) {
+            & $adb -s $Serial install -r $apk | Out-Null
+            '{0,-40} {1}' -f 'the same after adb install -r', (Test-KestrelFile 'spike-s7-kestrel')
+        } else {
+            '{0,-40} {1}' -f 'the same after adb install -r', "not checked: build $apk with scripts\install.ps1 first"
+        }
+    } finally {
+        $cleanup = (@("rm -rf $base/spike-s7-adb $base/spike-s7-kestrel") + @($created | ForEach-Object { "rmdir $_" })) -join ' && '
+        Invoke-Shell $cleanup | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $restoreFailed = $true
+            Write-Warning "Could not delete the spike's folders on $Serial. Run: & '$adb' -s $Serial shell '$cleanup'"
+        }
     }
+} catch {
+    $failed = $true
+    throw
 } finally {
-    Invoke-Shell "rm -rf $base/spike-s7-adb $base/spike-s7-kestrel" | Out-Null
     Remove-Item $local -ErrorAction SilentlyContinue
+    if (Test-Path $local) {
+        $restoreFailed = $true
+        Write-Warning "Could not delete $local on this computer."
+    }
+    # A failed run ends with its error. After a stop, such as Ctrl+C, the script would end with exit code 0.
+    if ($restoreFailed -and -not $failed) { exit 1 }
 }

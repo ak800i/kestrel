@@ -87,63 +87,97 @@ $checks = [ordered]@{
 }
 $fields = @('Name', 'Email address', 'Message box', 'Notes')
 
+# Each change to the device and this computer is put back in the finally block of its own try, in the reverse order, so
+# that a failed restore or a stop such as Ctrl+C does not skip the others. A restore that fails warns, and the script
+# then ends with exit code 1. The browsers keep the tabs and the history of the page, and the choices of their
+# first-run screens, because only clearing a browser's data would remove them.
+$restoreFailed = $false
+$failed = $false
 $savedAccessibility = Get-AccessibilitySettings -Serial $Serial
 $server = Start-Process -FilePath (Join-Path $env:JAVA_HOME 'bin\jwebserver.exe') -PassThru -WindowStyle Hidden `
     -ArgumentList '-p', $port, '-b', '127.0.0.1', '-d', (Join-Path $PSScriptRoot 'spike-s4')
 try {
     & $adb -s $Serial reverse "tcp:$port" "tcp:$port" | Out-Null
-    Invoke-Shell "settings put secure enabled_accessibility_services $service" | Out-Null
-    Invoke-Shell 'settings put secure accessibility_enabled 1' | Out-Null
-    for ($i = 0; (Invoke-Hook state) -notlike 'screen=on*'; $i++) {
-        if ($i -ge 30) { throw "Kestrel's accessibility service did not connect within 30 s." }
-        Start-Sleep -Seconds 1
-    }
-    foreach ($name in $Browser) {
-        $package = $packages[$name]
-        if (-not ((Invoke-Shell "pm list packages $package") -match "package:$([regex]::Escape($package))$")) {
-            Write-Host "$name ($package) is not installed."
-            continue
-        }
-        Write-Host "Browser $name"
-        $snapshot = Open-Page $package
-        foreach ($check in $checks.GetEnumerator()) {
-            $named = @($snapshot.elements | Where-Object { Test-Name $_ $check.Value.Name })
-            $result = if (-not $named) { 'no' }
-                elseif (-not $check.Value.Needs -or ($named | Where-Object { $_.($check.Value.Needs) })) { 'yes' }
-                else { "named, not $($check.Value.Needs)" }
-            '  {0,-36} {1}' -f $check.Key, $result
-        }
-        foreach ($field in $fields) {
-            # Each field gets the page in a new tab, because the keyboard of the previous field can hide the next one.
-            # A browser that has just started may not take typed text yet, so the browser keeps running.
-            Open-Page $package | Out-Null
-            Start-Sleep -Seconds 2
-            $snapshot = Get-Snapshot
-            $text = "Kestrel $($fields.IndexOf($field) + 1)"
-            $target = $snapshot.elements | Where-Object { $_.editable -and (Test-Name $_ $field) } | Select-Object -First 1
-            $answer = if (-not $target) { 'no editable field' } else {
-                try { Invoke-Hook type -Key $target.key -Text $text } catch { $_.Exception.Message }
+    if ($LASTEXITCODE -ne 0) { throw "adb reverse tcp:$port failed." }
+    try {
+        try {
+            Invoke-Shell "settings put secure enabled_accessibility_services $service" | Out-Null
+            Invoke-Shell 'settings put secure accessibility_enabled 1' | Out-Null
+            for ($i = 0; (Invoke-Hook state) -notlike 'screen=on*'; $i++) {
+                if ($i -ge 30) { throw "Kestrel's accessibility service did not connect within 30 s." }
+                Start-Sleep -Seconds 1
             }
-            Start-Sleep -Seconds 1
-            $after = (Get-Snapshot).elements | Where-Object { $_.editable -and $_.text -eq $text } | Select-Object -First 1
-            $shows = if ($after) { "shows the text, named '$($after.label)'" } else { 'does not show the text' }
-            '  {0,-36} {1}; the field {2}' -f "type into '$field'", $answer, $shows
+            foreach ($name in $Browser) {
+                $package = $packages[$name]
+                if (-not ((Invoke-Shell "pm list packages $package") -match "package:$([regex]::Escape($package))$")) {
+                    Write-Host "$name ($package) is not installed."
+                    continue
+                }
+                Write-Host "Browser $name"
+                try {
+                    $snapshot = Open-Page $package
+                    foreach ($check in $checks.GetEnumerator()) {
+                        $named = @($snapshot.elements | Where-Object { Test-Name $_ $check.Value.Name })
+                        $result = if (-not $named) { 'no' }
+                            elseif (-not $check.Value.Needs -or ($named | Where-Object { $_.($check.Value.Needs) })) { 'yes' }
+                            else { "named, not $($check.Value.Needs)" }
+                        '  {0,-36} {1}' -f $check.Key, $result
+                    }
+                    foreach ($field in $fields) {
+                        # Each field gets the page in a new tab, because the keyboard of the previous field can hide the
+                        # next one. A browser that has just started may not take typed text yet, so the browser keeps
+                        # running.
+                        Open-Page $package | Out-Null
+                        Start-Sleep -Seconds 2
+                        $snapshot = Get-Snapshot
+                        $text = "Kestrel $($fields.IndexOf($field) + 1)"
+                        $target = $snapshot.elements | Where-Object { $_.editable -and (Test-Name $_ $field) } | Select-Object -First 1
+                        $answer = if (-not $target) { 'no editable field' } else {
+                            try { Invoke-Hook type -Key $target.key -Text $text } catch { $_.Exception.Message }
+                        }
+                        Start-Sleep -Seconds 1
+                        $after = (Get-Snapshot).elements | Where-Object { $_.editable -and $_.text -eq $text } | Select-Object -First 1
+                        $shows = if ($after) { "shows the text, named '$($after.label)'" } else { 'does not show the text' }
+                        '  {0,-36} {1}; the field {2}' -f "type into '$field'", $answer, $shows
+                    }
+                    # Content below the screen is not in the snapshot until Kestrel scrolls to it. The page opens again
+                    # first, so that the keyboard from the typing checks does not cover it.
+                    Invoke-Shell "am force-stop $package" | Out-Null
+                    Open-Page $package | Out-Null
+                    $answers = @()
+                    while ($answers.Count -lt 8 -and -not ((Get-Snapshot).elements | Where-Object { Test-Name $_ 'Item 30' })) {
+                        $answers += Invoke-Hook scroll -Direction down
+                    }
+                    $found = [bool]((Get-Snapshot).elements | Where-Object { Test-Name $_ 'Item 30' })
+                    $how = ($answers | Sort-Object -Unique) -join ', '
+                    '  {0,-36} {1}' -f 'list item after scrolling down', "$(if ($found) { 'yes' } else { 'no' }), after $($answers.Count) scrolls ($how)"
+                } finally {
+                    Invoke-Shell "am force-stop $package" | Out-Null
+                }
+            }
+        } finally {
+            # Restore-AccessibilitySettings warns about each setting that it cannot put back.
+            if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility)) { $restoreFailed = $true }
         }
-        # Content below the screen is not in the snapshot until Kestrel scrolls to it. The page opens again first, so that
-        # the keyboard from the typing checks does not cover it.
-        Invoke-Shell "am force-stop $package" | Out-Null
-        Open-Page $package | Out-Null
-        $answers = @()
-        while ($answers.Count -lt 8 -and -not ((Get-Snapshot).elements | Where-Object { Test-Name $_ 'Item 30' })) {
-            $answers += Invoke-Hook scroll -Direction down
+    } finally {
+        & $adb -s $Serial reverse --remove "tcp:$port" 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $restoreFailed = $true
+            Write-Warning "Could not remove the adb reverse rule tcp:$port of $Serial. Run: & '$adb' -s $Serial reverse --remove tcp:$port"
         }
-        $found = [bool]((Get-Snapshot).elements | Where-Object { Test-Name $_ 'Item 30' })
-        $how = ($answers | Sort-Object -Unique) -join ', '
-        '  {0,-36} {1}' -f 'list item after scrolling down', "$(if ($found) { 'yes' } else { 'no' }), after $($answers.Count) scrolls ($how)"
-        Invoke-Shell "am force-stop $package" | Out-Null
     }
+} catch {
+    $failed = $true
+    throw
 } finally {
-    $null = Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility
-    & $adb -s $Serial reverse --remove "tcp:$port" 2>$null | Out-Null
-    Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+    try {
+        Stop-Process -Id $server.Id -ErrorAction Stop
+    } catch {
+        if (-not $server.HasExited) {
+            $restoreFailed = $true
+            Write-Warning "Could not stop the jwebserver process $($server.Id) on this computer. Stop it in the Task Manager."
+        }
+    }
+    # A failed run ends with its error. After a stop, such as Ctrl+C, the script would end with exit code 0.
+    if ($restoreFailed -and -not $failed) { exit 1 }
 }
