@@ -45,10 +45,13 @@ class SnapshotTest {
     @Test
     fun keysStayTheSameInANewSnapshotOfTheSameScreen() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val first = screen.session.snapshots.current().snapshot.elements.map { it.key }
+        // Only the fixture's keys: on a phone, the keys of the status bar's notification icons hold the notifications' text.
+        suspend fun fixtureKeys() =
+            screen.session.snapshots.current().snapshot.elements.filter { it.packageName == FIXTURES }.map { it.key }
+        val first = fixtureKeys()
 
         screen.session.snapshots.invalidate()
-        val second = screen.session.snapshots.current().snapshot.elements.map { it.key }
+        val second = fixtureKeys()
 
         assertEquals(first, second)
     }

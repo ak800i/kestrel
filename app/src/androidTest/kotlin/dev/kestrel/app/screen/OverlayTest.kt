@@ -68,7 +68,8 @@ class OverlayTest {
         session.showNumbers()
 
         val badges = session.numberBadges
-        assertEquals(keyOf("SEND"), badges.first().key)
+        // The message names no key: a badge on another window, such as a notification, has the notification's text in it.
+        assertTrue("SEND does not have the first number", badges.first().key == keyOf("SEND"))
         assertEquals((1..badges.size).toList(), badges.map { it.number })
         eventually { screen.showsWindow("Kestrel numbers") }
     }
