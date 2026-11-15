@@ -35,7 +35,7 @@ deny com.onesignal:* push notifications and analytics
 deny androidx.ads:* advertising ID
 deny androidx.privacysandbox*:* Privacy Sandbox advertising APIs
 
-# ONNX Runtime 1.31 turns telemetry on by default on Android (B14).
+# ONNX Runtime 1.29 turns telemetry on by default on Android (B14).
 pin com.microsoft.onnxruntime:* 1.28.*
 # sherpa-onnx 1.13.8 links ONNX Runtime 1.28.2 statically (B13, B14). A new version needs a new audit of the ONNX Runtime
 # that it links, and a new hash in gradle/verification-metadata.xml.

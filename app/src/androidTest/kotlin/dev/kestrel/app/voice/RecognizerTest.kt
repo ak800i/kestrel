@@ -32,8 +32,9 @@ class RecognizerTest {
 
     private fun transcribe(text: String, boostWords: List<String> = emptyList()): Transcript {
         val audio = voice(text)
+        val recognizer = recognizer()
         val started = SystemClock.elapsedRealtime()
-        return recognizer().transcribe(audio, boostWords).also {
+        return recognizer.transcribe(audio, boostWords).also {
             log("recognizer: ${"%.1f".format(audio.size / SAMPLE_RATE.toFloat())} s of audio in ${SystemClock.elapsedRealtime() - started} ms")
         }
     }

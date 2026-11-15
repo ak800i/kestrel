@@ -20,6 +20,12 @@ class BoostWordsTest {
     }
 
     @Test
+    fun wordsWithoutALetterOrADigitAreDropped() {
+        assertEquals("", BoostWords.format(listOf("-", "'", "- -")))
+        assertEquals("Wi-Fi/Turn on", BoostWords.format(listOf("Wi-Fi", "Turn - on")))
+    }
+
+    @Test
     fun emptyLongAndRepeatedPhrasesAreDropped() {
         assertEquals("Viber", BoostWords.format(listOf(" ", "/", "x".repeat(41), "Viber", "VIBER")))
     }

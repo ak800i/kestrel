@@ -28,6 +28,22 @@ class TranscriptChoiceTest {
     }
 
     @Test
+    fun aLastWordThatEndsLessThanASecondBeforeTheAudioIsKept() {
+        var decoded = 0
+
+        assertSame(cut, TranscriptChoice.choose(1.8f, cut) { decoded++; whole })
+        assertEquals(0, decoded)
+    }
+
+    @Test
+    fun aLastWordThatEndsMoreThanASecondBeforeTheAudioIsDecodedAgain() {
+        var decoded = 0
+
+        assertSame(whole, TranscriptChoice.choose(2.0f, cut) { decoded++; whole })
+        assertEquals(1, decoded)
+    }
+
+    @Test
     fun anEmptyTranscriptOfLongAudioIsDecodedAgain() {
         var decoded = 0
 
