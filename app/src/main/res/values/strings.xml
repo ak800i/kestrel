@@ -30,7 +30,7 @@
     <string name="about_licence_apache">Apache License 2.0</string>
     <string name="about_licence_apache_summary">The licence of most of these libraries</string>
     <string name="about_licence_mpl">Mozilla Public License 2.0</string>
-    <string name="about_licence_mpl_summary">The licence of the Public Suffix List in OkHttp</string>
+    <string name="about_licence_mpl_summary">The licence of the Public Suffix List in OkHttp and of Eigen in sherpa-onnx</string>
     <string name="about_licence_mit">MIT License</string>
     <string name="about_licence_mit_summary">The licence of ONNX Runtime, piper-phonemize, JSON for Modern C++ and some speech models</string>
     <string name="about_licence_onnxruntime">ONNX Runtime\'s third-party notices</string>
