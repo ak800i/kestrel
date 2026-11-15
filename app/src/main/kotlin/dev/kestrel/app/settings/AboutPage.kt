@@ -43,7 +43,9 @@ internal fun AboutPage(data: SettingsData, models: List<ModelStatus>?, onOpen: (
     if (models == null) {
         Text(stringResource(R.string.about_models_checking))
     } else {
-        for (status in models) Text(modelLine(status))
+        for (status in models) {
+            for (line in modelLines(status)) Text(line)
+        }
     }
     Text(stringResource(R.string.about_licences), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleMedium)
     for (licence in Licence.entries) {
@@ -52,15 +54,19 @@ internal fun AboutPage(data: SettingsData, models: List<ModelStatus>?, onOpen: (
     }
 }
 
-/** A model's name and licence, and whether its files are ready. */
+/** A model's name and licence, and whether its files are ready: one line for missing files and one for damaged files. */
 @Composable
-private fun modelLine(status: ModelStatus): String {
+private fun modelLines(status: ModelStatus): List<String> {
     val name = "${status.model.name} (${status.model.licence})"
-    return when {
-        status.missing.isNotEmpty() -> pluralStringResource(R.plurals.about_model_missing, status.missing.size, name, status.missing.size)
-        status.damaged.isNotEmpty() -> pluralStringResource(R.plurals.about_model_damaged, status.damaged.size, name, status.damaged.size)
-        else -> stringResource(R.string.about_model_ready, name)
+    val lines = mutableListOf<String>()
+    if (status.missing.isNotEmpty()) {
+        lines += pluralStringResource(R.plurals.about_model_missing, status.missing.size, name, status.missing.size)
     }
+    if (status.damaged.isNotEmpty()) {
+        lines += pluralStringResource(R.plurals.about_model_damaged, status.damaged.size, name, status.damaged.size)
+    }
+    if (lines.isEmpty()) lines += stringResource(R.string.about_model_ready, name)
+    return lines
 }
 
 /** One licence text, in paragraphs. */

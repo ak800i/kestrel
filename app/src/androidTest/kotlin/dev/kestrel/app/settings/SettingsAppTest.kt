@@ -200,13 +200,15 @@ class SettingsAppTest {
 
     @Test
     fun theAboutPageShowsEachModel() {
-        val speech = ModelStatus(SPEECH, missing = listOf("asr/encoder.onnx", "asr/tokens.txt"), damaged = emptyList())
+        val speech = ModelStatus(SPEECH, missing = listOf("asr/encoder.onnx", "asr/tokens.txt"), damaged = listOf("asr/joiner.onnx"))
         show(NOTHING_SET_UP.copy(models = listOf(READY_VOICE, speech)))
         compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
 
         compose.onNodeWithText(text(R.string.about_model_ready, "Voice (MIT)")).performScrollTo().assertIsDisplayed()
         val missing = compose.activity.resources.getQuantityString(R.plurals.about_model_missing, 2, "Speech (CC-BY-4.0)", 2)
         compose.onNodeWithText(missing).performScrollTo().assertIsDisplayed()
+        val damaged = compose.activity.resources.getQuantityString(R.plurals.about_model_damaged, 1, "Speech (CC-BY-4.0)", 1)
+        compose.onNodeWithText(damaged).performScrollTo().assertIsDisplayed()
     }
 
     @Test

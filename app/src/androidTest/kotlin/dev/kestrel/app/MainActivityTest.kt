@@ -1,10 +1,14 @@
 package dev.kestrel.app
 
 import androidx.annotation.StringRes
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -31,6 +35,10 @@ class MainActivityTest {
 
     private fun await(matcher: SemanticsMatcher) {
         compose.waitUntil(5_000) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun startsWith(prefix: String) = SemanticsMatcher("a text that starts with '$prefix'") { node ->
+        node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text.startsWith(prefix) }
     }
 
     @After
@@ -67,6 +75,26 @@ class MainActivityTest {
             await(hasText(start, substring = true))
             compose.onNodeWithText(text(R.string.settings_back)).performClick()
         }
+    }
+
+    @Test
+    fun theChecklistShowsTheResultOfTheRealModelCheck() {
+        compose.onNodeWithText(text(R.string.settings_checklist)).performClick()
+        await(hasText(text(R.string.setup_models_title)))
+
+        // The first check after a copy hashes about 740 MB of model files.
+        compose.waitUntil(120_000) {
+            compose.onAllNodesWithText(text(R.string.setup_models_checking)).fetchSemanticsNodes().isEmpty()
+        }
+
+        val done = hasText(text(R.string.setup_state_done)) and hasAnySibling(hasText(text(R.string.setup_models_title)))
+        val problem = startsWith(compose.activity.getString(R.string.setup_models_missing, "")) or
+            startsWith(compose.activity.getString(R.string.setup_models_damaged, ""))
+        assertTrue(
+            "Step 2 should be done, or name a missing or damaged file.",
+            compose.onAllNodes(done).fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodes(problem).fetchSemanticsNodes().isNotEmpty(),
+        )
     }
 
     @Test
