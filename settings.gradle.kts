@@ -12,6 +12,19 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // sherpa-onnx publishes its Android library only as an asset of its GitHub releases. Gradle downloads it from
+        // there, and gradle/verification-metadata.xml checks its SHA-256 hash (design spec, section 17).
+        exclusiveContent {
+            forRepository {
+                ivy {
+                    name = "sherpa-onnx releases"
+                    url = uri("https://github.com/k2-fsa/sherpa-onnx/releases/download")
+                    patternLayout { artifact("v[revision]/[artifact]-[revision].[ext]") }
+                    metadataSources { artifact() }
+                }
+            }
+            filter { includeGroup("com.k2fsa.sherpa.onnx") }
+        }
     }
 }
 
@@ -20,5 +33,6 @@ rootProject.name = "kestrel"
 include(":app")
 include(":core:privacy")
 include(":core:screen")
+include(":core:voice")
 include(":core:safety")
 include(":testapp")

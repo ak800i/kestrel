@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":core:privacy"))
     implementation(project(":core:safety"))
     implementation(project(":core:screen"))
+    implementation(project(":core:voice"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
@@ -77,5 +78,5 @@ androidComponents {
 // Kestrel's accessibility service, so they run after the other modules' device tests instead of alongside them.
 tasks.matching { it.name == "connectedDebugAndroidTest" }.configureEach {
     dependsOn(":testapp:installDebug")
-    mustRunAfter(":core:privacy:connectedDebugAndroidTest")
+    mustRunAfter(":core:privacy:connectedDebugAndroidTest", ":core:voice:connectedDebugAndroidTest")
 }

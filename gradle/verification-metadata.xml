@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Gradle checks the SHA-256 hash of sherpa-onnx's Android library, which comes from a GitHub release instead of a
+     Maven repository (settings.gradle.kts). Every other artifact is trusted, as before this file existed. A new version
+     of sherpa-onnx needs a new audit of the ONNX Runtime that it links (audit/rules.txt) and its hash here: the digest
+     that the release page shows for the asset. -->
+<verification-metadata xmlns="https://schema.gradle.org/dependency-verification" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://schema.gradle.org/dependency-verification https://schema.gradle.org/dependency-verification/dependency-verification-1.3.xsd">
+   <configuration>
+      <verify-metadata>false</verify-metadata>
+      <verify-signatures>false</verify-signatures>
+      <trusted-artifacts>
+         <trust group="^(?!com[.]k2fsa[.]sherpa[.]onnx$).*$" regex="true"/>
+      </trusted-artifacts>
+   </configuration>
+   <components>
+      <component group="com.k2fsa.sherpa.onnx" name="sherpa-onnx-static-link-onnxruntime" version="1.13.8">
+         <artifact name="sherpa-onnx-static-link-onnxruntime-1.13.8.aar">
+            <sha256 value="b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471" origin="the digest on https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8"/>
+         </artifact>
+      </component>
+   </components>
+</verification-metadata>

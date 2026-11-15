@@ -17,6 +17,7 @@ androidxTestEspresso = "3.7.0"
 androidxTestRunner = "1.7.0"
 androidxTestRules = "1.7.0"
 asm = "9.11.1"
+sherpaOnnx = "1.13.8"
 
 [libraries]
 android-gradleApi = { module = "com.android.tools.build:gradle-api", version.ref = "agp" }

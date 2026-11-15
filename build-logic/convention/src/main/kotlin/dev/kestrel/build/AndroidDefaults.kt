@@ -9,6 +9,9 @@ internal fun CommonExtension.applyKestrelAndroidDefaults() {
     defaultConfig.apply {
         minSdk { version = release(KestrelSdk.MIN) }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Kestrel runs on arm64 phones and on the x86_64 emulator. Each other ABI would add 16-27 MB of sherpa-onnx's
+        // native library, and the one for x86 comes with a separate copy of ONNX Runtime (design spec, section 8.2).
+        ndk.abiFilters += setOf("arm64-v8a", "x86_64")
     }
     compileOptions.apply {
         sourceCompatibility = JavaVersion.VERSION_17

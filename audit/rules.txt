@@ -37,6 +37,9 @@ deny androidx.privacysandbox*:* Privacy Sandbox advertising APIs
 
 # ONNX Runtime 1.31 turns telemetry on by default on Android (B14).
 pin com.microsoft.onnxruntime:* 1.28.*
+# sherpa-onnx 1.13.8 links ONNX Runtime 1.28.2 statically (B13, B14). A new version needs a new audit of the ONNX Runtime
+# that it links, and a new hash in gradle/verification-metadata.xml.
+pin com.k2fsa.sherpa.onnx:* 1.13.8
 
 # Network API exceptions
 allow-network-class dev/kestrel/privacy/network/ The network gateway is the only HTTP client in Kestrel (design spec, section 13.1).
@@ -50,3 +53,6 @@ allow com.squareup.okhttp3:* Apache-2.0
 allow com.squareup.okio:* Apache-2.0
 allow com.google.guava:listenablefuture Apache-2.0
 allow org.jspecify:jspecify Apache-2.0
+# sherpa-onnx itself is Apache-2.0. Its library also contains espeak-ng (GPL-3.0-or-later) and piper-phonemize
+# (GPL-3.0), so the library as a whole is under the GPL, version 3 (THIRD_PARTY_NOTICES.md).
+allow com.k2fsa.sherpa.onnx:sherpa-onnx-static-link-onnxruntime GPL-3.0-only
