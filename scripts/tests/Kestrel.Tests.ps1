@@ -1,9 +1,31 @@
-# Tests of the settings helpers in scripts\lib\Kestrel.ps1, with fake-adb.cmd instead of a device. The fake adb runs in a
-# process of its own, as adb does, so its error lines reach the helpers as a native program's error output, which
-# Windows PowerShell 5.1 and PowerShell 7 handle differently. scripts\test-scripts.ps1 runs these tests in both shells.
+# Tests of the helpers in scripts\lib\Kestrel.ps1. The settings helpers run with fake-adb.cmd instead of a device. The
+# fake adb runs in a process of its own, as adb does, so its error lines reach the helpers as a native program's error
+# output, which Windows PowerShell 5.1 and PowerShell 7 handle differently. scripts\test-scripts.ps1 runs these tests in
+# both shells.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '',
     Justification = 'A test runs the command that a warning asks the owner to paste.')]
 param()
+
+Describe 'Get-DeviceTaskArgument' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns the argument that names a device task: <_>' -ForEach @(
+        'installDebug', ':app:installDebug', ':testapp:installDebug', 'installDebugAndroidTest', 'uninstallAll',
+        ':app:uninstallDebug', 'connectedCheck', 'connectedAndroidTest', ':app:connectedDebugAndroidTest', 'deviceCheck',
+        ':core:privacy:connectedDebugAndroidTest'
+    ) {
+        Get-DeviceTaskArgument -Arguments @('check', $_, '--console=plain') | Should -BeExactly @($_)
+    }
+
+    It 'returns nothing for tasks and options that do not reach a device: <_>' -ForEach @(
+        'check', 'assembleDebug', 'kestrelAudit', ':app:assembleDebugAndroidTest', 'testDebugUnitTest', 'lint', '--stop',
+        '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest'
+    ) {
+        Get-DeviceTaskArgument -Arguments @($_) | Should -BeNullOrEmpty
+    }
+}
 
 Describe 'The settings helpers' {
     BeforeAll {

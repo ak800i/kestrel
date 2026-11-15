@@ -35,7 +35,7 @@ To open the project in Android Studio, use Android Studio Rabbit 2 (2026.2.2) or
 
 ## Testing on a device
 
-Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The scripts refuse other devices.
+Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The scripts refuse other devices. Run the device tests with `connected-test.ps1` and install with `install.ps1`: `gradle.ps1` refuses tasks that install or test on a device unless the environment variable `ANDROID_SERIAL` names test devices, and for other tasks it hides every device from Gradle.
 
 ```powershell
 scripts\create-avd.ps1                    # once: installs Android 17 and creates kestrel-api37

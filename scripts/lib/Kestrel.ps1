@@ -104,6 +104,13 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
     $back
 }
 
+# Returns the arguments of a Gradle call that name a task of the Android Gradle plugin that acts on a device: installs,
+# uninstalls, connected (on-device) tests and device checks. Options, which start with '-', are not tasks. Gradle also
+# accepts abbreviated task names, which this check misses, so scripts\gradle.ps1 has a second guard.
+function Get-DeviceTaskArgument([string[]]$Arguments) {
+    @($Arguments | Where-Object { $_ -notlike '-*' -and ($_ -split ':')[-1] -match 'install|connected|devicecheck' })
+}
+
 function Find-EmulatorSerial([string]$AvdName) {
     $adb = Get-Adb
     # Windows PowerShell 5.1 would stop at adb's first error line.
