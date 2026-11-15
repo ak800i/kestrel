@@ -3,6 +3,7 @@ MIT License
 These components use the MIT License, each with its own copyright notice:
 
 - ONNX Runtime: Copyright (c) Microsoft Corporation
+- piper-phonemize: Copyright (c) 2023 Michael Hansen
 - JSON for Modern C++: Copyright (c) 2013-2025 Niels Lohmann
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

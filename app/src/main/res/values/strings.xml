@@ -32,7 +32,9 @@
     <string name="about_licence_mpl">Mozilla Public License 2.0</string>
     <string name="about_licence_mpl_summary">The licence of the Public Suffix List in OkHttp</string>
     <string name="about_licence_mit">MIT License</string>
-    <string name="about_licence_mit_summary">The licence of ONNX Runtime, JSON for Modern C++ and some speech models</string>
+    <string name="about_licence_mit_summary">The licence of ONNX Runtime, piper-phonemize, JSON for Modern C++ and some speech models</string>
+    <string name="about_licence_onnxruntime">ONNX Runtime\'s third-party notices</string>
+    <string name="about_licence_onnxruntime_summary">The licences of the libraries inside ONNX Runtime, such as Protocol Buffers, RE2, Abseil and cpuinfo</string>
     <string name="about_licence_hclust">hclust-cpp\'s BSD licence</string>
     <string name="about_licence_hclust_summary">The licence of the clustering code in sherpa-onnx</string>
     <string name="about_reading">Reading the text…</string>

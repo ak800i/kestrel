@@ -26,6 +26,7 @@ enum class Licence(val asset: String) {
     NOTICES("licences/THIRD_PARTY_NOTICES.md"),
     APACHE("licences/Apache-2.0.txt"),
     MIT("licences/MIT.txt"),
+    ONNX_RUNTIME("licences/onnxruntime-ThirdPartyNotices.txt"),
     MPL("licences/MPL-2.0.txt"),
     HCLUST("licences/hclust-cpp.txt"),
 }
@@ -83,6 +84,7 @@ private fun texts(licence: Licence): Pair<Int, Int> = when (licence) {
     Licence.NOTICES -> R.string.about_licence_notices to R.string.about_licence_notices_summary
     Licence.APACHE -> R.string.about_licence_apache to R.string.about_licence_apache_summary
     Licence.MIT -> R.string.about_licence_mit to R.string.about_licence_mit_summary
+    Licence.ONNX_RUNTIME -> R.string.about_licence_onnxruntime to R.string.about_licence_onnxruntime_summary
     Licence.MPL -> R.string.about_licence_mpl to R.string.about_licence_mpl_summary
     Licence.HCLUST -> R.string.about_licence_hclust to R.string.about_licence_hclust_summary
 }
