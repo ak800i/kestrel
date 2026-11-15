@@ -63,16 +63,21 @@ class SnapshotBuilderTest {
     }
 
     @Test
-    fun aSupplementalDescriptionNamesAFieldButDoesNotReplaceAText() {
-        // WebView and Chrome 157 give a web text field's aria-label only as a supplemental description, with an empty hint.
-        val field = FakeNode(text = "", hint = "", supplementalDescription = "Web field", className = "android.widget.EditText", editable = true)
-        val select = FakeNode(text = "Arial", supplementalDescription = "Font", className = "android.widget.Spinner", clickable = true)
+    fun aSupplementalDescriptionNamesAFieldBeforeItsHintButDoesNotReplaceAText() {
+        // WebView and Chrome 157 give a web element's name as its supplemental description, and keep only a field's
+        // placeholder or help text, such as a character counter, in the hint.
+        fun field(hint: String) =
+            FakeNode(text = "", hint = hint, supplementalDescription = "Email", className = "android.widget.EditText", editable = true)
+        val select = FakeNode(text = "Serbia", supplementalDescription = "Country", className = "android.widget.Spinner", clickable = true)
 
-        val elements = build(FakeWindow(FakeNode(children = listOf(field, select)))).snapshot.elements
+        fun key(field: FakeNode) = build(FakeWindow(field)).snapshot.elements.single().key
 
-        assertEquals(listOf("Web field", "Arial"), elements.map { it.label })
-        assertEquals(listOf("Web field", "Font"), elements.map { it.supplementalDescription })
-        assertEquals("dev.app||Web field|EditText|0", elements[0].key)
+        val elements = build(FakeWindow(FakeNode(children = listOf(field("email@example.com"), select)))).snapshot.elements
+
+        assertEquals(listOf("Email", "Serbia"), elements.map { it.label })
+        assertEquals(listOf("Email", "Country"), elements.map { it.supplementalDescription })
+        assertEquals("dev.app||Email|EditText|0", key(field("0/280")))
+        assertEquals(key(field("0/280")), key(field("5/280")))
     }
 
     @Test

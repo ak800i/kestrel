@@ -37,8 +37,8 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
     private fun visit(node: NodeData, window: WindowData, depth: Int, parent: Int?, out: MutableList<Draft>): List<String> {
         if (!node.visible || depth > MAX_DEPTH || out.size >= MAX_ELEMENTS) return emptyList()
         val text = if (node.password) null else Labels.clean(node.text)
-        val name = Labels.clean(node.contentDescription) ?: Labels.clean(node.hint) ?: Labels.clean(node.supplementalDescription)
-        // A text field is named by its description or hint, never by what was typed into it.
+        val name = Labels.clean(node.contentDescription) ?: Labels.clean(node.supplementalDescription) ?: Labels.clean(node.hint)
+        // A text field is named by its description, supplemental description or hint, never by what was typed into it.
         val ownLabel = if (node.editable) name else text ?: name
         val bounds = node.bounds.intersect(window.bounds)
         val actionable = node.clickable || node.longClickable || node.editable || node.checkable
@@ -116,7 +116,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         private val used = mutableMapOf<String, Int>()
 
         fun next(draft: Draft): String {
-            // A text field's key uses only its own description, hint or supplemental description, because the texts
+            // A text field's key uses only its own description, supplemental description or hint, because the texts
             // inside a field, such as a placeholder or a character counter, can change while the owner types.
             val name = if (draft.node.editable) draft.ownLabel else draft.label
             val base = listOf(

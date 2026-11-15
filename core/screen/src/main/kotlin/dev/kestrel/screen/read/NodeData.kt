@@ -13,7 +13,7 @@ interface NodeData {
     val hint: String?
     /**
      * A short description that adds to the node's text, such as a field's purpose. WebView and Chrome 157 give a web
-     * text field's label only here.
+     * element's name here and keep only a field's placeholder or help text in the hint.
      */
     val supplementalDescription: String?
     val stateDescription: String?
