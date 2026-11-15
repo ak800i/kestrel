@@ -6,10 +6,11 @@ import dev.kestrel.voice.Recognizer
 import dev.kestrel.voice.SAMPLE_RATE
 import dev.kestrel.voice.SpeechDetector
 import dev.kestrel.voice.Utterance
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -31,7 +32,8 @@ enum class Recognition {
 sealed interface VoiceEvent {
     /**
      * The transcript of an utterance of [seconds] that took [millis] to transcribe; it may be empty. [named] is true when
-     * the keyword spotter heard "Kestrel" at its start.
+     * the keyword spotter heard "Kestrel" at its start. The part of an utterance that is left after the pipeline cut away
+     * Kestrel's own voice is never named, because the cut removed the part that held the name.
      */
     data class Heard(val text: String, val named: Boolean, val seconds: Float, val millis: Long) : VoiceEvent {
         override fun toString() = "Heard(${text.length} characters, named=$named, seconds=$seconds, millis=$millis)"
@@ -49,8 +51,9 @@ sealed interface VoiceEvent {
  * detector and the keyword spotter hear every frame; the endpointer decides when an utterance has ended, and the
  * recogniser transcribes the utterances that [recognition] asks for, one at a time in [recognitionContext], with the
  * boost words that [boostWords] returns at that moment. [isOwnVoice] tells which keyword hits came from Kestrel's own
- * voice. The pipeline does not own the engines: whoever opened them closes them, after [close]. Call [accept] and
- * [pause] from one thread only, the microphone's.
+ * voice. The pipeline does not own the engines: whoever opened them closes them, after [close] and after the last call
+ * of [accept] and [pause], because the engines throw when they are used after they were closed. Call [accept] and
+ * [pause] from one thread at a time: from the microphone's thread, or after it has stopped.
  */
 class ListeningPipeline(
     private val detector: SpeechDetector,
@@ -76,7 +79,10 @@ class ListeningPipeline(
     private var interrupted = false
     private var interruption: Long? = null
 
-    /** What the pipeline heard, in order. Collect it once. */
+    /**
+     * What the pipeline heard, in the order in which the pipeline produces the events. A transcript can come after the
+     * keyword events of later audio, because transcribing takes time. Collect it once.
+     */
     val events: Flow<VoiceEvent> = output.receiveAsFlow()
 
     /** Which utterances to transcribe from the next frame on. Any thread may set it. */
@@ -112,9 +118,9 @@ class ListeningPipeline(
     }
 
     /**
-     * Drops the utterance in progress after the microphone stopped, so that it does not run into the next audio. The
-     * microphone stops only when the screen turns off or locks or when Kestrel turns off, and no request should start
-     * then.
+     * Drops the utterance that the endpointer holds and the audio in progress after the microphone stopped, so that they
+     * do not run into the next audio. A transcription that was already queued or running still finishes, and its event
+     * still goes out; the Orchestrator ignores transcripts while the screen is off.
      */
     fun pause() {
         detector.finish()
@@ -123,11 +129,17 @@ class ListeningPipeline(
         interruption = null
     }
 
-    /** Stops transcribing and drops the utterances that wait. Returns when the recogniser is no longer in use. */
+    /**
+     * Stops transcribing, drops the utterances that wait and ends [events]. Returns when the recogniser is no longer in
+     * use.
+     */
     suspend fun close() {
-        queue.cancel()
-        worker.cancelAndJoin()
-        output.close()
+        try {
+            queue.cancel()
+            worker.cancelAndJoin()
+        } finally {
+            output.close()
+        }
     }
 
     /**
@@ -149,18 +161,20 @@ class ListeningPipeline(
         else -> Speech(
             resumeFrom,
             speech.samples.copyOfRange((resumeFrom - speech.startSample).toInt(), speech.samples.size),
-            speech.named,
+            named = false,
         )
     }
 
     private suspend fun transcribe(speech: Speech) {
-        val started = System.nanoTime()
         val event = try {
-            val transcript = recognizer.transcribe(speech.samples, boostWords())
+            val words = boostWords()
+            val started = System.nanoTime()
+            val transcript = recognizer.transcribe(speech.samples, words)
             VoiceEvent.Heard(transcript.text, speech.named, speech.seconds, (System.nanoTime() - started) / 1_000_000)
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Exception) {
+            // A cancellation that is not the worker's own, such as a timeout inside boostWords, is a failure like any
+            // other.
+            currentCoroutineContext().ensureActive()
             VoiceEvent.Failed(e)
         }
         output.trySend(event)

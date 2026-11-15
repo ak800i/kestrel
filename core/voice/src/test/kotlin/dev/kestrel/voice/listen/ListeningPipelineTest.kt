@@ -8,15 +8,30 @@ import dev.kestrel.voice.SAMPLE_RATE
 import dev.kestrel.voice.SpeechDetector
 import dev.kestrel.voice.Transcript
 import dev.kestrel.voice.Utterance
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 import kotlin.math.roundToLong
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -30,7 +45,7 @@ class ListeningPipelineTest {
 
     @Test
     fun transcribesEachUtteranceWithTheBoostWords() = runTest {
-        val pipeline = pipeline(boostWords = listOf("Viber"))
+        val pipeline = pipeline(boostWords = { listOf("Viber") })
 
         detector.next.addLast(listOf(utterance(0f, 1f)))
         pipeline.feed()
@@ -92,6 +107,10 @@ class ListeningPipelineTest {
     @Test
     fun speechThatBeganWhileKestrelSpokeIsCutWhereKestrelStopped() = runTest {
         val pipeline = pipeline()
+        // The owner's "Kestrel" from 0.5 s names the first utterance, and Kestrel answers "Yes?" over it until 1 s.
+        pipeline.feedUntil(0.5f)
+        spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, 0.5f)))
+        pipeline.feed()
         pipeline.recognition = Recognition.NONE
         pipeline.feedUntil(1f)
         pipeline.recognition = Recognition.ALL
@@ -99,11 +118,14 @@ class ListeningPipelineTest {
         pipeline.feedUntil(2.2f)
         detector.next.addLast(listOf(utterance(0.5f, 1f)))
         pipeline.feed()
-        detector.next.addLast(listOf(utterance(1.6f, 0.8f)))
+        pipeline.feedUntil(3.8f)
+        detector.next.addLast(listOf(utterance(3.1f, 0.8f)))
         pipeline.feed()
 
-        // The first utterance keeps its half second after 1 s, when Kestrel stopped speaking.
-        assertEquals(listOf("heard 8000", "heard 12800"), events.filterIsInstance<VoiceEvent.Heard>().map { it.text })
+        // The first utterance keeps its half second after 1 s, when Kestrel stopped speaking. The cut removed the name.
+        val heard = events.filterIsInstance<VoiceEvent.Heard>()
+        assertEquals(listOf("heard 8000", "heard 12800"), heard.map { it.text })
+        assertEquals(listOf(false, false), heard.map { it.named })
     }
 
     @Test
@@ -221,9 +243,151 @@ class ListeningPipelineTest {
         assertTrue(events.filterIsInstance<VoiceEvent.Heard>().single().named)
     }
 
-    private fun TestScope.pipeline(boostWords: List<String> = emptyList()): ListeningPipeline {
+    @Test
+    fun pauseDropsAHeldNamedUtterance() = runTest {
+        val pipeline = pipeline()
+        spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, 0.02f)))
+        pipeline.feed()
+        pipeline.feedUntil(1.5f)
+        // The endpointer holds this one, in case the owner goes on after a pause.
+        detector.next.addLast(listOf(utterance(0f, 0.8f)))
+        pipeline.feed()
+
+        pipeline.pause()
+        pipeline.feedUntil(5f)
+
+        assertEquals(0, recognizer.calls)
+    }
+
+    @Test
+    fun anInterruptionCountsWhenRecognitionResumesWithin3Seconds() = runTest {
+        interruptedAt(1f, resumingAt = 4f)
+
+        val heard = events.filterIsInstance<VoiceEvent.Heard>().single()
+        assertEquals("heard 70400", heard.text)
+        assertTrue(heard.named)
+    }
+
+    @Test
+    fun anInterruptionMoreThan3SecondsOldOnlyCutsAtTheResume() = runTest {
+        interruptedAt(1f, resumingAt = 4.1f)
+
+        val heard = events.filterIsInstance<VoiceEvent.Heard>().single()
+        assertEquals("heard 8000", heard.text)
+        assertFalse(heard.named)
+    }
+
+    @Test
+    fun aStrayCancellationIsReportedAndTheNextUtteranceIsTranscribed() = runTest {
+        var timeouts = 1
+        val pipeline = pipeline(boostWords = {
+            if (timeouts-- > 0) withTimeout(10) { awaitCancellation() }
+            emptyList()
+        })
+
+        detector.next.addLast(listOf(utterance(0f, 0.5f)))
+        pipeline.feed()
+        detector.next.addLast(listOf(utterance(0.5f, 0.25f)))
+        pipeline.feed()
+        // The worker runs in the background scope, so only time running on lets its timeout fire.
+        delay(1_000)
+
+        assertTrue((events[0] as VoiceEvent.Failed).error is TimeoutCancellationException)
+        assertEquals("heard 4000", (events[1] as VoiceEvent.Heard).text)
+    }
+
+    @Test
+    fun closeWhileBoostWordsWaitsReportsNoFailure() = runTest {
+        val pipeline = pipeline(boostWords = { awaitCancellation() })
+        detector.next.addLast(listOf(utterance(0f, 0.5f)))
+        pipeline.feed()
+
+        pipeline.close()
+
+        assertEquals(emptyList<VoiceEvent>(), events)
+    }
+
+    @Test
+    fun closeWaitsForTheTranscriptionInProgressAndDropsTheWaitingOnes() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val gate = CountDownLatch(1)
+        recognizer.gate = gate
+        try {
+            val pipeline = ListeningPipeline(
+                detector, spotter, recognizer, { emptyList() }, { false }, scope,
+                Dispatchers.Default.limitedParallelism(1),
+            )
+            val heard = scope.async { pipeline.events.toList() }
+            detector.next.addLast(listOf(utterance(0f, 0.5f)))
+            pipeline.feed()
+            assertTrue(recognizer.entered.await(10, TimeUnit.SECONDS))
+            detector.next.addLast(listOf(utterance(0.5f, 0.25f)))
+            pipeline.feed()
+            detector.next.addLast(listOf(utterance(0.75f, 0.25f)))
+            pipeline.feed()
+
+            val closing = scope.launch { pipeline.close() }
+            delay(300)
+            assertFalse(closing.isCompleted)
+            gate.countDown()
+            withTimeout(10_000) { closing.join() }
+
+            assertEquals(1, recognizer.calls)
+            // The transcript in progress still goes out, and then the events end.
+            val sent = withTimeout(10_000) { heard.await() }
+            assertEquals(listOf("heard 8000"), sent.map { (it as VoiceEvent.Heard).text })
+        } finally {
+            gate.countDown()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun closeTwiceAndFramesAfterCloseDoNoHarm() = runTest {
+        val pipeline = pipeline(context = StandardTestDispatcher(testScheduler))
+        detector.next.addLast(listOf(utterance(0f, 0.5f)))
+        pipeline.feed()
+        detector.next.addLast(listOf(utterance(0.5f, 0.25f)))
+        pipeline.feed()
+
+        pipeline.close()
+        pipeline.close()
+        detector.next.addLast(listOf(utterance(0.75f, 0.25f)))
+        spotter.next.addLast(listOf(KeywordHit(Keyword.STOP, 0.06f)))
+        pipeline.feed()
+
+        assertEquals(0, recognizer.calls)
+        assertEquals(emptyList<VoiceEvent>(), withTimeout(1_000) { pipeline.events.toList() })
+        assertEquals(emptyList<VoiceEvent>(), events)
+    }
+
+    /**
+     * The owner says "Kestrel" while Kestrel speaks, and the spotter reports it at [hit] + 0.02 s; Kestrel stops speaking
+     * at [resumingAt]. The speech detector made one utterance from 0.2 s to 4.6 s, which starts less than 1.5 s before
+     * the hit.
+     */
+    private fun TestScope.interruptedAt(hit: Float, resumingAt: Float) {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        pipeline.feedUntil(hit)
+        spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, hit)))
+        pipeline.feed()
+        pipeline.feedUntil(resumingAt)
+        pipeline.recognition = Recognition.ALL
+        pipeline.feedUntil(5.3f)
+        detector.next.addLast(listOf(utterance(0.2f, 4.4f)))
+        pipeline.feed()
+        pipeline.feedUntil(7f)
+    }
+
+    private fun TestScope.pipeline(
+        boostWords: suspend () -> List<String> = { emptyList() },
+        context: CoroutineContext? = null,
+    ): ListeningPipeline {
         val unconfined = UnconfinedTestDispatcher(testScheduler)
-        val pipeline = ListeningPipeline(detector, spotter, recognizer, { boostWords }, { it in ownVoice }, backgroundScope, unconfined)
+        val pipeline = ListeningPipeline(
+            detector, spotter, recognizer, boostWords, { it in ownVoice }, backgroundScope, context ?: unconfined,
+        )
         backgroundScope.launch(unconfined) { pipeline.events.collect { events += it } }
         return pipeline
     }
@@ -265,13 +429,18 @@ class ListeningPipelineTest {
     }
 
     private class FakeRecognizer : Recognizer {
+        @Volatile
         var calls = 0
         var failNext = false
         var blankNext = false
+        var gate: CountDownLatch? = null
+        val entered = CountDownLatch(1)
         val boostWords = mutableListOf<List<String>>()
 
         override fun transcribe(samples: FloatArray, boostWords: List<String>): Transcript {
             calls++
+            entered.countDown()
+            gate?.await(10, TimeUnit.SECONDS)
             this.boostWords += listOf(boostWords)
             if (failNext) {
                 failNext = false

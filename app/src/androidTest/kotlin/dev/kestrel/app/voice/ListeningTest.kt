@@ -1,5 +1,6 @@
 package dev.kestrel.app.voice
 
+import dev.kestrel.voice.KeywordSpotter
 import dev.kestrel.voice.Recognizer
 import dev.kestrel.voice.listen.ListeningPipeline
 import dev.kestrel.voice.listen.VoiceEvent
@@ -54,26 +55,29 @@ class ListeningTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun listen(audio: FloatArray): VoiceEvent.Heard = runBlocking {
         val detector = VoiceTests.graph.voice.speechDetector()
-        val spotter = VoiceTests.graph.voice.keywordSpotter()
+        var spotter: KeywordSpotter? = null
+        var pipeline: ListeningPipeline? = null
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val pipeline = ListeningPipeline(
-                detector, spotter, recognizer(), { listOf("Kestrel") }, { false }, scope, Dispatchers.Default.limitedParallelism(1),
-            )
+            val keywords = VoiceTests.graph.voice.keywordSpotter().also { spotter = it }
+            val listening = ListeningPipeline(
+                detector, keywords, recognizer(), { listOf("Kestrel") }, { false }, scope, Dispatchers.Default.limitedParallelism(1),
+            ).also { pipeline = it }
             VoiceTests.frames(audio) { frame ->
-                pipeline.accept(frame)
+                listening.accept(frame)
                 emptyList<Unit>()
             }
-            val event = withTimeout(30_000) { pipeline.events.first { it is VoiceEvent.Heard || it is VoiceEvent.Failed } }
-            pipeline.close()
+            val event = withTimeout(30_000) { listening.events.first { it is VoiceEvent.Heard || it is VoiceEvent.Failed } }
             if (event is VoiceEvent.Failed) throw AssertionError("Transcribing failed", event.error)
             val heard = event as VoiceEvent.Heard
             VoiceTests.log("Pipeline: ${heard.seconds} s of speech transcribed in ${heard.millis} ms")
             heard
         } finally {
+            // The worker must stop before the next test uses the shared recogniser and before the engines close.
+            pipeline?.close()
             scope.cancel()
             detector.close()
-            spotter.close()
+            spotter?.close()
         }
     }
 
