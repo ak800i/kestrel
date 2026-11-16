@@ -14,6 +14,7 @@ import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
+import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
@@ -31,8 +32,6 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,13 +112,11 @@ class AppGraph(context: Context) {
             scope = scope,
             thread = Dispatchers.Default.limitedParallelism(1),
             sessions = object : VoiceSessions {
-                override suspend fun open(microphone: Microphone, listener: SessionListener): Session = coroutineScope {
+                override suspend fun open(microphone: Microphone, listener: SessionListener): Session =
                     // "Kestrel" and the names of the apps that the launcher shows, read once while the engines load.
-                    // words() throws only a cancellation, so it cannot fail this scope; a failed load cancels it.
-                    val apps = BoostWordSource(LauncherAppLabels(appContext), reportFailure)
-                    val words = async { apps.words() }
-                    VoiceSession.open(appContext, voice, microphone, listener, boostWords = { words.await() })
-                }
+                    openWithBoostWords(BoostWordSource(LauncherAppLabels(appContext), reportFailure)) { boostWords ->
+                        VoiceSession.open(appContext, voice, microphone, listener, boostWords)
+                    }
             },
             services = ListeningService.control(appContext),
             // One main-thread task per text, in order, so that an earlier text never replaces a later one.

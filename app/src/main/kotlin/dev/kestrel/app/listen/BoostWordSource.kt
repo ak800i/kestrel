@@ -6,6 +6,9 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /** An app's name as the launcher shows it, and whether the app came with the phone ([system]). */
@@ -20,9 +23,10 @@ internal fun interface AppLabels {
 }
 
 /**
- * The labels of the apps that the launcher shows, in the order in which the package manager lists them. An app is a
- * system app when its [ApplicationInfo] has [ApplicationInfo.FLAG_SYSTEM], or [ApplicationInfo.FLAG_UPDATED_SYSTEM_APP]
- * for a system app that an update replaced. Since Android 11, Kestrel sees the other apps' launcher activities only
+ * The labels of the launcher activities, in the order in which the package manager lists them. An app with two launcher
+ * activities gives two labels; [BoostWordSource] drops a repeated name. An activity counts as a system app's when its
+ * [ApplicationInfo] has [ApplicationInfo.FLAG_SYSTEM], or [ApplicationInfo.FLAG_UPDATED_SYSTEM_APP] for a system app
+ * that an update replaced. Since Android 11, Kestrel sees the other apps' launcher activities only
  * because its manifest declares the launcher's intent in `<queries>` (design spec, section 13.6); Android shows a few
  * packages, such as the Settings app, to every app. It asks the package manager, so call it off the main thread.
  */
@@ -72,5 +76,36 @@ internal class BoostWordSource(private val labels: AppLabels, private val report
     companion object {
         const val NAME = "Kestrel"
         const val SHORTEST = 3
+    }
+}
+
+/**
+ * Opens a voice session with [open], which gets the boost words of [source]. The words are read while [open] loads the
+ * engines: [open] must ask for them only after its loads, as `VoiceSession.open` does. When the coroutine that opens
+ * the session is cancelled after [open] returned, the session is closed before the cancellation goes on, so that no
+ * engine stays loaded.
+ */
+internal suspend fun openWithBoostWords(
+    source: BoostWordSource,
+    open: suspend (boostWords: suspend () -> List<String>) -> Session,
+): Session {
+    var opened: Session? = null
+    try {
+        return coroutineScope {
+            // words() throws only a cancellation or an Error, so a failed read of the names cannot fail this scope; a
+            // failed load cancels the read.
+            val words = async { source.words() }
+            open { words.await() }.also { opened = it }
+        }
+    } catch (e: CancellationException) {
+        // coroutineScope drops the value of its block when its job was cancelled while the block ran.
+        withContext(NonCancellable) {
+            try {
+                opened?.close()
+            } catch (closing: Exception) {
+                e.addSuppressed(closing)
+            }
+        }
+        throw e
     }
 }

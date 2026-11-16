@@ -139,6 +139,24 @@ class VoiceSessionFailuresTest {
     }
 
     @Test
+    fun openAsksForTheBoostWordsAfterTheEnginesHaveLoaded() = runBlocking {
+        val calls = CopyOnWriteArrayList<String>()
+
+        val session = VoiceSession.open(
+            context, VoiceTests.graph.voice, microphone, listener,
+            boostWords = { calls += "words"; listOf("Kestrel") },
+            loadSpeechDetector = { calls += "detector"; detector },
+            loadKeywordSpotter = { calls += "spotter"; spotter },
+            loadSynthesizer = { calls += "synthesizer"; synthesizer },
+            loadRecognizer = { calls += "recognizer"; recognizer },
+        )
+        session.close()
+
+        // The caller reads the words while the engines load, so open must not wait for them before a load.
+        assertEquals(listOf("detector", "spotter", "synthesizer", "recognizer", "words"), calls.toList())
+    }
+
+    @Test
     fun openClosesTheLoadedEnginesWhenALaterLoadFails() = runBlocking {
         val missing = ModelsNotReadyException(Engine.TTS, emptyList())
         val closing = FakeFailure()

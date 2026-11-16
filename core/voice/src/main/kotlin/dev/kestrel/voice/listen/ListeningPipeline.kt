@@ -78,7 +78,8 @@ sealed interface VoiceEvent {
 /**
  * Turns the microphone's frames into transcripts and keyword events (design spec, sections 7.5 and 8.1–8.4). The speech
  * detector and the keyword spotter hear every frame; the endpointer decides when an utterance has ended, and while
- * [recognition] is [Recognition.ANSWER] it holds every utterance as it holds one that starts with the name. The
+ * [recognition] is [Recognition.ANSWER] it holds every utterance as it holds one that starts with the name, except the
+ * one that began with Kestrel's voice before an interruption, which it lets go at once (section 8.4). The
  * recogniser transcribes the utterances that [recognition] asks for, one at a time in [recognitionContext], with the
  * boost words that [boostWords] returns at that moment. [isOwnVoice] tells which keyword hits came from Kestrel's own
  * voice. The pipeline does not own the engines: whoever opened them closes them, after [close] and after the last call

@@ -25,8 +25,8 @@ class AppNamesTest {
         val millis = SystemClock.elapsedRealtime() - started
         val words = BoostWordSource(LauncherAppLabels(context)) { _, error -> failures += error }.words()
         VoiceTests.log(
-            "App names: ${labels.size} launcher apps (${labels.count { it.system }} system apps) read in $millis ms; " +
-                "${words.size} boost words",
+            "App names: ${labels.size} launcher activities (${labels.count { it.system }} of system apps) read in " +
+                "$millis ms; ${words.size} boost words",
         )
 
         assertTrue("Reading the names failed: ${failures.map { it.javaClass.name }}", failures.isEmpty())
@@ -48,7 +48,8 @@ class AppNamesTest {
         // The owner's apps come before the system apps.
         assertTrue("The fixture app is boost word $fixtures, after Settings at $settings", fixtures < settings)
         assertTrue(
-            "Of ${labels.size} launcher apps, ${labels.count { it.system }} are system apps, and Settings is not one of them",
+            "Of ${labels.size} launcher activities, ${labels.count { it.system }} are of system apps, and Settings is " +
+                "not one of them",
             labels.any { it.label == settingsLabel && it.system },
         )
     }
