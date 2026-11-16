@@ -112,4 +112,9 @@
     <string name="listening_pause">Pause</string>
     <string name="listening_resume">Resume</string>
     <string name="listening_stop">Stop</string>
+
+    <!-- The subtitle of the Quick Settings tile (design spec, sections 8.5 and 8.6). -->
+    <string name="tile_listening">Listening</string>
+    <string name="tile_paused">Paused</string>
+    <string name="tile_off">Off</string>
 </resources>

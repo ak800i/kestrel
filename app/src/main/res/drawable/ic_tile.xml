@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- The letter K of the launcher icon, in one colour, because Android tints a tile's icon itself. -->
+    <path
+        android:pathData="M8,5 V19 M16.5,5 L9,12.5 M11.5,10.5 L16.5,19"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="square"
+        android:strokeWidth="2.5" />
+</vector>

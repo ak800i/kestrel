@@ -49,6 +49,22 @@
             android:exported="false"
             android:foregroundServiceType="microphone|mediaPlayback" />
 
+        <!-- The Quick Settings tile that toggles listening (design spec, sections 7.2 and 8.6). Only SystemUI, which holds
+             BIND_QUICK_SETTINGS_TILE, can bind it. -->
+        <service
+            android:name=".listen.KestrelTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="Kestrel"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
         <!-- EmojiCompat would ask Google Play services for a downloadable emoji font. -->
         <provider
             android:name="androidx.startup.InitializationProvider"

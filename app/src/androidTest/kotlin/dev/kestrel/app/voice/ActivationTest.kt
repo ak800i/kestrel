@@ -2,6 +2,7 @@ package dev.kestrel.app.voice
 
 import android.accessibilityservice.AccessibilityService
 import android.os.ParcelFileDescriptor
+import android.service.quicksettings.Tile
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.State
@@ -15,11 +16,12 @@ import org.junit.Test
 
 /**
  * The ways into listening without a word (design spec, section 8.6): the accessibility shortcut and the accessibility
- * button, which both reach KestrelAccessibilityService's button callback. Kestrel is in the background, as when the owner
- * uses them. The test process is instrumented, which Android may count as a reason to let Kestrel start a foreground
- * service from the background, so these tests check the wiring; scripts\listen-check.ps1 checks the start paths
- * themselves. Each test puts back the settings that it changes, and leaves Kestrel off and its accessibility service off,
- * as the voice tests after it expect.
+ * button, which both reach KestrelAccessibilityService's button callback, and the Quick Settings tile. Kestrel is in the
+ * background, as when the owner uses them. The test process is instrumented, which Android may count as a reason to let
+ * Kestrel start a foreground service from the background, so these tests check the wiring; scripts\listen-check.ps1
+ * checks the start paths themselves. Each test puts back the settings that it changes, and leaves Kestrel off and its
+ * accessibility service off, as the voice tests after it expect. The tile's test runs only on an emulator, because no
+ * script puts the list of tiles back if the test's process dies.
  */
 class ActivationTest {
     @get:Rule
@@ -88,6 +90,59 @@ class ActivationTest {
         }
     }
 
+    @Test
+    fun theTileTogglesListening() {
+        // It changes the list of tiles, which no script puts back if the test's process dies.
+        VoiceTests.assumeEmulator()
+        // Without Kestrel's tile, also if an earlier run's test process died before it removed the tile.
+        val tiles = secure(TILES).let { list ->
+            if (list == "null") list else list.split(',').filterNot { TILE_NAME in it }.joinToString(",")
+        }
+        try {
+            // First in the list, so that the tile is on the first page of Quick Settings, whose tiles SystemUI follows while
+            // the panel is open. A device without a list of its own gets the tile at the end.
+            if (tiles == "null" || tiles.isEmpty()) {
+                VoiceTests.shell("cmd statusbar add-tile $TILE")
+            } else {
+                VoiceTests.shell("cmd statusbar set-tiles $TILE_SPEC,$tiles")
+                // A SystemUI without set-tiles follows the setting itself.
+                if (!VoiceTests.waitUntil(5_000) { secure(TILES).contains(TILE_NAME) }) putSecure(TILES, "$TILE_SPEC,$tiles")
+            }
+            assertTrue("Quick Settings does not list Kestrel's tile", VoiceTests.waitUntil(5_000) { secure(TILES).contains(TILE_NAME) })
+            VoiceTests.shell("cmd statusbar expand-settings")
+            // SystemUI makes and binds the tile a moment after it lists it, and a click before that is lost.
+            awaitTile("Off", Tile.STATE_INACTIVE, timeoutMillis = 15_000)
+
+            VoiceTests.shell("cmd statusbar click-tile $TILE")
+            awaitListening()
+            awaitTile("Listening", Tile.STATE_ACTIVE)
+            VoiceTests.shell("cmd statusbar click-tile $TILE")
+            awaitState { it.mode == Mode.PAUSED }
+            awaitTile("Paused", Tile.STATE_INACTIVE)
+        } finally {
+            VoiceTests.shell("cmd statusbar collapse")
+            // SystemUI removes only a tile that it has made, so not the tile of a Kestrel without it.
+            VoiceTests.shell("cmd statusbar remove-tile $TILE")
+            // SystemUI writes the list a moment later. A list that does not come back as it was is written back: through
+            // SystemUI, which since Android 14 keeps the list itself and overwrites other writes to the setting, or else
+            // to the setting, which an older SystemUI follows.
+            if (!VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) {
+                if (tiles != "null" && tiles.isNotEmpty()) VoiceTests.shell("cmd statusbar set-tiles $tiles")
+                if (!VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) putSecure(TILES, tiles)
+                check(VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) { "The list of Quick Settings tiles is not as it was" }
+            }
+        }
+    }
+
+    /** Waits until SystemUI's dump shows Kestrel's tile with [subtitle] and in [state], as the owner sees it. */
+    private fun awaitTile(subtitle: String, state: Int, timeoutMillis: Long = 5_000) {
+        val look = Regex("""spec=custom\([^)]*KestrelTileService\).*,secondaryLabel=$subtitle,.*,state=$state,""")
+        assertTrue(
+            "SystemUI does not show Kestrel's tile as $subtitle",
+            VoiceTests.waitUntil(timeoutMillis) { look.containsMatchIn(VoiceTests.shell("dumpsys activity service com.android.systemui/.SystemUIService")) },
+        )
+    }
+
     /** Asks Android for a system action, as the accessibility shortcut or button does. Returns whether Android ran it. */
     private fun press(action: Int): Boolean = screen.automation.performGlobalAction(action)
 
@@ -126,5 +181,12 @@ class ActivationTest {
 
         // How `dumpsys accessibility` names the shortcut's targets, as in "shortcut key:{dev.kestrel/...}".
         val SHORTCUT_KEY = Regex("""shortcut key:\{[^}]*dev\.kestrel/""")
+
+        const val TILES = "sysui_qs_tiles"
+        const val TILE = "dev.kestrel/dev.kestrel.app.listen.KestrelTileService"
+
+        // SystemUI lists the tile as custom(dev.kestrel/.app.listen.KestrelTileService), as add-tile writes it.
+        const val TILE_SPEC = "custom(dev.kestrel/.app.listen.KestrelTileService)"
+        const val TILE_NAME = "KestrelTileService"
     }
 }

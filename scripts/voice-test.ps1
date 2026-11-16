@@ -9,9 +9,10 @@
 # end with 'cmd sensor_privacy disable 0 microphone', also when the run failed or was interrupted.
 # The test ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock turns on the swipe lock
 # screen when the device has none and unlocks it with 'wm dismiss-keyguard', which cannot unlock a PIN, pattern or
-# password, so on a phone the script leaves that test out too. The run fails when one of the two tests ran on a phone or
-# did not run on an emulator. On an emulator the script turns the lock screen off again at the end, wakes the screen and
-# dismisses the keyguard, also when the run failed or was interrupted.
+# password, so on a phone the script leaves that test out too. So does ActivationTest#theTileTogglesListening, which adds
+# Kestrel's tile to Quick Settings: no script puts the list of tiles back if the test's process dies. The run fails when
+# one of these three tests ran on a phone or did not run on an emulator. On an emulator the script turns the lock screen
+# off again at the end, wakes the screen and dismisses the keyguard, also when the run failed or was interrupted.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
 param([Parameter(Mandatory = $true)][string]$Serial)
 $ErrorActionPreference = 'Stop'
@@ -38,11 +39,12 @@ try {
         $adb = Get-Adb
         # The tests log their measurements; clearing the log first keeps only this run's lines.
         & $adb -s $Serial logcat -c
-        # Tests that a phone must not run: one switches the microphone's privacy toggle, the other turns on a lock screen
-        # that it unlocks with adb.
+        # Tests that a phone must not run: one switches the microphone's privacy toggle, one turns on a lock screen that it
+        # unlocks with adb, and one changes the list of Quick Settings tiles.
         $emulatorOnly = @(
             'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
             'dev.kestrel.app.voice.ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock'
+            'dev.kestrel.app.voice.ActivationTest#theTileTogglesListening'
         )
         $tasks = @(
             ':app:connectedDebugAndroidTest'
