@@ -14,6 +14,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 
 /** Which utterances the pipeline transcribes (design spec, sections 8.4 and 8.5). */
@@ -41,6 +42,21 @@ sealed interface VoiceEvent {
 
     /** The keyword spotter heard [keyword], and it was not Kestrel's own voice. */
     data class Spotted(val keyword: Keyword) : VoiceEvent
+
+    /**
+     * The owner started to speak while recognition is on: the speech detector hears speech on a frame for which
+     * recognition is not [Recognition.NONE], and on the frame before it heard none or recognition was [Recognition.NONE].
+     * It comes again on the first frame on which the detector still hears speech after the pipeline sent an event for an
+     * earlier utterance: a transcript, a failure or a drop. The Orchestrator's `Event.Speaking`.
+     */
+    data object SpeechStarted : VoiceEvent
+
+    /**
+     * An utterance ended that recognition would have transcribed, but nothing of it was left to transcribe: it began
+     * while Kestrel spoke, and after the cut at the resume less than 0.25 s remained, or the owner's "Kestrel" broke into
+     * it (section 8.4).
+     */
+    data object Dropped : VoiceEvent
 
     /** Transcribing an utterance failed; the pipeline goes on with the next one. */
     data class Failed(val error: Exception) : VoiceEvent {
@@ -70,6 +86,9 @@ class ListeningPipeline(
     private val output = Channel<VoiceEvent>(Channel.UNLIMITED)
     private val queue = Channel<Speech>(Channel.UNLIMITED)
     private val endpointer = Endpointer()
+
+    // The worker sets it after each event that it sends; the microphone's thread reads and clears it on the next frame.
+    private val sent = AtomicBoolean(false)
     private val worker = scope.launch(recognitionContext) {
         for (speech in queue) transcribe(speech)
     }
@@ -81,6 +100,7 @@ class ListeningPipeline(
     private var resumeFrom = 0L
     private var interrupted = false
     private var interruption: Long? = null
+    private var hearing = false
 
     /**
      * What the pipeline heard, in the order in which the pipeline produces the events. A transcript can come after the
@@ -95,7 +115,8 @@ class ListeningPipeline(
     /** Feeds one frame of 16 kHz samples. */
     fun accept(frame: FloatArray) {
         val wanted = recognition
-        if (lastRecognition == Recognition.NONE && wanted != Recognition.NONE) resume()
+        val before = lastRecognition
+        if (before == Recognition.NONE && wanted != Recognition.NONE) resume()
         lastRecognition = wanted
         val utterances = detector.accept(frame).map { Utterance(detectorStart + it.startSample, it.samples) }
         val hits = spotter.accept(frame).filterNot { isOwnVoice(it.keyword) }
@@ -109,15 +130,26 @@ class ListeningPipeline(
             }
             output.trySend(VoiceEvent.Spotted(hit.keyword))
         }
-        for (speech in endpointer.accept(utterances, names, detector.hearsSpeech, position)) {
-            val kept = afterResume(speech) ?: continue
-            val transcribe = when (wanted) {
-                Recognition.ALL -> true
-                Recognition.NAMED -> kept.named
-                Recognition.NONE -> false
+        val hears = detector.hearsSpeech
+        // An event for an earlier utterance went out since the last frame: the worker's, or a drop below.
+        var answered = sent.getAndSet(false)
+        for (speech in endpointer.accept(utterances, names, hears, position)) {
+            val kept = afterResume(speech)
+            if (kept == null) {
+                if (transcribes(wanted, speech.named)) {
+                    output.trySend(VoiceEvent.Dropped)
+                    answered = true
+                }
+            } else if (transcribes(wanted, kept.named)) {
+                queue.trySend(kept)
             }
-            if (transcribe) queue.trySend(kept)
         }
+        // The Orchestrator's Event.Speaking: an event for an earlier utterance may have shortened the wait for a task, so
+        // speech that goes on after it counts as a new start.
+        if (hears && wanted != Recognition.NONE && (!hearing || before == Recognition.NONE || answered)) {
+            output.trySend(VoiceEvent.SpeechStarted)
+        }
+        hearing = hears
     }
 
     /**
@@ -130,6 +162,7 @@ class ListeningPipeline(
         detectorStart = position
         endpointer.finish()
         interruption = null
+        hearing = false
     }
 
     /**
@@ -168,6 +201,13 @@ class ListeningPipeline(
         )
     }
 
+    /** Whether recognition [wanted] transcribes an utterance that is [named], or not. */
+    private fun transcribes(wanted: Recognition, named: Boolean): Boolean = when (wanted) {
+        Recognition.ALL -> true
+        Recognition.NAMED -> named
+        Recognition.NONE -> false
+    }
+
     private suspend fun transcribe(speech: Speech) {
         val event = try {
             val words = boostWords()
@@ -181,6 +221,7 @@ class ListeningPipeline(
             VoiceEvent.Failed(e)
         }
         output.trySend(event)
+        sent.set(true)
     }
 
     private companion object {

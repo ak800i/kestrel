@@ -176,6 +176,7 @@ class ListeningPipelineTest {
         pipeline.feed()
 
         assertEquals(0, recognizer.calls)
+        assertEquals(listOf(VoiceEvent.Spotted(Keyword.KESTREL), VoiceEvent.Dropped), events)
     }
 
     @Test
@@ -275,6 +276,78 @@ class ListeningPipelineTest {
         val heard = events.filterIsInstance<VoiceEvent.Heard>().single()
         assertEquals("heard 8000", heard.text)
         assertFalse(heard.named)
+    }
+
+    @Test
+    fun speechStartedComesWhenTheDetectorStartsToHearSpeech() = runTest {
+        val pipeline = pipeline()
+        pipeline.feedUntil(0.5f)
+        detector.hearsSpeech = true
+        pipeline.feedUntil(1f)
+        detector.hearsSpeech = false
+        pipeline.feedUntil(1.5f)
+        detector.hearsSpeech = true
+        pipeline.feedUntil(2f)
+
+        assertEquals(listOf<VoiceEvent>(VoiceEvent.SpeechStarted, VoiceEvent.SpeechStarted), events)
+    }
+
+    @Test
+    fun speechStartedWaitsWhileKestrelSpeaksAndComesWhenRecognitionResumesDuringSpeech() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        detector.hearsSpeech = true
+        pipeline.feedUntil(1f)
+        assertEquals(emptyList<VoiceEvent>(), events)
+
+        pipeline.recognition = Recognition.ALL
+        pipeline.feedUntil(1.5f)
+
+        assertEquals(listOf<VoiceEvent>(VoiceEvent.SpeechStarted), events)
+    }
+
+    @Test
+    fun speechStartedComesAgainWhenAnEventArrivesWhileTheOwnerStillSpeaks() = runTest {
+        val pipeline = pipeline()
+        detector.hearsSpeech = true
+        pipeline.feedUntil(1f)
+        // An earlier utterance ends, and its transcript arrives while the owner goes on speaking.
+        detector.next.addLast(listOf(utterance(0f, 0.5f)))
+        pipeline.feed()
+        pipeline.feedUntil(1.5f)
+
+        assertEquals(listOf("SpeechStarted", "Heard", "SpeechStarted"), events.map { it::class.simpleName })
+    }
+
+    @Test
+    fun anUtteranceThatTheResumeCutsToNothingIsReportedAsDropped() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        pipeline.feedUntil(1f)
+        pipeline.recognition = Recognition.ALL
+        pipeline.feedUntil(1.6f)
+        // Only 0.1 s of it comes after 1 s, when Kestrel stopped speaking: the echo of Kestrel's own voice.
+        detector.next.addLast(listOf(utterance(0.3f, 0.8f)))
+        pipeline.feed()
+
+        assertEquals(listOf<VoiceEvent>(VoiceEvent.Dropped), events)
+        assertEquals(0, recognizer.calls)
+    }
+
+    @Test
+    fun speechStartedComesAgainAfterADropWhileTheOwnerStillSpeaks() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        pipeline.feedUntil(1f)
+        pipeline.recognition = Recognition.ALL
+        detector.hearsSpeech = true
+        pipeline.feedUntil(1.6f)
+        // Kestrel's echo before 1 s ends, while the owner, who has started to answer, still speaks.
+        detector.next.addLast(listOf(utterance(0.3f, 0.8f)))
+        pipeline.feed()
+        pipeline.feedUntil(2f)
+
+        assertEquals(listOf<VoiceEvent>(VoiceEvent.SpeechStarted, VoiceEvent.Dropped, VoiceEvent.SpeechStarted), events)
     }
 
     @Test
@@ -408,7 +481,7 @@ class ListeningPipelineTest {
     private class FakeDetector : SpeechDetector {
         val next = ArrayDeque<List<Utterance>>()
         var finished = 0
-        override val hearsSpeech = false
+        override var hearsSpeech = false
 
         override fun accept(samples: FloatArray): List<Utterance> = next.removeFirstOrNull() ?: emptyList()
 

@@ -26,7 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Any thread may call [start] and [stop], except the microphone's own thread.
  */
-class MicCapture(private val context: Context) {
+class MicCapture(private val context: Context) : Microphone {
     private val audio = context.getSystemService(AudioManager::class.java)
     private val silencedState = MutableStateFlow(false)
     private val main = Handler(Looper.getMainLooper())
@@ -46,11 +46,11 @@ class MicCapture(private val context: Context) {
      * True while Android silences Kestrel's recording, for any of the reasons above: "mic busy" on the feedback bar
      * (section 8.1).
      */
-    val silenced: StateFlow<Boolean> = silencedState.asStateFlow()
+    override val silenced: StateFlow<Boolean> = silencedState.asStateFlow()
 
     /** Whether Android's echo canceller works on the current recording. */
     @Volatile
-    var echoCancelling = false
+    override var echoCancelling = false
         private set
 
     private val callback = object : AudioManager.AudioRecordingCallback() {
@@ -73,7 +73,7 @@ class MicCapture(private val context: Context) {
      * fails after the microphone opened, or no thread can be created, does [start] throw with the microphone still open;
      * then [stop] releases it.
      */
-    fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
+    override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         checkNotOnTheMicrophonesThread()
         synchronized(this) { open(onFrame, onError) }
     }
@@ -131,7 +131,7 @@ class MicCapture(private val context: Context) {
      * ended with an error. Throws [IllegalStateException] when called from [start]'s callbacks, where it would wait
      * for ever.
      */
-    fun stop() {
+    override fun stop() {
         checkNotOnTheMicrophonesThread()
         synchronized(this) { close() }
     }
