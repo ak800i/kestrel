@@ -3,6 +3,7 @@
 # (scripts\install.ps1), and it prints what Kestrel recorded in its results: whether a
 # location came, never the place. The location comes from a test provider with a made-up place, which replaces the fused
 # provider while the script runs.
+# Before it turns Kestrel's accessibility service on, it turns Kestrel off, and Kestrel stays off afterwards.
 # Afterwards, also when it fails or is interrupted, it puts back what it changed on the device. If it cannot put something
 # back, also because Ctrl+C interrupted it while it put things back, it says at the end what is left and how to put it
 # back by hand. Then, and after Ctrl+C, it ends with exit code 1. With -Verbose, it names each thing that it puts back.

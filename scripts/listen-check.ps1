@@ -12,8 +12,8 @@
 #   reboot    with -Reboot: listening comes back after a reboot
 # Kestrel is in the background for each check, and it listens with its own microphone. The tile, shortcut and restart
 # checks also check in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
-# with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line per check, also when
-# a check fails with an error.
+# with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that
+# ran, also when a later check fails with an error.
 # While it runs, it grants Kestrel the microphone permission, replaces the list of enabled accessibility services, sets
 # the target of the accessibility shortcut, and puts Kestrel's tile first in Quick Settings and opens the panel for the
 # tile check. Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the
@@ -144,29 +144,24 @@ function Wait-Reboot([string]$BootId) {
         }
     } until ($unlocked -or (Get-Date) -gt $deadline)
     if (-not $unlocked) { throw "$Serial did not start again within 5 minutes of the reboot." }
+    # If the emulator itself ended during the reboot, another emulator that started meanwhile can have this serial now.
+    Assert-TestDevice -Serial $Serial
 }
-
-# Kestrel's lines 'rec start ...' and 'rec update ...' in 'dumpsys audio', with the riid of the recording. Each recording
-# has its own riid. On kestrel-api37, a recording sometimes begins with a 'rec update' line and has no 'rec start' line.
-$recordingLine = '\brec (?:start|update) riid:(?<riid>\d+) .* pack:dev\.kestrel(?:\s|$)'
 
 # The riids of Kestrel's recordings that 'dumpsys audio' lists now.
-function Get-RecordingId {
-    @(@(Invoke-Checked 'dumpsys audio') | ForEach-Object { if ($_ -match $recordingLine) { $Matches['riid'] } } | Select-Object -Unique)
-}
+function Get-KestrelRecording { Get-RecordingId -Dump (Invoke-Checked 'dumpsys audio') -Package dev.kestrel }
 
 # Waits up to 5 s until Kestrel's newest recording is one whose riid is not in $Before, so one that started after the
-# check's action, and returns whether Android let it record: its newest line says 'not silenced' (design spec, B5;
-# spike S1).
-function Test-Recording([string[]]$Before) {
+# check's action, and that Android lets record: its newest line says 'not silenced' (design spec, B5; spike S1). Returns
+# nothing then, and otherwise why the check fails.
+function Get-RecordingProblem([string[]]$Before) {
+    $state = 'none'
     for ($i = 0; $i -lt 10; $i++) {
         if ($i -gt 0) { Start-Sleep -Milliseconds 500 }
-        $dump = @(Invoke-Checked 'dumpsys audio')
-        $newest = ($dump -match $recordingLine) | Select-Object -Last 1
-        if (-not $newest -or -not ($newest -match $recordingLine) -or $Matches['riid'] -in $Before) { continue }
-        if ((Test-RecordingSilenced -Dump $dump -Package dev.kestrel) -eq $false) { return $true }
+        $state = Get-NewRecordingState -Dump (Invoke-Checked 'dumpsys audio') -Package dev.kestrel -Before $Before
+        if ($state -eq 'not silenced') { return }
     }
-    $false
+    if ($state -eq 'silenced') { 'Android silenced the microphone' } else { "no new recording of Kestrel's showed in dumpsys audio within 5 s" }
 }
 
 function Invoke-TileCheck {
@@ -179,7 +174,7 @@ function Invoke-TileCheck {
         # First in the list, so that the tile is on the first page of Quick Settings, whose tiles SystemUI follows while the
         # panel is open; its dump lists only them. Since Android 15, SystemUI keeps the list itself and overwrites other
         # writes to the setting at once, so the tile goes in through SystemUI. A device without a list of its own gets the
-        # tile at the end, where it is first too.
+        # tile at the end, after SystemUI's default tiles; if that is past the first page, the check fails.
         $others = if ($tilesBefore -in 'null', '') { @() } else { @($tilesBefore -split ',' | Where-Object { $_ -notmatch 'KestrelTileService' }) }
         $tiles = (@($tileSpec) + $others) -join ','
         if ($others.Count -eq 0) {
@@ -200,11 +195,12 @@ function Invoke-TileCheck {
             ((Invoke-Checked 'dumpsys activity service com.android.systemui/.SystemUIService QSTileHost') -join "`n") -match $off
         }
         if (-not $shown) { return 'failed: SystemUI did not show Kestrel''s tile as Off within 15 s of opening Quick Settings' }
-        $before = Get-RecordingId
+        $before = Get-KestrelRecording
         Invoke-Once "cmd statusbar click-tile $tile"
         $on = Wait-Mode listening 60
         if ($on -lt 0) { return "failed: no listening within 60 s of a tap$modelsHint" }
-        if (-not (Test-Recording $before)) { return "failed: listening $on s after a tap, but Android silenced the microphone" }
+        $problem = Get-RecordingProblem $before
+        if ($problem) { return "failed: listening $on s after a tap, but $problem" }
         Invoke-Once "cmd statusbar click-tile $tile"
         if ((Wait-Mode paused 10) -lt 0) { return "failed: listening $on s after a tap, but a second tap did not pause it" }
         "ok: listening $on s after a tap, and a second tap paused it"
@@ -227,13 +223,12 @@ function Invoke-ShortcutCheck {
     }
     if (-not $named) { return 'failed: Android did not take Kestrel as the target of the accessibility shortcut' }
     # The command's exit code is 0 even when the action did nothing, so only Kestrel's state tells.
-    $before = Get-RecordingId
+    $before = Get-KestrelRecording
     Invoke-Once 'cmd accessibility call-system-action 13'
     $on = Wait-Mode listening 60
     if ($on -lt 0) { return "failed: no listening within 60 s of the shortcut$modelsHint" }
-    if (-not (Test-Recording $before)) {
-        return "failed: listening $on s after the shortcut, but Android silenced the microphone"
-    }
+    $problem = Get-RecordingProblem $before
+    if ($problem) { return "failed: listening $on s after the shortcut, but $problem" }
     Invoke-Once 'cmd accessibility call-system-action 13'
     if ((Wait-Mode paused 10) -lt 0) { return "failed: listening $on s after the shortcut, but a second press did not pause it" }
     "ok: listening $on s after the shortcut, and a second press paused it"
@@ -270,7 +265,7 @@ function Invoke-RestartCheck {
     # Kestrel stores Listening once its voice session is open, from a coroutine a moment later; a crash before that write
     # would leave Off stored.
     Start-Sleep -Seconds 2
-    $recording = Get-RecordingId
+    $recording = Get-KestrelRecording
     $before = Get-KestrelProcess
     $watch = [Diagnostics.Stopwatch]::StartNew()
     Invoke-Once 'am crash dev.kestrel'
@@ -286,9 +281,8 @@ function Invoke-RestartCheck {
     }
     if ((Wait-Mode listening 120) -lt 0) { return 'failed: Kestrel did not listen again within 120 s of its new start' }
     $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
-    if (-not (Test-Recording $recording)) {
-        return "failed: listening again $again s after Android ended Kestrel's process, but Android silenced the microphone"
-    }
+    $problem = Get-RecordingProblem $recording
+    if ($problem) { return "failed: listening again $again s after Android ended Kestrel's process, but $problem" }
     "ok: listening again $again s after Android ended Kestrel's process"
 }
 
@@ -352,12 +346,12 @@ $tilesByHand = if ($tilesBefore -in 'null', '') {
 }
 $microphoneBefore = Test-MicrophonePermission
 # The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
-# list of services first, and they delete the list and the switch if these were not there before.
-$accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($savedAccessibility.Keys) | Select-Object -Unique) {
+# list of services first, and they delete the settings that the script changes if these were not there before.
+$accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled', 'accessibility_shortcut_target_service') + @($savedAccessibility.Keys) | Select-Object -Unique) {
         $value = if ($savedAccessibility.Contains($setting)) { $savedAccessibility[$setting] } else { 'null' }
         if ($value -ne 'null') {
             "settings put secure $setting '$($value -replace "'", "'\''")'"
-        } elseif ($setting -in 'enabled_accessibility_services', 'accessibility_enabled') {
+        } else {
             "settings delete secure $setting"
         }
     }) -join '; '
@@ -369,6 +363,8 @@ $restoresAtEnd = @(
         Stop-Kestrel
     }
     Register-Restore 'the Quick Settings tiles' $tilesByHand {
+        # The restores below write to the device directly, so they first check that the serial still names a test device.
+        Assert-TestDevice -Serial $Serial
         Invoke-Checked 'cmd statusbar collapse' | Out-Null
         # SystemUI removes only a tile that it has made. A tile that was in the list before stays, and set-tiles below
         # puts it back in its place.
@@ -386,11 +382,13 @@ $restoresAtEnd = @(
         }
     }
     Register-Restore 'the accessibility settings' (Format-DeviceCommand $accessibilityByHand) {
+        Assert-TestDevice -Serial $Serial
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility)) { throw 'see the warning above' }
     }
     # Revoking a permission ends Kestrel's process, so this comes last.
     if (-not $microphoneBefore) {
         Register-Restore "Kestrel's microphone permission" (Format-DeviceCommand 'pm revoke dev.kestrel android.permission.RECORD_AUDIO') {
+            Assert-TestDevice -Serial $Serial
             if (Test-MicrophonePermission) { Invoke-Checked 'pm revoke dev.kestrel android.permission.RECORD_AUDIO' | Out-Null }
             if (Test-MicrophonePermission) { throw 'it is still granted' }
         }
@@ -420,6 +418,11 @@ try {
         $results.GetEnumerator() | ForEach-Object { Write-Host ('{0,-9} {1}' -f $_.Key, $_.Value) }
         foreach ($restore in $pending) {
             Write-Warning "Could not put back $($restore.What) on $Serial ($($restore.Reason)). $($restore.ByHand)"
+        }
+        # The commands name the serial, which another emulator can have after this one ended.
+        if ($pending.Count -gt 0 -and $isEmulator) {
+            Write-Warning ("Before you run these commands, check with 'adb -s $Serial emu avd name' that $Serial is still " +
+                'kestrel-api37. If kestrel-api37 is not running, start it with scripts\start-emulator.ps1 and use the serial that it prints.')
         }
         # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its error.
         if (-not ($completed -or $failed) -or $pending.Reason -contains $stopReason) {

@@ -298,3 +298,85 @@ Describe 'Test-RecordingSilenced' {
         Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Get-RecordingId' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns the riid of each recording of the package once, from its rec start and rec update lines' {
+        $dump = @(
+            '11-16 16:02:10:101 rec start riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 16:02:10:350 rec update riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 16:02:31:002 rec stop riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 16:02:33:540 rec update riid:119 uid:10331 session:113 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 16:02:34:000 rec start riid:120 uid:10200 session:114 src:MIC not silenced pack:dev.kestrel.testapp'
+            '11-16 16:02:35:000 rec stop riid:121 uid:10331 session:115 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+        )
+
+        Get-RecordingId -Dump $dump -Package dev.kestrel | Should -BeExactly @('111', '119')
+    }
+
+    It 'returns nothing when no recording names the package' {
+        $dump = @(
+            '11-16 16:02:34:000 rec start riid:120 uid:10200 session:114 src:MIC not silenced pack:dev.kestrel.testapp'
+            'some other line'
+        )
+
+        @(Get-RecordingId -Dump $dump -Package dev.kestrel).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-NewRecordingState' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns ''not silenced'' for a new recording that has only a rec update line' {
+        # As kestrel-api37 showed it: the new recording 119 has no rec start line.
+        $dump = @(
+            '11-16 16:02:31:002 rec stop riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 16:02:33:540 rec update riid:119 uid:10331 session:113 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+        )
+
+        Get-NewRecordingState -Dump $dump -Package dev.kestrel -Before @('111') | Should -BeExactly 'not silenced'
+    }
+
+    It 'returns ''silenced'' when Android silenced the new recording' {
+        $dump = @(
+            '11-16 16:02:33:100 rec start riid:119 uid:10331 session:113 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 16:02:33:540 rec update riid:119 uid:10331 session:113 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
+        )
+
+        Get-NewRecordingState -Dump $dump -Package dev.kestrel -Before @('111') | Should -BeExactly 'silenced'
+    }
+
+    It 'returns ''not silenced'' for a recording when there was none before' {
+        $dump = @('11-16 16:02:33:540 rec start riid:119 uid:10331 session:113 src:VOICE_RECOGNITION not silenced pack:dev.kestrel')
+
+        Get-NewRecordingState -Dump $dump -Package dev.kestrel -Before @() | Should -BeExactly 'not silenced'
+    }
+
+    It 'returns ''none'' when <Name>' -ForEach @(
+        @{
+            Name = 'the newest line belongs to a recording that was there before'
+            Dump = @(
+                '11-16 16:02:10:101 rec start riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+                '11-16 16:02:10:350 rec update riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            )
+        }
+        @{
+            Name = 'only a recording of a package that starts like it is new'
+            Dump = @(
+                '11-16 16:02:10:101 rec start riid:111 uid:10331 session:105 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+                '11-16 16:02:34:000 rec start riid:120 uid:10200 session:114 src:MIC not silenced pack:dev.kestrel.testapp'
+            )
+        }
+        @{
+            Name = 'no line names the package'
+            Dump = @('some other line')
+        }
+    ) {
+        Get-NewRecordingState -Dump $Dump -Package dev.kestrel -Before @('111') | Should -BeExactly 'none'
+    }
+}

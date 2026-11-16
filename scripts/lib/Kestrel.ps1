@@ -189,14 +189,34 @@ function Test-ShortcutTarget([string[]]$Dump, [string]$Package) {
     $false
 }
 
+# Reads the package's lines 'rec start riid:<riid> ... silenced pack:<package>' and 'rec update ...' from the output of
+# 'dumpsys audio', oldest first, and returns the riid of each and whether it says 'silenced' or 'not silenced'. Each
+# recording has its own riid. On kestrel-api37, a recording sometimes has a 'rec update' line and no 'rec start' line.
+function Get-RecordingLine([string[]]$Dump, [string]$Package) {
+    $pattern = '\brec (?:start|update) riid:(?<riid>\d+) .*? (?<state>not silenced|silenced) pack:' + [regex]::Escape($Package) + '(?:\s|$)'
+    foreach ($line in $Dump) {
+        if ($line -match $pattern) { [pscustomobject]@{ Id = $Matches['riid']; Silenced = $Matches['state'] -eq 'silenced' } }
+    }
+}
+
+# Returns the riids of the package's recordings in the output of 'dumpsys audio', each once.
+function Get-RecordingId([string[]]$Dump, [string]$Package) {
+    @(Get-RecordingLine -Dump $Dump -Package $Package | ForEach-Object { $_.Id } | Select-Object -Unique)
+}
+
+# Returns whether the package's newest recording in the output of 'dumpsys audio' is a new one, whose riid is not in
+# $Before, and whether Android silences it: 'not silenced', 'silenced', or 'none' when the newest line of the package
+# belongs to a recording in $Before or no line names the package.
+function Get-NewRecordingState([string[]]$Dump, [string]$Package, [string[]]$Before) {
+    $newest = Get-RecordingLine -Dump $Dump -Package $Package | Select-Object -Last 1
+    if (-not $newest -or $newest.Id -in @($Before)) { return 'none' }
+    if ($newest.Silenced) { 'silenced' } else { 'not silenced' }
+}
+
 # Returns whether Android silences the package's recording, from the output of 'dumpsys audio': the newest line
 # 'rec start ...' or 'rec update ...' of the package ends with 'silenced pack:<package>' or 'not silenced pack:<package>'.
 # Returns $null when no such line names the package.
 function Test-RecordingSilenced([string[]]$Dump, [string]$Package) {
-    $silenced = $null
-    $pattern = '\brec (?:start|update) .*? (?<state>not silenced|silenced) pack:' + [regex]::Escape($Package) + '(?:\s|$)'
-    foreach ($line in $Dump) {
-        if ($line -match $pattern) { $silenced = $Matches['state'] -eq 'silenced' }
-    }
-    $silenced
+    $newest = Get-RecordingLine -Dump $Dump -Package $Package | Select-Object -Last 1
+    if ($newest) { $newest.Silenced } else { $null }
 }

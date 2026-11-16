@@ -3,6 +3,7 @@
 # the JDK's jwebserver, opens it on the device through adb reverse, and compares Kestrel's snapshot with the page.
 # It needs Kestrel's debug build (scripts\install.ps1) and the browsers. It taps through first-run screens whose
 # buttons it knows, and otherwise asks you to finish them.
+# Before it turns Kestrel's accessibility service on, it turns Kestrel off, and Kestrel stays off afterwards.
 # Afterwards, also when it fails or is interrupted, it puts back the accessibility settings, removes the adb reverse rule,
 # stops jwebserver and stops each browser that it checked. If it cannot put something back, also because Ctrl+C
 # interrupted it while it put things back, it says at the end what is left and how to put it back by hand. Then, and
