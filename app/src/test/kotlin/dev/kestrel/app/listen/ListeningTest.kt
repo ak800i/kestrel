@@ -1022,4 +1022,45 @@ class ListeningTest {
 
         override fun stop() = Unit
     }
+
+    @Test
+    fun anErrorWhileStoringTheModeIsReportedAndLaterModesAreStillStored() = runTest {
+        val errors = mutableListOf<Throwable>()
+        val writes = mutableListOf<Mode>()
+        var failure: Throwable? = OutOfMemoryError("Failed to allocate")
+        val listening = Listening(
+            scope = catching(errors),
+            thread = StandardTestDispatcher(testScheduler),
+            sessions = sessions,
+            services = services,
+            bar = { shown += it },
+            report = { what, error -> reports += what to error },
+            openSettings = {},
+            // Its first write throws an Error, and the later ones work.
+            memory = object : ModeMemory {
+                override suspend fun read(): Mode = Mode.OFF
+
+                override suspend fun write(mode: Mode) {
+                    failure?.let {
+                        failure = null
+                        throw it
+                    }
+                    writes += mode
+                }
+            },
+            microphones = { microphone },
+        )
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+        assertEquals("Storing the listening mode", reports.single().first)
+        assertTrue(reports.single().second is OutOfMemoryError)
+
+        // The Off that the owner chooses next is still stored.
+        listening.send(Event.TurnOff)
+        runCurrent()
+        assertEquals(listOf(Mode.OFF), writes)
+        assertTrue(errors.isEmpty())
+    }
 }

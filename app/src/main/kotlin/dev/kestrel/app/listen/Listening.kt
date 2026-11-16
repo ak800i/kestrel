@@ -151,6 +151,10 @@ class Listening internal constructor(
                     throw e
                 } catch (e: Exception) {
                     report("Storing the listening mode", e)
+                } catch (e: Error) {
+                    // Such as an OutOfMemoryError. Thrown on, it would end this collector, and no later mode, not even
+                    // an Off that the owner chooses, would be stored in this process.
+                    report("Storing the listening mode", e)
                 }
             }
         }
