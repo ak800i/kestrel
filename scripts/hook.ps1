@@ -35,15 +35,10 @@
 #                                           scripts\install.ps1 ends the process
 #   voice-clip -Clear                       drops the waiting clips, and gives Kestrel back the microphone that the
 #                                           first voice-clip replaced, from Kestrel's next start
-# Spike S1 (scripts\spike-s1.ps1 runs these):
-#   listen [-Source name] [-DelaySeconds n] [-Seconds n]
-#                                           starts the stand-in listening service after n seconds (15 by default)
-#   listen-notification                     posts a notification whose action starts it
-#   listen-after-boot                       starts it 15 s after the accessibility service connects at the next
-#                                           start of Kestrel's process, which a reboot causes
+# Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
-#   spike-results [-Clear]                  what the spike found: whether each step worked, never the audio or the place
+#   spike-results [-Clear]                  what the location check found: whether a location came, never the place
 # Spike S3 with a real finger:
 #   watch [-Seconds n]                      counts the touches of the owner that the touch watcher reports during n
 #                                           seconds (10 by default, at most 15); Kestrel's own gestures do not count
@@ -60,8 +55,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
-        'voice-state', 'voice-clip', 'listen', 'listen-notification', 'listen-after-boot', 'location', 'spike-results',
-        'files', 'watch')][string]$Command,
+        'voice-state', 'voice-clip', 'location', 'spike-results', 'files', 'watch')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,

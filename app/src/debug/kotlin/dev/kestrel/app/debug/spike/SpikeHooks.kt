@@ -1,9 +1,5 @@
 package dev.kestrel.app.debug.spike
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.location.Location
@@ -20,50 +16,13 @@ import java.io.File
 import java.security.MessageDigest
 import kotlin.coroutines.resume
 
-/** The test-hook commands of spikes S1, S3 and S7. `scripts/hook.ps1` lists them. */
+/** The test-hook commands of spike S1's location check and of spikes S3 and S7. `scripts/hook.ps1` lists them. */
 internal class SpikeHooks(private val context: Context, private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "FILES" -> files(intent)
-        "LISTEN" -> listen(intent)
-        "LISTEN_NOTIFICATION" -> listenNotification()
-        "LISTEN_AFTER_BOOT" -> {
-            SpikeListening.requestListenAtNextStart(context)
-            "Kestrel records 15 s after its accessibility service connects at the next start of its process"
-        }
         "LOCATION" -> location(intent)
         "WATCH" -> watch(intent)
         else -> results(intent)
-    }
-
-    /** Starts a recording after a delay, so that the hook's own broadcast is long over when it starts. */
-    private fun listen(intent: Intent): String {
-        val source = intent.getStringExtra(EXTRA_SOURCE) ?: "hook"
-        val delaySeconds = intent.getIntExtra(EXTRA_DELAY, DEFAULT_DELAY_SECONDS)
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, DEFAULT_SECONDS)
-        graph.scope.launch {
-            delay(delaySeconds * 1_000L)
-            SpikeListening.start(context, source, seconds)
-        }
-        return "recording in $delaySeconds s for $seconds s"
-    }
-
-    private fun listenNotification(): String {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Spike", NotificationManager.IMPORTANCE_HIGH))
-        val start = PendingIntent.getForegroundService(
-            context,
-            0,
-            SpikeListeningService.intent(context, "notification", DEFAULT_SECONDS),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val notification = Notification.Builder(context, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Kestrel spike")
-            .addAction(Notification.Action.Builder(null, ACTION_LABEL, start).build())
-            .setTimeoutAfter(NOTIFICATION_TIMEOUT_MILLIS)
-            .build()
-        manager.notify(NOTIFICATION_ID, notification)
-        return "posted a notification with the action '$ACTION_LABEL'"
     }
 
     private fun location(intent: Intent): String {
@@ -150,14 +109,8 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
     }
 
     companion object {
-        val COMMANDS = setOf("FILES", "LISTEN", "LISTEN_NOTIFICATION", "LISTEN_AFTER_BOOT", "LOCATION", "SPIKE_RESULTS", "WATCH")
+        val COMMANDS = setOf("FILES", "LOCATION", "SPIKE_RESULTS", "WATCH")
         private const val BUFFER_BYTES = 1 shl 16
-        private const val CHANNEL = "spike"
-        private const val NOTIFICATION_ID = 7_002
-        private const val ACTION_LABEL = "Start listening"
-        private const val NOTIFICATION_TIMEOUT_MILLIS = 60_000L
-        private const val DEFAULT_DELAY_SECONDS = 15
-        private const val DEFAULT_SECONDS = 3
         private const val DEFAULT_WATCH_SECONDS = 10
 
         // The hook's answer must come within the receiver's 20 s.

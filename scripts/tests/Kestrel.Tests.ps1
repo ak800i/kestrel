@@ -218,3 +218,83 @@ Describe 'Get-TestResultCounts' {
         $counts.Skipped | Should -Be 2
     }
 }
+
+Describe 'ConvertFrom-VoiceState' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'reads every name and value of the hook''s answer' {
+        $state = ConvertFrom-VoiceState 'mode=listening work=idle speaking=false microphone=true recognition=all screenOn=true micBusy=false session=open clips=off'
+
+        $state.mode | Should -BeExactly 'listening'
+        $state.session | Should -BeExactly 'open'
+        $state.clips | Should -BeExactly 'off'
+        @($state.Keys) | Should -HaveCount 9
+    }
+
+    It 'throws for a text that is not the hook''s answer: ''<_>''' -ForEach @('', 'error: the command failed', 'mode=off work=idle') {
+        $text = $_
+        { ConvertFrom-VoiceState $text } | Should -Throw -ExpectedMessage "Not an answer of the voice-state hook: '$text'"
+    }
+}
+
+Describe 'Test-ShortcutTarget' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns $true when the shortcut''s line names a service of the package' {
+        $dump = @(
+            '     button mode: 1'
+            '     shortcut key:{com.example.reader/com.example.reader.ReaderService, dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}'
+            '     button:{}'
+        )
+
+        Test-ShortcutTarget -Dump $dump -Package dev.kestrel | Should -BeExactly $true
+    }
+
+    It 'returns $false when <Name>' -ForEach @(
+        @{ Name = 'the line names another package'; Dump = @('     shortcut key:{com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService}') }
+        @{ Name = 'the line names a package that only starts like it'; Dump = @('     shortcut key:{dev.kestrel.testapp/dev.kestrel.testapp.Service}') }
+        @{ Name = 'the line names no service'; Dump = @('     shortcut key:{}') }
+        @{ Name = 'there is no such line'; Dump = @('     button:{}') }
+    ) {
+        Test-ShortcutTarget -Dump $Dump -Package dev.kestrel | Should -BeExactly $false
+    }
+}
+
+Describe 'Test-RecordingSilenced' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns $false when the newest recording of the package is not silenced' {
+        $dump = @(
+            '11-16 10:21:56:811 rec start riid:1831 uid:10331 session:2001 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
+            '11-16 10:21:57:022 rec start riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 10:21:57:123 rec stop riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
+            '11-16 10:21:57:200 rec start riid:1840 uid:10200 session:2010 src:MIC silenced pack:dev.kestrel.testapp'
+        )
+
+        Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeExactly $false
+    }
+
+    It 'returns $true when Android silenced the newest recording of the package' {
+        $dump = @(
+            '11-16 10:21:57:022 rec start riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
+            '11-16 10:21:58:410 rec update riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
+        )
+
+        Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeExactly $true
+    }
+
+    It 'returns $null when no recording names the package' {
+        $dump = @(
+            '11-16 10:21:57:200 rec start riid:1840 uid:10200 session:2010 src:MIC not silenced pack:dev.kestrel.testapp'
+            'some other line'
+        )
+
+        Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeNullOrEmpty
+    }
+}

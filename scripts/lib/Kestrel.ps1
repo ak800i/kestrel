@@ -163,3 +163,40 @@ function Get-TestResultCounts([string]$Folder) {
     }
     return [pscustomobject]$counts
 }
+
+# Reads the answer of the voice-state hook, such as 'mode=listening work=idle ... session=open clips=off', into an ordered
+# table of names and values. The answer never contains what Kestrel heard. Throws when the text is not such an answer.
+function ConvertFrom-VoiceState([string]$Text) {
+    $state = [ordered]@{}
+    foreach ($pair in @("$Text".Trim() -split '\s+' | Where-Object { $_ })) {
+        $name, $value = $pair -split '=', 2
+        if (-not $name -or $null -eq $value) { throw "Not an answer of the voice-state hook: '$Text'" }
+        $state[$name] = $value
+    }
+    if (-not ($state.Contains('mode') -and $state.Contains('session'))) { throw "Not an answer of the voice-state hook: '$Text'" }
+    $state
+}
+
+# Returns whether the output of 'dumpsys accessibility' names a service of the package as a target of the accessibility
+# shortcut, in its line 'shortcut key:{...}'. Android reads the setting a moment after it changes, and this line shows
+# what it has read.
+function Test-ShortcutTarget([string[]]$Dump, [string]$Package) {
+    foreach ($line in $Dump) {
+        if ($line -match 'shortcut key:\{([^}]*)\}') {
+            return [bool](@($Matches[1] -split ',\s*') | Where-Object { $_ -like "$Package/*" })
+        }
+    }
+    $false
+}
+
+# Returns whether Android silences the package's recording, from the output of 'dumpsys audio': the newest line
+# 'rec start ...' or 'rec update ...' of the package ends with 'silenced pack:<package>' or 'not silenced pack:<package>'.
+# Returns $null when no such line names the package.
+function Test-RecordingSilenced([string[]]$Dump, [string]$Package) {
+    $silenced = $null
+    $pattern = '\brec (?:start|update) .*? (?<state>not silenced|silenced) pack:' + [regex]::Escape($Package) + '(?:\s|$)'
+    foreach ($line in $Dump) {
+        if ($line -match $pattern) { $silenced = $Matches['state'] -eq 'silenced' }
+    }
+    $silenced
+}

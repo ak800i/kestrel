@@ -176,6 +176,9 @@ try {
     $reverseAdded = $true
     & $adb -s $Serial reverse "tcp:$port" "tcp:$port" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "adb reverse tcp:$port failed." }
+    # When its accessibility service connects, Kestrel would bring back a listening mode that it stored, and this script
+    # never turns it off. The hook's off stops that and stores Off.
+    Invoke-Hook voice -Send off | Out-Null
     Invoke-Checked "settings put secure enabled_accessibility_services $service" | Out-Null
     Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
     for ($i = 0; (Invoke-Hook state) -notlike 'screen=on*'; $i++) {
