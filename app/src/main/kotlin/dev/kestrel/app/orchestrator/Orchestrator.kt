@@ -86,7 +86,9 @@ class Orchestrator(
         const val WAIT_MILLIS = 8_000L
 
         // Once the owner has started to answer: the longest utterance (30 s, section 8.3), the end-of-speech pause
-        // (0.7 s) and a transcription on the A71 (at most 4 s, section 5.3). Plan 2D measures it on the A71.
+        // (0.7 s) and a transcription on the A71 (at most 4 s, section 5.3). The endpointer holds an answer and lets it
+        // go up to 1.85 s after its end, but at the latest 30 s after its start, so the worst case stays at about
+        // 30.7 s and a transcription. Plan 2D measures it on the A71.
         const val ANSWER_MILLIS = 35_000L
     }
 }

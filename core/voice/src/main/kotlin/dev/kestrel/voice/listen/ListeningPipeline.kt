@@ -23,9 +23,11 @@ enum class Recognition {
     ALL,
 
     /**
-     * Every utterance, while Kestrel waits for the answer to "Yes?". The endpointer holds each one as it holds an
-     * utterance that starts with "Kestrel", and joins the next one to it when that one starts within 1.5 s, so that the
-     * owner can pause while dictating the task (section 8.3).
+     * Every utterance, while Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel". The
+     * endpointer holds each one as it holds an utterance that starts with "Kestrel", and joins the next one to it when
+     * that one starts within 1.5 s, so that the owner can pause while dictating the task (section 8.3). After an
+     * interruption, it does not hold the utterance that began with Kestrel's own voice, which the pipeline drops
+     * (section 8.4).
      */
     ANSWER,
 
@@ -142,7 +144,8 @@ class ListeningPipeline(
         val hears = detector.hearsSpeech
         // An event for an earlier utterance went out since the last frame: the worker's, or a drop below.
         var answered = sent.getAndSet(false)
-        for (speech in endpointer.accept(utterances, names, hears, position, holdAll = wanted == Recognition.ANSWER)) {
+        val ready = endpointer.accept(utterances, names, hears, position, holdAll = wanted == Recognition.ANSWER, holdFrom = holdFrom())
+        for (speech in ready) {
             val kept = afterResume(speech)
             if (kept == null) {
                 if (transcribes(wanted, speech.named)) {
@@ -198,6 +201,14 @@ class ListeningPipeline(
         interrupted = hit != null && position - hit <= INTERRUPTION
         resumeFrom = if (hit != null && interrupted) hit - NAME_LENGTH else position
     }
+
+    /**
+     * Where the endpointer may start to hold utterances. After an interruption, [afterResume] drops every utterance that
+     * starts before [resumeFrom], so the endpointer lets such an utterance go at once and joins nothing to it: otherwise
+     * the request that follows it within 1.5 s would be dropped with it (section 8.4). Without an interruption, the cut
+     * keeps the end of such an utterance, which the endpointer may hold and join like any other.
+     */
+    private fun holdFrom(): Long = if (interrupted) resumeFrom else Long.MIN_VALUE
 
     /** [speech] without its part before [resumeFrom], or null when too little is left or the owner broke into it. */
     private fun afterResume(speech: Speech): Speech? = when {

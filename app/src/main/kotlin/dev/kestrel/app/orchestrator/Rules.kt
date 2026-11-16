@@ -41,7 +41,8 @@ data class State(
     val recognition: Recognition
         get() = when {
             speaking -> Recognition.NONE
-            // The owner dictates the task in the answer to "Yes?", and may pause in it.
+            // While Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the owner dictates the
+            // task and may pause in it.
             work == Work.AWAITING_TASK -> Recognition.ANSWER
             work != Work.IDLE || mode == Mode.LISTENING -> Recognition.ALL
             else -> Recognition.NAMED

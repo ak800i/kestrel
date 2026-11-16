@@ -185,6 +185,42 @@ class EndpointerTest {
         assertFalse(ready.single().named)
     }
 
+    @Test
+    fun anUtteranceThatStartsBeforeHoldFromGoesOutAtOnceAndNothingJoinsIt() {
+        // After an interruption, the pipeline drops what starts before its cut at 1.1 s: here Kestrel's voice.
+        val first = endpointer.accept(
+            listOf(utterance(0.2f, 2.7f)), emptyList(), hearsSpeech = false, position = at(3.6f), holdAll = true, holdFrom = at(1.1f),
+        )
+        assertEquals(at(0.2f), first.single().startSample)
+
+        // The request starts 1 s after it ends, which is within the longer pause, but it is held on its own.
+        assertEquals(
+            none,
+            endpointer.accept(
+                listOf(utterance(3.9f, 1.1f)), emptyList(), hearsSpeech = false, position = at(5.7f), holdAll = true, holdFrom = at(1.1f),
+            ),
+        )
+        val request = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(6.85f), holdAll = true, holdFrom = at(1.1f))
+        assertEquals(at(3.9f), request.single().startSample)
+        assertEquals(at(1.1f).toInt(), request.single().samples.size)
+    }
+
+    @Test
+    fun aHeldUtteranceThatStartsBeforeHoldFromGoesOutAtOnceAndNothingJoinsIt() {
+        // A named utterance is held while Kestrel speaks; then the pipeline's cut after an interruption moves past its start.
+        endpointer.accept(emptyList(), listOf(at(1f)), hearsSpeech = true, position = at(1f))
+        assertEquals(none, endpointer.accept(listOf(utterance(0.5f, 0.5f)), emptyList(), hearsSpeech = false, position = at(1.7f)))
+
+        val ready = endpointer.accept(
+            listOf(utterance(1.6f, 0.5f)), emptyList(), hearsSpeech = false, position = at(2.8f), holdAll = true, holdFrom = at(1.2f),
+        )
+
+        assertEquals(listOf(at(0.5f)), ready.map { it.startSample })
+        val later = endpointer.finish().single()
+        assertEquals(at(1.6f), later.startSample)
+        assertEquals(at(0.5f).toInt(), later.samples.size)
+    }
+
     private val none = emptyList<Speech>()
 
     private fun at(seconds: Float): Long = (seconds * SAMPLE_RATE).roundToLong()

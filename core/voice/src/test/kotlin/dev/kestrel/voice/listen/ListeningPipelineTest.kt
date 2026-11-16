@@ -113,7 +113,7 @@ class ListeningPipelineTest {
         pipeline.feed()
         pipeline.recognition = Recognition.NONE
         pipeline.feedUntil(1f)
-        pipeline.recognition = Recognition.ALL
+        pipeline.recognition = Recognition.ANSWER
 
         pipeline.feedUntil(2.2f)
         detector.next.addLast(listOf(utterance(0.5f, 1f)))
@@ -121,6 +121,8 @@ class ListeningPipelineTest {
         pipeline.feedUntil(3.8f)
         detector.next.addLast(listOf(utterance(3.1f, 0.8f)))
         pipeline.feed()
+        // Each one is held for 1.85 s after its end, and the pause of 1.6 s between them is too long to join them.
+        pipeline.feedUntil(6f)
 
         // The first utterance keeps its half second after 1 s, when Kestrel stopped speaking. The cut removed the name.
         val heard = events.filterIsInstance<VoiceEvent.Heard>()
@@ -153,12 +155,14 @@ class ListeningPipelineTest {
         // Kestrel answers "Yes?" until 1 s, and the microphone hears it from 0.4 s.
         pipeline.recognition = Recognition.NONE
         pipeline.feedUntil(1f)
-        pipeline.recognition = Recognition.ALL
+        pipeline.recognition = Recognition.ANSWER
         pipeline.feedUntil(1.5f)
         detector.next.addLast(listOf(utterance(0.4f, 0.4f)))
         pipeline.feed()
+        pipeline.feedUntil(3f)
 
         assertEquals(0, recognizer.calls)
+        assertEquals(listOf(VoiceEvent.Spotted(Keyword.KESTREL), VoiceEvent.Dropped), events)
     }
 
     @Test
@@ -168,15 +172,47 @@ class ListeningPipelineTest {
         pipeline.feedUntil(2.6f)
         spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, 2.6f)))
         pipeline.feed()
-        pipeline.recognition = Recognition.ALL
+        pipeline.recognition = Recognition.ANSWER
 
         // Kestrel's voice from 0.2 s, with the owner's "Kestrel, open the settings" over its end, makes one utterance.
         pipeline.feedUntil(4.7f)
         detector.next.addLast(listOf(utterance(0.2f, 3.8f)))
         pipeline.feed()
+        pipeline.feedUntil(7f)
 
         assertEquals(0, recognizer.calls)
         assertEquals(listOf(VoiceEvent.Spotted(Keyword.KESTREL), VoiceEvent.Dropped), events)
+    }
+
+    @Test
+    fun theRequestAfterAnInterruptionIsNotJoinedToKestrelsVoice() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        pipeline.feedUntil(2.6f)
+        spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, 2.6f)))
+        pipeline.feed()
+        // Kestrel stops speaking at 2.9 s and waits for the task.
+        pipeline.feedUntil(2.9f)
+        pipeline.recognition = Recognition.ANSWER
+
+        // Kestrel's voice with the owner's "Kestrel" over its end, from 0.2 s to 2.9 s, ends after 0.7 s of silence.
+        pipeline.feedUntil(3.6f)
+        detector.next.addLast(listOf(utterance(0.2f, 2.7f)))
+        pipeline.feed()
+        // The request follows 1 s after Kestrel stopped, from 3.9 s to 5 s. The detector hears it from 0.3 s after its
+        // start until it ends the utterance after 0.7 s of silence.
+        pipeline.feedUntil(4.2f)
+        detector.hearsSpeech = true
+        pipeline.feedUntil(5.7f)
+        detector.hearsSpeech = false
+        detector.next.addLast(listOf(utterance(3.9f, 1.1f)))
+        pipeline.feed()
+        pipeline.feedUntil(8f)
+
+        assertEquals(listOf("Spotted", "Dropped", "SpeechStarted", "Heard"), events.map { it::class.simpleName })
+        val heard = events.filterIsInstance<VoiceEvent.Heard>().single()
+        assertEquals("heard 17600", heard.text)
+        assertFalse(heard.named)
     }
 
     @Test
@@ -186,7 +222,7 @@ class ListeningPipelineTest {
         pipeline.feedUntil(2.6f)
         spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, 2.6f)))
         pipeline.feed()
-        pipeline.recognition = Recognition.ALL
+        pipeline.recognition = Recognition.ANSWER
 
         // An echo canceller kept Kestrel's voice out, so the utterance starts with the owner's "Kestrel" at 1.8 s.
         pipeline.feedUntil(4.7f)
@@ -497,7 +533,7 @@ class ListeningPipelineTest {
         spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, hit)))
         pipeline.feed()
         pipeline.feedUntil(resumingAt)
-        pipeline.recognition = Recognition.ALL
+        pipeline.recognition = Recognition.ANSWER
         pipeline.feedUntil(5.3f)
         detector.next.addLast(listOf(utterance(0.2f, 4.4f)))
         pipeline.feed()

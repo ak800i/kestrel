@@ -16,11 +16,12 @@ class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean)
 /**
  * Decides when an utterance has ended (design spec, section 8.3). The speech detector ends an utterance after 0.7 s of
  * silence. When the keyword spotter heard "Kestrel" at its start, or while the caller asks to hold every utterance, as
- * it does for the answer to "Yes?", the limit is 1.5 s instead: the endpointer holds the utterance, and joins the next
- * one to it when that one starts less than 1.5 s after its end, so that the owner can pause while dictating a task. A
- * joined utterance is named when its first part was. A held utterance goes out at the latest 30 s after its start, also
- * while the owner still speaks, and a joined utterance lasts at most 30 s. What comes after that, such as the next part
- * of long speech that the detector cut at 30 s, is a separate utterance. Not thread-safe: feed it from one thread.
+ * it does while Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the limit is 1.5 s
+ * instead: the endpointer holds the utterance, and joins the next one to it when that one starts less than 1.5 s after
+ * its end, so that the owner can pause while dictating a task. A joined utterance is named when its first part was. A
+ * held utterance goes out at the latest 30 s after its start, also while the owner still speaks, and a joined utterance
+ * lasts at most 30 s. What comes after that, such as the next part of long speech that the detector cut at 30 s, is a
+ * separate utterance. Not thread-safe: feed it from one thread.
  */
 class Endpointer {
     private val names = ArrayDeque<Long>()
@@ -31,7 +32,9 @@ class Endpointer {
      * keyword spotter heard "Kestrel" in the same audio, and whether the detector hears speech now, and returns the
      * utterances that are complete. All positions count samples since the audio started. With [holdAll], each new
      * utterance is held as one that starts with the name is; an utterance that is already held waits for its pause
-     * either way.
+     * either way. An utterance that starts before [holdFrom] is never held and nothing is joined to it: it goes out at
+     * once, also when it is held already. The pipeline passes the start of its cut after an interruption, because it
+     * drops such an utterance, so that the request that follows it is not dropped with it (section 8.4).
      */
     fun accept(
         utterances: List<Utterance>,
@@ -39,17 +42,22 @@ class Endpointer {
         hearsSpeech: Boolean,
         position: Long,
         holdAll: Boolean = false,
+        holdFrom: Long = Long.MIN_VALUE,
     ): List<Speech> {
         names.addAll(nameHits)
         val ready = mutableListOf<Speech>()
+        held?.takeIf { it.startSample < holdFrom }?.let {
+            ready += it
+            held = null
+        }
         for (utterance in utterances) {
             val speech = Speech(utterance.startSample, utterance.samples, startsWithName(utterance))
-            val joined = held?.let { join(it, speech) }
+            val joined = held?.takeIf { speech.startSample >= holdFrom }?.let { join(it, speech) }
             if (joined != null) {
                 held = joined
             } else {
                 held?.let { ready += it }
-                val hold = speech.named || holdAll
+                val hold = (speech.named || holdAll) && speech.startSample >= holdFrom
                 held = if (hold) speech else null
                 if (!hold) ready += speech
             }
