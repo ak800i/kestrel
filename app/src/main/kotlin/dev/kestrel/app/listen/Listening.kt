@@ -38,7 +38,7 @@ internal fun interface FeedbackBar {
     fun show(text: String)
 }
 
-/** What Kestrel says and shows while it listens. Plan 2C-2 decides the final wording. */
+/** What Kestrel says and shows while it listens. Plan 2C-3 decides the final wording. */
 internal object ListeningTexts {
     const val YES = "Yes?"
     const val NO_TASKS = "I can't run tasks yet."
@@ -49,6 +49,7 @@ internal object ListeningTexts {
     const val CANNOT_START = "Kestrel could not start listening. Start it from the notification or the tile."
     const val MODELS_MISSING = "The speech models are missing; see the setup checklist."
     const val MICROPHONE_FAILED = "The microphone failed, so Kestrel stopped listening."
+    const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
 }
 
 /**
@@ -63,6 +64,7 @@ internal object ListeningTexts {
  * [thread], one at a time. A session opens and closes in a coroutine of [scope] behind one lock, so that a new start
  * waits until a shutdown has finished: two recognisers would need about 1.4 GB. The public functions may be called from
  * any thread. [report] gets each failure with a fixed description of what failed, and must log no message.
+ * [openSettings] opens Kestrel's settings app; the controller's thread calls it, and it throws when Android refuses.
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -71,6 +73,7 @@ class Listening internal constructor(
     private val services: ServiceControl,
     private val bar: FeedbackBar,
     private val report: (String, Throwable) -> Unit,
+    private val openSettings: () -> Unit,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -340,6 +343,18 @@ class Listening internal constructor(
             // The Orchestrator runs the wait itself.
             is Effect.WaitForTask -> Unit
             Effect.StopService -> shutdown()
+            Effect.OpenSettings -> openSettingsOrSayWhy()
+        }
+    }
+
+    // Section 14: Kestrel never fails silently. Android may also block an activity start from the background without an
+    // exception; Kestrel's accessibility service gives it the right to start one (prototype P1).
+    private fun openSettingsOrSayWhy() {
+        try {
+            openSettings()
+        } catch (e: Exception) {
+            report("Opening the settings", e)
+            bar.show(ListeningTexts.CANNOT_OPEN_SETTINGS)
         }
     }
 

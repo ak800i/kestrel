@@ -143,6 +143,47 @@ class RequestsTest {
     }
 
     @Test
+    fun turnOffAndSwitchOffAfterTheNameTurnKestrelOff() {
+        assertEquals(Request.TurnOff, Requests.read("Kestrel, turn off.", spotted = false))
+        assertEquals(Request.TurnOff, Requests.read("Kestrel, switch off, please.", spotted = true))
+        assertEquals(Request.TurnOff, Requests.read("Turn off.", spotted = false, afterName = true))
+        assertEquals(Request.Task("turn off the wifi."), Requests.read("Kestrel, turn off the wifi.", spotted = false))
+        assertEquals(Request.Other("Turn off."), Requests.read("Turn off.", spotted = false))
+    }
+
+    @Test
+    fun turnOffMayEndWithTheName() {
+        assertEquals(Request.TurnOff, Requests.read("Turn off, Kestrel.", spotted = false))
+        assertEquals(Request.TurnOff, Requests.read("Switch off, please, Kestrel.", spotted = false))
+        assertEquals(Request.Other("Turn off the wifi, Kestrel."), Requests.read("Turn off the wifi, Kestrel.", spotted = false))
+    }
+
+    @Test
+    fun kestrelsSettingsOpenWithTheirOwnPhrases() {
+        assertEquals(Request.OpenSettings, Requests.read("Kestrel, open settings.", spotted = false))
+        assertEquals(Request.OpenSettings, Requests.read("Kestrel, open your settings, please.", spotted = true))
+        assertEquals(Request.OpenSettings, Requests.read("Kestrel settings", spotted = false))
+        assertEquals(Request.OpenSettings, Requests.read("Open settings.", spotted = false, afterName = true))
+        // The owner may mean Android's settings, so these stay a task and an instant command.
+        assertEquals(Request.Task("open the settings."), Requests.read("Kestrel, open the settings.", spotted = false))
+        assertEquals(Request.Other("Open settings."), Requests.read("Open settings.", spotted = false))
+    }
+
+    @Test
+    fun anAnswerToYesMayCallItOff() {
+        assertEquals(Request.Stop(named = true), Requests.read("Never mind.", spotted = false, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("Forget it, please.", spotted = false, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("Nothing.", spotted = false, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("Kestrel, never mind.", spotted = true, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("Never mind, Kestrel.", spotted = false, afterName = true))
+        // "Kestrel, forget [fact]" is a command of its own (Appendix A).
+        assertEquals(Request.Task("Forget the milk."), Requests.read("Forget the milk.", spotted = false, afterName = true))
+        // Only an answer to "Yes?" is called off this way.
+        assertEquals(Request.Task("never mind."), Requests.read("Kestrel, never mind.", spotted = false))
+        assertEquals(Request.Other("Never mind."), Requests.read("Never mind.", spotted = false))
+    }
+
+    @Test
     fun aTranscriptWithoutWordsIsNothing() {
         assertNull(Requests.read("", spotted = false))
         assertNull(Requests.read(" ... ", spotted = true))

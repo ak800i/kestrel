@@ -51,6 +51,13 @@ sealed interface Event {
     /** The accessibility button or shortcut, or the Quick Settings tile (section 8.6). */
     data object Toggle : Event
 
+    /**
+     * Turns Kestrel on while it is off: listening, or paused when [paused]. While Kestrel listens or is paused it changes
+     * nothing, so that a start that comes late cannot toggle anything. The restore after a restart of Kestrel's process
+     * sends it (section 8.5).
+     */
+    data class Start(val paused: Boolean = false) : Event
+
     /** The notification's Pause action. */
     data object Pause : Event
 
@@ -148,6 +155,9 @@ sealed interface Effect {
 
     /** Stops the listening service. */
     data object StopService : Effect
+
+    /** Opens Kestrel's settings app, for "Kestrel, open settings" (section 15). */
+    data object OpenSettings : Effect
 }
 
 /** A transition: the new state, and what to do, in order. */
@@ -157,6 +167,8 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 object Rules {
     fun next(state: State, event: Event): Step = when (event) {
         Event.Toggle -> switch(state, if (state.mode == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
+        is Event.Start ->
+            if (state.mode == Mode.OFF) switch(state, if (event.paused) Mode.PAUSED else Mode.LISTENING) else Step(state)
         Event.Pause -> if (state.mode == Mode.LISTENING) switch(state, Mode.PAUSED) else Step(state)
         // The notification exists only while Kestrel is on, so a Resume while off comes from a stale notification.
         Event.Resume -> if (state.mode == Mode.PAUSED) switch(state, Mode.LISTENING) else Step(state)
@@ -218,6 +230,7 @@ object Rules {
         is Request.Stop -> Step(state.copy(work = Work.IDLE), listOf(shown))
         Request.PauseListening -> changeMode(state.copy(work = Work.IDLE), Mode.PAUSED, shown)
         Request.TurnOff -> turnOff(state, shown)
+        Request.OpenSettings -> Step(state.copy(work = Work.IDLE), listOf(shown, Effect.OpenSettings))
     }
 
     private fun whileIdle(state: State, request: Request, text: String, shown: Effect): Step = when (request) {
@@ -226,6 +239,7 @@ object Rules {
         Request.WakeUp -> changeMode(state, Mode.LISTENING, shown)
         Request.PauseListening -> changeMode(state, Mode.PAUSED, shown)
         Request.TurnOff -> turnOff(state, shown)
+        Request.OpenSettings -> Step(state, listOf(shown, Effect.OpenSettings))
         is Request.Stop -> if (request.named) {
             // "Kestrel, stop" with nothing running only ends the speech; plain "stop" may name a button.
             Step(state, listOfNotNull(shown, Effect.StopSaying.takeIf { state.speaking }))

@@ -1,6 +1,7 @@
 package dev.kestrel.app
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.Listening
@@ -99,6 +100,16 @@ class AppGraph(context: Context) {
                 for ((index, part) in error.describeWithoutMessagesByCause().withIndex()) {
                     Log.w(TAG, if (index == 0) "$what failed: $part" else part)
                 }
+            },
+            // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity. The
+            // controller's thread calls it; startActivity may be called from any thread.
+            openSettings = {
+                appContext.startActivity(
+                    Intent(appContext, MainActivity::class.java)
+                        .setAction(Intent.ACTION_MAIN)
+                        .addCategory(Intent.CATEGORY_LAUNCHER)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
             },
             microphones = { MicCapture(appContext) },
         )

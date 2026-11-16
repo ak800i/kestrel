@@ -37,6 +37,7 @@ class ListeningTest {
     private val services = FakeServices()
     private val microphone = FakeMicrophone()
     private val service = Any()
+    private var settingsFailure: Exception? = null
 
     @Test
     fun theServiceStartsWhenTheModeLeavesOffAndTheSessionOpensOnlyInTheForeground() = runTest {
@@ -197,6 +198,31 @@ class ListeningTest {
         // The reason takes the place of "Off", which would replace it at once.
         assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.CANNOT_START), shown)
         assertEquals("Starting the listening service", reports.single().first)
+    }
+
+    @Test
+    fun kestrelOpenSettingsOpensTheSettingsApp() = runTest {
+        val listening = listeningWithSession()
+        log.clear()
+
+        listening.send(Event.Heard("Kestrel, open settings.", named = true))
+        runCurrent()
+
+        assertEquals(listOf("open settings"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun settingsThatCannotOpenAreReportedAndShown() = runTest {
+        settingsFailure = IllegalStateException("No activity")
+        val listening = listeningWithSession()
+
+        listening.send(Event.Heard("Kestrel settings", named = true))
+        runCurrent()
+
+        assertEquals("Opening the settings", reports.single().first)
+        assertEquals(ListeningTexts.CANNOT_OPEN_SETTINGS, shown.last())
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
     }
 
     @Test
@@ -626,6 +652,10 @@ class ListeningTest {
         services = services,
         bar = { shown += it },
         report = { what, error -> reports += what to error },
+        openSettings = {
+            log += "open settings"
+            settingsFailure?.let { throw it }
+        },
         microphones = { microphone },
     )
 

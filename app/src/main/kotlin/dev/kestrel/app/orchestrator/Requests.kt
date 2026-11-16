@@ -22,8 +22,11 @@ sealed interface Request {
     /** "Stop listening": the paused mode. */
     data object PauseListening : Request
 
-    /** "Stop Kestrel": off. */
+    /** "Stop Kestrel", or "Kestrel, turn off": off. */
     data object TurnOff : Request
+
+    /** "Kestrel, open settings" or "Kestrel settings": Kestrel's settings app (section 15). */
+    data object OpenSettings : Request
 
     /** Anything else, which the instant commands of sub-project 3 will read. */
     data class Other(val text: String) : Request {
@@ -43,8 +46,11 @@ sealed interface Request {
  *    anywhere among them, as in "Stop it, Kestrel"; then the stop is named.
  * 3. The name starts the utterance, or, when the spotter heard it, comes after one short word such as "hey", "okay" or
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
- *    "wake up", "stop listening", or a task. A task after "stop" or "cancel" asks to cancel a running task first.
- * 4. Otherwise "stop listening" pauses, and "wake up" or "stop listening" followed by the name count too.
+ *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings", or a
+ *    task. In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. A task
+ *    after "stop" or "cancel" asks to cancel a running task first.
+ * 4. Otherwise "stop listening" pauses, and "wake up", "stop listening", "turn off" or "switch off" followed by the
+ *    name count too.
  *    Everything else is for the instant commands, or, in an answer to "Yes?", read as the words after the name.
  *
  * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up".
@@ -67,6 +73,13 @@ object Requests {
 
     // Words that Kestrel's own phrases may come with, as in "Kestrel, wake up, please".
     private val POLITE = setOf("please", "now", "ok", "okay")
+
+    // Kestrel's own phrases after the name, as phrase() gives them (Appendix A).
+    private val TURN_OFF = setOf("turn off", "switch off")
+    private val OPEN_SETTINGS = setOf("open settings", "open your settings", "settings")
+
+    // Answers to "Yes?" that end the wait (section 8.3).
+    private val NEVER_MIND = setOf("never mind", "nevermind", "forget it", "nothing")
 
     /**
      * Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start.
@@ -92,7 +105,7 @@ object Requests {
                 rest = rest.drop(again)
                 again = nameAt(rest, 0, limit)
             }
-            return named(transcript, rest, limit, stopFirst = start == 1 && words[0].text in STOP_WORDS)
+            return named(transcript, rest, limit, stopFirst = start == 1 && words[0].text in STOP_WORDS, afterName = afterName)
         }
         val phrase = phrase(words)
         val trailingName = nameBefore(words, words.size, limit)
@@ -100,7 +113,9 @@ object Requests {
         return when {
             phrase == "stop listening" || beforeName == "stop listening" -> Request.PauseListening
             beforeName == "wake up" -> Request.WakeUp
-            afterName -> named(transcript, words, limit, stopFirst = false)
+            beforeName != null && beforeName in TURN_OFF -> Request.TurnOff
+            afterName && beforeName != null && beforeName in NEVER_MIND -> Request.Stop(named = true)
+            afterName -> named(transcript, words, limit, stopFirst = false, afterName = true)
             else -> Request.Other(transcript.trim())
         }
     }
@@ -132,13 +147,18 @@ object Requests {
         return Request.Stop(named)
     }
 
-    /** What [rest], the words after the name, ask for. */
-    private fun named(transcript: String, rest: List<Word>, limit: Int, stopFirst: Boolean): Request {
+    /** What [rest], the words after the name, ask for. [afterName]: they answer "Yes?". */
+    private fun named(transcript: String, rest: List<Word>, limit: Int, stopFirst: Boolean, afterName: Boolean): Request {
         if (rest.isEmpty()) return Request.Name
         if (readStop(rest, limit) != null) return Request.Stop(named = true)
-        return when (phrase(rest)) {
-            "wake up" -> Request.WakeUp
-            "stop listening" -> Request.PauseListening
+        val said = phrase(rest)
+        return when {
+            said == "wake up" -> Request.WakeUp
+            said == "stop listening" -> Request.PauseListening
+            said in TURN_OFF -> Request.TurnOff
+            said in OPEN_SETTINGS -> Request.OpenSettings
+            // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
+            afterName && said in NEVER_MIND -> Request.Stop(named = true)
             else -> Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst)
         }
     }

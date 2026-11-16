@@ -230,7 +230,7 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 
 - An utterance ends after 0.7 s of silence. When the keyword spotter hears "Kestrel" at the start of an utterance, the limit becomes 1.5 s, so that the owner can pause while dictating a task: Kestrel holds the utterance and joins the next one to it when that one starts within 1.5 s, with the pause as silence between them. The voice activity detector notices speech only about 0.3 s after it starts, so Kestrel waits that much longer before it lets a held utterance go. An utterance can last at most 30 s.
 - Before each utterance is decoded, the recogniser receives boost words: the labels that are visible on screen, the names of installed apps, the command vocabulary, "Kestrel", the owner's aliases, and relevant contact names (names on screen, favourites and recent contacts). sherpa-onnx applies boost words to Parakeet-TDT only with modified beam search and a list of the model's word pieces, which Kestrel writes from the model's token list (B39). In tests on the emulator, boost words that the model cannot spell, such as emoji, were skipped without harm, and a strong boost once cut a transcript short. So Kestrel uses a moderate boost, and when the last word of a transcript ends more than 1 s before the audio does, it decodes the audio again without boost words and keeps the longer transcript. The matching of spoken words to the screen (section 9.6) still has to allow for near misses.
-- A transcript is a task when its first word matches "Kestrel", allowing near misses such as "Kestral" or "Kes trel". When the keyword spotter heard the name at the start of the utterance, more distant spellings count, and the name may also be the second word, as in "Hey Kestrel". A transcript without a word like the name is not a task, even when the spotter fired, so that a false hit cannot start a task. Kestrel removes the name, and the rest is the task. "Kestrel" on its own makes Kestrel answer "Yes?" and treat the next utterance within 8 s as the task.
+- A transcript is a task when its first word matches "Kestrel", allowing near misses such as "Kestral" or "Kes trel". When the keyword spotter heard the name at the start of the utterance, more distant spellings count, and the name may also be the second word, as in "Hey Kestrel". A transcript without a word like the name is not a task, even when the spotter fired, so that a false hit cannot start a task. Kestrel removes the name, and the rest is the task. "Kestrel" on its own makes Kestrel answer "Yes?" and treat the next utterance within 8 s as the task. "Never mind", "forget it" or "nothing" in answer to "Yes?" ends the wait.
 - A few requests that start with "Kestrel" are handled on the phone without the LLM, such as "Kestrel, wake up" and "Kestrel, delete history". Appendix A lists them.
 - Everything else goes to the instant-command parser (section 9.5). Speech that is neither a task nor a command is ignored, except during dictation (section 9.7).
 
@@ -245,7 +245,7 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 
 | Mode | What runs | How Kestrel enters it |
 |---|---|---|
-| Off | Nothing; the microphone is released | "Stop Kestrel", the notification's Stop action, or a fresh install |
+| Off | Nothing; the microphone is released | "Stop Kestrel", "Kestrel, turn off", the notification's Stop action, or a fresh install |
 | Listening | Voice activity detection, keyword spotting and recognition | The accessibility shortcut, the tile, the notification, the side key, or "Kestrel, wake up" |
 | Paused | Voice activity detection and keyword spotting. Recognition runs only on utterances that start with "Kestrel". | "Stop listening", the notification's Pause action or the tile |
 | Ringing | Recognition with the call commands only | An incoming call while Kestrel is listening or paused, also on the lock screen (a setting, on by default; spike S1) |
@@ -954,12 +954,13 @@ Kestrel adds these commands, which use its name:
 | Kestrel, [task] | Runs a task |
 | Kestrel | Answers "Yes?" and treats the next utterance as a task |
 | Kestrel, wake up | Resumes listening from the paused mode |
+| Kestrel, turn off | Turns Kestrel off, as "Stop Kestrel" does |
 | Kestrel, stop | Stops speech and cancels a running task |
 | Kestrel, continue | Resumes a task after a hand-over |
 | Kestrel, save that as [name] | Saves the last task as a routine |
 | Kestrel, remember [fact]; Kestrel, forget [fact] | Adds or removes an alias or fact, after confirmation |
 | Kestrel, delete history | Wipes the activity log and the network log, after confirmation |
-| Kestrel, open settings | Opens Kestrel's settings |
+| Kestrel, open settings; Kestrel settings | Opens Kestrel's settings |
 
 ## Appendix B. Key facts and sources
 

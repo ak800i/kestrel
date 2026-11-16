@@ -430,4 +430,64 @@ class RulesTest {
         assertEquals(Step(State()), Rules.next(State(), Event.TurnOff))
         assertEquals(Step(State()), Rules.next(State(), Event.MicBusy(busy = true)))
     }
+
+    @Test
+    fun startTurnsKestrelOnOnlyWhileItIsOff() {
+        val started = Rules.next(State(), Event.Start())
+
+        assertEquals(Mode.LISTENING, started.state.mode)
+        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING))), started.effects)
+        assertEquals(Mode.PAUSED, Rules.next(State(), Event.Start(paused = true)).state.mode)
+        // A start that comes late must not toggle anything.
+        assertEquals(Step(listening), Rules.next(listening, Event.Start(paused = true)))
+        assertEquals(Step(paused), Rules.next(paused, Event.Start()))
+    }
+
+    @Test
+    fun kestrelTurnOffTurnsKestrelOff() {
+        val off = Rules.next(paused, Event.Heard("Kestrel, turn off.", named = true))
+
+        assertEquals(Mode.OFF, off.state.mode)
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Kestrel, turn off.")), Effect.Show(Feedback.ModeChanged(Mode.OFF)), Effect.StopService),
+            off.effects,
+        )
+    }
+
+    @Test
+    fun kestrelOpenSettingsOpensThemWhileListeningOrPaused() {
+        assertEquals(
+            Step(listening, listOf(Effect.Show(Feedback.Heard("Kestrel, open settings.")), Effect.OpenSettings)),
+            Rules.next(listening, Event.Heard("Kestrel, open settings.", named = true)),
+        )
+        assertEquals(
+            Step(paused, listOf(Effect.Show(Feedback.Heard("Kestrel settings")), Effect.OpenSettings)),
+            Rules.next(paused, Event.Heard("Kestrel settings", named = true)),
+        )
+        // Nothing may start while the screen is off (section 14.4).
+        val dark = listening.copy(screenOn = false)
+        assertEquals(Step(dark), Rules.next(dark, Event.Heard("Kestrel, open settings.", named = true)))
+    }
+
+    @Test
+    fun openSettingsEndsTheWaitForATaskAndIsIgnoredWhileATaskRuns() {
+        val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
+        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
+
+        assertEquals(
+            Step(listening.copy(wait = 1), listOf(Effect.Show(Feedback.Heard("Open settings.")), Effect.OpenSettings)),
+            Rules.next(waiting, Event.Heard("Open settings.", named = false)),
+        )
+        assertEquals(Step(running), Rules.next(running, Event.Heard("Kestrel, open settings.", named = true)))
+    }
+
+    @Test
+    fun neverMindEndsTheWaitForATask() {
+        val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
+
+        assertEquals(
+            Step(listening.copy(wait = 1), listOf(Effect.Show(Feedback.Heard("Never mind.")))),
+            Rules.next(waiting, Event.Heard("Never mind.", named = false)),
+        )
+    }
 }
