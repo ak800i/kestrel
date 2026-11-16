@@ -970,6 +970,33 @@ class ListeningTest {
     }
 
     @Test
+    fun offAndOnWhileASessionOpensKeepTheSessionForTheNewStart() = runTest {
+        val opening = CompletableDeferred<Unit>()
+        sessions.opening = opening
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        // Off and on again while the models load. The running service takes the new start and reports before the
+        // opening ends.
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+        opening.complete(Unit)
+        runCurrent()
+
+        assertEquals(1, sessions.opened.size)
+        assertFalse("close" in log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertTrue(listening.sessionOpen.value)
+    }
+
+    @Test
     fun anErrorWhileTheSessionOpensTurnsKestrelOff() = runTest {
         val errors = mutableListOf<Throwable>()
         sessions.failure = UnsatisfiedLinkError("libsherpa-onnx-jni.so")

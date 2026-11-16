@@ -116,11 +116,15 @@ class VoiceHookTest {
     @Test
     fun aBlankClipIsRefused() {
         val previous = listening.microphones
+        try {
+            val reply = hook("VOICE_CLIP", "text" to " ")
 
-        val reply = hook("VOICE_CLIP", "text" to " ")
-
-        assertEquals(HookReply(HookReply.FAILED, "error: add a text that is not blank"), reply)
-        assertSame(previous, listening.microphones)
+            assertEquals(HookReply(HookReply.FAILED, "error: add a text that is not blank"), reply)
+            assertSame(previous, listening.microphones)
+        } finally {
+            listening.microphones = previous
+            VoiceHooks.microphone.clear()
+        }
     }
 
     @Test

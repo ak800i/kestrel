@@ -53,7 +53,8 @@ class ModelFiles(
      * Checks every model, in the manifest's order. Hashing a large file takes seconds, so this runs on [Dispatchers.IO].
      * It uses one folder for the whole check, and creates it first, so that scripts\push-models.ps1 finds it also after
      * someone deleted it while Kestrel ran. A cancelled check stops before the next file, but it first adds the hashes
-     * that it computed to the cache, so that the next check hashes only the files that this one did not reach.
+     * that it computed to the cache, so that the next check hashes only the files that this one did not reach. A check
+     * that finds a file missing keeps its entry, so that a check while shared storage is missing does not empty the cache.
      */
     suspend fun check(): List<ModelStatus> = withContext(Dispatchers.IO) {
         lock.withLock {
@@ -82,11 +83,13 @@ class ModelFiles(
                     }
                     ModelStatus(model, missing, damaged)
                 }
-                if (known != cached) writeCache(known)
+                // Each entry holds its file's size and modification time, so the old entries of the files that this
+                // check did not find or did not reach stay valid, also while shared storage is missing for a while.
+                val kept = cached + known
+                if (kept != cached) writeCache(kept)
                 statuses
             } catch (e: CancellationException) {
-                // Each entry holds its file's size and modification time, so the old entries of the files that this
-                // check did not reach stay valid. writeCache does not suspend, so the cancellation cannot stop it.
+                // As above. writeCache does not suspend, so the cancellation cannot stop it.
                 val kept = cached + known
                 if (kept != cached) writeCache(kept)
                 throw e

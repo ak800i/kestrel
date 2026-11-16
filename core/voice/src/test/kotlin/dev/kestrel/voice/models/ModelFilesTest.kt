@@ -223,6 +223,27 @@ class ModelFilesTest {
     }
 
     @Test
+    fun aCheckThatFindsNoFileKeepsTheCachedHashes() = runTest {
+        write("m/a.onnx", "abc")
+        write("m/b.onnx", "de")
+        var current = root
+        val files = ModelFiles({ current }, manifest("m/a.onnx" to "abc", "m/b.onnx" to "de"), cache) { file ->
+            hashed += file.name
+            sha256(file)
+        }
+        files.check()
+
+        // Shared storage is missing for a while, and Kestrel falls back to a folder in its private storage.
+        current = File(folder.root, "fallback")
+        assertEquals(2, files.check().single().missing.size)
+        current = root
+        hashed.clear()
+
+        assertTrue(files.check().single().ready)
+        assertEquals(emptyList<String>(), hashed)
+    }
+
+    @Test
     fun aCheckCreatesTheFolder() = runTest {
         // Someone deleted the folder while Kestrel ran; scripts\push-models.ps1 waits for Kestrel to create it.
         root.deleteRecursively()
