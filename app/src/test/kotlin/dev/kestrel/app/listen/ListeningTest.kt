@@ -44,6 +44,10 @@ class ListeningTest {
     private val conditions = FakeConditions()
     private val notices = FakeNotices()
     private val memory = FakeMemory()
+    private val exits = FakeExits()
+
+    // The wall clock, in milliseconds.
+    private var now = 1_000_000L
 
     @Test
     fun theServiceStartsWhenTheModeLeavesOffAndTheSessionOpensOnlyInTheForeground() = runTest {
@@ -561,6 +565,217 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals("Reading the listening mode", reports.single().first)
+    }
+
+    @Test
+    fun kestrelStaysOffAfterTheOwnerStoppedIt() = runTest {
+        // A force stop, "Stop app" or Stop in "Active apps" ended the process that stored Listening (prototype P2).
+        memory.stored = Mode.LISTENING
+        memory.writtenAt = 500_000
+        exits.record = ExitRecord(ExitReason.OWNER_STOPPED, timestamp = 600_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals(listOf(Mode.OFF), memory.writes)
+        assertTrue(notices.shown.isEmpty())
+    }
+
+    @Test
+    fun aCrashSoonAfterARestoreKeepsKestrelOffAndSaysSo() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.restoredAt = 500_000
+        memory.writtenAt = 510_000
+        // 100 s after the restore.
+        exits.record = ExitRecord(ExitReason.CRASH, timestamp = 600_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals(listOf(Mode.OFF), memory.writes)
+        assertEquals(listOf(ListeningTexts.CRASHED_AFTER_RESTORE), shown)
+        assertEquals(listOf(StopReason.CRASHED_AFTER_RESTORE), notices.shown)
+    }
+
+    @Test
+    fun aCrashBeforeTheRestoredSessionOpenedKeepsKestrelOffAndSaysSo() = runTest {
+        // The last restore stored Off and turned Kestrel on, and a native crash ended the process while the models
+        // loaded, so Listening was never stored again.
+        memory.stored = Mode.OFF
+        memory.writtenAt = 500_000
+        memory.restoredAt = 500_000
+        exits.record = ExitRecord(ExitReason.CRASH, timestamp = 530_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals(listOf(StopReason.CRASHED_AFTER_RESTORE), notices.shown)
+        // Said once: the next process finds an Off without the time of a restore.
+        assertEquals(null, memory.restoredAt)
+    }
+
+    @Test
+    fun aRestoredProcessThatEndedWithoutACrashBeforeItsSessionOpenedStaysOff() = runTest {
+        // The last restore stored Off and turned Kestrel on, and Android ended the process while the models loaded, for
+        // example with the low-memory killer. "Off first" keeps Kestrel off, and there is nothing to say.
+        memory.stored = Mode.OFF
+        memory.writtenAt = 500_000
+        memory.restoredAt = 500_000
+        exits.record = ExitRecord(ExitReason.OTHER, timestamp = 530_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertTrue(shown.isEmpty())
+        assertTrue(notices.shown.isEmpty())
+        assertEquals(null, memory.restoredAt)
+    }
+
+    @Test
+    fun aCrashTwoMinutesAfterARestoreRestoresListening() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.restoredAt = 500_000
+        memory.writtenAt = 510_000
+        exits.record = ExitRecord(ExitReason.CRASH, timestamp = 620_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun aCrashAfterTheOwnersOwnStartRestoresListening() = runTest {
+        // The owner turned Kestrel off and on after the last restore, which cleared its time; listen-check.ps1's
+        // restart check does this before its 'am crash'.
+        memory.stored = Mode.LISTENING
+        memory.writtenAt = 510_000
+        exits.record = ExitRecord(ExitReason.CRASH, timestamp = 520_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+        assertTrue(notices.shown.isEmpty())
+    }
+
+    @Test
+    fun otherEndsOfTheProcessRestoreListening() = runTest {
+        // Such as a low-memory kill or a package update.
+        memory.stored = Mode.LISTENING
+        memory.writtenAt = 500_000
+        exits.record = ExitRecord(ExitReason.OTHER, timestamp = 600_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun aRecordFromBeforeTheStoredModeIsIgnoredAsAfterAReboot() = runTest {
+        // A reboot leaves no record of its own, so the newest one belongs to an older process.
+        memory.stored = Mode.PAUSED
+        memory.writtenAt = 500_000
+        exits.record = ExitRecord(ExitReason.OWNER_STOPPED, timestamp = 400_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.PAUSED, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun aModeWithoutATimeLetsTheNewestRecordDecide() = runTest {
+        // Stored by plan 2C-2's version, which kept no times.
+        memory.stored = Mode.LISTENING
+        exits.record = ExitRecord(ExitReason.OWNER_STOPPED, timestamp = 400_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+    }
+
+    @Test
+    fun exitRecordsThatCannotBeReadDoNotStopTheRestore() = runTest {
+        memory.stored = Mode.LISTENING
+        exits.failure = SecurityException("No access to the records")
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals("Reading the exit records", reports.single().first)
+    }
+
+    @Test
+    fun theOwnersChoiceWhileTheExitRecordsAreReadIsKept() = runTest {
+        memory.stored = Mode.LISTENING
+        exits.reading = CompletableDeferred()
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        // While the record is read, the owner turns Kestrel on and off again.
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        exits.reading?.complete(Unit)
+        runCurrent()
+
+        // Only the owner's Off was stored; the restore wrote nothing and started nothing more.
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(Mode.OFF), memory.writes)
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun aRestoreKeepsItsTimeUntilKestrelTurnsOff() = runTest {
+        memory.stored = Mode.LISTENING
+        now = 700_000
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+        assertEquals(700_000L, memory.restoredAt)
+
+        now = 705_000
+        listening.onForeground(service)
+        runCurrent()
+        // Listening, stored once the session is open, keeps the time of the restore for the rule about crashes.
+        assertEquals(listOf(Mode.OFF, Mode.LISTENING), memory.writes)
+        assertEquals(705_000L, memory.writtenAt)
+        assertEquals(700_000L, memory.restoredAt)
+
+        // A start after an Off is the owner's, so a crash after it is not one soon after a restore.
+        listening.send(Event.TurnOff)
+        runCurrent()
+        assertEquals(Mode.OFF, memory.stored)
+        assertEquals(null, memory.restoredAt)
     }
 
     @Test
@@ -1450,6 +1665,8 @@ class ListeningTest {
         memory = memory,
         conditions = conditions,
         notices = notices,
+        exits = exits,
+        clock = { now },
         microphones = { microphone },
     )
 
@@ -1564,6 +1781,8 @@ class ListeningTest {
 
     private class FakeMemory : ModeMemory {
         var stored = Mode.OFF
+        var writtenAt: Long? = null
+        var restoredAt: Long? = null
         var reads = 0
         var readFailure: Exception? = null
         var reading: CompletableDeferred<Unit>? = null
@@ -1571,18 +1790,32 @@ class ListeningTest {
         var writing: CompletableDeferred<Unit>? = null
         val writes = mutableListOf<Mode>()
 
-        override suspend fun read(): Mode {
+        override suspend fun read(): StoredMode {
             reads++
             reading?.await()
             readFailure?.let { throw it }
-            return stored
+            return StoredMode(stored, writtenAt, restoredAt)
         }
 
-        override suspend fun write(mode: Mode) {
+        override suspend fun write(mode: Mode, writtenAt: Long, restoredAt: Long?) {
             writing?.await()
             writeFailure?.let { throw it }
             writes += mode
             stored = mode
+            this.writtenAt = writtenAt
+            this.restoredAt = restoredAt
+        }
+    }
+
+    private class FakeExits : ExitRecords {
+        var record: ExitRecord? = null
+        var failure: Exception? = null
+        var reading: CompletableDeferred<Unit>? = null
+
+        override suspend fun newest(): ExitRecord? {
+            reading?.await()
+            failure?.let { throw it }
+            return record
         }
     }
 
@@ -1642,11 +1875,13 @@ class ListeningTest {
             openSettings = { true },
             conditions = conditions,
             notices = notices,
+            exits = exits,
+            clock = { now },
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
-                override suspend fun read(): Mode = Mode.OFF
+                override suspend fun read(): StoredMode = StoredMode(Mode.OFF)
 
-                override suspend fun write(mode: Mode) {
+                override suspend fun write(mode: Mode, writtenAt: Long, restoredAt: Long?) {
                     failure?.let {
                         failure = null
                         throw it

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
+import dev.kestrel.app.listen.AndroidExitRecords
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.LauncherAppLabels
@@ -17,6 +18,7 @@ import dev.kestrel.app.listen.ModeMemory
 import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
+import dev.kestrel.app.listen.StoredMode
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.openWithBoostWords
@@ -150,10 +152,15 @@ class AppGraph(context: Context) {
             },
             // Encrypted like every setting (section 13.4). SettingsStore reads and writes on Dispatchers.IO.
             memory = object : ModeMemory {
-                override suspend fun read(): Mode = settings.get(SettingKeys.LISTENING).mode
+                override suspend fun read(): StoredMode =
+                    settings.get(SettingKeys.LISTENING).let { StoredMode(it.mode, it.writtenAt, it.restoredAt) }
 
-                override suspend fun write(mode: Mode) = settings.set(SettingKeys.LISTENING, ListeningSetting(mode))
+                override suspend fun write(mode: Mode, writtenAt: Long, restoredAt: Long?) =
+                    settings.set(SettingKeys.LISTENING, ListeningSetting(mode, writtenAt, restoredAt))
             },
+            exits = AndroidExitRecords(appContext),
+            // The wall clock, as in Android's exit records.
+            clock = System::currentTimeMillis,
             conditions = object : ListeningConditions {
                 override fun microphoneAllowed() =
                     appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
