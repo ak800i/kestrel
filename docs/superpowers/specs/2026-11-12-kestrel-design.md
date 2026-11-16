@@ -726,6 +726,7 @@ Kestrel always says what happened and what it already did. It never fails silent
 | Another privileged app silences the microphone | The feedback bar shows "mic busy", and listening resumes on its own |
 | A model file is missing or fails its checksum | The setup checklist names the file, and the affected engine is disabled |
 | Voice output fails | Kestrel shows its text on screen only |
+| The microphone fails, for example after Android's audio server restarted | Kestrel starts it again after 1 s. If that fails, or the microphone fails again within a minute, Kestrel turns off and says why |
 | Recognition keeps returning empty text | Kestrel suggests checking the microphone permission |
 | The accessibility service is turned off or killed | A persistent notification says "Kestrel is off" and opens the settings page with one tap |
 | Samsung battery restrictions are detected | The setup checklist asks for unrestricted battery use and "Never sleeping apps" |

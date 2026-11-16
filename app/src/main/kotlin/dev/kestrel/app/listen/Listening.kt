@@ -14,6 +14,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +50,7 @@ internal interface ModeMemory {
     suspend fun write(mode: Mode)
 }
 
-/** What Kestrel says and shows while it listens. Plan 2C-3 decides the final wording. */
+/** What Kestrel says and shows while it listens. Plan 2C-4 decides the final wording. */
 internal object ListeningTexts {
     const val YES = "Yes?"
     const val NO_TASKS = "I can't run tasks yet."
@@ -68,16 +70,20 @@ internal object ListeningTexts {
  * owns the [Orchestrator] and follows its state: when the mode leaves Off, it starts ListeningService; once the service
  * runs in the foreground, it opens a voice session; while the session is open, the microphone runs exactly while
  * [State.microphone] is true, and the pipeline's recognition is [State.recognition] before the first frame and after
- * every change. [Effect.StopService] closes the session and then stops the service. It stores the mode in [memory]:
+ * every change. [Effect.StopService] closes the session and then stops the service. A read error of the microphone
+ * restarts it after a second, at most once a minute (section 14.6). It stores the mode in [memory]:
  * listening or paused once a voice session is open, off at once. When Kestrel's accessibility service connects for the
  * first time in a process in which Kestrel has not been on, it stores Off and turns Kestrel on in the stored mode, so
  * that listening comes back after Android ended Kestrel's process or the phone restarted, while a start that ends the
  * process does not come back at every start. A task never comes back (sections 8.5 and 14.4).
  *
- * Threads: the Orchestrator's loop, its effects, the following of the state, and the microphone's start and stop run on
- * [thread], one at a time. A session opens and closes in a coroutine of [scope] behind one lock, so that a new start
- * waits until a shutdown has finished: two recognisers would need about 1.4 GB. The public functions may be called from
- * any thread. [report] gets each failure with a fixed description of what failed, and must log no message.
+ * Threads: the Orchestrator's loop, its effects, the following of the state, the microphone's start and stop, and the
+ * open session's events run on [thread], one at a time. A session opens and closes in a coroutine of [scope] behind
+ * one lock, so that a new session opens only after a shutdown has finished: two recognisers would need about 1.4 GB.
+ * Android is asked for the service at once, also while a session still closes, because a tap on the tile or a
+ * notification action lets Kestrel start a foreground service from the background only for a few seconds. The public
+ * functions may be called from any thread. [report] gets each failure with a fixed description of what failed, and
+ * must log no message.
  * [openSettings] opens Kestrel's settings app; the controller's thread calls it, and it throws when Android refuses.
  * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
  * and by the restore, which writes Off before anything else can write.
@@ -108,6 +114,11 @@ class Listening internal constructor(
     // Android was asked to start the service, and the service has not reported back yet. Stopping such a service makes
     // Android end Kestrel's process.
     private var awaitingForeground = false
+
+    // Only [thread] uses these. [microphoneWait]: the microphone failed, and starts again when this wait ends; until then
+    // follow() leaves it off. [restartedLately]: runs for a minute after such a restart (section 14.6).
+    private var microphoneWait: Job? = null
+    private var restartedLately: Job? = null
 
     // Why Kestrel turned itself off. The next "Off" on the bar shows it instead (section 14.6).
     private var offReason: String? = null
@@ -270,7 +281,8 @@ class Listening internal constructor(
         if (state.mode != Mode.OFF && serviceState == ServiceState.STOPPED) start()
         val current = session ?: return
         current.recognition = state.recognition
-        if (state.microphone && !microphoneOn) {
+        // Not while the microphone waits to start again after a failure.
+        if (state.microphone && !microphoneOn && microphoneWait == null) {
             try {
                 current.startMicrophone()
                 microphoneOn = true
@@ -289,26 +301,24 @@ class Listening internal constructor(
         serviceState = ServiceState.STARTING
         // A reason from an earlier start must never come back.
         offReason = null
-        scope.launch(thread) {
-            // After a shutdown in progress, so that its stop cannot end the new service.
-            lifecycle.withLock {
-                if (serviceState != ServiceState.STARTING || requested) return@withLock
-                requested = true
-                try {
-                    services.start()
-                    awaitingForeground = true
-                } catch (e: Exception) {
-                    turnOff("Starting the listening service", e, ListeningTexts.CANNOT_START)
-                }
-            }
+        // At once, also while a shutdown still closes the session: a tap on the tile or a notification action lets Kestrel
+        // start a foreground service from the background only for a few seconds. The shutdown's stop sees [requested]
+        // and leaves the service running, and open() waits for the close.
+        requested = true
+        try {
+            services.start()
+            awaitingForeground = true
+        } catch (e: Exception) {
+            turnOff("Starting the listening service", e, ListeningTexts.CANNOT_START)
         }
     }
 
     private fun foreground(instance: Any) {
         awaitingForeground = false
         when (serviceState) {
-            // Before the start was asked for, the instance is the one that a shutdown in progress is about to stop.
-            ServiceState.STARTING -> if (requested) {
+            // The start's report. While a shutdown still closes the session, Android gives the new start to the instance
+            // that runs, so the report may come from it, and the shutdown leaves it running.
+            ServiceState.STARTING -> {
                 serviceState = ServiceState.FOREGROUND
                 running = instance
                 open()
@@ -376,6 +386,11 @@ class Listening internal constructor(
         serviceState = ServiceState.STOPPED
         requested = false
         running = null
+        // A restart of the microphone that waits, and the minute after a restart, belong to the closing session.
+        microphoneWait?.cancel()
+        microphoneWait = null
+        restartedLately?.cancel()
+        restartedLately = null
         scope.launch(thread) {
             lifecycle.withLock {
                 try {
@@ -383,9 +398,9 @@ class Listening internal constructor(
                     if (closing != null) closeQuietly(closing)
                 } finally {
                     // Also after an Error from close(), so that the service does not run on while the mode is Off.
-                    // Decided here, under the lock: a start that waited for the lock may have been asked for since
-                    // shutdown() ran. A service that has not called startForeground() yet reports to foreground(),
-                    // which stops it then.
+                    // Decided here, under the lock and after the close: a start may have asked Android for the service
+                    // while the session closed, and then the service keeps running. A service that has not called
+                    // startForeground() yet reports to foreground(), which stops it then.
                     if (!requested && !awaitingForeground) stopService()
                 }
             }
@@ -420,6 +435,29 @@ class Listening internal constructor(
             session.stopMicrophone()
         } catch (e: Exception) {
             report("Stopping the microphone", e)
+        }
+    }
+
+    /**
+     * Section 14.6: a read error of the microphone, such as ERROR_DEAD_OBJECT after Android's audio server restarted,
+     * need not end listening. The microphone, which the caller has stopped, starts again after [MICROPHONE_RESTART_MILLIS]
+     * if the state still wants it then; a turn-off or a new session cancels the wait in shutdown(). A restart that fails,
+     * or a failure within [MICROPHONE_FAILURES_MILLIS] of a restart, turns Kestrel off.
+     */
+    private fun restartMicrophone(error: Exception) {
+        if (restartedLately?.isActive == true) {
+            turnOff("The microphone", error, ListeningTexts.MICROPHONE_FAILED)
+            return
+        }
+        report("The microphone", error)
+        microphoneWait?.cancel()
+        microphoneWait = scope.launch(thread) {
+            // Android's audio server needs a moment to come back.
+            delay(MICROPHONE_RESTART_MILLIS)
+            microphoneWait = null
+            if (state.value.microphone) restartedLately = scope.launch(thread) { delay(MICROPHONE_FAILURES_MILLIS) }
+            // Starts the microphone if the state wants it; a start that fails turns Kestrel off.
+            followSafely(state.value)
         }
     }
 
@@ -513,17 +551,18 @@ class Listening internal constructor(
     }
 
     /**
-     * Where one session reports. It goes quiet when the session starts to close. An event that a session thread sends
-     * just as Kestrel turns off can still slip through, within the width of an instruction, and act on the next state;
-     * it still comes before the next session opens, because close() waits for calls that are on their way.
+     * Where one session reports. It goes quiet when the session starts to close. [send] returns at once, and the
+     * Orchestrator checks [active] when the event's turn comes, on [thread], after every event that was sent before it:
+     * an event that a session thread sends just as Kestrel turns off is dropped once the shutdown has run, and never acts
+     * on the next state. The events keep the order in which they were sent.
      */
     private inner class Listener : SessionListener {
+        // Written on [thread]; read there by the Orchestrator's check and by microphoneFailed, and on a session thread by
+        // transcriptionFailed.
         @Volatile
         var active = true
 
-        override fun send(event: Event) {
-            if (active) orchestrator.send(event)
-        }
+        override fun send(event: Event) = orchestrator.send(event) { active }
 
         override fun microphoneFailed(error: Exception) {
             // The microphone's own thread cannot stop the microphone, so the controller's thread does.
@@ -534,12 +573,20 @@ class Listening internal constructor(
                     microphoneOn = false
                     releaseMicrophone(current)
                 }
-                turnOff("The microphone", error, ListeningTexts.MICROPHONE_FAILED)
+                restartMicrophone(error)
             }
         }
 
         override fun transcriptionFailed(error: Exception) {
             if (active) report("A transcription", error)
         }
+    }
+
+    private companion object {
+        // Android's audio server needs about this long to come back after it restarted (section 14.6).
+        const val MICROPHONE_RESTART_MILLIS = 1_000L
+
+        // A failure within this time after a restart turns Kestrel off.
+        const val MICROPHONE_FAILURES_MILLIS = 60_000L
     }
 }

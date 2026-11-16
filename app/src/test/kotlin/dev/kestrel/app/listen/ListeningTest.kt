@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -505,7 +506,7 @@ class ListeningTest {
     }
 
     @Test
-    fun aNewStartWaitsForTheCloseInProgress() = runTest {
+    fun aNewStartAsksForTheServiceAtOnceAndOpensItsSessionAfterTheClose() = runTest {
         val listening = listeningWithSession()
         val closing = CompletableDeferred<Unit>()
         sessions.opened.single().closing = closing
@@ -515,15 +516,18 @@ class ListeningTest {
         runCurrent()
         listening.send(Event.Toggle)
         runCurrent()
-        assertEquals(listOf("close"), log)
+        // At once, so that the short exemption of a tap on the tile cannot run out while a transcription ends the close.
+        assertEquals(listOf("close", "start"), log)
+
+        // The running service, which the shutdown has not stopped yet, takes the new start and reports.
+        listening.onForeground(service)
+        runCurrent()
+        assertEquals(1, sessions.opened.size)
 
         closing.complete(Unit)
         runCurrent()
-        assertEquals(listOf("close", "closed", "stop", "start"), log)
-
-        listening.onForeground(Any())
-        runCurrent()
-        assertEquals(2, sessions.opened.size)
+        // The close does not stop the service that the new start asked for, and the new session opens after the close.
+        assertEquals(listOf("close", "start", "closed", "open", "recognition ALL", "microphone on"), log)
         assertTrue(listening.sessionOpen.value)
     }
 
@@ -577,17 +581,154 @@ class ListeningTest {
     }
 
     @Test
-    fun aMicrophoneThatFailsTurnsKestrelOff() = runTest {
+    fun aMicrophoneThatFailsStartsAgainAfterASecond() = runTest {
         val listening = listeningWithSession()
         log.clear()
 
-        sessions.opened.single().listener.microphoneFailed(IllegalStateException("The microphone failed with error -3"))
+        sessions.opened.single().listener.microphoneFailed(readError())
+        runCurrent()
+        assertEquals(listOf("microphone off"), log)
+
+        // A change of the state during the wait does not start the microphone early.
+        listening.send(Event.Pause)
+        runCurrent()
+        advanceTimeBy(999)
+        assertEquals(listOf("microphone off", "recognition NAMED"), log)
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf("microphone off", "recognition NAMED", "microphone on"), log)
+        assertEquals(Mode.PAUSED, listening.state.value.mode)
+        assertEquals("The microphone", reports.single().first)
+    }
+
+    @Test
+    fun aMicrophoneThatFailsAgainWithinAMinuteOfItsRestartTurnsKestrelOff() = runTest {
+        val listening = listeningWithSession()
+        val events = sessions.opened.single().listener
+        events.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+        log.clear()
+
+        // 59 s after the restart.
+        advanceTimeBy(59_000)
+        events.microphoneFailed(readError())
         runCurrent()
 
         assertEquals(listOf("microphone off", "close", "closed", "stop"), log)
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(ListeningTexts.MICROPHONE_FAILED, shown.last())
-        assertEquals("The microphone", reports.single().first)
+        assertEquals(listOf("The microphone", "The microphone"), reports.map { it.first })
+    }
+
+    @Test
+    fun aMicrophoneThatFailsAMinuteAfterItsRestartStartsAgain() = runTest {
+        val listening = listeningWithSession()
+        val events = sessions.opened.single().listener
+        events.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+        advanceTimeBy(60_000)
+        runCurrent()
+        log.clear()
+
+        events.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(listOf("microphone off", "microphone on"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aRestartThatFailsTurnsKestrelOff() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        session.listener.microphoneFailed(readError())
+        runCurrent()
+        session.microphoneFailure = readError()
+        log.clear()
+
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(listOf("microphone on", "microphone off", "close", "closed", "stop"), log)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(ListeningTexts.MICROPHONE_FAILED, shown.last())
+        assertEquals(listOf("The microphone", "Starting the microphone"), reports.map { it.first })
+    }
+
+    @Test
+    fun aTurnOffDuringTheWaitCancelsTheRestart() = runTest {
+        val listening = listeningWithSession()
+        sessions.opened.single().listener.microphoneFailed(readError())
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+        log.clear()
+
+        listening.onForeground(Any())
+        runCurrent()
+
+        // The new session starts its microphone at once, not when the old session's wait would have ended.
+        assertEquals(listOf("open", "recognition ALL", "microphone on"), log)
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(listOf("open", "recognition ALL", "microphone on"), log)
+
+        // The old wait did not start the minute after a restart for the new session, so this first failure restarts it.
+        sessions.opened.last().listener.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aRestartInAnEarlierSessionDoesNotCountForTheNextOne() = runTest {
+        val listening = listeningWithSession()
+        sessions.opened.single().listener.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(Any())
+        runCurrent()
+        log.clear()
+
+        // Within a minute of the first session's restart, the new session's microphone fails for the first time.
+        sessions.opened.last().listener.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(listOf("microphone off", "microphone on"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aMicrophoneThatFailsAsTheScreenGoesOffStartsAgainWithTheScreen() = runTest {
+        val listening = listeningWithSession()
+        val events = sessions.opened.single().listener
+        events.microphoneFailed(readError())
+        runCurrent()
+        listening.send(Event.Screen(on = false))
+        advanceTimeBy(1_000)
+        runCurrent()
+        log.clear()
+
+        listening.send(Event.Screen(on = true))
+        runCurrent()
+        assertEquals(listOf("microphone on"), log)
+
+        // The controller did not restart the microphone itself, so this failure is not one within a minute of a restart.
+        events.microphoneFailed(readError())
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
     }
 
     @Test
@@ -660,6 +801,22 @@ class ListeningTest {
     }
 
     @Test
+    fun anEventThatAClosingSessionSendsAsKestrelTurnsOffNeverActsOnTheNextState() = runTest {
+        val listening = listeningWithSession()
+        val old = sessions.opened.single().listener
+
+        // The owner turns Kestrel off and on again, and the old session's transcript arrives before the controller has
+        // handled either: it must not run as a task in the new state.
+        listening.send(Event.TurnOff)
+        listening.send(Event.Toggle)
+        old.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(0, listening.state.value.task)
+    }
+
+    @Test
     fun aServiceThatNobodyAskedForIsStopped() = runTest {
         val listening = listening()
 
@@ -703,7 +860,7 @@ class ListeningTest {
     }
 
     @Test
-    fun aStopThatWaitedBehindANewStartLeavesTheNewServiceRunning() = runTest {
+    fun offAndOnTwiceWhileASessionClosesLeaveTheNewServiceRunning() = runTest {
         val listening = listeningWithSession()
         val closing = CompletableDeferred<Unit>()
         sessions.opened.single().closing = closing
@@ -717,8 +874,12 @@ class ListeningTest {
         closing.complete(Unit)
         runCurrent()
 
-        assertEquals(listOf("closed", "stop", "start"), log)
+        // Both starts went to Android before the close ended, so neither stop ends the service that they asked for.
+        assertEquals(listOf("closed"), log)
+        listening.onForeground(service)
+        runCurrent()
         assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertTrue(listening.sessionOpen.value)
     }
 
     @Test
@@ -739,27 +900,26 @@ class ListeningTest {
     }
 
     @Test
-    fun aReportFromTheClosingServiceIsNotTakenForTheNewStart() = runTest {
+    fun aReportOfTheClosingServiceBeforeANewStartDoesNotStopTheNewService() = runTest {
         val listening = listeningWithSession()
         val closing = CompletableDeferred<Unit>()
         sessions.opened.single().closing = closing
         listening.send(Event.TurnOff)
         runCurrent()
-        listening.send(Event.Toggle)
-        runCurrent()
 
-        // A notification action reaches the old service while it closes; the shutdown is about to stop that service.
+        // A notification action reaches the old service while it closes, and then the owner turns Kestrel on again.
         listening.onForeground(service)
         runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+        log.clear()
         closing.complete(Unit)
         runCurrent()
-        listening.onServiceDestroyed(service)
-        runCurrent()
-        listening.onForeground(Any())
+        listening.onForeground(service)
         runCurrent()
 
+        assertEquals(listOf("closed", "open", "recognition ALL", "microphone on"), log)
         assertEquals(Mode.LISTENING, listening.state.value.mode)
-        assertEquals(2, sessions.opened.size)
         assertTrue(listening.sessionOpen.value)
     }
 
@@ -886,6 +1046,9 @@ class ListeningTest {
         assertEquals("start", log.last())
         assertTrue(errors.isEmpty())
     }
+
+    /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
+    private fun readError() = IllegalStateException("The microphone failed with error -6")
 
     /** A scope whose failures go to [errors] instead of failing the test, for the errors that the controller rethrows. */
     private fun TestScope.catching(errors: MutableList<Throwable>): CoroutineScope = CoroutineScope(

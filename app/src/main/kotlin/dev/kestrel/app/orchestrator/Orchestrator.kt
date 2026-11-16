@@ -27,7 +27,8 @@ class Orchestrator(
     private val waitMillis: Long = WAIT_MILLIS,
     private val answerMillis: Long = ANSWER_MILLIS,
 ) {
-    private val events = Channel<Event>(Channel.UNLIMITED)
+    // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
+    private val events = Channel<Pair<Event, () -> Boolean>>(Channel.UNLIMITED)
     private val current = MutableStateFlow(State())
     private var wait: Job? = null
 
@@ -36,13 +37,20 @@ class Orchestrator(
 
     init {
         scope.launch {
-            for (event in events) handle(event)
+            for ((event, valid) in events) if (valid()) handle(event)
         }
     }
 
     /** Sends [event] to the Orchestrator. Any thread may call it. */
-    fun send(event: Event) {
-        events.trySend(event)
+    fun send(event: Event) = send(event) { true }
+
+    /**
+     * Sends [event], which the Orchestrator handles only if [valid] still returns true when the event's turn comes. Any
+     * thread may call it; [valid] runs on the Orchestrator's coroutine, after every event that was sent before this one,
+     * and must not throw.
+     */
+    fun send(event: Event, valid: () -> Boolean) {
+        events.trySend(event to valid)
     }
 
     private suspend fun handle(event: Event) {
@@ -77,7 +85,7 @@ class Orchestrator(
                 }
             }
         }
-        notStarted.forEach(::send)
+        notStarted.forEach { send(it) }
     }
 
     private companion object {
