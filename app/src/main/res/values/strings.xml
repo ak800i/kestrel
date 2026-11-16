@@ -103,4 +103,12 @@
     <string name="setup_open_accessibility">Open accessibility settings</string>
     <string name="setup_allow">Allow</string>
     <string name="setup_open_app_settings">Open app settings</string>
+
+    <!-- The notification of the listening service (design spec, sections 8.5 and 8.6). -->
+    <string name="listening_channel">Listening</string>
+    <string name="listening_title_listening">Kestrel is listening</string>
+    <string name="listening_title_paused">Kestrel is paused</string>
+    <string name="listening_pause">Pause</string>
+    <string name="listening_resume">Resume</string>
+    <string name="listening_stop">Stop</string>
 </resources>

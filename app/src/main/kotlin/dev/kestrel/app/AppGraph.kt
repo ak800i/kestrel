@@ -2,6 +2,13 @@ package dev.kestrel.app
 
 import android.content.Context
 import android.util.Log
+import dev.kestrel.app.listen.FeedbackBar
+import dev.kestrel.app.listen.Listening
+import dev.kestrel.app.listen.ListeningService
+import dev.kestrel.app.listen.Session
+import dev.kestrel.app.listen.SessionListener
+import dev.kestrel.app.listen.VoiceSession
+import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.NetworkGateway
@@ -10,6 +17,8 @@ import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.voice.VoiceEngines
+import dev.kestrel.voice.listen.MicCapture
+import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelManifest
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -69,6 +78,31 @@ class AppGraph(context: Context) {
 
     /** Kestrel's speech engines, which load their models from [models] (design spec, section 8.2). */
     val voice: VoiceEngines by lazy { VoiceEngines(models, File(appContext.noBackupFilesDir, "voice")) }
+
+    /**
+     * Kestrel's listening, one for the whole process (design spec, sections 7.2 and 7.3), so that the accessibility
+     * service, the notification and the tile reach it whether or not ListeningService runs. Its thread runs one thing at a
+     * time; failures are logged by their classes and stack frames only (section 13.5).
+     */
+    val listening: Listening by lazy {
+        Listening(
+            scope = scope,
+            thread = Dispatchers.Default.limitedParallelism(1),
+            sessions = object : VoiceSessions {
+                override suspend fun open(microphone: Microphone, listener: SessionListener): Session =
+                    VoiceSession.open(appContext, voice, microphone, listener)
+            },
+            services = ListeningService.control(appContext),
+            // One main-thread task per text, in order, so that an earlier text never replaces a later one.
+            bar = FeedbackBar { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text) } },
+            report = { what, error ->
+                for ((index, part) in error.describeWithoutMessagesByCause().withIndex()) {
+                    Log.w(TAG, if (index == 0) "$what failed: $part" else part)
+                }
+            },
+            microphones = { MicCapture(appContext) },
+        )
+    }
 
     private val screens = MutableStateFlow<ScreenSession?>(null)
 

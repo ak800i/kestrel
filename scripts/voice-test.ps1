@@ -6,8 +6,12 @@
 # The test MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle switches the device's microphone privacy toggle on
 # and off. If the test process dies in between, every app on the device hears only silence. So on a phone (a serial that
 # does not start with 'emulator-') the script leaves that test out, and on an emulator it switches the toggle off at the
-# end with 'cmd sensor_privacy disable 0 microphone', also when the run failed or was interrupted. The run fails when
-# that test ran on a phone or did not run on an emulator.
+# end with 'cmd sensor_privacy disable 0 microphone', also when the run failed or was interrupted.
+# The test ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock turns on the swipe lock
+# screen when the device has none and unlocks it with 'wm dismiss-keyguard', which cannot unlock a PIN, pattern or
+# password, so on a phone the script leaves that test out too. The run fails when one of the two tests ran on a phone or
+# did not run on an emulator. On an emulator the script turns the lock screen off again at the end, wakes the screen and
+# dismisses the keyguard, also when the run failed or was interrupted.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
 param([Parameter(Mandatory = $true)][string]$Serial)
 $ErrorActionPreference = 'Stop'
@@ -17,10 +21,14 @@ $ended = $false
 $failed = $false
 $emulator = $Serial -like 'emulator-*'
 $reached = $false
+$lockScreenOff = $false
 try {
     Use-KestrelToolchain
     Assert-TestDevice -Serial $Serial
     $reached = $true
+    # The lock-screen test turns on a swipe lock screen and puts the setting back itself, but a test process that died in
+    # between would leave it on, so on an emulator the script reads the setting first and puts it back at the end.
+    if ($emulator) { $lockScreenOff = "$(& (Get-Adb) -s $Serial shell cmd lock_settings get-disabled)".Trim() -eq 'true' }
     & "$PSScriptRoot\install.ps1" -Serial $Serial
     $code = $LASTEXITCODE
     if ($code -eq 0) {
@@ -30,7 +38,12 @@ try {
         $adb = Get-Adb
         # The tests log their measurements; clearing the log first keeps only this run's lines.
         & $adb -s $Serial logcat -c
-        $toggleTest = 'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
+        # Tests that a phone must not run: one switches the microphone's privacy toggle, the other turns on a lock screen
+        # that it unlocks with adb.
+        $emulatorOnly = @(
+            'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
+            'dev.kestrel.app.voice.ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock'
+        )
         $tasks = @(
             ':app:connectedDebugAndroidTest'
             '-Pandroid.testInstrumentationRunnerArguments.package=dev.kestrel.app.voice'
@@ -39,7 +52,8 @@ try {
             # the notClass of a run on a phone, can be reused by mistake.
             '--no-configuration-cache'
         )
-        if (-not $emulator) { $tasks += "-Pandroid.testInstrumentationRunnerArguments.notClass=$toggleTest" }
+        # notClass takes a comma-separated list.
+        if (-not $emulator) { $tasks += "-Pandroid.testInstrumentationRunnerArguments.notClass=$($emulatorOnly -join ',')" }
         & "$PSScriptRoot\connected-test.ps1" -Serial $Serial @tasks
         $code = $LASTEXITCODE
         $counts = Get-TestResultCounts -Folder $results
@@ -50,12 +64,14 @@ try {
             $code = 1
         }
         # The JUnit XML names each test as name="method" classname="class".
-        $method = ($toggleTest -split '#')[1]
-        $toggleRan = [bool](Test-Path -LiteralPath $results) -and
-            [bool](Get-ChildItem -LiteralPath $results -Recurse -Filter 'TEST-*.xml' | Select-String -SimpleMatch "name=`"$method`"")
-        if ($code -eq 0 -and $toggleRan -ne $emulator) {
-            Write-Host "The test $toggleTest should run only on an emulator, so the run fails."
-            $code = 1
+        $reports = @(if (Test-Path -LiteralPath $results) { Get-ChildItem -LiteralPath $results -Recurse -Filter 'TEST-*.xml' })
+        foreach ($test in $emulatorOnly) {
+            $method = ($test -split '#')[1]
+            $ran = [bool]($reports | Select-String -SimpleMatch "name=`"$method`"")
+            if ($code -eq 0 -and $ran -ne $emulator) {
+                Write-Host "The test $test should run only on an emulator, so the run fails."
+                $code = 1
+            }
         }
     }
     $ended = $true
@@ -75,6 +91,18 @@ try {
                     "Run: adb -s $Serial shell cmd sensor_privacy disable 0 microphone")
                 $code = 1
             }
+            # The lock-screen test leaves the screen on and unlocked and the lock screen as it found it, unless its process
+            # died in between.
+            if ($lockScreenOff) {
+                & (Get-Adb) -s $Serial shell cmd lock_settings set-disabled true | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning ("Could not turn off the lock screen of $Serial again. " +
+                        "Run: adb -s $Serial shell cmd lock_settings set-disabled true")
+                    $code = 1
+                }
+            }
+            & (Get-Adb) -s $Serial shell input keyevent KEYCODE_WAKEUP
+            & (Get-Adb) -s $Serial shell wm dismiss-keyguard
         }
     } finally {
         # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its

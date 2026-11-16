@@ -6,6 +6,10 @@
     <!-- Asked for in the setup checklist (design spec, sections 13.6 and 15). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Granted at install, for ListeningService (design spec, sections 7.2 and 13.6). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
         android:name=".KestrelApplication"
@@ -38,6 +42,12 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Keeps Kestrel listening, with the microphone and voice output (design spec, sections 7.2 and 8.5). -->
+        <service
+            android:name=".listen.ListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback" />
 
         <!-- EmojiCompat would ask Google Play services for a downloadable emoji font. -->
         <provider
