@@ -98,6 +98,7 @@ class ActivationTest {
         val tiles = secure(TILES).let { list ->
             if (list == "null") list else list.split(',').filterNot { TILE_NAME in it }.joinToString(",")
         }
+        var failure: Throwable? = null
         try {
             // First in the list, so that the tile is on the first page of Quick Settings, whose tiles SystemUI follows while
             // the panel is open. A device without a list of its own gets the tile at the end.
@@ -119,27 +120,41 @@ class ActivationTest {
             VoiceTests.shell("cmd statusbar click-tile $TILE")
             awaitState { it.mode == Mode.PAUSED }
             awaitTile("Paused", Tile.STATE_INACTIVE)
+        } catch (e: Throwable) {
+            failure = e
+            throw e
         } finally {
-            VoiceTests.shell("cmd statusbar collapse")
-            // SystemUI removes only a tile that it has made, so not the tile of a Kestrel without it.
-            VoiceTests.shell("cmd statusbar remove-tile $TILE")
-            // SystemUI writes the list a moment later. A list that does not come back as it was is written back: through
-            // SystemUI, which since Android 14 keeps the list itself and overwrites other writes to the setting, or else
-            // to the setting, which an older SystemUI follows.
-            if (!VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) {
-                if (tiles != "null" && tiles.isNotEmpty()) VoiceTests.shell("cmd statusbar set-tiles $tiles")
-                if (!VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) putSecure(TILES, tiles)
-                check(VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) { "The list of Quick Settings tiles is not as it was" }
+            try {
+                VoiceTests.shell("cmd statusbar collapse")
+                // SystemUI removes only a tile that it has made, so not the tile of a Kestrel without it.
+                VoiceTests.shell("cmd statusbar remove-tile $TILE")
+                // SystemUI writes the list a moment later. A list that does not come back as it was is written back: through
+                // SystemUI, which since Android 15 keeps the list itself and overwrites other writes to the setting, or else
+                // to the setting, which an older SystemUI follows. set-tiles does nothing when the list equals the tiles that
+                // SystemUI has made, which leave out tiles that are not installed; then the check below fails, and the next
+                // passing run removes Kestrel's tile.
+                if (!VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) {
+                    if (tiles != "null" && tiles.isNotEmpty()) VoiceTests.shell("cmd statusbar set-tiles $tiles")
+                    if (!VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) putSecure(TILES, tiles)
+                    check(VoiceTests.waitUntil(5_000) { secure(TILES) == tiles }) { "The list of Quick Settings tiles is not as it was" }
+                }
+            } catch (e: Throwable) {
+                // The test's own failure comes first, with the failed restore added to it.
+                val first = failure ?: throw e
+                first.addSuppressed(e)
             }
         }
     }
 
     /** Waits until SystemUI's dump shows Kestrel's tile with [subtitle] and in [state], as the owner sees it. */
     private fun awaitTile(subtitle: String, state: Int, timeoutMillis: Long = 5_000) {
-        val look = Regex("""spec=custom\([^)]*KestrelTileService\).*,secondaryLabel=$subtitle,.*,state=$state,""")
+        // A BooleanState: SystemUI treats the tile as a switch, which TalkBack announces as one.
+        val look = Regex("""BooleanState\[spec=custom\([^)]*KestrelTileService\).*,secondaryLabel=$subtitle,.*,state=$state,""")
         assertTrue(
             "SystemUI does not show Kestrel's tile as $subtitle",
-            VoiceTests.waitUntil(timeoutMillis) { look.containsMatchIn(VoiceTests.shell("dumpsys activity service com.android.systemui/.SystemUIService")) },
+            VoiceTests.waitUntil(timeoutMillis) {
+                look.containsMatchIn(VoiceTests.shell("dumpsys activity service com.android.systemui/.SystemUIService QSTileHost"))
+            },
         )
     }
 

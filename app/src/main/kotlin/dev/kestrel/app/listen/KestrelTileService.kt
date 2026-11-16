@@ -59,6 +59,8 @@ class KestrelTileService : TileService() {
                 Mode.OFF -> R.string.tile_off
             },
         )
+        // A small tile shows no subtitle, and TalkBack would say "Off" both while Kestrel is paused and while it is off.
+        tile.stateDescription = tile.subtitle
         tile.updateTile()
     }
 }
