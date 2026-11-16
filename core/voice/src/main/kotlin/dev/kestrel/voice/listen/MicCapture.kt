@@ -69,7 +69,9 @@ class MicCapture(private val context: Context) {
      * [IllegalStateException] there. The caller hands the error to another thread, which then stops the microphone.
      *
      * Throws [SecurityException] without the microphone permission and [IllegalStateException] when the microphone does
-     * not start; then it has released everything, so that a later call can try again.
+     * not start; then it has released everything, so that a later call can try again. Only when Android's audio service
+     * fails after the microphone opened, or no thread can be created, does [start] throw with the microphone still open;
+     * then [stop] releases it.
      */
     fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         checkNotOnTheMicrophonesThread()

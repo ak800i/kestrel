@@ -143,9 +143,17 @@ class MicCaptureTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             val capture = MicCapture(context)
             capture.start(onFrame = {}, onError = {})
+            var switched = false
             try {
+                // A toggle that someone switched on silences the new recording at once. The test leaves such a toggle
+                // alone, because Android offers no public way to read the toggle, and it switches off only its own.
+                assertFalse(
+                    "The recording is silenced before the test switches the toggle; is the microphone's privacy toggle on?",
+                    waitUntil(1_000) { capture.silenced.value },
+                )
                 runBlocking {
                     // Switched on after the start, so that Android silences the running recording instead of refusing it.
+                    switched = true
                     shell("cmd sensor_privacy enable 0 microphone")
                     withTimeout(5_000) { capture.silenced.first { it } }
                     shell("cmd sensor_privacy disable 0 microphone")
@@ -153,7 +161,7 @@ class MicCaptureTest {
                 }
             } finally {
                 // A toggle that stayed on would silence every later recording on this device.
-                shell("cmd sensor_privacy disable 0 microphone")
+                if (switched) shell("cmd sensor_privacy disable 0 microphone")
                 capture.stop()
             }
         }
