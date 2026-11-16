@@ -6,10 +6,13 @@ import android.util.Log
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.Listening
 import dev.kestrel.app.listen.ListeningService
+import dev.kestrel.app.listen.ListeningSetting
+import dev.kestrel.app.listen.ModeMemory
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
+import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.NetworkGateway
@@ -35,6 +38,9 @@ import java.io.File
 /** Every setting that Kestrel stores. */
 object SettingKeys {
     val SAFETY = SettingKey("safety", SafetySettings.serializer(), SafetySettings())
+
+    /** The listening mode that Kestrel turns on in again after its process restarts (design spec, sections 8.5 and 14.4). */
+    val LISTENING = SettingKey("listening", ListeningSetting.serializer(), ListeningSetting())
 }
 
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
@@ -110,6 +116,12 @@ class AppGraph(context: Context) {
                         .addCategory(Intent.CATEGORY_LAUNCHER)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
+            },
+            // Encrypted like every setting (section 13.4). SettingsStore reads and writes on Dispatchers.IO.
+            memory = object : ModeMemory {
+                override suspend fun read(): Mode = settings.get(SettingKeys.LISTENING).mode
+
+                override suspend fun write(mode: Mode) = settings.set(SettingKeys.LISTENING, ListeningSetting(mode))
             },
             microphones = { MicCapture(appContext) },
         )

@@ -253,6 +253,7 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 
 - While Kestrel is paused, "Kestrel, wake up" returns it to listening. "Kestrel, <task>" runs the task and then returns to the paused mode.
 - When the screen turns off or the phone locks, Kestrel releases the microphone. The only exception is an incoming call, which starts the Ringing mode. After unlock, Kestrel follows the "on screen wake-up" setting, as Voice Access does: resume the previous mode (the default), always start listening, or stay off.
+- When Android ends Kestrel's process or the phone restarts, Kestrel returns to the mode that it had, listening or paused, as soon as its accessibility service connects again. A task never comes back (section 14.4). Kestrel counts listening or paused as its mode only once its voice session is open, so when Kestrel turned itself off after a failure, or it ended before its voice session was open, it stays off.
 - An optional setting, off by default, pauses listening after 30 s without speech.
 
 ### 8.6 Activation

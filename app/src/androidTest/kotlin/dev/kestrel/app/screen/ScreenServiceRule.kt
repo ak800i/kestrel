@@ -8,6 +8,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
+import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.delay
@@ -34,6 +36,8 @@ class ScreenServiceRule : ExternalResource() {
 
     override fun before() {
         runBlocking {
+            // A mode that an interrupted run stored would turn Kestrel on when its service connects (section 8.5).
+            graph.settings.set(SettingKeys.LISTENING, ListeningSetting())
             shell("settings delete secure enabled_accessibility_services")
             withTimeout(10_000) { graph.screen.first { it == null } }
             shell("settings put secure enabled_accessibility_services $SERVICE")

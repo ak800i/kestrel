@@ -27,6 +27,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ListeningTest {
@@ -38,6 +39,7 @@ class ListeningTest {
     private val microphone = FakeMicrophone()
     private val service = Any()
     private var settingsFailure: Exception? = null
+    private val memory = FakeMemory()
 
     @Test
     fun theServiceStartsWhenTheModeLeavesOffAndTheSessionOpensOnlyInTheForeground() = runTest {
@@ -223,6 +225,202 @@ class ListeningTest {
         assertEquals("Opening the settings", reports.single().first)
         assertEquals(ListeningTexts.CANNOT_OPEN_SETTINGS, shown.last())
         assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun theModeIsStoredWhenItChanges() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        // Every process starts off, and that Off is not stored. Listening counts once the session is open.
+        assertEquals(listOf(Mode.LISTENING, Mode.PAUSED, Mode.OFF), memory.writes)
+    }
+
+    @Test
+    fun aStartThatFailsStoresOff() = runTest {
+        services.failure = IllegalStateException("Not allowed in the background")
+        val listening = listening()
+
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        // Listening was never stored, because no voice session opened; the Off is a change and is stored.
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(Mode.OFF), memory.writes)
+    }
+
+    @Test
+    fun anOffReplacesAModeThatAnEarlierProcessStored() = runTest {
+        // An earlier process ended while Kestrel listened, and no restore has reset the stored mode.
+        memory.stored = Mode.LISTENING
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        // Off before the voice session opened.
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        assertEquals(Mode.OFF, memory.stored)
+    }
+
+    @Test
+    fun theAccessibilityServiceBringsListeningBack() = runTest {
+        memory.stored = Mode.LISTENING
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun theAccessibilityServiceBringsThePauseBack() = runTest {
+        memory.stored = Mode.PAUSED
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.PAUSED, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun theStoredModeIsReadOncePerProcess() = runTest {
+        memory.stored = Mode.LISTENING
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        // The service connects again, for example after the owner turned it off and on in Android's settings.
+        memory.stored = Mode.LISTENING
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(1, memory.reads)
+    }
+
+    @Test
+    fun aStoredOffStartsNothing() = runTest {
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(1, memory.reads)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+    }
+
+    @Test
+    fun aRestoreStoresOffBeforeItStarts() = runTest {
+        memory.stored = Mode.LISTENING
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        // If this start ended Kestrel's process, the next start of the process would find Off.
+        assertEquals(listOf(Mode.OFF), memory.writes)
+        assertEquals(listOf("start"), log)
+
+        listening.onForeground(service)
+        runCurrent()
+
+        assertEquals(listOf(Mode.OFF, Mode.LISTENING), memory.writes)
+    }
+
+    @Test
+    fun nothingIsRestoredOnceKestrelHasBeenOn() = runTest {
+        memory.stored = Mode.PAUSED
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(0, memory.reads)
+    }
+
+    @Test
+    fun theOwnersChoiceDuringTheReadIsKept() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.reading = CompletableDeferred()
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        // While the stored mode is read, the owner turns Kestrel on and off again.
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        memory.reading?.complete(Unit)
+        runCurrent()
+
+        // Only the owner's Off was stored; the restore wrote nothing and started nothing.
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(Mode.OFF), memory.writes)
+    }
+
+    @Test
+    fun anOnAndOffInOneRunDuringTheReadIsKept() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.reading = CompletableDeferred()
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        // Both wait in the channel, so the Orchestrator handles them in one run, and the state's collector sees neither.
+        listening.send(Event.Toggle)
+        listening.send(Event.TurnOff)
+        runCurrent()
+        memory.reading?.complete(Unit)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(Mode.OFF, memory.stored)
+    }
+
+    @Test
+    fun aRestoreThatTheOffHookSkippedStartsNothing() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.reading = CompletableDeferred()
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        listening.skipRestore()
+        memory.reading?.complete(Unit)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+    }
+
+    @Test
+    fun aStoredModeThatCannotBeReadIsReported() = runTest {
+        memory.readFailure = IOException("The disk failed")
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals("Reading the listening mode", reports.single().first)
     }
 
     @Test
@@ -656,6 +854,7 @@ class ListeningTest {
             log += "open settings"
             settingsFailure?.let { throw it }
         },
+        memory = memory,
         microphones = { microphone },
     )
 
@@ -738,6 +937,26 @@ class ListeningTest {
 
         override fun stop() {
             log += "stop"
+        }
+    }
+
+    private class FakeMemory : ModeMemory {
+        var stored = Mode.OFF
+        var reads = 0
+        var readFailure: Exception? = null
+        var reading: CompletableDeferred<Unit>? = null
+        val writes = mutableListOf<Mode>()
+
+        override suspend fun read(): Mode {
+            reads++
+            reading?.await()
+            readFailure?.let { throw it }
+            return stored
+        }
+
+        override suspend fun write(mode: Mode) {
+            writes += mode
+            stored = mode
         }
     }
 

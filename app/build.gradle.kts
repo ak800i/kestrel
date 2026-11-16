@@ -3,6 +3,7 @@ import dev.kestrel.build.CopyAssetsTask
 plugins {
     id("kestrel.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {

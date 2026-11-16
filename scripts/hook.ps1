@@ -17,7 +17,10 @@
 #   voice -Send toggle|pause|resume|off|screen-on|screen-off
 #                                           sends the event to Kestrel's Orchestrator; toggle starts listening when
 #                                           Kestrel is off or paused and pauses it while it listens, and the
-#                                           notification's Pause or Resume and Stop actions work while Kestrel is on
+#                                           notification's Pause or Resume and Stop actions work while Kestrel is on;
+#                                           off also stops a restore of the stored mode and stores Off, also while
+#                                           Kestrel is off, so that Kestrel does not come back at the next start of
+#                                           its process
 #   voice -Send heard -Text 'text' [-Named] sends a transcript, as if Kestrel had heard it; -Named as if the keyword
 #                                           spotter had heard "Kestrel" at its start
 #   voice-state                             the Orchestrator's mode, work, speaking, microphone, recognition, screen and

@@ -17,9 +17,11 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Starts and stops ListeningService. Any thread may call it. */
 internal interface ServiceControl {
@@ -38,6 +40,14 @@ internal fun interface FeedbackBar {
     fun show(text: String)
 }
 
+/** Keeps Kestrel's listening mode across restarts of its process (design spec, sections 8.5 and 14.4). */
+internal interface ModeMemory {
+    /** The mode that Kestrel stored last, or [Mode.OFF] when it stored none. */
+    suspend fun read(): Mode
+
+    suspend fun write(mode: Mode)
+}
+
 /** What Kestrel says and shows while it listens. Plan 2C-3 decides the final wording. */
 internal object ListeningTexts {
     const val YES = "Yes?"
@@ -54,17 +64,23 @@ internal object ListeningTexts {
 
 /**
  * Kestrel's listening, one for the whole process (design spec, sections 7.2, 7.3 and 8.5). It lives in AppGraph, so that
- * the accessibility service, the notification and later the tile can send it events whether or not ListeningService
- * runs. It owns the [Orchestrator] and follows its state: when the mode leaves Off, it starts ListeningService; once the
- * service runs in the foreground, it opens a voice session; while the session is open, the microphone runs exactly while
+ * the accessibility service, the notification and the tile can send it events whether or not ListeningService runs. It
+ * owns the [Orchestrator] and follows its state: when the mode leaves Off, it starts ListeningService; once the service
+ * runs in the foreground, it opens a voice session; while the session is open, the microphone runs exactly while
  * [State.microphone] is true, and the pipeline's recognition is [State.recognition] before the first frame and after
- * every change. [Effect.StopService] closes the session and then stops the service.
+ * every change. [Effect.StopService] closes the session and then stops the service. It stores the mode in [memory]:
+ * listening or paused once a voice session is open, off at once. When Kestrel's accessibility service connects for the
+ * first time in a process in which Kestrel has not been on, it stores Off and turns Kestrel on in the stored mode, so
+ * that listening comes back after Android ended Kestrel's process or the phone restarted, while a start that ends the
+ * process does not come back at every start. A task never comes back (sections 8.5 and 14.4).
  *
  * Threads: the Orchestrator's loop, its effects, the following of the state, and the microphone's start and stop run on
  * [thread], one at a time. A session opens and closes in a coroutine of [scope] behind one lock, so that a new start
  * waits until a shutdown has finished: two recognisers would need about 1.4 GB. The public functions may be called from
  * any thread. [report] gets each failure with a fixed description of what failed, and must log no message.
  * [openSettings] opens Kestrel's settings app; the controller's thread calls it, and it throws when Android refuses.
+ * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
+ * and by the restore, which writes Off before anything else can write.
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -74,6 +90,7 @@ class Listening internal constructor(
     private val bar: FeedbackBar,
     private val report: (String, Throwable) -> Unit,
     private val openSettings: () -> Unit,
+    private val memory: ModeMemory,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -100,6 +117,17 @@ class Listening internal constructor(
     private val lifecycle = Mutex()
     private val sessionState = MutableStateFlow(false)
 
+    // Only [thread] uses these. [lastMode]: the mode that was last noted for storing, null before the first change of
+    // mode in this process. [restoreChecked]: the accessibility service has connected in this process, so the stored mode
+    // was considered. [wasOn]: Kestrel has been on in this process, so the owner has already chosen a mode.
+    private var lastMode: Mode? = null
+    private var restoreChecked = false
+    private var wasOn = false
+
+    // The newest mode to store. It stays null until the mode first changes in this process, so that the Off that every
+    // process starts with never replaces the stored mode before the restore has read it.
+    private val modeToStore = MutableStateFlow<Mode?>(null)
+
     /** Whether a voice session is open: from the end of its opening until its close has returned. */
     internal val sessionOpen: StateFlow<Boolean> = sessionState.asStateFlow()
 
@@ -114,10 +142,72 @@ class Listening internal constructor(
 
     init {
         scope.launch(thread) { orchestrator.state.collect { followSafely(it) } }
+        // One writer, so that the newest mode is written last. It may skip a mode that a newer one replaced at once.
+        scope.launch {
+            modeToStore.filterNotNull().collect { mode ->
+                try {
+                    memory.write(mode)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    report("Storing the listening mode", e)
+                }
+            }
+        }
     }
 
     /** Sends [event] to the Orchestrator. Any thread may call it. */
     fun send(event: Event) = orchestrator.send(event)
+
+    /**
+     * Kestrel's accessibility service has connected, which also happens after Android ended Kestrel's process or the phone
+     * restarted. The first time in a process, if Kestrel has not been on in it, Kestrel turns on in the mode that it
+     * stored; Android lets it start its foreground service from the background from now on (prototype P1). Any thread
+     * may call it.
+     */
+    fun onAccessibilityServiceConnected() {
+        scope.launch(thread) {
+            if (restoreChecked) return@launch
+            restoreChecked = true
+            // The owner has already chosen a mode in this process, for example with the tile.
+            if (wasOn || state.value.mode != Mode.OFF) return@launch
+            val stored = try {
+                memory.read()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("Reading the listening mode", e)
+                return@launch
+            }
+            // Also when the owner chose a mode while the stored one was read.
+            if (stored == Mode.OFF || wasOn || state.value.mode != Mode.OFF) return@launch
+            // Off first: if this start ends Kestrel's process, for example with a native crash while the models load, the
+            // next start of the process finds Off and does not try again. The mode is stored again once the voice session
+            // is open. Nothing else writes now, because Kestrel has not been on in this process.
+            try {
+                memory.write(Mode.OFF)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("Storing the listening mode", e)
+                return@launch
+            }
+            if (wasOn || state.value.mode != Mode.OFF) return@launch
+            send(Event.Start(paused = stored == Mode.PAUSED))
+        }
+    }
+
+    /**
+     * For the debug hook's off: no restore turns Kestrel on in this process from now on. A restore either stops at its
+     * next check, or it sent its Event.Start before this returned, so an Event.TurnOff sent afterwards comes after it.
+     */
+    internal suspend fun skipRestore() {
+        withContext(thread) {
+            restoreChecked = true
+            // As if the owner had chosen a mode.
+            wasOn = true
+        }
+    }
 
     /** ListeningService, whose instance is [instance], runs in the foreground. */
     fun onForeground(instance: Any) {
@@ -142,6 +232,23 @@ class Listening internal constructor(
     /** Android destroyed the ListeningService instance [instance], whether Kestrel asked for it or not. */
     fun onServiceDestroyed(instance: Any) {
         scope.launch(thread) { destroyed(instance) }
+    }
+
+    // Every change of mode shows the new mode, so the controller sees each change here, in order. This includes the
+    // changes that the Orchestrator makes in one run, which the state's collector skips. The Off that every process
+    // starts with is not a change, so it never replaces the stored mode before the restore has read it.
+    private fun noteMode(mode: Mode) {
+        if (mode != Mode.OFF) wasOn = true
+        remember(mode)
+    }
+
+    // Listening and paused count once a voice session is open, so that a start that ends Kestrel's process, such as a
+    // native crash while the models load, does not come back at every start of the process. Off counts at once.
+    private fun remember(mode: Mode) {
+        if (mode != Mode.OFF && session == null) return
+        if (mode == lastMode) return
+        lastMode = mode
+        modeToStore.value = mode
     }
 
     private fun followSafely(state: State) {
@@ -248,6 +355,9 @@ class Listening internal constructor(
                 listener = events
                 sessionState.value = true
                 followSafely(state.value)
+                // After followSafely, which starts the microphone, so that a native crash there comes before Listening is
+                // stored.
+                remember(state.value.mode)
             }
         }
     }
@@ -339,7 +449,10 @@ class Listening internal constructor(
             is Effect.RunTask -> send(Event.TaskEnded(effect.task, ListeningTexts.NO_TASKS))
             // Nothing runs that could be cancelled yet, and the instant commands come with sub-project 3.
             Effect.CancelTask, is Effect.RunCommand -> Unit
-            is Effect.Show -> bar.show(text(effect.feedback))
+            is Effect.Show -> {
+                (effect.feedback as? Feedback.ModeChanged)?.let { noteMode(it.mode) }
+                bar.show(text(effect.feedback))
+            }
             // The Orchestrator runs the wait itself.
             is Effect.WaitForTask -> Unit
             Effect.StopService -> shutdown()

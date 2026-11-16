@@ -37,6 +37,8 @@ class KestrelAccessibilityService : AccessibilityService() {
         }
         accessibilityButtonController.registerAccessibilityButtonCallback(clicks)
         button = clicks
+        // After a restart of Kestrel's process or of the phone, listening comes back from here (sections 8.5 and 14.4).
+        graph.listening.onAccessibilityServiceConnected()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {

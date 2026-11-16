@@ -5,10 +5,12 @@ import android.content.Intent
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.debug.HookReply
 import dev.kestrel.app.debug.TestHooks
 import dev.kestrel.app.debug.VoiceHooks
+import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.voice.models.Engine
 import kotlinx.coroutines.runBlocking
@@ -127,6 +129,22 @@ class VoiceHookTest {
 
         assertEquals(HookReply.FAILED, reply.code)
         assertTrue(reply.text, reply.text.startsWith("error: add --es event with one of toggle"))
+    }
+
+    @Test
+    fun offStoresOffAlsoWhileKestrelIsOff() {
+        val settings = VoiceTests.graph.settings
+        try {
+            // As an interrupted run leaves it: Kestrel is off in this process, and Listening is stored.
+            runBlocking { settings.set(SettingKeys.LISTENING, ListeningSetting(Mode.LISTENING)) }
+            assertEquals(Mode.OFF, listening.state.value.mode)
+
+            assertEquals("sent off", hook("VOICE", "event" to "off").text)
+
+            assertEquals(Mode.OFF, runBlocking { settings.get(SettingKeys.LISTENING) }.mode)
+        } finally {
+            runBlocking { settings.set(SettingKeys.LISTENING, ListeningSetting()) }
+        }
     }
 
     /** Runs a hook command as TestHookReceiver does, with string extras and the boolean extras `named` and `clear`. */

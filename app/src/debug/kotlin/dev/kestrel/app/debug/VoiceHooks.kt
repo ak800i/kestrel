@@ -2,7 +2,9 @@ package dev.kestrel.app.debug
 
 import android.content.Intent
 import dev.kestrel.app.AppGraph
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.TestHooks.HookError
+import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.SAMPLE_RATE
@@ -24,13 +26,20 @@ internal class VoiceHooks(private val graph: AppGraph) {
         else -> throw HookError("unknown command '$command'")
     }
 
-    private fun event(intent: Intent): String {
+    private suspend fun event(intent: Intent): String {
         val name = intent.getStringExtra(EXTRA_EVENT)
         val event = when (name) {
             "toggle" -> Event.Toggle
             "pause" -> Event.Pause
             "resume" -> Event.Resume
-            "off" -> Event.TurnOff
+            "off" -> {
+                // No restore may turn Kestrel on in this process from now on. Then Off is stored at once, also while Kestrel
+                // is off, as it is in a new process, where TurnOff changes nothing and so stores nothing: Kestrel must not
+                // come back at the next start of its process.
+                graph.listening.skipRestore()
+                graph.settings.set(SettingKeys.LISTENING, ListeningSetting())
+                Event.TurnOff
+            }
             "screen-on" -> Event.Screen(on = true)
             "screen-off" -> Event.Screen(on = false)
             "heard" -> Event.Heard(text(intent), intent.getBooleanExtra(EXTRA_NAMED, false))
