@@ -56,9 +56,10 @@ sealed interface Request {
  *    name count too. In an answer to "Yes?", "never mind", "forget it" and "nothing" followed by the name are a named
  *    stop.
  *    Everything else is for the instant commands, or, in an answer to "Yes?", read as the words after the name. A bare
- *    "turn off" or "switch off" in an answer is a task, though: the answer ends after 0.7 s of silence (section 8.3),
- *    so the owner may still be saying what to turn off. "Kestrel, turn off", "Turn off, Kestrel" and "Stop Kestrel"
- *    still turn Kestrel off.
+ *    "turn off" or "switch off" in an answer is a task, though: the answer is held for 1.5 s of silence (section 8.3),
+ *    but a longer pause still splits it, so the owner may still be saying what to turn off, and "Turn off ... the
+ *    wifi" would otherwise turn Kestrel off. "Kestrel, turn off", "Turn off, Kestrel" and "Stop Kestrel" still turn
+ *    Kestrel off.
  *
  * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up". The
  * answers that end the wait may also come with "no", "oh", "ah", "thanks" or "thank you", as in "No, never mind" or
@@ -97,8 +98,9 @@ object Requests {
     /**
      * Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start.
      * [afterName]: the transcript answers "Yes?", so words without the name are read as the words after it: "Wake up."
-     * is [Request.WakeUp], "Stop." is a named stop, and "Open the settings." is a task. "Turn off." is a task too, while
-     * "Stop Kestrel" and "Turn off, Kestrel" still turn Kestrel off.
+     * is [Request.WakeUp], "Stop." is a named stop, and "Open the settings." is a task. "Turn off." is a task too,
+     * because a pause of more than 1.5 s still splits the answer and the owner may not have finished, while "Stop
+     * Kestrel" and "Turn off, Kestrel" still turn Kestrel off.
      */
     fun read(transcript: String, spotted: Boolean, afterName: Boolean = false): Request? {
         val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
@@ -163,7 +165,8 @@ object Requests {
 
     /**
      * What [rest], the words after the name, ask for. [afterName]: they answer "Yes?". [nameSaid]: the owner said the
-     * name before them; without it, a bare "turn off" is a task, because the owner may not have finished.
+     * name before them; without it, a bare "turn off" is a task, because the answer is held for only 1.5 s of silence,
+     * and after a longer pause the owner may not have finished.
      */
     private fun named(
         transcript: String,

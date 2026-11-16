@@ -200,6 +200,29 @@ class ListeningPipelineTest {
     }
 
     @Test
+    fun anAnswerToYesIsHeldAndJoinedToTheNextUtterance() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.ANSWER
+
+        // "Open the ..." from 0.5 s to 1.5 s, and "... settings" from 2.9 s, after a pause of 1.4 s.
+        pipeline.feedUntil(2.2f)
+        detector.next.addLast(listOf(utterance(0.5f, 1f)))
+        pipeline.feed()
+        pipeline.feedUntil(3.2f)
+        detector.hearsSpeech = true
+        pipeline.feedUntil(4.6f)
+        detector.hearsSpeech = false
+        detector.next.addLast(listOf(utterance(2.9f, 1f)))
+        pipeline.feed()
+        pipeline.feedUntil(6.5f)
+
+        // One transcript of both parts and the pause between them: 1 s, 1.4 s and 1 s.
+        val heard = events.filterIsInstance<VoiceEvent.Heard>().single()
+        assertEquals("heard 54400", heard.text)
+        assertFalse(heard.named)
+    }
+
+    @Test
     fun aFailedTranscriptionIsReportedAndTheNextOneWorks() = runTest {
         val pipeline = pipeline()
         recognizer.failNext = true

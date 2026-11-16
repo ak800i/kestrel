@@ -90,7 +90,7 @@ class ListeningTest {
 
         assertFalse(listening.state.value.speaking)
         assertEquals(Work.AWAITING_TASK, listening.state.value.work)
-        assertEquals(listOf("recognition NONE", "recognition ALL"), log)
+        assertEquals(listOf("recognition NONE", "recognition ANSWER"), log)
         // A reply that was spoken is not shown.
         assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel"), shown)
     }

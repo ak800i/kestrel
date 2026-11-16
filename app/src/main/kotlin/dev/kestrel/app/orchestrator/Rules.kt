@@ -37,10 +37,12 @@ data class State(
     /** Whether Kestrel records: in every mode but off, while the screen is on and the phone unlocked (section 8.5). */
     val microphone: Boolean get() = mode != Mode.OFF && screenOn
 
-    /** Which utterances the pipeline transcribes (sections 8.4, 8.5 and 11.10). */
+    /** Which utterances the pipeline transcribes, and whether it holds them (sections 8.3, 8.4, 8.5 and 11.10). */
     val recognition: Recognition
         get() = when {
             speaking -> Recognition.NONE
+            // The owner dictates the task in the answer to "Yes?", and may pause in it.
+            work == Work.AWAITING_TASK -> Recognition.ANSWER
             work != Work.IDLE || mode == Mode.LISTENING -> Recognition.ALL
             else -> Recognition.NAMED
         }

@@ -17,10 +17,17 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 
-/** Which utterances the pipeline transcribes (design spec, sections 8.4 and 8.5). */
+/** Which utterances the pipeline transcribes (design spec, sections 8.3, 8.4 and 8.5). */
 enum class Recognition {
     /** Every utterance, while Kestrel listens. */
     ALL,
+
+    /**
+     * Every utterance, while Kestrel waits for the answer to "Yes?". The endpointer holds each one as it holds an
+     * utterance that starts with "Kestrel", and joins the next one to it when that one starts within 1.5 s, so that the
+     * owner can pause while dictating the task (section 8.3).
+     */
+    ANSWER,
 
     /** Only the utterances that start with "Kestrel", while Kestrel is paused. */
     NAMED,
@@ -52,10 +59,10 @@ sealed interface VoiceEvent {
     data object SpeechStarted : VoiceEvent
 
     /**
-     * An utterance ended that recognition would have transcribed (while recognition is [Recognition.ALL], or
-     * [Recognition.NAMED] and the utterance began with the name), but nothing of it was left to transcribe: it began
-     * while Kestrel spoke, and after the cut at the resume less than 0.25 s remained, or the owner's "Kestrel" broke into
-     * it (section 8.4).
+     * An utterance ended that recognition would have transcribed (while recognition is [Recognition.ALL] or
+     * [Recognition.ANSWER], or [Recognition.NAMED] and the utterance began with the name), but nothing of it was left
+     * to transcribe: it began while Kestrel spoke, and after the cut at the resume less than 0.25 s remained, or the
+     * owner's "Kestrel" broke into it (section 8.4).
      */
     data object Dropped : VoiceEvent
 
@@ -68,7 +75,8 @@ sealed interface VoiceEvent {
 
 /**
  * Turns the microphone's frames into transcripts and keyword events (design spec, sections 7.5 and 8.1–8.4). The speech
- * detector and the keyword spotter hear every frame; the endpointer decides when an utterance has ended, and the
+ * detector and the keyword spotter hear every frame; the endpointer decides when an utterance has ended, and while
+ * [recognition] is [Recognition.ANSWER] it holds every utterance as it holds one that starts with the name. The
  * recogniser transcribes the utterances that [recognition] asks for, one at a time in [recognitionContext], with the
  * boost words that [boostWords] returns at that moment. [isOwnVoice] tells which keyword hits came from Kestrel's own
  * voice. The pipeline does not own the engines: whoever opened them closes them, after [close] and after the last call
@@ -134,7 +142,7 @@ class ListeningPipeline(
         val hears = detector.hearsSpeech
         // An event for an earlier utterance went out since the last frame: the worker's, or a drop below.
         var answered = sent.getAndSet(false)
-        for (speech in endpointer.accept(utterances, names, hears, position)) {
+        for (speech in endpointer.accept(utterances, names, hears, position, holdAll = wanted == Recognition.ANSWER)) {
             val kept = afterResume(speech)
             if (kept == null) {
                 if (transcribes(wanted, speech.named)) {
@@ -204,7 +212,7 @@ class ListeningPipeline(
 
     /** Whether recognition [wanted] transcribes an utterance that is [named], or not. */
     private fun transcribes(wanted: Recognition, named: Boolean): Boolean = when (wanted) {
-        Recognition.ALL -> true
+        Recognition.ALL, Recognition.ANSWER -> true
         Recognition.NAMED -> named
         Recognition.NONE -> false
     }

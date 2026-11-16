@@ -15,11 +15,12 @@ class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean)
 
 /**
  * Decides when an utterance has ended (design spec, section 8.3). The speech detector ends an utterance after 0.7 s of
- * silence. When the keyword spotter heard "Kestrel" at its start, the limit is 1.5 s instead: the endpointer holds the
- * utterance, and joins the next one to it when that one starts less than 1.5 s after its end, so that the owner can
- * pause while dictating a task. A held utterance goes out at the latest 30 s after its start, also while the owner still
- * speaks, and a joined utterance lasts at most 30 s. What comes after that, such as the next part of long speech that
- * the detector cut at 30 s, is a separate utterance. Not thread-safe: feed it from one thread.
+ * silence. When the keyword spotter heard "Kestrel" at its start, or while the caller asks to hold every utterance, as
+ * it does for the answer to "Yes?", the limit is 1.5 s instead: the endpointer holds the utterance, and joins the next
+ * one to it when that one starts less than 1.5 s after its end, so that the owner can pause while dictating a task. A
+ * joined utterance is named when its first part was. A held utterance goes out at the latest 30 s after its start, also
+ * while the owner still speaks, and a joined utterance lasts at most 30 s. What comes after that, such as the next part
+ * of long speech that the detector cut at 30 s, is a separate utterance. Not thread-safe: feed it from one thread.
  */
 class Endpointer {
     private val names = ArrayDeque<Long>()
@@ -28,9 +29,17 @@ class Endpointer {
     /**
      * Takes the utterances that the speech detector returned for the audio up to [position], the positions at which the
      * keyword spotter heard "Kestrel" in the same audio, and whether the detector hears speech now, and returns the
-     * utterances that are complete. All positions count samples since the audio started.
+     * utterances that are complete. All positions count samples since the audio started. With [holdAll], each new
+     * utterance is held as one that starts with the name is; an utterance that is already held waits for its pause
+     * either way.
      */
-    fun accept(utterances: List<Utterance>, nameHits: List<Long>, hearsSpeech: Boolean, position: Long): List<Speech> {
+    fun accept(
+        utterances: List<Utterance>,
+        nameHits: List<Long>,
+        hearsSpeech: Boolean,
+        position: Long,
+        holdAll: Boolean = false,
+    ): List<Speech> {
         names.addAll(nameHits)
         val ready = mutableListOf<Speech>()
         for (utterance in utterances) {
@@ -40,8 +49,9 @@ class Endpointer {
                 held = joined
             } else {
                 held?.let { ready += it }
-                held = if (speech.named) speech else null
-                if (!speech.named) ready += speech
+                val hold = speech.named || holdAll
+                held = if (hold) speech else null
+                if (!hold) ready += speech
             }
         }
         val waiting = held
@@ -71,7 +81,10 @@ class Endpointer {
     private fun startsWithName(utterance: Utterance): Boolean =
         names.any { it >= utterance.startSample && it <= utterance.startSample + NAME_WINDOW }
 
-    /** [earlier], silence for the pause and [later] in one utterance, or null when the pause or the result is too long. */
+    /**
+     * [earlier], silence for the pause and [later] in one utterance, named when [earlier] is, or null when the pause or
+     * the result is too long.
+     */
     private fun join(earlier: Speech, later: Speech): Speech? {
         val pause = maxOf(0L, later.startSample - earlier.endSample)
         val size = earlier.samples.size + pause + later.samples.size
@@ -79,7 +92,7 @@ class Endpointer {
         val samples = FloatArray(size.toInt())
         earlier.samples.copyInto(samples)
         later.samples.copyInto(samples, (earlier.samples.size + pause).toInt())
-        return Speech(earlier.startSample, samples, named = true)
+        return Speech(earlier.startSample, samples, named = earlier.named)
     }
 
     private companion object {

@@ -152,7 +152,8 @@ class RequestsTest {
 
     @Test
     fun aBareTurnOffInAnAnswerToYesIsATask() {
-        // The answer ends after 0.7 s of silence, so the owner may still be saying what to turn off.
+        // The answer is held for 1.5 s of silence, but a longer pause still splits it, so the owner may still be saying
+        // what to turn off.
         assertEquals(Request.Task("Turn off."), Requests.read("Turn off.", spotted = false, afterName = true))
         assertEquals(Request.Task("Switch off, please."), Requests.read("Switch off, please.", spotted = false, afterName = true))
         assertEquals(Request.TurnOff, Requests.read("Kestrel, turn off.", spotted = true, afterName = true))

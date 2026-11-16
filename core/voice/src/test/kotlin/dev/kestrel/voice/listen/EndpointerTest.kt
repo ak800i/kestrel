@@ -128,6 +128,63 @@ class EndpointerTest {
         assertEquals(none, endpointer.finish())
     }
 
+    @Test
+    fun withTheHoldAnUtteranceWithoutTheNameWaitsAndJoinsTheNextOne() {
+        // The answer to "Yes?" ends at 1.5 s, and the owner goes on at 2.9 s, 1.4 s after the end.
+        assertEquals(
+            none,
+            endpointer.accept(listOf(utterance(0.5f, 1f, value = 0.5f)), emptyList(), hearsSpeech = false, position = at(2.2f), holdAll = true),
+        )
+        assertEquals(none, endpointer.accept(emptyList(), emptyList(), hearsSpeech = true, position = at(3.4f), holdAll = true))
+        assertEquals(
+            none,
+            endpointer.accept(listOf(utterance(2.9f, 1f, value = 0.25f)), emptyList(), hearsSpeech = false, position = at(4.6f), holdAll = true),
+        )
+
+        val speech = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(5.75f), holdAll = true).single()
+
+        assertFalse(speech.named)
+        assertEquals(at(0.5f), speech.startSample)
+        assertEquals(at(3.4f).toInt(), speech.samples.size)
+        assertEquals(0.5f, speech.samples[0])
+        assertEquals(0.25f, speech.samples.last())
+    }
+
+    @Test
+    fun withTheHoldAnUtteranceWithoutTheNameGoesOutAfterTheLongerPause() {
+        endpointer.accept(listOf(utterance(0.5f, 1f)), emptyList(), hearsSpeech = false, position = at(2.2f), holdAll = true)
+        assertEquals(none, endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(3.3f), holdAll = true))
+
+        val ready = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(3.35f), holdAll = true)
+
+        assertFalse(ready.single().named)
+        assertEquals(at(0.5f), ready.single().startSample)
+    }
+
+    @Test
+    fun aJoinedUtteranceIsNamedOnlyWhenItsFirstPartWas() {
+        endpointer.accept(listOf(utterance(0.5f, 1f)), emptyList(), hearsSpeech = false, position = at(2.2f), holdAll = true)
+        // The second part starts with "Kestrel" at 2.9 s, and the spotter reports the name at 3.4 s.
+        endpointer.accept(emptyList(), listOf(at(3.4f)), hearsSpeech = true, position = at(3.4f), holdAll = true)
+        endpointer.accept(listOf(utterance(2.9f, 1f)), emptyList(), hearsSpeech = false, position = at(4.6f), holdAll = true)
+
+        val speech = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(5.75f), holdAll = true).single()
+
+        assertFalse(speech.named)
+        assertEquals(at(3.4f).toInt(), speech.samples.size)
+    }
+
+    @Test
+    fun aHeldAnswerStillWaitsForItsPauseWhenTheHoldEnds() {
+        endpointer.accept(listOf(utterance(0.5f, 1f)), emptyList(), hearsSpeech = false, position = at(2.2f), holdAll = true)
+
+        // Kestrel no longer waits for the task, so recognition is no longer ANSWER.
+        assertEquals(none, endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(3.3f)))
+        val ready = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(3.35f))
+
+        assertFalse(ready.single().named)
+    }
+
     private val none = emptyList<Speech>()
 
     private fun at(seconds: Float): Long = (seconds * SAMPLE_RATE).roundToLong()

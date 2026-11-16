@@ -88,11 +88,22 @@ class RulesTest {
         assertEquals(listOf(Effect.WaitForTask()), spoken.effects)
         assertEquals(2, spoken.state.wait)
         val ready = spoken.state
-        assertEquals(Recognition.ALL, ready.recognition)
+        assertEquals(Recognition.ANSWER, ready.recognition)
 
         val task = Rules.next(ready, Event.Heard("Open the settings.", named = false))
         assertEquals(Effect.RunTask(1, "Open the settings."), task.effects.last())
         assertEquals(Work.RUNNING_TASK, task.state.work)
+    }
+
+    @Test
+    fun theAnswerToYesIsHeldLikeANamedUtterance() {
+        val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
+
+        assertEquals(Recognition.ANSWER, waiting.recognition)
+        assertEquals(Recognition.ANSWER, paused.copy(work = Work.AWAITING_TASK, wait = 1).recognition)
+        // While "Yes?" is spoken, nothing is transcribed, and while a task runs, every utterance goes out at once.
+        assertEquals(Recognition.NONE, waiting.copy(speeches = 1).recognition)
+        assertEquals(Recognition.ALL, listening.copy(work = Work.RUNNING_TASK, task = 1).recognition)
     }
 
     @Test

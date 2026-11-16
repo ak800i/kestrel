@@ -176,7 +176,8 @@ class OrchestratorTest {
         orchestrator.send(Event.Toggle)
         orchestrator.send(Event.Heard("Kestrel", named = true))
         runCurrent()
-        assertEquals(Recognition.ALL, orchestrator.state.value.recognition)
+        // "Yes?" could not be spoken, so Kestrel waits for the task and holds the answer.
+        assertEquals(Recognition.ANSWER, orchestrator.state.value.recognition)
 
         orchestrator.send(Event.Heard("Open the settings.", named = false))
         runCurrent()
