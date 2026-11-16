@@ -1,5 +1,12 @@
 # Checks the ways in which Kestrel's listening starts without a word from the owner (design spec, sections 8.5, 8.6 and
 # 14.4), on a test device with Kestrel's debug build (scripts\install.ps1) and its speech models (scripts\push-models.ps1):
+#   notification  while Kestrel's accessibility service is off, Android refuses a start through the hook with Kestrel
+#             in the background; Kestrel's problems notification then offers "Start listening", and a tap on it in the
+#             notification shade starts listening (design spec, section 14.6; spike S1). The script finds the button
+#             with 'uiautomator dump', whose file it deletes and never prints, because on a phone it holds the text of
+#             the owner's notifications. When the shade shows Kestrel's notification collapsed, without its button,
+#             the script first expands it with a swipe down on it. If this check fails, the problems notification stays
+#             until Kestrel next listens, which the later checks bring about, or until you swipe it away
 #   tile      a tap on Kestrel's Quick Settings tile starts listening while Kestrel's accessibility service is off, and a
 #             second tap pauses it
 #   shortcut  the accessibility shortcut ('cmd accessibility call-system-action 13') starts listening, and a second press
@@ -17,10 +24,13 @@
 # check also checks in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
 # with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that
 # ran, also when a later check fails with an error.
-# While it runs, it grants Kestrel the microphone permission, replaces the list of enabled accessibility services, sets
-# the target of the accessibility shortcut, and puts Kestrel's tile first in Quick Settings and opens the panel for the
-# tile check. Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the
-# tiles, the accessibility settings and the permission. If it cannot put something back, also because Ctrl+C interrupted
+# While it runs, it grants Kestrel the microphone and notification permissions, replaces the list of enabled
+# accessibility services, sets the target of the accessibility shortcut, opens the notification shade for the
+# notification check, and puts Kestrel's tile first in Quick Settings and opens the panel for the tile check.
+# Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the tiles, the
+# accessibility settings and the permissions, and it deletes the dump of the screen. When Kestrel's accessibility
+# service was off before the run, Kestrel's notification that the service is off stays afterwards; swipe it away. If
+# it cannot put something back, also because Ctrl+C interrupted
 # it while it put things back, it says at the end what is left and how to put it back by hand. Then, after Ctrl+C, and
 # when a check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With -Reboot it
 # reboots the device; a phone with a PIN, pattern or password asks you to unlock it after the reboot. It needs
@@ -44,6 +54,10 @@ $tileSpec = 'custom(dev.kestrel/.app.listen.KestrelTileService)'
 $isEmulator = $Serial -like 'emulator-*'
 # Kestrel turns itself off when a speech model is missing, so a start that never comes may have this cause.
 $modelsHint = '; are the speech models on the device? Run scripts\push-models.ps1'
+$microphonePermission = 'android.permission.RECORD_AUDIO'
+$notificationPermission = 'android.permission.POST_NOTIFICATIONS'
+# Where 'uiautomator dump' writes the screen's tree on the device; Get-UiDump deletes it after each read.
+$uiDumpFile = '/data/local/tmp/kestrel-ui.xml'
 
 # Runs a command on the device and fails when it fails. A busy device sometimes fails a command, so it is repeated.
 function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
@@ -128,8 +142,9 @@ function Set-KestrelService([bool]$On) {
 # The ID of Kestrel's process, or an empty string when it does not run.
 function Get-KestrelProcess { ((Invoke-Checked 'pidof dev.kestrel || true') -join '').Trim() }
 
-function Test-MicrophonePermission {
-    ((Invoke-Checked 'dumpsys package dev.kestrel') -join "`n") -match 'android\.permission\.RECORD_AUDIO: granted=true'
+# Whether Kestrel holds a runtime permission, such as android.permission.RECORD_AUDIO.
+function Test-KestrelPermission([string]$Permission) {
+    ((Invoke-Checked 'dumpsys package dev.kestrel') -join "`n") -match "$([regex]::Escape($Permission)): granted=true"
 }
 
 # Waits until the device has started again after a reboot, which a new boot ID shows, and until Android has unlocked the
@@ -169,6 +184,94 @@ function Get-RecordingProblem([string[]]$Before) {
         if ($state -eq 'not silenced') { return }
     }
     if ($state -eq 'silenced') { 'Android silenced the microphone' } else { "no new recording of Kestrel's showed in dumpsys audio within 5 s" }
+}
+
+# The screen's accessibility tree, as 'uiautomator dump' writes it, or an empty text when uiautomator could not read the
+# screen. On a phone it holds the text of the owner's notifications, so the script only searches it, never prints it,
+# and deletes the file on the device.
+function Get-UiDump {
+    $file = $uiDumpFile
+    try {
+        Invoke-Checked "uiautomator dump $file" | Out-Null
+        # The dump ends without a line break, and the device's marker must start a line of its own.
+        (Invoke-Checked "cat $file && echo") -join "`n"
+    } catch {
+        ''
+    } finally {
+        try { Invoke-Checked "rm -f $file" | Out-Null } catch { Write-Warning "Could not delete $file on $Serial." }
+    }
+}
+
+function Invoke-NotificationCheck {
+    Stop-Kestrel
+    # Without the accessibility service, and with Kestrel in the background, Android refuses a start through the hook.
+    Set-KestrelService $false
+    # The shade and the tap need the screen on, and Kestrel records only while it is on.
+    Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
+    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    # Android lets an app start a foreground service for a few seconds after it was in front; prototype P2 waited 10 s.
+    Start-Sleep -Seconds 10
+    Invoke-Hook voice -Send toggle | Out-Null
+    # Android refuses the start at once, and Kestrel turns off again. This is checked before the shade opens, so that a
+    # "Start listening" that an earlier failure left cannot stand in for this one.
+    Start-Sleep -Seconds 2
+    $state = Get-VoiceState
+    if ($state -and $state.mode -ne 'off') {
+        return ('failed: Android let the hook start listening in the background without the accessibility service, ' +
+            'so the check could not reach the notification')
+    }
+    $tapped = $null
+    try {
+        Invoke-Checked 'cmd statusbar expand-notifications' | Out-Null
+        # The problems notification's title after a refused start (problem_title_not_started in strings.xml).
+        $title = 'Kestrel could not start listening'
+        $button = $null
+        $notice = $null
+        $read = $false
+        # A dump takes a second or more, so the wait counts seconds, not dumps.
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        while (-not ($button -or $notice) -and $watch.Elapsed.TotalSeconds -lt 15) {
+            Start-Sleep -Milliseconds 500
+            $dump = Get-UiDump
+            $read = $read -or [bool]$dump
+            $button = Get-UiNodeCentre -Dump $dump -Text 'Start listening'
+            $notice = Get-UiNodeCentre -Dump $dump -Text $title
+        }
+        if (-not $read) { return 'failed: uiautomator could not read the notification shade within 15 s' }
+        if (-not ($button -or $notice)) {
+            return 'failed: the notification shade did not show Kestrel''s problems notification within 15 s of a start that Android refused'
+        }
+        if (-not $button) {
+            # The shade shows a notification collapsed, without its buttons, for example below other notifications. A
+            # swipe down on a collapsed notification expands it; a second swipe would collapse it again.
+            Invoke-Once "input swipe $($notice.X) $($notice.Y) $($notice.X) $($notice.Y + 300) 500"
+            $watch.Restart()
+            while (-not $button -and $watch.Elapsed.TotalSeconds -lt 5) {
+                Start-Sleep -Milliseconds 500
+                $button = Get-UiNodeCentre -Dump (Get-UiDump) -Text 'Start listening'
+            }
+            if (-not $button) {
+                return 'failed: Kestrel''s problems notification showed no "Start listening", also after a swipe down on it to expand it'
+            }
+        }
+        $before = Get-KestrelRecording
+        Invoke-Once "input tap $($button.X) $($button.Y)"
+        $tapped = [Diagnostics.Stopwatch]::StartNew()
+        $on = Wait-Mode listening 60
+        if ($on -lt 0) { return "failed: no listening within 60 s of a tap on ""Start listening""$modelsHint" }
+        $problem = Get-RecordingProblem $before
+        if ($problem) { return "failed: listening $on s after a tap on ""Start listening"", but $problem" }
+        "ok: Android refused a start in the background, and ""Start listening"" in the notification started listening in $on s"
+    } finally {
+        # The later checks run with the shade closed.
+        Invoke-Checked 'cmd statusbar collapse' | Out-Null
+        # The tap lets Kestrel start a foreground service from the background for a while (prototype P2, Q2). The tile
+        # check after this one must not use that exemption, so the check waits until 30 s have passed since the tap.
+        if ($tapped) {
+            $left = 30000 - $tapped.Elapsed.TotalMilliseconds
+            if ($left -gt 0) { Start-Sleep -Milliseconds ([int][math]::Ceiling($left)) }
+        }
+    }
 }
 
 function Invoke-TileCheck {
@@ -363,7 +466,8 @@ $tilesByHand = if ($tilesBefore -in 'null', '') {
 } else {
     Format-DeviceCommand "cmd statusbar set-tiles $(Format-ShellText $tilesBefore)"
 }
-$microphoneBefore = Test-MicrophonePermission
+$microphoneBefore = Test-KestrelPermission $microphonePermission
+$notificationsBefore = Test-KestrelPermission $notificationPermission
 # The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
 # list of services first, and they delete the settings that the script changes if these were not there before.
 $accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled', 'accessibility_shortcut_target_service') + @($savedAccessibility.Keys) | Select-Object -Unique) {
@@ -404,22 +508,39 @@ $restoresAtEnd = @(
         Assert-TestDevice -Serial $Serial
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility)) { throw 'see the warning above' }
     }
-    # Revoking a permission ends Kestrel's process, so this comes last.
-    if (-not $microphoneBefore) {
-        Register-Restore "Kestrel's microphone permission" (Format-DeviceCommand 'pm revoke dev.kestrel android.permission.RECORD_AUDIO') {
+    # Get-UiDump deletes its file after each read; this also covers a Ctrl+C that came in between. On a phone the file
+    # holds the text of the owner's notifications.
+    Register-Restore 'the dump of the screen' (Format-DeviceCommand "rm -f $uiDumpFile") {
+        Assert-TestDevice -Serial $Serial
+        Invoke-Checked "rm -f $uiDumpFile" | Out-Null
+    }
+    # Revoking a permission ends Kestrel's process, so these come last.
+    if (-not $notificationsBefore) {
+        Register-Restore "Kestrel's notification permission" (Format-DeviceCommand "pm revoke dev.kestrel $notificationPermission") {
             Assert-TestDevice -Serial $Serial
-            if (Test-MicrophonePermission) { Invoke-Checked 'pm revoke dev.kestrel android.permission.RECORD_AUDIO' | Out-Null }
-            if (Test-MicrophonePermission) { throw 'it is still granted' }
+            if (Test-KestrelPermission $notificationPermission) { Invoke-Checked "pm revoke dev.kestrel $notificationPermission" | Out-Null }
+            if (Test-KestrelPermission $notificationPermission) { throw 'it is still granted' }
+        }
+    }
+    if (-not $microphoneBefore) {
+        Register-Restore "Kestrel's microphone permission" (Format-DeviceCommand "pm revoke dev.kestrel $microphonePermission") {
+            Assert-TestDevice -Serial $Serial
+            if (Test-KestrelPermission $microphonePermission) { Invoke-Checked "pm revoke dev.kestrel $microphonePermission" | Out-Null }
+            if (Test-KestrelPermission $microphonePermission) { throw 'it is still granted' }
         }
     }
 )
 try {
-    Invoke-Checked 'pm grant dev.kestrel android.permission.RECORD_AUDIO' | Out-Null
+    Invoke-Checked "pm grant dev.kestrel $microphonePermission" | Out-Null
+    # The notification check taps Kestrel's problems notification.
+    Invoke-Checked "pm grant dev.kestrel $notificationPermission" | Out-Null
     # The hook's off first stops any restore in Kestrel's process and then stores Off, also while Kestrel is off, so a
     # mode that an earlier run stored cannot turn Kestrel on during a check, even if the accessibility service is on.
     Stop-Kestrel
     # Kestrel records with its own microphone, also if a hook gave it the clip microphone earlier in its process.
     Invoke-Hook voice-clip -Clear | Out-Null
+    # First: a failed notification check leaves the problems notification, which the later checks' starts remove.
+    $results['notification'] = Invoke-NotificationCheck
     $results['tile'] = Invoke-TileCheck
     $results['shortcut'] = Invoke-ShortcutCheck
     $results['settings'] = Invoke-SettingsCheck
@@ -434,7 +555,7 @@ try {
         Invoke-Restore $restoresAtEnd
     } finally {
         # Also when a check failed with an error, so that the lines of the checks that ran are not lost.
-        $results.GetEnumerator() | ForEach-Object { Write-Host ('{0,-9} {1}' -f $_.Key, $_.Value) }
+        $results.GetEnumerator() | ForEach-Object { Write-Host ('{0,-12} {1}' -f $_.Key, $_.Value) }
         foreach ($restore in $pending) {
             Write-Warning "Could not put back $($restore.What) on $Serial ($($restore.Reason)). $($restore.ByHand)"
         }

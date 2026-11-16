@@ -243,3 +243,21 @@ function Get-NewRecordingState([string[]]$Dump, [string]$Package, [string[]]$Bef
     if (-not $newest -or $newest.Id -in @($Before)) { return 'none' }
     if ($newest.Silenced) { 'silenced' } else { 'not silenced' }
 }
+
+# Returns the centre of the first node of a 'uiautomator dump' whose whole text is the text, in any letter case, because
+# some versions of Android show a notification's buttons in capitals: an object with X and Y. Returns $null when no node
+# has that text, or when the dump is not XML, as when uiautomator could not read the screen. A dump can hold the text of
+# the owner's notifications, so the scripts only search it and never print it.
+function Get-UiNodeCentre([string]$Dump, [string]$Text) {
+    $xml = New-Object System.Xml.XmlDocument
+    try { $xml.LoadXml($Dump) } catch { return $null }
+    foreach ($node in @($xml.SelectNodes('//node'))) {
+        if ($node.GetAttribute('text') -eq $Text -and $node.GetAttribute('bounds') -match '^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$') {
+            return [pscustomobject]@{
+                X = [int][math]::Floor(([int]$Matches[1] + [int]$Matches[3]) / 2)
+                Y = [int][math]::Floor(([int]$Matches[2] + [int]$Matches[4]) / 2)
+            }
+        }
+    }
+    $null
+}

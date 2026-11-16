@@ -10,9 +10,12 @@
 # The test ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock turns on the swipe lock
 # screen when the device has none and unlocks it with 'wm dismiss-keyguard', which cannot unlock a PIN, pattern or
 # password, so on a phone the script leaves that test out too. So does ActivationTest#theTileTogglesListening, which adds
-# Kestrel's tile to Quick Settings: no script puts the list of tiles back if the test's process dies. The run fails when
-# one of these three tests ran on a phone or did not run on an emulator. On an emulator the script turns the lock screen
-# off again at the end, wakes the screen and dismisses the keyguard, also when the run failed or was interrupted.
+# Kestrel's tile to Quick Settings: no script puts the list of tiles back if the test's process dies. So does
+# RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar, which sets Kestrel's app op TAKE_AUDIO_FOCUS to ignore and
+# back to foreground, the op's normal mode on Android 17. The run fails when one of these four tests ran on a phone or
+# did not run on an emulator. On an emulator the script turns the lock screen off again at the end, sets
+# TAKE_AUDIO_FOCUS back to foreground, wakes the screen and dismisses the keyguard, also when the run failed or was
+# interrupted.
 # Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
 # command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
@@ -59,11 +62,12 @@ try {
         # The tests log their measurements; clearing the log first keeps only this run's lines.
         & $adb -s $Serial logcat -c
         # Tests that a phone must not run: one switches the microphone's privacy toggle, one turns on a lock screen that it
-        # unlocks with adb, and one changes the list of Quick Settings tiles.
+        # unlocks with adb, one changes the list of Quick Settings tiles, and one refuses Kestrel's audio focus.
         $emulatorOnly = @(
             'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
             'dev.kestrel.app.voice.ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock'
             'dev.kestrel.app.voice.ActivationTest#theTileTogglesListening'
+            'dev.kestrel.app.voice.RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar'
         )
         $tasks = @(
             ':app:connectedDebugAndroidTest'
@@ -112,6 +116,11 @@ try {
             # The lock-screen test leaves the screen on and unlocked and the lock screen as it found it, unless its process
             # died in between.
             if ($lockScreenOff -and -not (Invoke-DeviceRestore 'turn off the lock screen again' 'cmd lock_settings set-disabled true')) {
+                $code = 1
+            }
+            # The refused-reply test puts the op back itself, unless its process died in between. The mode default would
+            # still refuse Kestrel's audio focus (prototype P2).
+            if (-not (Invoke-DeviceRestore 'give Kestrel back its audio focus' 'cmd appops set dev.kestrel TAKE_AUDIO_FOCUS foreground')) {
                 $code = 1
             }
             if (-not (Invoke-DeviceRestore 'wake the screen' 'input keyevent KEYCODE_WAKEUP')) { $code = 1 }

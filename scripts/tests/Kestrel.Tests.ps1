@@ -4,6 +4,8 @@
 # both shells.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingInvokeExpression', '',
     Justification = 'A test runs the command that a warning asks the owner to paste.')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '',
+    Justification = 'Pester shares the variables of BeforeAll with the It blocks.')]
 param()
 
 Describe 'Get-DeviceTaskArgument' {
@@ -383,5 +385,30 @@ Describe 'Get-NewRecordingState' {
         }
     ) {
         Get-NewRecordingState -Dump $Dump -Package dev.kestrel -Before @('111') | Should -BeExactly 'none'
+    }
+}
+
+Describe 'Get-UiNodeCentre' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        # The notification shade as 'uiautomator dump' shows a notification with an action, shortened.
+        $shade = @'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.android.systemui" content-desc="" bounds="[0,0][1080,2400]"><node index="0" text="Kestrel could not start listening" resource-id="android:id/title" class="android.widget.TextView" package="com.android.systemui" content-desc="" bounds="[96,780][900,830]" /><node index="1" text="Start listening now" resource-id="" class="android.widget.TextView" package="com.android.systemui" content-desc="" bounds="[96,840][900,880]" /><node index="2" text="START LISTENING" resource-id="android:id/action0" class="android.widget.Button" package="com.android.systemui" content-desc="" bounds="[264,900][352,948]" /></node></hierarchy>
+'@
+    }
+
+    It 'returns the centre of the node whose whole text is the text, in any letter case' {
+        $centre = Get-UiNodeCentre -Dump $shade -Text 'Start listening'
+
+        $centre.X | Should -Be 308
+        $centre.Y | Should -Be 924
+    }
+
+    It 'returns $null when no node has exactly that text' {
+        Get-UiNodeCentre -Dump $shade -Text 'Start' | Should -BeNullOrEmpty
+    }
+
+    It 'returns $null for an answer that is not XML: ''<_>''' -ForEach @('', 'ERROR: null root node returned by UiTestAutomationBridge.') {
+        Get-UiNodeCentre -Dump $_ -Text 'Start listening' | Should -BeNullOrEmpty
     }
 }
