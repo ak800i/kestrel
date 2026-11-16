@@ -16,8 +16,9 @@ import kotlinx.coroutines.launch
  * section 7.3). [perform] runs each effect in order on the Orchestrator's coroutine, so it must return quickly. An effect
  * that throws, even with a CancellationException, goes to [onError] and counts as not started: for a [Effect.Say] the
  * Orchestrator then handles [Event.SpeechEnded], and for a [Effect.RunTask] [Event.TaskEnded] without a reply. The next
- * effects and events still run. The timer that ends the wait for a task after "Yes?" runs here: [waitMillis] for the
- * owner to start the answer, and [answerMillis] once the owner has started it.
+ * effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
+ * that TODO() throws, is not caught and ends the Orchestrator's loop. The timer that ends the wait for a task after
+ * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it.
  */
 class Orchestrator(
     private val scope: CoroutineScope,

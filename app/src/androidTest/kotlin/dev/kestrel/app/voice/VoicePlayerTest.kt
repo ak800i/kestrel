@@ -39,18 +39,20 @@ class VoicePlayerTest {
 
         val spoke = runBlocking {
             val reply = player.speak("Hello. This is Kestrel.")
-            while (!reply.isCompleted) {
-                audio.activePlaybackConfigurations.mapTo(usages) { it.audioAttributes.usage }
-                delay(20)
+            withTimeout(10_000) {
+                while (!reply.isCompleted) {
+                    audio.activePlaybackConfigurations.mapTo(usages) { it.audioAttributes.usage }
+                    delay(20)
+                }
+                reply.await()
             }
-            reply.await()
         }
         val returned = SystemClock.elapsedRealtime()
 
         assertEquals(Spoke.FINISHED, spoke)
         assertTrue("Usages while speaking: $usages", AudioAttributes.USAGE_ASSISTANT in usages)
         // A reply without letters or digits never reaches the synthesizer, which would log its text, and plays nothing.
-        assertEquals(Spoke.FINISHED, runBlocking { player.speak("… !?").await() })
+        assertEquals(Spoke.FINISHED, runBlocking { withTimeout(10_000) { player.speak("… !?").await() } })
         val spoken = player.recent()
         assertEquals(listOf("Hello.", "This is Kestrel."), spoken.map { it.text })
         assertTrue(spoken[0].endMillis > spoken[0].startMillis)
@@ -69,7 +71,7 @@ class VoicePlayerTest {
             val stoppedAt = SystemClock.elapsedRealtime()
             player.stop()
 
-            assertEquals(Spoke.STOPPED, reply.await())
+            assertEquals(Spoke.STOPPED, withTimeout(10_000) { reply.await() })
             val millis = SystemClock.elapsedRealtime() - stoppedAt
             VoiceTests.log("Voice output: stopped in $millis ms")
             assertTrue("Stopping took $millis ms", millis < 500)
@@ -87,11 +89,11 @@ class VoicePlayerTest {
             val stoppedAt = SystemClock.elapsedRealtime()
             player.stop()
 
-            assertEquals(Spoke.STOPPED, reply.await())
+            assertEquals(Spoke.STOPPED, withTimeout(10_000) { reply.await() })
             val millis = SystemClock.elapsedRealtime() - stoppedAt
             assertTrue("Stopping took $millis ms", millis < 300)
             // The next reply waits until the synthesizer is free, and then plays.
-            assertEquals(Spoke.FINISHED, player.speak("Done.").await())
+            assertEquals(Spoke.FINISHED, withTimeout(10_000) { player.speak("Done.").await() })
         }
     }
 
@@ -101,7 +103,7 @@ class VoicePlayerTest {
             val reply = player.speak("Hello.")
             player.stop()
 
-            assertEquals(Spoke.STOPPED, reply.await())
+            assertEquals(Spoke.STOPPED, withTimeout(10_000) { reply.await() })
         }
     }
 
@@ -114,8 +116,8 @@ class VoicePlayerTest {
             delay(200)
             player.stop()
 
-            assertEquals(Spoke.STOPPED, first.await())
-            assertEquals(Spoke.STOPPED, second.await())
+            assertEquals(Spoke.STOPPED, withTimeout(10_000) { first.await() })
+            assertEquals(Spoke.STOPPED, withTimeout(10_000) { second.await() })
         }
     }
 
@@ -135,10 +137,12 @@ class VoicePlayerTest {
         val voice = FakeVoice()
         withPlayer(voice) { player ->
             runBlocking {
-                val failure = runCatching { player.speak("Hello. $FAILING Never said.").await() }.exceptionOrNull()
+                val failure = runCatching {
+                    withTimeout(10_000) { player.speak("Hello. $FAILING Never said.").await() }
+                }.exceptionOrNull()
 
                 assertEquals(FakeVoice.FAILURE, failure?.message)
-                assertEquals(Spoke.FINISHED, player.speak("Done.").await())
+                assertEquals(Spoke.FINISHED, withTimeout(10_000) { player.speak("Done.").await() })
                 assertEquals(listOf("Hello.", FAILING, "Done."), voice.said)
                 assertEquals("Done.", player.recent().last().text)
             }
@@ -171,7 +175,7 @@ class VoicePlayerTest {
             runBlocking {
                 player.close()
 
-                assertEquals(Spoke.STOPPED, player.speak("Hello.").await())
+                assertEquals(Spoke.STOPPED, withTimeout(10_000) { player.speak("Hello.").await() })
                 assertEquals(emptyList<String>(), voice.said)
             }
         }
@@ -214,7 +218,7 @@ class VoicePlayerTest {
             try {
                 said += text
                 started.countDown()
-                gate?.await()
+                gate?.await(10, TimeUnit.SECONDS)
                 if (text == FAILING) throw IllegalStateException(FAILURE)
                 return FloatArray(sampleRate * 3 / 10)
             } finally {

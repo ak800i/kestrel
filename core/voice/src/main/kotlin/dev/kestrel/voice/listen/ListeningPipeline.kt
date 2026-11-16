@@ -43,7 +43,10 @@ sealed interface VoiceEvent {
     data class Spotted(val keyword: Keyword) : VoiceEvent
 
     /** Transcribing an utterance failed; the pipeline goes on with the next one. */
-    data class Failed(val error: Exception) : VoiceEvent
+    data class Failed(val error: Exception) : VoiceEvent {
+        // The message could hold words from the screen or the owner, so only the class is printed.
+        override fun toString() = "Failed(${error.javaClass.name})"
+    }
 }
 
 /**
