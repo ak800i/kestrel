@@ -62,6 +62,8 @@ class SettingsAppTest {
     fun stepsToDoOfferTheirActions() {
         show(NOTHING_SET_UP)
         openChecklist()
+        compose.onNodeWithText(text(R.string.setup_battery_detail)).performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(text(R.string.setup_battery_detail_samsung)).assertCountEquals(0)
 
         compose.onNodeWithText(text(R.string.setup_allow)).performScrollTo().performClick()
         compose.onNodeWithText(text(R.string.setup_open_app_settings)).performScrollTo().performClick()
@@ -92,6 +94,24 @@ class SettingsAppTest {
         compose.onNodeWithText(text(R.string.setup_voice_access_warning)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.setup_open_accessibility)).performScrollTo().performClick()
         assertEquals(listOf(SetupAction.ACCESSIBILITY_SETTINGS), actions)
+    }
+
+    @Test
+    fun stepsThatNeedAttentionSayWhy() {
+        show(NOTHING_SET_UP.copy(serviceEnabled = true, batteryRestricted = true))
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_service_warning)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.setup_battery_warning)).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun theBatteryStepNamesNeverSleepingAppsOnlyOnASamsung() {
+        show(NOTHING_SET_UP.copy(samsung = true))
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_battery_detail_samsung)).performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(text(R.string.setup_battery_detail)).assertCountEquals(0)
     }
 
     @Test

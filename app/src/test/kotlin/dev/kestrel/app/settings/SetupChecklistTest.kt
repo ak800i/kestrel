@@ -53,6 +53,26 @@ class SetupChecklistTest {
     }
 
     @Test
+    fun aServiceThatIsOnButDoesNotRunNeedsAttention() {
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.ACCESSIBILITY_SERVICE)
+
+        // As after "Stop app": Android's setting names the service, but Android does not run it (prototype P2).
+        assertEquals(StepState.WARNING, state(nothingSetUp.copy(serviceEnabled = true)))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(serviceOn = true, serviceEnabled = true)))
+        assertEquals(StepState.TO_DO, state(nothingSetUp))
+    }
+
+    @Test
+    fun restrictedBatteryUseNeedsAttention() {
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.BATTERY)
+
+        // Android then stops listening in the background, also when Kestrel ignores the battery optimisations.
+        assertEquals(StepState.WARNING, state(nothingSetUp.copy(batteryRestricted = true)))
+        assertEquals(StepState.WARNING, state(nothingSetUp.copy(batteryRestricted = true, batteryUnrestricted = true)))
+        assertEquals(StepState.TO_DO, state(nothingSetUp))
+    }
+
+    @Test
     fun voiceAccessBesideKestrelIsAWarning() {
         fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.VOICE_ACCESS)
 

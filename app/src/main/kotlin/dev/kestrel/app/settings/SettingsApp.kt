@@ -60,7 +60,7 @@ fun SettingsApp(
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
-            SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, onAction, home) }
+            SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, status.samsung, onAction, home) }
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)

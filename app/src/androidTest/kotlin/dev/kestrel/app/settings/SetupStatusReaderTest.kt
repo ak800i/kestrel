@@ -4,6 +4,7 @@ import android.Manifest
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.screen.ScreenServiceRule
+import dev.kestrel.app.voice.VoiceTests
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -21,12 +22,34 @@ class SetupStatusReaderTest {
 
     @Test
     fun seesTheServiceTurnOff() = runBlocking {
-        assertTrue(reader.read().serviceOn)
+        val on = reader.read()
+        assertTrue(on.serviceOn)
+        assertTrue(on.serviceEnabled)
 
         screen.shell("settings delete secure enabled_accessibility_services")
         withTimeout(10_000) { (context.applicationContext as KestrelApplication).graph.screen.first { it == null } }
 
-        assertFalse(reader.read().serviceOn)
+        val off = reader.read()
+        assertFalse(off.serviceOn)
+        assertFalse(off.serviceEnabled)
+    }
+
+    @Test
+    fun seesRestrictedBatteryUse() {
+        // On a phone, a test process that died between the two commands would leave Kestrel restricted, and no script
+        // puts the op back. Before the try block, so that a phone runs no command.
+        VoiceTests.assumeEmulator()
+        try {
+            // What the battery setting "Restricted" sets (prototype P2).
+            screen.shell("cmd appops set ${context.packageName} RUN_ANY_IN_BACKGROUND ignore")
+            assertTrue(reader.read().batteryRestricted)
+
+            // The op's normal mode; "default" would still count as restricted (prototype P2).
+            screen.shell("cmd appops set ${context.packageName} RUN_ANY_IN_BACKGROUND allow")
+            assertFalse(reader.read().batteryRestricted)
+        } finally {
+            screen.shell("cmd appops set ${context.packageName} RUN_ANY_IN_BACKGROUND allow")
+        }
     }
 
     // Revoking a permission would stop the app's process, and the tests with it, so this test only grants them.

@@ -44,7 +44,13 @@ sealed interface ModelCheck {
     data class Done(val statuses: List<ModelStatus>) : ModelCheck
 }
 
-/** What Kestrel can find out about its own setup on the phone. [models] is what Kestrel knows about the model files. */
+/**
+ * What Kestrel can find out about its own setup on the phone. [serviceOn]: Kestrel's accessibility service runs.
+ * [models] is what Kestrel knows about the model files. [serviceEnabled]: Android's setting names the accessibility
+ * service, also when Android does not run it, as after "Stop app" (prototype P2). [batteryRestricted]: the owner set
+ * Kestrel's battery use to Restricted. [samsung]: the phone is a Samsung, whose battery settings also have "Never
+ * sleeping apps".
+ */
 data class SetupStatus(
     val serviceOn: Boolean,
     val microphoneAllowed: Boolean,
@@ -52,6 +58,9 @@ data class SetupStatus(
     val batteryUnrestricted: Boolean,
     val voiceAccessOn: Boolean,
     val models: ModelCheck = ModelCheck.Checking,
+    val serviceEnabled: Boolean = serviceOn,
+    val batteryRestricted: Boolean = false,
+    val samsung: Boolean = false,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -62,9 +71,19 @@ object SetupChecklist {
             SetupStep.INSTALL -> StepState.DONE
             SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready } == true)
             SetupStep.DEFAULT_ASSISTANT, SetupStep.PROVIDER -> StepState.LATER
-            SetupStep.ACCESSIBILITY_SERVICE -> doneIf(status.serviceOn)
+            SetupStep.ACCESSIBILITY_SERVICE -> when {
+                status.serviceOn -> StepState.DONE
+                // Android's setting names the service, but Android does not run it, as after "Stop app" (prototype P2).
+                status.serviceEnabled -> StepState.WARNING
+                else -> StepState.TO_DO
+            }
             SetupStep.MICROPHONE_AND_NOTIFICATIONS -> doneIf(status.microphoneAllowed && status.notificationsAllowed)
-            SetupStep.BATTERY -> doneIf(status.batteryUnrestricted)
+            SetupStep.BATTERY -> when {
+                // Android then stops listening in the background (prototype P2).
+                status.batteryRestricted -> StepState.WARNING
+                status.batteryUnrestricted -> StepState.DONE
+                else -> StepState.TO_DO
+            }
             // Both apps would react to the same words.
             SetupStep.VOICE_ACCESS -> when {
                 !status.voiceAccessOn -> StepState.DONE

@@ -1,6 +1,7 @@
 package dev.kestrel.app
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -156,6 +157,13 @@ class AppGraph(context: Context) {
             conditions = object : ListeningConditions {
                 override fun microphoneAllowed() =
                     appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+                override fun backgroundRestricted() =
+                    appContext.getSystemService(ActivityManager::class.java).isBackgroundRestricted
+
+                // A binder call with the service's token, which any thread may make (prototype P2). The type is 0 while
+                // the service is not in the foreground.
+                override fun demoted(service: Any) = (service as ListeningService).foregroundServiceType == 0
             },
             microphones = { MicCapture(appContext) },
         )

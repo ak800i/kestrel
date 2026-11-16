@@ -674,6 +674,56 @@ class ListeningTest {
     }
 
     @Test
+    fun aSilencedMicrophoneInADemotedServiceUnderTheBatteryRestrictionTurnsKestrelOff() = runTest {
+        // Started from the tile without the accessibility service: about 30 s after the panel closed, Android took the
+        // foreground from the service without a word, and 5 s later it silenced the microphone (prototype P2).
+        conditions.restricted = true
+        conditions.demoted = true
+        val listening = listeningWithSession()
+        log.clear()
+
+        listening.send(Event.MicBusy(true))
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf("close", "closed", "stop"), log)
+        // Not "Microphone blocked", which would stay until Android stops the service a minute later.
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.BATTERY_RESTRICTED), shown)
+        assertEquals(listOf(StopReason.BATTERY_RESTRICTED), notices.shown)
+    }
+
+    @Test
+    fun aSilencedMicrophoneIsOnlyShownUnlessTheServiceWasDemotedUnderTheRestriction() = runTest {
+        // Demoted without the restriction first, and then restricted while the service keeps the foreground.
+        conditions.demoted = true
+        val listening = listeningWithSession()
+        listening.send(Event.MicBusy(true))
+        runCurrent()
+        conditions.demoted = false
+        conditions.restricted = true
+        listening.send(Event.MicBusy(false))
+        listening.send(Event.MicBusy(true))
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MIC_BUSY, ListeningTexts.MIC_BUSY), shown)
+        assertTrue(notices.shown.isEmpty())
+    }
+
+    @Test
+    fun aStopByAndroidUnderTheBatteryRestrictionSaysSo() = runTest {
+        conditions.restricted = true
+        val listening = listeningWithSession()
+
+        listening.onServiceDestroyed(service)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(ListeningTexts.BATTERY_RESTRICTED, shown.last())
+        assertEquals(listOf(StopReason.BATTERY_RESTRICTED), notices.shown)
+    }
+
+    @Test
     fun aMicrophoneThatFailsStartsAgainAfterASecond() = runTest {
         val listening = listeningWithSession()
         log.clear()
@@ -1558,8 +1608,14 @@ class ListeningTest {
 
     private class FakeConditions : ListeningConditions {
         var microphone = true
+        var restricted = false
+        var demoted = false
 
         override fun microphoneAllowed() = microphone
+
+        override fun backgroundRestricted() = restricted
+
+        override fun demoted(service: Any) = demoted
     }
 
     private class FakeMicrophone : Microphone {

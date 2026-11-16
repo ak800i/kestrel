@@ -59,6 +59,15 @@ internal interface ModeMemory {
 internal interface ListeningConditions {
     /** Whether the owner allowed Kestrel to record audio. */
     fun microphoneAllowed(): Boolean
+
+    /** Whether the owner set Kestrel's battery use to Restricted (`ActivityManager.isBackgroundRestricted()`). */
+    fun backgroundRestricted(): Boolean
+
+    /**
+     * Whether Android took the foreground from ListeningService's instance [service]: its foreground service type is 0.
+     * Android does this without an exception or a callback (prototype P2).
+     */
+    fun demoted(service: Any): Boolean
 }
 
 /** What Kestrel says and shows while it listens, and why it stopped (design spec, sections 8.9 and 14.6). */
@@ -80,6 +89,8 @@ internal object ListeningTexts {
     const val ENGINES_FAILED = "Kestrel could not load its speech engines."
     const val MICROPHONE_FAILED = "The microphone failed, so Kestrel stopped listening."
     const val STOPPED_BY_ANDROID = "Android stopped Kestrel's listening."
+    const val BATTERY_RESTRICTED = "Android stops Kestrel's listening in the background because its battery use is " +
+        "Restricted. Set it to Unrestricted."
     const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on. Tap my " +
         "listening notification instead."
@@ -108,6 +119,11 @@ internal enum class StopReason(val text: String, val restart: Boolean, val start
 
     /** Android stopped ListeningService on its own. */
     STOPPED_BY_ANDROID(ListeningTexts.STOPPED_BY_ANDROID, restart = true, starting = false),
+
+    /**
+     * Android took the foreground from ListeningService, or stopped it, because Kestrel's battery use is Restricted.
+     */
+    BATTERY_RESTRICTED(ListeningTexts.BATTERY_RESTRICTED, restart = false, starting = false),
 }
 
 /**
@@ -436,7 +452,9 @@ class Listening internal constructor(
         // Android ended the service on its own, so Kestrel no longer listens, and the Orchestrator must know it.
         // Kestrel says so in place of "Off" (section 14.6).
         running = null
-        stopBecause(StopReason.STOPPED_BY_ANDROID)
+        // Under the battery restriction, Android stops the service a minute after it took its foreground (prototype
+        // P2).
+        stopBecause(if (conditions.backgroundRestricted()) StopReason.BATTERY_RESTRICTED else StopReason.STOPPED_BY_ANDROID)
     }
 
     private fun open() {
@@ -634,7 +652,14 @@ class Listening internal constructor(
             Effect.CancelTask, is Effect.RunCommand -> Unit
             is Effect.Show -> {
                 (effect.feedback as? Feedback.ModeChanged)?.let { noteMode(it.mode) }
-                bar.show(text(effect.feedback))
+                if (effect.feedback == Feedback.MicBusy && demotedByBattery()) {
+                    // Section 14.6: the microphone stays silenced, and Android stops the service a minute later. Only
+                    // the first MicBusy asks: when something else already blocked the microphone, the bar says
+                    // "Microphone blocked" until Android stops the service, and destroyed() then names the battery.
+                    stopBecause(StopReason.BATTERY_RESTRICTED)
+                } else {
+                    bar.show(text(effect.feedback))
+                }
             }
             // The Orchestrator runs the wait itself.
             is Effect.WaitForTask -> Unit
@@ -655,6 +680,16 @@ class Listening internal constructor(
             return
         }
         if (!opened) send(Event.SettingsUnavailable)
+    }
+
+    /**
+     * Whether Android took the foreground from the running service because Kestrel's battery use is Restricted. Without
+     * Kestrel's accessibility service, Android does this about 30 s after the Quick Settings panel closes, and the
+     * first sign is the silenced microphone (prototype P2).
+     */
+    private fun demotedByBattery(): Boolean {
+        val service = running ?: return false
+        return conditions.demoted(service) && conditions.backgroundRestricted()
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

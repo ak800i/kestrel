@@ -731,8 +731,10 @@ Kestrel always says what happened and what it already did. It never fails silent
 | Voice output fails | Kestrel shows its text on screen only |
 | The microphone fails, for example after Android's audio server restarted, or the listening pipeline fails on a frame | Kestrel starts it again after 1 s. If that fails, or the microphone fails again within a minute of that restart, Kestrel turns off and says why |
 | Recognition keeps returning empty text | Kestrel suggests checking the microphone permission |
-| The accessibility service is turned off or killed | A persistent notification says "Kestrel is off" and opens the settings page with one tap |
-| Samsung battery restrictions are detected | The setup checklist asks for unrestricted battery use and "Never sleeping apps" |
+| Kestrel's accessibility service is turned off | A notification says that the service is off, so Kestrel cannot use the screen, the accessibility button or the shortcut, and a tap opens Android's accessibility settings. If Kestrel is listening, it goes on listening, because the listening service does not need the accessibility service (prototype P2). The notification makes no sound, and it goes when the service connects again |
+| Android lists the accessibility service as on but does not run it, as after "Stop app" | The setup checklist asks the owner to turn the service off and on again |
+| Kestrel's battery use is Restricted | The setup checklist shows a warning. Without the accessibility service, Android takes the foreground from the listening service about 30 s after the Quick Settings panel closes and silences the microphone 5 s later (prototype P2); Kestrel then turns off at once and says why, and it says the same when Android stops the service |
+| A Samsung phone | The setup checklist also asks for "Never sleeping apps", which Kestrel cannot read |
 | The microphone service cannot start | Kestrel turns off and says why: Android refused the start in the background (then the owner can start it with the tile, the accessibility shortcut or the notification), the microphone permission is missing, the speech models are missing, or the speech engines did not load |
 | Android stops the listening service on its own | Kestrel turns off and says that Android stopped its listening |
 | Kestrel turns itself off, or cannot start | Besides the feedback bar, which exists only while the accessibility service runs, a notification on the channel "Problems" says why. A tap opens Kestrel. When a new start can help (a refused start in the background, a failed microphone, a stop by Android), it has a "Start listening" action, which starts the listening service as a service's `PendingIntent`, because a broadcast would leave only about 9 s for the microphone (prototype P2). The notification goes once Kestrel listens again, and the owner can swipe it away. Kestrel posts none for an Off that the owner chose |
@@ -746,9 +748,9 @@ The setup checklist stays visible until everything is done:
 
 1. Install Kestrel with `scripts/install.ps1`, which runs `adb install -r`. On the S23+, Samsung's Auto Blocker must be off while USB debugging is used.
 2. Copy the models with `scripts/push-models.ps1`.
-3. Turn on Kestrel's accessibility service.
+3. Turn on Kestrel's accessibility service. When Android lists it as on but does not run it, as after "Stop app", the checklist asks the owner to turn it off and on again.
 4. Allow the microphone and notifications.
-5. Allow unrestricted battery use, and add Kestrel to Samsung's "Never sleeping apps".
+5. Allow unrestricted battery use. The checklist shows a warning while the battery use is Restricted, because Android then stops listening in the background (section 14.6). On a Samsung phone, the step also asks for "Never sleeping apps", which Kestrel cannot read.
 6. Optionally, make Kestrel the default digital assistant, for the side key and the earbuds.
 7. Sign in to a provider and choose the models.
 8. Optionally, turn off Voice Access, so that the two apps don't react to the same words. Kestrel shows a warning while both are on.

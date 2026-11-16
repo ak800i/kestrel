@@ -14,25 +14,35 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 
-/** The setup checklist (design spec, section 15). [models] is what Kestrel knows about the model files. */
+/**
+ * The setup checklist (design spec, section 15). [models] is what Kestrel knows about the model files. [samsung]: the
+ * battery step also names Samsung's "Never sleeping apps".
+ */
 @Composable
 internal fun ChecklistPage(
     states: Map<SetupStep, StepState>,
     models: ModelCheck,
+    samsung: Boolean,
     onAction: (SetupAction) -> Unit,
     onBack: () -> Unit,
 ) {
     PageHeader(stringResource(R.string.settings_checklist), onBack)
     for (step in SetupStep.entries) {
-        StepCard(step, states.getValue(step), onAction) {
+        StepCard(step, states.getValue(step), samsung, onAction) {
             if (step == SetupStep.COPY_MODELS) ModelProblems(models)
         }
     }
 }
 
 @Composable
-private fun StepCard(step: SetupStep, state: StepState, onAction: (SetupAction) -> Unit, details: @Composable () -> Unit) {
-    val texts = texts(step)
+private fun StepCard(
+    step: SetupStep,
+    state: StepState,
+    samsung: Boolean,
+    onAction: (SetupAction) -> Unit,
+    details: @Composable () -> Unit,
+) {
+    val texts = texts(step, samsung)
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(texts.title), style = MaterialTheme.typography.titleMedium)
@@ -69,7 +79,7 @@ private class StepTexts(
     @StringRes val warning: Int? = null,
 )
 
-private fun texts(step: SetupStep): StepTexts = when (step) {
+private fun texts(step: SetupStep, samsung: Boolean): StepTexts = when (step) {
     SetupStep.INSTALL -> StepTexts(R.string.setup_install_title, R.string.setup_install_detail)
     SetupStep.COPY_MODELS -> StepTexts(R.string.setup_models_title, R.string.setup_models_detail)
     SetupStep.ACCESSIBILITY_SERVICE -> StepTexts(
@@ -77,6 +87,7 @@ private fun texts(step: SetupStep): StepTexts = when (step) {
         R.string.setup_service_detail,
         SetupAction.ACCESSIBILITY_SETTINGS,
         R.string.setup_open_accessibility,
+        R.string.setup_service_warning,
     )
     SetupStep.MICROPHONE_AND_NOTIFICATIONS -> StepTexts(
         R.string.setup_permissions_title,
@@ -86,9 +97,11 @@ private fun texts(step: SetupStep): StepTexts = when (step) {
     )
     SetupStep.BATTERY -> StepTexts(
         R.string.setup_battery_title,
-        R.string.setup_battery_detail,
+        // Only Samsung's battery settings have "Never sleeping apps" (section 14.6).
+        if (samsung) R.string.setup_battery_detail_samsung else R.string.setup_battery_detail,
         SetupAction.APP_SETTINGS,
         R.string.setup_open_app_settings,
+        R.string.setup_battery_warning,
     )
     SetupStep.DEFAULT_ASSISTANT -> StepTexts(R.string.setup_assistant_title, R.string.setup_assistant_detail)
     SetupStep.PROVIDER -> StepTexts(R.string.setup_provider_title, R.string.setup_provider_detail)

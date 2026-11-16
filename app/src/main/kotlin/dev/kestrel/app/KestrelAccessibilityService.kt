@@ -11,7 +11,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Reads the screen and acts on it for Kestrel (design spec, sections 7.2 and 9). The accessibility button and the
- * accessibility shortcut toggle listening through it (section 8.6). Android calls every callback on the main thread.
+ * accessibility shortcut toggle listening through it (section 8.6). While it is off in a running process, a
+ * notification says so (section 14.6). Android calls every callback on the main thread.
  */
 class KestrelAccessibilityService : AccessibilityService() {
     private val graph: AppGraph get() = (application as KestrelApplication).graph
@@ -20,6 +21,8 @@ class KestrelAccessibilityService : AccessibilityService() {
     private var button: AccessibilityButtonController.AccessibilityButtonCallback? = null
 
     override fun onServiceConnected() {
+        // The notification that said that this service was off goes (section 14.6).
+        graph.problems.accessibilityServiceOn()
         val connected = ScreenSession(this, graph.errors)
         session = connected
         graph.attachScreen(connected)
@@ -49,6 +52,10 @@ class KestrelAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         disconnect()
+        // Section 14.6: the screen, the button and the shortcut need this service; if Kestrel is listening, it goes on
+        // listening. Android calls this about 50 ms after the owner turned the service off (prototype P2), and
+        // onDestroy right after it. The notice comes after disconnect(), so that the screen session is detached first.
+        graph.problems.accessibilityServiceOff()
         return super.onUnbind(intent)
     }
 

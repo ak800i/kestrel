@@ -4,8 +4,11 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import dev.kestrel.app.R
 
 /**
@@ -39,12 +42,49 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
 
     override fun clear() = notifications.cancel(STOPPED_ID)
 
+    /**
+     * Kestrel's accessibility service disconnected, for example because the owner turned it off. Kestrel cannot use the
+     * screen, the accessibility button or the shortcut until the service is on again; if Kestrel is listening, it goes
+     * on listening (prototype P2). A tap opens Android's accessibility settings, where the owner turns the service on.
+     * Android's page of one service (ACTION_ACCESSIBILITY_DETAILS_SETTINGS) is a system API, and its activity needs a
+     * permission that only the system and the installer hold. The channel makes no sound, because the owner usually
+     * turned the service off on purpose.
+     */
+    fun accessibilityServiceOff() {
+        if (!allowed()) return
+        notifications.createNotificationChannel(
+            NotificationChannel(ACCESSIBILITY, context.getString(R.string.accessibility_channel), NotificationManager.IMPORTANCE_LOW),
+        )
+        val text = context.getString(R.string.problem_service_off_text)
+        val settings = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = Notification.Builder(context, ACCESSIBILITY)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle(context.getString(R.string.problem_service_off_title))
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(settings)
+            .build()
+        notifications.notify(ACCESSIBILITY_ID, notification)
+    }
+
+    /** Kestrel's accessibility service connected, so the notification of [accessibilityServiceOff] goes. */
+    fun accessibilityServiceOn() = notifications.cancel(ACCESSIBILITY_ID)
+
     private fun allowed() =
         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     companion object {
         /** The notification that says why Kestrel stopped listening or could not start. */
         internal const val STOPPED_ID = 7_102
+
+        /** The notification that says that Kestrel's accessibility service is off. */
+        internal const val ACCESSIBILITY_ID = 7_103
         private const val PROBLEMS = "problems"
+        private const val ACCESSIBILITY = "accessibility"
     }
 }
