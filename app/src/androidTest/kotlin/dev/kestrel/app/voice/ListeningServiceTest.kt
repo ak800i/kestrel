@@ -24,7 +24,8 @@ import org.junit.Test
 
 /**
  * ListeningService (design spec, sections 7.2, 8.5 and 8.6): the foreground, the notification's actions, the screen and
- * the lock, and a stop that Kestrel did not ask for. The lock-screen test runs only on emulators (scripts\voice-test.ps1).
+ * the lock, and a stop that Kestrel did not ask for. The lock-screen test runs only on emulators: it skips itself on a
+ * phone, and scripts\voice-test.ps1 leaves it out there.
  */
 class ListeningServiceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -76,6 +77,7 @@ class ListeningServiceTest {
 
     @Test
     fun theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock() {
+        VoiceTests.assumeEmulator()
         ActivityScenario.launch(MainActivity::class.java).use { VoiceTests.startListening(clip) }
         // kestrel-api37 has no lock screen. A phone has one, and only ACTION_USER_PRESENT, which SystemUI sends, tells
         // Kestrel that the owner unlocked it. So the test turns on the swipe lock screen, and turns it off again.

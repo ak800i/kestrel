@@ -2,6 +2,7 @@ package dev.kestrel.app.voice
 
 import android.Manifest
 import android.app.UiAutomation
+import android.os.Build
 import android.os.Debug
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -52,6 +53,12 @@ internal object VoiceTests {
         val notReady = runBlocking { graph.models.check() }.filter { it.model.engine in engines && !it.ready }
         assumeTrue("Models missing or damaged: ${notReady.map { it.model.id }}. Run scripts\\voice-test.ps1.", notReady.isEmpty())
     }
+
+    /**
+     * Skips the test on a phone. A test that changes a setting of the whole device runs only on an emulator, because a
+     * test process that dies would leave the setting changed.
+     */
+    fun assumeEmulator() = assumeTrue("Runs only on an emulator", Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish")
 
     /** [text] in Kestrel's voice without variation, so that it is the same in every run, at 16 kHz. */
     @Synchronized

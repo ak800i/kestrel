@@ -565,6 +565,54 @@ class ListeningTest {
         assertFalse(listening.state.value.speaking)
     }
 
+    @Test
+    fun aTranscriptionThatFailsWhileTheSessionIsOpenIsReported() = runTest {
+        val listening = listeningWithSession()
+
+        sessions.opened.single().listener.transcriptionFailed(IllegalStateException("The recogniser failed"))
+        runCurrent()
+
+        assertEquals("A transcription", reports.single().first)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aCancelledReplyEndsWithoutAFailure() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        shown.clear()
+
+        // As player.close() cancels a reply in progress.
+        sessions.opened.single().replies.single().cancel()
+        runCurrent()
+
+        assertFalse(listening.state.value.speaking)
+        assertTrue(shown.isEmpty())
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test
+    fun anErrorFromAnEffectTurnsKestrelOffAndTheOrchestratorRunsOn() = runTest {
+        val errors = mutableListOf<Throwable>()
+        val listening = listeningWithSession(catching(errors))
+        sessions.opened.single().speakFailure = OutOfMemoryError("Failed to allocate")
+        log.clear()
+
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertFalse(listening.state.value.speaking)
+        assertTrue(reports.single().second is OutOfMemoryError)
+        assertEquals(listOf("close", "closed", "stop"), log.takeLast(3))
+
+        // The Orchestrator still handles events.
+        listening.send(Event.Toggle)
+        runCurrent()
+        assertEquals("start", log.last())
+        assertTrue(errors.isEmpty())
+    }
+
     /** A scope whose failures go to [errors] instead of failing the test, for the errors that the controller rethrows. */
     private fun TestScope.catching(errors: MutableList<Throwable>): CoroutineScope = CoroutineScope(
         backgroundScope.coroutineContext + SupervisorJob(backgroundScope.coroutineContext[Job]) +
@@ -612,6 +660,7 @@ class ListeningTest {
         val replies = mutableListOf<CompletableDeferred<Spoke>>()
         var closing: CompletableDeferred<Unit>? = null
         var closeFailure: Throwable? = null
+        var speakFailure: Throwable? = null
         private var current: Recognition? = null
 
         // Logged only when it changes, so that the log shows what the pipeline would see.
@@ -633,6 +682,7 @@ class ListeningTest {
 
         override fun speak(text: String): Deferred<Spoke> {
             said += text
+            speakFailure?.let { throw it }
             return CompletableDeferred<Spoke>().also { replies += it }
         }
 

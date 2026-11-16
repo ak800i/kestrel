@@ -34,8 +34,9 @@ import kotlinx.coroutines.launch
  * Keeps Kestrel listening (design spec, sections 7.2, 8.5 and 8.6): a foreground service of the types microphone and
  * media playback, because Android lets Kestrel record and play audio in the background only while such a service runs
  * (B5). [Listening] starts and stops it, and holds the voice session while it runs. The service shows the notification
- * with Pause or Resume and Stop, and tells [Listening] whether the screen is on and the phone unlocked. It stops itself
- * when [Listening] asks, unless a newer start is still on its way to it. Android calls every callback on the main thread.
+ * with Pause or Resume and Stop, or without actions once Kestrel is turning off, and tells [Listening] whether the screen
+ * is on and the phone unlocked. It stops itself when [Listening] asks, unless a newer start is still on its way to it.
+ * Android calls every callback on the main thread.
  */
 class ListeningService : Service() {
     private val listening: Listening get() = (application as KestrelApplication).graph.listening
@@ -45,9 +46,17 @@ class ListeningService : Service() {
 
     // The id of the last start that onStartCommand handled; only the main thread uses it.
     private var lastStartId = 0
+
+    // The owner unlocked the phone since the screen last went off (USER_PRESENT). Only the main thread uses it.
+    private var unlocked = false
     private val screen = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) =
-            reportScreen(unlocked = intent.action == Intent.ACTION_USER_PRESENT)
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_USER_PRESENT -> unlocked = true
+                Intent.ACTION_SCREEN_OFF -> unlocked = false
+            }
+            reportScreen()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -71,8 +80,8 @@ class ListeningService : Service() {
         reportScreen()
         scope.launch {
             listening.state.map { it.mode }.distinctUntilChanged().collect { mode ->
-                // Off: the service is about to stop, and its notification goes with it.
-                if (foreground && mode != Mode.OFF) notifications.notify(NOTIFICATION_ID, notification(mode))
+                // Off: the notification says that Kestrel is turning off, without actions, until the service stops.
+                if (foreground) notifications.notify(NOTIFICATION_ID, notification(mode))
             }
         }
     }
@@ -96,8 +105,7 @@ class ListeningService : Service() {
         // update from the collector in onCreate. One more update a moment later shows the current mode.
         scope.launch {
             delay(REPOST_MILLIS)
-            val mode = listening.state.value.mode
-            if (foreground && mode != Mode.OFF) notifications.notify(NOTIFICATION_ID, notification(mode))
+            if (foreground) notifications.notify(NOTIFICATION_ID, notification(listening.state.value.mode))
         }
         listening.onForeground(this)
         when (intent?.action) {
@@ -120,29 +128,39 @@ class ListeningService : Service() {
     }
 
     /**
-     * Section 8.5: Kestrel records only while the screen is on and the phone unlocked. [unlocked]: the broadcast was
-     * USER_PRESENT, which says that the owner unlocked the phone, even if KeyguardManager learns it a moment later.
+     * Section 8.5: Kestrel records only while the screen is on and the phone unlocked. After USER_PRESENT the phone counts
+     * as unlocked until the screen goes off, because KeyguardManager can learn of the unlock a moment later, and a
+     * SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock.
      */
-    private fun reportScreen(unlocked: Boolean = false) {
+    private fun reportScreen() {
         val interactive = getSystemService(PowerManager::class.java).isInteractive
-        val locked = !unlocked && getSystemService(KeyguardManager::class.java).isKeyguardLocked
-        listening.send(Event.Screen(on = interactive && !locked))
+        val locked = getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        listening.send(Event.Screen(on = interactive && (unlocked || !locked)))
     }
 
+    /** The notification of [mode]. Off: the service is about to stop, so it offers no actions until then. */
     private fun notification(mode: Mode): Notification {
-        val listeningNow = mode == Mode.LISTENING
         val open = PendingIntent.getActivity(this, 0, launcherIntent(), PendingIntent.FLAG_IMMUTABLE)
-        val title = if (listeningNow) R.string.listening_title_listening else R.string.listening_title_paused
-        val toggle = if (listeningNow) action(R.string.listening_pause, ACTION_PAUSE) else action(R.string.listening_resume, ACTION_RESUME)
-        return Notification.Builder(this, CHANNEL)
+        val title = when (mode) {
+            Mode.LISTENING -> R.string.listening_title_listening
+            Mode.PAUSED -> R.string.listening_title_paused
+            Mode.OFF -> R.string.listening_title_stopping
+        }
+        val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(title))
             .setContentIntent(open)
             .setOngoing(true)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(toggle)
-            .addAction(action(R.string.listening_stop, ACTION_STOP))
-            .build()
+        if (mode != Mode.OFF) {
+            val toggle = if (mode == Mode.LISTENING) {
+                action(R.string.listening_pause, ACTION_PAUSE)
+            } else {
+                action(R.string.listening_resume, ACTION_RESUME)
+            }
+            builder.addAction(toggle).addAction(action(R.string.listening_stop, ACTION_STOP))
+        }
+        return builder.build()
     }
 
     // The launcher's own intent, so that a tap brings Kestrel's task to the front instead of adding another MainActivity.

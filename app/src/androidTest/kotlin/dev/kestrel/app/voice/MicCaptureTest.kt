@@ -134,6 +134,7 @@ class MicCaptureTest {
 
     @Test
     fun silencedFollowsTheMicrophonesPrivacyToggle() {
+        VoiceTests.assumeEmulator()
         assumeTrue(
             "This device has no privacy toggle for the microphone",
             context.getSystemService(SensorPrivacyManager::class.java)

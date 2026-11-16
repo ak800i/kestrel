@@ -318,6 +318,17 @@ class Listening internal constructor(
     }
 
     private fun perform(effect: Effect) {
+        try {
+            performUnguarded(effect)
+        } catch (e: Error) {
+            // Such as an OutOfMemoryError. Thrown on, it would end the Orchestrator's loop, and then nothing would turn
+            // Kestrel off any more, while the service and the microphone run on. Off also ends a reply that did not start.
+            report("An effect", e)
+            send(Event.TurnOff)
+        }
+    }
+
+    private fun performUnguarded(effect: Effect) {
         when (effect) {
             is Effect.Say -> say(effect.reply)
             Effect.StopSaying -> session?.stopSpeaking()

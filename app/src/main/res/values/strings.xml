@@ -108,6 +108,7 @@
     <string name="listening_channel">Listening</string>
     <string name="listening_title_listening">Kestrel is listening</string>
     <string name="listening_title_paused">Kestrel is paused</string>
+    <string name="listening_title_stopping">Kestrel is turning off</string>
     <string name="listening_pause">Pause</string>
     <string name="listening_resume">Resume</string>
     <string name="listening_stop">Stop</string>
