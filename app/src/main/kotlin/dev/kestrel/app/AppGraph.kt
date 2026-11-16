@@ -3,7 +3,9 @@ package dev.kestrel.app
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.FeedbackBar
+import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
@@ -29,6 +31,8 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,6 +64,16 @@ class AppGraph(context: Context) {
 
     /** Background work, whose failures go to [errors]. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + errors)
+
+    /**
+     * Logs a failure that Kestrel handled, after a fixed description of what failed: only the error's classes and stack
+     * frames, one entry for each error of the chain of causes, as [errors] does (section 13.5).
+     */
+    private val reportFailure: (String, Throwable) -> Unit = { what, error ->
+        for ((index, part) in error.describeWithoutMessagesByCause().withIndex()) {
+            Log.w(TAG, if (index == 0) "$what failed: $part" else part)
+        }
+    }
 
     private val store = PrivacyStore(context)
     val logs = store.logs
@@ -99,17 +113,18 @@ class AppGraph(context: Context) {
             scope = scope,
             thread = Dispatchers.Default.limitedParallelism(1),
             sessions = object : VoiceSessions {
-                override suspend fun open(microphone: Microphone, listener: SessionListener): Session =
-                    VoiceSession.open(appContext, voice, microphone, listener)
+                override suspend fun open(microphone: Microphone, listener: SessionListener): Session = coroutineScope {
+                    // "Kestrel" and the names of the apps that the launcher shows, read once while the engines load.
+                    // words() throws only a cancellation, so it cannot fail this scope; a failed load cancels it.
+                    val apps = BoostWordSource(LauncherAppLabels(appContext), reportFailure)
+                    val words = async { apps.words() }
+                    VoiceSession.open(appContext, voice, microphone, listener, boostWords = { words.await() })
+                }
             },
             services = ListeningService.control(appContext),
             // One main-thread task per text, in order, so that an earlier text never replaces a later one.
             bar = FeedbackBar { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text) } },
-            report = { what, error ->
-                for ((index, part) in error.describeWithoutMessagesByCause().withIndex()) {
-                    Log.w(TAG, if (index == 0) "$what failed: $part" else part)
-                }
-            },
+            report = reportFailure,
             // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity. The
             // controller's thread calls it; startActivity may be called from any thread.
             openSettings = {

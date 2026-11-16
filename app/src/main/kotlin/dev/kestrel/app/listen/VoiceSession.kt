@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * listening pipeline, the echo filter and the voice player, and turns what the pipeline hears into the Orchestrator's
  * events for [listener]. The microphone's thread feeds the pipeline and reports its errors to [listener];
  * transcription runs one utterance at a time on [Dispatchers.Default], and the events go out from coroutines of the
- * session. The only boost word is "Kestrel" for now.
+ * session. [words] are the boost words of every utterance of the session (section 8.3).
  */
 internal class VoiceSession(
     context: Context,
@@ -41,6 +41,7 @@ internal class VoiceSession(
     private val synthesizer: Synthesizer,
     private val microphone: Microphone,
     private val listener: SessionListener,
+    private val words: List<String> = listOf(BoostWordSource.NAME),
 ) : Session {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val closed = AtomicBoolean(false)
@@ -50,7 +51,7 @@ internal class VoiceSession(
         detector = detector,
         spotter = spotter,
         recognizer = recognizer,
-        boostWords = { BOOST_WORDS },
+        boostWords = { words },
         // The keyword spotter hears Kestrel's own voice too; the echo filter knows what Kestrel said and when (8.4).
         isOwnVoice = { keyword -> echo.isOwnVoice(keyword, SystemClock.elapsedRealtime(), player.recent()) },
         scope = scope,
@@ -127,20 +128,22 @@ internal class VoiceSession(
     }
 
     companion object {
-        private val BOOST_WORDS = listOf("Kestrel")
-
         /**
          * Loads the engines and opens a session (section 8.2): the speech detector, the keyword spotter, the voice with
          * its default options, and the recogniser last, because it holds about 700 MB: a missing model of another
          * engine then fails before it loads. Takes several seconds. Throws `ModelsNotReadyException` when a model is
          * missing or damaged, after closing the engines that it had loaded; it closes them also when a load fails
-         * otherwise or is cancelled. The loaders are parameters only for the tests.
+         * otherwise or is cancelled. It asks [boostWords] once, after the recogniser has loaded and inside the same clean-up,
+         * so that the caller can read the words while the engines load, and a cancellation while it waits still closes the
+         * engines. The session keeps the words, so that a change of the installed apps counts from the next time that
+         * Kestrel turns on. The loaders are parameters only for the tests.
          */
         suspend fun open(
             context: Context,
             engines: VoiceEngines,
             microphone: Microphone,
             listener: SessionListener,
+            boostWords: suspend () -> List<String> = { listOf(BoostWordSource.NAME) },
             loadSpeechDetector: suspend () -> SpeechDetector = { engines.speechDetector() },
             loadKeywordSpotter: suspend () -> KeywordSpotter = { engines.keywordSpotter() },
             loadSynthesizer: suspend () -> Synthesizer = { engines.synthesizer() },
@@ -152,7 +155,8 @@ internal class VoiceSession(
                 val spotter = loadKeywordSpotter().also { loaded += it }
                 val synthesizer = loadSynthesizer().also { loaded += it }
                 val recognizer = loadRecognizer().also { loaded += it }
-                return VoiceSession(context, detector, spotter, recognizer, synthesizer, microphone, listener)
+                val words = boostWords()
+                return VoiceSession(context, detector, spotter, recognizer, synthesizer, microphone, listener, words)
             } catch (e: Throwable) {
                 withContext(NonCancellable + Dispatchers.IO) {
                     for (engine in loaded.asReversed()) {

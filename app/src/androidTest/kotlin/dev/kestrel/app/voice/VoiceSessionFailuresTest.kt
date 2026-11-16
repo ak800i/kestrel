@@ -116,6 +116,29 @@ class VoiceSessionFailuresTest {
     }
 
     @Test
+    fun theSessionsBoostWordsReachTheRecognizer() = runBlocking {
+        val session = VoiceSession.open(
+            context, VoiceTests.graph.voice, microphone, listener,
+            boostWords = { listOf("Kestrel", "Viber") },
+            loadSpeechDetector = { detector },
+            loadKeywordSpotter = { spotter },
+            loadSynthesizer = { synthesizer },
+            loadRecognizer = { recognizer },
+        )
+        try {
+            session.recognition = Recognition.ALL
+            session.startMicrophone()
+            detector.next.add(Utterance(0, FloatArray(seconds(0.5f).toInt())))
+            microphone.feed(0.02f)
+            listener.await { it is Event.Heard }
+
+            assertEquals(listOf(listOf("Kestrel", "Viber")), recognizer.boostWords.toList())
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
     fun openClosesTheLoadedEnginesWhenALaterLoadFails() = runBlocking {
         val missing = ModelsNotReadyException(Engine.TTS, emptyList())
         val closing = FakeFailure()
@@ -194,8 +217,12 @@ class VoiceSessionFailuresTest {
         @Volatile
         var fails = false
 
+        /** The boost words of each call of [transcribe]. */
+        val boostWords = CopyOnWriteArrayList<List<String>>()
+
         override fun transcribe(samples: FloatArray, boostWords: List<String>): Transcript {
             checkOpen()
+            this.boostWords += boostWords
             if (fails) throw FakeFailure()
             return Transcript(TEXT, pieces = 1, lastWordEnd = 0.5f)
         }
