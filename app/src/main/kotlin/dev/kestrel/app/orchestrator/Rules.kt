@@ -69,8 +69,9 @@ sealed interface Event {
      * The owner speaks while Kestrel recognises speech. Send it when the speech detector hears speech on a frame for
      * which recognition is on, and on the frame before it either heard none or recognition was off. Send it again when a
      * transcript arrives while the detector still hears speech. Read `hearsSpeech` on the microphone's thread, after
-     * `ListeningPipeline.accept`. An utterance that ends without a transcript while recognition is on should restart the
-     * 8 s wait for a task; plan 2C adds the event for it.
+     * `ListeningPipeline.accept`; the pipeline's `VoiceEvent.SpeechStarted` follows this rule. An utterance that ends
+     * without a transcript while recognition is on restarts the 8 s wait for a task: `VoiceSession` sends
+     * `Heard("", named = false)` for it.
      */
     data object Speaking : Event
 
