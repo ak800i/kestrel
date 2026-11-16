@@ -49,6 +49,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
         if (command == "TEST_MODE") return testMode(intent)
         if (command == "CRASH") return crash(intent.requiredText())
         if (command in SpikeHooks.COMMANDS) return SpikeHooks(context, graph).run(command, intent)
+        if (command in VoiceHooks.COMMANDS) return VoiceHooks(graph).run(command, intent)
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val actions = session.actions
         return when (command) {
@@ -155,7 +156,8 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
 
     private fun onOff(value: Boolean) = if (value) "on" else "off"
 
-    private class HookError(override val message: String) : Exception(message)
+    /** A mistake in a command, which the answer reports. VoiceHooks throws it too. */
+    class HookError(override val message: String) : Exception(message)
 
     companion object {
         const val ACTION_PREFIX = "dev.kestrel.hook."

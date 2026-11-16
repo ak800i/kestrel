@@ -11,6 +11,18 @@
 #   global -Action back|home|recent-apps|notifications|quick-settings|lock-screen|screenshot|power-menu|split-screen|play-pause
 #   crash -Text 'text'                      ends Kestrel's process with an error whose message is the text, to check
 #                                           that Android's crash records do not contain it
+# Listening (a start needs Kestrel in front or its accessibility service on, the speech models that
+# scripts\push-models.ps1 copies, and the microphone permission; the notification and its actions show only with the
+# notification permission):
+#   voice -Send toggle|pause|resume|off|screen-on|screen-off
+#                                           sends the event to Kestrel's Orchestrator; toggle starts listening, and
+#                                           the notification's Pause or Resume and Stop actions work while it runs
+#   voice -Send heard -Text 'text' [-Named] sends a transcript, as if Kestrel had heard it; -Named as if the keyword
+#                                           spotter had heard "Kestrel" at its start
+#   voice-state                             the Orchestrator's mode, work, speaking, microphone, recognition, screen and
+#                                           "mic busy", and whether the voice session is open; never text
+#   voice-clip -Text 'text'                 says the text in Kestrel's voice into a stand-in microphone; Kestrel hears
+#                                           it from its next start, and then only such clips until its process ends
 # Spike S1 (scripts\spike-s1.ps1 runs these):
 #   listen [-Source name] [-DelaySeconds n] [-Seconds n]
 #                                           starts the stand-in listening service after n seconds (15 by default)
@@ -35,8 +47,9 @@
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'listen',
-        'listen-notification', 'listen-after-boot', 'location', 'spike-results', 'files', 'watch')][string]$Command,
+    [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
+        'voice-state', 'voice-clip', 'listen', 'listen-notification', 'listen-after-boot', 'location', 'spike-results',
+        'files', 'watch')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -52,7 +65,9 @@ param(
     [int]$DelaySeconds = -1,
     [int]$Seconds = -1,
     [switch]$Clear,
-    [string]$Create
+    [string]$Create,
+    [ValidateSet('toggle', 'pause', 'resume', 'off', 'screen-on', 'screen-off', 'heard')][string]$Send,
+    [switch]$Named
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -89,6 +104,8 @@ if ($DelaySeconds -ge 0) { $extras += "--ei delay $DelaySeconds" }
 if ($Seconds -gt 0) { $extras += "--ei seconds $Seconds" }
 if ($Clear) { $extras += '--ez clear true' }
 if ($Create) { $extras += "--es create $(ConvertTo-ShellText $Create)" }
+if ($Send) { $extras += "--es event $(ConvertTo-ShellText $Send)" }
+if ($Named) { $extras += '--ez named true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
