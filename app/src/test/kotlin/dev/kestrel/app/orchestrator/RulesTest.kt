@@ -482,6 +482,20 @@ class RulesTest {
     }
 
     @Test
+    fun stopBeforeOpenSettingsCancelsTheRunningTask() {
+        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
+
+        val step = Rules.next(running, Event.Heard("Stop. Kestrel, open settings.", named = true))
+
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.CancelTask, Effect.OpenSettings),
+            step.effects,
+        )
+        assertEquals(Work.IDLE, step.state.work)
+        assertTrue(step.state.cancelled)
+    }
+
+    @Test
     fun neverMindEndsTheWaitForATask() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
 

@@ -25,8 +25,11 @@ sealed interface Request {
     /** "Stop Kestrel", or "Kestrel, turn off": off. */
     data object TurnOff : Request
 
-    /** "Kestrel, open settings" or "Kestrel settings": Kestrel's settings app (section 15). */
-    data object OpenSettings : Request
+    /**
+     * "Kestrel, open settings" or "Kestrel settings": Kestrel's settings app (section 15). [stopFirst]: the owner said
+     * "stop" or "cancel" before it, as in "Stop. Kestrel, open settings.", so a running task should be cancelled first.
+     */
+    data class OpenSettings(val stopFirst: Boolean = false) : Request
 
     /** Anything else, which the instant commands of sub-project 3 will read. */
     data class Other(val text: String) : Request {
@@ -48,12 +51,18 @@ sealed interface Request {
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
  *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings", or a
  *    task. In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. A task
- *    after "stop" or "cancel" asks to cancel a running task first.
+ *    or "open settings" after "stop" or "cancel" asks to cancel a running task first.
  * 4. Otherwise "stop listening" pauses, and "wake up", "stop listening", "turn off" or "switch off" followed by the
- *    name count too.
- *    Everything else is for the instant commands, or, in an answer to "Yes?", read as the words after the name.
+ *    name count too. In an answer to "Yes?", "never mind", "forget it" and "nothing" followed by the name are a named
+ *    stop.
+ *    Everything else is for the instant commands, or, in an answer to "Yes?", read as the words after the name. A bare
+ *    "turn off" or "switch off" in an answer is a task, though: the answer ends after 0.7 s of silence (section 8.3),
+ *    so the owner may still be saying what to turn off. "Kestrel, turn off", "Turn off, Kestrel" and "Stop Kestrel"
+ *    still turn Kestrel off.
  *
- * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up".
+ * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up". The
+ * answers that end the wait may also come with "no", "oh", "ah", "thanks" or "thank you", as in "No, never mind" or
+ * "Nothing, thanks".
  */
 object Requests {
     private const val NAME = "kestrel"
@@ -81,11 +90,15 @@ object Requests {
     // Answers to "Yes?" that end the wait (section 8.3).
     private val NEVER_MIND = setOf("never mind", "nevermind", "forget it", "nothing")
 
+    // Words that may come before or after those answers, as in "No, never mind" or "Nothing, thank you".
+    private val AROUND_NEVER_MIND =
+        listOf(listOf("no"), listOf("oh"), listOf("ah"), listOf("thanks"), listOf("thank", "you"))
+
     /**
      * Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start.
      * [afterName]: the transcript answers "Yes?", so words without the name are read as the words after it: "Wake up."
-     * is [Request.WakeUp], "Stop." is a named stop, and "Open the settings." is a task. "Stop Kestrel" still turns
-     * Kestrel off.
+     * is [Request.WakeUp], "Stop." is a named stop, and "Open the settings." is a task. "Turn off." is a task too, while
+     * "Stop Kestrel" and "Turn off, Kestrel" still turn Kestrel off.
      */
     fun read(transcript: String, spotted: Boolean, afterName: Boolean = false): Request? {
         val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
@@ -105,7 +118,8 @@ object Requests {
                 rest = rest.drop(again)
                 again = nameAt(rest, 0, limit)
             }
-            return named(transcript, rest, limit, stopFirst = start == 1 && words[0].text in STOP_WORDS, afterName = afterName)
+            val stopFirst = start == 1 && words[0].text in STOP_WORDS
+            return named(transcript, rest, limit, stopFirst = stopFirst, afterName = afterName, nameSaid = true)
         }
         val phrase = phrase(words)
         val trailingName = nameBefore(words, words.size, limit)
@@ -114,8 +128,8 @@ object Requests {
             phrase == "stop listening" || beforeName == "stop listening" -> Request.PauseListening
             beforeName == "wake up" -> Request.WakeUp
             beforeName != null && beforeName in TURN_OFF -> Request.TurnOff
-            afterName && beforeName != null && beforeName in NEVER_MIND -> Request.Stop(named = true)
-            afterName -> named(transcript, words, limit, stopFirst = false, afterName = true)
+            afterName && trailingName > 0 && isNeverMind(words.dropLast(trailingName)) -> Request.Stop(named = true)
+            afterName -> named(transcript, words, limit, stopFirst = false, afterName = true, nameSaid = false)
             else -> Request.Other(transcript.trim())
         }
     }
@@ -147,18 +161,28 @@ object Requests {
         return Request.Stop(named)
     }
 
-    /** What [rest], the words after the name, ask for. [afterName]: they answer "Yes?". */
-    private fun named(transcript: String, rest: List<Word>, limit: Int, stopFirst: Boolean, afterName: Boolean): Request {
+    /**
+     * What [rest], the words after the name, ask for. [afterName]: they answer "Yes?". [nameSaid]: the owner said the
+     * name before them; without it, a bare "turn off" is a task, because the owner may not have finished.
+     */
+    private fun named(
+        transcript: String,
+        rest: List<Word>,
+        limit: Int,
+        stopFirst: Boolean,
+        afterName: Boolean,
+        nameSaid: Boolean,
+    ): Request {
         if (rest.isEmpty()) return Request.Name
         if (readStop(rest, limit) != null) return Request.Stop(named = true)
         val said = phrase(rest)
         return when {
             said == "wake up" -> Request.WakeUp
             said == "stop listening" -> Request.PauseListening
-            said in TURN_OFF -> Request.TurnOff
-            said in OPEN_SETTINGS -> Request.OpenSettings
+            nameSaid && said in TURN_OFF -> Request.TurnOff
+            said in OPEN_SETTINGS -> Request.OpenSettings(stopFirst)
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
-            afterName && said in NEVER_MIND -> Request.Stop(named = true)
+            afterName && isNeverMind(rest) -> Request.Stop(named = true)
             else -> Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst)
         }
     }
@@ -166,6 +190,22 @@ object Requests {
     /** [words] without the polite words, with "wakeup" read as "wake up". */
     private fun phrase(words: List<Word>): String =
         words.filter { it.text !in POLITE }.joinToString(" ") { if (it.text == "wakeup") "wake up" else it.text }
+
+    /** Whether [words] are one of [NEVER_MIND], maybe with the words of [AROUND_NEVER_MIND] before or after it. */
+    private fun isNeverMind(words: List<Word>): Boolean {
+        var said = phrase(words).split(" ")
+        while (true) {
+            said = AROUND_NEVER_MIND.firstNotNullOfOrNull { extra ->
+                when {
+                    said.size <= extra.size -> null
+                    said.take(extra.size) == extra -> said.drop(extra.size)
+                    said.takeLast(extra.size) == extra -> said.dropLast(extra.size)
+                    else -> null
+                }
+            } ?: break
+        }
+        return said.joinToString(" ") in NEVER_MIND
+    }
 
     /** How many words, one or two, make the name from [start], or 0. */
     private fun nameAt(words: List<Word>, start: Int, limit: Int): Int = when {

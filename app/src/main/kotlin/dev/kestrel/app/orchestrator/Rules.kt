@@ -212,12 +212,15 @@ object Rules {
         request is Request.Stop || request == Request.PauseListening || request == Request.TurnOff
 
     // Section 11.10: while a task runs, only "stop" and "cancel" count, and the ways to pause or turn Kestrel off.
-    // "Stop. Kestrel, [task]" cancels the running task and runs the new one.
+    // "Stop. Kestrel, [task]" cancels the running task and runs the new one, and "Stop. Kestrel, open settings" cancels it
+    // and opens the settings.
     private fun whileTaskRuns(state: State, request: Request, shown: Effect): Step = when (request) {
         is Request.Stop -> cancelTask(state, shown)
         is Request.Task -> if (request.stopFirst) cancelTask(state, shown).then { runTask(it, request.text) } else Step(state)
         Request.PauseListening -> cancelTask(state, shown).then { changeMode(it, Mode.PAUSED) }
         Request.TurnOff -> turnOff(state, shown)
+        is Request.OpenSettings ->
+            if (request.stopFirst) cancelTask(state, shown).then { Step(it, listOf(Effect.OpenSettings)) } else Step(state)
         else -> Step(state)
     }
 
@@ -230,7 +233,7 @@ object Rules {
         is Request.Stop -> Step(state.copy(work = Work.IDLE), listOf(shown))
         Request.PauseListening -> changeMode(state.copy(work = Work.IDLE), Mode.PAUSED, shown)
         Request.TurnOff -> turnOff(state, shown)
-        Request.OpenSettings -> Step(state.copy(work = Work.IDLE), listOf(shown, Effect.OpenSettings))
+        is Request.OpenSettings -> Step(state.copy(work = Work.IDLE), listOf(shown, Effect.OpenSettings))
     }
 
     private fun whileIdle(state: State, request: Request, text: String, shown: Effect): Step = when (request) {
@@ -239,7 +242,7 @@ object Rules {
         Request.WakeUp -> changeMode(state, Mode.LISTENING, shown)
         Request.PauseListening -> changeMode(state, Mode.PAUSED, shown)
         Request.TurnOff -> turnOff(state, shown)
-        Request.OpenSettings -> Step(state, listOf(shown, Effect.OpenSettings))
+        is Request.OpenSettings -> Step(state, listOf(shown, Effect.OpenSettings))
         is Request.Stop -> if (request.named) {
             // "Kestrel, stop" with nothing running only ends the speech; plain "stop" may name a button.
             Step(state, listOfNotNull(shown, Effect.StopSaying.takeIf { state.speaking }))

@@ -146,9 +146,17 @@ class RequestsTest {
     fun turnOffAndSwitchOffAfterTheNameTurnKestrelOff() {
         assertEquals(Request.TurnOff, Requests.read("Kestrel, turn off.", spotted = false))
         assertEquals(Request.TurnOff, Requests.read("Kestrel, switch off, please.", spotted = true))
-        assertEquals(Request.TurnOff, Requests.read("Turn off.", spotted = false, afterName = true))
         assertEquals(Request.Task("turn off the wifi."), Requests.read("Kestrel, turn off the wifi.", spotted = false))
         assertEquals(Request.Other("Turn off."), Requests.read("Turn off.", spotted = false))
+    }
+
+    @Test
+    fun aBareTurnOffInAnAnswerToYesIsATask() {
+        // The answer ends after 0.7 s of silence, so the owner may still be saying what to turn off.
+        assertEquals(Request.Task("Turn off."), Requests.read("Turn off.", spotted = false, afterName = true))
+        assertEquals(Request.Task("Switch off, please."), Requests.read("Switch off, please.", spotted = false, afterName = true))
+        assertEquals(Request.TurnOff, Requests.read("Kestrel, turn off.", spotted = true, afterName = true))
+        assertEquals(Request.TurnOff, Requests.read("Turn off, Kestrel.", spotted = false, afterName = true))
     }
 
     @Test
@@ -160,10 +168,11 @@ class RequestsTest {
 
     @Test
     fun kestrelsSettingsOpenWithTheirOwnPhrases() {
-        assertEquals(Request.OpenSettings, Requests.read("Kestrel, open settings.", spotted = false))
-        assertEquals(Request.OpenSettings, Requests.read("Kestrel, open your settings, please.", spotted = true))
-        assertEquals(Request.OpenSettings, Requests.read("Kestrel settings", spotted = false))
-        assertEquals(Request.OpenSettings, Requests.read("Open settings.", spotted = false, afterName = true))
+        assertEquals(Request.OpenSettings(), Requests.read("Kestrel, open settings.", spotted = false))
+        assertEquals(Request.OpenSettings(), Requests.read("Kestrel, open your settings, please.", spotted = true))
+        assertEquals(Request.OpenSettings(), Requests.read("Kestrel settings", spotted = false))
+        assertEquals(Request.OpenSettings(), Requests.read("Open settings.", spotted = false, afterName = true))
+        assertEquals(Request.OpenSettings(stopFirst = true), Requests.read("Stop. Kestrel, open settings.", spotted = true))
         // The owner may mean Android's settings, so these stay a task and an instant command.
         assertEquals(Request.Task("open the settings."), Requests.read("Kestrel, open the settings.", spotted = false))
         assertEquals(Request.Other("Open settings."), Requests.read("Open settings.", spotted = false))
@@ -181,6 +190,20 @@ class RequestsTest {
         // Only an answer to "Yes?" is called off this way.
         assertEquals(Request.Task("never mind."), Requests.read("Kestrel, never mind.", spotted = false))
         assertEquals(Request.Other("Never mind."), Requests.read("Never mind.", spotted = false))
+        assertEquals(Request.Other("Never mind, Kestrel."), Requests.read("Never mind, Kestrel.", spotted = false))
+    }
+
+    @Test
+    fun anAnswerThatCallsItOffMayHaveAFewMoreWords() {
+        for (answer in listOf("No, never mind.", "Oh, never mind.", "Ah, forget it.", "Never mind, thanks.", "Nothing, thanks.")) {
+            assertEquals(answer, Request.Stop(named = true), Requests.read(answer, spotted = false, afterName = true))
+        }
+        assertEquals(Request.Stop(named = true), Requests.read("Oh no, nothing, thank you.", spotted = false, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("No, never mind, Kestrel.", spotted = false, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("Kestrel, no, forget it.", spotted = true, afterName = true))
+        assertEquals(Request.Task("Forget the milk, thanks."), Requests.read("Forget the milk, thanks.", spotted = false, afterName = true))
+        assertEquals(Request.Task("No."), Requests.read("No.", spotted = false, afterName = true))
+        assertEquals(Request.Other("No, never mind."), Requests.read("No, never mind.", spotted = false))
     }
 
     @Test
