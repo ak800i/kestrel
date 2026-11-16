@@ -144,7 +144,8 @@ class RulesTest {
         assertEquals(listOf(Effect.WaitForTask()), nothing.effects)
         assertEquals(Work.AWAITING_TASK, nothing.state.work)
         assertEquals(3, nothing.state.wait)
-        assertEquals(Step(listening), Rules.next(listening, Event.Heard(" ... ", named = false)))
+        // Outside a wait, a transcript without words is only counted (section 14.6).
+        assertEquals(Step(listening.copy(emptyTranscripts = 1)), Rules.next(listening, Event.Heard(" ... ", named = false)))
     }
 
     @Test
@@ -500,6 +501,43 @@ class RulesTest {
         assertEquals(1, step.state.speeches)
         // A late report changes nothing once Kestrel is off.
         assertEquals(Step(State()), Rules.next(State(), Event.SettingsUnavailable))
+    }
+
+    @Test
+    fun threeEmptyTranscriptsInARowShowTheHintOncePerSession() {
+        var state = listening
+        val effects = (1..6).map { Rules.next(state, Event.Heard("", named = false)).also { state = it.state }.effects }
+
+        val hint = listOf(Effect.Show(Feedback.NoWords))
+        assertEquals(listOf<List<Effect>>(emptyList(), emptyList(), hint, emptyList(), emptyList(), emptyList()), effects)
+
+        // A new voice session, after Kestrel turned off and on, may show it again.
+        state = Rules.next(Rules.next(state, Event.TurnOff).state, Event.Toggle).state
+        val again = (1..3).map { Rules.next(state, Event.Heard("", named = false)).also { state = it.state }.effects }
+        assertEquals(listOf<List<Effect>>(emptyList(), emptyList(), hint), again)
+    }
+
+    @Test
+    fun aTranscriptWithWordsStartsTheCountAgain() {
+        var state = listening
+        for (text in listOf("", "", "Scroll down", "", "")) state = Rules.next(state, Event.Heard(text, named = false)).state
+
+        assertEquals(2, state.emptyTranscripts)
+        assertEquals(listOf(Effect.Show(Feedback.NoWords)), Rules.next(state, Event.Heard("", named = false)).effects)
+    }
+
+    @Test
+    fun anUtteranceWithoutATranscriptRestartsTheWaitButIsNotCounted() {
+        // The pipeline dropped the utterance, or transcribing it failed.
+        val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1, emptyTranscripts = 2)
+
+        val step = Rules.next(waiting, Event.NothingHeard)
+
+        assertEquals(listOf(Effect.WaitForTask()), step.effects)
+        assertEquals(2, step.state.wait)
+        assertEquals(2, step.state.emptyTranscripts)
+        assertEquals(Step(listening), Rules.next(listening, Event.NothingHeard))
+        assertEquals(Step(State()), Rules.next(State(), Event.NothingHeard))
     }
 
     @Test

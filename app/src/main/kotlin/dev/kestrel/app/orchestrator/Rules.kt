@@ -21,6 +21,8 @@ enum class Work {
  * The Orchestrator's state (design spec, section 7.3). [speeches] counts the replies that Kestrel has started and not
  * finished. [task] is the number of the latest task and [wait] the number of the latest wait for a task, so that the
  * end of an older task or wait changes nothing. [cancelled]: the latest task was cancelled and has not reported yet.
+ * [emptyTranscripts] counts the transcripts without words in a row, and [noWordsShown] is true once the hint about them
+ * has shown since Kestrel turned on (section 14.6).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -31,6 +33,8 @@ data class State(
     val cancelled: Boolean = false,
     val screenOn: Boolean = true,
     val micBusy: Boolean = false,
+    val emptyTranscripts: Int = 0,
+    val noWordsShown: Boolean = false,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -81,7 +85,7 @@ sealed interface Event {
      * transcript arrives while the detector still hears speech. Read `hearsSpeech` on the microphone's thread, after
      * `ListeningPipeline.accept`; the pipeline's `VoiceEvent.SpeechStarted` follows this rule. An utterance that ends
      * without a transcript while recognition is on restarts the 8 s wait for a task: `VoiceSession` sends
-     * `Heard("", named = false)` for it.
+     * [NothingHeard] for it.
      */
     data object Speaking : Event
 
@@ -113,6 +117,13 @@ sealed interface Event {
      * its accessibility service is on. Kestrel says so, because the feedback bar does not exist then (section 14).
      */
     data object SettingsUnavailable : Event
+
+    /**
+     * An utterance ended without a transcript: the pipeline dropped it, or transcribing it failed. Like a transcript
+     * without words, it gives the owner the whole wait for a task again, but it does not count towards the hint about
+     * empty transcripts (section 14.6).
+     */
+    data object NothingHeard : Event
 }
 
 /** What Kestrel says. */
@@ -143,6 +154,9 @@ sealed interface Feedback {
      * (section 8.9).
      */
     data object AwaitingTask : Feedback
+
+    /** Three transcripts in a row had no words, so the owner may check the microphone (section 14.6). */
+    data object NoWords : Feedback
 }
 
 /** What the Orchestrator asks of the rest of Kestrel. The microphone and recognition follow [State] instead. */
@@ -208,23 +222,38 @@ object Rules {
         is Event.WaitEnded ->
             if (state.work == Work.AWAITING_TASK && event.wait == state.wait) Step(state.copy(work = Work.IDLE)) else Step(state)
         Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
+        Event.NothingHeard ->
+            if (state.mode != Mode.OFF && state.work == Work.AWAITING_TASK) waitForTask(state) else Step(state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
         if (state.mode == Mode.OFF) return Step(state)
         val awaiting = state.work == Work.AWAITING_TASK
-        // An answer to "Yes?" without words: the owner has the full wait again.
+        // An empty transcript that finishes after the screen turned off does not count: nobody could see its hint.
+        // Waiting for a task ends when the screen turns off.
         val request = Requests.read(event.text, event.named, afterName = awaiting)
-            ?: return if (awaiting) waitForTask(state) else Step(state)
+            ?: return if (state.screenOn) withoutWords(state, awaiting) else Step(state)
+        // Words start the count of empty transcripts again.
+        val counted = state.copy(emptyTranscripts = 0)
         // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
         // only the requests that stop something count, because nothing may start (section 14.4).
-        if (!state.screenOn && !stopsSomething(request)) return Step(state)
+        if (!counted.screenOn && !stopsSomething(request)) return Step(counted)
         val shown = Effect.Show(Feedback.Heard(event.text))
-        return when (state.work) {
-            Work.RUNNING_TASK -> whileTaskRuns(state, request, shown)
-            Work.AWAITING_TASK -> whileAwaitingTask(state, request, shown)
-            Work.IDLE -> whileIdle(state, request, event.text, shown)
+        return when (counted.work) {
+            Work.RUNNING_TASK -> whileTaskRuns(counted, request, shown)
+            Work.AWAITING_TASK -> whileAwaitingTask(counted, request, shown)
+            Work.IDLE -> whileIdle(counted, request, event.text, shown)
         }
+    }
+
+    // Section 14.6: a transcript without words. After three in a row, the bar suggests checking the microphone, once
+    // until Kestrel turns off. An answer to "Yes?" without words gives the owner the full wait again.
+    private fun withoutWords(state: State, awaiting: Boolean): Step {
+        val count = state.emptyTranscripts + 1
+        val hint = count >= EMPTY_TRANSCRIPTS_FOR_HINT && !state.noWordsShown
+        val counted = state.copy(emptyTranscripts = count, noWordsShown = state.noWordsShown || hint)
+        val shown = listOfNotNull(Effect.Show(Feedback.NoWords).takeIf { hint })
+        return if (awaiting) waitForTask(counted, *shown.toTypedArray()) else Step(counted, shown)
     }
 
     private fun stopsSomething(request: Request): Boolean =
@@ -334,9 +363,18 @@ object Rules {
     private fun changeMode(state: State, mode: Mode, vararg first: Effect): Step =
         if (state.mode == mode) Step(state, first.toList()) else switch(state, mode, *first)
 
-    // Off also forgets the replies in progress and "mic busy", so that a lost SpeechEnded cannot keep recognition off.
+    // Off also forgets the replies in progress and "mic busy", so that a lost SpeechEnded cannot keep recognition off,
+    // and the count of empty transcripts, so that the next voice session may show the hint again.
     private fun turnOff(state: State, vararg first: Effect): Step = Step(
-        state.copy(mode = Mode.OFF, work = Work.IDLE, speeches = 0, cancelled = false, micBusy = false),
+        state.copy(
+            mode = Mode.OFF,
+            work = Work.IDLE,
+            speeches = 0,
+            cancelled = false,
+            micBusy = false,
+            emptyTranscripts = 0,
+            noWordsShown = false,
+        ),
         first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },
             Effect.CancelTask.takeIf { state.work == Work.RUNNING_TASK },
@@ -347,4 +385,7 @@ object Rules {
 
     /** This step, then the step that [next] makes from its state. */
     private fun Step.then(next: (State) -> Step): Step = next(state).let { Step(it.state, effects + it.effects) }
+
+    // Section 14.6: how many transcripts without words in a row bring the hint.
+    private const val EMPTY_TRANSCRIPTS_FOR_HINT = 3
 }

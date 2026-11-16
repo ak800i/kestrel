@@ -118,11 +118,12 @@ internal class VoiceSession(
             is VoiceEvent.Heard -> listener.send(Event.Heard(event.text, event.named))
             is VoiceEvent.Spotted -> listener.send(Event.Spotted(event.keyword))
             VoiceEvent.SpeechStarted -> listener.send(Event.Speaking)
-            // An utterance without a transcript gives the owner the whole wait for a task again (Rules, Event.Speaking).
-            VoiceEvent.Dropped -> listener.send(Event.Heard("", named = false))
+            // An utterance without a transcript gives the owner the whole wait for a task again, but it is not an empty
+            // transcript, which counts towards the hint of section 14.6 (Rules, Event.NothingHeard).
+            VoiceEvent.Dropped -> listener.send(Event.NothingHeard)
             is VoiceEvent.Failed -> {
                 listener.transcriptionFailed(event.error)
-                listener.send(Event.Heard("", named = false))
+                listener.send(Event.NothingHeard)
             }
         }
     }

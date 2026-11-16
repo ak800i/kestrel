@@ -46,7 +46,7 @@ class VoiceSessionFailuresTest {
     private val listener = RecordingListener()
 
     @Test
-    fun droppedAndFailedUtterancesReachTheListenerAsEmptyTranscripts() = runBlocking {
+    fun droppedAndFailedUtterancesReachTheListenerAsNothingHeard() = runBlocking {
         val session = session()
         try {
             session.recognition = Recognition.NONE
@@ -57,13 +57,14 @@ class VoiceSessionFailuresTest {
             // From 0.3 s to 0.8 s, before recognition resumed at 1 s: Kestrel's own voice, so the pipeline drops it.
             detector.next.add(Utterance(seconds(0.3f), FloatArray(seconds(0.5f).toInt())))
             microphone.feed(0.02f)
-            assertEquals(Event.Heard("", named = false), listener.await { it is Event.Heard })
+            // Not an empty transcript, which would count towards the hint of section 14.6.
+            assertEquals(Event.NothingHeard, listener.await { it == Event.NothingHeard })
             assertEquals(emptyList<Exception>(), listener.failures.toList())
 
             recognizer.fails = true
             detector.next.add(Utterance(seconds(1.1f), FloatArray(seconds(0.5f).toInt())))
             microphone.feed(0.02f)
-            assertEquals(Event.Heard("", named = false), listener.await { it is Event.Heard })
+            assertEquals(Event.NothingHeard, listener.await { it == Event.NothingHeard })
             assertEquals(1, listener.failures.size)
             assertTrue(listener.failures.single() is FakeFailure)
         } finally {

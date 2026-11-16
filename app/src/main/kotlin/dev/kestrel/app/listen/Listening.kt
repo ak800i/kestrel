@@ -99,6 +99,7 @@ internal object ListeningTexts {
     const val BATTERY_RESTRICTED = "Android stops Kestrel's listening in the background because its battery use is " +
         "Restricted. Set it to Unrestricted."
     const val CRASHED_AFTER_RESTORE = "Kestrel stopped soon after it came back, so it stays off."
+    const val NO_WORDS = "Kestrel hears sound but no words. Check the microphone."
     const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on. Tap my " +
         "listening notification instead."
@@ -802,6 +803,7 @@ class Listening internal constructor(
         is Feedback.Heard -> feedback.text
         Feedback.MicBusy -> ListeningTexts.MIC_BUSY
         Feedback.AwaitingTask -> ListeningTexts.YES
+        Feedback.NoWords -> ListeningTexts.NO_WORDS
     }
 
     /**
