@@ -16,6 +16,9 @@ import java.io.File
  * last call has returned.
  */
 internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, tokens: File, vocab: File) : Recognizer {
+    // Read before the model loads, so that a failed read leaves no native memory behind.
+    private val spelling = BoostWords.characters(tokens.readText())
+
     private val recognizer = OfflineRecognizer(
         config = OfflineRecognizerConfig(
             // sherpa-onnx replaces the feature dimension with the model's own, 128 for Parakeet, so it stays at its default.
@@ -40,7 +43,7 @@ internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, toke
 
     override fun transcribe(samples: FloatArray, boostWords: List<String>): Transcript = synchronized(this) {
         check(!closed) { "The recognizer is closed" }
-        val boost = BoostWords.format(boostWords)
+        val boost = BoostWords.format(boostWords, spelling)
         val first = decode(samples, boost)
         if (boost.isEmpty()) {
             first

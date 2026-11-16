@@ -7,9 +7,11 @@ package dev.kestrel.voice.sherpa
  */
 internal object BpeVocab {
     fun fromTokens(tokens: String): String = buildString {
-        for (line in tokens.lineSequence()) {
-            val piece = line.substringBeforeLast(' ', missingDelimiterValue = "")
-            if (piece.isNotEmpty()) append(piece).append("\t-1.0\n")
-        }
+        for (piece in pieces(tokens)) append(piece).append("\t-1.0\n")
     }
+
+    /** The word pieces of [tokens], the text of a tokens.txt whose lines are `<piece> <id>`, in order. */
+    fun pieces(tokens: String): Sequence<String> = tokens.lineSequence()
+        .map { it.substringBeforeLast(' ', missingDelimiterValue = "") }
+        .filter { it.isNotEmpty() }
 }
