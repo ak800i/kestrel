@@ -1,46 +1,80 @@
 # A stand-in for adb in the tests of scripts\lib\Kestrel.ps1; fake-adb.cmd runs it in its own process, as adb runs.
-# It understands 'adb -s <serial> shell "<command>"' for the settings commands that the helpers send, and it keeps the
-# device's state in the JSON file whose path is in the environment variable KESTREL_FAKE_ADB:
+# It understands 'adb -s <serial> get-state', 'adb -s <serial> shell getprop <property>' for the properties that
+# Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands that the helpers send, also
+# inside the check of Format-TestDeviceCommand. It keeps the device's state in the JSON file whose path is in the
+# environment variable KESTREL_FAKE_ADB:
+#   avd       the device's ro.boot.qemu.avd_name, empty for a phone
+#   model     the device's ro.product.model
 #   settings  names and values of the secure settings; a missing name is an unset setting
-#   failures  how many of the next commands fail, as a busy device fails them: 'Bad arguments' and no marker
-#   calls     every shell command that it received, in order
+#   failures  how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
+#   calls     every settings command that it received and did not refuse, in order, without the check
+#   refused   every settings command that the check kept from running, in order
 # The serial 'missing' stands for a device that adb cannot find. Error lines go to standard error, as adb's do.
 $statePath = $env:KESTREL_FAKE_ADB
 if (-not $statePath -or -not (Test-Path -LiteralPath $statePath)) {
     [Console]::Error.WriteLine('fake adb: KESTREL_FAKE_ADB must name an existing state file')
     exit 1
 }
-if ($args.Count -lt 4 -or $args[0] -ne '-s' -or $args[2] -ne 'shell') {
+$getState = $args.Count -eq 3 -and $args[0] -eq '-s' -and $args[2] -eq 'get-state'
+if (-not $getState -and ($args.Count -lt 4 -or $args[0] -ne '-s' -or $args[2] -ne 'shell')) {
     [Console]::Error.WriteLine("fake adb: unsupported arguments: $($args -join ' ')")
     exit 1
 }
 $serial = $args[1]
+if ($serial -eq 'missing') {
+    [Console]::Error.WriteLine("adb.exe: device '$serial' not found")
+    exit 1
+}
+if ($getState) {
+    [Console]::Out.WriteLine('device')
+    exit 0
+}
 # adb joins the words after 'shell' into one command line for the device's shell.
 $command = $args[3..($args.Count - 1)] -join ' '
 
 $state = [IO.File]::ReadAllText($statePath) | ConvertFrom-Json
+$avd = [string]$state.avd
+$model = [string]$state.model
+$properties = @{ 'ro.boot.qemu.avd_name' = $avd; 'ro.product.model' = $model }
+if ($command -match '^getprop (\S+)$') {
+    [Console]::Out.WriteLine([string]$properties[$Matches[1]])
+    exit 0
+}
 $settings = [ordered]@{}
 foreach ($property in $state.settings.PSObject.Properties) { $settings[$property.Name] = [string]$property.Value }
 $failures = [int]$state.failures
-$calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ }) + $command
+$calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
+$refused = @(@($state.refused) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
 
 function Save-State {
-    $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{ settings = $settings; failures = $failures; calls = [string[]]$calls })
+    $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{
+            avd = $avd; model = $model; settings = $settings; failures = $failures; calls = [string[]]$calls; refused = [string[]]$refused
+        })
     [IO.File]::WriteAllText($statePath, $json)
 }
 
-if ($serial -eq 'missing') {
-    Save-State
-    [Console]::Error.WriteLine("adb.exe: device '$serial' not found")
-    exit 1
+# The check that Format-TestDeviceCommand puts around a command. The commands in the warnings, which the owner pastes,
+# have none.
+$accepted = $true
+if ($command -match '^case \$\(getprop (\S+)\) in (\S+)\) (.*);; \*\) echo kestrel-refused;; esac$') {
+    $command = $Matches[3]
+    # As the device's shell matches a 'case' pattern, in which '*' stands for any text.
+    $accepted = [string]$properties[$Matches[1]] -like $Matches[2]
 }
 if ($failures -gt 0) {
     $failures--
+    $calls += $command
     Save-State
     [Console]::Error.WriteLine('Bad arguments')
     exit 255
 }
-
+if (-not $accepted) {
+    $refused += $command
+    Save-State
+    [Console]::Out.WriteLine('kestrel-refused')
+    exit 0
+}
+$calls += $command
 # The helpers end every command with this marker; the commands in their warnings, which the owner pastes, have none.
 $marker = ' && echo kestrel-end'
 $withMarker = $command.EndsWith($marker)

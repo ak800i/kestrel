@@ -1,7 +1,7 @@
 # A stand-in for adb in the tests of scripts\lib\Models.ps1; fake-adb-files.cmd runs it in its own process, as adb runs.
 # It keeps the files of a fake device in a folder on this computer and understands the commands that Push-ModelFiles
 # sends: 'adb -s <serial> push <file> <device path>', and 'adb -s <serial> shell "<command>"' for these commands, each
-# followed by ' && echo kestrel-end':
+# followed by ' && echo kestrel-end' and inside the check of Format-TestDeviceCommand, for which it is kestrel-api37:
 #   pm path dev.kestrel || true
 #   am start -n dev.kestrel/dev.kestrel.app.MainActivity    (creates Kestrel's models folder, as Kestrel does when it starts)
 #   test -d '<folder>' && echo yes || echo no
@@ -60,6 +60,16 @@ if ($args[2] -eq 'push') {
 
 if ($args[2] -ne 'shell') { Stop-WithError "fake adb: unsupported arguments: $($args -join ' ')" }
 $command = $args[3..($args.Count - 1)] -join ' '
+# The check that Format-TestDeviceCommand puts around a command. The fake device is kestrel-api37.
+if ($command -match '^case \$\(getprop (\S+)\) in (\S+)\) (.*);; \*\) echo kestrel-refused;; esac$') {
+    $command = $Matches[3]
+    $property = @{ 'ro.boot.qemu.avd_name' = 'kestrel-api37'; 'ro.product.model' = 'sdk_gphone64_x86_64' }[$Matches[1]]
+    if ([string]$property -notlike $Matches[2]) {
+        Save-State
+        'kestrel-refused'
+        exit 0
+    }
+}
 $calls += $command
 $marker = ' && echo kestrel-end'
 $withMarker = $command.EndsWith($marker)

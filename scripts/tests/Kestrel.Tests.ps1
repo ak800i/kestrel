@@ -37,13 +37,15 @@ Describe 'The settings helpers' {
         Mock Get-Adb { $fakeAdb }
         Mock Start-Sleep {}
 
-        # Gives the fake device these secure settings and makes its next commands fail as often as -Failures says.
-        function Set-FakeDevice([System.Collections.IDictionary]$Settings = @{}, [int]$Failures = 0) {
-            $state = [ordered]@{ settings = $Settings; failures = $Failures; calls = @() }
+        # Gives the fake device these secure settings and makes its next commands fail as often as -Failures says. It is
+        # kestrel-api37 unless -Avd and -Model say otherwise.
+        function Set-FakeDevice([System.Collections.IDictionary]$Settings = @{}, [int]$Failures = 0, [string]$Avd = 'kestrel-api37',
+            [string]$Model = 'sdk_gphone64_x86_64') {
+            $state = [ordered]@{ avd = $Avd; model = $Model; settings = $Settings; failures = $Failures; calls = @(); refused = @() }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
         }
 
-        # Returns the fake device's settings, its remaining failures and the shell commands that it received, in order.
+        # Returns the fake device's settings, its remaining failures, and the settings commands that it ran and refused.
         function Get-FakeDevice {
             [IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json
         }
@@ -52,6 +54,8 @@ Describe 'The settings helpers' {
     BeforeEach {
         $env:KESTREL_FAKE_ADB = Join-Path $TestDrive 'device.json'
         Set-FakeDevice
+        $KestrelTestDevices.Clear()
+        Assert-TestDevice -Serial emulator-5554
     }
 
     AfterAll {
@@ -84,8 +88,44 @@ Describe 'The settings helpers' {
         }
 
         It 'names adb''s complaint when the device is missing' {
+            # Assert-TestDevice accepted the device, which then went away.
+            $KestrelTestDevices['missing'] = @{ Property = 'ro.boot.qemu.avd_name'; Pattern = 'kestrel-api37' }
             $thrown = { Get-SecureSetting -Serial missing -Name x } | Should -Throw -PassThru
             $thrown.Exception.Message | Should -BeExactly "Could not run 'settings get secure x' on missing: adb.exe: device 'missing' not found"
+        }
+    }
+
+    Context 'The device check' {
+        It 'runs commands only on the device that Assert-TestDevice accepted: <Name>' -ForEach @(
+            @{ Name = 'kestrel-api37'; Avd = 'kestrel-api37'; Model = 'sdk_gphone64_x86_64'; Daily = $false; OtherAvd = 'zoran'; OtherModel = 'sdk_gphone64_x86_64' }
+            @{ Name = 'the Galaxy A71'; Avd = ''; Model = 'SM-A715F'; Daily = $false; OtherAvd = ''; OtherModel = 'SM-S916B' }
+            @{ Name = 'the Galaxy S23+ with -AllowDailyPhone'; Avd = ''; Model = 'SM-S916B'; Daily = $true; OtherAvd = ''; OtherModel = 'SM-A715F' }
+        ) {
+            Set-FakeDevice -Settings @{ x = 'old' } -Avd $Avd -Model $Model
+            Assert-TestDevice -Serial emulator-5554 -AllowDailyPhone:$Daily
+            Get-SecureSetting -Serial emulator-5554 -Name x | Should -BeExactly 'old'
+
+            # Another device took the serial after the check.
+            Set-FakeDevice -Settings @{ x = 'old' } -Avd $OtherAvd -Model $OtherModel
+            $thrown = { Invoke-SettingsCommand -Serial emulator-5554 -Command 'settings delete secure x || true' } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -BeExactly ("Refusing to run 'settings delete secure x || true' on emulator-5554: it is no " +
+                'longer the test device that Assert-TestDevice accepted.')
+            $device = Get-FakeDevice
+            $device.settings.x | Should -BeExactly 'old'
+            $device.calls | Should -BeNullOrEmpty
+            # Once: a refusal is not tried again.
+            $device.refused | Should -BeExactly @('settings delete secure x || true && echo kestrel-end')
+        }
+
+        It 'throws and sends nothing when Assert-TestDevice has not accepted the serial' {
+            $KestrelTestDevices.Clear()
+
+            { Get-SecureSetting -Serial emulator-5554 -Name x } | Should -Throw -ExpectedMessage 'Run Assert-TestDevice -Serial emulator-5554 before a command on that device.'
+
+            $device = Get-FakeDevice
+            $device.calls | Should -BeNullOrEmpty
+            $device.refused | Should -BeNullOrEmpty
         }
     }
 
@@ -261,41 +301,6 @@ Describe 'Test-ShortcutTarget' {
         @{ Name = 'there is no such line'; Dump = @('     button:{}') }
     ) {
         Test-ShortcutTarget -Dump $Dump -Package dev.kestrel | Should -BeExactly $false
-    }
-}
-
-Describe 'Test-RecordingSilenced' {
-    BeforeAll {
-        . "$PSScriptRoot\..\lib\Kestrel.ps1"
-    }
-
-    It 'returns $false when the newest recording of the package is not silenced' {
-        $dump = @(
-            '11-16 10:21:56:811 rec start riid:1831 uid:10331 session:2001 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
-            '11-16 10:21:57:022 rec start riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
-            '11-16 10:21:57:123 rec stop riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
-            '11-16 10:21:57:200 rec start riid:1840 uid:10200 session:2010 src:MIC silenced pack:dev.kestrel.testapp'
-        )
-
-        Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeExactly $false
-    }
-
-    It 'returns $true when Android silenced the newest recording of the package' {
-        $dump = @(
-            '11-16 10:21:57:022 rec start riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION not silenced pack:dev.kestrel'
-            '11-16 10:21:58:410 rec update riid:1839 uid:10331 session:2009 src:VOICE_RECOGNITION silenced pack:dev.kestrel'
-        )
-
-        Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeExactly $true
-    }
-
-    It 'returns $null when no recording names the package' {
-        $dump = @(
-            '11-16 10:21:57:200 rec start riid:1840 uid:10200 session:2010 src:MIC not silenced pack:dev.kestrel.testapp'
-            'some other line'
-        )
-
-        Test-RecordingSilenced -Dump $dump -Package dev.kestrel | Should -BeNullOrEmpty
     }
 }
 

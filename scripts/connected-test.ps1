@@ -1,7 +1,8 @@
 # Runs Gradle's connected (on-device) tests on one test device only.
-# Afterwards, also when the tests fail or Ctrl+C interrupts them, it puts back the device's accessibility settings, and
-# it uninstalls the fixture app dev.kestrel.testapp if it was not installed before. If Ctrl+C interrupts it while it puts
-# these back, it warns with the commands that do it by hand. After Ctrl+C, it ends with exit code 1.
+# Afterwards, also when the tests fail or Ctrl+C interrupts them, it checks that the serial still names the test device,
+# puts back the device's accessibility settings, and uninstalls the fixture app dev.kestrel.testapp if it was not
+# installed before. If the check fails, or Ctrl+C interrupts it while it puts these back, it warns with the commands that
+# do it by hand. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
@@ -38,6 +39,7 @@ $code = 1
 $testsEnded = $false
 $failed = $false
 $restored = $false
+$refusal = $null
 try {
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
     $code = $LASTEXITCODE
@@ -50,6 +52,8 @@ try {
     # the finally blocks around it in full. So the restore runs in a try block of its own, whose finally block warns
     # when the restore did not finish.
     try {
+        # The tests take minutes, in which the device can end and another one can take its serial.
+        try { Assert-TestDevice -Serial $Serial } catch { $refusal = $_.Exception.Message; throw }
         # The restore must run even when a command before it fails.
         $ErrorActionPreference = 'Continue'
         # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop
@@ -83,7 +87,12 @@ try {
     } finally {
         if (-not $restored) {
             $command = "& '$((Get-Adb) -replace "'", "''")' -s $Serial shell '$(($byHand -join '; ') -replace "'", "''")'"
-            Write-Warning "The device $Serial was not put back, because the restore was interrupted. Run: $command"
+            if ($refusal) {
+                Write-Warning ("The device was not put back, because $Serial no longer names it ($refusal). Run this command, with " +
+                    "$Serial replaced by the serial that the test device has now: $command")
+            } else {
+                Write-Warning "The device $Serial was not put back, because the restore was interrupted. Run: $command"
+            }
         }
         # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its error.
         if (-not $restored -or -not ($testsEnded -or $failed)) {

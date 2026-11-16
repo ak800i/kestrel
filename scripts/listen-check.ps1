@@ -9,9 +9,12 @@
 #   restart   after Android ended Kestrel's process ('am crash'), listening comes back once the accessibility service has
 #             connected again. Android does not restart an app that crashed twice within 2 minutes, so wait 2 minutes
 #             before you run the script again.
-#   reboot    with -Reboot: listening comes back after a reboot
-# Kestrel is in the background for each check, and it listens with its own microphone. The tile, shortcut and restart
-# checks also check in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
+#   reboot    with -Reboot: listening comes back after a reboot. On the emulator, start a run with -Reboot from a cold boot
+#             (& $adb -s $serial emu kill, then scripts\start-emulator.ps1 -ColdBoot): on this computer, 'adb reboot'
+#             has crashed and frozen an emulator that had run for many hours. The check fails when 'adb reboot' has not
+#             returned within 60 s.
+# Kestrel is in the background for each check, and it listens with its own microphone. Every check except the settings
+# check also checks in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
 # with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that
 # ran, also when a later check fails with an error.
 # While it runs, it grants Kestrel the microphone permission, replaces the list of enabled accessibility services, sets
@@ -46,13 +49,17 @@ $modelsHint = '; are the speech models on the device? Run scripts\push-models.ps
 function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
 
 # Runs a command on the device once, for the commands that toggle something, which a repeat would toggle back. Fails when
-# adb or the command fails.
+# adb or the command fails, and runs nothing when the serial no longer names the device that Assert-TestDevice accepted.
 function Invoke-Once([string]$Command) {
     # adb's error lines become part of the error message. 'Continue' keeps them from stopping the script also where
     # PowerShell applies the preference to a native command's error output (PSNativeCommandUseErrorActionPreference).
     $ErrorActionPreference = 'Continue'
-    $output = @(& $adb -s $Serial shell $Command 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "Could not run '$Command' on ${Serial}: $($output -join ' ')" }
+    $output = @(& $adb -s $Serial shell (Format-TestDeviceCommand -Serial $Serial -Command "$Command && echo kestrel-end") 2>&1)
+    $last = "$($output | Select-Object -Last 1)".Trim()
+    if ($last -eq 'kestrel-refused') {
+        throw "Refusing to run '$Command' on ${Serial}: it is no longer the test device that Assert-TestDevice accepted."
+    }
+    if ($LASTEXITCODE -ne 0 -or $last -ne 'kestrel-end') { throw "Could not run '$Command' on ${Serial}: $($output -join ' ')" }
 }
 
 function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join "`n" }
@@ -294,10 +301,22 @@ function Invoke-RebootCheck {
     Start-Sleep -Seconds 2
     $bootId = ((Invoke-Checked 'cat /proc/sys/kernel/random/boot_id') -join '').Trim()
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    & $adb -s $Serial reboot | Out-Null
+    # 'adb reboot' has not returned when an emulator froze during the reboot, so it gets 60 s. Ctrl+C still works meanwhile.
+    $call = Start-Process -FilePath $adb -ArgumentList '-s', $Serial, 'reboot' -NoNewWindow -PassThru
+    $deadline = (Get-Date).AddSeconds(60)
+    while (-not $call.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+    if (-not $call.HasExited) {
+        Stop-Process -Id $call.Id
+        return ("failed: 'adb reboot' did not return within 60 s, so the emulator may have frozen; close it, start it " +
+            'again with scripts\start-emulator.ps1 -ColdBoot, and run the script again')
+    }
     Wait-Reboot $bootId
     if ((Wait-Mode listening 240) -lt 0) { return 'failed: Kestrel did not listen again within 240 s of the device''s start' }
-    "ok: listening again $([math]::Round($watch.Elapsed.TotalSeconds, 1)) s after the reboot"
+    $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    # 'dumpsys audio' starts its history afresh at each boot, so every recording of Kestrel's that it lists is new.
+    $problem = Get-RecordingProblem @()
+    if ($problem) { return "failed: listening again $again s after the reboot, but $problem" }
+    "ok: listening again $again s after the reboot"
 }
 
 # What the script has still to put back. Each restore enters this list before the change that it undoes is made, and it
@@ -422,7 +441,8 @@ try {
         # The commands name the serial, which another emulator can have after this one ended.
         if ($pending.Count -gt 0 -and $isEmulator) {
             Write-Warning ("Before you run these commands, check with 'adb -s $Serial emu avd name' that $Serial is still " +
-                'kestrel-api37. If kestrel-api37 is not running, start it with scripts\start-emulator.ps1 and use the serial that it prints.')
+                'kestrel-api37. If it is not, run scripts\start-emulator.ps1, which starts kestrel-api37 only if it is not running and ' +
+                "prints its serial, and use that serial instead of $Serial.")
         }
         # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its error.
         if (-not ($completed -or $failed) -or $pending.Reason -contains $stopReason) {

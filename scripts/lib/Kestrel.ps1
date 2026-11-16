@@ -26,20 +26,40 @@ function Get-Adb {
     return (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe')
 }
 
+# The serials that Assert-TestDevice accepted, each with the device property and the pattern that the device matched.
+# A script dot-sources this file in its own scope, so each script has its own table.
+$KestrelTestDevices = @{}
+
+# Returns a command for the device's shell that runs the command only if the device still matches what Assert-TestDevice
+# accepted for the serial, checked in the same shell, and that prints 'kestrel-refused' otherwise. Another device can
+# take the serial of an emulator that ended, so the check and the command must not be two calls of adb. The 'case' keeps
+# a command that contains '||' from running after a failed check. It has no double quotes, which Windows PowerShell 5.1
+# would not pass on to adb; the word after 'case' is not split, also when the property is empty.
+function Format-TestDeviceCommand([string]$Serial, [string]$Command) {
+    $device = if ($KestrelTestDevices) { $KestrelTestDevices[$Serial] }
+    if (-not $device) { throw "Run Assert-TestDevice -Serial $Serial before a command on that device." }
+    "case `$(getprop $($device.Property)) in $($device.Pattern)) $Command;; *) echo kestrel-refused;; esac"
+}
+
 # Runs a settings command on a device and returns the lines that it printed. The device prints a marker only after a
 # command that worked, which tells an empty answer from a failed command. A busy device, or one whose system is still
 # starting, sometimes fails the command, so it is repeated before it fails for good with the device's last complaint.
+# The command runs only on the device that Assert-TestDevice accepted for the serial, and throws at once on another one.
 function Invoke-SettingsCommand([string]$Serial, [string]$Command) {
     $adb = Get-Adb
+    $guarded = Format-TestDeviceCommand -Serial $Serial -Command "$Command && echo kestrel-end"
     # Keeps adb's error lines as part of the answer, so that they neither stop the script nor fill the console.
     $ErrorActionPreference = 'Continue'
     $complaint = ''
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
-        $answer = @(& $adb -s $Serial shell "$Command && echo kestrel-end" 2>&1)
+        $answer = @(& $adb -s $Serial shell $guarded 2>&1)
         $errors = @($answer | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
         $lines = @($answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".TrimEnd("`r") })
         if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-end') { return $lines | Select-Object -First ($lines.Count - 1) }
+        if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-refused') {
+            throw "Refusing to run '$Command' on ${Serial}: it is no longer the test device that Assert-TestDevice accepted."
+        }
         $complaint = (@($errors | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) -join ' ')
     }
     if ($complaint) { throw "Could not run '$Command' on ${Serial}: $complaint" }
@@ -127,10 +147,12 @@ function Find-EmulatorSerial([string]$AvdName) {
 
 # Kestrel is tested only on kestrel-api37 and the Galaxy A71 (SM-A715F). The Galaxy S23+ (SM-S916*) is the
 # owner's daily phone and is accepted only with -AllowDailyPhone (design spec, D20). Every other device is refused.
+# It remembers what it accepted, so that Invoke-SettingsCommand runs its commands only on that device.
 function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
     $adb = Get-Adb
     # Windows PowerShell 5.1 would stop at adb's first error line, before the second and third check.
     $ErrorActionPreference = 'Continue'
+    $KestrelTestDevices.Remove($Serial)
     # A busy emulator sometimes answers a query with nothing, so a refusal is checked twice more before it counts.
     foreach ($try in 1..3) {
         if ($try -gt 1) { Start-Sleep -Seconds 2 }
@@ -139,8 +161,17 @@ function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
         $model = "$(& $adb -s $Serial shell getprop ro.product.model)".Trim()
         # Emulators report their AVD name here, however adb reaches them.
         $avd = "$(& $adb -s $Serial shell getprop ro.boot.qemu.avd_name)".Trim()
-        if ($avd -eq 'kestrel-api37' -or $model -like 'SM-A715F*') { return }
-        if ($model -like 'SM-S916*' -and $AllowDailyPhone) { return }
+        $device = if ($avd -eq 'kestrel-api37') {
+            @{ Property = 'ro.boot.qemu.avd_name'; Pattern = 'kestrel-api37' }
+        } elseif ($model -like 'SM-A715F*') {
+            @{ Property = 'ro.product.model'; Pattern = 'SM-A715F*' }
+        } elseif ($model -like 'SM-S916*' -and $AllowDailyPhone) {
+            @{ Property = 'ro.product.model'; Pattern = 'SM-S916*' }
+        }
+        if ($device) {
+            $KestrelTestDevices[$Serial] = $device
+            return
+        }
     }
     if ($state -ne 'device') { throw "Device $Serial is not connected." }
     throw "Refusing to use $Serial (model '$model', AVD '$avd'). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
@@ -211,12 +242,4 @@ function Get-NewRecordingState([string[]]$Dump, [string]$Package, [string[]]$Bef
     $newest = Get-RecordingLine -Dump $Dump -Package $Package | Select-Object -Last 1
     if (-not $newest -or $newest.Id -in @($Before)) { return 'none' }
     if ($newest.Silenced) { 'silenced' } else { 'not silenced' }
-}
-
-# Returns whether Android silences the package's recording, from the output of 'dumpsys audio': the newest line
-# 'rec start ...' or 'rec update ...' of the package ends with 'silenced pack:<package>' or 'not silenced pack:<package>'.
-# Returns $null when no such line names the package.
-function Test-RecordingSilenced([string[]]$Dump, [string]$Package) {
-    $newest = Get-RecordingLine -Dump $Dump -Package $Package | Select-Object -Last 1
-    if ($newest) { $newest.Silenced } else { $null }
 }

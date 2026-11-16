@@ -199,6 +199,8 @@ Describe 'Push-ModelFiles' {
         $ErrorActionPreference = 'Stop'
         . "$PSScriptRoot\..\lib\Kestrel.ps1"
         . "$PSScriptRoot\..\lib\Models.ps1"
+        # As Assert-TestDevice remembers kestrel-api37, which the fake device is, so that the helpers run their commands.
+        $KestrelTestDevices['fake'] = @{ Property = 'ro.boot.qemu.avd_name'; Pattern = 'kestrel-api37' }
         $fakeAdb = Join-Path $PSScriptRoot 'fake-adb-files.cmd'
         Mock Get-Adb { $fakeAdb }
         Mock Start-Sleep {}
