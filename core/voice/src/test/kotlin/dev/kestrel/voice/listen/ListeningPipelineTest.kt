@@ -342,12 +342,40 @@ class ListeningPipelineTest {
         pipeline.recognition = Recognition.ALL
         detector.hearsSpeech = true
         pipeline.feedUntil(1.6f)
-        // Kestrel's echo before 1 s ends, while the owner, who has started to answer, still speaks.
+        // The echo's utterance ends while the detector still hears speech. Silero reports an utterance only after 0.7 s
+        // of silence, so a real drop comes on a frame without speech; this checks that the flag outlives the drop.
         detector.next.addLast(listOf(utterance(0.3f, 0.8f)))
         pipeline.feed()
         pipeline.feedUntil(2f)
 
         assertEquals(listOf<VoiceEvent>(VoiceEvent.SpeechStarted, VoiceEvent.Dropped, VoiceEvent.SpeechStarted), events)
+    }
+
+    @Test
+    fun anUtteranceThatPausedRecognitionWouldNotTranscribeIsNotReportedAsDropped() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        pipeline.feedUntil(1f)
+        pipeline.recognition = Recognition.NAMED
+        pipeline.feedUntil(1.6f)
+        // Kestrel's echo, without the name: paused recognition would not have transcribed it anyway.
+        detector.next.addLast(listOf(utterance(0.3f, 0.8f)))
+        pipeline.feed()
+
+        assertEquals(emptyList<VoiceEvent>(), events)
+    }
+
+    @Test
+    fun speechStartedComesAgainAfterAFailureWhileTheOwnerStillSpeaks() = runTest {
+        val pipeline = pipeline()
+        recognizer.failNext = true
+        detector.hearsSpeech = true
+        pipeline.feedUntil(1f)
+        detector.next.addLast(listOf(utterance(0f, 0.5f)))
+        pipeline.feed()
+        pipeline.feedUntil(1.5f)
+
+        assertEquals(listOf("SpeechStarted", "Failed", "SpeechStarted"), events.map { it::class.simpleName })
     }
 
     @Test

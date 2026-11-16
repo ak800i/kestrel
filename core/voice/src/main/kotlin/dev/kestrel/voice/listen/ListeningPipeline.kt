@@ -52,7 +52,8 @@ sealed interface VoiceEvent {
     data object SpeechStarted : VoiceEvent
 
     /**
-     * An utterance ended that recognition would have transcribed, but nothing of it was left to transcribe: it began
+     * An utterance ended that recognition would have transcribed (while recognition is [Recognition.ALL], or
+     * [Recognition.NAMED] and the utterance began with the name), but nothing of it was left to transcribe: it began
      * while Kestrel spoke, and after the cut at the resume less than 0.25 s remained, or the owner's "Kestrel" broke into
      * it (section 8.4).
      */

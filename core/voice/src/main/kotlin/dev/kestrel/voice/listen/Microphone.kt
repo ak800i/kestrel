@@ -29,10 +29,14 @@ interface Microphone {
      * then stops the microphone.
      *
      * Throws when the microphone does not start, for example [SecurityException] without the microphone permission; a
-     * later [stop] releases whatever the start had opened.
+     * later [stop] releases whatever the start had opened. Throws [IllegalStateException] while the microphone records,
+     * also after an error until [stop].
      */
     fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit)
 
-    /** Stops recording, and returns when the microphone's thread has finished. */
+    /**
+     * Stops recording, and returns when the microphone's thread has finished, also when the calling thread is interrupted.
+     * It also closes a recording whose thread ended with an error, and does nothing when the microphone does not record.
+     */
     fun stop()
 }
