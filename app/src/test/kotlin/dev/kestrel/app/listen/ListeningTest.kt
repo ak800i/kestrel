@@ -10,8 +10,12 @@ import dev.kestrel.voice.listen.Recognition
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -327,7 +331,43 @@ class ListeningTest {
             log,
         )
         assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MICROPHONE_FAILED), shown)
         assertEquals("Starting the microphone", reports.single().first)
+    }
+
+    @Test
+    fun anErrorWhileFollowingTheStateTurnsKestrelOffAndTheStateIsStillFollowed() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Screen(on = false))
+        runCurrent()
+        sessions.opened.single().microphoneFailure = OutOfMemoryError("pthread_create failed")
+        log.clear()
+
+        listening.send(Event.Screen(on = true))
+        runCurrent()
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(reports.single().second is OutOfMemoryError)
+        assertEquals(listOf("microphone on", "close", "closed", "stop"), log)
+
+        // The next change of the state still starts the service.
+        listening.send(Event.Toggle)
+        runCurrent()
+        assertEquals("start", log.last())
+    }
+
+    @Test
+    fun anErrorWhileTheSessionClosesStillStopsTheService() = runTest {
+        val errors = mutableListOf<Throwable>()
+        val listening = listeningWithSession(catching(errors))
+        sessions.opened.single().closeFailure = StackOverflowError()
+        log.clear()
+
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        assertEquals(listOf("close", "stop"), log)
+        assertFalse(listening.sessionOpen.value)
+        assertTrue(errors.single() is StackOverflowError)
     }
 
     @Test
@@ -372,8 +412,167 @@ class ListeningTest {
         assertEquals(listOf("start", "stop"), log)
     }
 
-    private fun TestScope.listening(): Listening = Listening(
-        scope = backgroundScope,
+    @Test
+    fun offAndOnInOneRunOfTheOrchestratorStartTheServiceAgain() = runTest {
+        val listening = listeningWithSession()
+        log.clear()
+
+        // Both events wait in the channel, so the Orchestrator handles them in one run, and its state ends as it began.
+        listening.send(Event.TurnOff)
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        assertEquals(listOf("close", "closed", "stop", "start"), log)
+        listening.onForeground(Any())
+        runCurrent()
+        assertTrue(listening.sessionOpen.value)
+    }
+
+    @Test
+    fun aStopThatWaitedBehindANewStartLeavesTheNewServiceRunning() = runTest {
+        val listening = listeningWithSession()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        // Off, on, off and on again while the first session still closes.
+        for (event in listOf(Event.TurnOff, Event.Toggle, Event.TurnOff, Event.Toggle)) {
+            listening.send(event)
+            runCurrent()
+        }
+        log.clear()
+
+        closing.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf("closed", "stop", "start"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aRunningServiceThatCannotReenterTheForegroundTurnsKestrelOffAndSaysWhy() = runTest {
+        val listening = listeningWithSession()
+        log.clear()
+
+        // A notification action's start failed; the service stops itself, and Android destroys it.
+        listening.onForegroundFailed(SecurityException("No microphone permission"))
+        runCurrent()
+        listening.onServiceDestroyed(service)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals("Starting the listening service", reports.single().first)
+        assertEquals(ListeningTexts.CANNOT_START, shown.last())
+        assertEquals(listOf("close", "closed", "stop"), log)
+    }
+
+    @Test
+    fun aReportFromTheClosingServiceIsNotTakenForTheNewStart() = runTest {
+        val listening = listeningWithSession()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        // A notification action reaches the old service while it closes; the shutdown is about to stop that service.
+        listening.onForeground(service)
+        runCurrent()
+        closing.complete(Unit)
+        runCurrent()
+        listening.onServiceDestroyed(service)
+        runCurrent()
+        listening.onForeground(Any())
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(2, sessions.opened.size)
+        assertTrue(listening.sessionOpen.value)
+    }
+
+    @Test
+    fun anErrorWhileTheSessionOpensTurnsKestrelOff() = runTest {
+        val errors = mutableListOf<Throwable>()
+        sessions.failure = UnsatisfiedLinkError("libsherpa-onnx-jni.so")
+        val listening = listening(catching(errors))
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf("start", "open", "stop"), log)
+        assertTrue(errors.single() is UnsatisfiedLinkError)
+    }
+
+    @Test
+    fun aClosedSessionsFailuresAreIgnored() = runTest {
+        val listening = listeningWithSession()
+        val old = sessions.opened.single().listener
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(Any())
+        runCurrent()
+        log.clear()
+        reports.clear()
+
+        old.microphoneFailed(IllegalStateException("The microphone failed with error -3"))
+        old.transcriptionFailed(IllegalStateException("The recogniser failed"))
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test
+    fun aFailureAfterKestrelIsOffShowsItsReasonOnItsOwn() = runTest {
+        sessions.failure = ModelsNotReadyException(Engine.ASR, emptyList())
+        val opening = CompletableDeferred<Unit>()
+        sessions.opening = opening
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        // Turned off while the models load; the missing model shows up only afterwards.
+        listening.send(Event.TurnOff)
+        runCurrent()
+        opening.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.OFF, ListeningTexts.MODELS_MISSING), shown)
+    }
+
+    @Test
+    fun eachOfTwoOverlappingRepliesEndsOnce() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        // A transcript that arrives while "Yes?" still plays is the task, and the stub's reply queues behind "Yes?".
+        listening.send(Event.Heard("Open the settings.", named = false))
+        runCurrent()
+        assertEquals(2, listening.state.value.speeches)
+
+        session.replies[0].complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(listening.state.value.speaking)
+        session.replies[1].complete(Spoke.REFUSED)
+        runCurrent()
+        assertFalse(listening.state.value.speaking)
+    }
+
+    /** A scope whose failures go to [errors] instead of failing the test, for the errors that the controller rethrows. */
+    private fun TestScope.catching(errors: MutableList<Throwable>): CoroutineScope = CoroutineScope(
+        backgroundScope.coroutineContext + SupervisorJob(backgroundScope.coroutineContext[Job]) +
+            CoroutineExceptionHandler { _, e -> errors += e },
+    )
+
+    private fun TestScope.listening(scope: CoroutineScope = backgroundScope): Listening = Listening(
+        scope = scope,
         thread = StandardTestDispatcher(testScheduler),
         sessions = sessions,
         services = services,
@@ -383,8 +582,8 @@ class ListeningTest {
     )
 
     /** Turns listening on, and lets the service report the foreground, so that a session opens. */
-    private fun TestScope.listeningWithSession(): Listening {
-        val listening = listening()
+    private fun TestScope.listeningWithSession(scope: CoroutineScope = backgroundScope): Listening {
+        val listening = listening(scope)
         listening.send(Event.Toggle)
         runCurrent()
         listening.onForeground(service)
@@ -395,9 +594,9 @@ class ListeningTest {
     private inner class FakeSessions : VoiceSessions {
         val opened = mutableListOf<FakeSession>()
         val microphones = mutableListOf<Microphone>()
-        var failure: Exception? = null
+        var failure: Throwable? = null
         var opening: CompletableDeferred<Unit>? = null
-        var microphoneFailure: Exception? = null
+        var microphoneFailure: Throwable? = null
 
         override suspend fun open(microphone: Microphone, listener: SessionListener): Session {
             log += "open"
@@ -408,10 +607,11 @@ class ListeningTest {
         }
     }
 
-    private inner class FakeSession(val listener: SessionListener, private val microphoneFailure: Exception?) : Session {
+    private inner class FakeSession(val listener: SessionListener, var microphoneFailure: Throwable?) : Session {
         val said = mutableListOf<String>()
         val replies = mutableListOf<CompletableDeferred<Spoke>>()
         var closing: CompletableDeferred<Unit>? = null
+        var closeFailure: Throwable? = null
         private var current: Recognition? = null
 
         // Logged only when it changes, so that the log shows what the pipeline would see.
@@ -443,6 +643,7 @@ class ListeningTest {
         override suspend fun close() {
             log += "close"
             closing?.await()
+            closeFailure?.let { throw it }
             log += "closed"
         }
     }

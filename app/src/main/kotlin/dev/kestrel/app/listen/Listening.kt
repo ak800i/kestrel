@@ -110,7 +110,7 @@ class Listening internal constructor(
     val state: StateFlow<State> get() = orchestrator.state
 
     init {
-        scope.launch(thread) { orchestrator.state.collect { follow(it) } }
+        scope.launch(thread) { orchestrator.state.collect { followSafely(it) } }
     }
 
     /** Sends [event] to the Orchestrator. Any thread may call it. */
@@ -126,7 +126,11 @@ class Listening internal constructor(
         scope.launch(thread) {
             // The service stops itself after a failed startForeground(), which Android allows.
             awaitingForeground = false
-            if (serviceState == ServiceState.STARTING) {
+            if (serviceState == ServiceState.STOPPED) {
+                // A start that nobody asked for, such as a stale notification action.
+                report("Starting the listening service", error)
+            } else {
+                // Also for the running service: a notification action's start failed, and the service stops itself.
                 turnOff("Starting the listening service", error, ListeningTexts.CANNOT_START)
             }
         }
@@ -135,6 +139,17 @@ class Listening internal constructor(
     /** Android destroyed the ListeningService instance [instance], whether Kestrel asked for it or not. */
     fun onServiceDestroyed(instance: Any) {
         scope.launch(thread) { destroyed(instance) }
+    }
+
+    private fun followSafely(state: State) {
+        try {
+            follow(state)
+        } catch (e: Error) {
+            // Such as an OutOfMemoryError when the microphone's thread cannot be created. Thrown on, it would end the
+            // state's collector, and then nothing would start the service or stop the microphone any more.
+            report("Following the listening state", e)
+            send(Event.TurnOff)
+        }
     }
 
     private fun follow(state: State) {
@@ -229,16 +244,14 @@ class Listening internal constructor(
                 session = opened
                 listener = events
                 sessionState.value = true
-                follow(state.value)
+                followSafely(state.value)
             }
         }
     }
 
     private fun shutdown() {
         val closing = session
-        // A service that has not called startForeground() yet reports to foreground(), which stops it then.
-        val stop = !awaitingForeground
-        // A late event of the closing session, such as a transcript, must not reach the state of a later session.
+        // From now on, the closing session's events, such as a late transcript, are dropped. See Listener.
         listener?.active = false
         session = null
         listener = null
@@ -248,11 +261,21 @@ class Listening internal constructor(
         running = null
         scope.launch(thread) {
             lifecycle.withLock {
-                // The session first, so that Kestrel plays audio only while the service runs (B5).
-                if (closing != null) closeQuietly(closing)
-                if (stop) stopService()
+                try {
+                    // The session first, so that Kestrel plays audio only while the service runs (B5).
+                    if (closing != null) closeQuietly(closing)
+                } finally {
+                    // Also after an Error from close(), so that the service does not run on while the mode is Off.
+                    // Decided here, under the lock: a start that waited for the lock may have been asked for since
+                    // shutdown() ran. A service that has not called startForeground() yet reports to foreground(),
+                    // which stops it then.
+                    if (!requested && !awaitingForeground) stopService()
+                }
             }
         }
+        // The Orchestrator may turn Kestrel on again in the same run of events. Its state then equals the one that the
+        // collector saw last, and StateFlow skips an equal value, so follow() would never see this Off.
+        scope.launch(thread) { followSafely(state.value) }
     }
 
     private suspend fun closeQuietly(closing: Session) {
@@ -346,7 +369,11 @@ class Listening internal constructor(
         Feedback.MicBusy -> ListeningTexts.MIC_BUSY
     }
 
-    /** Where one session reports. It goes quiet when the session closes. */
+    /**
+     * Where one session reports. It goes quiet when the session starts to close. An event that a session thread sends
+     * just as Kestrel turns off can still slip through, within the width of an instruction, and act on the next state;
+     * it still comes before the next session opens, because close() waits for calls that are on their way.
+     */
     private inner class Listener : SessionListener {
         @Volatile
         var active = true
