@@ -13,13 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
-import dev.kestrel.voice.models.ModelStatus
 
-/** The setup checklist (design spec, section 15). [models] is null until Kestrel has checked the model files. */
+/** The setup checklist (design spec, section 15). [models] is what Kestrel knows about the model files. */
 @Composable
 internal fun ChecklistPage(
     states: Map<SetupStep, StepState>,
-    models: List<ModelStatus>?,
+    models: ModelCheck,
     onAction: (SetupAction) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -48,19 +47,16 @@ private fun StepCard(step: SetupStep, state: StepState, onAction: (SetupAction) 
     }
 }
 
-/** Names each model file that is missing or damaged (design spec, section 8.10). */
+/** Names each missing or damaged model file, or says that Kestrel is checking them or could not (section 8.10). */
 @Composable
-private fun ModelProblems(models: List<ModelStatus>?) {
-    if (models == null) {
-        Text(stringResource(R.string.setup_models_checking), style = MaterialTheme.typography.bodySmall)
-        return
-    }
-    for (status in models) {
-        for (path in status.missing) {
-            Text(stringResource(R.string.setup_models_missing, path), style = MaterialTheme.typography.bodySmall)
-        }
-        for (path in status.damaged) {
-            Text(stringResource(R.string.setup_models_damaged, path), style = MaterialTheme.typography.bodySmall)
+private fun ModelProblems(models: ModelCheck) {
+    val small = MaterialTheme.typography.bodySmall
+    when (models) {
+        ModelCheck.Checking -> Text(stringResource(R.string.setup_models_checking), style = small)
+        ModelCheck.Failed -> Text(stringResource(R.string.setup_models_check_failed), style = small)
+        is ModelCheck.Done -> for (status in models.statuses) {
+            for (path in status.missing) Text(stringResource(R.string.setup_models_missing, path), style = small)
+            for (path in status.damaged) Text(stringResource(R.string.setup_models_damaged, path), style = small)
         }
     }
 }

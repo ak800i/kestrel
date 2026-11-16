@@ -1,7 +1,9 @@
 package dev.kestrel.voice.models
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +15,8 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class ModelFilesTest {
@@ -158,6 +162,54 @@ class ModelFilesTest {
 
         assertTrue(statuses.all { it.single().ready })
         assertEquals(1, hashes.get())
+    }
+
+    @Test
+    fun aCancelledCheckStopsBeforeTheNextFileAndWritesNoCache() = runTest {
+        write("m/a.onnx", "abc")
+        write("m/b.onnx", "de")
+        val hashing = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        val files = ModelFiles(root, manifest("m/a.onnx" to "abc", "m/b.onnx" to "de"), cache) { file ->
+            hashed += file.name
+            hashing.complete(Unit)
+            // Hashing a large file takes seconds; the check is cancelled meanwhile.
+            release.await(10, TimeUnit.SECONDS)
+            sha256(file)
+        }
+
+        val checking = launch { files.check() }
+        hashing.await()
+        checking.cancel()
+        release.countDown()
+        checking.join()
+
+        assertEquals(listOf("a.onnx"), hashed)
+        assertFalse(cache.exists())
+    }
+
+    @Test
+    fun theFolderIsFoundAgainAtEachCheck() = runTest {
+        write("m/a.onnx", "abc")
+        // While shared storage is missing, Kestrel falls back to a folder in its private storage.
+        var current = File(folder.root, "fallback")
+        val files = ModelFiles({ current }, manifest("m/a.onnx" to "abc"), cache)
+
+        assertEquals(listOf("m/a.onnx"), files.check().single().missing)
+
+        current = root
+        assertTrue(files.check().single().ready)
+        assertEquals(File(root, "m/a.onnx"), files.file("m/a.onnx"))
+    }
+
+    @Test
+    fun aCheckCreatesTheFolder() = runTest {
+        // Someone deleted the folder while Kestrel ran; scripts\push-models.ps1 waits for Kestrel to create it.
+        root.deleteRecursively()
+
+        modelFiles(manifest("m/a.onnx" to "abc")).check()
+
+        assertTrue(root.isDirectory)
     }
 
     @Test

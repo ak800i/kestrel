@@ -3,7 +3,10 @@ package dev.kestrel.app.settings
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.Model
 import dev.kestrel.voice.models.ModelStatus
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SetupChecklistTest {
@@ -64,10 +67,42 @@ class SetupChecklistTest {
         val speech = Model("asr", Engine.ASR, "Speech", "CC-BY-4.0", "https://example.org", emptyList())
         val ready = ModelStatus(voice, emptyList(), emptyList())
 
-        // Kestrel has not checked the files yet.
+        // Kestrel has not checked the files yet, or could not check them.
         assertEquals(StepState.TO_DO, state(nothingSetUp))
-        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = listOf(ready, ModelStatus(speech, listOf("a"), emptyList())))))
-        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = listOf(ready, ModelStatus(speech, emptyList(), listOf("a"))))))
-        assertEquals(StepState.DONE, state(nothingSetUp.copy(models = listOf(ready, ModelStatus(speech, emptyList(), emptyList())))))
+        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = ModelCheck.Failed)))
+        assertEquals(
+            StepState.TO_DO,
+            state(nothingSetUp.copy(models = ModelCheck.Done(listOf(ready, ModelStatus(speech, listOf("a"), emptyList()))))),
+        )
+        assertEquals(
+            StepState.TO_DO,
+            state(nothingSetUp.copy(models = ModelCheck.Done(listOf(ready, ModelStatus(speech, emptyList(), listOf("a")))))),
+        )
+        assertEquals(
+            StepState.DONE,
+            state(nothingSetUp.copy(models = ModelCheck.Done(listOf(ready, ModelStatus(speech, emptyList(), emptyList()))))),
+        )
+    }
+
+    @Test
+    fun aModelCheckThatFailsIsReportedAndSaysSo() = runTest {
+        val failure = IllegalStateException("The manifest cannot be read")
+        val reported = mutableListOf<Exception>()
+
+        val result = checkModelFiles({ throw failure }) { reported += it }
+
+        assertEquals(ModelCheck.Failed, result)
+        assertEquals(listOf<Exception>(failure), reported)
+    }
+
+    @Test
+    fun aCancelledModelCheckIsNotAFailure() = runTest {
+        val reported = mutableListOf<Exception>()
+
+        // As when the owner leaves the page while the files are hashed.
+        val thrown = runCatching { checkModelFiles({ throw CancellationException("The page closed") }) { reported += it } }
+
+        assertTrue(thrown.exceptionOrNull() is CancellationException)
+        assertTrue(reported.isEmpty())
     }
 }

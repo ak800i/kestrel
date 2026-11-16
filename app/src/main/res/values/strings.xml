@@ -23,6 +23,7 @@
     <string name="about_android">Android %1$s (API %2$d)</string>
     <string name="about_models">Speech models</string>
     <string name="about_models_checking">Checking the model files…</string>
+    <string name="about_models_check_failed">Kestrel could not check the model files. It checks them again when this page opens again.</string>
     <string name="about_model_ready">%1$s: ready</string>
     <plurals name="about_model_missing">
         <item quantity="one">%1$s: %2$d file is missing</item>
@@ -84,6 +85,7 @@
     <!-- Lint's Typos check reads "ps1 -Serial" as a typo for "ps! -Serial", so this suppression is on purpose. -->
     <string name="setup_models_detail" tools:ignore="Typos">Run scripts\\push-models.ps1 -Serial &lt;serial&gt; on your computer. It downloads the speech models once and copies them to this phone, and Kestrel checks them against the hashes that come with the app.</string>
     <string name="setup_models_checking">Checking the model files…</string>
+    <string name="setup_models_check_failed">Kestrel could not check the model files. It checks them again when this page opens again.</string>
     <string name="setup_models_missing">Missing: %1$s</string>
     <string name="setup_models_damaged">Damaged: %1$s</string>
     <string name="setup_service_title">Turn on Kestrel\'s accessibility service</string>

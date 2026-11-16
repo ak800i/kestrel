@@ -35,15 +35,15 @@ enum class Licence(val asset: String) {
 
 /** The About page: versions, the status of the model files and the licences (design spec, section 15). */
 @Composable
-internal fun AboutPage(data: SettingsData, models: List<ModelStatus>?, onOpen: (Licence) -> Unit, onBack: () -> Unit) {
+internal fun AboutPage(data: SettingsData, models: ModelCheck, onOpen: (Licence) -> Unit, onBack: () -> Unit) {
     PageHeader(stringResource(R.string.settings_about), onBack)
     Text(stringResource(R.string.about_version, data.version), style = MaterialTheme.typography.titleMedium)
     Text(stringResource(R.string.about_android, Build.VERSION.RELEASE, Build.VERSION.SDK_INT))
     Text(stringResource(R.string.about_models), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleMedium)
-    if (models == null) {
-        Text(stringResource(R.string.about_models_checking))
-    } else {
-        for (status in models) {
+    when (models) {
+        ModelCheck.Checking -> Text(stringResource(R.string.about_models_checking))
+        ModelCheck.Failed -> Text(stringResource(R.string.about_models_check_failed))
+        is ModelCheck.Done -> for (status in models.statuses) {
             for (line in modelLines(status)) Text(line)
         }
     }

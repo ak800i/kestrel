@@ -189,9 +189,21 @@ class SettingsAppTest {
     }
 
     @Test
+    fun bothPagesSayWhenTheModelCheckFailed() {
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Failed))
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_models_check_failed)).performScrollTo().assertIsDisplayed()
+
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.about_models_check_failed)).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun theModelStepNamesTheFilesThatAreMissingOrDamaged() {
         val speech = ModelStatus(SPEECH, missing = listOf("asr/encoder.onnx"), damaged = listOf("asr/tokens.txt"))
-        show(NOTHING_SET_UP.copy(models = listOf(READY_VOICE, speech)))
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, speech))))
         openChecklist()
 
         compose.onNodeWithText(text(R.string.setup_models_missing, "asr/encoder.onnx")).performScrollTo().assertIsDisplayed()
@@ -201,7 +213,7 @@ class SettingsAppTest {
     @Test
     fun theAboutPageShowsEachModel() {
         val speech = ModelStatus(SPEECH, missing = listOf("asr/encoder.onnx", "asr/tokens.txt"), damaged = listOf("asr/joiner.onnx"))
-        show(NOTHING_SET_UP.copy(models = listOf(READY_VOICE, speech)))
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, speech))))
         compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
 
         compose.onNodeWithText(text(R.string.about_model_ready, "Voice (MIT)")).performScrollTo().assertIsDisplayed()
@@ -275,7 +287,7 @@ class SettingsAppTest {
             notificationsAllowed = true,
             batteryUnrestricted = true,
             voiceAccessOn = false,
-            models = listOf(READY_VOICE),
+            models = ModelCheck.Done(listOf(READY_VOICE)),
         )
     }
 }

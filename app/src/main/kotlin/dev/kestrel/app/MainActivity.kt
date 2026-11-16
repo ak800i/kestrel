@@ -17,11 +17,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import dev.kestrel.app.settings.ModelCheck
 import dev.kestrel.app.settings.SettingsApp
 import dev.kestrel.app.settings.SetupAction
 import dev.kestrel.app.settings.SetupStatus
 import dev.kestrel.app.settings.SetupStatusReader
 import dev.kestrel.app.settings.StoredSettingsData
+import dev.kestrel.app.settings.checkModelFiles
 import dev.kestrel.app.settings.writeLogExport
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -70,14 +72,18 @@ class MainActivity : ComponentActivity() {
     private fun refresh() {
         // Checking the model files can take seconds the first time, so the other steps show at once, and the model
         // files keep their last known status until the check ends.
-        status = SetupStatusReader(this).read().copy(models = status?.models)
+        status = SetupStatusReader(this).read().copy(models = status?.models ?: ModelCheck.Checking)
         checkModels()
     }
 
     /** The hash cache makes a check of unchanged files cost only a few stat calls, so pages may check often. */
     private fun checkModels() {
+        // After a failed check, the pages say "Checking…" again until this one ends.
+        status = status?.let { if (it.models == ModelCheck.Failed) it.copy(models = ModelCheck.Checking) else it }
         lifecycleScope.launch(graph.errors) {
-            val models = graph.models.check()
+            val coroutine = coroutineContext
+            // A failure is logged by its classes only (section 13.5), and the pages say that the check failed.
+            val models = checkModelFiles({ graph.models.check() }) { error -> graph.errors.handleException(coroutine, error) }
             status = status?.copy(models = models)
         }
     }

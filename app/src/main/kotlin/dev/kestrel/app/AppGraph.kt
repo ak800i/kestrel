@@ -72,12 +72,14 @@ class AppGraph(context: Context) {
 
     /**
      * Kestrel's speech model files, which scripts\push-models.ps1 copies into Kestrel's external files folder (design
-     * spec, section 8.10). Built on first use, because finding that folder touches the disk. If shared storage is not
-     * available, the models count as missing.
+     * spec, section 8.10). Built on first use, because it reads the manifest from the assets. The folder is found again
+     * at each check and each load of the engines: while shared storage is not available, a check or a load uses a folder
+     * in Kestrel's private storage, where the models count as missing, and the next one finds them once shared storage
+     * is back. Every caller uses it off the main thread, because finding the folder touches the disk.
      */
     val models: ModelFiles by lazy {
         ModelFiles(
-            root = File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, "models"),
+            findRoot = { File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, "models") },
             manifest = ModelManifest.fromAssets(appContext.assets),
             hashCache = File(appContext.noBackupFilesDir, "model-hashes.json"),
         )

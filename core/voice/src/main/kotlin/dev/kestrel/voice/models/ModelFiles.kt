@@ -1,6 +1,7 @@
 package dev.kestrel.voice.models
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -23,29 +24,43 @@ data class ModelStatus(val model: Model, val missing: List<String>, val damaged:
  * Checks the model files under [root] against [manifest] (design spec, section 8.10). A file of the wrong size is
  * damaged without being read; otherwise its SHA-256 hash decides. [hashCache] remembers each file's hash together with
  * its size and modification time, so that a file is hashed again only after it changes. The cache lives in Kestrel's
- * private storage, because anyone with adb can change the files under [root].
+ * private storage, because anyone with adb can change the files under [root]. [findRoot] finds the folder again at each
+ * use, because the folder can change while Kestrel runs, for example when shared storage comes back after a while.
  */
 class ModelFiles(
-    val root: File,
+    private val findRoot: () -> File,
     val manifest: ModelManifest,
     private val hashCache: File,
     private val hash: (File) -> String = ::sha256,
 ) {
+    /** Checks the files under [root], a folder that never changes. */
+    constructor(root: File, manifest: ModelManifest, hashCache: File, hash: (File) -> String = ::sha256) :
+        this({ root }, manifest, hashCache, hash)
+
     private val lock = Mutex()
+
+    /** The folder that holds the model files, found again at each use. */
+    val root: File get() = findRoot()
 
     /** Where a path from the manifest lives on this phone. */
     fun file(path: String): File = File(root, path)
 
-    /** Checks every model, in the manifest's order. Hashing a large file takes seconds, so this runs on [Dispatchers.IO]. */
+    /**
+     * Checks every model, in the manifest's order. Hashing a large file takes seconds, so this runs on [Dispatchers.IO].
+     * It uses one folder for the whole check, and creates it first, so that scripts\push-models.ps1 finds it also after
+     * someone deleted it while Kestrel ran. A cancelled check stops before the next file and leaves the cache as it was.
+     */
     suspend fun check(): List<ModelStatus> = withContext(Dispatchers.IO) {
         lock.withLock {
+            val folder = root.apply { mkdirs() }
             val cached = readCache()
             val known = mutableMapOf<String, CachedHash>()
             val statuses = manifest.models.map { model ->
                 val missing = mutableListOf<String>()
                 val damaged = mutableListOf<String>()
                 for (entry in model.files) {
-                    val file = file(entry.path)
+                    ensureActive()
+                    val file = File(folder, entry.path)
                     when {
                         !file.isFile -> missing += entry.path
                         file.length() != entry.size -> damaged += entry.path
@@ -61,6 +76,8 @@ class ModelFiles(
                 }
                 ModelStatus(model, missing, damaged)
             }
+            // Also after the last file, so that a cancelled check never writes the cache.
+            ensureActive()
             if (known != cached) writeCache(known)
             statuses
         }

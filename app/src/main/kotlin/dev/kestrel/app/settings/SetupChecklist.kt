@@ -1,6 +1,7 @@
 package dev.kestrel.app.settings
 
 import dev.kestrel.voice.models.ModelStatus
+import kotlinx.coroutines.CancellationException
 
 /** The steps of the setup checklist, in order (design spec, section 15). */
 enum class SetupStep {
@@ -31,14 +32,26 @@ enum class StepState {
     WARNING,
 }
 
-/** What Kestrel can find out about its own setup on the phone. [models] is null until Kestrel has checked the model files. */
+/** What the settings pages know about the model files (design spec, section 8.10). */
+sealed interface ModelCheck {
+    /** Kestrel is checking them and has no result to show. */
+    data object Checking : ModelCheck
+
+    /** The last check failed. The pages say so, and the next page that opens checks again. */
+    data object Failed : ModelCheck
+
+    /** The result of the last check: one status per model, in the manifest's order. */
+    data class Done(val statuses: List<ModelStatus>) : ModelCheck
+}
+
+/** What Kestrel can find out about its own setup on the phone. [models] is what Kestrel knows about the model files. */
 data class SetupStatus(
     val serviceOn: Boolean,
     val microphoneAllowed: Boolean,
     val notificationsAllowed: Boolean,
     val batteryUnrestricted: Boolean,
     val voiceAccessOn: Boolean,
-    val models: List<ModelStatus>? = null,
+    val models: ModelCheck = ModelCheck.Checking,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -47,7 +60,7 @@ object SetupChecklist {
         when (step) {
             // Kestrel is running, so it is installed.
             SetupStep.INSTALL -> StepState.DONE
-            SetupStep.COPY_MODELS -> doneIf(status.models?.all { it.ready } == true)
+            SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready } == true)
             SetupStep.DEFAULT_ASSISTANT, SetupStep.PROVIDER -> StepState.LATER
             SetupStep.ACCESSIBILITY_SERVICE -> doneIf(status.serviceOn)
             SetupStep.MICROPHONE_AND_NOTIFICATIONS -> doneIf(status.microphoneAllowed && status.notificationsAllowed)
@@ -63,3 +76,18 @@ object SetupChecklist {
 
     private fun doneIf(done: Boolean) = if (done) StepState.DONE else StepState.TO_DO
 }
+
+/**
+ * Checks the model files with [check] for the settings pages. A check that throws gives [ModelCheck.Failed], so that
+ * the pages do not say "Checking…" for ever, and [report] gets the error, which it must log by its classes only (design
+ * spec, section 13.5). A cancellation, such as the end of the page's scope, is thrown on.
+ */
+internal suspend fun checkModelFiles(check: suspend () -> List<ModelStatus>, report: (Exception) -> Unit): ModelCheck =
+    try {
+        ModelCheck.Done(check())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        report(e)
+        ModelCheck.Failed
+    }
