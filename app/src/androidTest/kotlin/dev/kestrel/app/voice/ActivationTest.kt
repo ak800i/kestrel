@@ -18,7 +18,8 @@ import org.junit.Test
  * button, which both reach KestrelAccessibilityService's button callback. Kestrel is in the background, as when the owner
  * uses them. The test process is instrumented, which Android may count as a reason to let Kestrel start a foreground
  * service from the background, so these tests check the wiring; scripts\listen-check.ps1 checks the start paths
- * themselves. Each test puts back the settings that it changes, and leaves Kestrel off.
+ * themselves. Each test puts back the settings that it changes, and leaves Kestrel off and its accessibility service off,
+ * as the voice tests after it expect.
  */
 class ActivationTest {
     @get:Rule
@@ -37,7 +38,19 @@ class ActivationTest {
 
     @After
     fun tearDown() {
-        VoiceTests.stopListening()
+        try {
+            VoiceTests.stopListening()
+        } finally {
+            turnOffTheAccessibilityService()
+        }
+    }
+
+    // The voice tests after this one run without Kestrel's accessibility service, as they did before this test existed. Its
+    // binding alone lets Kestrel record and play in the background while the screen is on (prototype P1, Q1), which would
+    // hide a ListeningService that does not give Kestrel these rights (ConversationTest, B5).
+    private fun turnOffTheAccessibilityService() {
+        VoiceTests.shell("settings delete secure enabled_accessibility_services")
+        check(VoiceTests.waitUntil(10_000) { VoiceTests.graph.screen.value == null }) { "Kestrel's accessibility service is still connected" }
     }
 
     @Test
@@ -69,7 +82,9 @@ class ActivationTest {
             )
             awaitState { it.mode == Mode.LISTENING }
         } finally {
-            for ((name, value) in saved) putSecure(name, value)
+            // Each setting is written back even when another write fails.
+            val failures = saved.map { (name, value) -> runCatching { putSecure(name, value) } }
+            failures.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
         }
     }
 
