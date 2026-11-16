@@ -16,6 +16,21 @@ class OrchestratorTest {
     private val errors = mutableListOf<Exception>()
 
     @Test
+    fun anEventWhoseCheckFailsWhenItsTurnComesIsDroppedAndTheNextEventIsHandled() = runTest {
+        var valid = true
+        // The first effect makes the check false, as a turn-off makes the events of a closing session stale.
+        val orchestrator = Orchestrator(backgroundScope, { performed += it; valid = false }, { errors += it })
+
+        orchestrator.send(Event.Toggle)
+        // The check is true now; it runs only when the event's turn comes, after the Toggle.
+        orchestrator.send(Event.Heard("Kestrel, open the maps.", named = true)) { valid }
+        orchestrator.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+
+        assertEquals(listOf(Effect.RunTask(1, "open the settings.")), performed.filterIsInstance<Effect.RunTask>())
+    }
+
+    @Test
     fun appliesTheRulesToEachEventInTurn() = runTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
 

@@ -883,6 +883,52 @@ class ListeningTest {
     }
 
     @Test
+    fun offAgainWhileASessionClosesStopsTheNewServiceOnceItReports() = runTest {
+        val listening = listeningWithSession()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        log.clear()
+        // Off, on and off again while the first session still closes: the start goes to Android at once.
+        for (event in listOf(Event.TurnOff, Event.Toggle, Event.TurnOff)) {
+            listening.send(event)
+            runCurrent()
+        }
+
+        closing.complete(Unit)
+        runCurrent()
+        // The service has not called startForeground() yet, so neither shutdown may stop it.
+        assertEquals(listOf("close", "start", "closed"), log)
+
+        listening.onForeground(service)
+        runCurrent()
+        assertEquals(listOf("close", "start", "closed", "stop"), log)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertFalse(listening.sessionOpen.value)
+    }
+
+    @Test
+    fun aStartThatAndroidRefusesWhileASessionClosesStopsTheServiceAfterTheClose() = runTest {
+        val listening = listeningWithSession()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        log.clear()
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        services.failure = SecurityException("Not allowed from the background")
+        listening.send(Event.Toggle)
+        runCurrent()
+        closing.complete(Unit)
+        runCurrent()
+
+        // The shutdown of the refused start and the first shutdown each stop the service once the session has closed.
+        assertEquals(listOf("close", "start", "closed", "stop", "stop"), log)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(ListeningTexts.CANNOT_START, shown.last())
+        assertEquals(listOf("Starting the listening service"), reports.map { it.first })
+    }
+
+    @Test
     fun aRunningServiceThatCannotReenterTheForegroundTurnsKestrelOffAndSaysWhy() = runTest {
         val listening = listeningWithSession()
         log.clear()

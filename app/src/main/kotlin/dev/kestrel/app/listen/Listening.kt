@@ -70,8 +70,9 @@ internal object ListeningTexts {
  * owns the [Orchestrator] and follows its state: when the mode leaves Off, it starts ListeningService; once the service
  * runs in the foreground, it opens a voice session; while the session is open, the microphone runs exactly while
  * [State.microphone] is true, and the pipeline's recognition is [State.recognition] before the first frame and after
- * every change. [Effect.StopService] closes the session and then stops the service. A read error of the microphone
- * restarts it after a second, at most once a minute (section 14.6). It stores the mode in [memory]:
+ * every change. [Effect.StopService] closes the session and then stops the service. A failure of the microphone, such as
+ * a read error after Android's audio server restarted, or an exception from the pipeline, restarts it after a second;
+ * a failure within a minute of such a restart turns Kestrel off (section 14.6). It stores the mode in [memory]:
  * listening or paused once a voice session is open, off at once. When Kestrel's accessibility service connects for the
  * first time in a process in which Kestrel has not been on, it stores Off and turns Kestrel on in the stored mode, so
  * that listening comes back after Android ended Kestrel's process or the phone restarted, while a start that ends the
@@ -105,8 +106,9 @@ class Listening internal constructor(
     @Volatile
     internal var microphones: () -> Microphone = microphones
 
-    // Only [thread] uses these. [requested]: the service was asked to start since the last stop. [running]: the
-    // service's instance that runs in the foreground and that Kestrel has not asked to stop.
+    // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start() and shutdown()
+    // change it together with [serviceState], so it always equals serviceState != STOPPED, and foreground() relies on
+    // that. [running]: the service's instance that runs in the foreground and that Kestrel has not asked to stop.
     private var serviceState = ServiceState.STOPPED
     private var requested = false
     private var running: Any? = null
@@ -439,10 +441,12 @@ class Listening internal constructor(
     }
 
     /**
-     * Section 14.6: a read error of the microphone, such as ERROR_DEAD_OBJECT after Android's audio server restarted,
-     * need not end listening. The microphone, which the caller has stopped, starts again after [MICROPHONE_RESTART_MILLIS]
-     * if the state still wants it then; a turn-off or a new session cancels the wait in shutdown(). A restart that fails,
-     * or a failure within [MICROPHONE_FAILURES_MILLIS] of a restart, turns Kestrel off.
+     * Section 14.6: a failure of the microphone, such as ERROR_DEAD_OBJECT after Android's audio server restarted, or an
+     * exception that the pipeline threw from a frame, need not end listening. The microphone, which the caller has
+     * stopped, starts again after [MICROPHONE_RESTART_MILLIS] if the state still wants it then; a turn-off or a new
+     * session cancels the wait in shutdown(). A restart that fails, or a failure within [MICROPHONE_FAILURES_MILLIS] of
+     * a restart, turns Kestrel off. The minute counts only from this restart: when the state did not want the microphone
+     * as the wait ended, for example because the screen was off, the microphone starts later and no minute counts.
      */
     private fun restartMicrophone(error: Exception) {
         if (restartedLately?.isActive == true) {
