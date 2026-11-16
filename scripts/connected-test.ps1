@@ -2,7 +2,8 @@
 # Afterwards, also when the tests fail or Ctrl+C interrupts them, it checks that the serial still names the test device,
 # puts back the device's accessibility settings, and uninstalls the fixture app dev.kestrel.testapp if it was not
 # installed before. If the check fails, or Ctrl+C interrupts it while it puts these back, it warns with the commands that
-# do it by hand. After Ctrl+C, it ends with exit code 1.
+# do it by hand. If the check fails, it puts nothing back and ends with exit code 1, also when the tests passed. After
+# Ctrl+C, it ends with exit code 1.
 # Example: scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest
 param(
     [Parameter(Mandatory = $true)][string]$Serial,

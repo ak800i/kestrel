@@ -13,10 +13,27 @@
 # Kestrel's tile to Quick Settings: no script puts the list of tiles back if the test's process dies. The run fails when
 # one of these three tests ran on a phone or did not run on an emulator. On an emulator the script turns the lock screen
 # off again at the end, wakes the screen and dismisses the keyguard, also when the run failed or was interrupted.
+# Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
+# command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
 param([Parameter(Mandatory = $true)][string]$Serial)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
+
+# Runs a command that puts the device back, and returns whether it worked. When it did not, it warns with what is left
+# and with the command that does it by hand.
+function Invoke-DeviceRestore([string]$What, [string]$Command) {
+    try {
+        Invoke-SettingsCommand -Serial $Serial -Command $Command | Out-Null
+        $true
+    } catch {
+        # The message is Invoke-SettingsCommand's, which holds only the command, the serial and adb's own error text.
+        Write-Warning ("Could not $What on $Serial ($($_.Exception.Message)). If the test device has another serial " +
+            "now, use that one. Run: & '$((Get-Adb) -replace "'", "''")' -s $Serial shell $Command")
+        $false
+    }
+}
+
 $code = 1
 $ended = $false
 $failed = $false
@@ -29,7 +46,9 @@ try {
     $reached = $true
     # The lock-screen test turns on a swipe lock screen and puts the setting back itself, but a test process that died in
     # between would leave it on, so on an emulator the script reads the setting first and puts it back at the end.
-    if ($emulator) { $lockScreenOff = "$(& (Get-Adb) -s $Serial shell cmd lock_settings get-disabled)".Trim() -eq 'true' }
+    if ($emulator) {
+        $lockScreenOff = ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd lock_settings get-disabled') -join '').Trim() -eq 'true'
+    }
     & "$PSScriptRoot\install.ps1" -Serial $Serial
     $code = $LASTEXITCODE
     if ($code -eq 0) {
@@ -85,26 +104,18 @@ try {
     # in a try block of its own, and the exit code is set in its finally block.
     try {
         if ($emulator -and $reached) {
-            # Windows PowerShell 5.1 would stop at adb's first error line.
-            $ErrorActionPreference = 'Continue'
-            & (Get-Adb) -s $Serial shell cmd sensor_privacy disable 0 microphone
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning ("Could not switch off the microphone's privacy toggle on $Serial. " +
-                    "Run: adb -s $Serial shell cmd sensor_privacy disable 0 microphone")
+            # The tests take minutes, in which the emulator can end and another one can take its serial, so each command
+            # checks the device in the same adb call. Each of them can run twice without harm, as the helper may repeat it.
+            if (-not (Invoke-DeviceRestore "switch off the microphone's privacy toggle" 'cmd sensor_privacy disable 0 microphone')) {
                 $code = 1
             }
             # The lock-screen test leaves the screen on and unlocked and the lock screen as it found it, unless its process
             # died in between.
-            if ($lockScreenOff) {
-                & (Get-Adb) -s $Serial shell cmd lock_settings set-disabled true | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warning ("Could not turn off the lock screen of $Serial again. " +
-                        "Run: adb -s $Serial shell cmd lock_settings set-disabled true")
-                    $code = 1
-                }
+            if ($lockScreenOff -and -not (Invoke-DeviceRestore 'turn off the lock screen again' 'cmd lock_settings set-disabled true')) {
+                $code = 1
             }
-            & (Get-Adb) -s $Serial shell input keyevent KEYCODE_WAKEUP
-            & (Get-Adb) -s $Serial shell wm dismiss-keyguard
+            if (-not (Invoke-DeviceRestore 'wake the screen' 'input keyevent KEYCODE_WAKEUP')) { $code = 1 }
+            if (-not (Invoke-DeviceRestore 'dismiss the keyguard' 'wm dismiss-keyguard')) { $code = 1 }
         }
     } finally {
         # After a stop, such as Ctrl+C, PowerShell would end the script with exit code 0. A failed run ends with its

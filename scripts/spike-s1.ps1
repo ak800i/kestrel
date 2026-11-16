@@ -21,15 +21,17 @@ $service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
 
 function Invoke-Shell([string]$Command) { (& $adb -s $Serial shell $Command) -join "`n" }
 function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join "`n" }
+# Runs a command on the device that Assert-TestDevice accepted, checked in the same adb call, and fails when it fails.
+function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
 
 function Set-KestrelService([bool]$On) {
     if (-not $On) {
-        Invoke-Shell 'settings delete secure enabled_accessibility_services' | Out-Null
+        Invoke-Checked 'settings delete secure enabled_accessibility_services' | Out-Null
         Start-Sleep -Seconds 2
         return
     }
-    Invoke-Shell "settings put secure enabled_accessibility_services $service" | Out-Null
-    Invoke-Shell 'settings put secure accessibility_enabled 1' | Out-Null
+    Invoke-Checked "settings put secure enabled_accessibility_services $service" | Out-Null
+    Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
     for ($i = 0; $i -lt 30; $i++) {
         if ((Invoke-Hook state) -like 'screen=on*') { return }
         Start-Sleep -Seconds 1
@@ -57,9 +59,6 @@ function Get-SpikeLocation([string]$Source) {
     }
     Wait-Result "source=$Source " 20
 }
-
-# Runs a command on the device and fails when it fails.
-function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
 
 # Returns the permissions, of those given, that Kestrel has now.
 function Get-GrantedPermissions([string[]]$Permissions) {

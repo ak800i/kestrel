@@ -9,10 +9,10 @@
 #   restart   after Android ended Kestrel's process ('am crash'), listening comes back once the accessibility service has
 #             connected again. Android does not restart an app that crashed twice within 2 minutes, so wait 2 minutes
 #             before you run the script again.
-#   reboot    with -Reboot: listening comes back after a reboot. On the emulator, start a run with -Reboot from a cold boot
-#             (& $adb -s $serial emu kill, then scripts\start-emulator.ps1 -ColdBoot): on this computer, 'adb reboot'
-#             has crashed and frozen an emulator that had run for many hours. The check fails when 'adb reboot' has not
-#             returned within 60 s.
+#   reboot    with -Reboot: listening comes back after a reboot. On the emulator, start a run with -Reboot from a cold boot:
+#             run & $adb -s $serial emu kill, wait until the emulator has closed, and then run
+#             $serial = scripts\start-emulator.ps1 -ColdBoot. On this computer, 'adb reboot' has crashed and frozen an
+#             emulator that had run for many hours. The check fails when 'adb reboot' has not returned within 60 s.
 # Kestrel is in the background for each check, and it listens with its own microphone. Every check except the settings
 # check also checks in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
 # with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that
