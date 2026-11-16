@@ -1130,7 +1130,8 @@ class ListeningTest {
         listening.send(Event.TurnOff)
         runCurrent()
 
-        // A notification action reaches the old service while it closes, and then the owner turns Kestrel on again.
+        // A late report of a start that Kestrel no longer wants reaches the old service while it closes, and then the
+        // owner turns Kestrel on again.
         listening.onForeground(service)
         runCurrent()
         listening.send(Event.Toggle)

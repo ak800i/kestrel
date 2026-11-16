@@ -31,8 +31,11 @@ internal interface ServiceControl {
     fun start()
 
     /**
-     * Asks the service to stop itself. It stops unless a newer start, such as a notification action, is still on its way
-     * to it; that start reports to [Listening.onForeground]. Nothing happens when the service does not run.
+     * Asks the service to stop itself, on the main thread a moment later. It stops unless Android has a newer start for
+     * it that onStartCommand has not handled yet; that start reports to [Listening.onForeground] or
+     * [Listening.onStartAction]. A "Start listening" that onStartCommand handled just before the stop runs, and that
+     * Listening has not adopted yet, stops with it; the owner then taps again. Nothing happens when the service does
+     * not run.
      */
     fun stop()
 }
@@ -134,9 +137,9 @@ internal interface StopNotices {
  * Threads: the Orchestrator's loop, its effects, the following of the state, the microphone's start and stop, and the
  * open session's events run on [thread], one at a time. A session opens and closes in a coroutine of [scope] behind
  * one lock, so that a new session opens only after a shutdown has finished: two recognisers would need about 1.4 GB.
- * Android is asked for the service at once, also while a session still closes, because a tap on the tile or a
- * notification action lets Kestrel start a foreground service from the background only for a few seconds. The public
- * functions may be called from any thread. [report] gets each failure with a fixed description of what failed, and
+ * Android is asked for the service at once, also while a session still closes, because a tap on the tile lets Kestrel
+ * start a foreground service from the background only for a few seconds. The public functions may be called from any
+ * thread. [report] gets each failure with a fixed description of what failed, and
  * must log no message. When Kestrel turns itself off, the bar shows a [StopReason] in place of "Off" (section 14.6),
  * and [notices] posts it as a notification, which goes once a voice session opens again; [conditions] tells the causes
  * apart.
@@ -322,9 +325,10 @@ class Listening internal constructor(
                 // Section 14.6: Kestrel is off, so the bar and the notification say why the owner's start failed.
                 startAction && serviceState == ServiceState.STOPPED ->
                     turnOff("Starting the listening service", error, startFailure(error), notify = true)
-                // A start that nobody asked for, such as a stale notification action.
+                // A start that nobody wants any more: Kestrel turned off before the service reported.
                 serviceState == ServiceState.STOPPED -> report("Starting the listening service", error)
-                // Also for the running service: a notification action's start failed, and the service stops itself.
+                // Also for the running service: a newer start, such as "Start listening", failed, and the service stops
+                // itself.
                 else -> turnOff("Starting the listening service", error, startFailure(error))
             }
         }
@@ -387,9 +391,9 @@ class Listening internal constructor(
         serviceState = ServiceState.STARTING
         // A reason from an earlier start must never come back.
         offReason = null
-        // At once, also while a shutdown still closes the session: a tap on the tile or a notification action lets Kestrel
-        // start a foreground service from the background only for a few seconds. The shutdown's stop sees [requested]
-        // and leaves the service running, and open() waits for the close.
+        // At once, also while a shutdown still closes the session: a tap on the tile lets Kestrel start a foreground
+        // service from the background only for a few seconds. The shutdown's stop sees [requested] and leaves the
+        // service running, and open() waits for the close.
         requested = true
         try {
             services.start()
@@ -409,11 +413,11 @@ class Listening internal constructor(
                 running = instance
                 open()
             }
-            // A service that nobody asked for, such as one that a stale notification started while Kestrel was off.
+            // A service that nobody wants any more, such as one whose start came after Kestrel turned off again.
             ServiceState.STOPPED -> scope.launch(thread) {
                 lifecycle.withLock { if (serviceState == ServiceState.STOPPED) stopService() }
             }
-            // The running service handled a notification action.
+            // A newer start, such as "Start listening" while Kestrel listens, reached the running service.
             ServiceState.FOREGROUND -> Unit
         }
     }

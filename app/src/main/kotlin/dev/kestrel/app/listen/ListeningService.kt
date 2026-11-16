@@ -34,9 +34,11 @@ import kotlinx.coroutines.launch
  * Keeps Kestrel listening (design spec, sections 7.2, 8.5 and 8.6): a foreground service of the types microphone and
  * media playback, because Android lets Kestrel record and play audio in the background only while such a service runs
  * (B5). [Listening] starts and stops it, and holds the voice session while it runs. The service shows the notification
- * with Pause or Resume and Stop, or without actions once Kestrel is turning off, and tells [Listening] whether the screen
- * is on and the phone unlocked. It stops itself when [Listening] asks, unless a newer start is still on its way to it.
- * Android calls every callback on the main thread.
+ * with Pause or Resume and Stop, or without actions once Kestrel is turning off, and tells [Listening] whether the
+ * screen is on and the phone unlocked. The actions are broadcasts to [NotificationActionReceiver], so they need no new
+ * start of the service. Since Android 14 the owner can swipe the notification away while the phone is unlocked; it
+ * comes back with the next change of mode. The service stops itself when [Listening] asks, unless a newer start is
+ * still on its way to it. Android calls every callback on the main thread.
  */
 class ListeningService : Service() {
     private val listening: Listening get() = (application as KestrelApplication).graph.listening
@@ -116,11 +118,6 @@ class ListeningService : Service() {
         }
         // The problems notification's "Start listening" asks for a start that Listening adopts (section 14.6).
         if (intent?.action == ACTION_START) listening.onStartAction(this) else listening.onForeground(this)
-        when (intent?.action) {
-            ACTION_PAUSE -> listening.send(Event.Pause)
-            ACTION_RESUME -> listening.send(Event.Resume)
-            ACTION_STOP -> listening.send(Event.TurnOff)
-        }
         return START_NOT_STICKY
     }
 
@@ -214,11 +211,11 @@ class ListeningService : Service() {
             PendingIntent.FLAG_IMMUTABLE,
         )
 
-        /** The intent of the notification's action [action]: it starts the service with that action. */
-        internal fun actionIntent(context: Context, action: String): PendingIntent = PendingIntent.getForegroundService(
+        /** The intent of the notification's action [action]: a broadcast to [NotificationActionReceiver]. */
+        internal fun actionIntent(context: Context, action: String): PendingIntent = PendingIntent.getBroadcast(
             context,
             0,
-            Intent(context, ListeningService::class.java).setAction(action),
+            Intent(context, NotificationActionReceiver::class.java).setAction(action),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 

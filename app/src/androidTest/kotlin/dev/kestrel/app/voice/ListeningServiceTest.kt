@@ -81,6 +81,30 @@ class ListeningServiceTest {
     }
 
     @Test
+    fun theNotificationsActionsWorkWithKestrelInTheBackground() {
+        ActivityScenario.launch(MainActivity::class.java).use { VoiceTests.startListening(clip) }
+        // As when the owner uses the notification over another app, with the screen on.
+        VoiceTests.shell("input keyevent KEYCODE_HOME")
+        assertEquals(texts(R.string.listening_pause, R.string.listening_stop), actions(R.string.listening_title_listening))
+        // Section 8.6: broadcasts, which need no new start of the service. Before this task they started the service.
+        val shown = notifications.activeNotifications.single { it.id == ListeningService.NOTIFICATION_ID }.notification
+        assertTrue("An action still starts the service", shown.actions.all { it.actionIntent.isBroadcast })
+
+        press(R.string.listening_pause)
+        awaitState { it.mode == Mode.PAUSED }
+        assertEquals(texts(R.string.listening_resume, R.string.listening_stop), actions(R.string.listening_title_paused))
+        press(R.string.listening_resume)
+        awaitState { it.mode == Mode.LISTENING }
+        assertEquals(texts(R.string.listening_pause, R.string.listening_stop), actions(R.string.listening_title_listening))
+        assertTrue("The microphone does not record", VoiceTests.waitUntil(5_000) { clip.recording })
+
+        press(R.string.listening_stop)
+        awaitState { it.mode == Mode.OFF }
+        assertTrue("The voice session is still open", VoiceTests.waitUntil(30_000) { !listening.sessionOpen.value })
+        assertTrue("ListeningService still runs", VoiceTests.waitUntil(10_000) { !VoiceTests.listeningServiceRuns() })
+    }
+
+    @Test
     fun theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock() {
         VoiceTests.assumeEmulator()
         ActivityScenario.launch(MainActivity::class.java).use { VoiceTests.startListening(clip) }

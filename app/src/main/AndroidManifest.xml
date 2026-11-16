@@ -58,6 +58,12 @@
             android:exported="false"
             android:foregroundServiceType="microphone|mediaPlayback" />
 
+        <!-- The listening notification's Pause, Resume and Stop (design spec, section 8.6). Only Kestrel's own
+             PendingIntents reach it. -->
+        <receiver
+            android:name=".listen.NotificationActionReceiver"
+            android:exported="false" />
+
         <!-- The Quick Settings tile that toggles listening (design spec, sections 7.2 and 8.6). Only SystemUI, which holds
              BIND_QUICK_SETTINGS_TILE, can bind it. -->
         <service

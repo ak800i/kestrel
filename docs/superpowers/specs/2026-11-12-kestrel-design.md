@@ -270,6 +270,8 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 
 The side-key and earbud routes depend on Kestrel holding the assistant role (spike S2). If they fail, the shortcut, the tile and the notification still work.
 
+The notification's Pause, Resume and Stop reach Kestrel as broadcasts to a receiver that only Kestrel's own notification can reach, so they need no new start of the listening service and work in the background. Since Android 14 the owner can swipe the listening notification away while the phone is unlocked; Kestrel goes on listening, and the notification comes back with the next change of mode.
+
 ### 8.7 Calls
 
 - While a call rings, Kestrel understands only "answer", "answer on speaker" and "decline". It performs them on the incoming-call screen with a button press or a swipe gesture. If that fails, it uses Android's call API, which needs the `ANSWER_PHONE_CALLS` permission. Spike S1 checks that this also works while the phone is locked.
