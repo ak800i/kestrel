@@ -1,17 +1,23 @@
 package dev.kestrel.app
 
+import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
+import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.screen.ScreenSession
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-/** Reads the screen and acts on it for Kestrel (design spec, sections 7.2 and 9). */
+/**
+ * Reads the screen and acts on it for Kestrel (design spec, sections 7.2 and 9). The accessibility button and the
+ * accessibility shortcut toggle listening through it (section 8.6). Android calls every callback on the main thread.
+ */
 class KestrelAccessibilityService : AccessibilityService() {
     private val graph: AppGraph get() = (application as KestrelApplication).graph
     private var session: ScreenSession? = null
     private var purging: Job? = null
+    private var button: AccessibilityButtonController.AccessibilityButtonCallback? = null
 
     override fun onServiceConnected() {
         val connected = ScreenSession(this, graph.errors)
@@ -22,6 +28,15 @@ class KestrelAccessibilityService : AccessibilityService() {
             val context = coroutineContext
             graph.logs.keepPurging { error -> graph.errors.handleException(context, error) }
         }
+        // A press of the accessibility button and the accessibility shortcut both arrive here, on the main thread. Toggle
+        // switches between listening and paused, or starts Kestrel when it is off (section 8.6).
+        val clicks = object : AccessibilityButtonController.AccessibilityButtonCallback() {
+            override fun onClicked(controller: AccessibilityButtonController) {
+                graph.listening.send(Event.Toggle)
+            }
+        }
+        accessibilityButtonController.registerAccessibilityButtonCallback(clicks)
+        button = clicks
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -41,6 +56,8 @@ class KestrelAccessibilityService : AccessibilityService() {
     }
 
     private fun disconnect() {
+        button?.let { accessibilityButtonController.unregisterAccessibilityButtonCallback(it) }
+        button = null
         purging?.cancel()
         purging = null
         session?.let {
