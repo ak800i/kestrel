@@ -340,6 +340,56 @@ class ListeningTest {
     }
 
     @Test
+    fun aRestoreStartsOnlyOnceItsOffIsStored() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.writing = CompletableDeferred()
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertTrue(log.isEmpty())
+
+        memory.writing?.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf("start"), log)
+    }
+
+    @Test
+    fun aRestoreWhoseOffCannotBeStoredStartsNothing() = runTest {
+        memory.stored = Mode.LISTENING
+        memory.writeFailure = IOException("The disk failed")
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        // A start now could end the process again at every start, because Listening would stay stored.
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals("Storing the listening mode", reports.single().first)
+    }
+
+    @Test
+    fun aReadThatFailedIsNotTriedAgainInTheProcess() = runTest {
+        memory.readFailure = IOException("The disk failed")
+        val listening = listening()
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        // The service connects again, for example after the owner turned it off and on in Android's settings.
+        memory.readFailure = null
+        memory.stored = Mode.LISTENING
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(1, memory.reads)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+    }
+
+    @Test
     fun nothingIsRestoredOnceKestrelHasBeenOn() = runTest {
         memory.stored = Mode.PAUSED
         val listening = listening()
@@ -945,6 +995,8 @@ class ListeningTest {
         var reads = 0
         var readFailure: Exception? = null
         var reading: CompletableDeferred<Unit>? = null
+        var writeFailure: Exception? = null
+        var writing: CompletableDeferred<Unit>? = null
         val writes = mutableListOf<Mode>()
 
         override suspend fun read(): Mode {
@@ -955,6 +1007,8 @@ class ListeningTest {
         }
 
         override suspend fun write(mode: Mode) {
+            writing?.await()
+            writeFailure?.let { throw it }
             writes += mode
             stored = mode
         }
