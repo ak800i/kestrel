@@ -13,7 +13,8 @@ import java.util.concurrent.locks.LockSupport
  * A stand-in for the microphone, for the device tests and the debug hooks (design spec, section 16.1). It delivers the
  * clips that [play] queues, in 20 ms frames of 16 kHz samples, in real time: one frame every 20 ms on its own thread,
  * and silence between the clips. A clip that is still playing when [stop] comes is dropped; the clips after it wait for
- * the next [start]. [silence] stands in for Android silencing the recording.
+ * the next [start]. [silence] stands in for Android silencing the recording: the clips go on, but the microphone
+ * delivers zeros.
  */
 class ClipMicrophone : Microphone {
     private val clips = ConcurrentLinkedQueue<FloatArray>()
@@ -37,9 +38,17 @@ class ClipMicrophone : Microphone {
         clips.add(samples)
     }
 
-    /** Silences the recording, or ends the silencing, as Android does when another app takes the microphone. */
+    /**
+     * Silences the recording, or ends the silencing, as Android does when another app takes the microphone: while it
+     * is silenced, the microphone delivers zeros, and the clips go on as sound in the room does. As with Android,
+     * only a recording is silenced: `silence(true)` throws [IllegalStateException] while the microphone does not
+     * record, and [stop] ends the silencing. Any thread.
+     */
     fun silence(on: Boolean) {
-        silencedState.value = on
+        synchronized(this) {
+            check(!on || reader != null) { "The microphone does not record" }
+            silencedState.value = on
+        }
     }
 
     /** Drops the clips that wait to be played. Any thread. */
@@ -108,6 +117,7 @@ class ClipMicrophone : Microphone {
                     clip = current
                 }
             }
+            if (silencedState.value) frame.fill(0f)
             try {
                 onFrame(frame)
             } catch (e: Exception) {

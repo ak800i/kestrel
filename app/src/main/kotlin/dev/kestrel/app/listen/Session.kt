@@ -17,11 +17,11 @@ internal interface Session {
 
     /**
      * Starts the microphone. Throws when it does not start, for example without the microphone permission; then
-     * [stopMicrophone] releases whatever the start had opened.
+     * [stopMicrophone] releases whatever the start had opened. Throws [IllegalStateException] after [close].
      */
     fun startMicrophone()
 
-    /** Stops the microphone, and then drops the audio that the pipeline still holds. */
+    /** Stops the microphone, and then drops the audio that the pipeline still holds. After [close] it does nothing. */
     fun stopMicrophone()
 
     /** Speaks [text] in Kestrel's voice. The result completes as `VoicePlayer.speak`'s does. */
@@ -32,20 +32,29 @@ internal interface Session {
 
     /**
      * Stops the microphone, then closes the pipeline, the player and the engines, in this order, each step also when an
-     * earlier one failed, and then throws the first failure. The session cannot be used afterwards.
+     * earlier one failed, and then throws the first failure, with the later ones as suppressed exceptions. The session
+     * cannot be used afterwards, and a later call does nothing. When it returns or throws, nothing more reaches the
+     * listener: it waits for a call of the listener in progress, so the listener must not wait for it.
      */
     suspend fun close()
 }
 
 /** Where a session reports. */
 internal interface SessionListener {
-    /** An event for the Orchestrator. Any thread may call it. */
+    /**
+     * An event for the Orchestrator. It is called from the session's coroutines on
+     * [kotlinx.coroutines.Dispatchers.Default], also on two threads at once, and must not throw: an exception would end
+     * Kestrel's process.
+     */
     fun send(event: Event)
 
     /** The microphone failed. It is called on the microphone's thread, so it must return at once and must not throw. */
     fun microphoneFailed(error: Exception)
 
-    /** Transcribing an utterance failed; the session goes on. */
+    /**
+     * Transcribing an utterance failed; the session goes on. It is called on a thread of
+     * [kotlinx.coroutines.Dispatchers.Default], and must not throw: an exception would end Kestrel's process.
+     */
     fun transcriptionFailed(error: Exception)
 }
 

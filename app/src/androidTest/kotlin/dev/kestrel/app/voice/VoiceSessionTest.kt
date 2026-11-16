@@ -35,8 +35,9 @@ class VoiceSessionTest {
         val session = VoiceSession.open(context, VoiceTests.graph.voice, clip, listener)
         try {
             session.recognition = Recognition.ALL
-            session.startMicrophone()
+            // Queued first, so that the clip starts on the microphone's first frame in every run.
             clip.play(VoiceTests.speech("Kestrel, open the settings."))
+            session.startMicrophone()
             val heard = listener.await { it is Event.Heard } as Event.Heard
             clip.silence(true)
             listener.await { it == Event.MicBusy(true) }
@@ -68,8 +69,8 @@ class VoiceSessionTest {
             val open = VoiceSession(context, detector, spotter, recognizer, synthesizer, clip, listener)
             session = open
             open.recognition = Recognition.ALL
-            open.startMicrophone()
             clip.play(VoiceTests.speech("Open the settings."))
+            open.startMicrophone()
             // The microphone still delivers speech when the session closes. A frame that reached a closed engine would
             // make the pipeline throw, and the microphone would report it as an error.
             delay(1_000)

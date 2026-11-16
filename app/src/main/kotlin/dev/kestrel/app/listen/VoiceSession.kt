@@ -20,15 +20,18 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Kestrel's voice session (design spec, sections 7.2 and 8.1–8.4). It owns the speech engines, [microphone], the
  * listening pipeline, the echo filter and the voice player, and turns what the pipeline hears into the Orchestrator's
- * events for [listener]. The microphone's thread only feeds the pipeline; transcription runs on a thread of its own,
- * and the events go out from a coroutine of the session. The only boost word is "Kestrel" for now.
+ * events for [listener]. The microphone's thread feeds the pipeline and reports its errors to [listener];
+ * transcription runs one utterance at a time on [Dispatchers.Default], and the events go out from coroutines of the
+ * session. The only boost word is "Kestrel" for now.
  */
 internal class VoiceSession(
     context: Context,
@@ -40,6 +43,7 @@ internal class VoiceSession(
     private val listener: SessionListener,
 ) : Session {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val closed = AtomicBoolean(false)
     private val player = VoicePlayer(context, synthesizer)
     private val echo = EchoFilter()
     private val pipeline = ListeningPipeline(
@@ -66,13 +70,16 @@ internal class VoiceSession(
         }
 
     override fun startMicrophone() {
+        // A frame would reach a closed engine, and the recording would stay open with nobody to stop it.
+        check(!closed.get()) { "The session is closed" }
         microphone.start(onFrame = pipeline::accept, onError = listener::microphoneFailed)
     }
 
     override fun stopMicrophone() {
         microphone.stop()
-        // Only after the microphone's thread has ended, because the pipeline serves one thread at a time.
-        pipeline.pause()
+        // Only after the microphone's thread has ended, because the pipeline serves one thread at a time. After close()
+        // the speech detector is closed, and the pipeline holds nothing.
+        if (!closed.get()) pipeline.pause()
     }
 
     override fun speak(text: String): Deferred<Spoke> = player.speak(text)
@@ -80,6 +87,7 @@ internal class VoiceSession(
     override fun stopSpeaking() = player.stop()
 
     override suspend fun close() {
+        if (!closed.compareAndSet(false, true)) return
         val errors = mutableListOf<Exception>()
         // A close that stopped half-way would leave the engines open, with about 1 GB of native memory.
         withContext(NonCancellable) {
@@ -96,8 +104,9 @@ internal class VoiceSession(
                 errors.attempt { detector.close() }
                 errors.attempt { synthesizer.close() }
             }
+            // Waits for an event that is going out, so that nothing reaches the listener after close() returns.
+            scope.coroutineContext.job.cancelAndJoin()
         }
-        scope.cancel()
         val first = errors.firstOrNull() ?: return
         errors.drop(1).forEach(first::addSuppressed)
         throw first
@@ -121,17 +130,28 @@ internal class VoiceSession(
         private val BOOST_WORDS = listOf("Kestrel")
 
         /**
-         * Loads the engines and opens a session (section 8.2): first the speech detector, the keyword spotter and the
-         * recogniser, which the pipeline needs, then the voice with its default options. Takes several seconds. Throws
-         * `ModelsNotReadyException` when a model is missing or damaged, after closing the engines that it had loaded.
+         * Loads the engines and opens a session (section 8.2): the speech detector, the keyword spotter, the voice with
+         * its default options, and the recogniser last, because it holds about 700 MB: a missing model of another
+         * engine then fails before it loads. Takes several seconds. Throws `ModelsNotReadyException` when a model is
+         * missing or damaged, after closing the engines that it had loaded; it closes them also when a load fails
+         * otherwise or is cancelled. The loaders are parameters only for the tests.
          */
-        suspend fun open(context: Context, engines: VoiceEngines, microphone: Microphone, listener: SessionListener): VoiceSession {
+        suspend fun open(
+            context: Context,
+            engines: VoiceEngines,
+            microphone: Microphone,
+            listener: SessionListener,
+            loadSpeechDetector: suspend () -> SpeechDetector = { engines.speechDetector() },
+            loadKeywordSpotter: suspend () -> KeywordSpotter = { engines.keywordSpotter() },
+            loadSynthesizer: suspend () -> Synthesizer = { engines.synthesizer() },
+            loadRecognizer: suspend () -> Recognizer = { engines.recognizer() },
+        ): VoiceSession {
             val loaded = mutableListOf<AutoCloseable>()
             try {
-                val detector = engines.speechDetector().also { loaded += it }
-                val spotter = engines.keywordSpotter().also { loaded += it }
-                val recognizer = engines.recognizer().also { loaded += it }
-                val synthesizer = engines.synthesizer().also { loaded += it }
+                val detector = loadSpeechDetector().also { loaded += it }
+                val spotter = loadKeywordSpotter().also { loaded += it }
+                val synthesizer = loadSynthesizer().also { loaded += it }
+                val recognizer = loadRecognizer().also { loaded += it }
                 return VoiceSession(context, detector, spotter, recognizer, synthesizer, microphone, listener)
             } catch (e: Throwable) {
                 withContext(NonCancellable + Dispatchers.IO) {
