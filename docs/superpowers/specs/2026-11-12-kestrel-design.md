@@ -136,7 +136,7 @@ All components run in one process.
 | Component | Android type | Job |
 |---|---|---|
 | `KestrelAccessibilityService` | `AccessibilityService` | Reads the screen, performs actions, draws the overlays and watches for touches. It declares `isAccessibilityTool="true"` (D19). |
-| `ListeningService` | Foreground service of the types `microphone` and `mediaPlayback` | Owns the microphone, the speech engines and voice output. Android 17 requires audio playback to belong to a foreground service like this one (B5). |
+| `ListeningService` | Foreground service of the types `microphone` and `mediaPlayback` | Keeps Kestrel listening, and shows the notification with Pause or Resume and Stop. While it runs in the foreground, Kestrel's listening controller holds the microphone, the speech engines and voice output; the controller lives in the app's process, so that the accessibility service, the notification and the tile reach it whether or not the service runs. Android 17 requires audio playback to belong to a foreground service like this one (B5). |
 | `KestrelAssistantService` | `VoiceInteractionService`, with the session and recognition services that the platform expects in an assistant declaration | Makes Kestrel selectable as the default digital assistant. This enables the side-key and earbud gestures. When the owner selects Kestrel as the assistant, it can also give Kestrel Android's documented exemption for starting the microphone service from the background (B4). Spikes S1 and S2 check both points. |
 | `KestrelNotificationListener` | `NotificationListenerService` | Reads notifications for the notification data tool (D14). |
 | `KestrelTileService` | `TileService` | A Quick Settings tile that toggles listening. |

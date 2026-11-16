@@ -46,7 +46,7 @@ scripts\connected-test.ps1 -Serial $serial :core:privacy:connectedDebugAndroidTe
 scripts\install.ps1 -Serial $serial       # runs the privacy audit, then installs the debug build with adb install -r
 ```
 
-The device tests of the speech engines need the speech models on the device. `scripts\voice-test.ps1 -Serial $serial` installs Kestrel, copies the models with `push-models.ps1`, runs the tests of the package `dev.kestrel.app.voice`, and keeps Kestrel and its test APK installed, because uninstalling Kestrel deletes the models. It fails when a test was skipped, and it prints the timings and the memory use that the tests measured. One test, `MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle`, switches the device's microphone privacy toggle on and off. On a phone the script leaves it out, and on an emulator the script switches the toggle off at the end, so that a test process that died cannot leave the microphone silenced. `connected-test.ps1` runs these tests too, but they skip themselves when the models are missing, and at the end Gradle uninstalls Kestrel, which deletes the models.
+The device tests of the speech engines need the speech models on the device. `scripts\voice-test.ps1 -Serial $serial` installs Kestrel, copies the models with `push-models.ps1`, runs the tests of the package `dev.kestrel.app.voice`, and keeps Kestrel and its test APK installed, because uninstalling Kestrel deletes the models. It fails when a test was skipped, and it prints the timings and the memory use that the tests measured. One test, `MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle`, switches the device's microphone privacy toggle on and off. On a phone the script leaves it out, and on an emulator the script switches the toggle off at the end, so that a test process that died cannot leave the microphone silenced. Some of these tests start Kestrel's listening service, switch the emulator's screen off and on with `input keyevent`, turn the emulator's swipe lock screen on (`cmd lock_settings set-disabled false`) and off again, and grant Kestrel the microphone and notification permissions, which stay granted. The lock-screen test unlocks with `wm dismiss-keyguard`, which cannot unlock a PIN, pattern or password, so on a phone the script leaves it out, as it does the privacy-toggle test, and on an emulator the script turns the lock screen off again at the end, in case the test's process died before it could. `connected-test.ps1` runs these tests too, but they skip themselves when the models are missing, and at the end Gradle uninstalls Kestrel, which deletes the models.
 
 Kestrel is installed with `adb install`, which avoids Android's block on accessibility access for apps from unknown sources. On a Samsung phone, Auto Blocker must be off while USB debugging is in use.
 
@@ -72,6 +72,19 @@ scripts\hook.ps1 -Serial $serial overlay -Show numbers                 # numbers
 scripts\hook.ps1 -Serial $serial tap -Number 3                         # taps the element with the number 3
 scripts\hook.ps1 -Serial $serial test-mode -On true                    # test mode stays on during all testing (design spec, D25)
 ```
+
+Until the accessibility shortcut and the Quick Settings tile come with plan 2C-2, listening starts in a debug build through the hooks. It needs the speech models (`push-models.ps1`), the microphone permission and, for the notification, the notification permission (the setup checklist asks for both), and Kestrel must be in front or its accessibility service on, because Android lets an app in the background start a microphone service only then. While Kestrel listens, its notification shows whether it listens or is paused, and its Pause or Resume and Stop actions work. Kestrel stops recording while the screen is off or the phone locked, and goes on after the unlock.
+
+```powershell
+scripts\hook.ps1 -Serial $serial voice -Send toggle                     # starts listening, or pauses it
+scripts\hook.ps1 -Serial $serial voice-state                            # the Orchestrator's state, never what was said
+scripts\hook.ps1 -Serial $serial voice -Send heard -Text 'Kestrel' -Named   # as if Kestrel had heard its name
+scripts\hook.ps1 -Serial $serial voice-clip -Text 'Kestrel, wake up.'   # says the text into a stand-in microphone
+scripts\hook.ps1 -Serial $serial voice-clip -Clear                      # gives Kestrel its own microphone back
+scripts\hook.ps1 -Serial $serial voice -Send off                        # turns Kestrel off
+```
+
+`voice-clip` makes Kestrel hear only such clips from its next start until `voice-clip -Clear` or the end of its process. After `voice-clip -Clear`, Kestrel uses its own microphone again from its next start.
 
 Release builds do not contain the hooks, and the privacy audit fails a release build that does.
 
