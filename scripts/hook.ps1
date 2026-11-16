@@ -15,14 +15,23 @@
 # scripts\push-models.ps1 copies, and the microphone permission; the notification and its actions show only with the
 # notification permission):
 #   voice -Send toggle|pause|resume|off|screen-on|screen-off
-#                                           sends the event to Kestrel's Orchestrator; toggle starts listening, and
-#                                           the notification's Pause or Resume and Stop actions work while it runs
+#                                           sends the event to Kestrel's Orchestrator; toggle starts listening when
+#                                           Kestrel is off or paused and pauses it while it listens, and the
+#                                           notification's Pause or Resume and Stop actions work while Kestrel is on
 #   voice -Send heard -Text 'text' [-Named] sends a transcript, as if Kestrel had heard it; -Named as if the keyword
 #                                           spotter had heard "Kestrel" at its start
 #   voice-state                             the Orchestrator's mode, work, speaking, microphone, recognition, screen and
-#                                           "mic busy", and whether the voice session is open; never text
-#   voice-clip -Text 'text'                 says the text in Kestrel's voice into a stand-in microphone; Kestrel hears
-#                                           it from its next start, and then only such clips until its process ends
+#                                           "mic busy", whether the voice session is open, and whether Kestrel's next
+#                                           start uses the clip microphone (clips=on); never text
+#   voice-clip -Text 'text'                 says the text in Kestrel's voice into a stand-in microphone, the clip
+#                                           microphone, and makes it Kestrel's microphone from Kestrel's next start.
+#                                           Kestrel hears the text when the clip microphone records: from that start,
+#                                           or at once if Kestrel already listens through it, or, if the screen is off
+#                                           then, when the screen comes back on. Kestrel hears only clips until
+#                                           voice-clip -Clear or the end of its process; reinstalling with
+#                                           scripts\install.ps1 ends the process
+#   voice-clip -Clear                       drops the waiting clips, and gives Kestrel back the microphone that the
+#                                           first voice-clip replaced, from Kestrel's next start
 # Spike S1 (scripts\spike-s1.ps1 runs these):
 #   listen [-Source name] [-DelaySeconds n] [-Seconds n]
 #                                           starts the stand-in listening service after n seconds (15 by default)
@@ -104,7 +113,8 @@ if ($DelaySeconds -ge 0) { $extras += "--ei delay $DelaySeconds" }
 if ($Seconds -gt 0) { $extras += "--ei seconds $Seconds" }
 if ($Clear) { $extras += '--ez clear true' }
 if ($Create) { $extras += "--es create $(ConvertTo-ShellText $Create)" }
-if ($Send) { $extras += "--es event $(ConvertTo-ShellText $Send)" }
+# ValidateSet accepts any letter case, and the hook only lower case.
+if ($Send) { $extras += "--es event $(ConvertTo-ShellText $Send.ToLowerInvariant())" }
 if ($Named) { $extras += '--ez named true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
