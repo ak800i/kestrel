@@ -40,6 +40,8 @@ class ListeningTest {
     private val microphone = FakeMicrophone()
     private val service = Any()
     private var settingsFailure: Exception? = null
+    private var settingsCanOpen = true
+    private val conditions = FakeConditions()
     private val memory = FakeMemory()
 
     @Test
@@ -92,8 +94,8 @@ class ListeningTest {
         assertFalse(listening.state.value.speaking)
         assertEquals(Work.AWAITING_TASK, listening.state.value.work)
         assertEquals(listOf("recognition NONE", "recognition ANSWER"), log)
-        // A reply that was spoken is not shown.
-        assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel"), shown)
+        // The bar shows "Yes?" at the start of the wait for the task (section 8.9), and not again when it was spoken.
+        assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel", ListeningTexts.YES), shown)
     }
 
     @Test
@@ -131,13 +133,22 @@ class ListeningTest {
 
         session.replies[0].complete(Spoke.REFUSED)
         runCurrent()
-        listening.send(Event.Heard("Kestrel", named = true))
+        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
         session.replies[1].completeExceptionally(IllegalStateException("The voice failed"))
         runCurrent()
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        session.replies[2].completeExceptionally(IllegalStateException("The voice failed"))
+        runCurrent()
 
-        assertEquals(listOf(ListeningTexts.NO_TASKS, "Kestrel", ListeningTexts.YES), shown)
-        assertEquals("A reply", reports.single().first)
+        // A refused and a failed reply go to the bar (section 14.6). "Yes?" shows at the start of the wait for the
+        // task, and a failed "Yes?" is not shown a second time.
+        assertEquals(
+            listOf(ListeningTexts.NO_TASKS, "Kestrel, open the settings.", ListeningTexts.NO_TASKS, "Kestrel", ListeningTexts.YES),
+            shown,
+        )
+        assertEquals(listOf("A reply", "A reply"), reports.map { it.first })
         assertFalse(listening.state.value.speaking)
     }
 
@@ -154,8 +165,14 @@ class ListeningTest {
         assertEquals("An effect", reports.single().first)
         assertFalse(listening.state.value.speaking)
         assertEquals(Work.AWAITING_TASK, listening.state.value.work)
-        // Section 14.6: without a voice, the reply's text goes to the bar.
-        assertEquals(ListeningTexts.YES, shown.last())
+        // The bar shows "Yes?" at the start of the wait for the task; a "Yes?" that cannot be spoken is not shown
+        // again.
+        assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel", ListeningTexts.YES), shown)
+
+        // The answer is a task, and its reply goes to the bar, because there is no voice (section 14.6).
+        listening.send(Event.Heard("Open the settings.", named = false))
+        runCurrent()
+        assertEquals(ListeningTexts.NO_TASKS, shown.last())
     }
 
     @Test
@@ -198,8 +215,9 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(listOf("start", "stop"), log)
-        // The reason takes the place of "Off", which would replace it at once.
-        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.CANNOT_START), shown)
+        // The reason takes the place of "Off", which would replace it at once. Android refused a start in the
+        // background.
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.BACKGROUND_START), shown)
         assertEquals("Starting the listening service", reports.single().first)
     }
 
@@ -226,6 +244,68 @@ class ListeningTest {
         assertEquals("Opening the settings", reports.single().first)
         assertEquals(ListeningTexts.CANNOT_OPEN_SETTINGS, shown.last())
         assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun kestrelOpenSettingsWithoutTheAccessibilityServiceSaysWhy() = runTest {
+        // Android blocks the start from the background without an exception, and the bar does not exist.
+        settingsCanOpen = false
+        val listening = listeningWithSession()
+        log.clear()
+
+        listening.send(Event.Heard("Kestrel, open settings.", named = true))
+        runCurrent()
+
+        // Recognition is off while Kestrel says why.
+        assertEquals(listOf("open settings", "recognition NONE"), log)
+        assertEquals(listOf(ListeningTexts.SETTINGS_NEED_SERVICE), sessions.opened.single().said)
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test
+    fun aServiceThatCannotEnterTheForegroundWithoutTheMicrophonePermissionAsksForIt() = runTest {
+        // Android 14 and later refuse a microphone service without the permission at startForeground().
+        conditions.microphone = false
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        listening.onForegroundFailed(SecurityException("Starting FGS with type microphone requires permissions"))
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MICROPHONE_PERMISSION), shown)
+    }
+
+    @Test
+    fun aMicrophoneThatDoesNotStartWithoutThePermissionAsksForIt() = runTest {
+        // Android 13, as on the A71, starts the service, and the microphone fails instead.
+        conditions.microphone = false
+        sessions.microphoneFailure = SecurityException("Kestrel may not record audio")
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        listening.onForeground(service)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MICROPHONE_PERMISSION), shown)
+    }
+
+    @Test
+    fun speechEnginesThatCannotLoadSaySo() = runTest {
+        sessions.failure = IllegalStateException("The recogniser could not load")
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        listening.onForeground(service)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.ENGINES_FAILED), shown)
+        assertEquals("Opening the voice session", reports.single().first)
     }
 
     @Test
@@ -485,7 +565,9 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(listOf("start", "stop"), log)
-        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.CANNOT_START), shown)
+        // With the microphone allowed, the start came too late after a tap (prototype P2), as a start in the
+        // background.
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.BACKGROUND_START), shown)
         assertTrue(reports.single().second is SecurityException)
     }
 
@@ -560,6 +642,7 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(listOf("close", "closed", "stop"), log)
+        assertEquals(ListeningTexts.STOPPED_BY_ANDROID, shown.last())
     }
 
     @Test
@@ -924,7 +1007,7 @@ class ListeningTest {
         // The shutdown of the refused start and the first shutdown each stop the service once the session has closed.
         assertEquals(listOf("close", "start", "closed", "stop", "stop"), log)
         assertEquals(Mode.OFF, listening.state.value.mode)
-        assertEquals(ListeningTexts.CANNOT_START, shown.last())
+        assertEquals(ListeningTexts.BACKGROUND_START, shown.last())
         assertEquals(listOf("Starting the listening service"), reports.map { it.first })
     }
 
@@ -933,15 +1016,15 @@ class ListeningTest {
         val listening = listeningWithSession()
         log.clear()
 
-        // A notification action's start failed; the service stops itself, and Android destroys it.
+        // A newer start, such as "Start listening", failed; the service stops itself, and Android destroys it before
+        // the Orchestrator has turned Kestrel off. The first reason stays.
         listening.onForegroundFailed(SecurityException("No microphone permission"))
-        runCurrent()
         listening.onServiceDestroyed(service)
         runCurrent()
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals("Starting the listening service", reports.single().first)
-        assertEquals(ListeningTexts.CANNOT_START, shown.last())
+        assertEquals(ListeningTexts.BACKGROUND_START, shown.last())
         assertEquals(listOf("close", "closed", "stop"), log)
     }
 
@@ -1009,6 +1092,8 @@ class ListeningTest {
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(listOf("start", "open", "stop"), log)
         assertTrue(errors.single() is UnsatisfiedLinkError)
+        // Section 14.6: the native library of the engines did not load.
+        assertEquals(ListeningTexts.ENGINES_FAILED, shown.last())
     }
 
     @Test
@@ -1139,8 +1224,10 @@ class ListeningTest {
         openSettings = {
             log += "open settings"
             settingsFailure?.let { throw it }
+            settingsCanOpen
         },
         memory = memory,
+        conditions = conditions,
         microphones = { microphone },
     )
 
@@ -1250,6 +1337,12 @@ class ListeningTest {
         }
     }
 
+    private class FakeConditions : ListeningConditions {
+        var microphone = true
+
+        override fun microphoneAllowed() = microphone
+    }
+
     private class FakeMicrophone : Microphone {
         override val silenced: StateFlow<Boolean> = MutableStateFlow(false)
         override val echoCancelling = false
@@ -1271,7 +1364,8 @@ class ListeningTest {
             services = services,
             bar = { shown += it },
             report = { what, error -> reports += what to error },
-            openSettings = {},
+            openSettings = { true },
+            conditions = conditions,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
                 override suspend fun read(): Mode = Mode.OFF

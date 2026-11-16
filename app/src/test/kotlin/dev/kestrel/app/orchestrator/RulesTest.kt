@@ -78,7 +78,16 @@ class RulesTest {
     fun theNameAloneAsksAndTheNextUtteranceIsTheTask() {
         val asked = Rules.next(paused, Event.Heard("Kestrel?", named = true))
 
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Kestrel?")), Effect.WaitForTask(), Effect.Say(Reply.Yes)), asked.effects)
+        // The bar shows "Yes?" at the start of the wait for the task (section 8.9).
+        assertEquals(
+            listOf(
+                Effect.Show(Feedback.Heard("Kestrel?")),
+                Effect.Show(Feedback.AwaitingTask),
+                Effect.WaitForTask(),
+                Effect.Say(Reply.Yes),
+            ),
+            asked.effects,
+        )
         assertEquals(Work.AWAITING_TASK, asked.state.work)
         assertEquals(1, asked.state.wait)
         assertEquals(Recognition.NONE, asked.state.recognition)
@@ -241,7 +250,7 @@ class RulesTest {
     fun theNameWhileKestrelSpeaksEndsTheSpeechAndWaitsForARequest() {
         val step = Rules.next(listening.copy(speeches = 1), Event.Spotted(Keyword.KESTREL))
 
-        assertEquals(listOf(Effect.StopSaying, Effect.WaitForTask()), step.effects)
+        assertEquals(listOf(Effect.StopSaying, Effect.Show(Feedback.AwaitingTask), Effect.WaitForTask()), step.effects)
         assertEquals(Work.AWAITING_TASK, step.state.work)
         assertEquals(1, step.state.wait)
     }
@@ -364,7 +373,10 @@ class RulesTest {
         )
 
         val again = heard(waiting, "Kestrel?", named = true)
-        assertEquals(listOf(shown("Kestrel?"), Effect.WaitForTask(), Effect.Say(Reply.Yes)), again.effects)
+        assertEquals(
+            listOf(shown("Kestrel?"), Effect.Show(Feedback.AwaitingTask), Effect.WaitForTask(), Effect.Say(Reply.Yes)),
+            again.effects,
+        )
         assertEquals(Work.AWAITING_TASK, again.state.work)
         assertEquals(2, again.state.wait)
     }
@@ -478,6 +490,16 @@ class RulesTest {
         // Nothing may start while the screen is off (section 14.4).
         val dark = listening.copy(screenOn = false)
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Kestrel, open settings.", named = true)))
+    }
+
+    @Test
+    fun kestrelSaysWhyItCannotOpenItsSettings() {
+        val step = Rules.next(listening, Event.SettingsUnavailable)
+
+        assertEquals(listOf(Effect.Say(Reply.SettingsNeedService)), step.effects)
+        assertEquals(1, step.state.speeches)
+        // A late report changes nothing once Kestrel is off.
+        assertEquals(Step(State()), Rules.next(State(), Event.SettingsUnavailable))
     }
 
     @Test

@@ -204,7 +204,7 @@ flowchart TD
 
 - Kestrel records with `AudioRecord`, source `VOICE_RECOGNITION`, at 16 kHz in mono with 16-bit samples, in 20 ms frames.
 - It never uses a privacy-sensitive source (`CAMCORDER`, `VOICE_COMMUNICATION` or `setPrivacySensitive(true)`), because such a source would silence other listeners such as Voice Access or a phone call (B2).
-- Android treats accessibility services as privileged when it shares the microphone between apps (B2, B3). Kestrel still registers an `AudioRecordingCallback`, and the feedback bar shows "mic busy" whenever Android silences Kestrel's recording.
+- Android treats accessibility services as privileged when it shares the microphone between apps (B2, B3). Kestrel still registers an `AudioRecordingCallback`, and the feedback bar shows "Microphone blocked" whenever Android silences Kestrel's recording (section 14.6).
 - Kestrel attaches Android's echo canceller (`AcousticEchoCanceler`) when the device supports it for this source.
 - The voice activity detector returns each utterance from its start, also when the keyword spotter hears "Kestrel" in the middle of it, so Kestrel needs no separate buffer of recent audio.
 
@@ -282,7 +282,7 @@ The side-key and earbud routes depend on Kestrel holding the assistant role (spi
 
 ### 8.9 Feedback bar
 
-A thin overlay at the top of the screen shows the listening mode, the last thing that Kestrel heard, the current task step and any question that Kestrel is asking. It never receives touches. Its text fades after a few seconds without activity.
+A thin overlay at the top of the screen shows the listening mode, the last thing that Kestrel heard, the current task step and any question that Kestrel is asking: when Kestrel starts to wait for a task, after "Kestrel" on its own or after an interruption with "Kestrel", it shows "Yes?", also when it does not say it. When Kestrel turns itself off, it shows why in place of "Off" (section 14.6). It never receives touches. Its text fades after a few seconds without activity.
 
 ### 8.10 Model files
 
@@ -723,14 +723,16 @@ Kestrel always says what happened and what it already did. It never fails silent
 
 | Situation | Behaviour |
 |---|---|
-| Another privileged app silences the microphone | The feedback bar shows "mic busy", and listening resumes on its own |
+| Another privileged app, the privacy toggle or Android silences the microphone | The feedback bar shows "Microphone blocked", and listening resumes on its own |
 | A model file is missing or fails its checksum | The setup checklist names the file, and the affected engine is disabled |
 | Voice output fails | Kestrel shows its text on screen only |
 | The microphone fails, for example after Android's audio server restarted, or the listening pipeline fails on a frame | Kestrel starts it again after 1 s. If that fails, or the microphone fails again within a minute of that restart, Kestrel turns off and says why |
 | Recognition keeps returning empty text | Kestrel suggests checking the microphone permission |
 | The accessibility service is turned off or killed | A persistent notification says "Kestrel is off" and opens the settings page with one tap |
 | Samsung battery restrictions are detected | The setup checklist asks for unrestricted battery use and "Never sleeping apps" |
-| The microphone service cannot start | Kestrel asks the owner to start it from the notification or the tile, and says why |
+| The microphone service cannot start | Kestrel turns off and says why: Android refused the start in the background (then the owner can start it with the tile, the accessibility shortcut or the notification), the microphone permission is missing, the speech models are missing, or the speech engines did not load |
+| Android stops the listening service on its own | Kestrel turns off and says that Android stopped its listening |
+| "Kestrel, open settings" while Kestrel's accessibility service is off | Android does not let Kestrel open an activity from the background then, so Kestrel says so and asks the owner to tap its listening notification |
 
 ## 15. Settings and setup
 

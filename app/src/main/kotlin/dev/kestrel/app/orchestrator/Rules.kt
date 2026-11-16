@@ -107,12 +107,21 @@ sealed interface Event {
 
     /** Wait number [wait] for a task after "Yes?" has lasted long enough. */
     data class WaitEnded(val wait: Int) : Event
+
+    /**
+     * Kestrel could not open its settings app, because Android lets it start an activity from the background only while
+     * its accessibility service is on. Kestrel says so, because the feedback bar does not exist then (section 14).
+     */
+    data object SettingsUnavailable : Event
 }
 
 /** What Kestrel says. */
 sealed interface Reply {
     /** "Yes?", after "Kestrel" on its own. */
     data object Yes : Reply
+
+    /** Why Kestrel did not open its settings: its accessibility service is off (section 14). */
+    data object SettingsNeedService : Reply
 
     data class Text(val text: String) : Reply {
         override fun toString() = "Text(${text.length} characters)"
@@ -128,6 +137,12 @@ sealed interface Feedback {
     }
 
     data object MicBusy : Feedback
+
+    /**
+     * Kestrel waits for the task, after "Yes?" or after an interruption with "Kestrel": the question that Kestrel asks
+     * (section 8.9).
+     */
+    data object AwaitingTask : Feedback
 }
 
 /** What the Orchestrator asks of the rest of Kestrel. The microphone and recognition follow [State] instead. */
@@ -192,6 +207,7 @@ object Rules {
         )
         is Event.WaitEnded ->
             if (state.work == Work.AWAITING_TASK && event.wait == state.wait) Step(state.copy(work = Work.IDLE)) else Step(state)
+        Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
@@ -269,7 +285,7 @@ object Rules {
                 if (state.work == Work.RUNNING_TASK || !state.screenOn) {
                     Step(state, listOf(Effect.StopSaying))
                 } else {
-                    waitForTask(state, Effect.StopSaying)
+                    waitForTask(state, Effect.StopSaying, Effect.Show(Feedback.AwaitingTask))
                 }
         }
     }
@@ -288,7 +304,9 @@ object Rules {
         return if (event.reply == null) Step(ended) else say(ended, Reply.Text(event.reply))
     }
 
-    private fun askForTask(state: State, shown: Effect): Step = waitForTask(state, shown).then { say(it, Reply.Yes) }
+    // The bar shows "Yes?" at the start of the wait, also when "Yes?" cannot be spoken (section 8.9).
+    private fun askForTask(state: State, shown: Effect): Step =
+        waitForTask(state, shown, Effect.Show(Feedback.AwaitingTask)).then { say(it, Reply.Yes) }
 
     // Every wait gets the next number, so that the end of an older wait changes nothing.
     private fun waitForTask(state: State, vararg first: Effect, answering: Boolean = false): Step = Step(

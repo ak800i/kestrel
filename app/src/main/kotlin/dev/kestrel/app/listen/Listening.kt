@@ -50,18 +50,57 @@ internal interface ModeMemory {
     suspend fun write(mode: Mode)
 }
 
-/** What Kestrel says and shows while it listens. Plan 2C-4 decides the final wording. */
+/** What Kestrel reads about the phone to say why it stopped (design spec, section 14.6). Any thread may call it. */
+internal interface ListeningConditions {
+    /** Whether the owner allowed Kestrel to record audio. */
+    fun microphoneAllowed(): Boolean
+}
+
+/** What Kestrel says and shows while it listens, and why it stopped (design spec, sections 8.9 and 14.6). */
 internal object ListeningTexts {
     const val YES = "Yes?"
     const val NO_TASKS = "I can't run tasks yet."
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
-    const val MIC_BUSY = "Microphone busy"
-    const val CANNOT_START = "Kestrel could not start listening. Start it from the notification or the tile."
+
+    // Also for the privacy toggle and for Android's own silencing of an app in the background, not only for another
+    // app.
+    const val MIC_BUSY = "Microphone blocked"
+    // Short enough for the feedback bar, which fades after 4 s.
+    const val BACKGROUND_START = "Android blocked a start in the background. Start Kestrel with the tile, the shortcut " +
+        "or the notification."
+    const val MICROPHONE_PERMISSION = "Kestrel needs the microphone permission. Open Kestrel to allow it."
     const val MODELS_MISSING = "The speech models are missing; see the setup checklist."
+    const val ENGINES_FAILED = "Kestrel could not load its speech engines."
     const val MICROPHONE_FAILED = "The microphone failed, so Kestrel stopped listening."
+    const val STOPPED_BY_ANDROID = "Android stopped Kestrel's listening."
     const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
+    const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on. Tap my " +
+        "listening notification instead."
+}
+
+/**
+ * Why Kestrel turned itself off, or could not turn on (design spec, section 14.6). [text] says it on the feedback bar.
+ */
+internal enum class StopReason(val text: String) {
+    /** Android refused to start ListeningService from the background, or to give it the microphone. */
+    BACKGROUND_START(ListeningTexts.BACKGROUND_START),
+
+    /** The owner has not allowed the microphone. */
+    MICROPHONE_PERMISSION(ListeningTexts.MICROPHONE_PERMISSION),
+
+    /** A speech model is missing or damaged. */
+    MODELS_MISSING(ListeningTexts.MODELS_MISSING),
+
+    /** Another failure while the voice session opened. */
+    ENGINES_FAILED(ListeningTexts.ENGINES_FAILED),
+
+    /** The microphone failed, also after its restart. */
+    MICROPHONE_FAILED(ListeningTexts.MICROPHONE_FAILED),
+
+    /** Android stopped ListeningService on its own. */
+    STOPPED_BY_ANDROID(ListeningTexts.STOPPED_BY_ANDROID),
 }
 
 /**
@@ -84,8 +123,11 @@ internal object ListeningTexts {
  * Android is asked for the service at once, also while a session still closes, because a tap on the tile or a
  * notification action lets Kestrel start a foreground service from the background only for a few seconds. The public
  * functions may be called from any thread. [report] gets each failure with a fixed description of what failed, and
- * must log no message.
- * [openSettings] opens Kestrel's settings app; the controller's thread calls it, and it throws when Android refuses.
+ * must log no message. When Kestrel turns itself off, the bar shows a [StopReason] in place of "Off" (section 14.6);
+ * [conditions] tells the causes apart.
+ * [openSettings] opens Kestrel's settings app and returns true, or returns false while Kestrel's accessibility service
+ * is off, because Android then blocks the start without an exception and Kestrel says why instead; the controller's
+ * thread calls it, and it throws when Android refuses.
  * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
  * and by the restore, which writes Off before anything else can write.
  */
@@ -96,8 +138,9 @@ class Listening internal constructor(
     private val services: ServiceControl,
     private val bar: FeedbackBar,
     private val report: (String, Throwable) -> Unit,
-    private val openSettings: () -> Unit,
+    private val openSettings: () -> Boolean,
     private val memory: ModeMemory,
+    private val conditions: ListeningConditions,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -241,7 +284,7 @@ class Listening internal constructor(
                 report("Starting the listening service", error)
             } else {
                 // Also for the running service: a notification action's start failed, and the service stops itself.
-                turnOff("Starting the listening service", error, ListeningTexts.CANNOT_START)
+                turnOff("Starting the listening service", error, startFailure(error))
             }
         }
     }
@@ -291,7 +334,7 @@ class Listening internal constructor(
             } catch (e: Exception) {
                 // A start that failed after the microphone opened leaves it open until a stop.
                 releaseMicrophone(current)
-                turnOff("Starting the microphone", e, ListeningTexts.MICROPHONE_FAILED)
+                turnOff("Starting the microphone", e, microphoneFailure())
             }
         } else if (!state.microphone && microphoneOn) {
             microphoneOn = false
@@ -311,7 +354,7 @@ class Listening internal constructor(
             services.start()
             awaitingForeground = true
         } catch (e: Exception) {
-            turnOff("Starting the listening service", e, ListeningTexts.CANNOT_START)
+            turnOff("Starting the listening service", e, startFailure(e))
         }
     }
 
@@ -337,8 +380,9 @@ class Listening internal constructor(
     private fun destroyed(instance: Any) {
         if (instance !== running) return
         // Android ended the service on its own, so Kestrel no longer listens, and the Orchestrator must know it.
+        // Kestrel says so in place of "Off" (section 14.6).
         running = null
-        send(Event.TurnOff)
+        stopBecause(StopReason.STOPPED_BY_ANDROID)
     }
 
     private fun open() {
@@ -351,14 +395,15 @@ class Listening internal constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ModelsNotReadyException) {
-                    turnOff("Opening the voice session", e, ListeningTexts.MODELS_MISSING)
+                    turnOff("Opening the voice session", e, StopReason.MODELS_MISSING)
                     return@withLock
                 } catch (e: Exception) {
-                    turnOff("Opening the voice session", e, ListeningTexts.CANNOT_START)
+                    turnOff("Opening the voice session", e, StopReason.ENGINES_FAILED)
                     return@withLock
                 } catch (e: Error) {
-                    // Kestrel must not look as if it listened. AppGraph's handler still logs the error's classes.
-                    send(Event.TurnOff)
+                    // Kestrel must not look as if it listened, and says why, as for a native library that does not
+                    // load. AppGraph's handler still logs the error's classes.
+                    stopBecause(StopReason.ENGINES_FAILED)
                     throw e
                 }
                 if (serviceState != ServiceState.FOREGROUND) {
@@ -450,7 +495,7 @@ class Listening internal constructor(
      */
     private fun restartMicrophone(error: Exception) {
         if (restartedLately?.isActive == true) {
-            turnOff("The microphone", error, ListeningTexts.MICROPHONE_FAILED)
+            turnOff("The microphone", error, StopReason.MICROPHONE_FAILED)
             return
         }
         report("The microphone", error)
@@ -466,15 +511,36 @@ class Listening internal constructor(
     }
 
     /** Section 14: Kestrel never fails silently. It turns off and shows why, in place of "Off". */
-    private fun turnOff(what: String, error: Exception, text: String) {
+    private fun turnOff(what: String, error: Exception, reason: StopReason) {
         report(what, error)
-        if (state.value.mode == Mode.OFF) {
-            bar.show(text)
-        } else {
-            offReason = text
-            send(Event.TurnOff)
+        stopBecause(reason)
+    }
+
+    /**
+     * Turns Kestrel off for [reason], which the bar shows in place of "Off", or shows [reason] when Kestrel is off
+     * already. While a turn-off for an earlier reason is on its way, that reason stays: the earlier failure caused this
+     * one, as when Android destroys a service whose newer start failed. [offReason] is set only here, together with the
+     * turn-off, and the next Off consumes it, so while Kestrel is on it tells that a turn-off is on its way.
+     */
+    private fun stopBecause(reason: StopReason) {
+        when {
+            state.value.mode == Mode.OFF -> bar.show(reason.text)
+            offReason != null -> Unit
+            else -> {
+                offReason = reason.text
+                send(Event.TurnOff)
+            }
         }
     }
+
+    // Android 14 and later refuse a microphone service without the permission at startForeground(). With the
+    // permission, a SecurityException there means that the start came too late after a tap (prototype P2).
+    private fun startFailure(error: Exception): StopReason =
+        if (error is SecurityException && !conditions.microphoneAllowed()) StopReason.MICROPHONE_PERMISSION else StopReason.BACKGROUND_START
+
+    // Android 13, as on the A71, lets the service start without the permission, and the microphone fails instead.
+    private fun microphoneFailure(): StopReason =
+        if (conditions.microphoneAllowed()) StopReason.MICROPHONE_FAILED else StopReason.MICROPHONE_PERMISSION
 
     private fun perform(effect: Effect) {
         try {
@@ -506,28 +572,34 @@ class Listening internal constructor(
         }
     }
 
-    // Section 14: Kestrel never fails silently. Android may also block an activity start from the background without an
-    // exception; Kestrel's accessibility service gives it the right to start one (prototype P1).
+    // Section 14: Kestrel never fails silently. Android blocks an activity start from the background without an
+    // exception unless Kestrel's accessibility service is on (prototype P1); then the bar does not exist either, so
+    // Kestrel says why.
     private fun openSettingsOrSayWhy() {
-        try {
+        val opened = try {
             openSettings()
         } catch (e: Exception) {
             report("Opening the settings", e)
             bar.show(ListeningTexts.CANNOT_OPEN_SETTINGS)
+            return
         }
+        if (!opened) send(Event.SettingsUnavailable)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun say(reply: Reply) {
         val text = when (reply) {
             Reply.Yes -> ListeningTexts.YES
+            Reply.SettingsNeedService -> ListeningTexts.SETTINGS_NEED_SERVICE
             is Reply.Text -> reply.text
         }
+        // Section 14.6: a reply that Kestrel cannot speak goes to the bar, except "Yes?", which the bar shows already
+        // at the start of the wait for the task (Feedback.AwaitingTask).
+        val showInstead = { if (reply != Reply.Yes) bar.show(text) }
         val current = session
         if (current == null) {
-            // Section 14.6: without a voice the text goes to the bar. Thrown before the reply starts, so that the
-            // Orchestrator ends the reply in its place.
-            bar.show(text)
+            // Thrown before the reply starts, so that the Orchestrator ends the reply in its place.
+            showInstead()
             error("No voice session")
         }
         val spoken = current.speak(text)
@@ -535,10 +607,9 @@ class Listening internal constructor(
         spoken.invokeOnCompletion { error ->
             if (error != null && error !is CancellationException) {
                 report("A reply", error)
-                // Section 14.6: when the voice fails, Kestrel shows the text instead.
-                bar.show(text)
+                showInstead()
             } else if (error == null && spoken.getCompleted() == Spoke.REFUSED) {
-                bar.show(text)
+                showInstead()
             }
             send(Event.SpeechEnded)
         }
@@ -552,6 +623,7 @@ class Listening internal constructor(
         }
         is Feedback.Heard -> feedback.text
         Feedback.MicBusy -> ListeningTexts.MIC_BUSY
+        Feedback.AwaitingTask -> ListeningTexts.YES
     }
 
     /**

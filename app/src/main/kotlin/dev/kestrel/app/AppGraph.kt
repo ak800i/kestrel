@@ -1,12 +1,15 @@
 package dev.kestrel.app
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.util.Log
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
+import dev.kestrel.app.listen.ListeningConditions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.listen.ModeMemory
@@ -122,21 +125,32 @@ class AppGraph(context: Context) {
             // One main-thread task per text, in order, so that an earlier text never replaces a later one.
             bar = FeedbackBar { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text) } },
             report = reportFailure,
-            // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity. The
-            // controller's thread calls it; startActivity may be called from any thread.
+            // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity.
+            // The controller's thread calls it; startActivity may be called from any thread. Without Kestrel's
+            // accessibility service, Android blocks the start from the background without an exception (prototype P1),
+            // so Kestrel does not try, and says why instead.
             openSettings = {
-                appContext.startActivity(
-                    Intent(appContext, MainActivity::class.java)
-                        .setAction(Intent.ACTION_MAIN)
-                        .addCategory(Intent.CATEGORY_LAUNCHER)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
+                if (screen.value == null) {
+                    false
+                } else {
+                    appContext.startActivity(
+                        Intent(appContext, MainActivity::class.java)
+                            .setAction(Intent.ACTION_MAIN)
+                            .addCategory(Intent.CATEGORY_LAUNCHER)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    true
+                }
             },
             // Encrypted like every setting (section 13.4). SettingsStore reads and writes on Dispatchers.IO.
             memory = object : ModeMemory {
                 override suspend fun read(): Mode = settings.get(SettingKeys.LISTENING).mode
 
                 override suspend fun write(mode: Mode) = settings.set(SettingKeys.LISTENING, ListeningSetting(mode))
+            },
+            conditions = object : ListeningConditions {
+                override fun microphoneAllowed() =
+                    appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
             },
             microphones = { MicCapture(appContext) },
         )
