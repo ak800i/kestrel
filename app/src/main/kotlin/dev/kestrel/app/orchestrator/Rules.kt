@@ -19,13 +19,16 @@ enum class Work {
 
 /**
  * The Orchestrator's state (design spec, section 7.3). [speeches] counts the replies that Kestrel has started and not
- * finished, and [task] is the number of the latest task, so that the end of an older task changes nothing.
+ * finished. [task] is the number of the latest task and [wait] the number of the latest wait for a task, so that the
+ * end of an older task or wait changes nothing. [cancelled]: the latest task was cancelled and has not reported yet.
  */
 data class State(
     val mode: Mode = Mode.OFF,
     val work: Work = Work.IDLE,
     val speeches: Int = 0,
     val task: Int = 0,
+    val wait: Int = 0,
+    val cancelled: Boolean = false,
     val screenOn: Boolean = true,
     val micBusy: Boolean = false,
 ) {
@@ -62,6 +65,9 @@ sealed interface Event {
         override fun toString() = "Heard(${text.length} characters, named=$named)"
     }
 
+    /** The owner started an utterance while Kestrel recognises speech: the speech detector began to hear speech. */
+    data object Speaking : Event
+
     /** A keyword from the spotter that was not Kestrel's own voice. */
     data class Spotted(val keyword: Keyword) : Event
 
@@ -76,11 +82,14 @@ sealed interface Event {
     /** Android started or stopped silencing Kestrel's recording. */
     data class MicBusy(val busy: Boolean) : Event
 
-    /** The screen is on and the phone unlocked ([on]), or the screen turned off or the phone locked. */
+    /**
+     * The screen is on and the phone unlocked ([on]), or the screen turned off or the phone locked. Sub-project 5 pauses
+     * a running task here, and asks "Continue the task?" when the owner is back (section 14.4).
+     */
     data class Screen(val on: Boolean) : Event
 
-    /** Kestrel has waited long enough for a task after "Yes?". */
-    data object WaitEnded : Event
+    /** Wait number [wait] for a task after "Yes?" has lasted long enough. */
+    data class WaitEnded(val wait: Int) : Event
 }
 
 /** What Kestrel says. */
@@ -123,8 +132,12 @@ sealed interface Effect {
 
     data class Show(val feedback: Feedback) : Effect
 
-    /** Starts the timer that ends the wait for a task after "Yes?". The Orchestrator runs it itself. */
-    data object WaitForTask : Effect
+    /**
+     * Starts the timer that ends the latest wait for a task after "Yes?", in place of the one that runs. [answering]: the
+     * owner has started to answer, so the timer also covers the answer and its transcription. The Orchestrator runs it
+     * itself.
+     */
+    data class WaitForTask(val answering: Boolean = false) : Effect
 
     /** Stops the listening service. */
     data object StopService : Effect
@@ -138,27 +151,36 @@ object Rules {
     fun next(state: State, event: Event): Step = when (event) {
         Event.Toggle -> switch(state, if (state.mode == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
         Event.Pause -> if (state.mode == Mode.LISTENING) switch(state, Mode.PAUSED) else Step(state)
-        Event.Resume -> if (state.mode == Mode.LISTENING) Step(state) else switch(state, Mode.LISTENING)
-        Event.TurnOff -> turnOff(state)
+        // The notification exists only while Kestrel is on, so a Resume while off comes from a stale notification.
+        Event.Resume -> if (state.mode == Mode.PAUSED) switch(state, Mode.LISTENING) else Step(state)
+        Event.TurnOff -> if (state.mode == Mode.OFF) Step(state) else turnOff(state)
         is Event.Heard -> heard(state, event)
+        // The owner has started to answer "Yes?", so the wait lasts until the answer has been transcribed.
+        Event.Speaking -> if (state.work == Work.AWAITING_TASK && !state.speaking) waitForTask(state, answering = true) else Step(state)
         is Event.Spotted -> spotted(state, event.keyword)
-        Event.SpeechEnded -> Step(state.copy(speeches = maxOf(0, state.speeches - 1)))
+        Event.SpeechEnded -> speechEnded(state)
         is Event.TaskEnded -> taskEnded(state, event)
-        is Event.MicBusy -> Step(
-            state.copy(micBusy = event.busy),
-            if (event.busy && !state.micBusy) listOf(Effect.Show(Feedback.MicBusy)) else emptyList(),
-        )
+        is Event.MicBusy -> when {
+            state.mode == Mode.OFF -> Step(state)
+            event.busy && !state.micBusy -> Step(state.copy(micBusy = true), listOf(Effect.Show(Feedback.MicBusy)))
+            else -> Step(state.copy(micBusy = event.busy))
+        }
         is Event.Screen -> Step(
             state.copy(screenOn = event.on, work = if (!event.on && state.work == Work.AWAITING_TASK) Work.IDLE else state.work),
         )
-        Event.WaitEnded -> Step(if (state.work == Work.AWAITING_TASK) state.copy(work = Work.IDLE) else state)
+        is Event.WaitEnded ->
+            if (state.work == Work.AWAITING_TASK && event.wait == state.wait) Step(state.copy(work = Work.IDLE)) else Step(state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
-        // A transcription that was queued before the microphone stopped can finish after the screen turned off; no
-        // request starts then (section 14.4).
-        if (state.mode == Mode.OFF || !state.screenOn) return Step(state)
-        val request = Requests.read(event.text, event.named) ?: return Step(state)
+        if (state.mode == Mode.OFF) return Step(state)
+        val awaiting = state.work == Work.AWAITING_TASK
+        // An answer to "Yes?" without words: the owner has the full wait again.
+        val request = Requests.read(event.text, event.named, afterName = awaiting)
+            ?: return if (awaiting) waitForTask(state) else Step(state)
+        // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
+        // only the requests that stop something count, because nothing may start (section 14.4).
+        if (!state.screenOn && !stopsSomething(request)) return Step(state)
         val shown = Effect.Show(Feedback.Heard(event.text))
         return when (state.work) {
             Work.RUNNING_TASK -> whileTaskRuns(state, request, shown)
@@ -167,78 +189,93 @@ object Rules {
         }
     }
 
+    private fun stopsSomething(request: Request): Boolean =
+        request is Request.Stop || request == Request.PauseListening || request == Request.TurnOff
+
     // Section 11.10: while a task runs, only "stop" and "cancel" count, and the ways to pause or turn Kestrel off.
     // "Stop. Kestrel, [task]" cancels the running task and runs the new one.
     private fun whileTaskRuns(state: State, request: Request, shown: Effect): Step = when (request) {
         is Request.Stop -> cancelTask(state, shown)
-        is Request.Task -> if (request.stopFirst) {
-            val cancelled = cancelTask(state, shown)
-            val started = runTask(cancelled.state, request.text)
-            Step(started.state, cancelled.effects + started.effects)
-        } else {
-            Step(state)
-        }
-        Request.PauseListening -> {
-            val cancelled = cancelTask(state, shown)
-            val paused = switch(cancelled.state, Mode.PAUSED)
-            Step(paused.state, cancelled.effects + paused.effects)
-        }
-        Request.TurnOff -> turnOff(state)
+        is Request.Task -> if (request.stopFirst) cancelTask(state, shown).then { runTask(it, request.text) } else Step(state)
+        Request.PauseListening -> cancelTask(state, shown).then { changeMode(it, Mode.PAUSED) }
+        Request.TurnOff -> turnOff(state, shown)
         else -> Step(state)
     }
 
+    // The answer to "Yes?" is read as the words after the name, so it is never Other.
     private fun whileAwaitingTask(state: State, request: Request, shown: Effect): Step = when (request) {
         is Request.Task -> runTask(state, request.text, shown)
         is Request.Other -> runTask(state, request.text, shown)
-        Request.Name -> say(state, Reply.Yes, shown, Effect.WaitForTask)
-        Request.WakeUp -> switch(state.copy(work = Work.IDLE), Mode.LISTENING, shown)
+        Request.Name -> askForTask(state, shown)
+        Request.WakeUp -> changeMode(state.copy(work = Work.IDLE), Mode.LISTENING, shown)
         is Request.Stop -> Step(state.copy(work = Work.IDLE), listOf(shown))
-        Request.PauseListening -> switch(state.copy(work = Work.IDLE), Mode.PAUSED, shown)
-        Request.TurnOff -> turnOff(state)
+        Request.PauseListening -> changeMode(state.copy(work = Work.IDLE), Mode.PAUSED, shown)
+        Request.TurnOff -> turnOff(state, shown)
     }
 
     private fun whileIdle(state: State, request: Request, text: String, shown: Effect): Step = when (request) {
         is Request.Task -> runTask(state, request.text, shown)
-        Request.Name -> say(state.copy(work = Work.AWAITING_TASK), Reply.Yes, shown, Effect.WaitForTask)
-        Request.WakeUp -> if (state.mode == Mode.PAUSED) switch(state, Mode.LISTENING, shown) else Step(state, listOf(shown))
-        Request.PauseListening -> if (state.mode == Mode.LISTENING) switch(state, Mode.PAUSED, shown) else Step(state, listOf(shown))
-        Request.TurnOff -> turnOff(state)
-        // "Kestrel, stop" with nothing running only ends the speech; plain "stop" may name a button.
-        is Request.Stop -> if (request.named) Step(state, listOfNotNull(shown, Effect.StopSaying.takeIf { state.speaking })) else command(state, text.trim(), shown)
+        Request.Name -> askForTask(state, shown)
+        Request.WakeUp -> changeMode(state, Mode.LISTENING, shown)
+        Request.PauseListening -> changeMode(state, Mode.PAUSED, shown)
+        Request.TurnOff -> turnOff(state, shown)
+        is Request.Stop -> if (request.named) {
+            // "Kestrel, stop" with nothing running only ends the speech; plain "stop" may name a button.
+            Step(state, listOfNotNull(shown, Effect.StopSaying.takeIf { state.speaking }))
+        } else {
+            command(state, text.trim(), shown)
+        }
         is Request.Other -> command(state, request.text, shown)
     }
 
-    // Instant commands work only while Kestrel listens (sections 8.5 and 9.5).
+    // Instant commands work only while Kestrel listens (sections 8.5 and 9.5), and not after the screen turned off.
     private fun command(state: State, text: String, shown: Effect): Step =
-        if (state.mode == Mode.LISTENING) Step(state, listOf(shown, Effect.RunCommand(text))) else Step(state)
+        if (state.mode == Mode.LISTENING && state.screenOn) Step(state, listOf(shown, Effect.RunCommand(text))) else Step(state)
 
     private fun spotted(state: State, keyword: Keyword): Step {
         if (!state.speaking || state.mode == Mode.OFF) return Step(state)
         return when (keyword) {
             Keyword.STOP, Keyword.CANCEL ->
                 if (state.work == Work.RUNNING_TASK) cancelTask(state) else Step(state.copy(work = Work.IDLE), listOf(Effect.StopSaying))
+            // Kestrel does not wait for a task while a task runs or the screen is off.
             Keyword.KESTREL ->
-                if (state.work == Work.RUNNING_TASK) {
+                if (state.work == Work.RUNNING_TASK || !state.screenOn) {
                     Step(state, listOf(Effect.StopSaying))
                 } else {
-                    Step(state.copy(work = Work.AWAITING_TASK), listOf(Effect.StopSaying, Effect.WaitForTask))
+                    waitForTask(state, Effect.StopSaying)
                 }
         }
     }
 
+    // The wait starts again when "Yes?" has been spoken, so that the owner has all of it to start the answer.
+    private fun speechEnded(state: State): Step {
+        val ended = state.copy(speeches = maxOf(0, state.speeches - 1))
+        return if (state.speeches == 1 && state.work == Work.AWAITING_TASK) waitForTask(ended) else Step(ended)
+    }
+
+    // A cancelled task still reports what it had already done, unless a newer task or wait has started (sections 14.1
+    // and 14.5).
     private fun taskEnded(state: State, event: Event.TaskEnded): Step {
-        if (state.work != Work.RUNNING_TASK || event.task != state.task) return Step(state)
-        val ended = state.copy(work = Work.IDLE)
+        if (event.task != state.task || !(state.work == Work.RUNNING_TASK || state.cancelled)) return Step(state)
+        val ended = state.copy(work = Work.IDLE, cancelled = false)
         return if (event.reply == null) Step(ended) else say(ended, Reply.Text(event.reply))
     }
 
+    private fun askForTask(state: State, shown: Effect): Step = waitForTask(state, shown).then { say(it, Reply.Yes) }
+
+    // Every wait gets the next number, so that the end of an older wait changes nothing.
+    private fun waitForTask(state: State, vararg first: Effect, answering: Boolean = false): Step = Step(
+        state.copy(work = Work.AWAITING_TASK, wait = state.wait + 1, cancelled = false),
+        first.toList() + Effect.WaitForTask(answering),
+    )
+
     private fun runTask(state: State, text: String, vararg first: Effect): Step {
         val task = state.task + 1
-        return Step(state.copy(work = Work.RUNNING_TASK, task = task), first.toList() + Effect.RunTask(task, text))
+        return Step(state.copy(work = Work.RUNNING_TASK, task = task, cancelled = false), first.toList() + Effect.RunTask(task, text))
     }
 
     private fun cancelTask(state: State, vararg first: Effect): Step = Step(
-        state.copy(work = Work.IDLE),
+        state.copy(work = Work.IDLE, cancelled = true),
         first.toList() + listOfNotNull(Effect.StopSaying.takeIf { state.speaking }) + Effect.CancelTask,
     )
 
@@ -248,14 +285,21 @@ object Rules {
     private fun switch(state: State, mode: Mode, vararg first: Effect): Step =
         Step(state.copy(mode = mode), first.toList() + Effect.Show(Feedback.ModeChanged(mode)))
 
+    // Shows a mode only when it changes.
+    private fun changeMode(state: State, mode: Mode, vararg first: Effect): Step =
+        if (state.mode == mode) Step(state, first.toList()) else switch(state, mode, *first)
+
     // Off also forgets the replies in progress and "mic busy", so that a lost SpeechEnded cannot keep recognition off.
-    private fun turnOff(state: State): Step = Step(
-        state.copy(mode = Mode.OFF, work = Work.IDLE, speeches = 0, micBusy = false),
-        listOfNotNull(
+    private fun turnOff(state: State, vararg first: Effect): Step = Step(
+        state.copy(mode = Mode.OFF, work = Work.IDLE, speeches = 0, cancelled = false, micBusy = false),
+        first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },
             Effect.CancelTask.takeIf { state.work == Work.RUNNING_TASK },
             Effect.Show(Feedback.ModeChanged(Mode.OFF)),
             Effect.StopService,
         ),
     )
+
+    /** This step, then the step that [next] makes from its state. */
+    private fun Step.then(next: (State) -> Step): Step = next(state).let { Step(it.state, effects + it.effects) }
 }
