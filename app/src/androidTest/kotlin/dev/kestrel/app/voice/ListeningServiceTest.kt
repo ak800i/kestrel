@@ -11,6 +11,8 @@ import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.listen.ListeningService
+import dev.kestrel.app.listen.ListeningTexts
+import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.State
@@ -23,9 +25,10 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * ListeningService (design spec, sections 7.2, 8.5 and 8.6): the foreground, the notification's actions, the screen and
- * the lock, and a stop that Kestrel did not ask for. The lock-screen test runs only on emulators: it skips itself on a
- * phone, and scripts\voice-test.ps1 leaves it out there.
+ * ListeningService (design spec, sections 7.2, 8.5, 8.6 and 14.6): the foreground, the notification's actions, the
+ * screen and the lock, a stop that Kestrel did not ask for and the problems notification that it posts, and the start
+ * from that notification's "Start listening". The lock-screen test runs only on emulators: it skips itself on a phone,
+ * and scripts\voice-test.ps1 leaves it out there.
  */
 class ListeningServiceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -41,6 +44,8 @@ class ListeningServiceTest {
 
     @After
     fun tearDown() {
+        // The problems notification of a stop by Android is not left for the next tests.
+        notifications.cancel(ProblemNotifications.STOPPED_ID)
         // A test that failed while the screen was off must not leave it off for the next tests.
         VoiceTests.shell("input keyevent KEYCODE_WAKEUP")
         VoiceTests.shell("wm dismiss-keyguard")
@@ -117,6 +122,24 @@ class ListeningServiceTest {
         context.stopService(Intent(context, ListeningService::class.java))
         awaitState { it.mode == Mode.OFF }
         assertTrue("The voice session is still open", VoiceTests.waitUntil(30_000) { !listening.sessionOpen.value })
+
+        // Section 14.6: the reason is a notification too, with "Start listening", because the bar may not exist.
+        val problem = problemNotification()
+        assertEquals(ListeningTexts.STOPPED_BY_ANDROID, problem.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        assertEquals(texts(R.string.problem_start), problem.actions.map { it.title.toString() })
+    }
+
+    @Test
+    fun theProblemNotificationsStartActionTurnsKestrelOn() {
+        VoiceTests.useMicrophone(clip)
+        // In front, as after a tap on the notification, which lets Kestrel start its microphone service (spike S1).
+        ActivityScenario.launch(MainActivity::class.java).use {
+            ListeningService.startIntent(context).send()
+            assertTrue("The voice session did not open", VoiceTests.waitUntil(60_000) { listening.sessionOpen.value })
+        }
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertTrue("The microphone does not record", VoiceTests.waitUntil(5_000) { clip.recording })
     }
 
     private fun texts(vararg ids: Int): List<String> = ids.map { context.getString(it) }
@@ -134,6 +157,17 @@ class ListeningServiceTest {
             found != null
         }
         assertTrue("No notification titled '$expected'", shown)
+        return found!!
+    }
+
+    /** The problems notification, once it shows (section 14.6). */
+    private fun problemNotification(): Notification {
+        var found: Notification? = null
+        val shown = VoiceTests.waitUntil(5_000) {
+            found = notifications.activeNotifications.firstOrNull { it.id == ProblemNotifications.STOPPED_ID }?.notification
+            found != null
+        }
+        assertTrue("No problems notification", shown)
         return found!!
     }
 

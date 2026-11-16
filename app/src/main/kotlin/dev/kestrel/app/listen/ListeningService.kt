@@ -91,12 +91,19 @@ class ListeningService : Service() {
         // Android requires this after a startForegroundService() unless the service is already in the foreground. It can
         // also ignore the call without an exception, so the service calls it after every start.
         try {
-            startForeground(NOTIFICATION_ID, notification(listening.state.value.mode), FOREGROUND_TYPES)
+            // "Start listening" turns Kestrel on, so the notification that startForeground() posts, possibly after the
+            // collector's update, must not say that Kestrel is turning off.
+            val mode = listening.state.value.mode
+            startForeground(
+                NOTIFICATION_ID,
+                notification(if (mode == Mode.OFF && intent?.action == ACTION_START) Mode.LISTENING else mode),
+                FOREGROUND_TYPES,
+            )
         } catch (e: Exception) {
             // For example a SecurityException without the microphone permission, or a start from the background that
             // Android does not allow (section 14.6). A newer start that is on its way keeps the service, and fails or
             // reports in turn.
-            listening.onForegroundFailed(e)
+            listening.onForegroundFailed(e, startAction = intent?.action == ACTION_START)
             if (stopSelfResult(startId)) foreground = false
             return START_NOT_STICKY
         }
@@ -107,7 +114,8 @@ class ListeningService : Service() {
             delay(REPOST_MILLIS)
             if (foreground) notifications.notify(NOTIFICATION_ID, notification(listening.state.value.mode))
         }
-        listening.onForeground(this)
+        // The problems notification's "Start listening" asks for a start that Listening adopts (section 14.6).
+        if (intent?.action == ACTION_START) listening.onStartAction(this) else listening.onForeground(this)
         when (intent?.action) {
             ACTION_PAUSE -> listening.send(Event.Pause)
             ACTION_RESUME -> listening.send(Event.Resume)
@@ -140,7 +148,6 @@ class ListeningService : Service() {
 
     /** The notification of [mode]. Off: the service is about to stop, so it offers no actions until then. */
     private fun notification(mode: Mode): Notification {
-        val open = PendingIntent.getActivity(this, 0, launcherIntent(), PendingIntent.FLAG_IMMUTABLE)
         val title = when (mode) {
             Mode.LISTENING -> R.string.listening_title_listening
             Mode.PAUSED -> R.string.listening_title_paused
@@ -149,7 +156,7 @@ class ListeningService : Service() {
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(title))
-            .setContentIntent(open)
+            .setContentIntent(openKestrel(this))
             .setOngoing(true)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         if (mode != Mode.OFF) {
@@ -163,10 +170,6 @@ class ListeningService : Service() {
         return builder.build()
     }
 
-    // The launcher's own intent, so that a tap brings Kestrel's task to the front instead of adding another MainActivity.
-    private fun launcherIntent(): Intent =
-        Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-
     private fun action(title: Int, action: String): Notification.Action =
         Notification.Action.Builder(null, getString(title), actionIntent(this, action)).build()
 
@@ -175,6 +178,9 @@ class ListeningService : Service() {
         internal const val ACTION_PAUSE = "dev.kestrel.listen.PAUSE"
         internal const val ACTION_RESUME = "dev.kestrel.listen.RESUME"
         internal const val ACTION_STOP = "dev.kestrel.listen.STOP"
+
+        /** The problems notification's "Start listening" (design spec, section 14.6). */
+        internal const val ACTION_START = "dev.kestrel.listen.START"
         private const val CHANNEL = "listening"
         private const val REPOST_MILLIS = 1_000L
         private const val FOREGROUND_TYPES =
@@ -184,6 +190,29 @@ class ListeningService : Service() {
         // and onDestroy clears it, so it cannot keep a destroyed service alive.
         @SuppressLint("StaticFieldLeak")
         private var current: ListeningService? = null
+
+        /**
+         * The intent of the problems notification's "Start listening": it starts the service with [ACTION_START]. A
+         * service's PendingIntent lets the service record after the tap (spike S1); a broadcast would leave it only
+         * about 9 s to call startForeground() with the microphone (prototype P2).
+         */
+        internal fun startIntent(context: Context): PendingIntent = PendingIntent.getForegroundService(
+            context,
+            0,
+            Intent(context, ListeningService::class.java).setAction(ACTION_START),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        /**
+         * Opens Kestrel's settings app with the launcher's own intent, so that a tap brings Kestrel's task to the front
+         * instead of adding another MainActivity.
+         */
+        internal fun openKestrel(context: Context): PendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
 
         /** The intent of the notification's action [action]: it starts the service with that action. */
         internal fun actionIntent(context: Context, action: String): PendingIntent = PendingIntent.getForegroundService(

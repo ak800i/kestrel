@@ -81,26 +81,40 @@ internal object ListeningTexts {
 }
 
 /**
- * Why Kestrel turned itself off, or could not turn on (design spec, section 14.6). [text] says it on the feedback bar.
+ * Why Kestrel turned itself off, or could not turn on (design spec, section 14.6). [text] says it on the feedback bar
+ * and in the problems notification. [restart]: a new start can help, so the notification offers "Start listening".
+ * [starting]: Kestrel failed while it started, so the notification says that it could not start listening.
  */
-internal enum class StopReason(val text: String) {
+internal enum class StopReason(val text: String, val restart: Boolean, val starting: Boolean) {
     /** Android refused to start ListeningService from the background, or to give it the microphone. */
-    BACKGROUND_START(ListeningTexts.BACKGROUND_START),
+    BACKGROUND_START(ListeningTexts.BACKGROUND_START, restart = true, starting = true),
 
     /** The owner has not allowed the microphone. */
-    MICROPHONE_PERMISSION(ListeningTexts.MICROPHONE_PERMISSION),
+    MICROPHONE_PERMISSION(ListeningTexts.MICROPHONE_PERMISSION, restart = false, starting = true),
 
     /** A speech model is missing or damaged. */
-    MODELS_MISSING(ListeningTexts.MODELS_MISSING),
+    MODELS_MISSING(ListeningTexts.MODELS_MISSING, restart = false, starting = true),
 
     /** Another failure while the voice session opened. */
-    ENGINES_FAILED(ListeningTexts.ENGINES_FAILED),
+    ENGINES_FAILED(ListeningTexts.ENGINES_FAILED, restart = false, starting = true),
 
     /** The microphone failed, also after its restart. */
-    MICROPHONE_FAILED(ListeningTexts.MICROPHONE_FAILED),
+    MICROPHONE_FAILED(ListeningTexts.MICROPHONE_FAILED, restart = true, starting = false),
 
     /** Android stopped ListeningService on its own. */
-    STOPPED_BY_ANDROID(ListeningTexts.STOPPED_BY_ANDROID),
+    STOPPED_BY_ANDROID(ListeningTexts.STOPPED_BY_ANDROID, restart = true, starting = false),
+}
+
+/**
+ * The problems notification, which says why Kestrel stopped also while the feedback bar does not exist (design spec,
+ * section 14.6). The controller's thread calls it.
+ */
+internal interface StopNotices {
+    /** Posts [reason], in place of an earlier one. Does nothing without the notification permission. */
+    fun show(reason: StopReason)
+
+    /** Removes the notification of [show], if it is there. */
+    fun clear()
 }
 
 /**
@@ -123,8 +137,9 @@ internal enum class StopReason(val text: String) {
  * Android is asked for the service at once, also while a session still closes, because a tap on the tile or a
  * notification action lets Kestrel start a foreground service from the background only for a few seconds. The public
  * functions may be called from any thread. [report] gets each failure with a fixed description of what failed, and
- * must log no message. When Kestrel turns itself off, the bar shows a [StopReason] in place of "Off" (section 14.6);
- * [conditions] tells the causes apart.
+ * must log no message. When Kestrel turns itself off, the bar shows a [StopReason] in place of "Off" (section 14.6),
+ * and [notices] posts it as a notification, which goes once a voice session opens again; [conditions] tells the causes
+ * apart.
  * [openSettings] opens Kestrel's settings app and returns true, or returns false while Kestrel's accessibility service
  * is off, because Android then blocks the start without an exception and Kestrel says why instead; the controller's
  * thread calls it, and it throws when Android refuses.
@@ -141,6 +156,7 @@ class Listening internal constructor(
     private val openSettings: () -> Boolean,
     private val memory: ModeMemory,
     private val conditions: ListeningConditions,
+    private val notices: StopNotices,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -149,9 +165,10 @@ class Listening internal constructor(
     @Volatile
     internal var microphones: () -> Microphone = microphones
 
-    // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start() and shutdown()
-    // change it together with [serviceState], so it always equals serviceState != STOPPED, and foreground() relies on
-    // that. [running]: the service's instance that runs in the foreground and that Kestrel has not asked to stop.
+    // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start(),
+    // onStartAction() and shutdown() change it together with [serviceState], so it always equals
+    // serviceState != STOPPED, and foreground() relies on that. [running]: the service's instance that runs in the
+    // foreground and that Kestrel has not asked to stop.
     private var serviceState = ServiceState.STOPPED
     private var requested = false
     private var running: Any? = null
@@ -274,17 +291,41 @@ class Listening internal constructor(
         scope.launch(thread) { foreground(instance) }
     }
 
-    /** ListeningService could not enter the foreground; [error] says why. */
-    fun onForegroundFailed(error: Exception) {
+    /**
+     * ListeningService, whose instance is [instance], runs in the foreground after the problems notification's "Start
+     * listening" (section 14.6). From Off, Kestrel marks this service as asked for before it sends Event.Start, so it
+     * never stops the service as one that nobody asked for. While Kestrel is on, nothing changes.
+     */
+    fun onStartAction(instance: Any) {
+        scope.launch(thread) {
+            if (serviceState == ServiceState.STOPPED) {
+                serviceState = ServiceState.STARTING
+                requested = true
+                // A reason from an earlier start must never come back.
+                offReason = null
+            }
+            // Event.Start acts only from Off, so a tap after the owner started Kestrel another way changes nothing.
+            send(Event.Start())
+            foreground(instance)
+        }
+    }
+
+    /**
+     * ListeningService could not enter the foreground; [error] says why. [startAction]: the start came from the
+     * problems notification's "Start listening", so the owner asked for it, also while Kestrel is off.
+     */
+    fun onForegroundFailed(error: Exception, startAction: Boolean = false) {
         scope.launch(thread) {
             // The service stops itself after a failed startForeground(), which Android allows.
             awaitingForeground = false
-            if (serviceState == ServiceState.STOPPED) {
+            when {
+                // Section 14.6: Kestrel is off, so the bar and the notification say why the owner's start failed.
+                startAction && serviceState == ServiceState.STOPPED ->
+                    turnOff("Starting the listening service", error, startFailure(error), notify = true)
                 // A start that nobody asked for, such as a stale notification action.
-                report("Starting the listening service", error)
-            } else {
+                serviceState == ServiceState.STOPPED -> report("Starting the listening service", error)
                 // Also for the running service: a notification action's start failed, and the service stops itself.
-                turnOff("Starting the listening service", error, startFailure(error))
+                else -> turnOff("Starting the listening service", error, startFailure(error))
             }
         }
     }
@@ -415,6 +456,13 @@ class Listening internal constructor(
                 session = opened
                 listener = events
                 sessionState.value = true
+                // Kestrel listens again, so the notification that said why it stopped goes (section 14.6). Before the
+                // microphone starts: a microphone that cannot start posts its own reason, which must stay.
+                try {
+                    notices.clear()
+                } catch (e: Exception) {
+                    report("Removing the problems notification", e)
+                }
                 followSafely(state.value)
                 // After followSafely, which starts the microphone, so that a native crash there comes before Listening is
                 // stored.
@@ -511,24 +559,34 @@ class Listening internal constructor(
     }
 
     /** Section 14: Kestrel never fails silently. It turns off and shows why, in place of "Off". */
-    private fun turnOff(what: String, error: Exception, reason: StopReason) {
+    private fun turnOff(what: String, error: Exception, reason: StopReason, notify: Boolean = state.value.mode != Mode.OFF) {
         report(what, error)
-        stopBecause(reason)
+        stopBecause(reason, notify)
     }
 
     /**
      * Turns Kestrel off for [reason], which the bar shows in place of "Off", or shows [reason] when Kestrel is off
      * already. While a turn-off for an earlier reason is on its way, that reason stays: the earlier failure caused this
      * one, as when Android destroys a service whose newer start failed. [offReason] is set only here, together with the
-     * turn-off, and the next Off consumes it, so while Kestrel is on it tells that a turn-off is on its way.
+     * turn-off, and the next Off consumes it, so while Kestrel is on it tells that a turn-off is on its way. With
+     * [notify], the problems notification says it too, because the bar exists only while the accessibility service
+     * runs. By default it does so only when Kestrel turns itself off, never after an Off that the owner chose.
      */
-    private fun stopBecause(reason: StopReason) {
+    private fun stopBecause(reason: StopReason, notify: Boolean = state.value.mode != Mode.OFF) {
         when {
             state.value.mode == Mode.OFF -> bar.show(reason.text)
-            offReason != null -> Unit
+            offReason != null -> return
             else -> {
                 offReason = reason.text
                 send(Event.TurnOff)
+            }
+        }
+        // After the turn-off, so that a notification that cannot be posted never keeps Kestrel on.
+        if (notify) {
+            try {
+                notices.show(reason)
+            } catch (e: Exception) {
+                report("Posting the problems notification", e)
             }
         }
     }

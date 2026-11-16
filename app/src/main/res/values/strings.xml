@@ -115,6 +115,12 @@
     <string name="listening_resume">Resume</string>
     <string name="listening_stop">Stop</string>
 
+    <!-- The problems notification, which says why Kestrel stopped listening (design spec, section 14.6). -->
+    <string name="problems_channel">Problems</string>
+    <string name="problem_title_stopped">Kestrel stopped listening</string>
+    <string name="problem_title_not_started">Kestrel could not start listening</string>
+    <string name="problem_start">Start listening</string>
+
     <!-- The subtitle of the Quick Settings tile (design spec, sections 8.5 and 8.6). -->
     <string name="tile_listening">Listening</string>
     <string name="tile_paused">Paused</string>

@@ -13,6 +13,7 @@ import dev.kestrel.app.listen.ListeningConditions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.listen.ModeMemory
+import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.VoiceSession
@@ -105,6 +106,9 @@ class AppGraph(context: Context) {
     /** Kestrel's speech engines, which load their models from [models] (design spec, section 8.2). */
     val voice: VoiceEngines by lazy { VoiceEngines(models, File(appContext.noBackupFilesDir, "voice")) }
 
+    /** Kestrel's notifications about problems (design spec, section 14.6). */
+    internal val problems: ProblemNotifications by lazy { ProblemNotifications(appContext) }
+
     /**
      * Kestrel's listening, one for the whole process (design spec, sections 7.2 and 7.3), so that the accessibility
      * service, the notification and the tile reach it whether or not ListeningService runs. Its thread runs one thing at a
@@ -125,6 +129,7 @@ class AppGraph(context: Context) {
             // One main-thread task per text, in order, so that an earlier text never replaces a later one.
             bar = FeedbackBar { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text) } },
             report = reportFailure,
+            notices = problems,
             // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity.
             // The controller's thread calls it; startActivity may be called from any thread. Without Kestrel's
             // accessibility service, Android blocks the start from the background without an exception (prototype P1),

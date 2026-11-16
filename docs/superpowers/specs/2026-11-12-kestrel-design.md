@@ -262,6 +262,7 @@ All engines run through sherpa-onnx (Apache-2.0). Kestrel uses sherpa-onnx 1.13.
 |---|---|
 | Accessibility shortcut or accessibility button | Toggles between listening and paused, or starts Kestrel when it is off |
 | Persistent notification | Pause, resume or stop |
+| "Start listening" in the notification that says why Kestrel stopped (section 14.6) | Starts listening |
 | Quick Settings tile | Toggles listening |
 | Side key (press and hold), with Kestrel as the default digital assistant | Starts listening if needed and treats the next utterance as a task |
 | Earbud assistant gesture (also through the assistant role) | The same as the side key |
@@ -732,6 +733,7 @@ Kestrel always says what happened and what it already did. It never fails silent
 | Samsung battery restrictions are detected | The setup checklist asks for unrestricted battery use and "Never sleeping apps" |
 | The microphone service cannot start | Kestrel turns off and says why: Android refused the start in the background (then the owner can start it with the tile, the accessibility shortcut or the notification), the microphone permission is missing, the speech models are missing, or the speech engines did not load |
 | Android stops the listening service on its own | Kestrel turns off and says that Android stopped its listening |
+| Kestrel turns itself off, or cannot start | Besides the feedback bar, which exists only while the accessibility service runs, a notification on the channel "Problems" says why. A tap opens Kestrel. When a new start can help (a refused start in the background, a failed microphone, a stop by Android), it has a "Start listening" action, which starts the listening service as a service's `PendingIntent`, because a broadcast would leave only about 9 s for the microphone (prototype P2). The notification goes once Kestrel listens again, and the owner can swipe it away. Kestrel posts none for an Off that the owner chose |
 | "Kestrel, open settings" while Kestrel's accessibility service is off | Android does not let Kestrel open an activity from the background then, so Kestrel says so and asks the owner to tap its listening notification |
 
 ## 15. Settings and setup

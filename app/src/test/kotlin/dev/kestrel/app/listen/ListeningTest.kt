@@ -42,6 +42,7 @@ class ListeningTest {
     private var settingsFailure: Exception? = null
     private var settingsCanOpen = true
     private val conditions = FakeConditions()
+    private val notices = FakeNotices()
     private val memory = FakeMemory()
 
     @Test
@@ -60,6 +61,8 @@ class ListeningTest {
         assertEquals(listOf("start", "open", "recognition ALL", "microphone on"), log)
         assertSame(microphone, sessions.microphones.single())
         assertTrue(listening.sessionOpen.value)
+        // Kestrel listens again, so the notification that said why it stopped goes.
+        assertEquals(1, notices.cleared)
     }
 
     @Test
@@ -189,6 +192,8 @@ class ListeningTest {
             listOf(ListeningTexts.LISTENING, "Open the settings.", ListeningTexts.MIC_BUSY, ListeningTexts.PAUSED, ListeningTexts.OFF),
             shown,
         )
+        // Kestrel never posts the problems notification for an Off that the owner chose.
+        assertTrue(notices.shown.isEmpty())
     }
 
     @Test
@@ -219,6 +224,8 @@ class ListeningTest {
         // background.
         assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.BACKGROUND_START), shown)
         assertEquals("Starting the listening service", reports.single().first)
+        // The bar exists only while the accessibility service runs, so the reason is a notification too.
+        assertEquals(listOf(StopReason.BACKGROUND_START), notices.shown)
     }
 
     @Test
@@ -291,6 +298,8 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MICROPHONE_PERMISSION), shown)
+        // The session opened, but Kestrel never listened, so the notification that says why stays (section 14.6).
+        assertEquals(StopReason.MICROPHONE_PERMISSION, notices.visible)
     }
 
     @Test
@@ -585,6 +594,7 @@ class ListeningTest {
         assertEquals(listOf("start", "open", "stop"), log)
         assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MODELS_MISSING), shown)
         assertFalse(listening.sessionOpen.value)
+        assertEquals(listOf(StopReason.MODELS_MISSING), notices.shown)
     }
 
     @Test
@@ -900,6 +910,90 @@ class ListeningTest {
     }
 
     @Test
+    fun theStartActionFromOffTurnsKestrelOnInTheServiceThatItStarted() = runTest {
+        val listening = listening()
+
+        // The problems notification's "Start listening" started the service, which runs in the foreground.
+        listening.onStartAction(service)
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        // Kestrel asks Android for no second start, and it does not stop the service as one that nobody asked for.
+        assertEquals(listOf("open", "recognition ALL", "microphone on"), log)
+        assertTrue(listening.sessionOpen.value)
+        assertEquals(1, notices.cleared)
+    }
+
+    @Test
+    fun theStartActionWhileKestrelIsOnChangesNothing() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Pause)
+        runCurrent()
+        log.clear()
+
+        // A tap on a notification that an earlier failure left, after the owner started Kestrel another way.
+        listening.onStartAction(service)
+        runCurrent()
+
+        assertEquals(Mode.PAUSED, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals(1, sessions.opened.size)
+    }
+
+    @Test
+    fun aTurnOffWhileTheStartActionsSessionOpensStopsTheService() = runTest {
+        val opening = CompletableDeferred<Unit>()
+        sessions.opening = opening
+        val listening = listening()
+        listening.onStartAction(service)
+        runCurrent()
+
+        listening.send(Event.TurnOff)
+        runCurrent()
+        opening.complete(Unit)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf("open", "close", "closed", "stop"), log)
+        assertFalse(listening.sessionOpen.value)
+    }
+
+    @Test
+    fun theStartActionWhileASessionClosesKeepsTheServiceForTheNewSession() = runTest {
+        val listening = listeningWithSession()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        listening.send(Event.TurnOff)
+        runCurrent()
+        log.clear()
+
+        // The owner taps "Start listening" while the old session still closes, and Android gives the start to the
+        // service that runs.
+        listening.onStartAction(service)
+        runCurrent()
+        closing.complete(Unit)
+        runCurrent()
+
+        // The close does not stop the service that the start action asked for, and the new session opens after it.
+        assertEquals(listOf("closed", "open", "recognition ALL", "microphone on"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aStartActionThatCannotEnterTheForegroundSaysWhyWhileKestrelIsOff() = runTest {
+        val listening = listening()
+
+        // The owner tapped "Start listening", and the service stops itself after the failure.
+        listening.onForegroundFailed(SecurityException("Foreground service of type microphone not allowed"), startAction = true)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.BACKGROUND_START), shown)
+        assertEquals(listOf(StopReason.BACKGROUND_START), notices.shown)
+        assertEquals("Starting the listening service", reports.single().first)
+    }
+
+    @Test
     fun aServiceThatNobodyAskedForIsStopped() = runTest {
         val listening = listening()
 
@@ -1136,6 +1230,8 @@ class ListeningTest {
         runCurrent()
 
         assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.OFF, ListeningTexts.MODELS_MISSING), shown)
+        // The owner chose Off, so the reason shows on the bar only.
+        assertTrue(notices.shown.isEmpty())
     }
 
     @Test
@@ -1228,6 +1324,7 @@ class ListeningTest {
         },
         memory = memory,
         conditions = conditions,
+        notices = notices,
         microphones = { microphone },
     )
 
@@ -1337,6 +1434,24 @@ class ListeningTest {
         }
     }
 
+    private class FakeNotices : StopNotices {
+        val shown = mutableListOf<StopReason>()
+        var cleared = 0
+
+        // The notification that the owner sees now.
+        var visible: StopReason? = null
+
+        override fun show(reason: StopReason) {
+            shown += reason
+            visible = reason
+        }
+
+        override fun clear() {
+            cleared++
+            visible = null
+        }
+    }
+
     private class FakeConditions : ListeningConditions {
         var microphone = true
 
@@ -1366,6 +1481,7 @@ class ListeningTest {
             report = { what, error -> reports += what to error },
             openSettings = { true },
             conditions = conditions,
+            notices = notices,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
                 override suspend fun read(): Mode = Mode.OFF
