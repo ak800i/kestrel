@@ -35,8 +35,8 @@ try {
             ':app:connectedDebugAndroidTest'
             '-Pandroid.testInstrumentationRunnerArguments.package=dev.kestrel.app.voice'
             '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
-            # A reused configuration cache keeps the instrumentation arguments of the run that stored it, so a notClass
-            # from a run on a phone would stay in later runs on an emulator, and the other way round.
+            # The configuration cache is off for this run, so that no instrumentation argument of an earlier run, such as
+            # the notClass of a run on a phone, can be reused by mistake.
             '--no-configuration-cache'
         )
         if (-not $emulator) { $tasks += "-Pandroid.testInstrumentationRunnerArguments.notClass=$toggleTest" }
