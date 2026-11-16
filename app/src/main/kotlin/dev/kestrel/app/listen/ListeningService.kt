@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -40,6 +41,7 @@ class ListeningService : Service() {
     private val listening: Listening get() = (application as KestrelApplication).graph.listening
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var foreground = false
+    private lateinit var notifications: NotificationManager
 
     // The id of the last start that onStartCommand handled; only the main thread uses it.
     private var lastStartId = 0
@@ -53,7 +55,7 @@ class ListeningService : Service() {
     override fun onCreate() {
         super.onCreate()
         current = this
-        val notifications = getSystemService(NotificationManager::class.java)
+        notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.listening_channel), NotificationManager.IMPORTANCE_LOW),
         )
@@ -77,7 +79,8 @@ class ListeningService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
-        // Android requires this soon after every startForegroundService(), also for a service that already runs.
+        // Android requires this after a startForegroundService() unless the service is already in the foreground. It can
+        // also ignore the call without an exception, so the service calls it after every start.
         try {
             startForeground(NOTIFICATION_ID, notification(listening.state.value.mode), FOREGROUND_TYPES)
         } catch (e: Exception) {
@@ -85,10 +88,17 @@ class ListeningService : Service() {
             // Android does not allow (section 14.6). A newer start that is on its way keeps the service, and fails or
             // reports in turn.
             listening.onForegroundFailed(e)
-            stopSelfResult(startId)
+            if (stopSelfResult(startId)) foreground = false
             return START_NOT_STICKY
         }
         foreground = true
+        // startForeground() posts its notification later, from a thread of Android's own, so it can arrive after a newer
+        // update from the collector in onCreate. One more update a moment later shows the current mode.
+        scope.launch {
+            delay(REPOST_MILLIS)
+            val mode = listening.state.value.mode
+            if (foreground && mode != Mode.OFF) notifications.notify(NOTIFICATION_ID, notification(mode))
+        }
         listening.onForeground(this)
         when (intent?.action) {
             ACTION_PAUSE -> listening.send(Event.Pause)
@@ -121,7 +131,7 @@ class ListeningService : Service() {
 
     private fun notification(mode: Mode): Notification {
         val listeningNow = mode == Mode.LISTENING
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = PendingIntent.getActivity(this, 0, launcherIntent(), PendingIntent.FLAG_IMMUTABLE)
         val title = if (listeningNow) R.string.listening_title_listening else R.string.listening_title_paused
         val toggle = if (listeningNow) action(R.string.listening_pause, ACTION_PAUSE) else action(R.string.listening_resume, ACTION_RESUME)
         return Notification.Builder(this, CHANNEL)
@@ -135,6 +145,10 @@ class ListeningService : Service() {
             .build()
     }
 
+    // The launcher's own intent, so that a tap brings Kestrel's task to the front instead of adding another MainActivity.
+    private fun launcherIntent(): Intent =
+        Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+
     private fun action(title: Int, action: String): Notification.Action =
         Notification.Action.Builder(null, getString(title), actionIntent(this, action)).build()
 
@@ -144,6 +158,7 @@ class ListeningService : Service() {
         internal const val ACTION_RESUME = "dev.kestrel.listen.RESUME"
         internal const val ACTION_STOP = "dev.kestrel.listen.STOP"
         private const val CHANNEL = "listening"
+        private const val REPOST_MILLIS = 1_000L
         private const val FOREGROUND_TYPES =
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
 
@@ -172,7 +187,9 @@ class ListeningService : Service() {
             // and Android would then end Kestrel's process. stopSelfResult() leaves such a service running, and its start
             // reports to Listening, which asks again.
             override fun stop() {
-                main.post { current?.let { it.stopSelfResult(it.lastStartId) } }
+                // A stopped service must not post its notification again: without a foreground record nothing would
+                // remove it.
+                main.post { current?.let { if (it.stopSelfResult(it.lastStartId)) it.foreground = false } }
             }
         }
     }

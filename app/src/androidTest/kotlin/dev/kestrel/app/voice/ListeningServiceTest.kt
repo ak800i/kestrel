@@ -3,6 +3,7 @@ package dev.kestrel.app.voice
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationManager
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -10,6 +11,7 @@ import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.listen.ListeningService
+import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.voice.models.Engine
@@ -21,8 +23,8 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * ListeningService on the emulator (design spec, sections 7.2, 8.5 and 8.6): the foreground, the notification's actions,
- * and the screen and the lock.
+ * ListeningService (design spec, sections 7.2, 8.5 and 8.6): the foreground, the notification's actions, the screen and
+ * the lock, and a stop that Kestrel did not ask for. The lock-screen test runs only on emulators (scripts\voice-test.ps1).
  */
 class ListeningServiceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -99,6 +101,20 @@ class ListeningServiceTest {
             VoiceTests.shell("wm dismiss-keyguard")
             if (noLockScreen) VoiceTests.shell("cmd lock_settings set-disabled true")
         }
+    }
+
+    @Test
+    fun aNewServiceReportsTheScreenAndAStopByAndroidTurnsKestrelOff() {
+        // A screen state that an earlier run left: only the new service's first report can correct it, and
+        // startListening waits until the microphone records.
+        listening.send(Event.Screen(on = false))
+        awaitState { !it.screenOn }
+        ActivityScenario.launch(MainActivity::class.java).use { VoiceTests.startListening(clip) }
+
+        // As when Android ends the service on its own: Kestrel did not ask for it.
+        context.stopService(Intent(context, ListeningService::class.java))
+        awaitState { it.mode == Mode.OFF }
+        assertTrue("The voice session is still open", VoiceTests.waitUntil(30_000) { !listening.sessionOpen.value })
     }
 
     private fun texts(vararg ids: Int): List<String> = ids.map { context.getString(it) }
