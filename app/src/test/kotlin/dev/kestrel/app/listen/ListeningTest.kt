@@ -980,6 +980,80 @@ class ListeningTest {
     }
 
     @Test
+    fun aStopDecidedJustBeforeTheStartActionWasAdoptedLeavesItsServiceRunning() = runTest {
+        val listening = stopDecidedJustBeforeAStartAction()
+
+        // The controller adopts start 2 and turns Kestrel on, and only then does the main thread run the stop.
+        runCurrent()
+        val destroyed = services.runPostedStops(newest = 2)
+        destroyed.forEach { listening.onServiceDestroyed(it) }
+        runCurrent()
+
+        assertTrue(destroyed.isEmpty())
+        assertListeningInTheAdoptedService(listening)
+    }
+
+    @Test
+    fun aStopThatRunsBeforeTheAdoptedStartTurnsKestrelOnLeavesItsServiceRunning() = runTest {
+        val listening = stopDecidedJustBeforeAStartAction()
+
+        // The main thread runs the stop before the Orchestrator has handled the Event.Start of start 2. Had the stop
+        // ended the service, destroyed() would come before that Event.Start, and Kestrel would listen without a service.
+        val destroyed = services.runPostedStops(newest = 2)
+        destroyed.forEach { listening.onServiceDestroyed(it) }
+        runCurrent()
+
+        assertTrue(destroyed.isEmpty())
+        assertListeningInTheAdoptedService(listening)
+    }
+
+    /**
+     * Turns Kestrel off and lets the close end, so that the shutdown decides to stop the service, just before the
+     * controller's thread handles the owner's tap on "Start listening", whose start onStartCommand has already received
+     * as the service's start 2. The stop waits for the main thread.
+     */
+    private fun TestScope.stopDecidedJustBeforeAStartAction(): Listening {
+        val listening = listeningWithSession()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        listening.send(Event.TurnOff)
+        runCurrent()
+        log.clear()
+        closing.complete(Unit)
+        runCurrent()
+        listening.onStartAction(service)
+        // The stop names start 1, the newest that Kestrel had seen, so stopSelfResult() keeps the service for start 2.
+        // A stop of the newest start would end it, as the stop of every start did before.
+        assertEquals(listOf(service to 1), services.stops)
+        return listening
+    }
+
+    private fun TestScope.assertListeningInTheAdoptedService(listening: Listening) {
+        assertEquals(listOf("closed", "stop", "open", "recognition ALL", "microphone on"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertTrue(listening.sessionOpen.value)
+        // Kestrel knows the service as its own, so it turns off and says why when Android ends the service later.
+        listening.onServiceDestroyed(service)
+        runCurrent()
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(ListeningTexts.STOPPED_BY_ANDROID, shown.last())
+    }
+
+    @Test
+    fun aProblemsNotificationThatCannotBePostedIsReportedAndKestrelStillTurnsOff() = runTest {
+        val listening = listeningWithSession()
+        notices.failure = SecurityException("Not allowed to post")
+
+        listening.onServiceDestroyed(service)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(ListeningTexts.STOPPED_BY_ANDROID, shown.last())
+        assertEquals("Posting the problems notification", reports.single().first)
+        assertTrue(reports.single().second is SecurityException)
+    }
+
+    @Test
     fun aStartActionThatCannotEnterTheForegroundSaysWhyWhileKestrelIsOff() = runTest {
         val listening = listening()
 
@@ -1130,8 +1204,8 @@ class ListeningTest {
         listening.send(Event.TurnOff)
         runCurrent()
 
-        // A late report of a start that Kestrel no longer wants reaches the old service while it closes, and then the
-        // owner turns Kestrel on again.
+        // The old service, which still closes, receives a start that Kestrel no longer wants, and its report reaches
+        // Listening; then the owner turns Kestrel on again.
         listening.onForeground(service)
         runCurrent()
         listening.send(Event.Toggle)
@@ -1329,6 +1403,15 @@ class ListeningTest {
         microphones = { microphone },
     )
 
+    // Android gives every start of the service the next start ID, and onStartCommand reports it with the instance.
+    private var startIds = 0
+
+    /** The service reports the foreground after its next start. */
+    private fun Listening.onForeground(instance: Any) = onForeground(instance, ++startIds)
+
+    /** The service reports the problems notification's "Start listening" as its next start. */
+    private fun Listening.onStartAction(instance: Any) = onStartAction(instance, ++startIds)
+
     /** Turns listening on, and lets the service report the foreground, so that a session opens. */
     private fun TestScope.listeningWithSession(scope: CoroutineScope = backgroundScope): Listening {
         val listening = listening(scope)
@@ -1406,8 +1489,26 @@ class ListeningTest {
             failure?.let { throw it }
         }
 
-        override fun stop() {
+        // What each stop named: the newest start that Kestrel had seen, by its instance and its start ID.
+        val stops = mutableListOf<Pair<Any?, Int>>()
+
+        // The stops that wait for the main thread.
+        private val posted = mutableListOf<Pair<Any?, Int>>()
+
+        override fun stop(instance: Any?, startId: Int) {
             log += "stop"
+            stops += instance to startId
+            posted += instance to startId
+        }
+
+        /**
+         * Runs the stops that wait for the main thread, as ListeningService does with stopSelfResult(): a stop ends the
+         * service only when it names the service's newest start, [newest]. Returns the instances that Android destroys.
+         */
+        fun runPostedStops(newest: Int): List<Any> {
+            val ended = posted.filter { it.second == newest }.mapNotNull { it.first }
+            posted.clear()
+            return ended
         }
     }
 
@@ -1441,8 +1542,10 @@ class ListeningTest {
 
         // The notification that the owner sees now.
         var visible: StopReason? = null
+        var failure: Exception? = null
 
         override fun show(reason: StopReason) {
+            failure?.let { throw it }
             shown += reason
             visible = reason
         }

@@ -31,13 +31,15 @@ internal interface ServiceControl {
     fun start()
 
     /**
-     * Asks the service to stop itself, on the main thread a moment later. It stops unless Android has a newer start for
-     * it that onStartCommand has not handled yet; that start reports to [Listening.onForeground] or
-     * [Listening.onStartAction]. A "Start listening" that onStartCommand handled just before the stop runs, and that
-     * Listening has not adopted yet, stops with it; the owner then taps again. Nothing happens when the service does
-     * not run.
+     * Asks the service's instance [instance] to stop itself, on the main thread a moment later, if [startId] is still
+     * its newest start. [instance] and [startId] are the newest start that Listening has seen (null and 0 before the
+     * first). So a stop never ends a start that Listening has not seen: a start that onStartCommand handled after
+     * Listening decided to stop, such as a "Start listening" that the stop overtakes, keeps the service. Its report
+     * reaches [Listening.onForeground] or [Listening.onStartAction] later, and Listening adopts the service or stops it
+     * again with the newer start. Nothing happens when that instance no longer runs, because a new instance counts its
+     * starts anew.
      */
-    fun stop()
+    fun stop(instance: Any?, startId: Int)
 }
 
 /** Shows a text on the feedback bar (design spec, section 8.9), or nothing while the accessibility service is off. */
@@ -180,6 +182,11 @@ class Listening internal constructor(
     // Android end Kestrel's process.
     private var awaitingForeground = false
 
+    // Only [thread] uses these: the newest start that ListeningService reported, by its instance and its start ID. A stop
+    // names it, so that a newer start that has not reached [thread] yet keeps the service.
+    private var reported: Any? = null
+    private var reportedStartId = 0
+
     // Only [thread] uses these. [microphoneWait]: the microphone failed, and starts again when this wait ends; until then
     // follow() leaves it off. [restartedLately]: runs for a minute after such a restart (section 14.6).
     private var microphoneWait: Job? = null
@@ -289,17 +296,17 @@ class Listening internal constructor(
         }
     }
 
-    /** ListeningService, whose instance is [instance], runs in the foreground. */
-    fun onForeground(instance: Any) {
-        scope.launch(thread) { foreground(instance) }
+    /** ListeningService, whose instance is [instance], runs in the foreground after its start [startId]. */
+    fun onForeground(instance: Any, startId: Int) {
+        scope.launch(thread) { foreground(instance, startId) }
     }
 
     /**
      * ListeningService, whose instance is [instance], runs in the foreground after the problems notification's "Start
-     * listening" (section 14.6). From Off, Kestrel marks this service as asked for before it sends Event.Start, so it
-     * never stops the service as one that nobody asked for. While Kestrel is on, nothing changes.
+     * listening" (section 14.6), its start [startId]. From Off, Kestrel marks this service as asked for before it sends
+     * Event.Start, so it never stops the service as one that nobody asked for. While Kestrel is on, nothing changes.
      */
-    fun onStartAction(instance: Any) {
+    fun onStartAction(instance: Any, startId: Int) {
         scope.launch(thread) {
             if (serviceState == ServiceState.STOPPED) {
                 serviceState = ServiceState.STARTING
@@ -309,7 +316,7 @@ class Listening internal constructor(
             }
             // Event.Start acts only from Off, so a tap after the owner started Kestrel another way changes nothing.
             send(Event.Start())
-            foreground(instance)
+            foreground(instance, startId)
         }
     }
 
@@ -403,8 +410,10 @@ class Listening internal constructor(
         }
     }
 
-    private fun foreground(instance: Any) {
+    private fun foreground(instance: Any, startId: Int) {
         awaitingForeground = false
+        reported = instance
+        reportedStartId = startId
         when (serviceState) {
             // The start's report. While a shutdown still closes the session, Android gives the new start to the instance
             // that runs, so the report may come from it, and the shutdown leaves it running.
@@ -523,7 +532,7 @@ class Listening internal constructor(
 
     private fun stopService() {
         try {
-            services.stop()
+            services.stop(reported, reportedStartId)
         } catch (e: Exception) {
             report("Stopping the listening service", e)
         }

@@ -37,17 +37,14 @@ import kotlinx.coroutines.launch
  * with Pause or Resume and Stop, or without actions once Kestrel is turning off, and tells [Listening] whether the
  * screen is on and the phone unlocked. The actions are broadcasts to [NotificationActionReceiver], so they need no new
  * start of the service. Since Android 14 the owner can swipe the notification away while the phone is unlocked; it
- * comes back with the next change of mode. The service stops itself when [Listening] asks, unless a newer start is
- * still on its way to it. Android calls every callback on the main thread.
+ * comes back with the next change of mode. The service stops itself when [Listening] asks, unless Android gave it a start
+ * that Listening has not seen yet. Android calls every callback on the main thread.
  */
 class ListeningService : Service() {
     private val listening: Listening get() = (application as KestrelApplication).graph.listening
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var foreground = false
     private lateinit var notifications: NotificationManager
-
-    // The id of the last start that onStartCommand handled; only the main thread uses it.
-    private var lastStartId = 0
 
     // The owner unlocked the phone since the screen last went off (USER_PRESENT). Only the main thread uses it.
     private var unlocked = false
@@ -89,7 +86,6 @@ class ListeningService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        lastStartId = startId
         // Android requires this after a startForegroundService() unless the service is already in the foreground. It can
         // also ignore the call without an exception, so the service calls it after every start.
         try {
@@ -116,8 +112,13 @@ class ListeningService : Service() {
             delay(REPOST_MILLIS)
             if (foreground) notifications.notify(NOTIFICATION_ID, notification(listening.state.value.mode))
         }
-        // The problems notification's "Start listening" asks for a start that Listening adopts (section 14.6).
-        if (intent?.action == ACTION_START) listening.onStartAction(this) else listening.onForeground(this)
+        // The problems notification's "Start listening" asks for a start that Listening adopts (section 14.6). Listening
+        // names the start ID when it asks the service to stop.
+        if (intent?.action == ACTION_START) {
+            listening.onStartAction(this, startId)
+        } else {
+            listening.onForeground(this, startId)
+        }
         return START_NOT_STICKY
     }
 
@@ -228,12 +229,14 @@ class ListeningService : Service() {
             }
 
             // stopService() would also bring down a service whose newest start has not reached startForeground() yet,
-            // and Android would then end Kestrel's process. stopSelfResult() leaves such a service running, and its start
-            // reports to Listening, which asks again.
-            override fun stop() {
+            // and Android would then end Kestrel's process. stopSelfResult() leaves such a service running, as it leaves
+            // one whose newest start has not reached Listening yet. That start reports to Listening, which decides again.
+            override fun stop(instance: Any?, startId: Int) {
                 // A stopped service must not post its notification again: without a foreground record nothing would
-                // remove it.
-                main.post { current?.let { if (it.stopSelfResult(it.lastStartId)) it.foreground = false } }
+                // remove it. A new instance started after the one that Listening named, so its start IDs count anew.
+                main.post {
+                    current?.takeIf { it === instance }?.let { if (it.stopSelfResult(startId)) it.foreground = false }
+                }
             }
         }
     }
