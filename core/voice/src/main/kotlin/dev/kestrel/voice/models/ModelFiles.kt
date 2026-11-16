@@ -1,5 +1,6 @@
 package dev.kestrel.voice.models
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -39,7 +40,10 @@ class ModelFiles(
 
     private val lock = Mutex()
 
-    /** The folder that holds the model files, found again at each use. */
+    /**
+     * The folder that holds the model files, found again at each use. Finding it touches the disk, so read it and
+     * [file] off the main thread.
+     */
     val root: File get() = findRoot()
 
     /** Where a path from the manifest lives on this phone. */
@@ -48,38 +52,45 @@ class ModelFiles(
     /**
      * Checks every model, in the manifest's order. Hashing a large file takes seconds, so this runs on [Dispatchers.IO].
      * It uses one folder for the whole check, and creates it first, so that scripts\push-models.ps1 finds it also after
-     * someone deleted it while Kestrel ran. A cancelled check stops before the next file and leaves the cache as it was.
+     * someone deleted it while Kestrel ran. A cancelled check stops before the next file, but it first adds the hashes
+     * that it computed to the cache, so that the next check hashes only the files that this one did not reach.
      */
     suspend fun check(): List<ModelStatus> = withContext(Dispatchers.IO) {
         lock.withLock {
             val folder = root.apply { mkdirs() }
             val cached = readCache()
             val known = mutableMapOf<String, CachedHash>()
-            val statuses = manifest.models.map { model ->
-                val missing = mutableListOf<String>()
-                val damaged = mutableListOf<String>()
-                for (entry in model.files) {
-                    ensureActive()
-                    val file = File(folder, entry.path)
-                    when {
-                        !file.isFile -> missing += entry.path
-                        file.length() != entry.size -> damaged += entry.path
-                        else -> {
-                            val actual = try {
-                                hashOf(file, entry.path, cached, known)
-                            } catch (e: IOException) {
-                                null
+            try {
+                val statuses = manifest.models.map { model ->
+                    val missing = mutableListOf<String>()
+                    val damaged = mutableListOf<String>()
+                    for (entry in model.files) {
+                        ensureActive()
+                        val file = File(folder, entry.path)
+                        when {
+                            !file.isFile -> missing += entry.path
+                            file.length() != entry.size -> damaged += entry.path
+                            else -> {
+                                val actual = try {
+                                    hashOf(file, entry.path, cached, known)
+                                } catch (e: IOException) {
+                                    null
+                                }
+                                if (actual != entry.sha256) damaged += entry.path
                             }
-                            if (actual != entry.sha256) damaged += entry.path
                         }
                     }
+                    ModelStatus(model, missing, damaged)
                 }
-                ModelStatus(model, missing, damaged)
+                if (known != cached) writeCache(known)
+                statuses
+            } catch (e: CancellationException) {
+                // Each entry holds its file's size and modification time, so the old entries of the files that this
+                // check did not reach stay valid. writeCache does not suspend, so the cancellation cannot stop it.
+                val kept = cached + known
+                if (kept != cached) writeCache(kept)
+                throw e
             }
-            // Also after the last file, so that a cancelled check never writes the cache.
-            ensureActive()
-            if (known != cached) writeCache(known)
-            statuses
         }
     }
 

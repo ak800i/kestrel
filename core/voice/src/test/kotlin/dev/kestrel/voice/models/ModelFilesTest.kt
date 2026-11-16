@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -165,12 +166,34 @@ class ModelFilesTest {
     }
 
     @Test
-    fun aCancelledCheckStopsBeforeTheNextFileAndWritesNoCache() = runTest {
+    fun aCancelledCheckStopsBeforeTheNextFile() = runTest {
         write("m/a.onnx", "abc")
         write("m/b.onnx", "de")
+
+        cancelWhileTheFirstFileIsHashed(manifest("m/a.onnx" to "abc", "m/b.onnx" to "de"))
+
+        assertEquals(listOf("a.onnx"), hashed)
+    }
+
+    @Test
+    fun aCancelledCheckKeepsTheHashesThatItComputed() = runTest {
+        write("m/a.onnx", "abc")
+        write("m/b.onnx", "de")
+        val manifest = manifest("m/a.onnx" to "abc", "m/b.onnx" to "de")
+        cancelWhileTheFirstFileIsHashed(manifest)
+        hashed.clear()
+
+        val second = modelFiles(manifest).check().single()
+
+        assertTrue(second.ready)
+        assertEquals(listOf("b.onnx"), hashed)
+    }
+
+    /** Starts a check of [manifest] and cancels it while the check hashes its first file. */
+    private suspend fun TestScope.cancelWhileTheFirstFileIsHashed(manifest: ModelManifest) {
         val hashing = CompletableDeferred<Unit>()
         val release = CountDownLatch(1)
-        val files = ModelFiles(root, manifest("m/a.onnx" to "abc", "m/b.onnx" to "de"), cache) { file ->
+        val files = ModelFiles(root, manifest, cache) { file ->
             hashed += file.name
             hashing.complete(Unit)
             // Hashing a large file takes seconds; the check is cancelled meanwhile.
@@ -183,9 +206,6 @@ class ModelFilesTest {
         checking.cancel()
         release.countDown()
         checking.join()
-
-        assertEquals(listOf("a.onnx"), hashed)
-        assertFalse(cache.exists())
     }
 
     @Test

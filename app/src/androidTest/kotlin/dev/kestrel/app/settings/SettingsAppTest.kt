@@ -242,6 +242,22 @@ class SettingsAppTest {
         assertEquals(2, checks)
     }
 
+    @Test
+    fun theAboutPageChecksTheModelsAgainAfterALicenceText() {
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.about_version, "9.9.9 (99)")).assertIsDisplayed()
+        assertEquals(1, checks)
+
+        compose.onNodeWithText(text(R.string.about_licence_apache)).performScrollTo().performClick()
+        compose.onNodeWithText("The first paragraph, wrapped.").assertIsDisplayed()
+        assertEquals(1, checks)
+
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        compose.onNodeWithText(text(R.string.about_version, "9.9.9 (99)")).assertIsDisplayed()
+        assertEquals(2, checks)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val version = "9.9.9 (99)"

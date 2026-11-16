@@ -75,7 +75,8 @@ class AppGraph(context: Context) {
      * spec, section 8.10). Built on first use, because it reads the manifest from the assets. The folder is found again
      * at each check and each load of the engines: while shared storage is not available, a check or a load uses a folder
      * in Kestrel's private storage, where the models count as missing, and the next one finds them once shared storage
-     * is back. Every caller uses it off the main thread, because finding the folder touches the disk.
+     * is back. Every read of root and file() runs off the main thread, because finding the folder touches the disk;
+     * check() switches to Dispatchers.IO itself.
      */
     val models: ModelFiles by lazy {
         ModelFiles(
