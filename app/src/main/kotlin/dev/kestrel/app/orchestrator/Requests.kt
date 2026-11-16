@@ -45,7 +45,7 @@ sealed interface Request {
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
  *    "wake up", "stop listening", or a task. A task after "stop" or "cancel" asks to cancel a running task first.
  * 4. Otherwise "stop listening" pauses, and "wake up" or "stop listening" followed by the name count too.
- *    Everything else is for the instant commands.
+ *    Everything else is for the instant commands, or, in an answer to "Yes?", read as the words after the name.
  *
  * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up".
  */
@@ -68,13 +68,18 @@ object Requests {
     // Words that Kestrel's own phrases may come with, as in "Kestrel, wake up, please".
     private val POLITE = setOf("please", "now", "ok", "okay")
 
-    /** Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start. */
-    fun read(transcript: String, spotted: Boolean): Request? {
+    /**
+     * Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start.
+     * [afterName]: the transcript answers "Yes?", so words without the name are read as the words after it: "Wake up."
+     * is [Request.WakeUp], "Stop." is a named stop, and "Open the settings." is a task. "Stop Kestrel" still turns
+     * Kestrel off.
+     */
+    fun read(transcript: String, spotted: Boolean, afterName: Boolean = false): Request? {
         val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
         if (words.isEmpty()) return null
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
         if (isStopKestrel(words, limit)) return Request.TurnOff
-        readStop(words, limit)?.let { return it }
+        readStop(words, limit)?.let { return if (afterName) Request.Stop(named = true) else it }
         val start = when {
             nameAt(words, 0, limit) > 0 -> 0
             spotted && words[0].text in BEFORE_NAME && nameAt(words, 1, limit) > 0 -> 1
@@ -95,6 +100,7 @@ object Requests {
         return when {
             phrase == "stop listening" || beforeName == "stop listening" -> Request.PauseListening
             beforeName == "wake up" -> Request.WakeUp
+            afterName -> named(transcript, words, limit, stopFirst = false)
             else -> Request.Other(transcript.trim())
         }
     }

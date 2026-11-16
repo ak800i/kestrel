@@ -132,6 +132,17 @@ class RequestsTest {
     }
 
     @Test
+    fun anAnswerToYesIsReadAsTheWordsAfterTheName() {
+        assertEquals(Request.WakeUp, Requests.read("Wake up.", spotted = false, afterName = true))
+        assertEquals(Request.Stop(named = true), Requests.read("Stop.", spotted = false, afterName = true))
+        assertEquals(Request.PauseListening, Requests.read("Stop listening.", spotted = false, afterName = true))
+        assertEquals(Request.Task("Open the settings."), Requests.read("Open the settings.", spotted = false, afterName = true))
+        assertEquals(Request.TurnOff, Requests.read("Stop Kestrel.", spotted = false, afterName = true))
+        assertEquals(Request.Task("open Viber"), Requests.read("Kestrel, open Viber", spotted = true, afterName = true))
+        assertNull(Requests.read(" ... ", spotted = false, afterName = true))
+    }
+
+    @Test
     fun aTranscriptWithoutWordsIsNothing() {
         assertNull(Requests.read("", spotted = false))
         assertNull(Requests.read(" ... ", spotted = true))
