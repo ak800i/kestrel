@@ -58,14 +58,19 @@ class NormalizerTest {
         assertEquals("Ђорђе», please", original.substring(folded.span(1, 3)))
         assertFalse(folded.toString().contains("djordje"))
         // An empty range is empty in the original text too: where its first folded character or word starts, or after
-        // the last one.
-        assertEquals(5 until 5, folded.source(4, 4))
-        assertEquals(5 until 5, folded.span(1, 1))
-        assertEquals(0 until 0, folded.span(0, 0))
-        assertEquals(19 until 19, folded.span(3, 3))
-        assertEquals(19 until 19, folded.source(18, 18))
+        // the last one. Kotlin counts every two empty ranges as equal, so the checks compare the positions.
+        assertEmptyAt(5, folded.source(4, 4))
+        assertEmptyAt(5, folded.span(1, 1))
+        assertEmptyAt(0, folded.span(0, 0))
+        assertEmptyAt(19, folded.span(3, 3))
+        assertEmptyAt(19, folded.source(18, 18))
         assertEquals("", original.substring(folded.span(3, 3)))
-        assertEquals(0 until 0, Normalizer.withOffsets(" ?! ").span(0, 0))
+        assertEmptyAt(0, Normalizer.withOffsets(" ?! ").span(0, 0))
+    }
+
+    private fun assertEmptyAt(position: Int, range: IntRange) {
+        assertEquals(position, range.first)
+        assertEquals(position - 1, range.last)
     }
 
     @Test

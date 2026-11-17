@@ -67,6 +67,9 @@ class GrammarScreenTest {
         // "Drag three to two", as the recogniser writes it: the last "to" is the place.
         "drag 3 to to" to Command.Drag(number(3), number(2)),
         "drag Send to to" to Command.Drag(label("Send"), number(2)),
+        // Polite words after the place's "to" are no place.
+        "drag 3 to please" to Command.Drag(number(3), null),
+        "drag 3 to to please" to Command.Drag(number(3), number(2)),
         // Scrolling.
         "scroll down" to Command.Scroll(Direction.DOWN, null),
         "scroll up" to Command.Scroll(Direction.UP, null),

@@ -83,6 +83,9 @@ internal object GrammarScreen {
             val doubled = words.size >= 4 && words[words.size - 1] == "to" && words[words.size - 2] == "to"
             val to = if (doubled) words.size - 2 else words.lastIndexOf("to")
             if (to in 2 until words.size - 1) {
+                // Polite words alone are no place: "drag 3 to please" is left to the parser's second try, which reads
+                // "drag 3 to", and "drag 3 to to please" the same way (design D5).
+                if (CommandParser.politeOnly(words, to + 1, words.size)) return null
                 val from = target(1, to) ?: return null
                 return Command.Drag(from, target(to + 1))
             }
