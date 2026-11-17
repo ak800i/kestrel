@@ -19,6 +19,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:commands"))
     implementation(project(":core:privacy"))
     implementation(project(":core:safety"))
     implementation(project(":core:screen"))

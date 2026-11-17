@@ -164,7 +164,7 @@ Each Gradle module has one job. Most of them are plain Kotlin, so their tests ru
 | `:app` | Wiring, Android services and the Compose settings UI | No |
 | `:core:screen` | Screen snapshots, actions and the overlays (numbers, labels, grid, feedback bar, touch watcher) | No |
 | `:core:voice` | Audio capture, voice activity detection, keyword spotting, speech recognition and voice output, through sherpa-onnx | No |
-| `:core:commands` | The instant-command grammar, the parser and the matching of spoken words to screen elements | Yes |
+| `:core:commands` | The instant-command grammar, the parser, the matching of spoken words to screen elements, apps and contacts, the editing model and dictation, and the phone-number rules. The contacts themselves are read in `:app` until `:core:datatools` exists (sub-project 5) | Yes |
 | `:core:providers` | The generated catalog, the request adapters and the sign-in methods (uses OkHttp) | Yes |
 | `:core:agent` | The agent loop, its tools, memory and routines | Yes |
 | `:core:safety` | The safety check, agent-free apps, redaction and test mode | Yes |
@@ -358,7 +358,8 @@ Before Kestrel takes a screenshot for OCR or for the LLM, it hides its overlays.
 ### 9.6 Matching spoken words to the screen
 
 - **Normalising:** Kestrel lowercases text, folds diacritics (č→c, ć→c, š→s, ž→z, đ→dj), transliterates Cyrillic labels to Latin and removes punctuation. It does this to both the spoken words and the screen labels.
-- **Scoring:** each candidate gets a score from word overlap, Jaro–Winkler similarity and a phonetic key.
+- **Scoring:** each candidate gets 0.40 × the Jaro–Winkler similarity of the words joined without spaces, 0.35 × the word overlap (the Dice coefficient; two words match when they are equal, equal without a final "s", or at least 0.92 similar, and, for a command with a verb but never for bare labels or contacts, when both have 5 letters or more, the same phonetic key and spellings at least 0.80 similar once respelled) and 0.25 × the similarity of an in-house phonetic key that respells Serbian letters first ("Đorđe" and "Georgie" share it). The leading "the", "a" or "an" of the spoken phrase is dropped, and "okay", "OK" and "O.K." are the same word, so "okay" taps an "OK" button. An exact match after normalising, with or without those articles, scores 1.0, and a phrase whose words start a name, such as "Ana Petrović" for a chat row "Ana Petrović: See you at 5", scores at least 0.85.
+- **Limits:** a name that the owner says exactly (after normalising) acts at once when no other candidate has it, whatever near misses the screen also shows, so "Ana" taps "Ana" next to "Anja"; two or more exact matches ask "Which one?" with those only. Without an exact match, Kestrel acts when the best score is at least 0.80 and beats the second best by at least 0.10. For bare labels, contacts, and every phrase or name of 4 letters or fewer, it needs 0.90 and 0.15. Two equal best scores never act. Candidates from 0.60 up that are within 0.10 of the best are offered in "Which one?"; below 0.60 for all, nothing was found; so a single near miss, such as "Anja" for "Ana", asks "Which one?" with its one number, which works as a confirmation. These are research r23's starting values, which the corpus run of sub-project 3 checks.
 - **Deciding:** Kestrel acts when the best score passes a threshold and clearly beats the second best. Otherwise it shows numbers on the candidates and asks "Which one?". When nothing comes close, it says "I can't find X" and shows numbers.
 - The boost words in section 8.3 make the recogniser produce the on-screen spelling more often in the first place.
 

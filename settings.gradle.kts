@@ -31,6 +31,7 @@ dependencyResolutionManagement {
 rootProject.name = "kestrel"
 
 include(":app")
+include(":core:commands")
 include(":core:privacy")
 include(":core:screen")
 include(":core:voice")
