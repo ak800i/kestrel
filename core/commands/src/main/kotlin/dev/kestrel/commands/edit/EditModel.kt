@@ -206,7 +206,10 @@ object EditModel {
     /** The first letter of each word in capitals. */
     private fun capitalized(text: String): String = buildString {
         for ((index, char) in text.withIndex()) {
-            val startsWord = index == 0 || !(text[index - 1].isLetterOrDigit() || text[index - 1] in APOSTROPHES)
+            // An apostrophe joins the letters around it, as in "O'neil"; one at the start of a word opens a quotation.
+            val inWord = index > 0 &&
+                (text[index - 1].isLetterOrDigit() || (text[index - 1] in APOSTROPHES && index >= 2 && text[index - 2].isLetterOrDigit()))
+            val startsWord = !inWord
             append(if (startsWord && char.isLetter()) char.titlecaseChar() else char)
         }
     }

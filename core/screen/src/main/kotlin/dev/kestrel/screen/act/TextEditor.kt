@@ -69,18 +69,21 @@ class TextEditor(
      * Replaces the text from [start] until [end] of the field with [key] by [replacement], and then selects
      * [selectionStart] to [selectionEnd]. The input method comes first: it replaces only that range, makes the events
      * that web pages expect, and lands in the field's undo history. When the input does not start or the field does not
-     * show the result within 1 s, Kestrel sets the whole new text with the set-text action instead. A password field
-     * shows only dots, so there only the length is checked, and set-text only empties it.
+     * show the result within 1 s, Kestrel sets the whole new text with the set-text action instead. The new text comes
+     * from a read after the field has connected, so that the fallback never writes over a change that the app made
+     * meanwhile. A password field shows only dots, so there only the length is checked, and set-text only empties it.
      */
     suspend fun replace(key: String, start: Int, end: Int, replacement: String, selectionStart: Int, selectionEnd: Int): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
         if (!field.element.editable) return NOT_A_FIELD
         if (!field.node.isEnabled) return DISABLED
-        val before = field.node.shownText().orEmpty()
-        if (start < 0 || start > end || end > before.length) return CHANGED
-        val expected = before.substring(0, start) + replacement + before.substring(end)
+        if (start < 0 || start > end || end > field.node.shownText().orEmpty().length) return CHANGED
         val password = password(field)
         val connection = connect(field)
+        if (!field.node.refresh()) return NOT_ON_SCREEN
+        val before = field.node.shownText().orEmpty()
+        if (end > before.length) return CHANGED
+        val expected = before.substring(0, start) + replacement + before.substring(end)
         if (connection != null) {
             withContext(Dispatchers.Main) {
                 connection.setSelection(start, end)
@@ -95,15 +98,17 @@ class TextEditor(
 
     /**
      * Starts a new line at the cursor with the Enter key, which every kind of multi-line field takes as a line break
-     * (P4). A field with one line gets nothing, because the Enter key would submit it.
+     * (P4). A field with one line gets nothing, because the Enter key would submit it. The field is read after it has
+     * connected, so that the set-text fallback never writes over a change that the app made meanwhile.
      */
     suspend fun newLine(key: String): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
         if (!field.node.isEnabled) return DISABLED
-        val before = field.node.shownText().orEmpty()
-        val (start, end) = selection(field.node, before)
         val connection = connect(field)
         if (!multiLine(field)) return ONE_LINE
+        if (!field.node.refresh()) return NOT_ON_SCREEN
+        val before = field.node.shownText().orEmpty()
+        val (start, end) = selection(field.node, before)
         if (connection != null) {
             withContext(Dispatchers.Main) { connection.enter() }
             if (changes(field.node, before)) return settled(ActionMethod.INPUT_METHOD)
@@ -128,7 +133,8 @@ class TextEditor(
      * Submits the field with [key] with its own editor action, which the input method sends as the app expects: search,
      * go, send, done, next or previous, and in a field with more lines only search, go or send. Without one, a field with
      * one line gets the Enter key, and a field with more lines has nothing to submit. When the input does not start, the
-     * IME-enter action is the fallback, never on a field with more lines, where it moves the focus instead.
+     * IME-enter action is the fallback, never on a field with more lines, where it moves the focus instead, nor on a
+     * Compose field, whose node says one line also when it has more.
      */
     suspend fun submit(key: String): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
@@ -148,7 +154,7 @@ class TextEditor(
             withContext(Dispatchers.Main) { connection.enter() }
             return settled(ActionMethod.INPUT_METHOD)
         }
-        if (field.node.isMultiLine) return NO_ACTION
+        if (field.node.isMultiLine || composed(field.node)) return NO_ACTION
         return if (field.node.performAction(IME_ENTER)) {
             settled(ActionMethod.ACTION)
         } else {
@@ -245,34 +251,47 @@ class TextEditor(
     }
 
     /**
-     * Focuses [field] and waits until its app has started the input with Kestrel's input method. Null when the input does
-     * not start within 2 s or the field does not have the focus then.
+     * Focuses [field], waits up to 2 s until its app has started the input with Kestrel's input method, and then up to
+     * 1 s until the field has the focus, because a web page's field may start its input a moment before its node reports
+     * the focus. Only then does it take the input connection, because the app may restart the input meanwhile. Null when
+     * the input does not start, the field does not get the focus, or the input is no longer the field's at the end.
      */
     private suspend fun connect(field: Field): InputMethod.AccessibilityInputConnection? {
         val inputMethod = service.inputMethod ?: return null
-        val packageName = field.element.packageName
         val before = withContext(Dispatchers.Main) { inputMethod.currentInputEditorInfo }
         val wasFocused = field.node.isFocused
         if (!wasFocused && !field.node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
             field.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         }
-        val connection = withContext(Dispatchers.Main) {
+        withContext(Dispatchers.Main) {
             withTimeoutOrNull(INPUT_START_MILLIS) {
-                var ready: InputMethod.AccessibilityInputConnection? = null
-                while (ready == null) {
-                    val editor = inputMethod.currentInputEditorInfo
-                    // A window without a text field also starts an input, but with the type 0 and no connection (P4).
-                    val started = inputMethod.currentInputStarted && editor != null && editor.packageName == packageName &&
-                        editor.inputType != InputType.TYPE_NULL && (wasFocused || editor !== before)
-                    ready = if (started) inputMethod.currentInputConnection else null
-                    if (ready == null) delay(POLL_MILLIS)
-                }
-                ready
+                while (startedConnection(inputMethod, field, before, wasFocused) == null) delay(POLL_MILLIS)
+                true
             }
         } ?: return null
-        // A web page's field may start its input a moment before its node reports the focus.
-        return if (waitFor { field.node.refresh() && field.node.isFocused }) connection else null
+        if (!waitFor { field.node.refresh() && field.node.isFocused }) return null
+        return withContext(Dispatchers.Main) { startedConnection(inputMethod, field, before, wasFocused) }
     }
+
+    /**
+     * The connection of the input that [field]'s app started with Kestrel's input method, or null when the current input
+     * is not one: the field must have had the focus already, or the input must be newer than [before].
+     */
+    private fun startedConnection(
+        inputMethod: InputMethod,
+        field: Field,
+        before: EditorInfo?,
+        wasFocused: Boolean,
+    ): InputMethod.AccessibilityInputConnection? {
+        val editor = inputMethod.currentInputEditorInfo
+        // A window without a text field also starts an input, but with the type 0 and no connection (P4).
+        val started = inputMethod.currentInputStarted && editor != null && editor.packageName == field.element.packageName &&
+            editor.inputType != InputType.TYPE_NULL && (wasFocused || editor !== before)
+        return if (started) inputMethod.currentInputConnection else null
+    }
+
+    // Compose offers its semantics ID as extra data on every node (androidx.compose.ui.platform, ExtraDataIdKey).
+    private fun composed(node: AccessibilityNodeInfo): Boolean = node.availableExtraData.any { it.startsWith(COMPOSE_EXTRA_DATA) }
 
     /** Focuses [field] when it does not have the focus, and waits up to 2 s until it has. */
     private suspend fun focus(field: Field): Boolean {
@@ -358,7 +377,10 @@ class TextEditor(
     private suspend fun selects(node: AccessibilityNodeInfo, start: Int, end: Int): Boolean =
         waitFor { node.refresh() && node.textSelectionStart == start && node.textSelectionEnd == end }
 
-    /** Checks [condition] every 50 ms for up to 1 s: an edit shows within 300 to 400 ms (P4). */
+    /**
+     * Checks [condition] every 50 ms for up to 1 s: an edit shows within 300 to 400 ms (P4), and a web page's field
+     * reports the focus about 50 ms after its input has started.
+     */
     private suspend fun waitFor(condition: () -> Boolean): Boolean {
         repeat(READ_BACK_TRIES) {
             if (condition()) return true
@@ -406,6 +428,7 @@ class TextEditor(
             EditorInfo.IME_ACTION_DONE,
             EditorInfo.IME_ACTION_PREVIOUS,
         )
+        private const val COMPOSE_EXTRA_DATA = "androidx.compose.ui.semantics."
         private const val INPUT_START_MILLIS = 2_000L
         private const val READ_BACK_TRIES = 20
         private const val POLL_MILLIS = 50L

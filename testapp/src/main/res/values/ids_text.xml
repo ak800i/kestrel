@@ -12,4 +12,6 @@
     <item name="text_paste_state" type="id" />
     <item name="text_phone" type="id" />
     <item name="text_phone_state" type="id" />
+    <item name="text_draft" type="id" />
+    <item name="text_draft_state" type="id" />
 </resources>

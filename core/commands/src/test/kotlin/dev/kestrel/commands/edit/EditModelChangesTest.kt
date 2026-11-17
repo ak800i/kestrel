@@ -69,6 +69,12 @@ class EditModelChangesTest {
     }
 
     @Test
+    fun capitalizeTreatsAQuoteAtTheStartOfAWordAsAnOpeningQuote() {
+        assertEquals("Say \u2018Hello|", edit(ChangeCase(TextCase.CAPITALIZE, "say hello"), "say \u2018hello|"))
+        assertEquals("Say 'Hello|", edit(ChangeCase(TextCase.CAPITALIZE, "say hello"), "say 'hello|"))
+    }
+
+    @Test
     fun formatEmailChangesTheSelectionOrElseTheWholeText() {
         assertEquals("john.smith@example.com|", edit(TextCommand.FormatEmail, "John dot Smith at example dot com|"))
         assertEquals("Mail: john@example.com|", edit(TextCommand.FormatEmail, "Mail: [john at example dot com]"))

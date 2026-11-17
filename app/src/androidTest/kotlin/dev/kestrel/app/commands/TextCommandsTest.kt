@@ -47,6 +47,11 @@ class TextCommandsTest {
         screen.awaitFocus("text_notes")
     }
 
+    /** Whether the web page's field with the HTML ID [id] is in the snapshot: the page loads after its window shows. */
+    private fun webFieldShown(id: String): Boolean = runBlocking { screen.session.snapshots.current() }.snapshot.elements.any {
+        it.editable && it.packageName == ScreenServiceRule.FIXTURES && it.viewId?.substringAfter(":id/") == id
+    }
+
     @Test
     fun dictationTypesWhatIsSaidWithSpokenPunctuationAndSpelling() {
         editNotes()
@@ -154,6 +159,7 @@ class TextCommandsTest {
         screen.awaitLine("Compose notes: \"See you at five.\" 16-16")
 
         screen.open("WebEditActivity", "Web edit fixture")
+        check(VoiceTests.waitUntil(10_000) { webFieldShown("web_notes") }) { "The web page's field did not appear" }
         done("start editing Web notes")
         screen.awaitFocus("web_notes")
         done("the meeting is on Monday exclamation mark")
@@ -163,6 +169,7 @@ class TextCommandsTest {
     @Test
     fun aWebPasswordThatShowPasswordShowsIsStillSpelled() {
         screen.open("WebEditActivity", "Web edit fixture")
+        check(VoiceTests.waitUntil(10_000) { webFieldShown("web_password") }) { "The web page's field did not appear" }
         done("start editing Web password")
         screen.awaitFocus("web_password")
         done("a b")

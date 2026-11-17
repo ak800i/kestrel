@@ -118,6 +118,18 @@ class TextEditorTest {
     }
 
     @Test
+    fun anEditKeepsWhatTheAppPutInTheFieldWhileItConnected() = runBlocking<Unit> {
+        screen.open("EditActivity", "Edit fixture")
+        val draft = screen.field("text_draft").key
+        assertEquals("", checkNotNull(editor.read(draft)).text)
+
+        // The app fills in its draft when the field gets the focus, after Kestrel read the field and before its input
+        // started, so the edit goes into the draft, and no fallback writes the text that Kestrel read over it.
+        assertEquals(throughInputMethod, editor.replace(draft, 0, 0, "Hi ", 3, 3))
+        screen.awaitLine("Draft: \"Hi Dear team,\" 3-3")
+    }
+
+    @Test
     fun composeFieldsTakeEditsAndTheInputTellsWhichHasMoreLines() = runBlocking<Unit> {
         screen.open("ComposeEditActivity", "Compose edit fixture")
         val search = screen.field("compose_search").key

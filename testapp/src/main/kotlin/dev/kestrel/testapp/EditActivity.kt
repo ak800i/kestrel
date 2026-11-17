@@ -18,7 +18,8 @@ import android.widget.TextView
 /**
  * The text fields of the editing tests in Android's own views (design spec, section 9.7): a search field with one line
  * and the search action, a notes field with more lines, a password field with a "Show password" check box, a field
- * to paste into, and a phone number field, as a dialpad has. The line under each field reports its text and selection, as `Notes: "hello" 5-5`, with each line break
+ * to paste into, a phone number field, as a dialpad has, and a draft field that fills in a draft when it gets the focus
+ * while it is empty, as some apps do. The line under each field reports its text and selection, as `Notes: "hello" 5-5`, with each line break
  * as "\n", because Kestrel's labels join lines; the password line reports only the length. The top status line reports
  * the editor actions and the check box.
  */
@@ -63,6 +64,10 @@ class EditActivity : Activity() {
         page.addField(R.id.text_phone, "Phone", R.id.text_phone_state, InputType.TYPE_CLASS_PHONE) { field ->
             "Phone: \"${field.text}\""
         }
+        val draft = page.addField(R.id.text_draft, "Draft", R.id.text_draft_state, InputType.TYPE_CLASS_TEXT) { field ->
+            "Draft: \"${field.text}\" ${field.selectionStart}-${field.selectionEnd}"
+        }
+        draft.setOnFocusChangeListener { _, focused -> if (focused && draft.text.isEmpty()) draft.setText("Dear team,") }
     }
 
     /** Adds a field with [hint] and, under it, the line that [report] fills whenever its text or selection changes. */
