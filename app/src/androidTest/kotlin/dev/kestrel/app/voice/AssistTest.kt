@@ -1,6 +1,7 @@
 package dev.kestrel.app.voice
 
 import dev.kestrel.app.debug.ClipMicrophone
+import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.models.Engine
@@ -12,8 +13,9 @@ import org.junit.Test
 
 /**
  * The assistant gesture and the earbuds' assistant button (design spec, section 8.6; prototype P3), with Kestrel in the
- * background and its accessibility service off. Both start listening and wait for a task. The test of the assistant
- * role runs only on an emulator, because it makes Kestrel the holder of the role: it puts the holder back itself, and
+ * background and its accessibility service off. Both start listening and wait for a task. With the assistant role,
+ * "Kestrel, open settings" also brings Kestrel's settings to the front. The two tests of the role run only on an
+ * emulator, because they make Kestrel the holder of the role: they put the holder back themselves, and
  * scripts\voice-test.ps1 puts it back at the end in case the test's process died before it could.
  */
 class AssistTest {
@@ -43,6 +45,46 @@ class AssistTest {
     fun theAssistKeyStartsListeningAndWaitsForATask() {
         // It changes the holder of the assistant role, which only voice-test.ps1 puts back if the test's process dies.
         VoiceTests.assumeEmulator()
+        asTheAssistant {
+            VoiceTests.shell("input keyevent KEYCODE_ASSIST")
+
+            awaitTheWaitForATask()
+            // The session hides its window at once, so that the window does not cover the app in front (prototype P3).
+            assertFalse(
+                "The assistant session's window has the focus",
+                FOCUSED_SESSION.containsMatchIn(VoiceTests.shell("dumpsys window")),
+            )
+        }
+    }
+
+    @Test
+    fun withTheAssistantRoleOpenSettingsBringsTheSettingsToTheFront() {
+        // It changes the holder of the assistant role, as the test of the assist key does.
+        VoiceTests.assumeEmulator()
+        asTheAssistant {
+            // The role alone lets Kestrel start its microphone service from the background (prototype P3).
+            VoiceTests.startListening(clip)
+            try {
+                listening.send(Event.Heard("Kestrel, open settings", named = true))
+
+                // Without the role and the accessibility service, Android would block the start without an exception.
+                assertTrue(
+                    "Kestrel's settings did not come to the front",
+                    VoiceTests.waitUntil(10_000) {
+                        SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
+                    },
+                )
+            } finally {
+                VoiceTests.shell("input keyevent KEYCODE_HOME")
+            }
+        }
+    }
+
+    /**
+     * Makes Kestrel the holder of the assistant role, runs [block], and gives the role back to the app that held it,
+     * which also puts back the settings that name the assistant's service.
+     */
+    private fun asTheAssistant(block: () -> Unit) {
         val holder = roleHolders()
         val settings = ASSISTANT_SETTINGS.associateWith { secure(it) }
         var failure: Throwable? = null
@@ -56,14 +98,7 @@ class AssistTest {
                     roleHolders() == "dev.kestrel" && ASSISTANT_SETTINGS.all { secure(it).startsWith("dev.kestrel/") }
                 },
             )
-            VoiceTests.shell("input keyevent KEYCODE_ASSIST")
-
-            awaitTheWaitForATask()
-            // The session hides its window at once, so that the window does not cover the app in front (prototype P3).
-            assertFalse(
-                "The assistant session's window has the focus",
-                FOCUSED_SESSION.containsMatchIn(VoiceTests.shell("dumpsys window")),
-            )
+            block()
         } catch (e: Throwable) {
             failure = e
             throw e
@@ -129,5 +164,6 @@ class AssistTest {
         val ASSISTANT_SETTINGS = listOf("assistant", "voice_interaction_service")
         val FOCUSED_SESSION = Regex("""mCurrentFocus=Window\{[^}]*VoiceInteractionSession""")
         val KESTREL_IN_FRONT = Regex("""topResumedActivity=ActivityRecord\{[^}]* dev\.kestrel/""")
+        val SETTINGS_IN_FRONT = Regex("""topResumedActivity=ActivityRecord\{[^}]* dev\.kestrel/\.app\.MainActivity""")
     }
 }

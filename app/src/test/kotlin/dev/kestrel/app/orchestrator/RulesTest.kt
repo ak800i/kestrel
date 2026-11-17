@@ -774,6 +774,23 @@ class RulesTest {
     }
 
     @Test
+    fun theAssistantGestureWhilePausedOverKestrelsVoiceListensStopsAndWaitsForATask() {
+        val step = Rules.next(paused.copy(speeches = 1), Event.Assist)
+
+        assertEquals(
+            listOf(
+                Effect.Show(Feedback.ModeChanged(Mode.LISTENING)),
+                Effect.StopSaying,
+                Effect.Show(Feedback.AwaitingTask),
+                Effect.WaitForTask(),
+            ),
+            step.effects,
+        )
+        assertEquals(Mode.LISTENING, step.state.mode)
+        assertEquals(Work.AWAITING_TASK, step.state.work)
+    }
+
+    @Test
     fun theAssistantGestureChangesNothingDuringACall() {
         val ringing = Rules.next(listening, Event.CallState(CallState.RINGING)).state
 

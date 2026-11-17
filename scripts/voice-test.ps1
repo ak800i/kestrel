@@ -12,11 +12,12 @@
 # password, so on a phone the script leaves that test out too. So does ActivationTest#theTileTogglesListening, which adds
 # Kestrel's tile to Quick Settings: no script puts the list of tiles back if the test's process dies. So does
 # RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar, which sets Kestrel's app op TAKE_AUDIO_FOCUS to ignore and
-# back to foreground, the op's normal mode on Android 17. So does AssistTest#theAssistKeyStartsListeningAndWaitsForATask,
-# which makes Kestrel the holder of the assistant role. The run fails when one of these five tests ran on a phone or did
-# not run on an emulator. On an emulator the script turns the lock screen off again at the end, sets TAKE_AUDIO_FOCUS
-# back to foreground, gives the assistant role and the settings assistant and voice_interaction_service back as they
-# were before the run, wakes the screen and dismisses the keyguard, also when the run failed or was interrupted.
+# back to foreground, the op's normal mode on Android 17. So do AssistTest#theAssistKeyStartsListeningAndWaitsForATask and
+# AssistTest#withTheAssistantRoleOpenSettingsBringsTheSettingsToTheFront, which make Kestrel the holder of the assistant
+# role. The run fails when one of these six tests ran on a phone or did not run on an emulator. On an emulator the script
+# turns the lock screen off again at the end, sets TAKE_AUDIO_FOCUS back to foreground, gives the assistant role and the
+# settings assistant and voice_interaction_service back as they were before the run, wakes the screen and dismisses the
+# keyguard, also when the run failed or was interrupted.
 # Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
 # command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
@@ -56,7 +57,7 @@ try {
     # between would leave it on, so on an emulator the script reads the setting first and puts it back at the end.
     if ($emulator) {
         $lockScreenOff = ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd lock_settings get-disabled') -join '').Trim() -eq 'true'
-        # The assistant test makes Kestrel the holder of the role and puts the holder back, unless its process dies.
+        # The assistant tests make Kestrel the holder of the role and put the holder back, unless their process dies.
         $assistantHolder = ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd role get-role-holders android.app.role.ASSISTANT') -join '').Trim()
         foreach ($name in 'assistant', 'voice_interaction_service') { $assistantSettings[$name] = Get-SecureSetting -Serial $Serial -Name $name }
     }
@@ -70,7 +71,7 @@ try {
         # The tests log their measurements; clearing the log first keeps only this run's lines.
         & $adb -s $Serial logcat -c
         # Tests that a phone must not run: one switches the microphone's privacy toggle, one turns on a lock screen that it
-        # unlocks with adb, one changes the list of Quick Settings tiles, one refuses Kestrel's audio focus, and one makes
+        # unlocks with adb, one changes the list of Quick Settings tiles, one refuses Kestrel's audio focus, and two make
         # Kestrel the assistant.
         $emulatorOnly = @(
             'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
@@ -78,6 +79,7 @@ try {
             'dev.kestrel.app.voice.ActivationTest#theTileTogglesListening'
             'dev.kestrel.app.voice.RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar'
             'dev.kestrel.app.voice.AssistTest#theAssistKeyStartsListeningAndWaitsForATask'
+            'dev.kestrel.app.voice.AssistTest#withTheAssistantRoleOpenSettingsBringsTheSettingsToTheFront'
         )
         $tasks = @(
             ':app:connectedDebugAndroidTest'

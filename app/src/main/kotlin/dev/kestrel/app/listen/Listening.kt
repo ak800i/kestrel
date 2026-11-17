@@ -198,8 +198,8 @@ internal interface StopNotices {
  * and [notices] posts it as a notification, which goes once a voice session opens again; [conditions] tells the causes
  * apart.
  * [openSettings] opens Kestrel's settings app and returns true, or returns false while Kestrel's accessibility service
- * is off, because Android then blocks the start without an exception and Kestrel says why instead; the controller's
- * thread calls it, and it throws when Android refuses.
+ * is off and Kestrel does not hold the assistant role, because Android then blocks the start without an exception and
+ * Kestrel says why instead; the controller's thread calls it, and it throws when Android refuses.
  * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
  * and by the restore, which writes Off before anything else can write.
  * [calls] reports the call state while a voice session is open (section 8.7). The stored mode is never Ringing or In
@@ -266,8 +266,8 @@ class Listening internal constructor(
     private val sessionState = MutableStateFlow(false)
 
     // Only [thread] uses these. [lastMode]: the mode that was last noted for storing, null before the first change of
-    // mode in this process. [restoreChecked]: the accessibility service has connected in this process, so the stored mode
-    // was considered. [wasOn]: Kestrel has been on in this process, so the owner has already chosen a mode.
+    // mode in this process. [restoreChecked]: the accessibility service has connected, or the assistant service has
+    // become ready while Kestrel holds the assistant role, in this process, so the stored mode was considered. [wasOn]: Kestrel has been on in this process, so the owner has already chosen a mode.
     private var lastMode: Mode? = null
     private var restoreChecked = false
     private var wasOn = false
@@ -883,8 +883,8 @@ class Listening internal constructor(
     }
 
     // Section 14: Kestrel never fails silently. Android blocks an activity start from the background without an
-    // exception unless Kestrel's accessibility service is on (prototype P1); then the bar does not exist either, so
-    // Kestrel says why.
+    // exception unless Kestrel's accessibility service is on (prototype P1) or Kestrel holds the assistant role; without
+    // the service the bar does not exist either, so Kestrel says why.
     private fun openSettingsOrSayWhy() {
         val opened = try {
             openSettings()
