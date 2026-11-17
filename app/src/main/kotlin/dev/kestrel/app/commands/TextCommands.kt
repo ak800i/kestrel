@@ -1,5 +1,6 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.commands.ClipboardAction
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
@@ -15,12 +16,15 @@ import dev.kestrel.commands.edit.TextState
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
+import dev.kestrel.screen.act.ClipboardKind
 import dev.kestrel.screen.act.FieldState
 import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.TextEditor
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal fun textCommands(environment: CommandEnvironment): CommandPart = TextCommands(environment)
 
@@ -49,6 +53,10 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
             is TextCommand.Delete, is TextCommand.Select, TextCommand.Unselect, is TextCommand.MoveCursor, is TextCommand.Insert,
             is TextCommand.Replace, is TextCommand.ReplaceBetween, is TextCommand.ChangeCase, TextCommand.FormatEmail,
             -> inField(screen) { edit(screen, it, command as TextCommand) }
+            is TextCommand.Clipboard -> inField(screen) { clipboard(screen, it, command.action) }
+            is TextCommand.Keyboard -> keyboard(screen, command.show)
+            TextCommand.ShowPassword -> showPassword(screen)
+            is TextCommand.Search -> search(screen, command.query)
             else -> null
         }
     }
@@ -247,6 +255,103 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
         }
     }
 
+    /** "Cut", "copy" and "paste" in the focused field; cut and copy need a selection. */
+    private suspend fun clipboard(screen: ScreenSession, field: ScreenElement, action: ClipboardAction): CommandResult {
+        val state = screen.text.read(field.key) ?: return gone()
+        if (editing.password(field, state.password)) return CommandResult(Outcome.FAILED, say = TextCommandTexts.PASSWORD_FIELD)
+        val before = state.toTextState()
+        val kind = when (action) {
+            ClipboardAction.CUT -> ClipboardKind.CUT
+            ClipboardAction.COPY -> ClipboardKind.COPY
+            ClipboardAction.PASTE -> ClipboardKind.PASTE
+        }
+        val result = screen.text.clipboard(field.key, kind)
+        if (result == TextEditor.SELECT_FIRST) return CommandResult(Outcome.FAILED, say = TextEditor.SELECT_FIRST.reason)
+        if (result is ActionResult.Failed) return failed(result)
+        if (action != ClipboardAction.COPY) record(screen, field, before)
+        return CommandResult(Outcome.DONE, repeatable = true)
+    }
+
+    /** "Show keyboard" taps the focused field; "hide keyboard" goes back, but only while the keyboard shows. */
+    private suspend fun keyboard(screen: ScreenSession, show: Boolean): CommandResult {
+        val snapshot = screen.snapshots.current().snapshot
+        val result = if (show) {
+            val field = TextFields.focused(snapshot) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_FIELD)
+            val element = environment.targets.still(ScreenTargets.chosen(field))
+                ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+            screen.actions.tap(element.key)
+        } else {
+            if (!TextFields.keyboardShows(snapshot)) return CommandResult(Outcome.FAILED, show = TextCommandTexts.KEYBOARD_NOT_SHOWING)
+            screen.actions.global(GlobalAction.BACK)
+        }
+        return when (result) {
+            is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+            is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
+        }
+    }
+
+    /** "Show password" taps what shows the password of the focused password field, or of the first on the screen. */
+    private suspend fun showPassword(screen: ScreenSession): CommandResult {
+        val snapshot = screen.snapshots.current().snapshot
+        val field = TextFields.passwordField(snapshot) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_PASSWORD_TOGGLE)
+        // Once its text shows, the field may no longer say that it is a password field.
+        editing.password(field, password = true, focused = TextFields.focused(snapshot))
+        val toggle = TextFields.passwordToggle(snapshot, field)
+            ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_PASSWORD_TOGGLE)
+        if (toggle.checkable && toggle.checked) return CommandResult(Outcome.DONE, show = TextCommandTexts.PASSWORD_SHOWING)
+        val element = environment.targets.still(ScreenTargets.chosen(toggle))
+            ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+        return when (val result = screen.actions.tap(element.key)) {
+            is ActionResult.Done -> CommandResult(Outcome.DONE)
+            is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
+        }
+    }
+
+    /**
+     * "Search for X": the focused field when it is a search field (by its input's search action, its names or its view
+     * ID), else the first search field, else a "search" button, which Kestrel taps before it waits up to 2 s for a field
+     * to get the focus. A password field, or a field with more lines and no search action, such as a message, is never
+     * used. Kestrel replaces the field's text with X, records it so that "undo" brings back what was there, and submits
+     * it.
+     */
+    private suspend fun search(screen: ScreenSession, query: String): CommandResult {
+        val snapshot = screen.snapshots.current().snapshot
+        val focusedSearches = TextFields.focused(snapshot)?.let { screen.text.searches(it.key) } == true
+        val field = TextFields.searchField(snapshot, focusedSearches) ?: run {
+            val button = TextFields.searchButton(snapshot) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
+            val element = environment.targets.still(ScreenTargets.chosen(button))
+                ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+            openSearch(screen, element) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
+        }
+        val state = screen.text.read(field.key) ?: return gone()
+        // Checked on the live field, also for one that a search button opened.
+        val password = editing.password(field, state.password, TextFields.focused(screen.snapshots.current().snapshot))
+        if (password || (state.multiLine && !screen.text.searches(field.key))) {
+            return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
+        }
+        val text = Dictation.phrase(query)
+        val replaced = screen.text.replace(field.key, 0, state.text.length, text, text.length, text.length)
+        if (replaced is ActionResult.Failed) return failed(replaced)
+        record(screen, field, state.toTextState())
+        return when (val submitted = screen.text.submit(field.key)) {
+            is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+            is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = submitted.reason)
+        }
+    }
+
+    /** Taps the search [button], which is still the element chosen, and waits up to 2 s for a field to get the focus. */
+    private suspend fun openSearch(screen: ScreenSession, button: ScreenElement): ScreenElement? {
+        if (screen.actions.tap(button.key) is ActionResult.Failed) return null
+        return withTimeoutOrNull(SEARCH_FIELD_MILLIS) {
+            var field: ScreenElement? = null
+            while (field == null) {
+                field = TextFields.focused(screen.snapshots.current().snapshot)
+                if (field == null) delay(POLL_MILLIS)
+            }
+            field
+        }
+    }
+
     /** Applies [change] to the field with the input method first and set-text as the fallback. */
     private suspend fun apply(screen: ScreenSession, field: ScreenElement, change: EditStep.Change): ActionResult =
         screen.text.replace(field.key, change.start, change.end, change.replacement, change.selectionStart, change.selectionEnd)
@@ -275,4 +380,9 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
     private fun gone() = CommandResult(Outcome.FAILED, show = TextCommandTexts.FIELD_GONE)
 
     private fun FieldState.toTextState() = TextState.of(text, selectionStart, selectionEnd)
+
+    private companion object {
+        const val SEARCH_FIELD_MILLIS = 2_000L
+        const val POLL_MILLIS = 100L
+    }
 }

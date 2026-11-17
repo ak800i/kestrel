@@ -3,6 +3,7 @@ package dev.kestrel.app.commands
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.commands.TextFieldTests.awaitBar
 import dev.kestrel.app.commands.TextFieldTests.awaitFocus
+import dev.kestrel.app.commands.TextFieldTests.awaitKeyboard
 import dev.kestrel.app.commands.TextFieldTests.awaitLine
 import dev.kestrel.app.commands.TextFieldTests.field
 import dev.kestrel.app.listen.ListeningTexts
@@ -290,6 +291,80 @@ class TextCommandsTest {
 
         done("undo")
         screen.awaitLine("Notes: \"\" 0-0")
+    }
+
+    @Test
+    fun copyCutAndPasteBetweenTwoFields() {
+        screen.open("EditActivity", "Edit fixture")
+        done("start editing Search")
+        screen.awaitFocus("text_search")
+        done("type copy me")
+        assertEquals(Outcome.FAILED, CommandTests.say("copy").outcome)
+        CommandTests.awaitSaid(TextEditor.SELECT_FIRST.reason)
+
+        done("select copy")
+        done("copy")
+        done("start editing Paste here")
+        screen.awaitFocus("text_paste")
+        done("paste")
+        screen.awaitLine("Paste: \"Copy\"")
+        done("select all")
+        done("cut")
+        screen.awaitLine("Paste: \"\"")
+    }
+
+    @Test
+    fun showAndHideTheKeyboard() {
+        editNotes()
+        screen.awaitKeyboard(shown = true)
+
+        done("hide keyboard")
+        screen.awaitKeyboard(shown = false)
+        assertEquals(Outcome.FAILED, CommandTests.say("hide the keyboard").outcome)
+        screen.awaitBar(TextCommandTexts.KEYBOARD_NOT_SHOWING)
+        done("show keyboard")
+        screen.awaitKeyboard(shown = true)
+    }
+
+    @Test
+    fun showPasswordTicksTheCheckBoxNextToTheField() {
+        screen.open("EditActivity", "Edit fixture")
+
+        // "Show the password" is no bare label of the check box, so only the text part can take it.
+        done("show the password")
+        screen.awaitLine("Password shown")
+        done("uncheck Show password")
+        screen.awaitLine("Password hidden")
+        done("show password")
+        screen.awaitLine("Password shown")
+        // The shown password is still a password field by its input type: dictation spells it.
+        done("start editing Password")
+        screen.awaitFocus("text_password")
+        done("three")
+        screen.awaitLine("Password: 1 characters")
+    }
+
+    @Test
+    fun searchForTypesTheQueryAndSubmitsItInEveryKindOfField() {
+        screen.open("EditActivity", "Edit fixture")
+        done("search for coffee near me")
+        screen.awaitLine("Action 3: \"coffee near me\"")
+
+        screen.open("ComposeEditActivity", "Compose edit fixture")
+        done("search for weather tomorrow")
+        screen.awaitLine("Searched: \"weather tomorrow\"")
+
+        screen.open("WebEditActivity", "Web edit fixture")
+        done("search for coffee near me")
+        screen.awaitLine("Submitted: \"coffee near me\"")
+    }
+
+    @Test
+    fun withoutASearchFieldKestrelSaysSo() {
+        screen.open("CommandsActivity", "Commands fixture")
+
+        assertEquals(Outcome.FAILED, CommandTests.say("search for coffee").outcome)
+        CommandTests.awaitSaid(TextCommandTexts.NO_SEARCH_FIELD)
     }
 
     // Tasks 6 and 7 add their tests above this line.
