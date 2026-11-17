@@ -1,9 +1,11 @@
 package dev.kestrel.commands.edit
 
 import dev.kestrel.commands.Place
+import dev.kestrel.commands.TextCase
 import dev.kestrel.commands.TextCommand
 import dev.kestrel.commands.TextScope
 import dev.kestrel.commands.TextUnit
+import java.util.Locale
 
 /**
  * Plans the editing commands (design spec, section 9.7): every offset, move and range comes from the field's text and
@@ -16,6 +18,11 @@ object EditModel {
         is TextCommand.Select -> select(command.scope, state)
         TextCommand.Unselect -> EditStep.Select(state.selectionEnd, state.selectionEnd)
         is TextCommand.MoveCursor -> move(command.place, state)
+        is TextCommand.Insert -> insert(command.text, command.place, state)
+        is TextCommand.Replace -> replace(command.old, command.new, state)
+        is TextCommand.ReplaceBetween -> replaceBetween(command, state)
+        is TextCommand.ChangeCase -> changeCase(command.case, command.phrase, state)
+        TextCommand.FormatEmail -> formatEmail(state)
         else -> EditStep.Fail(EditFailure.NOT_AN_EDIT)
     }
 
@@ -131,6 +138,67 @@ object EditModel {
         return PairLookup.Both(before, one)
     }
 
+    private fun insert(spoken: String, place: Place, state: TextState): EditStep = when (val found = offset(place, state)) {
+        is Missing -> found.step
+        // The words go in as dictation at that place, with spoken punctuation and the spaces around them.
+        is Found -> Dictation.render(TextState(state.text, found.range.first, found.range.first), spoken, startsUtterance = false)
+    }
+
+    private fun replace(old: String, new: String, state: TextState): EditStep {
+        val range = TextSearch.find(state.text, old, state.selectionEnd) ?: return EditStep.Fail(EditFailure.NOT_FOUND, old)
+        val replacement = Dictation.phrase(new)
+        val end = range.first + replacement.length
+        return EditStep.Change(range.first, range.last + 1, replacement, end, end)
+    }
+
+    private fun replaceBetween(command: TextCommand.ReplaceBetween, state: TextState): EditStep {
+        val text = state.text
+        val both = when (val found = pair(text, command.from, command.to, state.selectionEnd)) {
+            is PairLookup.Missing -> return found.step
+            is PairLookup.Both -> found
+        }
+        val replacement = Dictation.phrase(command.new)
+        val inner = trimmed(text, both.first.last + 1, both.second.first)
+        if (inner.isEmpty()) {
+            // Only spaces lie between the two: the new words go between them with a space on each side.
+            val start = both.first.last + 1
+            val end = start + 1 + replacement.length
+            return EditStep.Change(start, both.second.first, " $replacement ", end, end)
+        }
+        val end = inner.first + replacement.length
+        return EditStep.Change(inner.first, inner.last + 1, replacement, end, end)
+    }
+
+    private fun changeCase(case: TextCase, phrase: String, state: TextState): EditStep {
+        val text = state.text
+        val range = TextSearch.find(text, phrase, state.selectionEnd) ?: return EditStep.Fail(EditFailure.NOT_FOUND, phrase)
+        val old = text.substring(range.first, range.last + 1)
+        val new = when (case) {
+            TextCase.UPPER -> old.uppercase(Locale.ROOT)
+            TextCase.LOWER -> old.lowercase(Locale.ROOT)
+            TextCase.CAPITALIZE -> capitalized(old)
+        }
+        val end = range.first + new.length
+        return EditStep.Change(range.first, range.last + 1, new, end, end)
+    }
+
+    // "Format email" changes the selection, or the whole text when nothing is selected.
+    private fun formatEmail(state: TextState): EditStep {
+        val range = if (state.hasSelection) state.selectionStart until state.selectionEnd else state.text.indices
+        if (range.isEmpty()) return EditStep.Fail(EditFailure.NOTHING_THERE)
+        val email = Dictation.formatEmail(state.text.substring(range.first, range.last + 1))
+        val end = range.first + email.length
+        return EditStep.Change(range.first, range.last + 1, email, end, end)
+    }
+
+    /** The first letter of each word in capitals. */
+    private fun capitalized(text: String): String = buildString {
+        for ((index, char) in text.withIndex()) {
+            val startsWord = index == 0 || !(text[index - 1].isLetterOrDigit() || text[index - 1] in APOSTROPHES)
+            append(if (startsWord && char.isLetter()) char.titlecaseChar() else char)
+        }
+    }
+
     private fun removal(start: Int, end: Int) = EditStep.Change(start, end, "", start, start)
 
     /**
@@ -187,4 +255,5 @@ object EditModel {
     }
 
     private val CLOSING = setOf('.', ',', '!', '?', ';', ':', ')', ']')
+    private val APOSTROPHES = setOf('\'', '\u2019')
 }
