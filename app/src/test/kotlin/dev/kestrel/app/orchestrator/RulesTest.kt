@@ -687,6 +687,39 @@ class RulesTest {
     }
 
     @Test
+    fun whileACallRingsOnlyTheCallCommandsCountAlsoOnTheLockScreen() {
+        val ringing = Rules.next(listening.copy(screenOn = false), Event.CallState(CallState.RINGING)).state
+
+        assertEquals(
+            Step(ringing, listOf(Effect.Show(Feedback.Heard("Answer.")), Effect.CallCommand(Request.Answer(speaker = false)))),
+            Rules.next(ringing, Event.Heard("Answer.", named = false)),
+        )
+        assertEquals(
+            Effect.CallCommand(Request.Answer(speaker = true)),
+            Rules.next(ringing, Event.Heard("Kestrel, answer on speaker, please.", named = true)).effects.last(),
+        )
+        assertEquals(Effect.CallCommand(Request.Decline), Rules.next(ringing, Event.Heard("Decline, Kestrel.", named = false)).effects.last())
+        assertEquals(Step(ringing), Rules.next(ringing, Event.Heard("Hang up.", named = false)))
+    }
+
+    @Test
+    fun duringACallItsCommandsCountOnlyWithTheSetting() {
+        val inCall = Rules.next(listening, Event.CallState(CallState.ACTIVE)).state
+
+        assertEquals(Step(inCall), Rules.next(inCall, Event.Heard("Hang up.", named = false)))
+        val commands = inCall.copy(callCommands = true)
+        assertEquals(Effect.CallCommand(Request.HangUp), Rules.next(commands, Event.Heard("Hang up.", named = false)).effects.last())
+        assertEquals(Effect.CallCommand(Request.Mute), Rules.next(commands, Event.Heard("Mute.", named = false)).effects.last())
+        assertEquals(Effect.CallCommand(Request.Speaker), Rules.next(commands, Event.Heard("Speaker, please.", named = false)).effects.last())
+        assertEquals(Step(commands), Rules.next(commands, Event.Heard("Answer.", named = false)))
+        // With the setting, Kestrel records during the call while the phone is unlocked; the other person hears the
+        // commands too (section 8.7).
+        assertTrue(commands.microphone)
+        assertEquals(Recognition.ALL, commands.recognition)
+        assertFalse(commands.copy(screenOn = false).microphone)
+    }
+
+    @Test
     fun neverMindEndsTheWaitForATask() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
 

@@ -11,6 +11,7 @@ enum class SetupStep {
     MICROPHONE_AND_NOTIFICATIONS,
     BATTERY,
     DEFAULT_ASSISTANT,
+    CALLS,
     PROVIDER,
     VOICE_ACCESS,
 }
@@ -49,7 +50,8 @@ sealed interface ModelCheck {
  * [models] is what Kestrel knows about the model files. [serviceEnabled]: Android's setting names the accessibility
  * service, also when Android does not run it, as after "Stop app" (prototype P2). [batteryRestricted]: the owner set
  * Kestrel's battery use to Restricted. [samsung]: the phone is a Samsung, whose battery settings also have "Never
- * sleeping apps".
+ * sleeping apps". [callsAllowed]: Kestrel may read the phone state and answer calls (READ_PHONE_STATE and
+ * ANSWER_PHONE_CALLS, section 8.7).
  */
 data class SetupStatus(
     val serviceOn: Boolean,
@@ -61,6 +63,7 @@ data class SetupStatus(
     val serviceEnabled: Boolean = serviceOn,
     val batteryRestricted: Boolean = false,
     val samsung: Boolean = false,
+    val callsAllowed: Boolean = false,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -71,6 +74,7 @@ object SetupChecklist {
             SetupStep.INSTALL -> StepState.DONE
             SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready } == true)
             SetupStep.DEFAULT_ASSISTANT, SetupStep.PROVIDER -> StepState.LATER
+            SetupStep.CALLS -> if (status.callsAllowed) StepState.DONE else StepState.OPTIONAL
             SetupStep.ACCESSIBILITY_SERVICE -> when {
                 status.serviceOn -> StepState.DONE
                 // Android's setting names the service, but Android does not run it, as after "Stop app" (prototype P2).

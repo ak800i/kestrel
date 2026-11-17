@@ -3,6 +3,7 @@ package dev.kestrel.app.listen
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.ModelsNotReadyException
@@ -47,6 +48,7 @@ class ListeningTest {
     private val memory = FakeMemory()
     private val exits = FakeExits()
     private val calls = FakeCallMonitor()
+    private val callActions = FakeCallControl()
 
     // The wall clock, in milliseconds.
     private var now = 1_000_000L
@@ -1843,6 +1845,55 @@ class ListeningTest {
         assertEquals(listOf(ListeningTexts.RINGING, ListeningTexts.NO_TASKS), shown)
     }
 
+    @Test
+    fun aCallCommandIsCarriedOutAndAFailureIsShownOnTheBar() = runTest {
+        val listening = listeningWithSession()
+        calls.change(CallState.RINGING)
+        runCurrent()
+        shown.clear()
+
+        listening.send(Event.Heard("Answer.", named = false))
+        runCurrent()
+        assertEquals(listOf<Request.Call>(Request.Answer(speaker = false)), callActions.commands)
+        assertEquals(listOf("Answer."), shown)
+
+        callActions.result = ListeningTexts.CANNOT_DECLINE
+        listening.send(Event.Heard("Decline.", named = false))
+        runCurrent()
+        // Section 14: Kestrel says why a command failed.
+        assertEquals(listOf("Answer.", "Decline.", ListeningTexts.CANNOT_DECLINE), shown)
+    }
+
+    @Test
+    fun aCallCommandThatThrowsIsReportedAndShown() = runTest {
+        val listening = listeningWithSession()
+        calls.change(CallState.RINGING)
+        runCurrent()
+        callActions.failure = SecurityException("No permission to answer calls")
+
+        listening.send(Event.Heard("Answer.", named = false))
+        runCurrent()
+
+        assertEquals("A call command", reports.single().first)
+        assertEquals(ListeningTexts.CALL_FAILED, shown.last())
+    }
+
+    @Test
+    fun aPermissionGivenWhileKestrelListensStartsTheCallState() = runTest {
+        val listening = listeningWithSession()
+
+        listening.watchCalls()
+        runCurrent()
+        assertEquals(2, calls.starts)
+
+        // Without a session, the next start watches the call state.
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.watchCalls()
+        runCurrent()
+        assertEquals(2, calls.starts)
+    }
+
     /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
     private fun readError() = IllegalStateException("The microphone failed with error -6")
 
@@ -1870,6 +1921,7 @@ class ListeningTest {
         exits = exits,
         clock = { now },
         calls = calls,
+        callActions = callActions,
         microphones = { microphone },
     )
 
@@ -2079,6 +2131,18 @@ class ListeningTest {
         }
     }
 
+    private class FakeCallControl : CallControl {
+        val commands = mutableListOf<Request.Call>()
+        var result: String? = null
+        var failure: Exception? = null
+
+        override suspend fun perform(command: Request.Call): String? {
+            commands += command
+            failure?.let { throw it }
+            return result
+        }
+    }
+
     private class FakeMicrophone : Microphone {
         override val silenced: StateFlow<Boolean> = MutableStateFlow(false)
         override val echoCancelling = false
@@ -2106,6 +2170,7 @@ class ListeningTest {
             exits = exits,
             clock = { now },
             calls = calls,
+            callActions = callActions,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
                 override suspend fun read(): StoredMode = StoredMode(Mode.OFF)

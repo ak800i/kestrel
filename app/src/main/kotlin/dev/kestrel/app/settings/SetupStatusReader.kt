@@ -35,6 +35,7 @@ class SetupStatusReader(private val context: Context) {
             serviceEnabled = kestrel in enabled,
             batteryRestricted = context.getSystemService(ActivityManager::class.java).isBackgroundRestricted,
             samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true),
+            callsAllowed = granted(Manifest.permission.READ_PHONE_STATE) && granted(Manifest.permission.ANSWER_PHONE_CALLS),
         )
     }
 

@@ -6,9 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
+import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidExitRecords
 import dev.kestrel.app.listen.BoostWordSource
+import dev.kestrel.app.listen.CallActions
+import dev.kestrel.app.listen.CallScreen
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
@@ -164,6 +167,11 @@ class AppGraph(context: Context) {
             clock = System::currentTimeMillis,
             // Section 8.7: the call state, while a voice session is open.
             calls = AndroidCallMonitor(appContext),
+            // The call commands: Android's call API with ANSWER_PHONE_CALLS, otherwise the phone app's controls through
+            // the accessibility service while it runs. Listening runs them on Dispatchers.IO.
+            callActions = CallActions(AndroidCallApi(appContext)) {
+                screen.value?.let { session -> CallScreen { label, ifOff -> session.actions.clickLabelled(label, ifOff) } }
+            },
             conditions = object : ListeningConditions {
                 override fun microphoneAllowed() =
                     appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

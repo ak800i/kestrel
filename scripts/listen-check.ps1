@@ -13,6 +13,16 @@
 #             pauses it
 #   settings  with the accessibility service on, 'Kestrel, open settings' (a transcript that the hook sends) brings
 #             Kestrel's settings app to the front
+#   call      on an emulator only, because only its console can place a call ('gsm call', 'gsm cancel'): with the
+#             accessibility service on and Kestrel in the background, a call rings, Kestrel shows Ringing and Android
+#             does not silence its recording; "decline" (a transcript that the hook sends) declines it, and "answer"
+#             answers the next one, both through the call's heads-up notification; Kestrel shows In call, and listening
+#             comes back when the call ends. Then, with the permission to answer calls, a plain "answer" answers a third
+#             call through Android's call API and leaves the in-call screen behind, and "answer on speaker" answers a
+#             fourth one, brings the in-call screen to the front and leaves its speaker control on (the emulator has no
+#             earpiece, so its calls are on the speaker from the start). Last, with the swipe lock screen on, a call
+#             that wakes the locked screen starts Kestrel's recording, which Android must not silence, and "decline"
+#             declines it (design spec, section 8.7; spike S1). On a phone the check is skipped and changes nothing
 #   restart   after Android ended Kestrel's process ('am crash'), listening comes back once the accessibility service has
 #             connected again. Android does not restart an app that crashed twice within 2 minutes, so wait 2 minutes
 #             before you run the script again.
@@ -32,12 +42,15 @@
 # ran, also when a later check fails with an error.
 # While it runs, it grants Kestrel the microphone and notification permissions, replaces the list of enabled
 # accessibility services, sets the target of the accessibility shortcut, opens the notification shade for the
-# notification check, and puts Kestrel's tile first in Quick Settings and opens the panel for the tile check.
+# notification check, and puts Kestrel's tile first in Quick Settings and opens the panel for the tile check. On an
+# emulator, it also grants Kestrel the permission to read the phone state, takes away its permission to answer calls
+# until the call check needs it, and turns the swipe lock screen on during the call check.
 # Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the tiles, the
-# accessibility settings and the permissions, and it deletes the dump of the screen. When Kestrel's accessibility
-# service was off before the run, Kestrel's notification that the service is off stays afterwards, because the shell
-# cannot remove another app's notification; swipe it away. If it cannot put something back, also because Ctrl+C
-# interrupted it while it put things back, it says at the end what is left and how to put it back by hand. Then, after
+# accessibility settings, the lock screen and the permissions, deletes the calls that it made from the call log, and
+# deletes the dump of the screen. When Kestrel's accessibility service was off before the run, Kestrel's notification
+# that the service is off stays afterwards, because the shell cannot remove another app's notification; swipe it away.
+# If it cannot put something back, also because Ctrl+C interrupted it while it put things back, it says at the end what
+# is left and how to put it back by hand. Then, after
 # Ctrl+C, and when a check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
 # -Reboot it reboots a phone, or closes an emulator and starts it from a cold boot; a phone with a PIN, pattern or
 # password asks you to unlock it after the reboot. It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
@@ -64,6 +77,15 @@ $microphonePermission = 'android.permission.RECORD_AUDIO'
 $notificationPermission = 'android.permission.POST_NOTIFICATIONS'
 # Where 'uiautomator dump' writes the screen's tree on the device; Get-UiDump deletes it after each read.
 $uiDumpFile = '/data/local/tmp/kestrel-ui.xml'
+# The call check's permissions, and the number from which the emulator's console calls. The script deletes these calls
+# from the call log afterwards, and it never prints the call log.
+$phoneStatePermission = 'android.permission.READ_PHONE_STATE'
+$answerCallsPermission = 'android.permission.ANSWER_PHONE_CALLS'
+$testNumber = '5550175'
+# The label of the in-call screen's speaker control (Step 1 of plan 2D's Task 3 looked at it), and Google's in-call
+# screen in front (prototype P3).
+$speakerLabel = 'Speaker'
+$inCallScreenPattern = 'topResumedActivity=ActivityRecord\{[^}]* com\.google\.android\.dialer/\S*InCallActivity'
 
 # Runs a command on the device and fails when it fails. A busy device sometimes fails a command, so it is repeated.
 function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
@@ -83,6 +105,41 @@ function Invoke-Once([string]$Command) {
 }
 
 function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join "`n" }
+
+# Sends a command to the emulator's console, such as 'gsm call', after checking that the serial still names
+# kestrel-api37: only an emulator has a console. The console answers 'OK'.
+function Invoke-Emulator([string]$Command) {
+    # adb's error lines become part of the error message, as in Invoke-Once.
+    $ErrorActionPreference = 'Continue'
+    # Read before the if, because PSScriptAnalyzer takes a 2> in an if's condition for a comparison.
+    $name = "$(& $adb -s $Serial emu avd name 2>$null)"
+    if ($name -notmatch '^kestrel-api37\b') {
+        throw "Refusing to send '$Command' to ${Serial}: it is no longer kestrel-api37."
+    }
+    $output = @(& $adb -s $Serial emu @($Command -split ' ') 2>&1)
+    if ($LASTEXITCODE -ne 0 -or -not ($output -match '^OK')) { throw "The emulator did not take '$Command': $($output -join ' ')" }
+}
+
+# Whether Google's in-call screen is in front. Only the answer leaves this function, because the dump names other apps.
+function Test-InCallScreen {
+    ((Invoke-Checked 'dumpsys activity activities') -join "`n") -match $inCallScreenPattern
+}
+
+# Whether the in-call screen's speaker control is on: the element labelled $speakerLabel, or a parent of it, is checked.
+# Only the answer leaves this function, because the dump names the call.
+function Test-SpeakerOn {
+    $xml = New-Object System.Xml.XmlDocument
+    try { $xml.LoadXml((Get-UiDump)) } catch { return $false }
+    foreach ($node in @($xml.SelectNodes('//node'))) {
+        if ($node.GetAttribute('content-desc').Trim() -ne $speakerLabel -and $node.GetAttribute('text').Trim() -ne $speakerLabel) {
+            continue
+        }
+        for ($at = $node; $at -and $at.LocalName -eq 'node'; $at = $at.ParentNode) {
+            if ($at.GetAttribute('checked') -eq 'true') { return $true }
+        }
+    }
+    $false
+}
 
 # Quotes a text for the device's shell, in which a single quote becomes '\''.
 function Format-ShellText([string]$Text) { "'" + ($Text -replace "'", "'\''") + "'" }
@@ -399,6 +456,90 @@ function Invoke-SettingsCheck {
     "failed: Kestrel's settings did not come to the front within 10 s of 'Kestrel, open settings'"
 }
 
+function Invoke-CallCheck {
+    if (-not $isEmulator) { return 'skipped: only an emulator can place a call to itself' }
+    Stop-Kestrel
+    # The accessibility service is on since the shortcut check; Kestrel clicks the call's controls through it.
+    Invoke-Hook voice -Send toggle | Out-Null
+    if ((Wait-Mode listening 60) -lt 0) { return "failed: Kestrel did not start listening before the call$modelsHint" }
+    Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
+    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    try {
+        # Without the permission to answer calls, Kestrel clicks the controls of the call's heads-up notification.
+        Invoke-Emulator "gsm call $testNumber"
+        if ((Wait-Mode ringing 15) -lt 0) { return 'failed: Kestrel did not show Ringing within 15 s of an incoming call' }
+        # Kestrel's recording goes on from before the call, so its newest line counts. Android may silence a recording a
+        # moment after the call starts to ring, so the check looks again for 3 s.
+        foreach ($look in 1..6) {
+            $state = Get-NewRecordingState -Dump (Invoke-Checked 'dumpsys audio') -Package dev.kestrel -Before @()
+            if ($state -ne 'not silenced') { return "failed: while the call rang, Kestrel's newest recording was '$state'" }
+            Start-Sleep -Milliseconds 500
+        }
+        Invoke-Hook voice -Send heard -Text 'Decline.' | Out-Null
+        if ((Wait-Mode listening 15) -lt 0) { return 'failed: "decline" did not end the ringing call within 15 s' }
+        Invoke-Emulator "gsm call $testNumber"
+        if ((Wait-Mode ringing 15) -lt 0) { return 'failed: Kestrel did not show Ringing for the second call within 15 s' }
+        Invoke-Hook voice -Send heard -Text 'Answer.' | Out-Null
+        if ((Wait-Mode in_call 15) -lt 0) { return 'failed: "answer" did not answer the call within 15 s' }
+        Invoke-Emulator "gsm cancel $testNumber"
+        if ((Wait-Mode listening 15) -lt 0) { return 'failed: listening did not come back within 15 s of the end of the call' }
+        # With the permission, Kestrel answers through Android's call API, which leaves the in-call screen behind
+        # (prototype P3): a plain "answer" must leave it there, and "answer on speaker" must bring it to the front with its
+        # speaker control on. The emulator has no earpiece, so its calls are on the speaker from the start, and Kestrel
+        # must leave the control as it is.
+        Invoke-Checked "pm grant dev.kestrel $answerCallsPermission" | Out-Null
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+        Invoke-Emulator "gsm call $testNumber"
+        if ((Wait-Mode ringing 15) -lt 0) { return 'failed: Kestrel did not show Ringing for the third call within 15 s' }
+        Invoke-Hook voice -Send heard -Text 'Answer.' | Out-Null
+        if ((Wait-Mode in_call 15) -lt 0) { return 'failed: "answer" did not answer the third call within 15 s' }
+        $plainShown = Wait-Condition -TimeoutSeconds 5 { Test-InCallScreen }
+        Invoke-Emulator "gsm cancel $testNumber"
+        if ($plainShown) {
+            return 'failed: the in-call screen came to the front after a plain "answer", so the check cannot tell whether "answer on speaker" brought it there'
+        }
+        if ((Wait-Mode listening 15) -lt 0) { return 'failed: listening did not come back within 15 s of the end of the third call' }
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+        Invoke-Emulator "gsm call $testNumber"
+        if ((Wait-Mode ringing 15) -lt 0) { return 'failed: Kestrel did not show Ringing for the fourth call within 15 s' }
+        Invoke-Hook voice -Send heard -Text 'Answer on speaker.' | Out-Null
+        if ((Wait-Mode in_call 15) -lt 0) { return 'failed: "answer on speaker" did not answer the call within 15 s' }
+        # Kestrel waits up to 5 s for the active call, brings the in-call screen to the front, and then looks for the
+        # speaker control for up to 3 s.
+        $shown = Wait-Condition -TimeoutSeconds 15 { Test-InCallScreen }
+        if ($shown) { Start-Sleep -Seconds 4 }
+        $speakerOn = $shown -and (Test-SpeakerOn)
+        Invoke-Emulator "gsm cancel $testNumber"
+        if (-not $shown) { return 'failed: "answer on speaker" answered the call, but the in-call screen did not come to the front within 15 s' }
+        if (-not $speakerOn) { return 'failed: "answer on speaker" brought the in-call screen to the front, but its speaker control was not on' }
+        if ((Wait-Mode listening 15) -lt 0) { return 'failed: listening did not come back within 15 s of the end of the fourth call' }
+        # Also on the lock screen, Kestrel uses Android's call API (spike S1's open scenario).
+        Invoke-Checked 'cmd lock_settings set-disabled false' | Out-Null
+        Invoke-Checked 'input keyevent KEYCODE_SLEEP' | Out-Null
+        if (-not (Wait-Condition -TimeoutSeconds 10 { (Get-VoiceState).screenOn -eq 'false' })) {
+            return 'failed: Kestrel did not see the screen turn off within 10 s'
+        }
+        $before = Get-KestrelRecording
+        Invoke-Emulator "gsm call $testNumber"
+        if ((Wait-Mode ringing 15) -lt 0) { return 'failed: Kestrel did not show Ringing on the lock screen within 15 s' }
+        $problem = Get-RecordingProblem $before
+        if ($problem) { return "failed: Ringing on the lock screen, but $problem" }
+        Invoke-Hook voice -Send heard -Text 'Decline.' | Out-Null
+        if ((Wait-Mode listening 15) -lt 0) { return 'failed: "decline" did not end the call on the lock screen within 15 s' }
+        ('ok: "decline" and "answer" worked through the call''s notification, a plain "answer" through the call API left ' +
+            'the in-call screen behind, "answer on speaker" brought it to the front with the speaker on, and "decline" ' +
+            'worked with the permission to answer calls on the lock screen, where Kestrel recorded while the call rang')
+    } finally {
+        # A call that a failed step left goes. The later checks need the screen on and unlocked; the reboot check also
+        # needs the lock screen off.
+        try { Invoke-Emulator "gsm cancel $testNumber" } catch { Write-Verbose 'No call was left to end.' }
+        if ($lockScreenOff) { Invoke-Checked 'cmd lock_settings set-disabled true' | Out-Null }
+        Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
+        Invoke-Checked 'wm dismiss-keyguard' | Out-Null
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    }
+}
+
 function Invoke-RestartCheck {
     Stop-Kestrel
     # The accessibility service is on since the shortcut check, so Android lets the hook's start run in the background.
@@ -514,6 +655,13 @@ $tilesByHand = if ($tilesBefore -in 'null', '') {
 }
 $microphoneBefore = Test-KestrelPermission $microphonePermission
 $notificationsBefore = Test-KestrelPermission $notificationPermission
+# The call check runs only on an emulator; on a phone none of these is read or changed.
+$phoneStateBefore = $isEmulator -and (Test-KestrelPermission $phoneStatePermission)
+$answerCallsBefore = $isEmulator -and (Test-KestrelPermission $answerCallsPermission)
+$lockScreenOff = $isEmulator -and ((Invoke-Checked 'cmd lock_settings get-disabled') -join '').Trim() -eq 'true'
+# The check's calls are newer than the newest row of the call log now. The query reads only the rows' IDs.
+$callLogLargest = if ($isEmulator) { Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id') } else { 0 }
+$callLogDelete = "content delete --uri content://call_log/calls --where '_id>$callLogLargest AND number=$testNumber'"
 # The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
 # list of services first, and they delete the settings that the script changes if these were not there before.
 $accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled', 'accessibility_shortcut_target_service') + @($savedAccessibility.Keys) | Select-Object -Unique) {
@@ -562,6 +710,26 @@ $restoresAtEnd = @(
         Assert-TestDevice -Serial $Serial
         Invoke-Checked "rm -f $uiDumpFile" | Out-Null
     }
+    # The call check's lock screen, calls and permission to answer calls, on an emulator only. The check turns the lock
+    # screen off again itself; this restore also covers a Ctrl+C.
+    if ($lockScreenOff) {
+        Register-Restore 'the disabled lock screen' (Format-DeviceCommand 'cmd lock_settings set-disabled true') {
+            Assert-TestDevice -Serial $Serial
+            Invoke-Checked 'cmd lock_settings set-disabled true' | Out-Null
+        }
+    }
+    if ($isEmulator) {
+        Register-Restore 'the call log without the test calls' (Format-DeviceCommand $callLogDelete) {
+            Assert-TestDevice -Serial $Serial
+            Invoke-Checked $callLogDelete | Out-Null
+        }
+    }
+    if ($answerCallsBefore) {
+        Register-Restore "Kestrel's permission to answer calls" (Format-DeviceCommand "pm grant dev.kestrel $answerCallsPermission") {
+            Assert-TestDevice -Serial $Serial
+            Invoke-Checked "pm grant dev.kestrel $answerCallsPermission" | Out-Null
+        }
+    }
     # Revoking a permission ends Kestrel's process, so these come last.
     if (-not $notificationsBefore) {
         Register-Restore "Kestrel's notification permission" (Format-DeviceCommand "pm revoke dev.kestrel $notificationPermission") {
@@ -577,11 +745,32 @@ $restoresAtEnd = @(
             if (Test-KestrelPermission $microphonePermission) { throw 'it is still granted' }
         }
     }
+    if ($isEmulator -and -not $answerCallsBefore) {
+        Register-Restore "Kestrel's permission to answer calls" (Format-DeviceCommand "pm revoke dev.kestrel $answerCallsPermission") {
+            Assert-TestDevice -Serial $Serial
+            if (Test-KestrelPermission $answerCallsPermission) { Invoke-Checked "pm revoke dev.kestrel $answerCallsPermission" | Out-Null }
+            if (Test-KestrelPermission $answerCallsPermission) { throw 'it is still granted' }
+        }
+    }
+    if ($isEmulator -and -not $phoneStateBefore) {
+        Register-Restore "Kestrel's permission to read the phone state" (Format-DeviceCommand "pm revoke dev.kestrel $phoneStatePermission") {
+            Assert-TestDevice -Serial $Serial
+            if (Test-KestrelPermission $phoneStatePermission) { Invoke-Checked "pm revoke dev.kestrel $phoneStatePermission" | Out-Null }
+            if (Test-KestrelPermission $phoneStatePermission) { throw 'it is still granted' }
+        }
+    }
 )
 try {
     Invoke-Checked "pm grant dev.kestrel $microphonePermission" | Out-Null
     # The notification check taps Kestrel's problems notification.
     Invoke-Checked "pm grant dev.kestrel $notificationPermission" | Out-Null
+    if ($isEmulator) {
+        # The call check: Kestrel watches the call state only with this permission.
+        Invoke-Checked "pm grant dev.kestrel $phoneStatePermission" | Out-Null
+        # The call check first clicks the phone app's controls, which Kestrel does only without this permission.
+        # Revoking it ends Kestrel's process, which the hook below starts again.
+        if ($answerCallsBefore) { Invoke-Checked "pm revoke dev.kestrel $answerCallsPermission" | Out-Null }
+    }
     # The hook's off first stops any restore in Kestrel's process and then stores Off, also while Kestrel is off, so a
     # mode that an earlier run stored cannot turn Kestrel on during a check, even if the accessibility service is on.
     Stop-Kestrel
@@ -592,6 +781,7 @@ try {
     $results['tile'] = Invoke-TileCheck
     $results['shortcut'] = Invoke-ShortcutCheck
     $results['settings'] = Invoke-SettingsCheck
+    $results['call'] = Invoke-CallCheck
     $results['restart'] = Invoke-RestartCheck
     if ($Reboot) { $results['reboot'] = Invoke-RebootCheck }
     $completed = $true

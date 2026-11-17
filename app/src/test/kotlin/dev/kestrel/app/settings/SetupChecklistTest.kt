@@ -28,6 +28,7 @@ class SetupChecklistTest {
                 SetupStep.MICROPHONE_AND_NOTIFICATIONS to StepState.TO_DO,
                 SetupStep.BATTERY to StepState.TO_DO,
                 SetupStep.DEFAULT_ASSISTANT to StepState.LATER,
+                SetupStep.CALLS to StepState.OPTIONAL,
                 SetupStep.PROVIDER to StepState.LATER,
                 SetupStep.VOICE_ACCESS to StepState.DONE,
             ),
@@ -78,6 +79,14 @@ class SetupChecklistTest {
 
         assertEquals(StepState.WARNING, state(nothingSetUp.copy(voiceAccessOn = true, serviceOn = true)))
         assertEquals(StepState.OPTIONAL, state(nothingSetUp.copy(voiceAccessOn = true)))
+    }
+
+    @Test
+    fun theCallStepIsDoneWithBothPhonePermissions() {
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.CALLS)
+
+        assertEquals(StepState.OPTIONAL, state(nothingSetUp))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(callsAllowed = true)))
     }
 
     @Test

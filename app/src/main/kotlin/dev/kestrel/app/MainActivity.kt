@@ -69,10 +69,19 @@ class MainActivity : ComponentActivity() {
         refresh()
     }
 
+    // Whether READ_PHONE_STATE was granted at the last refresh. A grant in Android's settings does not restart Kestrel,
+    // so the call monitor starts here too (section 8.7).
+    private var phoneStateGranted = false
+
     private fun refresh() {
         // Checking the model files can take seconds the first time, so the other steps show at once, and the model
         // files keep their last known status until the check ends.
         status = SetupStatusReader(this).read().copy(models = status?.models ?: ModelCheck.Checking)
+        // Kestrel watches the call state from now on, also while it listens already. refresh() runs in onResume and
+        // after the permission dialog, so this covers a grant in the dialog and one in Android's settings.
+        val granted = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+        if (granted && !phoneStateGranted) graph.listening.watchCalls()
+        phoneStateGranted = granted
         checkModels()
     }
 
@@ -91,17 +100,19 @@ class MainActivity : ComponentActivity() {
     private fun perform(action: SetupAction) {
         when (action) {
             SetupAction.ACCESSIBILITY_SETTINGS -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            SetupAction.PERMISSIONS -> requestPermissions()
+            SetupAction.PERMISSIONS -> askForPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+            // Section 8.7: the call state and the call commands.
+            SetupAction.CALL_PERMISSIONS ->
+                askForPermissions(Manifest.permission.READ_PHONE_STATE, Manifest.permission.ANSWER_PHONE_CALLS)
             SetupAction.APP_SETTINGS -> openAppSettings()
         }
     }
 
-    private fun requestPermissions() {
-        val wanted = arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+    private fun askForPermissions(vararg wanted: String) {
         missingWithoutRationale = wanted
             .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED && !shouldShowRequestPermissionRationale(it) }
             .toSet()
-        permissions.launch(wanted)
+        permissions.launch(arrayOf(*wanted))
     }
 
     /** Writes both logs to the file that the owner chose. The logs leave the phone only this way (design spec, 13.5). */

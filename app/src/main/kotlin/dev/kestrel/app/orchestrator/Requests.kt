@@ -31,6 +31,24 @@ sealed interface Request {
      */
     data class OpenSettings(val stopFirst: Boolean = false) : Request
 
+    /** A call command (section 8.7), which [Requests.readCall] reads while a call rings or lasts. */
+    sealed interface Call : Request
+
+    /** "Answer", or "answer on speaker" ([speaker]), while a call rings. */
+    data class Answer(val speaker: Boolean) : Call
+
+    /** "Decline", while a call rings. */
+    data object Decline : Call
+
+    /** "Hang up", during a call. */
+    data object HangUp : Call
+
+    /** "Mute", during a call: the in-call screen's mute control. */
+    data object Mute : Call
+
+    /** "Speaker", during a call: the in-call screen's speaker control. */
+    data object Speaker : Call
+
     /** Anything else, which the instant commands of sub-project 3 will read. */
     data class Other(val text: String) : Request {
         override fun toString() = "Other(${text.length} characters)"
@@ -95,6 +113,19 @@ object Requests {
     private val AROUND_NEVER_MIND =
         listOf(listOf("no"), listOf("oh"), listOf("ah"), listOf("thanks"), listOf("thank", "you"))
 
+    // The call commands, as phrase() gives them (section 8.7): while a call rings, and during the call.
+    private val RINGING_COMMANDS: Map<String, Request.Call> = mapOf(
+        "answer" to Request.Answer(speaker = false),
+        "answer on speaker" to Request.Answer(speaker = true),
+        "answer on the speaker" to Request.Answer(speaker = true),
+        "decline" to Request.Decline,
+    )
+    private val CALL_COMMANDS: Map<String, Request.Call> = mapOf(
+        "hang up" to Request.HangUp,
+        "mute" to Request.Mute,
+        "speaker" to Request.Speaker,
+    )
+
     /**
      * Returns null when [transcript] has no words. [spotted]: the keyword spotter heard "Kestrel" at its start.
      * [afterName]: the transcript answers "Yes?", so words without the name are read as the words after it: "Wake up."
@@ -134,6 +165,25 @@ object Requests {
             afterName -> named(transcript, words, limit, stopFirst = false, afterName = true, nameSaid = false)
             else -> Request.Other(transcript.trim())
         }
+    }
+
+    /**
+     * Reads a call command (section 8.7): while a call rings ([ringing]) "answer", "answer on speaker" or "decline", and
+     * during a call "hang up", "mute" or "speaker". The name may come before or after the command, and Kestrel's polite
+     * words may come with it, as in "Kestrel, answer, please". Returns null for anything else, which Kestrel ignores
+     * during a call. [spotted]: the keyword spotter heard "Kestrel" at the start.
+     */
+    fun readCall(transcript: String, spotted: Boolean, ringing: Boolean): Request.Call? {
+        // The polite words go first, so that they may also follow a trailing name, as in "Decline, Kestrel, please".
+        val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }
+            .filter { it.text !in POLITE }
+            .toList()
+        val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
+        // As in read(): when the spotter heard the name, one short word such as "hey" may come before it.
+        val start = if (spotted && words.isNotEmpty() && words[0].text in BEFORE_NAME && nameAt(words, 1, limit) > 0) 1 else 0
+        val afterName = words.drop(start + nameAt(words, start, limit))
+        val command = afterName.dropLast(nameBefore(afterName, afterName.size, limit))
+        return (if (ringing) RINGING_COMMANDS else CALL_COMMANDS)[phrase(command)]
     }
 
     private class Word(val text: String, val range: IntRange)

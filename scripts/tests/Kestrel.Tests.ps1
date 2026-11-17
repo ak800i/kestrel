@@ -461,3 +461,17 @@ Describe 'Get-EmulatorProcess' {
         Get-EmulatorProcess -AvdName kestrel | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Get-LargestRowId' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns the largest _id of the rows' {
+        Get-LargestRowId -Rows @('Row: 0 _id=3', 'Row: 1 _id=12', 'Row: 2 _id=7') | Should -Be 12
+    }
+
+    It 'returns 0 when the query found no row' {
+        Get-LargestRowId -Rows @('No result found.') | Should -Be 0
+    }
+}

@@ -10,9 +10,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- Optional, in the setup checklist: the call state, for the modes Ringing and In call (design spec, sections 8.7
-         and 13.6). Kestrel reads no phone number and no call log. -->
+    <!-- Optional, in the setup checklist: the call state, for the modes Ringing and In call, and the answer, decline and
+         hang-up through Android's call API (design spec, sections 8.7 and 13.6). Kestrel reads no phone number and no
+         call log. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android
          11 an app sees the other apps' launcher activities only when it declares their intent here. -->

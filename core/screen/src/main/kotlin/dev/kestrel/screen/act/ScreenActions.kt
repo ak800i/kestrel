@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.Rect
 import android.net.Uri
 import android.os.FileUriExposedException
+import android.os.Build
 import android.os.Bundle
 import android.view.ViewConfiguration
 import android.view.WindowManager
@@ -229,6 +230,49 @@ class ScreenActions internal constructor(
         }
     }
 
+    /**
+     * Clicks the element whose content description or text is [label], in any letter case, in any window on the screen,
+     * such as a call's heads-up notification, the incoming-call screen over the lock screen or the in-call screen (design
+     * spec, section 8.7): the element itself, or its nearest parent that handles touches. Returns whether an element took
+     * the click. With [ifOff], an element that is checked already, or whose parent that handles touches is, counts as
+     * clicked and stays as it is, such as a speaker control that is on. It looks at no more than [MAX_LABEL_NODES]
+     * elements in each window, and it keeps no text that it read.
+     */
+    fun clickLabelled(label: String, ifOff: Boolean = false): Boolean {
+        for (window in service.windows) {
+            val node = window.root?.let { labelled(it, label) } ?: continue
+            val target = node.touchTarget(AccessibilityNodeInfo.ACTION_CLICK) ?: continue
+            if (ifOff && (node.isOn() || target.node.isOn())) return true
+            if (target.node.isEnabled && target.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        }
+        return false
+    }
+
+    // Android 16 replaced the yes-or-no checked state with one that can also be "partly checked".
+    private fun AccessibilityNodeInfo.isOn(): Boolean =
+        if (Build.VERSION.SDK_INT >= 36) {
+            checked == AccessibilityNodeInfo.CHECKED_STATE_TRUE
+        } else {
+            @Suppress("DEPRECATION")
+            isChecked
+        }
+
+    /** The first visible node below [root], breadth first, whose content description or text is [label]. */
+    private fun labelled(root: AccessibilityNodeInfo, label: String): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+        var seen = 0
+        while (queue.isNotEmpty() && seen < MAX_LABEL_NODES) {
+            val node = queue.removeFirst()
+            seen++
+            val named = node.contentDescription?.toString()?.trim().equals(label, ignoreCase = true) ||
+                node.text?.toString()?.trim().equals(label, ignoreCase = true)
+            if (named && node.isVisibleToUser) return node
+            for (index in 0 until node.childCount) node.getChild(index)?.let(queue::addLast)
+        }
+        return null
+    }
+
     private suspend fun press(key: String, action: Int, fallback: (Int, Int) -> GestureDescription): ActionResult {
         val live = snapshots.current()
         val node = live.node(key) ?: return NOT_ON_SCREEN
@@ -406,6 +450,9 @@ class ScreenActions internal constructor(
 
     private companion object {
         const val MAX_PARENT_DEPTH = 20
+
+        // A call's screens have a few dozen elements; the limit keeps a search of a large window short.
+        const val MAX_LABEL_NODES = 2_000
         val NOT_ON_SCREEN = ActionResult.Failed("The element is not on the screen")
         val DISABLED = ActionResult.Failed("The element is disabled")
         val GONE = ActionResult.Failed("The element is no longer on the screen")

@@ -302,3 +302,13 @@ function Get-EmulatorProcess([string]$AvdName) {
     Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($AvdName))(\s|$)" }
 }
+
+# Returns the largest _id in the output of 'content query --uri <uri> --projection _id', whose lines read
+# 'Row: 0 _id=12', or 0 when it has no row, as when the device answers 'No result found.'.
+function Get-LargestRowId([string[]]$Rows) {
+    $largest = [long]0
+    foreach ($line in $Rows) {
+        if ($line -match '\b_id=(\d+)') { $largest = [math]::Max($largest, [long]$Matches[1]) }
+    }
+    $largest
+}

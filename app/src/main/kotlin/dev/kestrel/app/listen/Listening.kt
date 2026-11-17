@@ -6,6 +6,7 @@ import dev.kestrel.app.orchestrator.Feedback
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Orchestrator
 import dev.kestrel.app.orchestrator.Reply
+import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.listen.Microphone
@@ -84,8 +85,21 @@ internal object ListeningTexts {
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
-    const val RINGING = "A call is ringing."
+    const val RINGING = "A call is ringing. Say \"answer\" or \"decline\"."
     const val IN_CALL = "Paused during the call"
+
+    // Why a call command failed (section 8.7).
+    const val CALLS_NEED_ACCESS = "For the call commands, Kestrel needs the permission for calls or its accessibility " +
+        "service."
+    const val HANG_UP_NEEDS_PERMISSION = "To hang up, Kestrel needs the permission for calls. See the setup checklist."
+    const val CALLS_NEED_SERVICE = "Kestrel needs its accessibility service to press the call's buttons."
+    const val CANNOT_ANSWER = "I couldn't find the button that answers the call."
+    const val CANNOT_DECLINE = "I couldn't decline the call."
+    const val CANNOT_HANG_UP = "I couldn't hang up."
+    const val CANNOT_MUTE = "I couldn't find the mute button."
+    const val CANNOT_SPEAKER = "I couldn't find the speaker button."
+    const val ANSWERED_WITHOUT_SPEAKER = "I answered, but I couldn't turn on the speaker."
+    const val CALL_FAILED = "Something went wrong with the call."
 
     // Also for the privacy toggle and for Android's own silencing of an app in the background, not only for another
     // app.
@@ -187,7 +201,8 @@ internal interface StopNotices {
  * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
  * and by the restore, which writes Off before anything else can write.
  * [calls] reports the call state while a voice session is open (section 8.7). The stored mode is never Ringing or In
- * call, but the mode that the call interrupted.
+ * call, but the mode that the call interrupted. [callActions] carries out the call commands in a coroutine of [scope],
+ * and the bar shows why one failed.
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -203,6 +218,7 @@ class Listening internal constructor(
     private val exits: ExitRecords,
     private val clock: () -> Long,
     private val calls: CallMonitor,
+    private val callActions: CallControl,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -294,6 +310,14 @@ class Listening internal constructor(
 
     /** Sends [event] to the Orchestrator. Any thread may call it. */
     fun send(event: Event) = orchestrator.send(event)
+
+    /**
+     * The owner allowed Kestrel to read the phone state (section 8.7): while a voice session is open, Kestrel watches the
+     * call state from now on, and otherwise from its next start. Any thread may call it.
+     */
+    fun watchCalls() {
+        scope.launch(thread) { if (session != null) startCalls() }
+    }
 
     /**
      * Kestrel's accessibility service has connected, which also happens after Android ended Kestrel's process or the phone
@@ -784,6 +808,23 @@ class Listening internal constructor(
             is Effect.WaitForTask -> Unit
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> openSettingsOrSayWhy()
+            is Effect.CallCommand -> carryOut(effect.command)
+        }
+    }
+
+    // Section 8.7: the call commands act on Android's call or on the screen through binder calls, so they run off the
+    // controller's thread. A failure shows its reason on the bar (section 14).
+    private fun carryOut(command: Request.Call) {
+        scope.launch {
+            val failure = try {
+                callActions.perform(command)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("A call command", e)
+                ListeningTexts.CALL_FAILED
+            }
+            if (failure != null) bar.show(failure)
         }
     }
 

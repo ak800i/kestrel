@@ -29,7 +29,8 @@ enum class Work {
  * end of an older task or wait changes nothing. [cancelled]: the latest task was cancelled and has not reported yet.
  * [emptyTranscripts] counts the transcripts without words in a row, and [noWordsShown] is true once the hint about them
  * has shown since Kestrel turned on (section 14.6). [beforeCall] is the mode that a call interrupted, while the mode is
- * Ringing or In call; it comes back after the call (section 8.7).
+ * Ringing or In call; it comes back after the call (section 8.7). [callCommands]: the owner turned on "Commands during a
+ * call", so that Kestrel listens for them during a call (section 8.7).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -43,6 +44,7 @@ data class State(
     val emptyTranscripts: Int = 0,
     val noWordsShown: Boolean = false,
     val beforeCall: Mode? = null,
+    val callCommands: Boolean = false,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -50,13 +52,14 @@ data class State(
     val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
 
     /**
-     * Whether Kestrel records: while it listens or is paused, with the screen on and the phone unlocked, and while a call
-     * rings, also on the lock screen (section 8.5). Not during a call.
+     * Whether Kestrel records: while it listens or is paused, with the screen on and the phone unlocked; while a call
+     * rings, also on the lock screen (section 8.5); and during a call only with [callCommands] and the phone unlocked.
      */
     val microphone: Boolean
         get() = when (mode) {
-            Mode.OFF, Mode.IN_CALL -> false
+            Mode.OFF -> false
             Mode.RINGING -> true
+            Mode.IN_CALL -> callCommands && screenOn
             Mode.LISTENING, Mode.PAUSED -> screenOn
         }
 
@@ -66,7 +69,7 @@ data class State(
             speaking -> Recognition.NONE
             // The call commands come without the name (section 8.7).
             mode == Mode.RINGING -> Recognition.ALL
-            mode == Mode.IN_CALL -> Recognition.NONE
+            mode == Mode.IN_CALL -> if (callCommands) Recognition.ALL else Recognition.NONE
             // While Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the owner dictates the
             // task and may pause in it.
             work == Work.AWAITING_TASK -> Recognition.ANSWER
@@ -218,6 +221,9 @@ sealed interface Effect {
 
     /** Opens Kestrel's settings app, for "Kestrel, open settings" (section 15). */
     data object OpenSettings : Effect
+
+    /** Carries out a call command (section 8.7). */
+    data class CallCommand(val command: Request.Call) : Effect
 }
 
 /** A transition: the new state, and what to do, in order. */
@@ -267,8 +273,8 @@ object Rules {
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
-        // During a call, only the call commands count (section 8.7).
-        if (state.mode == Mode.OFF || state.inCall) return Step(state)
+        if (state.mode == Mode.OFF) return Step(state)
+        if (state.inCall) return callCommand(state, event)
         val awaiting = state.work == Work.AWAITING_TASK
         // An empty transcript that finishes after the screen turned off does not count: nobody could see its hint.
         // Waiting for a task ends when the screen turns off.
@@ -323,6 +329,8 @@ object Rules {
         Request.PauseListening -> changeMode(state.copy(work = Work.IDLE), Mode.PAUSED, shown)
         Request.TurnOff -> turnOff(state, shown)
         is Request.OpenSettings -> Step(state.copy(work = Work.IDLE), listOf(shown, Effect.OpenSettings))
+        // Requests.read never returns a call command; only readCall does.
+        is Request.Call -> Step(state)
     }
 
     private fun whileIdle(state: State, request: Request, text: String, shown: Effect): Step = when (request) {
@@ -339,6 +347,8 @@ object Rules {
             command(state, text.trim(), shown)
         }
         is Request.Other -> command(state, request.text, shown)
+        // Requests.read never returns a call command; only readCall does.
+        is Request.Call -> Step(state)
     }
 
     // Instant commands work only while Kestrel listens (sections 8.5 and 9.5), and not after the screen turned off.
@@ -424,6 +434,14 @@ object Rules {
             Effect.StopService,
         ),
     )
+
+    // Section 8.7: while a call rings, only "answer", "answer on speaker" and "decline" count, also on the lock screen;
+    // during the call, only "hang up", "mute" and "speaker", and only with the setting "Commands during a call".
+    private fun callCommand(state: State, event: Event.Heard): Step {
+        if (state.mode == Mode.IN_CALL && !state.callCommands) return Step(state)
+        val command = Requests.readCall(event.text, event.named, ringing = state.mode == Mode.RINGING) ?: return Step(state)
+        return Step(state, listOf(Effect.Show(Feedback.Heard(event.text)), Effect.CallCommand(command)))
+    }
 
     // Section 8.7: a call that rings while Kestrel listens or is paused, or that is active, interrupts the mode, and the
     // mode comes back after the call. While Kestrel is off, calls change nothing.

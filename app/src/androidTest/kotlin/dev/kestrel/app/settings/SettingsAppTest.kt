@@ -43,7 +43,7 @@ class SettingsAppTest {
     private fun text(@StringRes id: Int, vararg args: Any): String = compose.activity.getString(id, *args)
 
     private fun progress(done: Int): String =
-        compose.activity.resources.getQuantityString(R.plurals.settings_checklist_progress, 8, done, 8)
+        compose.activity.resources.getQuantityString(R.plurals.settings_checklist_progress, 9, done, 9)
 
     private fun openChecklist() {
         compose.onNodeWithText(text(R.string.settings_checklist)).performClick()
@@ -80,7 +80,12 @@ class SettingsAppTest {
         show(EVERYTHING_SET_UP)
         openChecklist()
 
-        val labels = listOf(R.string.setup_allow, R.string.setup_open_app_settings, R.string.setup_open_accessibility)
+        val labels = listOf(
+            R.string.setup_allow,
+            R.string.setup_open_app_settings,
+            R.string.setup_open_accessibility,
+            R.string.setup_allow_calls,
+        )
         for (label in labels) {
             compose.onAllNodesWithText(text(label)).assertCountEquals(0)
         }
@@ -280,6 +285,17 @@ class SettingsAppTest {
         assertEquals(2, checks)
     }
 
+    @Test
+    fun theCallStepAsksForThePhonePermissions() {
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_calls_detail)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.setup_allow_calls)).performScrollTo().performClick()
+
+        assertEquals(listOf(SetupAction.CALL_PERMISSIONS), actions)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val version = "9.9.9 (99)"
@@ -326,6 +342,7 @@ class SettingsAppTest {
             batteryUnrestricted = true,
             voiceAccessOn = false,
             models = ModelCheck.Done(listOf(READY_VOICE)),
+            callsAllowed = true,
         )
     }
 }

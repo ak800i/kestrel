@@ -208,6 +208,34 @@ class RequestsTest {
     }
 
     @Test
+    fun theCommandsWhileACallRings() {
+        assertEquals(Request.Answer(speaker = false), Requests.readCall("Answer.", spotted = false, ringing = true))
+        assertEquals(Request.Answer(speaker = false), Requests.readCall("Kestrel, answer, please.", spotted = true, ringing = true))
+        assertEquals(Request.Answer(speaker = true), Requests.readCall("Answer on speaker.", spotted = false, ringing = true))
+        assertEquals(Request.Answer(speaker = true), Requests.readCall("Answer on the speaker, Kestrel.", spotted = false, ringing = true))
+        assertEquals(Request.Decline, Requests.readCall("Decline now.", spotted = false, ringing = true))
+        // As in read(): one short word may come before a name that the spotter heard, and a polite word after a name.
+        assertEquals(Request.Answer(speaker = false), Requests.readCall("Hey Kestrel, answer.", spotted = true, ringing = true))
+        assertEquals(Request.Decline, Requests.readCall("Decline, Kestrel, please.", spotted = false, ringing = true))
+    }
+
+    @Test
+    fun theCommandsDuringACall() {
+        assertEquals(Request.HangUp, Requests.readCall("Hang up.", spotted = false, ringing = false))
+        assertEquals(Request.Mute, Requests.readCall("Kestrel, mute.", spotted = true, ringing = false))
+        assertEquals(Request.Speaker, Requests.readCall("Speaker, please.", spotted = false, ringing = false))
+    }
+
+    @Test
+    fun everythingElseIsNoCallCommand() {
+        assertNull(Requests.readCall("Hang up.", spotted = false, ringing = true))
+        assertNull(Requests.readCall("Answer.", spotted = false, ringing = false))
+        assertNull(Requests.readCall("Answer the phone and say that I'm busy.", spotted = false, ringing = true))
+        assertNull(Requests.readCall("Kestrel.", spotted = true, ringing = true))
+        assertNull(Requests.readCall("", spotted = false, ringing = true))
+    }
+
+    @Test
     fun aTranscriptWithoutWordsIsNothing() {
         assertNull(Requests.read("", spotted = false))
         assertNull(Requests.read(" ... ", spotted = true))

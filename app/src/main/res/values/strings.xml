@@ -100,6 +100,8 @@
     <string name="setup_battery_never_sleeping">Also add Kestrel to \"Never sleeping apps\" in the battery settings.</string>
     <string name="setup_assistant_title">Make Kestrel the default digital assistant</string>
     <string name="setup_assistant_detail">Optional: for the side key and earbuds. This step comes with Kestrel\'s voice features.</string>
+    <string name="setup_calls_title">Let Kestrel answer and decline calls</string>
+    <string name="setup_calls_detail">Optional: while a call rings, Kestrel then listens for \"answer\", \"answer on speaker\" and \"decline\", also on the lock screen. Kestrel reads no phone number and no call log.</string>
     <string name="setup_provider_title">Sign in to an AI provider and choose the models</string>
     <string name="setup_provider_detail">This step comes with Kestrel\'s provider settings.</string>
     <string name="setup_voice_access_title">Turn off Voice Access</string>
@@ -109,6 +111,7 @@
     <string name="setup_open_accessibility">Open accessibility settings</string>
     <string name="setup_allow">Allow</string>
     <string name="setup_open_app_settings">Open app settings</string>
+    <string name="setup_allow_calls">Allow calls</string>
 
     <!-- The notification of the listening service (design spec, sections 8.5 and 8.6). -->
     <string name="listening_channel">Listening</string>
