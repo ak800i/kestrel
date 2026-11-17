@@ -270,5 +270,5 @@ object EditModel {
     }
 
     private val CLOSING = setOf('.', ',', '!', '?', ';', ':', ')', ']')
-    private val APOSTROPHES = setOf('\'', '\u2019')
+    private val APOSTROPHES = setOf('\'', '\u2019', '\u2018')
 }

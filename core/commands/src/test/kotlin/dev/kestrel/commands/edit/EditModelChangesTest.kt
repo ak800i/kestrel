@@ -64,6 +64,11 @@ class EditModelChangesTest {
     }
 
     @Test
+    fun capitalizeTreatsALeftSingleQuoteAsAnApostrophe() {
+        assertEquals("O\u2018neil|", edit(ChangeCase(TextCase.CAPITALIZE, "oneil"), "o\u2018neil|"))
+    }
+
+    @Test
     fun formatEmailChangesTheSelectionOrElseTheWholeText() {
         assertEquals("john.smith@example.com|", edit(TextCommand.FormatEmail, "John dot Smith at example dot com|"))
         assertEquals("Mail: john@example.com|", edit(TextCommand.FormatEmail, "Mail: [john at example dot com]"))
