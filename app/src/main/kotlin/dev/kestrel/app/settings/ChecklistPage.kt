@@ -68,7 +68,8 @@ private fun ModelProblems(models: ModelCheck) {
     when (models) {
         ModelCheck.Checking -> Text(stringResource(R.string.setup_models_checking), style = small)
         ModelCheck.Failed -> Text(stringResource(R.string.setup_models_check_failed), style = small)
-        is ModelCheck.Done -> for (status in models.statuses) {
+        // An optional model that the owner did not copy is no problem (section 8.10).
+        is ModelCheck.Done -> for (status in models.statuses.filterNot { it.absent }) {
             for (path in status.missing) Text(stringResource(R.string.setup_models_missing, path), style = small)
             for (path in status.damaged) Text(stringResource(R.string.setup_models_damaged, path), style = small)
         }

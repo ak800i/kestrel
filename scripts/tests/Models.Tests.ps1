@@ -315,3 +315,31 @@ Describe 'Push-ModelFiles' {
         { Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache } | Should -Throw '*m/data/b.txt*does not have the hash*'
     }
 }
+
+Describe 'Select-ModelManifest' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        . "$PSScriptRoot\..\lib\Models.ps1"
+        $manifest = [pscustomobject]@{
+            format = 1
+            archives = @([pscustomobject]@{ id = 'pack' })
+            models = @(
+                [pscustomobject]@{ id = 'voice'; files = @() }
+                [pscustomobject]@{ id = 'kokoro'; optional = $true; files = @() }
+            )
+        }
+    }
+
+    It 'leaves out the optional models' {
+        $selected = Select-ModelManifest -Manifest $manifest
+
+        @($selected.models | ForEach-Object { $_.id }) | Should -Be @('voice')
+        @($selected.archives).Count | Should -Be 1
+    }
+
+    It 'keeps them with -IncludeOptional' {
+        $selected = Select-ModelManifest -Manifest $manifest -IncludeOptional
+
+        @($selected.models | ForEach-Object { $_.id }) | Should -Be @('voice', 'kokoro')
+    }
+}

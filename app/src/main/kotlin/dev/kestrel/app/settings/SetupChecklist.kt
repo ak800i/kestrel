@@ -77,7 +77,8 @@ object SetupChecklist {
         when (step) {
             // Kestrel is running, so it is installed.
             SetupStep.INSTALL -> StepState.DONE
-            SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready } == true)
+            // An optional model that the owner did not copy, such as the Kokoro voice, is no problem.
+            SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready || it.absent } == true)
             SetupStep.PROVIDER -> StepState.LATER
             SetupStep.DEFAULT_ASSISTANT -> if (status.assistantRole) StepState.DONE else StepState.OPTIONAL
             SetupStep.CALLS -> if (status.callsAllowed) StepState.DONE else StepState.OPTIONAL

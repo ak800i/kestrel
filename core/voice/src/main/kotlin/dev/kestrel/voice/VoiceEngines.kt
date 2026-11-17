@@ -6,6 +6,7 @@ import dev.kestrel.voice.models.ModelStatus
 import dev.kestrel.voice.sherpa.BpeVocab
 import dev.kestrel.voice.sherpa.KeywordLines
 import dev.kestrel.voice.sherpa.SherpaKeywordSpotter
+import dev.kestrel.voice.sherpa.SherpaKokoroSynthesizer
 import dev.kestrel.voice.sherpa.SherpaRecognizer
 import dev.kestrel.voice.sherpa.SherpaSpeechDetector
 import dev.kestrel.voice.sherpa.SherpaSynthesizer
@@ -24,8 +25,20 @@ import java.nio.file.StandardCopyOption
  * from the models.
  */
 class VoiceEngines(private val models: ModelFiles, private val workFolder: File) {
-    suspend fun synthesizer(options: VoiceOptions = VoiceOptions()): Synthesizer = load(Engine.TTS) {
-        SherpaSynthesizer(models.file(TTS_MODEL), models.file(TTS_TOKENS), models.file(ESPEAK_DATA), options)
+    /** The voice of [options]: each voice needs only its own models and espeak-ng's data (section 8.2). */
+    suspend fun synthesizer(options: VoiceOptions = VoiceOptions()): Synthesizer = when (options.voice) {
+        VoiceChoice.PIPER -> load(Engine.TTS, PIPER_MODELS) {
+            SherpaSynthesizer(models.file(TTS_MODEL), models.file(TTS_TOKENS), models.file(ESPEAK_DATA), options)
+        }
+        VoiceChoice.KOKORO -> load(Engine.TTS, KOKORO_MODELS) {
+            SherpaKokoroSynthesizer(
+                models.file(KOKORO_MODEL),
+                models.file(KOKORO_VOICES),
+                models.file(KOKORO_TOKENS),
+                models.file(ESPEAK_DATA),
+                options,
+            )
+        }
     }
 
     suspend fun speechDetector(): SpeechDetector = load(Engine.VAD) {
@@ -44,14 +57,15 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
     }
 
     /**
-     * Checks [engine]'s models and creates the engine on [Dispatchers.IO]. If the caller is cancelled while the engine
-     * loads, `withContext` drops the loaded engine, so this closes it before the cancellation goes on.
+     * Checks [engine]'s models and creates the engine on [Dispatchers.IO]: the models whose ids are in [ids], or without
+     * [ids] every model of the engine that is not optional. If the caller is cancelled while the engine loads,
+     * `withContext` drops the loaded engine, so this closes it before the cancellation goes on.
      */
-    internal suspend fun <T : AutoCloseable> load(engine: Engine, create: () -> T): T {
+    internal suspend fun <T : AutoCloseable> load(engine: Engine, ids: Set<String>? = null, create: () -> T): T {
         var created: T? = null
         try {
             return withContext(Dispatchers.IO) {
-                requireReady(engine)
+                requireReady(engine, ids)
                 create().also { created = it }
             }
         } catch (e: CancellationException) {
@@ -61,8 +75,10 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
         }
     }
 
-    private suspend fun requireReady(engine: Engine) {
-        val notReady = models.check().filter { it.model.engine == engine && !it.ready }
+    private suspend fun requireReady(engine: Engine, ids: Set<String>?) {
+        val notReady = models.check().filter { status ->
+            status.model.engine == engine && !status.ready && (ids?.contains(status.model.id) ?: !status.model.optional)
+        }
         if (notReady.isNotEmpty()) throw ModelsNotReadyException(engine, notReady)
     }
 
@@ -95,6 +111,13 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
         const val TTS_MODEL = "tts-piper-ljspeech/en_US-ljspeech-medium.onnx"
         const val TTS_TOKENS = "tts-piper-ljspeech/tokens.txt"
         const val ESPEAK_DATA = "espeak-ng-data"
+
+        // The ids in models/manifest.json of the models that each voice needs.
+        val PIPER_MODELS = setOf("tts-piper-ljspeech", "tts-espeak-ng-data")
+        val KOKORO_MODELS = setOf("tts-kokoro", "tts-espeak-ng-data")
+        const val KOKORO_MODEL = "tts-kokoro/model.onnx"
+        const val KOKORO_VOICES = "tts-kokoro/voices.bin"
+        const val KOKORO_TOKENS = "tts-kokoro/tokens.txt"
         const val KWS_ENCODER = "kws-gigaspeech/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
         const val KWS_DECODER = "kws-gigaspeech/decoder-epoch-12-avg-2-chunk-16-left-64.onnx"
         const val KWS_JOINER = "kws-gigaspeech/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"

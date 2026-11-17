@@ -27,6 +27,16 @@ class VoiceModelPathsTest {
     }
 
     @Test
+    fun theKokoroVoicesFilesAreInTheManifestAndOnlyItIsOptional() {
+        for (path in listOf(VoiceEngines.KOKORO_MODEL, VoiceEngines.KOKORO_VOICES, VoiceEngines.KOKORO_TOKENS)) {
+            assertEquals(path, Engine.TTS, engineOf(path))
+        }
+        val ids = manifest.models.map { it.id }.toSet()
+        for (id in VoiceEngines.PIPER_MODELS + VoiceEngines.KOKORO_MODELS) assertTrue(id, id in ids)
+        assertEquals(listOf("tts-kokoro"), manifest.models.filter { it.optional }.map { it.id })
+    }
+
+    @Test
     fun theKeywordSpottersFilesAreInTheManifest() {
         for (path in listOf(VoiceEngines.KWS_ENCODER, VoiceEngines.KWS_DECODER, VoiceEngines.KWS_JOINER, VoiceEngines.KWS_TOKENS)) {
             assertEquals(path, Engine.KWS, engineOf(path))

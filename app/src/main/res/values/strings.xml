@@ -164,4 +164,23 @@
     <string name="listening_tile">Kestrel\'s Quick Settings tile starts Kestrel. Android does not tell apps whether you added it, so add it when you edit Quick Settings.</string>
     <string name="listening_assistant_held">Kestrel is the digital assistant, so the assistant gesture, such as a long press of Home, starts it.</string>
     <string name="listening_assistant_not_held">Kestrel is not the digital assistant. Pick it as the digital assistant app in Default apps.</string>
+    <string name="settings_voice">Voice and speech</string>
+    <string name="settings_voice_summary">%1$s, speed %2$s</string>
+    <string name="voice_choice">Voice</string>
+    <string name="voice_piper">Piper (en_US-ljspeech-medium)</string>
+    <string name="voice_piper_short">Piper</string>
+    <string name="voice_kokoro">Kokoro (af_heart)</string>
+    <string name="voice_kokoro_short">Kokoro</string>
+    <!-- As for setup_models_detail, Lint's Typos check reads "ps1 -Kokoro" as a typo, so these suppressions are on purpose. -->
+    <string name="voice_kokoro_missing" tools:ignore="Typos">Kokoro\'s files are not on the phone. Copy them with scripts\\push-models.ps1 -Kokoro.</string>
+    <string name="voice_kokoro_damaged" tools:ignore="Typos">Some of Kokoro\'s files are missing or damaged. Copy them again with scripts\\push-models.ps1 -Kokoro.</string>
+    <string name="voice_speed">Speed: %1$s</string>
+    <string name="voice_slower">Slower</string>
+    <string name="voice_faster">Faster</string>
+    <string name="voice_try">Try it</string>
+    <string name="voice_trying">Speaking…</string>
+    <string name="voice_try_failed">Kestrel could not speak with this voice.</string>
+    <string name="voice_sample">This is how I sound at this speed.</string>
+    <string name="voice_next_start">Kestrel uses a new voice or speed from the next time it turns on.</string>
+    <string name="about_model_absent">%1$s: optional, not on the phone</string>
 </resources>

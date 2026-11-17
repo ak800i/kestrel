@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
@@ -14,6 +15,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import dev.kestrel.app.R
+import dev.kestrel.app.listen.VoiceOptionsSetting
+import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.privacy.logs.ActivityEvent
@@ -23,6 +26,7 @@ import dev.kestrel.privacy.logs.NetworkEvent
 import dev.kestrel.privacy.logs.NetworkOutcome
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.Model
+import dev.kestrel.voice.models.ModelFile
 import dev.kestrel.voice.models.ModelStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
@@ -343,6 +347,80 @@ class SettingsAppTest {
         assertEquals(listOf(SetupAction.DEFAULT_APPS), actions)
     }
 
+    private fun openVoicePage() {
+        compose.onNodeWithText(text(R.string.settings_voice)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.voice_choice)).assertIsDisplayed()
+    }
+
+    @Test
+    fun kokoroCanBeChosenWhenItsFilesAreReady() {
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, READY_KOKORO))))
+        openVoicePage()
+        // The page checks the models when it opens, so that it offers Kokoro only while its files are ready.
+        compose.waitForIdle()
+        assertEquals(1, checks)
+
+        compose.onNodeWithText(text(R.string.voice_piper)).assertIsSelected()
+        compose.onNodeWithText(text(R.string.voice_kokoro)).performClick()
+
+        compose.onNodeWithText(text(R.string.voice_kokoro)).assertIsSelected()
+        assertEquals(VoiceChoice.KOKORO, data.voiceOptions.value.voice)
+        compose.onAllNodesWithText(text(R.string.voice_kokoro_missing)).assertCountEquals(0)
+    }
+
+    @Test
+    fun kokoroCannotBeChosenWithoutItsFiles() {
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, ABSENT_KOKORO))))
+        openVoicePage()
+
+        compose.onNodeWithText(text(R.string.voice_kokoro)).assertIsNotEnabled()
+        compose.onNodeWithText(text(R.string.voice_kokoro_missing)).assertIsDisplayed()
+        assertEquals(VoiceChoice.PIPER, data.voiceOptions.value.voice)
+    }
+
+    @Test
+    fun theSpeedChangesInStepsAndStopsAtItsLimit() {
+        show(NOTHING_SET_UP)
+        openVoicePage()
+
+        repeat(4) { compose.onNodeWithText(text(R.string.voice_faster)).performClick() }
+
+        compose.onNodeWithText(text(R.string.voice_speed, "1.4")).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.voice_faster)).assertIsNotEnabled()
+        assertEquals(1.4f, data.voiceOptions.value.speed)
+        compose.onNodeWithText(text(R.string.voice_slower)).performClick()
+        compose.onNodeWithText(text(R.string.voice_speed, "1.3")).assertIsDisplayed()
+    }
+
+    @Test
+    fun tryItSpeaksWithTheChoiceOnThePage() {
+        data.voiceOptions.value = VoiceOptionsSetting(VoiceChoice.PIPER, speed = 1.2f)
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_voice_summary, text(R.string.voice_piper_short), "1.2")).assertIsDisplayed()
+        openVoicePage()
+
+        compose.onNodeWithText(text(R.string.voice_try)).performScrollTo().performClick()
+
+        compose.waitUntil(5_000) { data.tried.isNotEmpty() }
+        assertEquals(listOf(VoiceOptionsSetting(VoiceChoice.PIPER, speed = 1.2f)), data.tried)
+    }
+
+    @Test
+    fun theAboutPageSaysThatAnOptionalModelIsNotOnThePhone() {
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, ABSENT_KOKORO))))
+        compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.about_model_absent, "Kokoro (Apache-2.0)")).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun theChecklistDoesNotNameTheFilesOfAnOptionalModelThatIsNotOnThePhone() {
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, ABSENT_KOKORO))))
+        openChecklist()
+
+        compose.onAllNodesWithText(text(R.string.setup_models_missing, "tts-kokoro/model.onnx")).assertCountEquals(0)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
@@ -359,6 +437,17 @@ class SettingsAppTest {
 
         override suspend fun setTestMode(on: Boolean) {
             testMode.value = on
+        }
+
+        override val voiceOptions = MutableStateFlow(VoiceOptionsSetting())
+        val tried = mutableListOf<VoiceOptionsSetting>()
+
+        override suspend fun setVoiceOptions(options: VoiceOptionsSetting) {
+            voiceOptions.value = options
+        }
+
+        override suspend fun tryVoice(options: VoiceOptionsSetting) {
+            tried += options
         }
 
         override suspend fun setListening(options: ListeningOptions) {
@@ -380,6 +469,12 @@ class SettingsAppTest {
         val VOICE = Model("tts", Engine.TTS, "Voice", "MIT", "https://example.org", emptyList())
         val SPEECH = Model("asr", Engine.ASR, "Speech", "CC-BY-4.0", "https://example.org", emptyList())
         val READY_VOICE = ModelStatus(VOICE, emptyList(), emptyList())
+        private val KOKORO = Model(
+            "tts-kokoro", Engine.TTS, "Kokoro", "Apache-2.0", "https://example.org",
+            listOf(ModelFile("tts-kokoro/model.onnx", 1, "0".repeat(64))), optional = true,
+        )
+        val READY_KOKORO = ModelStatus(KOKORO, emptyList(), emptyList())
+        val ABSENT_KOKORO = ModelStatus(KOKORO, listOf("tts-kokoro/model.onnx"), emptyList())
         val NOTHING_SET_UP = SetupStatus(
             serviceOn = false,
             microphoneAllowed = false,

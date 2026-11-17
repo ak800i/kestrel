@@ -130,14 +130,15 @@ internal class VoiceSession(
 
     companion object {
         /**
-         * Loads the engines and opens a session (section 8.2): the speech detector, the keyword spotter, the voice with
-         * its default options, and the recogniser last, because it holds about 700 MB: a missing model of another
+         * Loads the engines and opens a session (section 8.2): the speech detector, the keyword spotter, the voice that
+         * [loadSynthesizer] loads (AppGraph's loads the owner's choice), and the recogniser last, because it holds about
+         * 700 MB: a missing model of another
          * engine then fails before it loads. Takes several seconds. Throws `ModelsNotReadyException` when a model is
          * missing or damaged, after closing the engines that it had loaded; it closes them also when a load fails
          * otherwise or is cancelled. It asks [boostWords] once, after the recogniser has loaded and inside the same clean-up,
          * so that the caller can read the words while the engines load, and a cancellation while it waits still closes the
          * engines. The session keeps the words, so that a change of the installed apps counts from the next time that
-         * Kestrel turns on. The loaders are parameters only for the tests.
+         * Kestrel turns on. The other loaders are parameters only for the tests.
          */
         suspend fun open(
             context: Context,

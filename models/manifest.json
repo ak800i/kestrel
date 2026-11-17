@@ -180,6 +180,34 @@
           "member": "vits-piper-en_US-ljspeech-medium/espeak-ng-data/lang/gmw/en-US"
         }
       ]
+    },
+    {
+      "id": "tts-kokoro",
+      "engine": "tts",
+      "name": "Kokoro v1.0 voice af_heart",
+      "licence": "Apache-2.0",
+      "project": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "optional": true,
+      "files": [
+        {
+          "path": "tts-kokoro/model.onnx",
+          "size": 325560556,
+          "sha256": "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+          "url": "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/model.onnx"
+        },
+        {
+          "path": "tts-kokoro/voices.bin",
+          "size": 28200960,
+          "sha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+          "url": "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/voices.bin"
+        },
+        {
+          "path": "tts-kokoro/tokens.txt",
+          "size": 687,
+          "sha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+          "url": "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/tokens.txt"
+        }
+      ]
     }
   ]
 }

@@ -25,8 +25,10 @@ import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.StoredMode
+import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
+import dev.kestrel.app.listen.loadChosenVoice
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.privacy.PrivacyStore
@@ -41,6 +43,7 @@ import dev.kestrel.voice.listen.MicCapture
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelManifest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +57,9 @@ import java.io.File
 /** Every setting that Kestrel stores. */
 object SettingKeys {
     val SAFETY = SettingKey("safety", SafetySettings.serializer(), SafetySettings())
+
+    /** The owner's voice and speed (design spec, sections 8.2 and 15). */
+    val VOICE = SettingKey("voice", VoiceOptionsSetting.serializer(), VoiceOptionsSetting())
 
     /** The listening mode that Kestrel turns on in again after its process restarts (design spec, sections 8.5 and 14.4). */
     val LISTENING = SettingKey("listening", ListeningSetting.serializer(), ListeningSetting())
@@ -134,7 +140,26 @@ class AppGraph(context: Context) {
                 override suspend fun open(microphone: Microphone, listener: SessionListener): Session =
                     // "Kestrel" and the names of the apps that the launcher shows, read once while the engines load.
                     openWithBoostWords(BoostWordSource(LauncherAppLabels(appContext), reportFailure)) { boostWords ->
-                        VoiceSession.open(appContext, voice, microphone, listener, boostWords)
+                        VoiceSession.open(
+                            appContext,
+                            voice,
+                            microphone,
+                            listener,
+                            boostWords,
+                            // The owner's voice and speed, read at each start, so that a change counts from the next one.
+                            // A setting that cannot be read counts as the default, Piper, as the listening options do.
+                            loadSynthesizer = {
+                                val chosen = try {
+                                    settings.get(SettingKeys.VOICE)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    reportFailure("Reading the voice setting", e)
+                                    VoiceOptionsSetting()
+                                }
+                                loadChosenVoice(chosen, reportFailure) { voice.synthesizer(it) }
+                            },
+                        )
                     }
             },
             services = ListeningService.control(appContext),

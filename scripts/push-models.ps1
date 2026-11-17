@@ -4,13 +4,16 @@
 # files' SHA-256 hashes. Then it copies the files that the device lacks, and those whose size or hash differs on the
 # device, into Kestrel's folder /sdcard/Android/data/dev.kestrel/files/models. Kestrel must be installed first
 # (scripts\install.ps1). Kestrel creates that folder when it starts, so the first run after an install may open Kestrel
-# on the device. The first run downloads about 760 MB; later runs download nothing. Uninstalling Kestrel deletes the
-# models from the device.
-# Example: scripts\push-models.ps1 -Serial emulator-5554
+# on the device. The first run downloads about 760 MB; later runs download nothing. With -Kokoro, it also copies the
+# optional Kokoro voice (design spec, section 8.2), which adds about 354 MB. Uninstalling Kestrel deletes the models from
+# the device.
+# Example: scripts\push-models.ps1 -Serial emulator-5554 -Kokoro
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     # Outside the repository, so that git clean keeps it and every clone shares it.
     [string]$Cache = (Join-Path $env:LOCALAPPDATA 'Kestrel\models'),
+    # Also the optional Kokoro voice.
+    [switch]$Kokoro,
     # Only for the owner's decision to start daily use on the Galaxy S23+.
     [switch]$AllowDailyPhone
 )
@@ -19,7 +22,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Models.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial -AllowDailyPhone:$AllowDailyPhone
-$manifest = Read-ModelManifest -Path (Join-Path $PSScriptRoot '..\models\manifest.json')
+$manifest = Select-ModelManifest -Manifest (Read-ModelManifest -Path (Join-Path $PSScriptRoot '..\models\manifest.json')) -IncludeOptional:$Kokoro
 # Before the first download, which takes a while, so that a missing Kestrel shows at once.
 Assert-KestrelInstalled -Serial $Serial
 Save-ModelFiles -Manifest $manifest -Cache $Cache

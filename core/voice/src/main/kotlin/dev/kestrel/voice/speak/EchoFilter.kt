@@ -27,7 +27,7 @@ internal fun Spoken.playedBy(now: Long): Spoken? {
     return Spoken(text.substring(0, characters), startMillis, startMillis + span * played / total)
 }
 
-// A digit counts as three characters, because Piper speaks digits as words.
+// A digit counts as three characters, because both voices speak digits as words, with espeak-ng's phonemes.
 private fun weight(character: Char): Int = if (character.isDigit()) 3 else 1
 
 private fun weight(text: CharSequence): Int = text.sumOf(::weight)
@@ -42,7 +42,7 @@ private fun weight(text: CharSequence): Int = text.sumOf(::weight)
  * stopping itself and cancelling a task, because the owner can simply say the keyword again.
  *
  * It places the end of the keyword's letters in the sentence's playing time, in proportion to the characters up to that
- * point. A digit counts as three characters, because Piper speaks digits as words. A hit is Kestrel's own voice
+ * point. A digit counts as three characters, because both voices speak digits as words. A hit is Kestrel's own voice
  * when the keyword ended at most [lateMillis] before the hit or at most [earlyMillis] after it, because the spotter
  * reports a keyword a little after it ends, and the estimate is rough. Both margins must be 0 or more.
  */

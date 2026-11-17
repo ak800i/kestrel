@@ -2,6 +2,7 @@ package dev.kestrel.app.settings
 
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.Model
+import dev.kestrel.voice.models.ModelFile
 import dev.kestrel.voice.models.ModelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -141,5 +142,25 @@ class SetupChecklistTest {
 
         assertTrue(thrown.exceptionOrNull() is CancellationException)
         assertTrue(reported.isEmpty())
+    }
+
+    @Test
+    fun anOptionalModelThatIsNotOnThePhoneLeavesTheModelStepDone() {
+        val voice = Model("tts", Engine.TTS, "Voice", "MIT", "https://example.org", listOf(ModelFile("tts/a.onnx", 1, "0".repeat(64))))
+        val kokoro = Model(
+            "tts-kokoro", Engine.TTS, "Kokoro", "Apache-2.0", "https://example.org",
+            listOf(ModelFile("tts-kokoro/model.onnx", 1, "0".repeat(64))), optional = true,
+        )
+        val absent = ModelStatus(kokoro, missing = listOf("tts-kokoro/model.onnx"), damaged = emptyList())
+        val status = SetupStatus(
+            serviceOn = false,
+            microphoneAllowed = false,
+            notificationsAllowed = false,
+            batteryUnrestricted = false,
+            voiceAccessOn = false,
+            models = ModelCheck.Done(listOf(ModelStatus(voice, emptyList(), emptyList()), absent)),
+        )
+
+        assertEquals(StepState.DONE, SetupChecklist.states(status).getValue(SetupStep.COPY_MODELS))
     }
 }

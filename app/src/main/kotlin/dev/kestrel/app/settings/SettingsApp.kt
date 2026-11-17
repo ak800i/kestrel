@@ -26,18 +26,20 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
+import dev.kestrel.app.listen.VoiceOptionsSetting
+import dev.kestrel.voice.VoiceChoice
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST, LISTENING, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
+enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
 
 /** What the button of a checklist step does. */
 enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS }
 
 /**
  * Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture.
- * [onCheckModels] checks the model files again, which happens whenever the checklist or the About page opens, and when
- * the About page shows again after a licence text (design spec, 8.10). [onExportLogs] asks the owner for a file to
- * export both logs to.
+ * [onCheckModels] checks the model files again, which happens whenever the checklist, the About page or the voice page
+ * opens, and when the About page shows again after a licence text (design spec, 8.10). [onExportLogs] asks the owner
+ * for a file to export both logs to.
  */
 @Composable
 fun SettingsApp(
@@ -52,7 +54,10 @@ fun SettingsApp(
     var licence by rememberSaveable { mutableStateOf<Licence?>(null) }
     // Keyed on the licence too, so that the About page checks again when the owner comes back from a licence text.
     LaunchedEffect(page, licence) {
-        if (licence == null && (page == SettingsPage.CHECKLIST || page == SettingsPage.ABOUT)) onCheckModels()
+        // The voice page offers Kokoro only while its files are ready.
+        if (licence == null && (page == SettingsPage.CHECKLIST || page == SettingsPage.ABOUT || page == SettingsPage.VOICE)) {
+            onCheckModels()
+        }
     }
     BackHandler(enabled = page != SettingsPage.HOME) { if (licence != null) licence = null else page = SettingsPage.HOME }
     val states = SetupChecklist.states(status)
@@ -62,6 +67,7 @@ fun SettingsApp(
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
             SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, status.samsung, onAction, home) }
             SettingsPage.LISTENING -> ScrollingPage { ListeningPage(data, status, onAction, home) }
+            SettingsPage.VOICE -> ScrollingPage { VoicePage(data, status.models, home) }
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
@@ -83,6 +89,7 @@ private fun ScrollingPage(content: @Composable ColumnScope.() -> Unit) {
 private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOpen: (SettingsPage) -> Unit) {
     val done = states.values.count { it == StepState.DONE }
     val testMode by data.testMode.collectAsState(initial = null)
+    val voice by data.voiceOptions.collectAsState(initial = null)
     val logsSummary = stringResource(R.string.settings_logs_summary)
     Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineMedium)
     PageEntry(
@@ -92,12 +99,20 @@ private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOp
     PageEntry(stringResource(R.string.settings_listening), stringResource(R.string.settings_listening_summary)) {
         onOpen(SettingsPage.LISTENING)
     }
+    PageEntry(stringResource(R.string.settings_voice), voiceSummary(voice)) { onOpen(SettingsPage.VOICE) }
     PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
     PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }
     PageEntry(stringResource(R.string.settings_network_log), logsSummary) { onOpen(SettingsPage.NETWORK_LOG) }
     PageEntry(stringResource(R.string.settings_about), stringResource(R.string.settings_about_summary, data.version)) {
         onOpen(SettingsPage.ABOUT)
     }
+}
+
+@Composable
+private fun voiceSummary(options: VoiceOptionsSetting?): String {
+    if (options == null) return ""
+    val name = stringResource(if (options.voice == VoiceChoice.KOKORO) R.string.voice_kokoro_short else R.string.voice_piper_short)
+    return stringResource(R.string.settings_voice_summary, name, speedText(options.options().speed))
 }
 
 @Composable

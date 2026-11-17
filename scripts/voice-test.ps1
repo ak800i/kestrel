@@ -1,8 +1,9 @@
 # Runs the device tests of Kestrel's speech engines (the package dev.kestrel.app.voice) on one test device (design spec,
 # section 16.4). They need the speech models, so the script installs Kestrel, copies the models with
-# scripts\push-models.ps1, and keeps Kestrel and its test APK installed afterwards, because uninstalling Kestrel deletes
-# the models. The tests skip themselves when the models are missing, so a run with a skipped test fails. Afterwards the
-# script prints the timings and memory use that the tests logged. After Ctrl+C, it ends with exit code 1.
+# scripts\push-models.ps1 -Kokoro, also the optional Kokoro voice, whose tests run too, and keeps Kestrel and its test APK
+# installed afterwards, because uninstalling Kestrel deletes the models. The tests skip themselves when the models are
+# missing, so a run with a skipped test fails. Afterwards the script prints the timings and memory use that the tests
+# logged. After Ctrl+C, it ends with exit code 1.
 # The test MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle switches the device's microphone privacy toggle on
 # and off. If the test process dies in between, every app on the device hears only silence. So on a phone (a serial that
 # does not start with 'emulator-') the script leaves that test out, and on an emulator it switches the toggle off at the
@@ -67,7 +68,7 @@ try {
     & "$PSScriptRoot\install.ps1" -Serial $Serial
     $code = $LASTEXITCODE
     if ($code -eq 0) {
-        & "$PSScriptRoot\push-models.ps1" -Serial $Serial
+        & "$PSScriptRoot\push-models.ps1" -Serial $Serial -Kokoro
         $results = Join-Path $PSScriptRoot '..\app\build\outputs\androidTest-results\connected'
         if (Test-Path -LiteralPath $results) { Remove-Item -LiteralPath $results -Recurse -Force }
         $adb = Get-Adb

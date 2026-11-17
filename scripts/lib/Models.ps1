@@ -40,6 +40,17 @@ function Read-ModelManifest([string]$Path) {
     return $manifest
 }
 
+# Returns the manifest without its optional models, such as the Kokoro voice, unless -IncludeOptional asks for them
+# (design spec, sections 8.2 and 8.10). Kestrel counts an optional model of which no file is on the phone as absent.
+function Select-ModelManifest($Manifest, [switch]$IncludeOptional) {
+    if ($IncludeOptional) { return $Manifest }
+    [pscustomobject]@{
+        format = $Manifest.format
+        archives = @($Manifest.archives | Where-Object { $null -ne $_ })
+        models = @($Manifest.models | Where-Object { -not $_.optional })
+    }
+}
+
 # Whether a path from the manifest is relative and stays inside its folder: segments of letters, digits, '.', '_' and
 # '-', separated by '/'. Each segment starts with a letter, a digit or '_', so that none is '.' or '..', and tar.exe
 # never reads a member as an option. '\z' ends the match at the end of the path; '$' would also allow a final newline.

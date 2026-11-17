@@ -28,7 +28,11 @@ data class ModelFile(
     val member: String? = null,
 )
 
-/** A model that one of the engines needs. An engine works when every model of its [engine] is ready. */
+/**
+ * A model that one of the engines needs. An engine works when every model of its [engine] that it needs is ready.
+ * [optional]: Kestrel works without the model, such as the Kokoro voice, which scripts\push-models.ps1 copies only with
+ * -Kokoro; an engine needs such a model only when it is asked for by its id.
+ */
 @Serializable
 data class Model(
     val id: String,
@@ -37,6 +41,7 @@ data class Model(
     val licence: String,
     val project: String,
     val files: List<ModelFile>,
+    val optional: Boolean = false,
 )
 
 /** A download that holds several model files, which scripts\push-models.ps1 unpacks. */

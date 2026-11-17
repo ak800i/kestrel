@@ -58,6 +58,7 @@ internal fun AboutPage(data: SettingsData, models: ModelCheck, onOpen: (Licence)
 @Composable
 private fun modelLines(status: ModelStatus): List<String> {
     val name = "${status.model.name} (${status.model.licence})"
+    if (status.absent) return listOf(stringResource(R.string.about_model_absent, name))
     val lines = mutableListOf<String>()
     if (status.missing.isNotEmpty()) {
         lines += pluralStringResource(R.plurals.about_model_missing, status.missing.size, name, status.missing.size)

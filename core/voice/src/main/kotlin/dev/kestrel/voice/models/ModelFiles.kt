@@ -19,6 +19,12 @@ import java.security.MessageDigest
 /** Whether a model's files are on the phone and intact. [missing] and [damaged] hold paths from the manifest. */
 data class ModelStatus(val model: Model, val missing: List<String>, val damaged: List<String>) {
     val ready: Boolean get() = missing.isEmpty() && damaged.isEmpty()
+
+    /**
+     * An optional model of which no file is on the phone: the owner did not copy it, which is no problem. Once one of its
+     * files is there, the others count as missing again.
+     */
+    val absent: Boolean get() = model.optional && damaged.isEmpty() && missing.isNotEmpty() && missing.size == model.files.size
 }
 
 /**

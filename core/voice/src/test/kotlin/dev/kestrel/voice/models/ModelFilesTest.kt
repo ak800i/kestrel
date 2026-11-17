@@ -254,6 +254,21 @@ class ModelFilesTest {
     }
 
     @Test
+    fun anOptionalModelWithoutAnyOfItsFilesIsAbsent() = runTest {
+        val optional = model("k", "k/a.onnx" to "abc", "k/b.bin" to "de").copy(optional = true)
+        val files = modelFiles(ModelManifest(format = 1, models = listOf(optional, model("m", "m/a.onnx" to "abc"))))
+
+        val (kokoro, other) = files.check()
+
+        assertTrue(kokoro.absent)
+        assertFalse(kokoro.ready)
+        assertFalse(other.absent)
+        // Once one of its files is there, it counts as missing files again, so that the checklist names the others.
+        write("k/a.onnx", "abc")
+        assertFalse(files.check().first().absent)
+    }
+
+    @Test
     fun theHashIsLowercaseHex() {
         val file = write("x", "abc")
 

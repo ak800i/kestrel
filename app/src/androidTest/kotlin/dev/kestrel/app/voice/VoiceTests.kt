@@ -50,9 +50,14 @@ internal object VoiceTests {
     private val automation: UiAutomation
         get() = InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
 
-    /** Skips the test unless every model of [engines] is on the device and intact. */
-    fun assumeModels(vararg engines: Engine) {
-        val notReady = runBlocking { graph.models.check() }.filter { it.model.engine in engines && !it.ready }
+    /**
+     * Skips the test unless every required model of [engines], and every optional model whose id is in [optional], is on
+     * the device and intact.
+     */
+    fun assumeModels(vararg engines: Engine, optional: Set<String> = emptySet()) {
+        val notReady = runBlocking { graph.models.check() }.filter { status ->
+            !status.ready && (if (status.model.optional) status.model.id in optional else status.model.engine in engines)
+        }
         assumeTrue("Models missing or damaged: ${notReady.map { it.model.id }}. Run scripts\\voice-test.ps1.", notReady.isEmpty())
     }
 
