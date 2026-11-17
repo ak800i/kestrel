@@ -184,5 +184,97 @@ class TextCommandsTest {
         screen.awaitLine("Web password: 3 characters")
     }
 
+    @Test
+    fun editingCommandsInAnEditText() {
+        editNotes()
+
+        done("type see you tomorrow at noon")
+        screen.awaitLine("Notes: \"See you tomorrow at noon\" 24-24")
+        done("go to the beginning")
+        screen.awaitLine("Notes: \"See you tomorrow at noon\" 0-0")
+        done("move after tomorrow")
+        screen.awaitLine("Notes: \"See you tomorrow at noon\" 16-16")
+        done("insert sharp after noon")
+        screen.awaitLine("Notes: \"See you tomorrow at noon sharp\" 30-30")
+        done("select tomorrow")
+        screen.awaitLine("Notes: \"See you tomorrow at noon sharp\" 8-16")
+        done("uppercase tomorrow")
+        screen.awaitLine("Notes: \"See you TOMORROW at noon sharp\" 16-16")
+        done("replace noon with one")
+        screen.awaitLine("Notes: \"See you TOMORROW at one sharp\" 23-23")
+        done("delete sharp")
+        screen.awaitLine("Notes: \"See you TOMORROW at one\" 23-23")
+        done("delete two words")
+        screen.awaitLine("Notes: \"See you TOMORROW\" 16-16")
+        done("left three characters")
+        screen.awaitLine("Notes: \"See you TOMORROW\" 13-13")
+        done("select all")
+        screen.awaitLine("Notes: \"See you TOMORROW\" 0-16")
+        done("delete selected text")
+        screen.awaitLine("Notes: \"\" 0-0")
+    }
+
+    @Test
+    fun editingCommandsInComposeAndOnTheWeb() {
+        screen.open("ComposeEditActivity", "Compose edit fixture")
+        done("start editing Compose notes")
+        screen.awaitFocus("compose_notes")
+        done("type hello there world")
+        done("delete there")
+        screen.awaitLine("Compose notes: \"Hello world\" 5-5")
+        done("capitalize world")
+        screen.awaitLine("Compose notes: \"Hello World\" 11-11")
+        done("select hello")
+        screen.awaitLine("Compose notes: \"Hello World\" 0-5")
+
+        screen.open("WebEditActivity", "Web edit fixture")
+        check(VoiceTests.waitUntil(10_000) { webFieldShown("web_notes") }) { "The web page's field did not appear" }
+        done("start editing Web notes")
+        screen.awaitFocus("web_notes")
+        done("type red green blue")
+        done("replace green with yellow")
+        screen.awaitLine("Web notes: \"Red yellow blue\" 10-10")
+        done("go to the end")
+        done("delete the last word")
+        screen.awaitLine("Web notes: \"Red yellow\" 10-10")
+        done("select red")
+        screen.awaitLine("Web notes: \"Red yellow\" 0-3")
+    }
+
+    @Test
+    fun theOneWordCommandsEditAFieldAndTapAButtonWithoutOne() {
+        editNotes()
+        done("type hello world")
+        val delete = CommandTests.say("delete")
+        assertEquals(Outcome.DONE, delete.outcome)
+        assertEquals("Delete", delete.kind)
+        screen.awaitLine("Notes: \"Hello\" 5-5")
+
+        // Without a text field, "delete" taps the dialog's only "Delete" button, and "again" taps it once more.
+        screen.open("CommandsActivity", "Commands fixture")
+        done("tap Open dialog")
+        screen.awaitLine("Draft")
+        done("Delete")
+        screen.awaitLine("Deleted 1 time")
+        done("again")
+        screen.awaitLine("Deleted 2 times")
+    }
+
+    @Test
+    fun aPasswordFieldTakesOnlyDeleteAndDeleteAll() {
+        screen.open("EditActivity", "Edit fixture")
+        done("start editing Password")
+        screen.awaitFocus("text_password")
+        done("a b c d")
+        screen.awaitLine("Password: 4 characters")
+
+        done("delete")
+        screen.awaitLine("Password: 3 characters")
+        assertEquals(Outcome.FAILED, CommandTests.say("delete two words").outcome)
+        CommandTests.awaitSaid(TextCommandTexts.PASSWORD_FIELD)
+        done("delete all")
+        screen.awaitLine("Password: 0 characters")
+    }
+
     // Tasks 6 and 7 add their tests above this line.
 }

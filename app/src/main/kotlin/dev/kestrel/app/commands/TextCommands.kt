@@ -5,8 +5,10 @@ import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.Target
 import dev.kestrel.commands.TextCommand
+import dev.kestrel.commands.TextScope
 import dev.kestrel.commands.edit.Dictation
 import dev.kestrel.commands.edit.DictationPart
+import dev.kestrel.commands.edit.EditFailure
 import dev.kestrel.commands.edit.EditModel
 import dev.kestrel.commands.edit.EditStep
 import dev.kestrel.commands.edit.TextState
@@ -44,6 +46,9 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
             TextCommand.NewLine -> inField(screen) { newLine(screen, it) }
             TextCommand.Undo -> inField(screen) { undo(screen, it, redo = false) }
             TextCommand.Redo -> inField(screen) { undo(screen, it, redo = true) }
+            is TextCommand.Delete, is TextCommand.Select, TextCommand.Unselect, is TextCommand.MoveCursor, is TextCommand.Insert,
+            is TextCommand.Replace, is TextCommand.ReplaceBetween, is TextCommand.ChangeCase, TextCommand.FormatEmail,
+            -> inField(screen) { edit(screen, it, command as TextCommand) }
             else -> null
         }
     }
@@ -185,6 +190,49 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
             ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.textChanged(redo))
         return when (val result = apply(screen, field, EditModel.between(current.text, target))) {
             is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+            is ActionResult.Failed -> failed(result)
+        }
+    }
+
+    /** The editing commands, planned by the editing model on the field's text and selection. */
+    private suspend fun edit(screen: ScreenSession, field: ScreenElement, command: TextCommand): CommandResult {
+        val state = screen.text.read(field.key) ?: return gone()
+        if (editing.password(field, state.password)) return passwordEdit(screen, field, command, state)
+        val before = state.toTextState()
+        return when (val step = EditModel.plan(command, before)) {
+            is EditStep.Change -> when (val result = apply(screen, field, step)) {
+                is ActionResult.Done -> {
+                    record(screen, field, before)
+                    CommandResult(Outcome.DONE, repeatable = true)
+                }
+                is ActionResult.Failed -> failed(result)
+            }
+            is EditStep.Select -> when (val result = screen.text.select(field.key, step.start, step.end)) {
+                is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+                is ActionResult.Failed -> failed(result)
+            }
+            is EditStep.Fail -> when (step.reason) {
+                EditFailure.NOTHING_SELECTED -> CommandResult(Outcome.FAILED, say = TextCommandTexts.NOTHING_SELECTED)
+                EditFailure.NOT_FOUND -> CommandResult(Outcome.FAILED, say = TextCommandTexts.notInText(step.phrase.orEmpty()))
+                EditFailure.NOTHING_THERE -> CommandResult(Outcome.FAILED, show = TextCommandTexts.NOTHING_THERE)
+                EditFailure.LINE_BREAK -> CommandResult(Outcome.FAILED, say = TextCommandTexts.LINE_BREAK)
+                EditFailure.NOT_AN_EDIT -> CommandResult(Outcome.IGNORED)
+            }
+        }
+    }
+
+    /**
+     * A password field shows only dots, so Kestrel never rewrites its text: "delete" removes one character before the
+     * cursor, "delete all" empties it, and the other editing commands do nothing.
+     */
+    private suspend fun passwordEdit(screen: ScreenSession, field: ScreenElement, command: TextCommand, state: FieldState): CommandResult {
+        val result = when (command) {
+            TextCommand.Delete(null) -> screen.text.deleteBeforeCursor(field.key, 1)
+            TextCommand.Delete(TextScope.All) -> screen.text.replace(field.key, 0, state.text.length, "", 0, 0)
+            else -> return CommandResult(Outcome.FAILED, say = TextCommandTexts.PASSWORD_FIELD)
+        }
+        return when (result) {
+            is ActionResult.Done -> CommandResult(Outcome.DONE)
             is ActionResult.Failed -> failed(result)
         }
     }
