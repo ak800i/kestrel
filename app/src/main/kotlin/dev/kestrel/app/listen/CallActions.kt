@@ -56,8 +56,9 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
         is Request.Answer -> answer(command.speaker)
         Request.Decline -> decline()
         Request.HangUp -> hangUp()
-        Request.Mute -> inCall(MUTE, ifOff = false, ListeningTexts.CANNOT_MUTE)
-        // "Speaker" turns the speaker on, so a control that is on already stays on.
+        Request.Mute -> inCall(MUTE, ifOff = true, ListeningTexts.CANNOT_MUTE)
+        // "Mute" and "Speaker" turn their control on, so a control that is on already stays on, and a second "mute"
+        // does not unmute the call.
         Request.Speaker -> inCall(SPEAKER, ifOff = true, ListeningTexts.CANNOT_SPEAKER)
     }
 

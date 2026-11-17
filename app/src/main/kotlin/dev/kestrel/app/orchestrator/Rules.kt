@@ -542,7 +542,8 @@ object Rules {
     }
 
     // Section 8.7: while a call rings, only "answer", "answer on speaker" and "decline" count, also on the lock screen;
-    // during the call, only "hang up", "mute" and "speaker", and only with the setting "Commands during a call".
+    // during the call, only "hang up", "mute" and "speaker" after the name, and only with the setting "Commands during a
+    // call".
     private fun callCommand(state: State, event: Event.Heard): Step {
         if (state.mode == Mode.IN_CALL && !state.callCommands) return Step(state)
         val command = Requests.readCall(event.text, event.named, ringing = state.mode == Mode.RINGING) ?: return Step(state)

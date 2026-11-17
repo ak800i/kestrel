@@ -122,6 +122,9 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
                     when {
                         generation.get() != mine -> Spoke.STOPPED
                         sentences.isEmpty() -> Spoke.FINISHED
+                        // A loss of the focus can still come between the check above and take(). The reply then asks
+                        // Android for the focus again after lost(), finds its generation ended in play() and plays
+                        // nothing, and finish() gives the focus up again.
                         !focus.take() -> Spoke.REFUSED
                         else -> withTrack { output -> play(output, sentences, mine) }
                     }

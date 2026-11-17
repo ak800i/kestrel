@@ -127,6 +127,17 @@ class CallActionsTest {
         assertEquals(ListeningTexts.CANNOT_SPEAKER, actions.perform(Request.Speaker))
     }
 
+    @Test
+    fun aMuteControlThatIsOnAlreadyStaysOn() = runTest {
+        api.inCallChecked = setOf("Mute")
+
+        assertNull(actions.perform(Request.Mute))
+
+        // A second "mute" does not unmute the call.
+        assertTrue(clicks.isEmpty())
+        assertEquals(listOf("show in-call screen"), api.calls)
+    }
+
     private inner class FakeCallApi : CallApi {
         val calls = mutableListOf<String>()
         var permitted = false

@@ -221,9 +221,18 @@ class RequestsTest {
 
     @Test
     fun theCommandsDuringACall() {
-        assertEquals(Request.HangUp, Requests.readCall("Hang up.", spotted = false, ringing = false))
+        assertEquals(Request.HangUp, Requests.readCall("Kestrel, hang up.", spotted = false, ringing = false))
         assertEquals(Request.Mute, Requests.readCall("Kestrel, mute.", spotted = true, ringing = false))
-        assertEquals(Request.Speaker, Requests.readCall("Speaker, please.", spotted = false, ringing = false))
+        assertEquals(Request.Speaker, Requests.readCall("Hey Kestrel, speaker, please.", spotted = true, ringing = false))
+    }
+
+    @Test
+    fun duringACallTheCommandsMustStartWithTheName() {
+        // The caller can be heard through the speaker, so a command without the name first is ignored (section 8.7).
+        assertNull(Requests.readCall("Hang up.", spotted = false, ringing = false))
+        assertNull(Requests.readCall("Mute.", spotted = false, ringing = false))
+        assertNull(Requests.readCall("Speaker, please.", spotted = false, ringing = false))
+        assertNull(Requests.readCall("Hang up, Kestrel.", spotted = false, ringing = false))
     }
 
     @Test

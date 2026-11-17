@@ -40,13 +40,13 @@ sealed interface Request {
     /** "Decline", while a call rings. */
     data object Decline : Call
 
-    /** "Hang up", during a call. */
+    /** "Kestrel, hang up", during a call. */
     data object HangUp : Call
 
-    /** "Mute", during a call: the in-call screen's mute control. */
+    /** "Kestrel, mute", during a call: the in-call screen's mute control, which stays on when it is on already. */
     data object Mute : Call
 
-    /** "Speaker", during a call: the in-call screen's speaker control. */
+    /** "Kestrel, speaker", during a call: the in-call screen's speaker control, which stays on when it is on already. */
     data object Speaker : Call
 
     /** Anything else, which the instant commands of sub-project 3 will read. */
@@ -169,9 +169,11 @@ object Requests {
 
     /**
      * Reads a call command (section 8.7): while a call rings ([ringing]) "answer", "answer on speaker" or "decline", and
-     * during a call "hang up", "mute" or "speaker". The name may come before or after the command, and Kestrel's polite
-     * words may come with it, as in "Kestrel, answer, please". Returns null for anything else, which Kestrel ignores
-     * during a call. [spotted]: the keyword spotter heard "Kestrel" at the start.
+     * during a call "hang up", "mute" or "speaker". While a call rings, the name may come before or after the command,
+     * or not at all; during a call, the command must start with the name, as in "Kestrel, hang up", because the caller's
+     * voice can come through the speaker. Kestrel's polite words may come with it, as in "Kestrel, answer, please".
+     * Returns null for anything else, which Kestrel ignores during a call. [spotted]: the keyword spotter heard "Kestrel"
+     * at the start.
      */
     fun readCall(transcript: String, spotted: Boolean, ringing: Boolean): Request.Call? {
         // The polite words go first, so that they may also follow a trailing name, as in "Decline, Kestrel, please".
@@ -181,7 +183,9 @@ object Requests {
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
         // As in read(): when the spotter heard the name, one short word such as "hey" may come before it.
         val start = if (spotted && words.isNotEmpty() && words[0].text in BEFORE_NAME && nameAt(words, 1, limit) > 0) 1 else 0
-        val afterName = words.drop(start + nameAt(words, start, limit))
+        val name = nameAt(words, start, limit)
+        if (!ringing && name == 0) return null
+        val afterName = words.drop(start + name)
         val command = afterName.dropLast(nameBefore(afterName, afterName.size, limit))
         return (if (ringing) RINGING_COMMANDS else CALL_COMMANDS)[phrase(command)]
     }

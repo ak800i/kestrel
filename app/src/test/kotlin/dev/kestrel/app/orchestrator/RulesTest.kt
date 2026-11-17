@@ -706,12 +706,21 @@ class RulesTest {
     fun duringACallItsCommandsCountOnlyWithTheSetting() {
         val inCall = Rules.next(listening, Event.CallState(CallState.ACTIVE)).state
 
-        assertEquals(Step(inCall), Rules.next(inCall, Event.Heard("Hang up.", named = false)))
+        assertEquals(Step(inCall), Rules.next(inCall, Event.Heard("Kestrel, hang up.", named = true)))
         val commands = inCall.copy(callCommands = true)
-        assertEquals(Effect.CallCommand(Request.HangUp), Rules.next(commands, Event.Heard("Hang up.", named = false)).effects.last())
-        assertEquals(Effect.CallCommand(Request.Mute), Rules.next(commands, Event.Heard("Mute.", named = false)).effects.last())
-        assertEquals(Effect.CallCommand(Request.Speaker), Rules.next(commands, Event.Heard("Speaker, please.", named = false)).effects.last())
-        assertEquals(Step(commands), Rules.next(commands, Event.Heard("Answer.", named = false)))
+        assertEquals(
+            Effect.CallCommand(Request.HangUp),
+            Rules.next(commands, Event.Heard("Kestrel, hang up.", named = true)).effects.last(),
+        )
+        assertEquals(Effect.CallCommand(Request.Mute), Rules.next(commands, Event.Heard("Kestrel, mute.", named = true)).effects.last())
+        assertEquals(
+            Effect.CallCommand(Request.Speaker),
+            Rules.next(commands, Event.Heard("Kestrel, speaker, please.", named = true)).effects.last(),
+        )
+        assertEquals(Step(commands), Rules.next(commands, Event.Heard("Kestrel, answer.", named = true)))
+        // The caller's voice can come through the speaker, so a command without the name first is ignored.
+        assertEquals(Step(commands), Rules.next(commands, Event.Heard("Hang up.", named = false)))
+        assertEquals(Step(commands), Rules.next(commands, Event.Heard("Mute.", named = false)))
         // With the setting, Kestrel records during the call while the phone is unlocked; the other person hears the
         // commands too (section 8.7).
         assertTrue(commands.microphone)
