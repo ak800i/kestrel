@@ -52,6 +52,8 @@ sealed interface ModelCheck {
  * Kestrel's battery use to Restricted. [samsung]: the phone is a Samsung, whose battery settings also have "Never
  * sleeping apps". [callsAllowed]: Kestrel may read the phone state and answer calls (READ_PHONE_STATE and
  * ANSWER_PHONE_CALLS, section 8.7). [assistantRole]: Kestrel holds Android's assistant role (section 8.6).
+ * [shortcutTarget] and [buttonTarget]: Android's accessibility settings name Kestrel as the target of the accessibility
+ * shortcut, and of the accessibility button or gesture (section 8.6).
  */
 data class SetupStatus(
     val serviceOn: Boolean,
@@ -65,6 +67,8 @@ data class SetupStatus(
     val samsung: Boolean = false,
     val callsAllowed: Boolean = false,
     val assistantRole: Boolean = false,
+    val shortcutTarget: Boolean = false,
+    val buttonTarget: Boolean = false,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */

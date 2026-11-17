@@ -7,12 +7,15 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import dev.kestrel.app.R
+import dev.kestrel.app.listen.ListeningOptions
+import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
@@ -306,8 +309,43 @@ class SettingsAppTest {
         assertEquals(listOf(SetupAction.DEFAULT_APPS), actions)
     }
 
+    @Test
+    fun theListeningPageChangesTheOptions() {
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_listening)).performClick()
+
+        compose.onNodeWithText(text(R.string.listening_wake_up_resume)).assertIsSelected()
+        compose.onNodeWithText(text(R.string.listening_wake_up_stay_off)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.listening_pause_after_silence)).performScrollTo().assertIsOff().performClick()
+        compose.onNodeWithText(text(R.string.listening_call_commands)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.listening_earbud_microphone)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.listening_earbud_microphone)).assertIsOn()
+        compose.onNodeWithText(text(R.string.listening_wake_up_stay_off)).assertIsSelected()
+        assertEquals(
+            ListeningOptions(WakeUpMode.STAY_OFF, pauseAfterSilence = true, callCommands = true, earbudMicrophone = true),
+            data.listening.value,
+        )
+    }
+
+    @Test
+    fun theListeningPageShowsTheWaysToStartKestrel() {
+        show(NOTHING_SET_UP.copy(serviceOn = true, shortcutTarget = true))
+        compose.onNodeWithText(text(R.string.settings_listening)).performClick()
+
+        compose.onNodeWithText(text(R.string.listening_service_on)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.listening_shortcut_set)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.listening_button_not_set)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.listening_tile)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.listening_assistant_not_held)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.setup_open_default_apps)).performScrollTo().performClick()
+
+        assertEquals(listOf(SetupAction.DEFAULT_APPS), actions)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
+        override val listening = MutableStateFlow(ListeningOptions())
         override val version = "9.9.9 (99)"
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
@@ -321,6 +359,10 @@ class SettingsAppTest {
 
         override suspend fun setTestMode(on: Boolean) {
             testMode.value = on
+        }
+
+        override suspend fun setListening(options: ListeningOptions) {
+            listening.value = options
         }
 
         override suspend fun activityLog() = activity

@@ -3,6 +3,7 @@ package dev.kestrel.app.settings
 import android.content.Context
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
@@ -16,6 +17,11 @@ interface SettingsData {
     val testMode: Flow<Boolean>
 
     suspend fun setTestMode(on: Boolean)
+
+    /** The owner's choices for listening (design spec, section 15). */
+    val listening: Flow<ListeningOptions>
+
+    suspend fun setListening(options: ListeningOptions)
 
     suspend fun activityLog(): List<LogEntry<ActivityEvent>>
 
@@ -35,6 +41,12 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
 
     override suspend fun setTestMode(on: Boolean) {
         graph.settings.set(SettingKeys.SAFETY, graph.settings.get(SettingKeys.SAFETY).copy(testMode = on))
+    }
+
+    override val listening: Flow<ListeningOptions> = graph.settings.observe(SettingKeys.LISTENING_OPTIONS)
+
+    override suspend fun setListening(options: ListeningOptions) {
+        graph.settings.set(SettingKeys.LISTENING_OPTIONS, options)
     }
 
     override suspend fun activityLog() = graph.logs.activity()

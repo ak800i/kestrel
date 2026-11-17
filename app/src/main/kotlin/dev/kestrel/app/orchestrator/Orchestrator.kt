@@ -18,7 +18,8 @@ import kotlinx.coroutines.launch
  * Orchestrator then handles [Event.SpeechEnded], and for a [Effect.RunTask] [Event.TaskEnded] without a reply. The next
  * effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
  * that TODO() throws, is not caught and ends the Orchestrator's loop. The timer that ends the wait for a task after
- * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it.
+ * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
+ * does the timer of the pause after [silenceMillis] without speech (section 8.5).
  */
 class Orchestrator(
     private val scope: CoroutineScope,
@@ -26,11 +27,13 @@ class Orchestrator(
     private val onError: (Exception) -> Unit,
     private val waitMillis: Long = WAIT_MILLIS,
     private val answerMillis: Long = ANSWER_MILLIS,
+    private val silenceMillis: Long = SILENCE_MILLIS,
 ) {
     // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
     private val events = Channel<Pair<Event, () -> Boolean>>(Channel.UNLIMITED)
     private val current = MutableStateFlow(State())
     private var wait: Job? = null
+    private var silence: Job? = null
 
     /** The state after the last event. */
     val state: StateFlow<State> = current.asStateFlow()
@@ -60,6 +63,10 @@ class Orchestrator(
             wait?.cancel()
             wait = null
         }
+        if (step.state.mode != Mode.LISTENING) {
+            silence?.cancel()
+            silence = null
+        }
         val notStarted = mutableListOf<Event>()
         for (effect in step.effects) {
             if (effect is Effect.WaitForTask) {
@@ -69,6 +76,13 @@ class Orchestrator(
                 wait = scope.launch {
                     delay(millis)
                     send(Event.WaitEnded(number))
+                }
+            } else if (effect == Effect.TimeSilence) {
+                val number = step.state.silence
+                silence?.cancel()
+                silence = scope.launch {
+                    delay(silenceMillis)
+                    send(Event.Silent(number))
                 }
             } else {
                 try {
@@ -98,5 +112,8 @@ class Orchestrator(
         // go up to 1.85 s after its end, but at the latest 30 s after its start, so the worst case stays at about
         // 30.7 s and a transcription. Plan 2D measures it on the A71.
         const val ANSWER_MILLIS = 35_000L
+
+        // Section 8.5: the optional pause after 30 s without speech.
+        const val SILENCE_MILLIS = 30_000L
     }
 }

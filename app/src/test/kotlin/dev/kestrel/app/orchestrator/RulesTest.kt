@@ -772,6 +772,82 @@ class RulesTest {
     }
 
     @Test
+    fun afterAnUnlockKestrelFollowsTheWakeUpSetting() {
+        fun unlocked(state: State, wakeUp: WakeUpMode): Step {
+            val chosen = Rules.next(state, Event.Options(wakeUp, pauseAfterSilence = false, callCommands = false)).state
+            // The running service has reported the screen on and unlocked before, in this run.
+            return Rules.next(chosen.copy(screenOn = false, screenSeen = true), Event.Screen(on = true))
+        }
+
+        assertEquals(Mode.PAUSED, unlocked(paused, WakeUpMode.RESUME).state.mode)
+        val listened = unlocked(paused, WakeUpMode.LISTEN)
+        assertEquals(Mode.LISTENING, listened.state.mode)
+        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING))), listened.effects)
+        val off = unlocked(listening, WakeUpMode.STAY_OFF)
+        assertEquals(Mode.OFF, off.state.mode)
+        assertEquals(Effect.StopService, off.effects.last())
+        // Only a change from off to on counts, and a call keeps its mode.
+        val stayOff = Rules.next(listening, Event.Options(WakeUpMode.STAY_OFF, pauseAfterSilence = false, callCommands = false)).state
+        assertEquals(Step(stayOff.copy(screenSeen = true)), Rules.next(stayOff, Event.Screen(on = true)))
+        val ringing = stayOff.copy(mode = Mode.RINGING, beforeCall = Mode.LISTENING, screenOn = false)
+        assertEquals(Mode.RINGING, Rules.next(ringing, Event.Screen(on = true)).state.mode)
+        // A turn-off forgets the reports, and an unlock after a start on the lock screen is no wake-up.
+        assertFalse(Rules.next(listening.copy(screenOn = false, screenSeen = true), Event.TurnOff).state.screenSeen)
+        val startedLocked = Rules.next(stayOff, Event.Screen(on = false)).state
+        assertEquals(Mode.LISTENING, Rules.next(startedLocked, Event.Screen(on = true)).state.mode)
+        // A report of the screen on, then a lock and an unlock: that unlock is a wake-up.
+        val used = Rules.next(Rules.next(stayOff, Event.Screen(on = true)).state, Event.Screen(on = false)).state
+        assertEquals(Mode.OFF, Rules.next(used, Event.Screen(on = true)).state.mode)
+        // The assistant gesture on the lock screen asks the owner to speak after the unlock, so that unlock keeps Kestrel
+        // on.
+        val gestured = Rules.next(stayOff.copy(mode = Mode.PAUSED, screenOn = false, screenSeen = true), Event.Assist).state
+        assertEquals(Mode.LISTENING, Rules.next(gestured, Event.Screen(on = true)).state.mode)
+    }
+
+    @Test
+    fun thirtySecondsWithoutSpeechPauseKestrelWhenTheSettingIsOn() {
+        // The timer starts when the setting goes on while Kestrel listens, and again when the owner starts to speak.
+        val on = Rules.next(listening, Event.Options(WakeUpMode.RESUME, pauseAfterSilence = true, callCommands = false))
+        assertEquals(listOf(Effect.TimeSilence), on.effects)
+        assertEquals(1, on.state.silence)
+        val spoke = Rules.next(on.state, Event.Speaking)
+        assertEquals(listOf(Effect.TimeSilence), spoke.effects)
+        assertEquals(2, spoke.state.silence)
+        // The end of an utterance starts it again, so that the time counts from the end of the owner's speech.
+        assertEquals(listOf(Effect.TimeSilence), Rules.next(spoke.state, Event.NothingHeard).effects)
+        assertEquals(listOf(Effect.TimeSilence), Rules.next(spoke.state, Event.Heard("", named = false)).effects)
+
+        // The end of an older timer changes nothing; the end of the latest one pauses Kestrel.
+        assertEquals(Step(spoke.state), Rules.next(spoke.state, Event.Silent(1)))
+        val silent = Rules.next(spoke.state, Event.Silent(2))
+        assertEquals(Mode.PAUSED, silent.state.mode)
+        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.PAUSED))), silent.effects)
+
+        // Listening again starts the timer again.
+        assertEquals(
+            listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING)), Effect.TimeSilence),
+            Rules.next(silent.state, Event.Toggle).effects,
+        )
+        // The owner gets the whole 30 s again when Kestrel can hear again: after an unlock, and after a reply.
+        val dark = listening.copy(pauseAfterSilence = true, silence = 3, screenOn = false)
+        assertEquals(listOf(Effect.TimeSilence), Rules.next(dark, Event.Screen(on = true)).effects)
+        val replying = listening.copy(pauseAfterSilence = true, silence = 3, speeches = 1)
+        assertEquals(listOf(Effect.TimeSilence), Rules.next(replying, Event.SpeechEnded).effects)
+        // Without the setting, nothing times the silence.
+        assertEquals(emptyList<Effect>(), Rules.next(listening, Event.Speaking).effects)
+        assertEquals(Step(listening.copy(silence = 2)), Rules.next(listening.copy(silence = 2), Event.Silent(2)))
+    }
+
+    @Test
+    fun theSilenceTimerStartsAgainWhileKestrelIsBusyOrDoesNotRecord() {
+        val timed = listening.copy(pauseAfterSilence = true, silence = 1)
+
+        for (busy in listOf(timed.copy(speeches = 1), timed.copy(work = Work.RUNNING_TASK, task = 1), timed.copy(screenOn = false))) {
+            assertEquals(Step(busy.copy(silence = 2), listOf(Effect.TimeSilence)), Rules.next(busy, Event.Silent(1)))
+        }
+    }
+
+    @Test
     fun neverMindEndsTheWaitForATask() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
 

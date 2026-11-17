@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
+enum class SettingsPage { HOME, CHECKLIST, LISTENING, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
 
 /** What the button of a checklist step does. */
 enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS }
@@ -61,6 +61,7 @@ fun SettingsApp(
         when (page) {
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
             SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, status.samsung, onAction, home) }
+            SettingsPage.LISTENING -> ScrollingPage { ListeningPage(data, status, onAction, home) }
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
@@ -88,6 +89,9 @@ private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOp
         stringResource(R.string.settings_checklist),
         pluralStringResource(R.plurals.settings_checklist_progress, states.size, done, states.size),
     ) { onOpen(SettingsPage.CHECKLIST) }
+    PageEntry(stringResource(R.string.settings_listening), stringResource(R.string.settings_listening_summary)) {
+        onOpen(SettingsPage.LISTENING)
+    }
     PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
     PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }
     PageEntry(stringResource(R.string.settings_network_log), logsSummary) { onOpen(SettingsPage.NETWORK_LOG) }

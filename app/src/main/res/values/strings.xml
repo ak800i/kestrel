@@ -140,4 +140,28 @@
     <string name="tile_off">Off</string>
     <string name="tile_ringing">Call ringing</string>
     <string name="tile_in_call">In a call</string>
+
+    <!-- The page "Listening and activation" (design spec, sections 8.5 to 8.8 and 15). -->
+    <string name="settings_listening">Listening and activation</string>
+    <string name="settings_listening_summary">After an unlock, during calls, with earbuds, and the ways to start Kestrel</string>
+    <string name="listening_wake_up">On screen wake-up</string>
+    <string name="listening_wake_up_resume">Resume the mode from before</string>
+    <string name="listening_wake_up_listen">Always start listening</string>
+    <string name="listening_wake_up_stay_off">Stay off</string>
+    <string name="listening_pause_after_silence">Pause after 30 s without speech</string>
+    <string name="listening_pause_after_silence_detail">While Kestrel listens, 30 seconds without speech pause it. \"Kestrel, wake up\" resumes it.</string>
+    <string name="listening_call_commands">Commands during a call</string>
+    <string name="listening_call_commands_detail">During a call, Kestrel listens for \"hang up\", \"mute\" and \"speaker\" while the phone is unlocked. The other person hears these commands too. They need Kestrel\'s accessibility service: without it, Android silences Kestrel\'s microphone during a call.</string>
+    <string name="listening_earbud_microphone">Use the earbud microphone</string>
+    <string name="listening_earbud_microphone_detail">With Bluetooth earbuds connected, Kestrel records with their microphone. The earbuds then switch to their call profile, which makes music sound worse.</string>
+    <string name="listening_activation">Ways to start Kestrel</string>
+    <string name="listening_service_on">Kestrel\'s accessibility service is on.</string>
+    <string name="listening_service_off">Kestrel\'s accessibility service is off, so the shortcut and the button do not start Kestrel.</string>
+    <string name="listening_shortcut_set">The accessibility shortcut starts Kestrel.</string>
+    <string name="listening_shortcut_not_set">The accessibility shortcut does not start Kestrel. Choose Kestrel for it in Android\'s accessibility settings.</string>
+    <string name="listening_button_set">The accessibility button starts Kestrel.</string>
+    <string name="listening_button_not_set">The accessibility button does not start Kestrel. Choose Kestrel for it in Android\'s accessibility settings.</string>
+    <string name="listening_tile">Kestrel\'s Quick Settings tile starts Kestrel. Android does not tell apps whether you added it, so add it when you edit Quick Settings.</string>
+    <string name="listening_assistant_held">Kestrel is the digital assistant, so the assistant gesture, such as a long press of Home, starts it.</string>
+    <string name="listening_assistant_not_held">Kestrel is not the digital assistant. Pick it as the digital assistant app in Default apps.</string>
 </resources>

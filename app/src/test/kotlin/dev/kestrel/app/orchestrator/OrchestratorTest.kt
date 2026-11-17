@@ -137,6 +137,28 @@ class OrchestratorTest {
     }
 
     @Test
+    fun thirtySecondsWithoutSpeechPauseKestrel() = runTest {
+        val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
+
+        orchestrator.send(Event.Options(WakeUpMode.RESUME, pauseAfterSilence = true, callCommands = false))
+        orchestrator.send(Event.Toggle)
+        runCurrent()
+        // The Orchestrator runs the timer itself.
+        assertFalse(performed.any { it is Effect.TimeSilence })
+        advanceTimeBy(20_000)
+        orchestrator.send(Event.Speaking)
+        runCurrent()
+
+        // Counted from the start, the pause would come at 30 s; counted from the speech, at 50 s.
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(Mode.LISTENING, orchestrator.state.value.mode)
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(Mode.PAUSED, orchestrator.state.value.mode)
+    }
+
+    @Test
     fun anEffectThatFailsIsReportedAndTheNextOnesStillCount() = runTest {
         val shown = Effect.Show(Feedback.Heard("Kestrel, open the settings."))
         val orchestrator = Orchestrator(

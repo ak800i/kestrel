@@ -12,6 +12,12 @@ enum class Mode { OFF, LISTENING, PAUSED, RINGING, IN_CALL }
 /** The phone's call state (design spec, section 8.7), as Android's call-state listener reports it. */
 enum class CallState { IDLE, RINGING, ACTIVE }
 
+/**
+ * What Kestrel does when the screen comes back on and the phone is unlocked (design spec, section 8.5): it keeps the
+ * mode that it had ([RESUME]), listens ([LISTEN]), or turns off ([STAY_OFF]).
+ */
+enum class WakeUpMode { RESUME, LISTEN, STAY_OFF }
+
 /** What Kestrel is doing besides listening: the spec's "current activity" (section 7.3). */
 enum class Work {
     IDLE,
@@ -30,7 +36,11 @@ enum class Work {
  * [emptyTranscripts] counts the transcripts without words in a row, and [noWordsShown] is true once the hint about them
  * has shown since Kestrel turned on (section 14.6). [beforeCall] is the mode that a call interrupted, while the mode is
  * Ringing or In call; it comes back after the call (section 8.7). [callCommands]: the owner turned on "Commands during a
- * call", so that Kestrel listens for them during a call (section 8.7).
+ * call", so that Kestrel listens for them during a call (section 8.7). [onWakeUp] is what Kestrel does after an unlock,
+ * and [pauseAfterSilence] pauses listening after 30 s without speech (section 8.5); [silence] is the number of the
+ * latest timer of that pause, so that the end of an older one changes nothing. [screenSeen]: since Kestrel turned on,
+ * the running ListeningService has reported the screen on and the phone unlocked, so that the next unlock is a wake-up
+ * (section 8.5).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -45,6 +55,10 @@ data class State(
     val noWordsShown: Boolean = false,
     val beforeCall: Mode? = null,
     val callCommands: Boolean = false,
+    val onWakeUp: WakeUpMode = WakeUpMode.RESUME,
+    val pauseAfterSilence: Boolean = false,
+    val silence: Int = 0,
+    val screenSeen: Boolean = false,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -162,6 +176,12 @@ sealed interface Event {
      * open, so the Rules ignore it while Kestrel is off.
      */
     data object Assist : Event
+
+    /** The owner's choices for listening, as Listening read them at its start or after a change (section 15). */
+    data class Options(val onWakeUp: WakeUpMode, val pauseAfterSilence: Boolean, val callCommands: Boolean) : Event
+
+    /** Timer number [silence] of the pause after 30 s without speech has run out (section 8.5). */
+    data class Silent(val silence: Int) : Event
 }
 
 /** What Kestrel says. */
@@ -231,6 +251,12 @@ sealed interface Effect {
 
     /** Carries out a call command (section 8.7). */
     data class CallCommand(val command: Request.Call) : Effect
+
+    /**
+     * Starts the timer of the pause after 30 s without speech, in place of the one that runs (section 8.5). The
+     * Orchestrator runs it itself.
+     */
+    data object TimeSilence : Effect
 }
 
 /** A transition: the new state, and what to do, in order. */
@@ -238,7 +264,9 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
-    fun next(state: State, event: Event): Step = when (event) {
+    fun next(state: State, event: Event): Step = silenceTimer(state, event, react(state, event))
+
+    private fun react(state: State, event: Event): Step = when (event) {
         Event.Toggle -> when {
             state.inCall -> afterCall(state, if (state.beforeCall == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
             else -> switch(state, if (state.mode == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
@@ -268,9 +296,7 @@ object Rules {
             event.busy && !state.micBusy -> Step(state.copy(micBusy = true), listOf(Effect.Show(Feedback.MicBusy)))
             else -> Step(state.copy(micBusy = event.busy))
         }
-        is Event.Screen -> Step(
-            state.copy(screenOn = event.on, work = if (!event.on && state.work == Work.AWAITING_TASK) Work.IDLE else state.work),
-        )
+        is Event.Screen -> screen(state, event.on)
         is Event.WaitEnded ->
             if (state.work == Work.AWAITING_TASK && event.wait == state.wait) Step(state.copy(work = Work.IDLE)) else Step(state)
         Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
@@ -278,6 +304,10 @@ object Rules {
             if (state.mode != Mode.OFF && state.work == Work.AWAITING_TASK) waitForTask(state) else Step(state)
         is Event.CallState -> call(state, event.state)
         Event.Assist -> assist(state)
+        is Event.Options -> Step(
+            state.copy(onWakeUp = event.onWakeUp, pauseAfterSilence = event.pauseAfterSilence, callCommands = event.callCommands),
+        )
+        is Event.Silent -> silent(state, event.silence)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
@@ -434,6 +464,8 @@ object Rules {
             emptyTranscripts = 0,
             noWordsShown = false,
             beforeCall = null,
+            // The next run's reports start the count of wake-ups again (section 8.5).
+            screenSeen = false,
         ),
         first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },
@@ -443,6 +475,53 @@ object Rules {
         ),
     )
 
+    // Section 8.5: after an unlock, Kestrel follows the setting "On screen wake-up" while it listens or is paused; a call
+    // keeps its mode. Waiting for a task ends when the screen turns off.
+    private fun screen(state: State, on: Boolean): Step {
+        val changed = state.copy(
+            screenOn = on,
+            work = if (!on && state.work == Work.AWAITING_TASK) Work.IDLE else state.work,
+            // An unlock is a wake-up only after the owner has used the phone in this run: not the first report after a
+            // start, not the unlock after a start on the lock screen, and not a report from a service that stops.
+            screenSeen = state.mode != Mode.OFF && (on || state.screenSeen),
+        )
+        if (!on || state.screenOn || !state.screenSeen || (state.mode != Mode.LISTENING && state.mode != Mode.PAUSED)) {
+            return Step(changed)
+        }
+        return when (state.onWakeUp) {
+            WakeUpMode.RESUME -> Step(changed)
+            WakeUpMode.LISTEN -> changeMode(changed, Mode.LISTENING)
+            WakeUpMode.STAY_OFF -> turnOff(changed)
+        }
+    }
+
+    // Section 8.5: 30 s without speech pause listening. A timer that ran out while Kestrel spoke, waited for a task, ran
+    // one or did not record starts again, because the owner was not silent then, or could not be heard.
+    private fun silent(state: State, silence: Int): Step = when {
+        silence != state.silence || state.mode != Mode.LISTENING || !state.pauseAfterSilence -> Step(state)
+        state.speaking || state.work != Work.IDLE || !state.microphone ->
+            Step(state.copy(silence = state.silence + 1), listOf(Effect.TimeSilence))
+        else -> switch(state, Mode.PAUSED)
+    }
+
+    // Section 8.5: while Kestrel listens with the setting on, the timer starts whenever Kestrel can hear the owner again
+    // (it starts to listen, the screen comes back on, or its reply, the wait for a task or a task ends), when the setting
+    // goes on, when the owner starts to speak, and when an utterance ends, so that the time counts from the end of the
+    // owner's speech. Each timer gets the next number.
+    private fun silenceTimer(before: State, event: Event, step: Step): Step {
+        val after = step.state
+        val start = after.pauseAfterSilence && hears(after) &&
+            (
+                !hears(before) || !before.pauseAfterSilence || event == Event.Speaking || event is Event.Heard ||
+                    event == Event.NothingHeard
+                )
+        return if (start) Step(after.copy(silence = after.silence + 1), step.effects + Effect.TimeSilence) else step
+    }
+
+    // Kestrel listens, idle, silent itself and recording: only then does the time without speech count.
+    private fun hears(state: State): Boolean =
+        state.mode == Mode.LISTENING && !state.speaking && state.work == Work.IDLE && state.microphone
+
     // Section 8.6: the assistant gesture or an earbud's button. Kestrel listens, if it was paused, and waits for a task
     // as after "Kestrel" on its own; over its own voice it stops speaking and waits, as after an interruption with
     // "Kestrel". While a task runs, it does what "Kestrel" does then: it stops speaking. A call keeps its mode, and an
@@ -451,9 +530,12 @@ object Rules {
         state.mode == Mode.OFF || state.inCall -> Step(state)
         state.work == Work.RUNNING_TASK -> Step(state, listOfNotNull(Effect.StopSaying.takeIf { state.speaking }))
         // Section 8.5: Kestrel does not record on the lock screen, so it asks nothing there; it hears the owner after the
-        // unlock.
-        !state.screenOn ->
-            changeMode(state, Mode.LISTENING, *listOfNotNull(Effect.StopSaying.takeIf { state.speaking }).toTypedArray())
+        // unlock, which is therefore no wake-up, as after a start on the lock screen.
+        !state.screenOn -> changeMode(
+            state.copy(screenSeen = false),
+            Mode.LISTENING,
+            *listOfNotNull(Effect.StopSaying.takeIf { state.speaking }).toTypedArray(),
+        )
         state.speaking ->
             changeMode(state, Mode.LISTENING).then { waitForTask(it, Effect.StopSaying, Effect.Show(Feedback.AwaitingTask)) }
         else -> changeMode(state, Mode.LISTENING).then { askForTask(it) }

@@ -17,6 +17,7 @@ import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
 import dev.kestrel.app.listen.ListeningConditions
+import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.listen.ModeMemory
@@ -56,6 +57,9 @@ object SettingKeys {
 
     /** The listening mode that Kestrel turns on in again after its process restarts (design spec, sections 8.5 and 14.4). */
     val LISTENING = SettingKey("listening", ListeningSetting.serializer(), ListeningSetting())
+
+    /** The owner's choices for listening (design spec, sections 8.5, 8.7, 8.8 and 15). */
+    val LISTENING_OPTIONS = SettingKey("listening-options", ListeningOptions.serializer(), ListeningOptions())
 }
 
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
@@ -176,6 +180,8 @@ class AppGraph(context: Context) {
             callActions = CallActions(AndroidCallApi(appContext)) {
                 screen.value?.let { session -> CallScreen { label, ifOff -> session.actions.clickLabelled(label, ifOff) } }
             },
+            // Section 15: encrypted like every setting. Listening passes a change on at once.
+            options = settings.observe(SettingKeys.LISTENING_OPTIONS),
             conditions = object : ListeningConditions {
                 override fun microphoneAllowed() =
                     appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

@@ -4,6 +4,7 @@ import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Request
+import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.ModelsNotReadyException
@@ -18,8 +19,10 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -49,6 +52,7 @@ class ListeningTest {
     private val exits = FakeExits()
     private val calls = FakeCallMonitor()
     private val callActions = FakeCallControl()
+    private val storedOptions = MutableStateFlow(ListeningOptions())
 
     // The wall clock, in milliseconds.
     private var now = 1_000_000L
@@ -2003,6 +2007,52 @@ class ListeningTest {
         assertEquals(1, memory.reads)
     }
 
+    @Test
+    fun theStoredOptionsReachTheOrchestratorWhenTheyChange() = runTest {
+        val listening = listeningWithSession()
+
+        storedOptions.value = ListeningOptions(WakeUpMode.LISTEN, pauseAfterSilence = true, callCommands = true, earbudMicrophone = true)
+        runCurrent()
+
+        val state = listening.state.value
+        assertEquals(WakeUpMode.LISTEN, state.onWakeUp)
+        assertTrue(state.pauseAfterSilence)
+        assertTrue(state.callCommands)
+        assertEquals(storedOptions.value, listening.currentOptions.value)
+    }
+
+    @Test
+    fun optionsThatCannotBeReadAreReportedAndTheDefaultsStay() = runTest {
+        val listening = listening(options = flow { throw IOException("The settings cannot be read") })
+        runCurrent()
+
+        assertEquals("Reading the listening options", reports.single().first)
+        assertEquals(ListeningOptions(), listening.currentOptions.value)
+    }
+
+    @Test
+    fun aStartDuringTheCloseOnTheLockScreenDoesNotRecord() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Screen(on = false))
+        runCurrent()
+        val closing = CompletableDeferred<Unit>()
+        sessions.opened.single().closing = closing
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        // The tile on the lock screen while the session closes: the start goes to the service that still runs, which
+        // reports the screen only when it is created and when the screen changes.
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        closing.complete(Unit)
+        runCurrent()
+
+        // Section 8.5: Kestrel records on the lock screen only while a call rings.
+        assertTrue(listening.sessionOpen.value)
+        assertFalse(listening.state.value.microphone)
+    }
+
     /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
     private fun readError() = IllegalStateException("The microphone failed with error -6")
 
@@ -2012,7 +2062,10 @@ class ListeningTest {
             CoroutineExceptionHandler { _, e -> errors += e },
     )
 
-    private fun TestScope.listening(scope: CoroutineScope = backgroundScope): Listening = Listening(
+    private fun TestScope.listening(
+        scope: CoroutineScope = backgroundScope,
+        options: Flow<ListeningOptions> = storedOptions,
+    ): Listening = Listening(
         scope = scope,
         thread = StandardTestDispatcher(testScheduler),
         sessions = sessions,
@@ -2031,6 +2084,7 @@ class ListeningTest {
         clock = { now },
         calls = calls,
         callActions = callActions,
+        options = options,
         microphones = { microphone },
     )
 
@@ -2287,6 +2341,7 @@ class ListeningTest {
             clock = { now },
             calls = calls,
             callActions = callActions,
+            options = storedOptions,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
                 override suspend fun read(): StoredMode = StoredMode(Mode.OFF)

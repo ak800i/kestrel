@@ -38,7 +38,20 @@ class SetupStatusReader(private val context: Context) {
             samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true),
             callsAllowed = granted(Manifest.permission.READ_PHONE_STATE) && granted(Manifest.permission.ANSWER_PHONE_CALLS),
             assistantRole = context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT),
+            shortcutTarget = names(SHORTCUT_TARGET, kestrel),
+            buttonTarget = names(BUTTON_TARGETS, kestrel) || names(GESTURE_TARGETS, kestrel),
         )
+    }
+
+    // Whether the secure setting [name], a list of components joined by ':', names [service]. Android may refuse an app
+    // some of its settings; then the way to start Kestrel shows as not set.
+    private fun names(name: String, service: ComponentName): Boolean = try {
+        Settings.Secure.getString(context.contentResolver, name).orEmpty()
+            .split(':')
+            .mapNotNull { ComponentName.unflattenFromString(it) }
+            .contains(service)
+    } catch (e: SecurityException) {
+        false
     }
 
     private fun granted(permission: String) =
@@ -46,5 +59,11 @@ class SetupStatusReader(private val context: Context) {
 
     private companion object {
         const val VOICE_ACCESS = "com.google.android.apps.accessibility.voiceaccess"
+
+        // The targets of the accessibility shortcut, and of the accessibility button with the navigation bar's buttons or
+        // with gesture navigation (research R14).
+        const val SHORTCUT_TARGET = "accessibility_shortcut_target_service"
+        const val BUTTON_TARGETS = "accessibility_button_targets"
+        const val GESTURE_TARGETS = "accessibility_gesture_targets"
     }
 }

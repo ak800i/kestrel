@@ -17,9 +17,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -203,7 +205,8 @@ internal interface StopNotices {
  * [calls] reports the call state while a voice session is open (section 8.7). The stored mode is never Ringing or In
  * call, but the mode that the call interrupted. [callActions] carries out the call commands in a coroutine of [scope],
  * and the bar shows why one failed. [assist] turns Kestrel on for the assistant gesture and asks for a task once the
- * voice session is open (section 8.6).
+ * voice session is open (section 8.6). [options] are the owner's choices for listening (section 15); Listening collects
+ * them on [thread], passes them to the Orchestrator, and keeps the newest in [currentOptions].
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -220,6 +223,7 @@ class Listening internal constructor(
     private val clock: () -> Long,
     private val calls: CallMonitor,
     private val callActions: CallControl,
+    options: Flow<ListeningOptions>,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -284,6 +288,11 @@ class Listening internal constructor(
     /** Whether a voice session is open: from the end of its opening until its close has returned. */
     internal val sessionOpen: StateFlow<Boolean> = sessionState.asStateFlow()
 
+    private val chosenOptions = MutableStateFlow(ListeningOptions())
+
+    /** The owner's choices for listening, as Kestrel read them last, or the defaults before the first read (section 15). */
+    internal val currentOptions: StateFlow<ListeningOptions> = chosenOptions.asStateFlow()
+
     private val orchestrator = Orchestrator(
         CoroutineScope(scope.coroutineContext + thread),
         perform = ::perform,
@@ -295,6 +304,15 @@ class Listening internal constructor(
 
     init {
         scope.launch(thread) { orchestrator.state.collect { followSafely(it) } }
+        // Section 15: a change counts at once. A failure to read the options is reported, and the last ones stay.
+        scope.launch(thread) {
+            options
+                .catch { error -> if (error is Exception) report("Reading the listening options", error) else throw error }
+                .collect { chosen ->
+                    chosenOptions.value = chosen
+                    send(Event.Options(chosen.onWakeUp, chosen.pauseAfterSilence, chosen.callCommands))
+                }
+        }
         // One writer, so that the newest mode is written last. It may skip a mode that a newer one replaced at once.
         scope.launch {
             modeToStore.filterNotNull().collect { mode ->
@@ -840,8 +858,8 @@ class Listening internal constructor(
                     bar.show(text(effect.feedback))
                 }
             }
-            // The Orchestrator runs the wait itself.
-            is Effect.WaitForTask -> Unit
+            // The Orchestrator runs the timers itself.
+            is Effect.WaitForTask, Effect.TimeSilence -> Unit
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> openSettingsOrSayWhy()
             is Effect.CallCommand -> carryOut(effect.command)
