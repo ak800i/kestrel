@@ -202,7 +202,8 @@ internal interface StopNotices {
  * and by the restore, which writes Off before anything else can write.
  * [calls] reports the call state while a voice session is open (section 8.7). The stored mode is never Ringing or In
  * call, but the mode that the call interrupted. [callActions] carries out the call commands in a coroutine of [scope],
- * and the bar shows why one failed.
+ * and the bar shows why one failed. [assist] turns Kestrel on for the assistant gesture and asks for a task once the
+ * voice session is open (section 8.6).
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -267,6 +268,10 @@ class Listening internal constructor(
     private var restoreChecked = false
     private var wasOn = false
 
+    // Only [thread] uses it. The assistant gesture came while no voice session was open: the session asks for the task
+    // once it opens, so that "Yes?" is spoken and the wait counts from there (section 8.6).
+    private var assistWhenOpen = false
+
     // When the restore of this process turned Kestrel on, until Kestrel next turns off; null otherwise. Written on
     // [thread], and stored with every mode by the mode's writer, so that a crash in the restored process finds it.
     @Volatile
@@ -318,6 +323,31 @@ class Listening internal constructor(
     fun watchCalls() {
         scope.launch(thread) { if (session != null) startCalls() }
     }
+
+    /**
+     * The assistant gesture or an earbud's assistant button (section 8.6): Kestrel listens, if it was off or paused, and
+     * waits for a task. While no voice session is open, Kestrel turns on if it is off, and asks once the session is open.
+     * Any thread may call it.
+     */
+    fun assist() {
+        scope.launch(thread) {
+            if (session != null) {
+                send(Event.Assist)
+            } else {
+                assistWhenOpen = true
+                // Acts only while Kestrel is off; otherwise a start is on its way, and its session asks.
+                send(Event.Start())
+            }
+        }
+    }
+
+    /**
+     * Kestrel's assistant service is ready, which also happens after Android ended Kestrel's process or the phone
+     * restarted, while Kestrel holds the assistant role. The role lets Kestrel start its foreground service from the
+     * background (prototype P3), so the restore runs as when the accessibility service connects (section 8.5): once in a
+     * process, whichever service comes first. Any thread may call it.
+     */
+    fun onAssistantServiceReady() = onAccessibilityServiceConnected()
 
     /**
      * Kestrel's accessibility service has connected, which also happens after Android ended Kestrel's process or the phone
@@ -621,6 +651,10 @@ class Listening internal constructor(
                 // After followSafely, which starts the microphone, so that a native crash there comes before Listening is
                 // stored.
                 remember(state.value.mode)
+                if (assistWhenOpen) {
+                    assistWhenOpen = false
+                    send(Event.Assist)
+                }
                 // Last, so that a failure here costs only the call state (section 8.7).
                 startCalls()
             }
@@ -633,6 +667,8 @@ class Listening internal constructor(
         listener?.active = false
         session = null
         listener = null
+        // An assist that waited for a session is forgotten with the start that failed or was turned off.
+        assistWhenOpen = false
         microphoneOn = false
         serviceState = ServiceState.STOPPED
         requested = false

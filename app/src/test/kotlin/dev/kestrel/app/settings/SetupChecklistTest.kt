@@ -27,7 +27,7 @@ class SetupChecklistTest {
                 SetupStep.ACCESSIBILITY_SERVICE to StepState.TO_DO,
                 SetupStep.MICROPHONE_AND_NOTIFICATIONS to StepState.TO_DO,
                 SetupStep.BATTERY to StepState.TO_DO,
-                SetupStep.DEFAULT_ASSISTANT to StepState.LATER,
+                SetupStep.DEFAULT_ASSISTANT to StepState.OPTIONAL,
                 SetupStep.CALLS to StepState.OPTIONAL,
                 SetupStep.PROVIDER to StepState.LATER,
                 SetupStep.VOICE_ACCESS to StepState.DONE,
@@ -87,6 +87,14 @@ class SetupChecklistTest {
 
         assertEquals(StepState.OPTIONAL, state(nothingSetUp))
         assertEquals(StepState.DONE, state(nothingSetUp.copy(callsAllowed = true)))
+    }
+
+    @Test
+    fun theAssistantStepFollowsTheRole() {
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.DEFAULT_ASSISTANT)
+
+        assertEquals(StepState.OPTIONAL, state(nothingSetUp))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(assistantRole = true)))
     }
 
     @Test

@@ -2,6 +2,7 @@ package dev.kestrel.app
 
 import android.Manifest
 import android.app.ActivityManager
+import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -140,9 +141,12 @@ class AppGraph(context: Context) {
             // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity.
             // The controller's thread calls it; startActivity may be called from any thread. Without Kestrel's
             // accessibility service, Android blocks the start from the background without an exception (prototype P1),
-            // so Kestrel does not try, and says why instead.
+            // so Kestrel does not try, and says why instead. Android lets the holder of the assistant role start
+            // activities from the background too, because it binds the role's VoiceInteractionService (section 8.6).
             openSettings = {
-                if (screen.value == null) {
+                if (screen.value == null &&
+                    !appContext.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT)
+                ) {
                     false
                 } else {
                     appContext.startActivity(

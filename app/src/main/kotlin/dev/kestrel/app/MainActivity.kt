@@ -105,6 +105,8 @@ class MainActivity : ComponentActivity() {
             SetupAction.CALL_PERMISSIONS ->
                 askForPermissions(Manifest.permission.READ_PHONE_STATE, Manifest.permission.ANSWER_PHONE_CALLS)
             SetupAction.APP_SETTINGS -> openAppSettings()
+            // Android does not let an app ask for the assistant role, so the owner picks Kestrel there (research r6).
+            SetupAction.DEFAULT_APPS -> startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
         }
     }
 

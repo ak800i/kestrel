@@ -109,7 +109,12 @@ private fun texts(step: SetupStep, samsung: Boolean): StepTexts = when (step) {
         R.string.setup_battery_warning,
         if (samsung) R.string.setup_battery_never_sleeping else null,
     )
-    SetupStep.DEFAULT_ASSISTANT -> StepTexts(R.string.setup_assistant_title, R.string.setup_assistant_detail)
+    SetupStep.DEFAULT_ASSISTANT -> StepTexts(
+        R.string.setup_assistant_title,
+        R.string.setup_assistant_detail,
+        SetupAction.DEFAULT_APPS,
+        R.string.setup_open_default_apps,
+    )
     SetupStep.CALLS -> StepTexts(
         R.string.setup_calls_title,
         R.string.setup_calls_detail,

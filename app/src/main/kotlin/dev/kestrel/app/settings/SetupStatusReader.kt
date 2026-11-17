@@ -3,6 +3,7 @@ package dev.kestrel.app.settings
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityManager
+import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
@@ -36,6 +37,7 @@ class SetupStatusReader(private val context: Context) {
             batteryRestricted = context.getSystemService(ActivityManager::class.java).isBackgroundRestricted,
             samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true),
             callsAllowed = granted(Manifest.permission.READ_PHONE_STATE) && granted(Manifest.permission.ANSWER_PHONE_CALLS),
+            assistantRole = context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT),
         )
     }
 

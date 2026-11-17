@@ -720,6 +720,58 @@ class RulesTest {
     }
 
     @Test
+    fun theAssistantGestureStartsListeningAndWaitsForATask() {
+        val expected = listOf(
+            Effect.Show(Feedback.ModeChanged(Mode.LISTENING)),
+            Effect.Show(Feedback.AwaitingTask),
+            Effect.WaitForTask(),
+            Effect.Say(Reply.Yes),
+        )
+        val step = Rules.next(paused, Event.Assist)
+        assertEquals(expected, step.effects)
+        assertEquals(Mode.LISTENING, step.state.mode)
+        assertEquals(Work.AWAITING_TASK, step.state.work)
+        // While Kestrel listens, it only asks.
+        assertEquals(expected.drop(1), Rules.next(listening, Event.Assist).effects)
+        // Listening turns Kestrel on first and sends the Assist once the session is open, so one that comes while
+        // Kestrel is off was queued behind a turn-off, and changes nothing.
+        assertEquals(Step(State()), Rules.next(State(), Event.Assist))
+        // Section 8.5: on the lock screen Kestrel does not record, so it only starts listening and asks nothing.
+        val locked = paused.copy(screenOn = false)
+        assertEquals(
+            Step(locked.copy(mode = Mode.LISTENING), listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING)))),
+            Rules.next(locked, Event.Assist),
+        )
+        assertEquals(
+            Step(
+                locked.copy(mode = Mode.LISTENING, speeches = 1),
+                listOf(Effect.StopSaying, Effect.Show(Feedback.ModeChanged(Mode.LISTENING))),
+            ),
+            Rules.next(locked.copy(speeches = 1), Event.Assist),
+        )
+    }
+
+    @Test
+    fun theAssistantGestureOverKestrelsVoiceOrWhileATaskRunsActsLikeTheName() {
+        // As after an interruption with "Kestrel": Kestrel stops speaking and waits for the task.
+        assertEquals(
+            listOf(Effect.StopSaying, Effect.Show(Feedback.AwaitingTask), Effect.WaitForTask()),
+            Rules.next(listening.copy(speeches = 1), Event.Assist).effects,
+        )
+        val running = paused.copy(work = Work.RUNNING_TASK, task = 1, speeches = 1)
+        assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Assist))
+        val silent = running.copy(speeches = 0)
+        assertEquals(Step(silent), Rules.next(silent, Event.Assist))
+    }
+
+    @Test
+    fun theAssistantGestureChangesNothingDuringACall() {
+        val ringing = Rules.next(listening, Event.CallState(CallState.RINGING)).state
+
+        assertEquals(Step(ringing), Rules.next(ringing, Event.Assist))
+    }
+
+    @Test
     fun neverMindEndsTheWaitForATask() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
 

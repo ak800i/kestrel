@@ -1927,6 +1927,82 @@ class ListeningTest {
         assertEquals(Mode.OFF, listening.state.value.mode)
     }
 
+    @Test
+    fun anAssistWhileKestrelIsOffAsksOnceTheSessionIsOpen() = runTest {
+        val listening = listening()
+
+        listening.assist()
+        runCurrent()
+        // Kestrel starts; "Yes?" waits for the voice session, so that it can be spoken and the wait counts from it.
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(Work.IDLE, listening.state.value.work)
+
+        listening.onForeground(service)
+        runCurrent()
+        assertEquals(listOf(ListeningTexts.YES), sessions.opened.single().said)
+        assertEquals(Work.AWAITING_TASK, listening.state.value.work)
+    }
+
+    @Test
+    fun anAssistWithASessionAsksAtOnceAndOneWhoseStartFailedIsForgotten() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Pause)
+        runCurrent()
+
+        listening.assist()
+        runCurrent()
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.YES), sessions.opened.single().said)
+
+        listening.send(Event.TurnOff)
+        runCurrent()
+        services.failure = IllegalStateException("Not allowed in the background")
+        listening.assist()
+        runCurrent()
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        services.failure = null
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        // The next session does not ask for the task of the assist whose start failed.
+        assertTrue(sessions.opened[1].said.isEmpty())
+        assertEquals(Work.IDLE, listening.state.value.work)
+    }
+
+    @Test
+    fun anAssistWhoseSessionCannotStartTheMicrophoneLeavesKestrelOff() = runTest {
+        sessions.microphoneFailure = SecurityException("Kestrel may not record audio")
+        val listening = listening()
+
+        listening.assist()
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        // The microphone's failure turns Kestrel off before the Assist's turn comes, and the Assist does not start it
+        // again.
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(1, log.count { it == "start" })
+    }
+
+    @Test
+    fun theAssistantServiceRestoresTheStoredModeOnceWithTheAccessibilityService() = runTest {
+        memory.stored = Mode.LISTENING
+        val listening = listening()
+
+        listening.onAssistantServiceReady()
+        runCurrent()
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        // The accessibility service that connects later in the same process finds the restore done.
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(listOf("start"), log)
+        assertEquals(1, memory.reads)
+    }
+
     /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
     private fun readError() = IllegalStateException("The microphone failed with error -6")
 

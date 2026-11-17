@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design spec, section 8.6; research r6: Android's assistant role needs a session service, a recognition service and
+     supportsAssist. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="dev.kestrel.app.assist.KestrelRecognitionService"
+    android:sessionService="dev.kestrel.app.assist.KestrelSessionService"
+    android:supportsAssist="true" />

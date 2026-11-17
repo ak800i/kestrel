@@ -85,6 +85,53 @@
                 android:value="true" />
         </service>
 
+        <!-- The assistant role (design spec, section 8.6; research r6): the service that makes Kestrel eligible, the
+             session that the assistant gesture opens, and the recognition service that the role requires. Only Android,
+             which holds BIND_VOICE_INTERACTION, can bind them. -->
+        <service
+            android:name=".assist.KestrelAssistantService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction" />
+        </service>
+        <service
+            android:name=".assist.KestrelSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <service
+            android:name=".assist.KestrelRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <!-- The earbuds' and headsets' assistant button (design spec, section 8.6; prototype P3): transparent, with no
+             place in the recent apps or the back stack, and in a task of its own, so that closing it brings back the
+             app that was in front. Not WEB_SEARCH, which other apps send for typed web searches. -->
+        <activity
+            android:name=".assist.AssistActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.speech.action.VOICE_SEARCH_HANDS_FREE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- EmojiCompat would ask Google Play services for a downloadable emoji font. -->
         <provider
             android:name="androidx.startup.InitializationProvider"

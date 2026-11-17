@@ -12,10 +12,11 @@
 # password, so on a phone the script leaves that test out too. So does ActivationTest#theTileTogglesListening, which adds
 # Kestrel's tile to Quick Settings: no script puts the list of tiles back if the test's process dies. So does
 # RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar, which sets Kestrel's app op TAKE_AUDIO_FOCUS to ignore and
-# back to foreground, the op's normal mode on Android 17. The run fails when one of these four tests ran on a phone or
-# did not run on an emulator. On an emulator the script turns the lock screen off again at the end, sets
-# TAKE_AUDIO_FOCUS back to foreground, wakes the screen and dismisses the keyguard, also when the run failed or was
-# interrupted.
+# back to foreground, the op's normal mode on Android 17. So does AssistTest#theAssistKeyStartsListeningAndWaitsForATask,
+# which makes Kestrel the holder of the assistant role. The run fails when one of these five tests ran on a phone or did
+# not run on an emulator. On an emulator the script turns the lock screen off again at the end, sets TAKE_AUDIO_FOCUS
+# back to foreground, gives the assistant role and the settings assistant and voice_interaction_service back as they
+# were before the run, wakes the screen and dismisses the keyguard, also when the run failed or was interrupted.
 # Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
 # command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
@@ -43,6 +44,10 @@ $failed = $false
 $emulator = $Serial -like 'emulator-*'
 $reached = $false
 $lockScreenOff = $false
+# The holder of the assistant role before the run, or an empty text when no app held it; $null until it is read.
+$assistantHolder = $null
+# The settings that name the assistant's service before the run, which Android changes with the role.
+$assistantSettings = [ordered]@{}
 try {
     Use-KestrelToolchain
     Assert-TestDevice -Serial $Serial
@@ -51,6 +56,9 @@ try {
     # between would leave it on, so on an emulator the script reads the setting first and puts it back at the end.
     if ($emulator) {
         $lockScreenOff = ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd lock_settings get-disabled') -join '').Trim() -eq 'true'
+        # The assistant test makes Kestrel the holder of the role and puts the holder back, unless its process dies.
+        $assistantHolder = ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd role get-role-holders android.app.role.ASSISTANT') -join '').Trim()
+        foreach ($name in 'assistant', 'voice_interaction_service') { $assistantSettings[$name] = Get-SecureSetting -Serial $Serial -Name $name }
     }
     & "$PSScriptRoot\install.ps1" -Serial $Serial
     $code = $LASTEXITCODE
@@ -62,12 +70,14 @@ try {
         # The tests log their measurements; clearing the log first keeps only this run's lines.
         & $adb -s $Serial logcat -c
         # Tests that a phone must not run: one switches the microphone's privacy toggle, one turns on a lock screen that it
-        # unlocks with adb, one changes the list of Quick Settings tiles, and one refuses Kestrel's audio focus.
+        # unlocks with adb, one changes the list of Quick Settings tiles, one refuses Kestrel's audio focus, and one makes
+        # Kestrel the assistant.
         $emulatorOnly = @(
             'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
             'dev.kestrel.app.voice.ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock'
             'dev.kestrel.app.voice.ActivationTest#theTileTogglesListening'
             'dev.kestrel.app.voice.RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar'
+            'dev.kestrel.app.voice.AssistTest#theAssistKeyStartsListeningAndWaitsForATask'
         )
         $tasks = @(
             ':app:connectedDebugAndroidTest'
@@ -122,6 +132,32 @@ try {
             # still refuse Kestrel's audio focus (prototype P2).
             if (-not (Invoke-DeviceRestore 'give Kestrel back its audio focus' 'cmd appops set dev.kestrel TAKE_AUDIO_FOCUS foreground')) {
                 $code = 1
+            }
+            # The assistant test puts the role back itself, unless its process died in between. The role is exclusive, so
+            # adding the earlier holder removes Kestrel. Adding the app that holds the role already grants the role's
+            # permissions again, so the script changes the holder only when it differs.
+            if ($null -ne $assistantHolder) {
+                $holderNow = try {
+                    ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd role get-role-holders android.app.role.ASSISTANT') -join '').Trim()
+                } catch {
+                    $null
+                }
+                if ($holderNow -ne $assistantHolder) {
+                    $role = if ($assistantHolder) {
+                        "cmd role add-role-holder android.app.role.ASSISTANT $assistantHolder"
+                    } else {
+                        'cmd role remove-role-holder android.app.role.ASSISTANT dev.kestrel'
+                    }
+                    if (-not (Invoke-DeviceRestore 'give the assistant role back' $role)) { $code = 1 }
+                    # Android points both settings at the holder's service a moment after the change.
+                    Start-Sleep -Seconds 2
+                }
+                foreach ($name in $assistantSettings.Keys) {
+                    $now = try { Get-SecureSetting -Serial $Serial -Name $name } catch { $null }
+                    if ($now -cne $assistantSettings[$name] -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $assistantSettings[$name])) {
+                        $code = 1
+                    }
+                }
             }
             if (-not (Invoke-DeviceRestore 'wake the screen' 'input keyevent KEYCODE_WAKEUP')) { $code = 1 }
             if (-not (Invoke-DeviceRestore 'dismiss the keyguard' 'wm dismiss-keyguard')) { $code = 1 }

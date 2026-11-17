@@ -31,7 +31,7 @@ import dev.kestrel.app.R
 enum class SettingsPage { HOME, CHECKLIST, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
 
 /** What the button of a checklist step does. */
-enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS }
+enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS }
 
 /**
  * Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture.

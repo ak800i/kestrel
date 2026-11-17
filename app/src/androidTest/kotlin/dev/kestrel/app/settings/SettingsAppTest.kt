@@ -296,6 +296,16 @@ class SettingsAppTest {
         assertEquals(listOf(SetupAction.CALL_PERMISSIONS), actions)
     }
 
+    @Test
+    fun theAssistantStepOpensTheDefaultApps() {
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_open_default_apps)).performScrollTo().performClick()
+
+        assertEquals(listOf(SetupAction.DEFAULT_APPS), actions)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val version = "9.9.9 (99)"

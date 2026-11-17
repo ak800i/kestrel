@@ -155,6 +155,13 @@ sealed interface Event {
 
     /** The phone's call state changed (section 8.7). Only Listening's call-state listener sends it. */
     data class CallState(val state: dev.kestrel.app.orchestrator.CallState) : Event
+
+    /**
+     * The assistant gesture or an earbud's assistant button (section 8.6): Kestrel listens, if it was paused, and waits
+     * for a task, as after "Kestrel" on its own. Listening turns Kestrel on first and sends it once a voice session is
+     * open, so the Rules ignore it while Kestrel is off.
+     */
+    data object Assist : Event
 }
 
 /** What Kestrel says. */
@@ -270,6 +277,7 @@ object Rules {
         Event.NothingHeard ->
             if (state.mode != Mode.OFF && state.work == Work.AWAITING_TASK) waitForTask(state) else Step(state)
         is Event.CallState -> call(state, event.state)
+        Event.Assist -> assist(state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
@@ -385,8 +393,8 @@ object Rules {
     }
 
     // The bar shows "Yes?" at the start of the wait, also when "Yes?" cannot be spoken (section 8.9).
-    private fun askForTask(state: State, shown: Effect): Step =
-        waitForTask(state, shown, Effect.Show(Feedback.AwaitingTask)).then { say(it, Reply.Yes) }
+    private fun askForTask(state: State, vararg first: Effect): Step =
+        waitForTask(state, *first, Effect.Show(Feedback.AwaitingTask)).then { say(it, Reply.Yes) }
 
     // Every wait gets the next number, so that the end of an older wait changes nothing.
     private fun waitForTask(state: State, vararg first: Effect, answering: Boolean = false): Step = Step(
@@ -434,6 +442,22 @@ object Rules {
             Effect.StopService,
         ),
     )
+
+    // Section 8.6: the assistant gesture or an earbud's button. Kestrel listens, if it was paused, and waits for a task
+    // as after "Kestrel" on its own; over its own voice it stops speaking and waits, as after an interruption with
+    // "Kestrel". While a task runs, it does what "Kestrel" does then: it stops speaking. A call keeps its mode, and an
+    // Assist while Kestrel is off was queued behind a turn-off, because Listening sends it only to an open session.
+    private fun assist(state: State): Step = when {
+        state.mode == Mode.OFF || state.inCall -> Step(state)
+        state.work == Work.RUNNING_TASK -> Step(state, listOfNotNull(Effect.StopSaying.takeIf { state.speaking }))
+        // Section 8.5: Kestrel does not record on the lock screen, so it asks nothing there; it hears the owner after the
+        // unlock.
+        !state.screenOn ->
+            changeMode(state, Mode.LISTENING, *listOfNotNull(Effect.StopSaying.takeIf { state.speaking }).toTypedArray())
+        state.speaking ->
+            changeMode(state, Mode.LISTENING).then { waitForTask(it, Effect.StopSaying, Effect.Show(Feedback.AwaitingTask)) }
+        else -> changeMode(state, Mode.LISTENING).then { askForTask(it) }
+    }
 
     // Section 8.7: while a call rings, only "answer", "answer on speaker" and "decline" count, also on the lock screen;
     // during the call, only "hang up", "mute" and "speaker", and only with the setting "Commands during a call".
