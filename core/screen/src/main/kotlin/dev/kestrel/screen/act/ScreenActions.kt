@@ -162,8 +162,8 @@ class ScreenActions internal constructor(
      * of its range.
      */
     suspend fun adjust(key: String, increase: Boolean): ActionResult {
-        val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
-        if (!node.isEnabled) return DISABLED
+        val node = snapshots.current().node(key) ?: return ActionResult.Failed("It isn't on the screen.")
+        if (!node.isEnabled) return ActionResult.Failed("It's disabled.")
         // A number can name an element that is no slider, such as a list, whose scroll action would move it instead.
         val range = node.rangeInfo ?: return ActionResult.Failed("It isn't a slider.")
         val step = if (increase) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD

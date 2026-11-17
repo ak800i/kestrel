@@ -218,6 +218,8 @@ class TouchCommandsTest {
         awaitStatus("Seek bar 50")
         assertEquals(Outcome.DONE, CommandTests.say("increment ${badge(speed.key)}").outcome)
         awaitStatus("Slider 0.55")
+        // A slider that has gone fails with a full sentence, as the other reasons of a slider's step do.
+        assertEquals(ActionResult.Failed("It isn't on the screen."), screen.session.actions.adjust("gone", increase = true))
     }
 
     @Test

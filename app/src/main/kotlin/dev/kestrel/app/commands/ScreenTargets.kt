@@ -266,7 +266,7 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
                 element.slider -> "a slider"
                 element.editable -> "a text field"
                 kind in SWITCHES -> "a switch"
-                kind == "RadioButton" -> "a radio button"
+                isRadioButton(element) -> "a radio button"
                 element.checkable -> "a check box"
                 element.scrollable -> "a list"
                 element.clickable || element.longClickable -> "a button"
@@ -275,11 +275,25 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             return if (element.checkable) "$noun, ${if (element.checked) "on" else "off"}" else noun
         }
 
+        /** Whether [element] is a radio button, which a tap turns on but never off. */
+        fun isRadioButton(element: ScreenElement): Boolean =
+            element.className?.substringAfterLast('.').orEmpty().endsWith("RadioButton")
+
+        /**
+         * Why "check" ([on]) or "uncheck" cannot change [element], or null when it can or already is as asked. Only another
+         * radio button of its group turns a radio button off, so a tap on one that is on would change nothing.
+         */
+        fun cannotCheck(element: ScreenElement, on: Boolean): String? = when {
+            !element.checkable -> CommandTexts.NOT_CHECKABLE
+            !on && element.checked && isRadioButton(element) -> CommandTexts.CANT_UNCHECK_RADIO
+            else -> null
+        }
+
         /** What the owner can say for [element], for "Show commands for X", from its actions and its kind. */
         fun sayable(element: ScreenElement): List<String> = buildList {
             if (element.clickable || !element.scrollable) add("tap")
             if (element.longClickable || ElementAction.LONG_CLICK in element.actions) add("long press")
-            if (element.checkable) addAll(listOf("check", "uncheck"))
+            if (element.checkable) addAll(if (isRadioButton(element)) listOf("check") else listOf("check", "uncheck"))
             if (element.slider) addAll(listOf("increment", "decrement"))
             if (ElementAction.EXPAND in element.actions) add("expand")
             if (ElementAction.COLLAPSE in element.actions) add("collapse")

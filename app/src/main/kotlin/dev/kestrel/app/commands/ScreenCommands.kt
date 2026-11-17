@@ -217,10 +217,11 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     private suspend fun check(screen: ScreenSession, target: Target?, on: Boolean, conversation: CommandConversation): CommandResult {
         var already = false
         val result = act(screen, target, TargetKind.CHECK, conversation) { element ->
+            // A number can name an element that does not check, such as a settings row with its switch inside it. A tap
+            // would toggle that switch whatever its state. A radio button that is on stays on when it is tapped.
+            val refused = ScreenTargets.cannotCheck(element, on)
             when {
-                // A number can name an element that does not check, such as a settings row with its switch inside it. A
-                // tap would toggle that switch whatever its state.
-                !element.checkable -> ActionResult.Failed(CommandTexts.NOT_CHECKABLE)
+                refused != null -> ActionResult.Failed(refused)
                 element.checked == on -> {
                     already = true
                     // Nothing to click: the element is as the owner wants it.
@@ -446,19 +447,14 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
      * is (design spec, Appendix A).
      */
     private suspend fun whatIs(screen: ScreenSession, number: Int): CommandResult {
-        val answer = when (val found = targets.resolve(Target.Number(number), TargetKind.TAP, cells = true)) {
-            is Resolution.Cell -> CommandTexts.square(found.number)
-            is Resolution.One -> {
-                // One snapshot for the check and the name: an element's parent is an index into its own snapshot.
-                val snapshot = screen.snapshots.current().snapshot
-                val element = snapshot.element(found.element.key)?.takeIf { ScreenTargets.same(found.element, it) }
-                    ?: return changed()
-                CommandTexts.whatIs(number, ScreenTargets.names(snapshot, element).firstOrNull(), ScreenTargets.role(element))
-            }
-            is Resolution.NoSuchNumber -> return CommandResult(Outcome.FAILED, say = CommandTexts.noNumber(found.number))
-            Resolution.Changed -> return changed()
-            else -> return CommandResult(Outcome.FAILED, say = CommandTexts.SHOW_NUMBERS_FIRST)
-        }
+        val found = targets.resolve(Target.Number(number), TargetKind.TAP, cells = true)
+        WhatIs.answer(found)?.let { return it }
+        // WhatIs answers every resolution but one element.
+        val chosen = (found as Resolution.One).element
+        // One snapshot for the check and the name: an element's parent is an index into its own snapshot.
+        val snapshot = screen.snapshots.current().snapshot
+        val element = snapshot.element(chosen.key)?.takeIf { ScreenTargets.same(chosen, it) } ?: return changed()
+        val answer = CommandTexts.whatIs(number, ScreenTargets.names(snapshot, element).firstOrNull(), ScreenTargets.role(element))
         return CommandResult(Outcome.DONE, say = answer, repeatable = true)
     }
 
@@ -482,6 +478,24 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     }
 
     private fun changed() = CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+}
+
+/**
+ * The answers of "What is N?" that need no element, apart from the screen so that JVM tests check them (design spec,
+ * Appendix A). Each failure has its own text, shown or spoken as `ScreenCommands.act` does.
+ */
+internal object WhatIs {
+    /** The answer for [found], or null when [found] is one element, whose name and kind the answer needs. */
+    fun answer(found: Resolution): CommandResult? = when (found) {
+        is Resolution.One -> null
+        is Resolution.Cell -> CommandResult(Outcome.DONE, say = CommandTexts.square(found.number), repeatable = true)
+        is Resolution.NoSuchNumber -> CommandResult(Outcome.FAILED, show = CommandTexts.noNumber(found.number))
+        Resolution.Changed -> CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+        Resolution.NoScreen -> CommandResult(Outcome.FAILED, say = CommandTexts.SERVICE_OFF)
+        // Without numbers on the screen, and also when several elements are named with the number: numbers tell them apart.
+        Resolution.NeedNumbers, is Resolution.Several, Resolution.NotFound ->
+            CommandResult(Outcome.FAILED, say = CommandTexts.SHOW_NUMBERS_FIRST)
+    }
 }
 
 /** The loop of "scroll to top" and "scroll to bottom", apart from the screen so that JVM tests check it. */

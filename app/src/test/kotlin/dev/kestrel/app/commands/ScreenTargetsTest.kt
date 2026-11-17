@@ -1,5 +1,7 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.Target
 import dev.kestrel.commands.text.Strictness
 import dev.kestrel.screen.act.ScreenPoint
@@ -191,6 +193,33 @@ class ScreenTargetsTest {
         assertEquals("You can say tap or long press.", CommandTexts.youCanSay(ScreenTargets.sayable(elements[0].copy(longClickable = true))))
         assertEquals("You can say tap or expand.", CommandTexts.youCanSay(ScreenTargets.sayable(snapshot.element("details")!!)))
         assertEquals("You can say tap or start editing.", CommandTexts.youCanSay(ScreenTargets.sayable(snapshot.element("message")!!)))
+    }
+
+    @Test
+    fun aRadioButtonThatIsOnCannotBeUncheckedAndOffersOnlyCheck() {
+        val radio = element("fast", "Fast", IntRect(0, 0, 100, 100), className = "android.widget.RadioButton").copy(checkable = true, checked = true)
+        val subscribed = snapshot.element("subscribe")!!.copy(checked = true)
+
+        assertEquals("You can say tap or check.", CommandTexts.youCanSay(ScreenTargets.sayable(radio)))
+        assertEquals(CommandTexts.CANT_UNCHECK_RADIO, ScreenTargets.cannotCheck(radio, on = false))
+        assertNull(ScreenTargets.cannotCheck(radio, on = true))
+        assertNull(ScreenTargets.cannotCheck(radio.copy(checked = false), on = false))
+        assertNull(ScreenTargets.cannotCheck(subscribed, on = false))
+        assertEquals(CommandTexts.NOT_CHECKABLE, ScreenTargets.cannotCheck(snapshot.element("send")!!, on = true))
+    }
+
+    @Test
+    fun whatIsGivesEachNumberThatNamesNoElementItsOwnAnswer() {
+        assertEquals(CommandResult(Outcome.FAILED, say = CommandTexts.SERVICE_OFF), WhatIs.answer(Resolution.NoScreen))
+        // Shown on the bar, as act shows it.
+        assertEquals(CommandResult(Outcome.FAILED, show = CommandTexts.noNumber(99)), WhatIs.answer(Resolution.NoSuchNumber(99)))
+        assertEquals(CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED), WhatIs.answer(Resolution.Changed))
+        assertEquals(CommandResult(Outcome.FAILED, say = CommandTexts.SHOW_NUMBERS_FIRST), WhatIs.answer(Resolution.NeedNumbers))
+        assertEquals(
+            CommandResult(Outcome.DONE, say = "That's square 5 of the grid.", repeatable = true),
+            WhatIs.answer(Resolution.Cell(5, IntRect(0, 0, 100, 100))),
+        )
+        assertNull(WhatIs.answer(one("send")))
     }
 
     @Test

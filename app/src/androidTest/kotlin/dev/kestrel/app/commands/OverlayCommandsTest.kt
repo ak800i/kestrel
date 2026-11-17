@@ -59,6 +59,10 @@ class OverlayCommandsTest {
         CommandTests.awaitSaid("Number $save is Save, a button.")
         assertEquals(Outcome.DONE, CommandTests.say("what is $subscribe").outcome)
         CommandTests.awaitSaid("Number $subscribe is Subscribe, a check box, off.")
+        // A number that the screen does not show goes to the bar, as with "tap 99", and Kestrel does not say it.
+        assertEquals(Outcome.FAILED, CommandTests.say("what is 99").outcome)
+        awaitBar(CommandTexts.noNumber(99))
+        assertFalse(CommandTexts.noNumber(99) in CommandTests.spoken)
     }
 
     @Test
@@ -75,6 +79,14 @@ class OverlayCommandsTest {
     fun theGridTapsAndMakesGesturesOnItsSquares() = runBlocking<Unit> {
         screen.open("GesturesActivity", "Gestures fixture")
 
+        // Without a grid, "more squares" and "fewer squares" ask for one.
+        for (squares in listOf("more squares", "fewer squares")) {
+            val said = CommandTests.spoken.size
+            assertEquals(Outcome.FAILED, CommandTests.say(squares).outcome)
+            withTimeout(5_000) {
+                while (CommandTests.spoken.size == said || CommandTests.spoken.last() != CommandTexts.SHOW_GRID_FIRST) delay(50)
+            }
+        }
         assertEquals(Outcome.DONE, CommandTests.say("show grid").outcome)
         assertEquals(4, screen.session.grid?.columns)
         assertEquals(Outcome.DONE, CommandTests.say("more squares").outcome)
@@ -113,4 +125,6 @@ class OverlayCommandsTest {
         }
         badge.number
     }
+
+    private suspend fun awaitBar(text: String) = withTimeout(5_000) { while (screen.session.feedbackText != text) delay(50) }
 }
