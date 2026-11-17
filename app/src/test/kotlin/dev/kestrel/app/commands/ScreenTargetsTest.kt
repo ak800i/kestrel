@@ -1,0 +1,155 @@
+package dev.kestrel.app.commands
+
+import dev.kestrel.commands.Target
+import dev.kestrel.commands.text.Strictness
+import dev.kestrel.screen.model.ElementAction
+import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowKind
+import dev.kestrel.screen.model.WindowSummary
+import dev.kestrel.screen.overlay.Badge
+import dev.kestrel.screen.overlay.Grid
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ScreenTargetsTest {
+    private val app = WindowSummary(1, WindowKind.APPLICATION, bounds = IntRect(0, 0, 1080, 2400), layer = 0)
+    private val keyboard = WindowSummary(2, WindowKind.INPUT_METHOD, bounds = IntRect(0, 1600, 1080, 2400), layer = 2)
+
+    private fun element(
+        key: String,
+        label: String?,
+        bounds: IntRect,
+        clickable: Boolean = true,
+        parent: Int? = null,
+        window: Int = 1,
+        className: String = "android.widget.Button",
+    ) = ScreenElement(key = key, windowId = window, parent = parent, className = className, label = label, bounds = bounds, clickable = clickable)
+
+    private val elements = listOf(
+        element("send", "Send", IntRect(100, 100, 300, 200)),
+        element("later", "Send later", IntRect(400, 100, 700, 200)),
+        element("row", null, IntRect(0, 300, 1080, 400), clickable = false, className = "android.widget.LinearLayout"),
+        element("ana", "Message from Ana", IntRect(0, 300, 600, 400), clickable = false, parent = 2, className = "android.widget.TextView"),
+        element("delete1", "Delete", IntRect(800, 300, 1000, 400), parent = 2),
+        element("delete2", "Delete", IntRect(800, 500, 1000, 600)),
+        element("compose", "Compose", IntRect(0, 700, 1080, 800), clickable = false, className = "android.widget.FrameLayout"),
+        element("icon", null, IntRect(100, 700, 200, 800), parent = 6, className = "android.widget.ImageButton"),
+        element("q", "q", IntRect(0, 1700, 100, 1800), window = 2),
+        element("subscribe", "Subscribe", IntRect(100, 900, 500, 1000)).copy(checkable = true),
+        element("message", "Message", IntRect(100, 1100, 900, 1200), className = "android.widget.EditText")
+            .copy(editable = true, hint = "Message", text = "secret typed", focused = true),
+        element("hidden", "Hidden", IntRect(0, 1700, 200, 1800)),
+        element("seven", "7", IntRect(100, 1300, 200, 1400)),
+        element("details", "Details", IntRect(100, 1450, 500, 1550), clickable = false).copy(actions = setOf(ElementAction.EXPAND)),
+    )
+    private val snapshot = ScreenSnapshot(0, listOf(keyboard, app), elements)
+    private val plain = ScreenView(snapshot, badges = emptyList(), grid = null)
+
+    private fun keys(kind: TargetKind) = ScreenTargets.candidates(snapshot, kind).map { it.key }
+
+    private fun decide(view: ScreenView, target: Target?, kind: TargetKind = TargetKind.TAP, cells: Boolean = false) =
+        ScreenTargets.decide(view, target, kind, Strictness.NORMAL, cells)
+
+    private fun one(key: String) = Resolution.One(ScreenTargets.chosen(snapshot.element(key)!!))
+
+    @Test
+    fun candidatesLeaveOutTheKeyboardAndWhatAWindowAboveCoversWhole() {
+        val tap = keys(TargetKind.TAP)
+
+        assertFalse(tap.contains("q"))
+        assertFalse(tap.contains("hidden"))
+        // A named element without anything actionable around or inside it gets a tap at its centre.
+        assertTrue(tap.containsAll(listOf("send", "ana", "delete1", "icon", "message", "details")))
+        // An element with an actionable element inside it is no candidate, and neither is one without a name.
+        assertFalse(tap.contains("compose"))
+        assertFalse(tap.contains("row"))
+        assertEquals(listOf("send", "later", "delete1", "delete2", "icon", "subscribe", "message", "seven"), keys(TargetKind.BARE))
+        assertEquals(listOf("subscribe"), keys(TargetKind.CHECK))
+        assertEquals(listOf("message"), keys(TargetKind.EDIT))
+        assertEquals(listOf("details"), keys(TargetKind.EXPAND))
+    }
+
+    @Test
+    fun anElementWithoutANameTakesItsNearestLabelledAncestorsAndTypedTextIsNoName() {
+        assertEquals(listOf("Compose"), ScreenTargets.names(snapshot, snapshot.element("icon")!!))
+        assertEquals(listOf("Message"), ScreenTargets.names(snapshot, snapshot.element("message")!!))
+    }
+
+    @Test
+    fun aLabelIsFoundAndTwoEqualOnesAsk() {
+        assertEquals(one("send"), decide(plain, Target.Label("send")))
+        assertEquals(one("later"), decide(plain, Target.Label("Send later")))
+        assertEquals(one("icon"), decide(plain, Target.Label("compose")))
+        assertEquals(
+            Resolution.Several(listOf(ScreenTargets.chosen(elements[4]), ScreenTargets.chosen(elements[5]))),
+            decide(plain, Target.Label("Delete")),
+        )
+        assertEquals(Resolution.NotFound, decide(plain, Target.Label("weather")))
+    }
+
+    @Test
+    fun bareLabelsLookOnlyAtActionableElements() {
+        assertEquals(one("details"), decide(plain, Target.Label("details")))
+        assertEquals(Resolution.NotFound, decide(plain, Target.Label("details"), TargetKind.BARE))
+    }
+
+    @Test
+    fun aNumberNamesABadgeAGridCellOrAnElementNamedWithIt() {
+        val badges = listOf(Badge(1, "send", IntRect(100, 100, 300, 200)), Badge(2, "delete1", IntRect(800, 300, 1000, 400)))
+        val numbered = plain.copy(badges = badges)
+        assertEquals(one("delete1"), decide(numbered, Target.Number(2)))
+        assertEquals(Resolution.NoSuchNumber(5), decide(numbered, Target.Number(5)))
+        // A badge that a new snapshot has not caught up with.
+        assertEquals(Resolution.Changed, decide(plain.copy(badges = listOf(Badge(1, "gone", IntRect(0, 0, 10, 10)))), Target.Number(1)))
+
+        val grid = Grid(IntRect(0, 0, 1080, 2400), columns = 4)
+        val gridded = numbered.copy(grid = grid)
+        assertEquals(Resolution.Cell(3, grid.cell(3)), decide(gridded, Target.Number(3), cells = true))
+        assertEquals(one("send"), decide(gridded, Target.Number(1), cells = false))
+
+        // Without numbers or the grid, only an actionable element whose whole name is the number.
+        assertEquals(one("seven"), decide(plain, Target.Number(7)))
+        assertEquals(Resolution.NeedNumbers, decide(plain, Target.Number(8)))
+        val seven = element("seven2", "7", IntRect(300, 1300, 400, 1400))
+        val eight = element("eight", "8", IntRect(500, 1300, 600, 1400), clickable = false, className = "android.widget.TextView")
+        val keys = plain.copy(snapshot = ScreenSnapshot(0, listOf(keyboard, app), elements + seven + eight))
+        assertEquals(Resolution.Several(listOf(ScreenTargets.chosen(elements[12]), ScreenTargets.chosen(seven))), decide(keys, Target.Number(7)))
+        assertEquals(Resolution.NeedNumbers, decide(keys, Target.Number(8)))
+    }
+
+    @Test
+    fun withoutATargetTheOnlyCandidateOrTheFocusedOne() {
+        assertEquals(one("subscribe"), decide(plain, null, TargetKind.CHECK))
+        assertEquals(one("message"), decide(plain, null, TargetKind.EDIT))
+        assertEquals(Resolution.NotFound, decide(plain, null, TargetKind.DISMISS))
+        // Several candidates: the focused one, and without one, all of them for "Which one?".
+        val news = element("news", "News", IntRect(600, 900, 1000, 1000)).copy(checkable = true)
+        val two = plain.copy(snapshot = ScreenSnapshot(0, listOf(keyboard, app), elements + news))
+        assertEquals(Resolution.Several(listOf(ScreenTargets.chosen(elements[9]), ScreenTargets.chosen(news))), decide(two, null, TargetKind.CHECK))
+        val focusedNews = news.copy(focused = true)
+        val focused = plain.copy(snapshot = ScreenSnapshot(0, listOf(keyboard, app), elements + focusedNews))
+        assertEquals(Resolution.One(ScreenTargets.chosen(focusedNews)), decide(focused, null, TargetKind.CHECK))
+    }
+
+    @Test
+    fun theChosenElementIsStillTheSameOnlyWithItsClassLabelAndMostOfItsBounds() {
+        val send = snapshot.element("send")!!
+        val chosen = ScreenTargets.chosen(send)
+
+        assertTrue(ScreenTargets.same(chosen, send))
+        assertTrue(ScreenTargets.same(chosen, send.copy(bounds = IntRect(120, 110, 320, 210))))
+        assertFalse(ScreenTargets.same(chosen, send.copy(bounds = IntRect(100, 160, 300, 260))))
+        assertFalse(ScreenTargets.same(chosen, send.copy(label = "Sent")))
+        assertFalse(ScreenTargets.same(chosen, send.copy(className = "android.widget.TextView")))
+        assertFalse(ScreenTargets.same(chosen, null))
+    }
+
+    @Test
+    fun aChosenElementPrintsNoLabel() {
+        assertFalse(ScreenTargets.chosen(elements[0]).toString().contains("Send"))
+    }
+}

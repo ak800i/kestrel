@@ -5,6 +5,8 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import dev.kestrel.screen.act.GestureRunner
 import dev.kestrel.screen.act.ScreenActions
+import dev.kestrel.screen.act.SystemControls
+import dev.kestrel.screen.act.TextEditor
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.overlay.Badge
@@ -29,7 +31,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -56,6 +61,17 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     val snapshots = SnapshotCache(tracker) { withContext(Dispatchers.IO) { reader.read() } }
 
     val actions = ScreenActions(service, snapshots, gestures, tracker)
+
+    /** Edits text fields through Kestrel's input method (design spec, section 9.7). */
+    val text = TextEditor(service, snapshots, tracker)
+
+    /** Starts activities and system actions, switches apps and pans the magnification (design spec, section 9.3). */
+    val system = SystemControls(service, snapshots, tracker)
+
+    private val whichOne = MutableStateFlow(false)
+
+    /** Whether "Which one?" numbers show. They go when the screen content changes. */
+    val whichOneShown: StateFlow<Boolean> = whichOne.asStateFlow()
 
     // These fields change only on the main thread.
     /** Set while "show numbers" is on: the numbers then follow the screen. "Which one?" leaves it set. */
@@ -107,6 +123,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /** Shows numbers on the actionable elements. They follow the screen until [hideNumbers] (design spec, section 9.4). */
     suspend fun showNumbers(mode: NumbersMode = NumbersMode.ALL) = withContext(Dispatchers.Main) {
         whichOneShownOn = null
+        whichOne.value = false
         numbersMode = mode
         numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
     }
@@ -119,11 +136,25 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
         val snapshot = snapshots.current().snapshot
         whichOneShownOn = contentOf(snapshot)
         numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys }))
+        whichOne.value = true
+    }
+
+    /**
+     * Removes the "Which one?" numbers of a command that has ended: the numbers of "show numbers" come back when it is
+     * on, and otherwise the numbers go. Nothing changes when no "Which one?" numbers show.
+     */
+    suspend fun endWhichOne() = withContext(Dispatchers.Main) {
+        if (whichOneShownOn == null) return@withContext
+        whichOneShownOn = null
+        whichOne.value = false
+        val mode = numbersMode
+        if (mode == null) numbers.hide() else numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
     }
 
     suspend fun hideNumbers() = withContext(Dispatchers.Main) {
         numbersMode = null
         whichOneShownOn = null
+        whichOne.value = false
         numbers.hide()
     }
 
@@ -199,6 +230,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
             if (content == whichOneShownOn) return
             // The candidates belong to the screen on which "Which one?" was asked.
             whichOneShownOn = null
+            whichOne.value = false
             if (numbersMode == null) numbers.hide()
         }
         numbersMode?.let { mode ->

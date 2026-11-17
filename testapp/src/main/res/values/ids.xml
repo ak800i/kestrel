@@ -13,4 +13,12 @@
     <item name="show_dialog" type="id" />
     <item name="rebuild" type="id" />
     <item name="gesture_pad" type="id" />
+    <item name="commands_dialog" type="id" />
+    <item name="dialog_status" type="id" />
+    <item name="seek_bar" type="id" />
+    <item name="progress_bar" type="id" />
+    <item name="details_row" type="id" />
+    <item name="drag_source" type="id" />
+    <item name="drop_target" type="id" />
+    <item name="pager" type="id" />
 </resources>

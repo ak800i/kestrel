@@ -310,6 +310,44 @@ function Get-EmulatorProcess([string]$AvdName) {
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($AvdName))(\s|$)" }
 }
 
+# Reads the index of a stream's volume from the answer of 'cmd media_session volume --stream <stream> --get', whose line
+# reads '[V] volume is 7 in range [0..25]'. Throws when the answer has no such line.
+function Get-StreamVolume([string[]]$Lines) {
+    foreach ($line in $Lines) {
+        if ($line -match 'volume is (\d+) in range') { return [int]$Matches[1] }
+    }
+    throw "Not an answer of cmd media_session volume: '$($Lines -join ' ')'"
+}
+
+# Returns the IDs of the users called [Name] in the output of 'pm list users', whose lines read
+# 'UserInfo{10:KestrelTest:1030}', such as the work profile that the command tests make.
+function Get-UserIdsNamed([string[]]$Lines, [string]$Name) {
+    foreach ($line in $Lines) {
+        if ($line -match 'UserInfo\{(\d+):([^:}]*):' -and $Matches[2] -ceq $Name) { [int]$Matches[1] }
+    }
+}
+
+# Returns the permissions of the list that the output of 'dumpsys package <package>' shows as granted, each once, in the
+# order of the list. A package that is not installed has none.
+function Get-GrantedPermissions([string[]]$Dump, [string[]]$Permissions) {
+    $text = $Dump -join "`n"
+    foreach ($permission in $Permissions) {
+        if ($text -match "$([regex]::Escape($permission)): granted=true") { $permission }
+    }
+}
+
+# The instrumentation argument that selects command device tests: the whole package dev.kestrel.app.commands, or the
+# classes of [Class], each a simple class name with an optional '#method'. Throws for any other name, so that no name can
+# reach other packages or the shell.
+function Get-CommandTestSelection([string[]]$Class) {
+    if ($Class.Count -eq 0) { return 'package=dev.kestrel.app.commands' }
+    $names = foreach ($name in $Class) {
+        if ($name -cnotmatch '^[A-Z][A-Za-z0-9]*(#[a-z][A-Za-z0-9]*)?$') { throw "Not a test class of dev.kestrel.app.commands: '$name'" }
+        "dev.kestrel.app.commands.$name"
+    }
+    "class=$($names -join ',')"
+}
+
 # Returns the largest _id in the output of 'content query --uri <uri> --projection _id', whose lines read
 # 'Row: 0 _id=12', or 0 when it has no row, as when the device answers 'No result found.'.
 function Get-LargestRowId([string[]]$Rows) {

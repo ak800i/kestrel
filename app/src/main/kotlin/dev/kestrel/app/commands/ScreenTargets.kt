@@ -1,0 +1,222 @@
+package dev.kestrel.app.commands
+
+import dev.kestrel.commands.Target
+import dev.kestrel.commands.text.LabelMatcher
+import dev.kestrel.commands.text.MatchCandidate
+import dev.kestrel.commands.text.MatchDecision
+import dev.kestrel.commands.text.MatchRules
+import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.commands.text.Strictness
+import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.model.ElementAction
+import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowKind
+import dev.kestrel.screen.overlay.Badge
+import dev.kestrel.screen.overlay.Grid
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/** What a command acts on, which decides its candidates (design spec, sections 9.5 and 9.6). */
+internal enum class TargetKind {
+    /** Tap and long press: the actionable elements, and named elements with nothing actionable around or inside them. */
+    TAP,
+
+    /** A bare label or number: the actionable elements only. */
+    BARE,
+    CHECK,
+    EXPAND,
+    COLLAPSE,
+    DISMISS,
+    SCROLL,
+    EDIT,
+}
+
+/** The element that Kestrel chose, as it was then. [ScreenTargets.still] checks it again right before the action. */
+internal data class ChosenElement(val key: String, val className: String?, val label: String?, val bounds: IntRect) {
+    override fun toString() = "ChosenElement(key of ${key.length} characters, label of ${label?.length} characters)"
+}
+
+/** What a command sees: the snapshot, the numbers on the screen and the grid. */
+internal data class ScreenView(val snapshot: ScreenSnapshot, val badges: List<Badge>, val grid: Grid?) {
+    override fun toString() = "ScreenView(${snapshot.elements.size} elements, ${badges.size} numbers, grid=${grid != null})"
+}
+
+/** How a target was found. */
+internal sealed interface Resolution {
+    data class One(val element: ChosenElement) : Resolution
+
+    /** A cell of the grid. */
+    data class Cell(val number: Int, val bounds: IntRect) : Resolution
+
+    /** Several close candidates, for "Which one?". */
+    data class Several(val elements: List<ChosenElement>) : Resolution
+
+    data object NotFound : Resolution
+
+    /** A number while neither numbers nor the grid show, and no element is named with it. */
+    data object NeedNumbers : Resolution
+
+    data class NoSuchNumber(val number: Int) : Resolution
+
+    /** A badge names an element that is no longer on the screen. */
+    data object Changed : Resolution
+
+    /** Kestrel's accessibility service is off. */
+    data object NoScreen : Resolution
+}
+
+/**
+ * Finds the elements that commands act on (design spec, sections 9.2, 9.4 and 9.6). The functions of the companion are
+ * pure, so that JVM tests check the decisions; the others read the current snapshot.
+ */
+internal class ScreenTargets(private val screen: () -> ScreenSession?) {
+    /** The current snapshot with the numbers and the grid on the screen, or null without the accessibility service. */
+    suspend fun view(): ScreenView? {
+        val session = screen() ?: return null
+        val snapshot = session.snapshots.current().snapshot
+        // The overlays change only on the main thread.
+        return withContext(Dispatchers.Main) { ScreenView(snapshot, session.numberBadges, session.grid) }
+    }
+
+    /** Finds [target] among the candidates of [kind]. With [cells], a number names a grid cell while the grid shows. */
+    suspend fun resolve(target: Target?, kind: TargetKind, strictness: Strictness = Strictness.NORMAL, cells: Boolean = false): Resolution {
+        val view = view() ?: return Resolution.NoScreen
+        return decide(view, target, kind, strictness, cells)
+    }
+
+    /** The element that [chosen] names in the current snapshot, when it is still the element that Kestrel chose. */
+    suspend fun still(chosen: ChosenElement): ScreenElement? {
+        val session = screen() ?: return null
+        return session.snapshots.current().snapshot.element(chosen.key).takeIf { same(chosen, it) }
+    }
+
+    companion object {
+        private const val MAX_DEPTH = 20
+
+        /**
+         * The candidates of [kind] in [snapshot], in the snapshot's order. The keyboard's window never gives candidates,
+         * and an element that a window above covers whole is no candidate, because a finger could not reach it.
+         */
+        fun candidates(snapshot: ScreenSnapshot, kind: TargetKind): List<ScreenElement> {
+            val keyboard = snapshot.windows.filter { it.kind == WindowKind.INPUT_METHOD }.map { it.id }.toSet()
+            val shown = snapshot.elements.filter { it.windowId !in keyboard && !covered(snapshot, it) }
+            return when (kind) {
+                TargetKind.TAP -> {
+                    val near = nearActionable(snapshot)
+                    shown.filter { it.isActionable || (it.enabled && ownNames(it).isNotEmpty() && it.key !in near) }
+                }
+                TargetKind.BARE -> shown.filter { it.isActionable }
+                TargetKind.CHECK -> shown.filter { it.enabled && it.checkable }
+                TargetKind.EXPAND -> shown.filter { it.enabled && ElementAction.EXPAND in it.actions }
+                TargetKind.COLLAPSE -> shown.filter { it.enabled && ElementAction.COLLAPSE in it.actions }
+                TargetKind.DISMISS -> shown.filter { it.enabled && ElementAction.DISMISS in it.actions }
+                TargetKind.SCROLL -> shown.filter { it.enabled && it.scrollable }
+                TargetKind.EDIT -> shown.filter { it.enabled && it.editable }
+            }
+        }
+
+        /** The names of [element], or of its nearest ancestor that has names. A field's typed text is never a name. */
+        fun names(snapshot: ScreenSnapshot, element: ScreenElement): List<String> {
+            var current: ScreenElement? = element
+            var depth = 0
+            while (current != null && depth <= MAX_DEPTH) {
+                val names = ownNames(current)
+                if (names.isNotEmpty()) return names
+                current = current.parent?.let { snapshot.elements.getOrNull(it) }
+                depth++
+            }
+            return emptyList()
+        }
+
+        fun decide(view: ScreenView, target: Target?, kind: TargetKind, strictness: Strictness, cells: Boolean): Resolution {
+            val candidates = candidates(view.snapshot, kind)
+            return when (target) {
+                null -> only(candidates)
+                is Target.Number -> number(view, target.number, candidates, cells)
+                is Target.Label -> label(view.snapshot, target.spoken, candidates, strictness)
+            }
+        }
+
+        fun chosen(element: ScreenElement) = ChosenElement(element.key, element.className, element.label, element.bounds)
+
+        /** Whether [element] is still [chosen]: the same class and label, and bounds that cover at least half the chosen ones. */
+        fun same(chosen: ChosenElement, element: ScreenElement?): Boolean {
+            if (element == null || element.className != chosen.className || element.label != chosen.label) return false
+            val overlap = chosen.bounds.intersect(element.bounds) ?: return chosen.bounds.isEmpty && chosen.bounds == element.bounds
+            return 2L * overlap.width * overlap.height >= chosen.bounds.width.toLong() * chosen.bounds.height
+        }
+
+        // Without a target: the only candidate, else the focused one.
+        private fun only(candidates: List<ScreenElement>): Resolution {
+            candidates.singleOrNull()?.let { return Resolution.One(chosen(it)) }
+            candidates.singleOrNull { it.focused }?.let { return Resolution.One(chosen(it)) }
+            if (candidates.isEmpty()) return Resolution.NotFound
+            return Resolution.Several(candidates.take(MatchRules.MAX_AMBIGUOUS).map(::chosen))
+        }
+
+        private fun number(view: ScreenView, number: Int, candidates: List<ScreenElement>, cells: Boolean): Resolution {
+            val grid = view.grid
+            if (cells && grid != null) {
+                return if (number in 1..grid.cellCount) Resolution.Cell(number, grid.cell(number)) else Resolution.NoSuchNumber(number)
+            }
+            if (view.badges.isNotEmpty()) {
+                val badge = view.badges.firstOrNull { it.number == number } ?: return Resolution.NoSuchNumber(number)
+                val element = view.snapshot.element(badge.key) ?: return Resolution.Changed
+                return Resolution.One(ChosenElement(badge.key, element.className, element.label, badge.bounds))
+            }
+            // An actionable element named with its number, such as a key of the dialer or of a calculator (design D6).
+            val named = candidates.filter { candidate ->
+                candidate.isActionable && names(view.snapshot, candidate).any { Normalizer.normalize(it) == number.toString() }
+            }
+            return when (named.size) {
+                0 -> Resolution.NeedNumbers
+                1 -> Resolution.One(chosen(named[0]))
+                else -> Resolution.Several(named.map(::chosen))
+            }
+        }
+
+        private fun label(snapshot: ScreenSnapshot, spoken: String, candidates: List<ScreenElement>, strictness: Strictness): Resolution {
+            val named = candidates.map { MatchCandidate(it.key, names(snapshot, it)) }
+            return when (val decision = LabelMatcher.decide(spoken, named, strictness)) {
+                is MatchDecision.Found -> snapshot.element(decision.id)?.let { Resolution.One(chosen(it)) } ?: Resolution.NotFound
+                is MatchDecision.Ambiguous -> Resolution.Several(decision.ids.mapNotNull { snapshot.element(it) }.map(::chosen))
+                MatchDecision.NotFound -> Resolution.NotFound
+            }
+        }
+
+        private fun ownNames(element: ScreenElement): List<String> = listOfNotNull(
+            element.label,
+            element.text.takeUnless { element.editable },
+            element.contentDescription,
+            element.hint,
+            element.supplementalDescription,
+            element.suggestedName,
+        ).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+        // The keys of the elements that have an actionable element around them or inside them.
+        private fun nearActionable(snapshot: ScreenSnapshot): Set<String> {
+            val near = HashSet<String>()
+            for (element in snapshot.elements) {
+                var ancestor = element.parent?.let { snapshot.elements.getOrNull(it) }
+                var depth = 0
+                while (ancestor != null && depth < MAX_DEPTH) {
+                    if (element.isActionable) near += ancestor.key
+                    if (ancestor.isActionable) near += element.key
+                    ancestor = ancestor.parent?.let { snapshot.elements.getOrNull(it) }
+                    depth++
+                }
+            }
+            return near
+        }
+
+        private fun covered(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
+            val window = snapshot.windows.firstOrNull { it.id == element.windowId } ?: return false
+            return snapshot.windows.any { it.layer > window.layer && it.bounds.contains(element.bounds) }
+        }
+
+        private fun IntRect.contains(other: IntRect): Boolean =
+            left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom
+    }
+}

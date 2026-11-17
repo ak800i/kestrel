@@ -343,7 +343,7 @@ All overlays are accessibility overlay windows, so Kestrel needs no "display ove
 | Numbers | Badges on actionable elements. They stay until "hide numbers" and refresh when the screen changes. A setting chooses between all elements and only unlabeled ones, as in Voice Access. |
 | Labels | Suggested names next to elements, hidden when the content changes. A name comes from the element's text, description, supplemental description or hint, or the text inside it, or is derived from its view ID (for example `compose_button` becomes "compose"). |
 | Grid | Numbered cells for tapping, swiping, dragging and pinching, with "more squares" and "fewer squares". |
-| Which one? | When "tap X" matches several elements, numbers appear on those elements only. They go when the screen changes. If "show numbers" is on, its numbers then come back. |
+| Which one? | When a command's words fit several elements, numbers appear on those elements only, and Kestrel asks "Which one?"; the answer is a number, such as "2", "number 2" or "tap 2". The numbers go when the command ends or the screen changes, and the question then ends; if "show numbers" is on, its numbers come back. When nothing fits, Kestrel says "I can't find X" and shows numbers on all actionable elements until the screen changes. |
 | Feedback bar | Section 8.9. |
 | Confirmation card | Section 12.4. Its Confirm and Cancel buttons accept touches. |
 | Touch watcher | An invisible window of 1×1 pixel that reports touches anywhere else on the screen (section 14.1). |
@@ -364,7 +364,9 @@ Before Kestrel takes a screenshot for OCR or for the LLM, it hides its overlays.
 - **Normalising:** Kestrel lowercases text, folds diacritics (č→c, ć→c, š→s, ž→z, đ→dj), transliterates Cyrillic labels to Latin and removes punctuation. It does this to both the spoken words and the screen labels.
 - **Scoring:** each candidate gets 0.40 × the Jaro–Winkler similarity of the words joined without spaces, 0.35 × the word overlap (the Dice coefficient; two words match when they are equal, equal without a final "s", or at least 0.92 similar, and, for a command with a verb but never for bare labels or contacts, when both have 5 letters or more, the same phonetic key and spellings at least 0.80 similar once respelled) and 0.25 × the similarity of an in-house phonetic key that respells Serbian letters first ("Đorđe" and "Georgie" share it). The leading "the", "a" or "an" of the spoken phrase is dropped, and "okay", "OK" and "O.K." are the same word, so "okay" taps an "OK" button. An exact match after normalising, with or without those articles, scores 1.0, and a phrase whose words start a name, such as "Ana Petrović" for a chat row "Ana Petrović: See you at 5", scores at least 0.85.
 - **Limits:** a name that the owner says exactly (after normalising) acts at once when no other candidate has it, whatever near misses the screen also shows, so "Ana" taps "Ana" next to "Anja"; two or more exact matches ask "Which one?" with those only. Without an exact match, Kestrel acts when the best score is at least 0.80 and beats the second best by at least 0.10. For bare labels, contacts, and every phrase or name of 4 letters or fewer, it needs 0.90 and 0.15. Two equal best scores never act. Candidates from 0.60 up that are within 0.10 of the best are offered in "Which one?"; below 0.60 for all, nothing was found; so a single near miss, such as "Anja" for "Ana", asks "Which one?" with its one number, which works as a confirmation. These are research r23's starting values, which the corpus run of sub-project 3 checks.
-- **Deciding:** Kestrel acts when the best score passes a threshold and clearly beats the second best. Otherwise it shows numbers on the candidates and asks "Which one?". When nothing comes close, it says "I can't find X" and shows numbers.
+- **Deciding:** Kestrel acts when the best score passes a threshold and clearly beats the second best. Otherwise it shows numbers on the candidates and asks "Which one?". When nothing comes close, it says "I can't find X" and shows numbers. A number names a badge, or a cell while the grid shows; without numbers or the grid, it names only an actionable element whose whole name is that number, such as a key of the dialer, and otherwise Kestrel says "Say 'show numbers' first."
+- **Checking:** right before it acts, Kestrel checks that the element still has the class, the label and most of the bounds that it had when Kestrel chose it, because a key names a position (section 9.2). A label is then decided once more; a number or an answer to "Which one?" ends with "The screen changed. Say it again."
+- **Bare labels and numbers:** a bare label acts only on its one exact match or a clear match under the strict limits, and never asks "Which one?" or says "I can't find X", because the owner may be talking to someone. A bare "okay" or "OK" is ignored, because it is conversation far more often than an answer to a dialog; "tap OK" taps an "OK" button. A bare number acts like "tap N" while numbers or the grid show. Anything else that is not a command is ignored without a word.
 - The boost words in section 8.3 make the recogniser produce the on-screen spelling more often in the first place.
 
 ### 9.7 Dictation and text editing
@@ -377,7 +379,7 @@ Before Kestrel takes a screenshot for OCR or for the LLM, it hides its overlays.
 
 ### 9.8 Voice Access options carried over
 
-Kestrel offers these Voice Access settings: numbers for all elements or only unlabeled ones, require verbs, behaviour on screen wake-up, time-out after no speech, listening for incoming calls, in-call commands, and the earbud microphone. Voice Access's "Cancel on touch" option is always on for tasks in Kestrel (section 14.1).
+Kestrel offers these Voice Access settings: numbers for all elements or only unlabeled ones, require verbs, behaviour on screen wake-up, time-out after no speech, listening for incoming calls, in-call commands, and the earbud microphone. Voice Access's "Cancel on touch" option is always on in Kestrel, for tasks and for an instant command's question or a call's countdown (section 14.1).
 
 ## 10. Provider layer
 
@@ -701,6 +703,7 @@ Kestrel always says what happened and what it already did. It never fails silent
 ### 14.1 Cancel on touch (D27)
 
 - Any touch on the screen cancels a running task, a routine replay, a pending confirmation or an open question from the agent. Kestrel stops at once, removes its task overlays, says "Cancelled", and reports what it had already done (section 14.5). This way, Kestrel never races with the owner, and changes that it did not make never confuse it.
+- A touch also cancels an instant command that waits for the owner: its "Which one?" question, or the countdown before a call (section 13.6). The bar then shows "Cancelled", and the owner's touch reaches the app as usual.
 - Touches on Kestrel's own confirmation card act on the card. During a hand-over, Kestrel is not acting, so touches are expected and do not cancel the task (section 12.4).
 - **Detection.** The touch watcher (section 9.4) is an accessibility overlay of 1×1 pixel that asks Android to report touches outside it (`FLAG_WATCH_OUTSIDE_TOUCH`). Android injects Kestrel's own gestures from its virtual input device, while the owner's finger comes from the touchscreen. So the watcher ignores touches from the virtual device while one of Kestrel's gestures runs and for 100 ms after it, and reports every other touch. On Android 13 to 15, the owner's touch also cancels Kestrel's running gesture. From Android 16 QPR2, Kestrel is told that the gesture completed, but Android cancels the copy that the app on the screen receives, so the gesture may have had no effect. Android 16 before QPR2 can behave either way, because a feature flag decides. In every case Kestrel stops after the gesture, and its report (section 14.5) does not count that gesture as done (section 19.1, B35).
 - If the A71 shows that the watcher does not receive a real finger's touches, Kestrel uses screen events that it did not cause (clicks, scrolls and text changes) as the signal instead.
@@ -797,6 +800,8 @@ These run on the JVM on every build and in CI:
 ### 16.3 Instrumented tests
 
 These run on `kestrel-api37`, and on the A71 before each release. They use the fixture screens in `:testapp`: classic Views, Compose, a WebView page, unlabeled icon buttons, long lists, dialogs, text fields, a secure window and an injection screen. They cover snapshots, every action and its fallback, the overlays, text editing, the touch watcher, and OCR on fixture screenshots.
+
+The device tests of the instant commands (the package `dev.kestrel.app.commands`) drive each command through the same path as speech: the test sends the text to the Orchestrator as a transcript, with a voice session that needs no speech models, and waits for the command's report. They use the fixture `CommandsActivity` and Android's own apps. They skip themselves unless the instrumentation argument `kestrelCommands=true` is present, which only `scripts\command-test.ps1` passes. That script runs only on the emulator, and puts back what the tests change: the radios, volumes and ringer mode, Quick Settings' tiles, the lock-screen setting, users, contacts, call-log rows, screenshots, and the permissions that the tests grant, except Kestrel's microphone and notification permissions, which stay granted as after `scripts\voice-test.ps1`.
 
 ### 16.4 Voice tests
 
@@ -973,7 +978,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | Keyboard | Show keyboard; Hide keyboard | Yes |
 | Magnification | Start magnification; Start zooming; Magnify; Zoom in; Enhance; Zoom out; Pan, move, go or scroll up, down, left or right; Stop magnification; Stop zooming; Cancel zooming | Yes, through the accessibility magnification controller |
 | Stopping | Stop listening; Touch to pause in the notification; screen off; time-out after no speech | Yes |
-| Options | Cancel on touch | Always on for tasks (section 14.1) |
+| Options | Cancel on touch | Always on, for tasks and for an instant command's question or a call's countdown (section 14.1) |
 | Options | Require verbs; numbers for all items or only unlabeled ones; behaviour on screen wake-up; time-out after no speech | Yes (section 9.8) |
 | Options | Recognize common icons | Later (section 21) |
 | Options | Activation with a Bluetooth or wired switch | Later |

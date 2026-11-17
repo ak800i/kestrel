@@ -7,8 +7,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
-import dev.kestrel.app.commands.CommandConversation
+import dev.kestrel.app.commands.CommandEnvironment
+import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.commands.CommandRunner
+import dev.kestrel.app.commands.InstantCommands
+import dev.kestrel.app.commands.ScreenTargets
 import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidCallScreen
@@ -33,9 +36,6 @@ import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.orchestrator.Mode
-import dev.kestrel.commands.Command
-import dev.kestrel.commands.CommandResult
-import dev.kestrel.commands.Outcome
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.NetworkGateway
@@ -139,6 +139,34 @@ class AppGraph(context: Context) {
     /** Kestrel's notifications about problems (design spec, section 14.6). */
     internal val problems: ProblemNotifications by lazy { ProblemNotifications(appContext) }
 
+    // The owner's options for the instant commands, at their defaults until the settings app stores them.
+    private val commandOptions = MutableStateFlow(CommandOptions())
+
+    /**
+     * The executor of the instant commands (design spec, section 9.5), which Listening runs on Dispatchers.IO. It works on
+     * the screen through Kestrel's accessibility service while that is connected.
+     */
+    internal val commands: CommandRunner by lazy {
+        InstantCommands(
+            CommandEnvironment(
+                context = appContext,
+                screen = { screen.value },
+                options = commandOptions.asStateFlow(),
+                targets = ScreenTargets { screen.value },
+                scope = scope,
+                // From the accessibility service, which Android lets start activities from the background (prototype P1).
+                // Showing a page and asking for a permission come with the settings page of the instant commands.
+                openSettings = { _, _ ->
+                    appContext.startActivity(
+                        Intent(appContext, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    )
+                },
+                report = reportFailure,
+            ),
+        )
+    }
+
     /**
      * Kestrel's listening, one for the whole process (design spec, sections 7.2 and 7.3), so that the accessibility
      * service, the notification and the tile reach it whether or not ListeningService runs. Its thread runs one thing at a
@@ -218,13 +246,7 @@ class AppGraph(context: Context) {
             callActions = CallActions(AndroidCallApi(appContext)) {
                 screen.value?.let { session -> AndroidCallScreen(appContext, session.actions) }
             },
-            // The executor of the instant commands comes with the next task; until then every command is ignored.
-            commands = object : CommandRunner {
-                override suspend fun run(command: Command, heard: String, conversation: CommandConversation) =
-                    CommandResult(Outcome.IGNORED)
-
-                override fun privateInput() = false
-            },
+            commands = commands,
             // Section 15: encrypted like every setting. Listening passes a change on at once.
             options = settings.observe(SettingKeys.LISTENING_OPTIONS),
             conditions = object : ListeningConditions {

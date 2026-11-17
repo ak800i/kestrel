@@ -48,5 +48,10 @@
         <activity
             android:name=".HookProbeActivity"
             android:exported="true" />
+        <activity
+            android:name=".CommandsActivity"
+            android:exported="true" />
+        <!-- Plan 3B: text fixtures -->
+        <!-- Plan 3C: phone fixtures -->
     </application>
 </manifest>

@@ -1,8 +1,13 @@
 package dev.kestrel.app.commands
 
+import android.content.Context
+import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
+import dev.kestrel.screen.ScreenSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Runs the instant commands (design spec, sections 7.3 and 9.5). `Listening` calls [run] in a job of its own, one
@@ -43,3 +48,30 @@ internal interface CommandConversation {
 
 /** What happened to instant command number [command] of the kind [kind] (its class's simple name), never its words. */
 internal data class CommandReport(val command: Int, val kind: String, val outcome: Outcome)
+
+/**
+ * One part of the executor: the text commands (plan 3B), the phone commands (plan 3C) or the screen commands. [run]
+ * returns null for a command that the part does not take.
+ */
+internal interface CommandPart {
+    suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult?
+
+    /** Whether a password field has the focus, as [CommandRunner.privateInput] asks; it makes no binder call. */
+    fun privateInput(): Boolean = false
+}
+
+/**
+ * What every part of the executor needs (design spec, section 9.5). [screen] is null while Kestrel's accessibility
+ * service is off. [options] are the owner's options for the instant commands, read at each command. [openSettings] opens
+ * Kestrel's settings app, on [SettingsPage] when one is given, and asks for the permission when one is given. [report]
+ * logs a failure by its classes only.
+ */
+internal class CommandEnvironment(
+    val context: Context,
+    val screen: () -> ScreenSession?,
+    val options: StateFlow<CommandOptions>,
+    val targets: ScreenTargets,
+    val scope: CoroutineScope,
+    val openSettings: (page: SettingsPage?, permission: String?) -> Unit,
+    val report: (String, Throwable) -> Unit,
+)
