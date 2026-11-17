@@ -66,6 +66,14 @@ object GesturePaths {
         return line.takeIf { moves }
     }
 
+    /**
+     * Where a gesture on an element with [bounds] starts or ends: the point that a fallback tap would use (design spec,
+     * section 9.3), that is the centre, or when windows above the element, given as [covers], hide the centre, the point
+     * of a grid of 8 by 8 points over it that lies nearest to the centre and that they leave uncovered. Null when they
+     * hide every point of the grid, so that the gesture would land on a window above, such as the keyboard.
+     */
+    fun pointOn(bounds: IntRect, covers: List<IntRect>): ScreenPoint? = Uncovered.point(bounds, covers)
+
     /** A swipe from one pixel inside [edge], at the middle of that edge, a third of the screen inwards. */
     fun fromEdge(screen: IntRect, edge: ScreenEdge): SwipeLine {
         val tall = screen.height / SWIPE_DIVISOR

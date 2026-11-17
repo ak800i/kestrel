@@ -2,6 +2,7 @@ package dev.kestrel.app.commands
 
 import dev.kestrel.commands.Target
 import dev.kestrel.commands.text.Strictness
+import dev.kestrel.screen.act.ScreenPoint
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
@@ -240,6 +241,31 @@ class ScreenTargetsTest {
         val plainText = ScreenSnapshot(0, listOf(keyboard, app), listOf(text) + elements.drop(1))
         assertEquals(text, check(plainText, send, Target.Label("Send")))
         assertNull(check(plainText, send, Target.Label("Send"), TargetKind.BARE, Strictness.STRICT))
+    }
+
+    @Test
+    fun actAndBareDecideAgainOnlyALabelThatWasFoundAtOnce() {
+        val found = one("send")
+        assertEquals(Target.Label("Send"), ScreenTargets.again(Target.Label("Send"), found))
+        // After "Which one?" the answer chose the element, so its label would decide among the same look-alikes again.
+        assertNull(ScreenTargets.again(Target.Label("Delete"), decide(plain, Target.Label("Delete"))))
+        assertNull(ScreenTargets.again(Target.Number(2), found))
+        assertNull(ScreenTargets.again(null, found))
+    }
+
+    @Test
+    fun aGestureOnAnElementStartsWhereNoWindowAboveCoversItAndNowhereWhenNothingOfItShows() {
+        val delete = snapshot.element("delete2")!!
+        assertEquals(ScreenPoint(900, 550), ScreenTargets.gesturePoint(snapshot, delete))
+
+        // A popup over the row's centre: the point of the 8 by 8 grid that is nearest to the centre and below the popup.
+        val popup = WindowSummary(3, WindowKind.APPLICATION, bounds = IntRect(0, 450, 1080, 560), layer = 1)
+        assertEquals(ScreenPoint(912, 568), ScreenTargets.gesturePoint(ScreenSnapshot(0, listOf(keyboard, popup, app), elements), delete))
+
+        // Two windows that each cover half of the element: a finger reaches neither half.
+        val left = WindowSummary(3, WindowKind.APPLICATION, bounds = IntRect(0, 0, 900, 1000), layer = 1)
+        val right = WindowSummary(4, WindowKind.APPLICATION, bounds = IntRect(900, 0, 1080, 1000), layer = 1)
+        assertNull(ScreenTargets.gesturePoint(ScreenSnapshot(0, listOf(keyboard, left, right, app), elements), delete))
     }
 
     private fun check(

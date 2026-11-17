@@ -96,6 +96,18 @@ class GestureCommandsTest {
     }
 
     @Test
+    fun aGestureOnAnElementThatAWindowCoversInPartGoesWhereAFingerReachesIt() = runBlocking<Unit> {
+        // A window without anything to tap covers the middle of the pad, its centre included.
+        screen.open("GesturesActivity", "Gestures fixture", extras = "--ez cover true")
+        screen.awaitElement { it.label == "Covered" }
+
+        assertEquals(Outcome.DONE, CommandTests.say("swipe left on gesture pad").outcome)
+        awaitStatus("Swipe left")
+        assertEquals(Outcome.DONE, CommandTests.say("pinch in on gesture pad").outcome)
+        awaitStatus("Pinch in")
+    }
+
+    @Test
     fun dragMovesAnElementToTheTargetThatTheOwnerNamesOrGivesWhenAsked() = runBlocking<Unit> {
         screen.open("CommandsActivity", "Commands fixture")
 

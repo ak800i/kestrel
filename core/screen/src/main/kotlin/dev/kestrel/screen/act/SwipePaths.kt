@@ -3,7 +3,8 @@ package dev.kestrel.screen.act
 import dev.kestrel.screen.model.IntRect
 import kotlin.math.roundToInt
 
-internal data class ScreenPoint(val x: Int, val y: Int)
+/** A point on the screen, in screen pixels. */
+data class ScreenPoint(val x: Int, val y: Int)
 
 /** Where a swipe that scrolls an area starts and ends. It stays clear of the screen edges, where swipes mean "back" or "home". */
 internal object SwipePaths {

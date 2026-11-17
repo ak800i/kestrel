@@ -14,6 +14,7 @@ import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GesturePaths
 import dev.kestrel.screen.act.ScreenEdge
+import dev.kestrel.screen.act.ScreenPoint
 import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
@@ -120,8 +121,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         }
         // A key names a position (section 9.2). A label is decided once more on the new screen; a number or an answer may
         // name another element by now.
-        val again = (target as? Target.Label)?.takeIf { found is Resolution.One }
-        val element = targets.still(chosen, again, kind) ?: return changed()
+        val element = targets.still(chosen, ScreenTargets.again(target, found), kind) ?: return changed()
         return done(onElement(element))
     }
 
@@ -192,16 +192,17 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         val number = command.number
         // A bare "okay" is conversation far more often than an answer to a dialog; "tap OK" still taps an "OK" button.
         if (number == null && Normalizer.words(command.text).all { it == "ok" }) return CommandResult(Outcome.IGNORED)
+        val target = if (number != null) Target.Number(number) else Target.Label(command.text)
         val found = if (number != null) {
-            targets.resolve(Target.Number(number), TargetKind.BARE, cells = true)
+            targets.resolve(target, TargetKind.BARE, cells = true)
         } else {
-            targets.resolve(Target.Label(command.text), TargetKind.BARE, Strictness.STRICT)
+            targets.resolve(target, TargetKind.BARE, Strictness.STRICT)
         }
         return when (found) {
             is Resolution.Cell -> done(tapAt(screen, found.bounds))
             is Resolution.One -> {
                 // As in act: a clear label is decided once more, as strictly, when its element has changed (section 9.6).
-                val again = if (number == null) Target.Label(command.text) else null
+                val again = ScreenTargets.again(target, found)
                 val element = targets.still(found.element, again, TargetKind.BARE, Strictness.STRICT) ?: return changed()
                 done(screen.actions.tap(element.key))
             }
@@ -267,7 +268,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
 
     /**
      * "Scroll to top" and "scroll to bottom": scrolls until the list stops moving, that is until the action fails or the
-     * screen's content stays the same, at most [MAX_SCROLLS] times and for [SCROLL_TO_END_MILLIS].
+     * screen's content stays the same, at most [ScrollToEnd.MAX_SCROLLS] times and for [ScrollToEnd.MILLIS].
      */
     private suspend fun scrollToEnd(
         screen: ScreenSession,
@@ -276,24 +277,18 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     ): CommandResult {
         val direction = if (command.top) ScrollDirection.UP else ScrollDirection.DOWN
         val target = command.target ?: return done(scrollAllTheWay(screen, direction, null))
-        return act(screen, target, TargetKind.SCROLL, conversation) { scrollAllTheWay(screen, direction, it.key) }
+        return act(screen, target, TargetKind.SCROLL, conversation) { scrollAllTheWay(screen, direction, it) }
     }
 
-    private suspend fun scrollAllTheWay(screen: ScreenSession, direction: ScrollDirection, key: String?): ActionResult {
-        var before = content(screen)
-        var last = screen.actions.scroll(direction, key)
-        if (last is ActionResult.Failed) return last
-        withTimeoutOrNull(SCROLL_TO_END_MILLIS) {
-            repeat(MAX_SCROLLS - 1) {
-                val now = content(screen)
-                if (now == before) return@withTimeoutOrNull
-                before = now
-                val next = screen.actions.scroll(direction, key)
-                if (next is ActionResult.Failed) return@withTimeoutOrNull
-                last = next
-            }
-        }
-        return last
+    // The list that the owner named is checked again before each scroll after the first, because a key names a position
+    // (section 9.2): a list that loads a new view or an app that navigates can give the key to another element.
+    private suspend fun scrollAllTheWay(screen: ScreenSession, direction: ScrollDirection, list: ScreenElement?): ActionResult {
+        val chosen = list?.let(ScreenTargets::chosen)
+        return ScrollToEnd.scroll(
+            scroll = { screen.actions.scroll(direction, list?.key) },
+            content = { content(screen) },
+            stillThere = { chosen == null || targets.still(chosen) != null },
+        )
     }
 
     /** What moves when a list scrolls: the names on the screen and where they are. */
@@ -319,7 +314,8 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     /**
      * "Swipe up", "swipe up on 5" and "swipe 5 up": from the screen's centre, or from the centre of a grid's square or of
      * an element, a third of the screen in the direction that the owner names, which is the finger's direction. The owner
-     * may name a sideways swipe across a list; spec 9.3's rule against them binds Kestrel's own choices.
+     * may name a sideways swipe across a list; spec 9.3's rule against them binds Kestrel's own choices. On an element
+     * that the keyboard or a popup covers in part, the swipe starts where a fallback tap would go.
      */
     private suspend fun swipe(screen: ScreenSession, command: Command.Swipe, conversation: CommandConversation): CommandResult {
         val direction = scrollDirection(command.direction)
@@ -328,26 +324,30 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             if (line == null) OFF_SCREEN else screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY)
         }
         val target = command.target ?: return screen.screenBounds.let { done(swipeFrom(it.centerX, it.centerY)) }
-        return act(screen, target, TargetKind.TAP, conversation, onCell = { swipeFrom(it.centerX, it.centerY) }) {
-            swipeFrom(it.bounds.centerX, it.bounds.centerY)
+        return act(screen, target, TargetKind.TAP, conversation, onCell = { swipeFrom(it.centerX, it.centerY) }) { element ->
+            targets.gesturePoint(element)?.let { swipeFrom(it.x, it.y) } ?: COVERED
         }
     }
 
-    /** "Pinch out" and "pinch in", around the screen's centre or the centre of a grid's square or of an element. */
+    /**
+     * "Pinch out" and "pinch in", around the screen's centre or the centre of a grid's square or of an element; on an
+     * element that the keyboard or a popup covers in part, around the point where a fallback tap would go.
+     */
     private suspend fun pinch(screen: ScreenSession, command: Command.Pinch, conversation: CommandConversation): CommandResult {
         val pinchAround: suspend (Int, Int) -> ActionResult = { x, y ->
             val line = GesturePaths.limit(screen.screenBounds, x, y, command.out)
             if (line == null) OFF_SCREEN else screen.actions.pinch(line.centerX, line.centerY, line.startSpan, line.endSpan)
         }
         val target = command.target ?: return screen.screenBounds.let { done(pinchAround(it.centerX, it.centerY)) }
-        return act(screen, target, TargetKind.TAP, conversation, onCell = { pinchAround(it.centerX, it.centerY) }) {
-            pinchAround(it.bounds.centerX, it.bounds.centerY)
+        return act(screen, target, TargetKind.TAP, conversation, onCell = { pinchAround(it.centerX, it.centerY) }) { element ->
+            targets.gesturePoint(element)?.let { pinchAround(it.x, it.y) } ?: COVERED
         }
     }
 
     /**
      * "Drag Drag me to Drop here" or "drag 5 to 9": presses and holds the centre of the first element or square and moves
-     * to the second's. "Drag 5" asks "Drag it where?" and takes the answer as the second.
+     * to the second's; on an element that the keyboard or a popup covers in part, the point where a fallback tap would
+     * go. "Drag 5" asks "Drag it where?" and takes the answer as the second.
      */
     private suspend fun drag(screen: ScreenSession, command: Command.Drag, conversation: CommandConversation): CommandResult {
         var source: ChosenElement? = null
@@ -370,18 +370,24 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         val to = command.to ?: dragTarget(conversation.ask(CommandTexts.DRAG_WHERE) ?: return CommandResult(Outcome.CANCELLED))
         var moved = false
         // The question, or "Which one?" for the target, can take many seconds, so the start is checked again right before
-        // the finger moves, as the target is (section 9.2). A square of the grid is a fixed point of the screen.
-        val dragTo: suspend (Int, Int) -> ActionResult = { toX, toY ->
-            val from = square ?: source?.let { targets.still(it) }?.bounds
-            if (from == null) {
-                moved = true
-                FOUND
+        // the finger moves, as the target is (section 9.2). A square of the grid is a fixed point of the screen. The start
+        // is not decided once more: a start that has changed ends the drag with "The screen changed" (section 9.6).
+        val dragTo: suspend (Int, Int) -> ActionResult = dragTo@{ toX, toY ->
+            val cell = square
+            val from = if (cell != null) {
+                ScreenPoint(cell.centerX, cell.centerY)
             } else {
-                screen.actions.drag(from.centerX, from.centerY, toX, toY)
+                val start = source?.let { targets.still(it) }
+                if (start == null) {
+                    moved = true
+                    return@dragTo FOUND
+                }
+                targets.gesturePoint(start) ?: return@dragTo COVERED
             }
+            screen.actions.drag(from.x, from.y, toX, toY)
         }
-        val result = act(screen, to, TargetKind.TAP, conversation, onCell = { dragTo(it.centerX, it.centerY) }) {
-            dragTo(it.bounds.centerX, it.bounds.centerY)
+        val result = act(screen, to, TargetKind.TAP, conversation, onCell = { dragTo(it.centerX, it.centerY) }) { element ->
+            targets.gesturePoint(element)?.let { dragTo(it.x, it.y) } ?: COVERED
         }
         return if (moved) changed() else result
     }
@@ -407,14 +413,14 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     }
 
     private companion object {
-        const val MAX_SCROLLS = 30
-        const val SCROLL_TO_END_MILLIS = 15_000L
-
         /** "to" at the start of an answer, as in "to Drop here". */
         val LEADING_TO = Regex("^\\s*to\\b[\\s,]*", RegexOption.IGNORE_CASE)
 
         /** A gesture whose point lies outside the screen, or too close to its edge to move. */
         val OFF_SCREEN = ActionResult.Failed("The gesture would leave the screen")
+
+        /** A gesture on an element that windows above, such as the keyboard or a popup, cover everywhere. */
+        val COVERED = ActionResult.Failed("Other windows cover it.")
 
         /** What a step that only finds its element gives `act`: nothing has moved yet. */
         val FOUND = ActionResult.Done(ActionMethod.ACTION)
@@ -476,4 +482,36 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     }
 
     private fun changed() = CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+}
+
+/** The loop of "scroll to top" and "scroll to bottom", apart from the screen so that JVM tests check it. */
+internal object ScrollToEnd {
+    const val MAX_SCROLLS = 30
+    const val MILLIS = 15_000L
+
+    /**
+     * Calls [scroll] until it fails, until [content] stays the same after a scroll, or until [stillThere] says before a
+     * scroll after the first that the list has gone, at most [MAX_SCROLLS] times and for [MILLIS]. Gives the first
+     * scroll's failure, or else the last scroll that was done.
+     */
+    suspend fun scroll(
+        scroll: suspend () -> ActionResult,
+        content: suspend () -> Any?,
+        stillThere: suspend () -> Boolean,
+    ): ActionResult {
+        var before = content()
+        var last = scroll()
+        if (last is ActionResult.Failed) return last
+        withTimeoutOrNull(MILLIS) {
+            repeat(MAX_SCROLLS - 1) {
+                val now = content()
+                if (now == before || !stillThere()) return@withTimeoutOrNull
+                before = now
+                val next = scroll()
+                if (next is ActionResult.Failed) return@withTimeoutOrNull
+                last = next
+            }
+        }
+        return last
+    }
 }

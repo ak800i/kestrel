@@ -7,23 +7,36 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.PopupWindow
+import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.hypot
 
-/** A pad that names the last gesture made on it, in its status line. */
+/**
+ * A pad that names the last gesture made on it, in its status line. With the extra `cover`, a window that has nothing to
+ * tap covers the middle half of the pad, centre included, as the keyboard or a popup can cover an element.
+ */
 class GesturesActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val page = fixturePage("Gestures fixture")
         val status = page.addStatus()
-        page.addView(
-            GesturePadView(this).apply {
-                id = R.id.gesture_pad
-                contentDescription = "Gesture pad"
-                onGesture = { status.text = it }
-            },
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
-        )
+        val pad = GesturePadView(this).apply {
+            id = R.id.gesture_pad
+            contentDescription = "Gesture pad"
+            onGesture = { status.text = it }
+        }
+        page.addView(pad, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (intent.getBooleanExtra("cover", false)) pad.post { cover(pad) }
+    }
+
+    private fun cover(pad: View) {
+        val cover = TextView(this).apply {
+            text = "Covered"
+            setBackgroundColor(0xFFFFFFFF.toInt())
+        }
+        val left = IntArray(2).also(pad::getLocationOnScreen)[0]
+        PopupWindow(cover, resources.displayMetrics.widthPixels, pad.height / 2, false).showAsDropDown(pad, -left, -pad.height * 3 / 4)
     }
 }
 

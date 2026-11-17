@@ -8,6 +8,8 @@ import dev.kestrel.commands.text.MatchRules
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Strictness
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.act.GesturePaths
+import dev.kestrel.screen.act.ScreenPoint
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
@@ -105,6 +107,12 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
         return check(session.snapshots.current().snapshot, chosen, again, kind, strictness)
     }
 
+    /** Where a gesture on [element] starts or ends in the current snapshot (see the companion's [gesturePoint]). */
+    suspend fun gesturePoint(element: ScreenElement): ScreenPoint? {
+        val session = screen() ?: return null
+        return gesturePoint(session.snapshots.current().snapshot, element)
+    }
+
     companion object {
         private const val MAX_DEPTH = 20
 
@@ -173,6 +181,24 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             val decided = label(snapshot, again.spoken, candidates(snapshot, kind), strictness) as? Resolution.One ?: return null
             return snapshot.element(decided.element.key)
         }
+
+        /**
+         * Where a swipe, a pinch or a drag on [element] starts or ends: its centre, or, when windows above it in [snapshot],
+         * such as the keyboard or a popup, cover the centre, the point that a fallback tap would use (section 9.3). Null
+         * when they cover every point of it, because the gesture would then act on the window above.
+         */
+        fun gesturePoint(snapshot: ScreenSnapshot, element: ScreenElement): ScreenPoint? {
+            val window = snapshot.windows.firstOrNull { it.id == element.windowId }
+            val covers = if (window == null) emptyList() else snapshot.windows.filter { it.layer > window.layer }.map { it.bounds }
+            return GesturePaths.pointOn(element.bounds, covers)
+        }
+
+        /**
+         * The label that [act][ScreenCommands.act] and a bare label decide once more when their element has changed: a
+         * label that was found at once. A number, a target that is no label, and an answer to "Which one?" ([found] is
+         * then [Resolution.Several]) may name another element by now, so they give null (section 9.6).
+         */
+        fun again(target: Target?, found: Resolution): Target.Label? = (target as? Target.Label)?.takeIf { found is Resolution.One }
 
         /** Whether [element] is still [chosen]: the same class and label, and bounds that cover at least half the chosen ones. */
         fun same(chosen: ChosenElement, element: ScreenElement?): Boolean {
