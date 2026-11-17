@@ -1,10 +1,14 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.commands.Outcome
+import dev.kestrel.screen.overlay.NumbersMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -112,6 +116,44 @@ class OverlayCommandsTest {
         CommandTests.awaitSaid("That's square 18 of the grid.")
         assertEquals(Outcome.DONE, CommandTests.say("hide grid").outcome)
         assertNull(screen.session.grid)
+    }
+
+    @Test
+    fun theNumbersSettingPutsNumbersOnlyOnElementsWithoutAName() = runBlocking<Unit> {
+        val settings = CommandTests.graph.settings
+        settings.set(SettingKeys.COMMANDS, CommandOptions(numbers = NumbersMode.UNLABELED))
+        try {
+            withTimeout(5_000) { while (CommandTests.graph.commandOptions.value.numbers != NumbersMode.UNLABELED) delay(50) }
+            screen.open("CommandsActivity", "Commands fixture")
+            val seekBar = screen.awaitElement { it.viewId == "$FIXTURES:id/seek_bar" }
+            val save = screen.awaitElement { it.label == "Save" }
+
+            assertEquals(Outcome.DONE, CommandTests.say("show numbers").outcome)
+
+            val numbered = screen.session.numberBadges.map { it.key }
+            assertTrue("The seek bar, which has no name, has no number", seekBar.key in numbered)
+            assertFalse("Save has a number", save.key in numbered)
+        } finally {
+            settings.set(SettingKeys.COMMANDS, CommandOptions())
+            withTimeout(5_000) { while (CommandTests.graph.commandOptions.value != CommandOptions()) delay(50) }
+        }
+    }
+
+    @Test
+    fun hideFeedbackHidesAKeptTextAndLeavesTheNumbers() = runBlocking<Unit> {
+        screen.open("CommandsActivity", "Commands fixture")
+        val session = screen.session
+        session.showNumbers()
+
+        // In one go on the main thread, so that no text of Kestrel's own comes in between.
+        val shown = withContext(Dispatchers.Main) {
+            session.showFeedback("Calling", keep = true)
+            session.hideFeedback()
+            session.feedbackText
+        }
+
+        assertNull(shown)
+        assertTrue(session.numberBadges.isNotEmpty())
     }
 
     private suspend fun awaitStatus(text: String) = screen.awaitElement { it.viewId == "$FIXTURES:id/status" && it.label == text }

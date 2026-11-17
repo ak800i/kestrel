@@ -18,7 +18,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import dev.kestrel.app.settings.ModelCheck
+import dev.kestrel.app.settings.PageRequest
 import dev.kestrel.app.settings.SettingsApp
+import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.app.settings.SetupAction
 import dev.kestrel.app.settings.SetupStatus
 import dev.kestrel.app.settings.SetupStatusReader
@@ -33,6 +35,9 @@ class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as KestrelApplication).graph }
     private val data by lazy { StoredSettingsData(graph, applicationContext) }
     private var status by mutableStateOf<SetupStatus?>(null)
+
+    /** The page that the latest intent asked for, such as the list of commands after "What can I say?". */
+    private var pageRequest by mutableStateOf<PageRequest?>(null)
 
     private val exportLogs = registerForActivityResult(CreateDocument("application/json")) { uri -> uri?.let(::export) }
 
@@ -52,15 +57,36 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // After the activity is made again, as after a rotation, the page that the owner has open stays. Reopened from the
+        // recent apps, Android gives it the task's first intent again, which may be an old "What can I say?".
+        if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) follow(intent)
         setContent {
             MaterialTheme {
                 status?.let {
-                    SettingsApp(it, data, ::perform, ::checkModels) {
+                    SettingsApp(it, data, ::perform, ::checkModels, pageRequest) {
                         exportLogs.launch("kestrel-logs-${LocalDate.now()}.json")
                     }
                 }
             }
         }
+    }
+
+    // MainActivity is singleTop, so an intent for it while it is in front comes here, such as a second "What can I say?".
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        follow(intent)
+    }
+
+    /**
+     * Shows the page that [EXTRA_PAGE] names, and asks for the permission of [EXTRA_ASK_PERMISSION] when [ASKABLE] has it.
+     * Any app may start MainActivity, so an unknown page or any other permission is ignored.
+     */
+    private fun follow(intent: Intent) {
+        intent.getStringExtra(EXTRA_PAGE)
+            ?.let { name -> SettingsPage.entries.firstOrNull { it.name == name } }
+            ?.let { pageRequest = PageRequest(it) }
+        intent.getStringExtra(EXTRA_ASK_PERMISSION)?.takeIf { it in ASKABLE }?.let { askForPermissions(it) }
     }
 
     // The owner may have changed a setting in another app, such as Android's accessibility settings.
@@ -128,5 +154,16 @@ class MainActivity : ComponentActivity() {
 
     private fun openAppSettings() {
         startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+    }
+
+    companion object {
+        /** The name of a [SettingsPage] to show, such as the list of commands that "What can I say?" opens. */
+        const val EXTRA_PAGE = "dev.kestrel.app.extra.PAGE"
+
+        /** A permission of [ASKABLE] to ask for, as when Kestrel needs the contacts to call by name (design spec, 13.6). */
+        const val EXTRA_ASK_PERMISSION = "dev.kestrel.app.extra.ASK_PERMISSION"
+
+        /** The permissions that an intent may ask for. Plan 3C declares READ_CONTACTS in the manifest. */
+        val ASKABLE: Set<String> = setOf(Manifest.permission.READ_CONTACTS)
     }
 }

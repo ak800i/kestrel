@@ -2,7 +2,7 @@
 
 Kestrel is a private, voice-first assistant for Android. It is meant to replace Google's Voice Access on the owner's phone. It keeps the direct commands that Voice Access has, such as "scroll down", "tap Send" or "show numbers", and it adds whole tasks in one sentence, such as "Kestrel, send Ana a Viber message that I'm 10 minutes late". An agent on the phone then performs the task through Android's accessibility service.
 
-> **Status:** early development. Kestrel listens for its name and its own commands, such as "Kestrel, turn off", but it cannot run tasks yet.
+> **Status:** early development. Kestrel listens for its name, its own commands, such as "Kestrel, turn off", and commands for the screen, such as "tap Send" or "scroll down", but it cannot run tasks yet.
 
 ## Privacy rules
 
@@ -43,6 +43,7 @@ Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The 
 scripts\create-avd.ps1                    # once: installs Android 17 and creates kestrel-api37
 $serial = scripts\start-emulator.ps1      # starts the emulator and prints its adb serial
 scripts\connected-test.ps1 -Serial $serial :core:privacy:connectedDebugAndroidTest :core:voice:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+scripts\command-test.ps1 -Serial $serial  # the instant commands' device tests, on the emulator only, which the line above skips
 scripts\install.ps1 -Serial $serial       # runs the privacy audit, then installs the debug build with adb install -r
 ```
 
@@ -136,7 +137,19 @@ The settings app also has these pages:
 - **Safety:** test mode, which is on until you turn it off. While it is on, Kestrel's agent and routines will send and share only to Telegram's Saved Messages, WhatsApp's Message yourself, Viber's My Notes and your own email address, and they will make no calls (design spec, section 12.7). Your own instant commands are not limited. Keep test mode on while you test Kestrel. The agent comes later, so in this version test mode changes nothing.
 - **Activity log** and **Network log:** what Kestrel did, and every request that it sent, encrypted and kept for 7 days. *Export both logs* writes both logs to a JSON file that you choose, which is the only way the logs leave the phone. *Delete history* wipes both logs after you confirm.
 - **Voice and speech:** the voice, Piper or Kokoro (when `push-models.ps1 -Kokoro` copied it), and the speed from 0.8 to 1.4. *Try it* speaks a sentence with the choice on the page; while Kestrel listens with that voice and speed, its voice session speaks the sentence, so that no second copy of the voice is loaded. A new voice or speed counts from the next time that Kestrel turns on; when Kokoro does not load, for example because its files are missing, Piper speaks, and the page says so.
+- **Instant commands:** "Require verbs", which makes a name alone, such as "Save", do nothing, so that only "tap Save" taps it, and whether numbers go on all elements or only on those without a name; below them, the list of what you can say, which "What can I say?" opens. Each choice counts from the next command.
 - **About:** Kestrel's version, the Android version, whether each speech model is ready (the optional Kokoro voice may be "not on the phone"), and the licence texts.
+
+## Instant commands
+
+While Kestrel listens, you drive the screen by voice without Kestrel's name, as with Voice Access (design spec, section 9 and Appendix A). Say the name of a button to tap it, such as "Send" or "tap Send"; "long press Send" holds it. "Show numbers" puts a number on every element, and then "tap 5", or just "5", taps that element; "hide numbers" removes them. "Show labels" shows the name that Kestrel uses for each element, "What is 5?" says the name and the kind of element 5, and "show commands for Send" says what you can do with it. "Show grid" puts numbered squares over the screen for places without an element, "more squares" and "fewer squares" change their size, and "hide grid" removes them. You can also scroll ("scroll down", "scroll to bottom", "scroll down on Messages"), swipe ("swipe up", "swipe left on 5", "swipe forwards", "swipe from the left edge"), pinch ("pinch out"), drag ("drag 5 to 9", or "drag 5" and then the place when Kestrel asks "Drag it where?"), check and uncheck ("check Remember me", "switch off"), expand, collapse and dismiss, also notifications in the shade, and move sliders one step ("increment 4", "decrement 4"). A name that you say exactly acts at once when no other element has it, whatever near misses the screen also shows; when two or more elements have that name, Kestrel shows numbers on them only and asks "Which one?", and when only a near miss fits, it asks "Which one?" with its one number, as a confirmation; say the number. When nothing matches, it says that it can't find it and shows numbers on every element, so that you can say the number next. A name alone, without a verb, taps only when it clearly names one element: it never asks "Which one?", and it never takes a name that only sounds like what you said, as a command with a verb such as "tap" may. Kestrel ignores other speech without a word, because it may be meant for someone else. "Again" repeats the last command, and "stop" or "cancel" cancels a command while it runs or asks, as a touch does while it asks; while nothing runs, "stop" and "cancel" tap a button with that name. A command that you say while another one runs is dropped, and the feedback bar says "Still busy with the last command." "What can I say?" opens the list of commands on the settings page "Instant commands" and says a short summary.
+
+Before each utterance, Kestrel gives the speech recogniser the names on the screen and a few rare words of the commands, so that it writes them as the screen does. It reads the names from its newest picture of the screen, which it keeps current while it listens; it never uses a password field or what you typed into a field.
+
+The device tests of the instant commands run only through `scripts\command-test.ps1 -Serial $serial`, on the emulator; every other run, such as `connected-test.ps1` above, skips them. The script refuses phones, because the tests change the device's state: Wi-Fi and Bluetooth, the volumes and the ringer mode, Quick Settings' tiles, the lock screen, users, contacts, the call log, screenshots and permissions. It puts all of these back at the end, also after a failure or Ctrl+C, except Kestrel's microphone and notification permissions, which stay granted, as after `voice-test.ps1`, because revoking a permission ends Kestrel's process. It ends with exit code 1 when a test was skipped or something could not be put back. `-Class TouchCommandsTest` runs one class, and `-Class TouchCommandsTest#longPressByLabel` one test.
+
+<!-- Plan 3B: dictation and editing -->
+<!-- Plan 3C: apps, phone settings and calls -->
 
 ## Licence
 

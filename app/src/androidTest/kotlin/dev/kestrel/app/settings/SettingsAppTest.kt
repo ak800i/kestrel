@@ -3,6 +3,9 @@ package dev.kestrel.app.settings
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -11,11 +14,15 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import dev.kestrel.app.R
+import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.listen.ListeningOptions
+import dev.kestrel.commands.CommandHelp
+import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.privacy.logs.ActivityEvent
@@ -347,6 +354,38 @@ class SettingsAppTest {
         assertEquals(listOf(SetupAction.DEFAULT_APPS), actions)
     }
 
+    @Test
+    fun theCommandsPageChangesTheOptionsAndListsTheCommands() {
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_commands)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.commands_numbers_all)).assertIsSelected()
+        compose.onNodeWithText(text(R.string.commands_require_verbs)).assertIsOff().performClick()
+        compose.onNodeWithText(text(R.string.commands_numbers_unlabeled)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.commands_require_verbs)).assertIsOn()
+        compose.onNodeWithText(text(R.string.commands_numbers_unlabeled)).assertIsSelected()
+        assertEquals(CommandOptions(requireVerbs = true, numbers = NumbersMode.UNLABELED), data.commandOptions.value)
+        // The list that "What can I say?" opens: each group of commands with its examples.
+        val group = CommandHelp.groups.first()
+        compose.onAllNodesWithText(group.title).onFirst().performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(group.examples.first()).onFirst().performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun aRequestedPageOpensAndTheSameRequestAgainSwitchesBackToIt() {
+        var request by mutableStateOf<PageRequest?>(PageRequest(SettingsPage.COMMANDS))
+        compose.setContent { MaterialTheme { SettingsApp(NOTHING_SET_UP, data, { actions += it }, { checks++ }, request) { exports++ } } }
+        compose.onNodeWithText(text(R.string.commands_list)).assertExists()
+
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        compose.onNodeWithText(text(R.string.settings_checklist)).assertIsDisplayed()
+        // A second "What can I say?" while the app shows another page.
+        request = PageRequest(SettingsPage.COMMANDS)
+
+        compose.onNodeWithText(text(R.string.commands_list)).assertExists()
+    }
+
     private fun openVoicePage() {
         compose.onNodeWithText(text(R.string.settings_voice)).performScrollTo().performClick()
         compose.onNodeWithText(text(R.string.voice_choice)).assertIsDisplayed()
@@ -451,6 +490,7 @@ class SettingsAppTest {
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
+        override val commandOptions = MutableStateFlow(CommandOptions())
         override val version = "9.9.9 (99)"
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
@@ -484,6 +524,10 @@ class SettingsAppTest {
 
         override suspend fun setListening(options: ListeningOptions) {
             listening.value = options
+        }
+
+        override suspend fun setCommandOptions(options: CommandOptions) {
+            commandOptions.value = options
         }
 
         override suspend fun activityLog() = activity

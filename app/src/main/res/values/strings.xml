@@ -184,4 +184,15 @@
     <string name="voice_sample">This is how I sound at this speed.</string>
     <string name="voice_next_start">Kestrel uses a new voice or speed from the next time it turns on.</string>
     <string name="about_model_absent">%1$s: optional, not on the phone</string>
+    <string name="settings_commands">Instant commands</string>
+    <string name="settings_commands_summary">Require verbs, numbers, and what you can say</string>
+    <string name="commands_require_verbs">Require verbs</string>
+    <string name="commands_require_verbs_detail">With this on, a name alone, such as \"Save\", does nothing, and you say \"tap Save\". With it off, a name alone taps an element when you say its name exactly and no other element has that name, or when the name clearly fits that one element.</string>
+    <string name="commands_numbers">Numbers</string>
+    <string name="commands_numbers_all">On all elements</string>
+    <string name="commands_numbers_unlabeled">Only on elements without a name</string>
+    <string name="commands_list">What you can say</string>
+    <string name="commands_list_detail">Say \"What can I say?\" to come back to this list.</string>
+    <!-- Plan 3B strings -->
+    <!-- Plan 3C strings -->
 </resources>

@@ -759,9 +759,11 @@ Kestrel always says what happened and what it already did. It never fails silent
 
 ## 15. Settings and setup
 
-The settings app has these screens: the setup checklist; listening and activation; voice and speech; instant-command options (section 9.8); providers and profiles (sign-in, models, cost and remaining allowance); safety (mode, test mode, agent-free apps and per-app screenshot approvals); memory (aliases and facts, route notes and routines); the activity log; the network log; and an About page with licences, versions and the status of the model files. "Kestrel, open settings" opens it.
+The settings app has these screens: the setup checklist; listening and activation; voice and speech; instant commands (section 9.8); providers and profiles (sign-in, models, cost and remaining allowance); safety (mode, test mode, agent-free apps and per-app screenshot approvals); memory (aliases and facts, route notes and routines); the activity log; the network log; and an About page with licences, versions and the status of the model files. "Kestrel, open settings" opens it.
 
 The page "Listening and activation" holds "On screen wake-up" (section 8.5), "Pause after 30 s without speech" (section 8.5), "Commands during a call" (section 8.7) and "Use the earbud microphone" (section 8.8). It also shows how the ways to start Kestrel stand: the accessibility service, the targets of the accessibility shortcut and of the accessibility button, the tile (Android does not tell an app whether its tile is added, so the page says how to add it) and the assistant role, with a button that opens Android's default apps. The choices are stored encrypted, like every setting. Each choice counts at once; a change of the earbud microphone restarts a running recording (section 8.8).
+
+The page "Instant commands" holds "Require verbs" (section 9.5), off by default, and whether numbers go on all elements, the default, or only on those without a name (section 9.4). Below them it lists what the owner can say: this is the list that "What can I say?", "Show all commands", "Show commands" and "Open tutorial" open. The choices are stored encrypted, like every setting, and count from the next command. Kestrel opens its settings app on a page with an intent that names the page; the settings app takes such an intent also while it is in front.
 
 The setup checklist stays visible until everything is done:
 
@@ -949,7 +951,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | General | Circle to Search | Best effort: a long press on the navigation handle, where the phone supports it |
 | General | Media play; Media pause | Yes |
 | General | "Hey Google, …" commands through Gemini | Not applicable; tasks start with "Kestrel" |
-| Help | What can I say?; Show all commands; Open tutorial | Yes. Kestrel shows a list of commands and speaks a short summary. |
+| Help | What can I say?; Show all commands; Open tutorial | Yes. Kestrel opens the list of commands on its settings page "Instant commands" and speaks a short summary; "Show commands" does the same. There is no separate tutorial, and "help" alone is a bare label. |
 | Help | Show numbers; Hide numbers; Show labels; Hide labels; What is [number]?; Show commands for [label or number] | Yes |
 | Help | Stop Voice Access; Voice Access settings | Yes, as "Stop Kestrel" and "Kestrel settings" |
 | Help | Send feedback | Not applicable, because no data leaves the phone |

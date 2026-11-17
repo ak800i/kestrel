@@ -54,9 +54,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -72,6 +75,9 @@ object SettingKeys {
 
     /** The owner's choices for listening (design spec, sections 8.5, 8.7, 8.8 and 15). */
     val LISTENING_OPTIONS = SettingKey("listening-options", ListeningOptions.serializer(), ListeningOptions())
+
+    /** The options of the instant commands: "Require verbs" and where the numbers go (design spec, sections 9.8 and 15). */
+    val COMMANDS = SettingKey("commands", CommandOptions.serializer(), CommandOptions())
 }
 
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
@@ -141,8 +147,16 @@ class AppGraph(context: Context) {
     /** Kestrel's notifications about problems (design spec, section 14.6). */
     internal val problems: ProblemNotifications by lazy { ProblemNotifications(appContext) }
 
-    // The owner's options for the instant commands, at their defaults until the settings app stores them.
-    private val commandOptions = MutableStateFlow(CommandOptions())
+    /**
+     * The owner's options for the instant commands (design spec, sections 9.5 and 9.8), stored encrypted, which the
+     * executor reads at each command: the defaults until the store has answered, and after a read that failed, which is
+     * logged by its classes only.
+     */
+    internal val commandOptions: StateFlow<CommandOptions> by lazy {
+        settings.observe(SettingKeys.COMMANDS)
+            .catch { reportFailure("Reading the command options", it) }
+            .stateIn(scope, SharingStarted.Eagerly, CommandOptions())
+    }
 
     /**
      * The executor of the instant commands (design spec, section 9.5), which Listening runs on Dispatchers.IO. It works on
@@ -153,16 +167,17 @@ class AppGraph(context: Context) {
             CommandEnvironment(
                 context = appContext,
                 screen = { screen.value },
-                options = commandOptions.asStateFlow(),
+                options = commandOptions,
                 targets = ScreenTargets { screen.value },
                 scope = scope,
                 // From the accessibility service, which Android lets start activities from the background (prototype P1).
-                // Showing a page and asking for a permission come with the settings page of the instant commands.
-                openSettings = { _, _ ->
-                    appContext.startActivity(
-                        Intent(appContext, MainActivity::class.java)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                    )
+                // MainActivity is singleTop, so an open settings app switches to the page.
+                openSettings = { page, permission ->
+                    val intent = Intent(appContext, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    page?.let { intent.putExtra(MainActivity.EXTRA_PAGE, it.name) }
+                    permission?.let { intent.putExtra(MainActivity.EXTRA_ASK_PERMISSION, it) }
+                    appContext.startActivity(intent)
                 },
                 report = reportFailure,
             ),

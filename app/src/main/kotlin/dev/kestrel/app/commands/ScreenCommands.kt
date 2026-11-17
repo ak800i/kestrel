@@ -1,5 +1,6 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Direction
@@ -86,6 +87,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             Command.FewerSquares -> squares(screen) { it.fewer() }
             is Command.WhatIs -> whatIs(screen, command.number)
             is Command.CommandsFor -> commandsFor(screen, command.target, conversation)
+            is Command.Help -> help()
             // Tasks 5 to 9 add their commands above this line.
             else -> null
         }
@@ -189,6 +191,8 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     // name is that number; a bare label taps only a clear, strict match. Anything else is ignored without a word, because
     // bare speech may be conversation.
     private suspend fun bare(screen: ScreenSession, command: Command.Bare): CommandResult {
+        // With "require verbs" on, a bare label or number never taps (design spec, section 9.5).
+        if (environment.options.value.requireVerbs) return CommandResult(Outcome.IGNORED)
         val number = command.number
         // A bare "okay" is conversation far more often than an answer to a dialog; "tap OK" still taps an "OK" button.
         if (number == null && Normalizer.words(command.text).all { it == "ok" }) return CommandResult(Outcome.IGNORED)
@@ -467,6 +471,15 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         }
         val sayable = phrases ?: return found
         return found.copy(say = CommandTexts.youCanSay(sayable))
+    }
+
+    /**
+     * "What can I say?", "show all commands", "show commands" and "open tutorial" open the list of commands on the settings
+     * page "Instant commands" and say a short summary (design spec, Appendix A). "Again" never repeats it.
+     */
+    private fun help(): CommandResult {
+        environment.openSettings(SettingsPage.COMMANDS, null)
+        return CommandResult(Outcome.DONE, say = CommandTexts.HELP)
     }
 
     private suspend fun tapAt(screen: ScreenSession, bounds: IntRect): ActionResult = screen.actions.tapAt(bounds.centerX, bounds.centerY)

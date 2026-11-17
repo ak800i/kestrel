@@ -4,6 +4,7 @@ import android.content.Context
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.R
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.privacy.logs.ActivityEvent
@@ -48,6 +49,11 @@ interface SettingsData {
     val listening: Flow<ListeningOptions>
 
     suspend fun setListening(options: ListeningOptions)
+
+    /** The options of the instant commands (design spec, sections 9.5, 9.8 and 15). */
+    val commandOptions: Flow<CommandOptions>
+
+    suspend fun setCommandOptions(options: CommandOptions)
 
     suspend fun activityLog(): List<LogEntry<ActivityEvent>>
 
@@ -104,6 +110,12 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
 
     override suspend fun setListening(options: ListeningOptions) = write {
         graph.settings.set(SettingKeys.LISTENING_OPTIONS, options)
+    }
+
+    override val commandOptions: Flow<CommandOptions> = graph.settings.observe(SettingKeys.COMMANDS)
+
+    override suspend fun setCommandOptions(options: CommandOptions) = write {
+        graph.settings.set(SettingKeys.COMMANDS, options)
     }
 
     // Section 15: each change counts, also when the owner leaves the page at once. The write runs in the graph's scope,

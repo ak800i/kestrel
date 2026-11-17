@@ -1,6 +1,7 @@
 package dev.kestrel.app.commands
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.TestFinger
@@ -296,6 +297,22 @@ class TouchCommandsTest {
             withTimeout(5_000) { while (notificationPosted()) delay(100) }
         } finally {
             removeNotification()
+        }
+    }
+
+    @Test
+    fun requireVerbsKeepsANameAloneFromTapping() = runBlocking<Unit> {
+        val settings = CommandTests.graph.settings
+        settings.set(SettingKeys.COMMANDS, CommandOptions(requireVerbs = true))
+        try {
+            withTimeout(5_000) { while (!CommandTests.graph.commandOptions.value.requireVerbs) delay(50) }
+
+            assertEquals(Outcome.IGNORED, CommandTests.say("Send later").outcome)
+            assertEquals(Outcome.DONE, CommandTests.say("tap Send later").outcome)
+            awaitStatus("Clicked Send later")
+        } finally {
+            settings.set(SettingKeys.COMMANDS, CommandOptions())
+            withTimeout(5_000) { while (CommandTests.graph.commandOptions.value != CommandOptions()) delay(50) }
         }
     }
 

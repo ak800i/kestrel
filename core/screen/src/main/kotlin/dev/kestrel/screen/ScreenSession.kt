@@ -222,6 +222,12 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     suspend fun releaseFeedback() = withContext(Dispatchers.Main) { feedback.release() }
 
     /**
+     * Hides the feedback bar at once, also a kept text, as before a screenshot (design spec, Appendix A); the numbers, the
+     * labels and the grid stay.
+     */
+    suspend fun hideFeedback() = withContext(Dispatchers.Main) { feedback.hide() }
+
+    /**
      * Asks [question] on a confirmation card and returns true when the owner taps Confirm. It returns false when the
      * owner taps Cancel, when a newer question replaces this one or when the session closes, and the card then goes at
      * once. A caller that also listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call, which

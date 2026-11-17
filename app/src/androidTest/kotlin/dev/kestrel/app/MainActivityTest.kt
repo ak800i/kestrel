@@ -1,11 +1,13 @@
 package dev.kestrel.app
 
+import android.content.Intent
 import androidx.annotation.StringRes
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -13,11 +15,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.SemanticsMatcher
+import dev.kestrel.app.commands.CommandOptions
+import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.NetworkEvent
 import dev.kestrel.privacy.logs.NetworkOutcome
 import dev.kestrel.safety.SafetySettings
+import dev.kestrel.screen.overlay.NumbersMode
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
@@ -44,6 +49,43 @@ class MainActivityTest {
     @After
     fun turnTestModeBackOn() = runBlocking {
         graph.settings.set(SettingKeys.SAFETY, SafetySettings(testMode = true))
+    }
+
+    @After
+    fun putTheCommandOptionsBack() = runBlocking {
+        graph.settings.set(SettingKeys.COMMANDS, CommandOptions())
+    }
+
+    @Test
+    fun theCommandsPageStoresTheOptions() {
+        runBlocking { graph.settings.set(SettingKeys.COMMANDS, CommandOptions()) }
+        compose.onNodeWithText(text(R.string.settings_commands)).performScrollTo().performClick()
+        // The rows are disabled until the stored options have arrived from the settings store; a click before is lost.
+        await(hasText(text(R.string.commands_require_verbs)) and isEnabled())
+
+        compose.onNodeWithText(text(R.string.commands_require_verbs)).performClick()
+        compose.onNodeWithText(text(R.string.commands_numbers_unlabeled)).performScrollTo().performClick()
+
+        val expected = CommandOptions(requireVerbs = true, numbers = NumbersMode.UNLABELED)
+        compose.waitUntil(5_000) { runBlocking { graph.settings.get(SettingKeys.COMMANDS) } == expected }
+    }
+
+    @Test
+    fun anIntentWithAPageOpensThatPageInTheRunningApp() {
+        await(hasText(text(R.string.settings_checklist)))
+
+        // As "What can I say?" does while the settings app is in front: MainActivity is singleTop.
+        compose.runOnUiThread {
+            // A copy of the activity's intent: MainActivity takes each new intent as its own, and ActivityScenario follows the
+            // activity, and closes it after the test, only while its intent has the action of the intent that started it.
+            compose.activity.startActivity(
+                Intent(compose.activity.intent)
+                    .putExtra(MainActivity.EXTRA_PAGE, SettingsPage.COMMANDS.name)
+                    .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+
+        await(hasText(text(R.string.commands_list)))
     }
 
     @Test

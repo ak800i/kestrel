@@ -30,7 +30,14 @@ import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.voice.VoiceChoice
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
+enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, COMMANDS, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
+
+/**
+ * A request to show [page], from an intent that opened the settings app, such as "What can I say?" (design spec, section
+ * 15). Not a data class: two requests for the same page are different requests, so the second one still switches to the
+ * page after the owner has left it.
+ */
+class PageRequest(val page: SettingsPage)
 
 /** What the button of a checklist step does. */
 enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS }
@@ -38,8 +45,8 @@ enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL
 /**
  * Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture.
  * [onCheckModels] checks the model files again, which happens whenever the checklist, the About page or the voice page
- * opens, and when the About page shows again after a licence text (design spec, 8.10). [onExportLogs] asks the owner
- * for a file to export both logs to.
+ * opens, and when the About page shows again after a licence text (design spec, 8.10). [request] names a page to show,
+ * at the start and whenever a new request arrives. [onExportLogs] asks the owner for a file to export both logs to.
  */
 @Composable
 fun SettingsApp(
@@ -47,11 +54,19 @@ fun SettingsApp(
     data: SettingsData,
     onAction: (SetupAction) -> Unit,
     onCheckModels: () -> Unit,
+    request: PageRequest? = null,
     onExportLogs: () -> Unit,
 ) {
-    var page by rememberSaveable { mutableStateOf(SettingsPage.HOME) }
+    var page by rememberSaveable { mutableStateOf(request?.page ?: SettingsPage.HOME) }
     // A licence text opens on top of the About page, and Back returns there.
     var licence by rememberSaveable { mutableStateOf<Licence?>(null) }
+    // A new request, such as a second "What can I say?" while the app shows another page, switches to its page.
+    LaunchedEffect(request) {
+        request?.let {
+            page = it.page
+            licence = null
+        }
+    }
     // Keyed on the licence too, so that the About page checks again when the owner comes back from a licence text.
     LaunchedEffect(page, licence) {
         // The voice page offers Kokoro only while its files are ready.
@@ -68,6 +83,7 @@ fun SettingsApp(
             SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, status.samsung, onAction, home) }
             SettingsPage.LISTENING -> ScrollingPage { ListeningPage(data, status, onAction, home) }
             SettingsPage.VOICE -> ScrollingPage { VoicePage(data, status.models, home) }
+            SettingsPage.COMMANDS -> ScrollingPage { CommandsPage(data, home) }
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
@@ -100,6 +116,9 @@ private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOp
         onOpen(SettingsPage.LISTENING)
     }
     PageEntry(stringResource(R.string.settings_voice), voiceSummary(voice)) { onOpen(SettingsPage.VOICE) }
+    PageEntry(stringResource(R.string.settings_commands), stringResource(R.string.settings_commands_summary)) {
+        onOpen(SettingsPage.COMMANDS)
+    }
     PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
     PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }
     PageEntry(stringResource(R.string.settings_network_log), logsSummary) { onOpen(SettingsPage.NETWORK_LOG) }

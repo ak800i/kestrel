@@ -3,6 +3,7 @@ package dev.kestrel.app.commands
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.KestrelApplication
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
@@ -67,6 +68,10 @@ internal object CommandTests {
     fun start() {
         assumeCommands()
         VoiceTests.grantListeningPermissions()
+        // A test process that died may have left other options stored, and command-test.ps1 does not reset Kestrel's
+        // settings.
+        runBlocking { graph.settings.set(SettingKeys.COMMANDS, CommandOptions()) }
+        check(VoiceTests.waitUntil(5_000) { graph.commandOptions.value == CommandOptions() }) { "The options did not reset" }
         val listening = graph.listening
         // An earlier test that failed may have left Kestrel on.
         if (listening.state.value.mode != Mode.OFF) turnOff()

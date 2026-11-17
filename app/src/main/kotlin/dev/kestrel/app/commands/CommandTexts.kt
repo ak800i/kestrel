@@ -13,6 +13,10 @@ internal object CommandTexts {
 
     fun noNumber(number: Int) = "There's no number $number on the screen."
 
+    /** What "What can I say?" says while the settings app opens on the list of commands (design spec, Appendix A). */
+    const val HELP = "You can say things like tap Send, scroll down, go back, show numbers or type hello. " +
+        "The list is on the screen."
+
     const val SHOW_GRID_FIRST = "Say 'show grid' first."
 
     /** The answer to "What is 5?". [name] is a name on the screen, which Kestrel says and never logs. */
