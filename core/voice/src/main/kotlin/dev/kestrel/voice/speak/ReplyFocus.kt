@@ -63,8 +63,9 @@ internal class ReplyFocus(private val focus: AudioFocus) {
      * player does. A loss that lets Kestrel lower its volume, as for a notification's sound or a navigation prompt, keeps
      * the reply going more quietly ([FocusChange.LOWER]) until the focus comes back ([FocusChange.RESTORE]). A transient
      * or lasting loss, as for a call, an app that asks for exclusive focus or another assistant, stops the reply
-     * ([FocusChange.STOP]); Kestrel gives the focus up then, so that Android does not give it back in the middle of a
-     * later reply.
+     * ([FocusChange.STOP]); the player then ends its replies and calls [lost]. Kestrel keeps the focus until then, so that
+     * a queued reply whose turn comes in between does not ask Android for it again and take it back from the app that
+     * just won it.
      */
     fun changed(change: Int): FocusChange {
         synchronized(lock) {
@@ -80,14 +81,22 @@ internal class ReplyFocus(private val focus: AudioFocus) {
                 } else {
                     FocusChange.NONE
                 }
-                AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    held = false
-                    lowered = false
-                    focus.abandon()
-                    FocusChange.STOP
-                }
+                AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> FocusChange.STOP
                 else -> FocusChange.NONE
             }
+        }
+    }
+
+    /**
+     * The player has ended its replies after [FocusChange.STOP], and Kestrel gives the focus up, so that Android does not
+     * give it back in the middle of a later reply.
+     */
+    fun lost() {
+        synchronized(lock) {
+            if (!held) return
+            held = false
+            lowered = false
+            focus.abandon()
         }
     }
 
@@ -104,7 +113,8 @@ internal enum class FocusChange { NONE, STOP, LOWER, RESTORE }
  * Transient focus that lets other apps lower their volume, for audio with [attributes]. Each instance has its own
  * request with its own listener, because Android tells requests apart by their listener: without one, every request
  * of Kestrel's would have the same client ID, and one player's abandon would drop another's focus (plan 2B, Task 5,
- * review N5). Android calls [onChange] with each change, on the main thread.
+ * review N5). Android calls [onChange] with each change on the looper of the thread that created the context's
+ * AudioManager, which is usually the main thread.
  */
 internal class AndroidAudioFocus(context: Context, attributes: AudioAttributes, onChange: (Int) -> Unit) : AudioFocus {
     private val audio = context.getSystemService(AudioManager::class.java)

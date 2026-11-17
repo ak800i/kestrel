@@ -95,7 +95,7 @@ class VoicePlayerTest {
             .build()
         runBlocking {
             val reply = player.speak("This is a long reply. It has several sentences. Each of them takes a while. A prompt stops it.")
-            delay(1_500)
+            awaitPlaying(player)
             val requestedAt = SystemClock.elapsedRealtime()
             try {
                 assertEquals(AudioManager.AUDIOFOCUS_REQUEST_GRANTED, audio.requestAudioFocus(prompt))
@@ -126,13 +126,17 @@ class VoicePlayerTest {
             .build()
         runBlocking {
             val reply = player.speak("This is a long reply. It has several sentences. A short sound comes while it plays.")
-            delay(1_500)
+            awaitPlaying(player)
             try {
                 assertEquals(AudioManager.AUDIOFOCUS_REQUEST_GRANTED, audio.requestAudioFocus(sound))
+                // Android does not lower the volume of speech by itself; it tells Kestrel, which lowers its own.
+                withTimeout(2_000) { while (player.volume() == 1f) delay(20) }
                 delay(500)
             } finally {
                 audio.abandonAudioFocusRequest(sound)
             }
+            // The focus came back, and Kestrel speaks at its full volume again.
+            withTimeout(2_000) { while (player.volume() != 1f) delay(20) }
             // Section 8.4: Kestrel spoke on under the sound, more quietly, and finished the reply.
             assertEquals(Spoke.FINISHED, withTimeout(30_000) { reply.await() })
         }
@@ -239,6 +243,11 @@ class VoicePlayerTest {
                 assertEquals(emptyList<String>(), voice.said)
             }
         }
+    }
+
+    // Waits until the reply's first sentence plays, so that Kestrel holds the focus, however long its synthesis takes.
+    private suspend fun awaitPlaying(player: VoicePlayer) {
+        withTimeout(10_000) { while (player.recent().isEmpty()) delay(20) }
     }
 
     private fun withPlayer(test: (VoicePlayer) -> Unit) {

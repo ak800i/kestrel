@@ -80,8 +80,10 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     private var track: AudioTrack? = null
     private var clips: Channel<Clip>? = null
 
-    // The generations whose replies a loss of the audio focus ended. Only code that holds [lock] uses it.
+    // The generations whose replies a loss of the audio focus ended, and the replies that were asked for and have not
+    // ended yet; the set is emptied when none is left. Only code that holds [lock] uses them.
     private val interruptedGenerations = mutableSetOf<Int>()
+    private var unfinished = 0
 
     // The synthesis of the reply that played last. Only the reply that holds the turn reads or sets it.
     private var synthesis: Job? = null
@@ -101,9 +103,12 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     fun speak(text: String): Deferred<Spoke> {
         // A cancelled Deferred would throw CancellationException into a caller that is not cancelled itself.
         if (!scope.isActive) return CompletableDeferred(Spoke.STOPPED)
-        val mine = generation.get()
         // Undispatched, the caller's thread takes the turn or joins the queue for it, so replies keep the order of the calls.
         return scope.async(start = CoroutineStart.UNDISPATCHED) {
+            val mine = synchronized(lock) {
+                unfinished++
+                generation.get()
+            }
             // Counted before the reply waits for its turn, so that the focus stays while it waits (section 8.4).
             focus.asked()
             try {
@@ -124,6 +129,7 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
                 // Section 14.6: a reply that a loss of the focus ended goes to the bar.
                 if (spoke == Spoke.STOPPED && wasInterrupted(mine)) Spoke.INTERRUPTED else spoke
             } finally {
+                synchronized(lock) { if (--unfinished == 0) interruptedGenerations.clear() }
                 focus.finish()
             }
         }
@@ -134,10 +140,17 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
         synchronized(lock) { endGeneration() }
     }
 
+    /**
+     * The volume at which a reply plays now: lower while another app's sound plays over Kestrel (section 8.4), and 1
+     * otherwise. The device tests read it. Any thread may call it.
+     */
+    fun volume(): Float = focus.volume()
+
     // Section 8.4: another app that only lets Kestrel lower its volume, such as a notification's sound, makes the reply
     // quieter until the focus comes back. Section 14.6: when Android takes the focus away, for a call or an app that asks
-    // for exclusive focus, the replies that play or wait end as a stop ends them, and they count as interrupted. Android
-    // calls it on the main thread.
+    // for exclusive focus, the replies that play or wait end as a stop ends them, and they count as interrupted. Kestrel
+    // gives the focus up only after the generation has ended, so that a queued reply whose turn comes in between does not
+    // ask Android for it again. Android calls it on its focus callback thread, which is usually the main thread.
     private fun focusChanged(change: Int) {
         when (focus.changed(change)) {
             FocusChange.NONE -> Unit
@@ -145,6 +158,7 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
             FocusChange.STOP -> synchronized(lock) {
                 interruptedGenerations += generation.get()
                 endGeneration()
+                focus.lost()
             }
         }
     }

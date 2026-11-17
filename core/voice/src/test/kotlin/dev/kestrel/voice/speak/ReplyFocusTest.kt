@@ -57,6 +57,7 @@ class ReplyFocusTest {
             reply.take()
 
             assertEquals("Loss $loss", FocusChange.STOP, reply.changed(loss))
+            reply.lost()
             reply.finish()
             assertEquals(listOf("request", "abandon"), lost.calls)
         }
@@ -88,9 +89,27 @@ class ReplyFocusTest {
         assertEquals(listOf("request"), focus.calls)
         // After a loss, the next reply asks Android again.
         assertEquals(FocusChange.STOP, replies.changed(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT))
+        replies.lost()
         replies.asked()
         assertTrue(replies.take())
         assertEquals(listOf("request", "abandon", "request"), focus.calls)
+    }
+
+    @Test
+    fun theFocusGoesOnlyOnceThePlayerHasStoppedItsReplies() {
+        replies.asked()
+        replies.asked()
+        replies.take()
+        assertEquals(FocusChange.STOP, replies.changed(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT))
+
+        // A queued reply whose turn comes before the player has ended its replies must not ask Android for the focus
+        // again, which would take it back from the app that just won it.
+        assertTrue(replies.take())
+        assertEquals(listOf("request"), focus.calls)
+        replies.lost()
+        replies.finish()
+        replies.finish()
+        assertEquals(listOf("request", "abandon"), focus.calls)
     }
 
     private class FakeFocus : AudioFocus {
