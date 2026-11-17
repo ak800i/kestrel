@@ -160,6 +160,22 @@ class ListeningTest {
     }
 
     @Test
+    fun aReplyThatAndroidInterruptsIsShownOnTheBar() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+        shown.clear()
+
+        // Android took the audio focus away, for a call or an app that asks for exclusive focus (section 14.6).
+        session.replies.single().complete(Spoke.INTERRUPTED)
+        runCurrent()
+
+        assertEquals(listOf(ListeningTexts.NO_TASKS), shown)
+        assertFalse(listening.state.value.speaking)
+    }
+
+    @Test
     fun aReplyWithoutASessionIsEndedByTheOrchestrator() = runTest {
         val listening = listening()
         listening.send(Event.Toggle)

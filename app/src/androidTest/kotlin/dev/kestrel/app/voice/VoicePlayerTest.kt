@@ -1,6 +1,7 @@
 package dev.kestrel.app.voice
 
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.SystemClock
 import androidx.test.core.app.ActivityScenario
@@ -75,6 +76,65 @@ class VoicePlayerTest {
             val millis = SystemClock.elapsedRealtime() - stoppedAt
             VoiceTests.log("Voice output: stopped in $millis ms")
             assertTrue("Stopping took $millis ms", millis < 500)
+        }
+    }
+
+    @Test
+    fun anotherAppsFocusStopsTheReplyAtOnceAndTheNextReplyAsksAgain() = withPlayer { player ->
+        val audio = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(AudioManager::class.java)
+        // Exclusive transient focus, as another assistant would ask for it; a request that lets others duck would only
+        // make Kestrel quieter. Its own listener gives it a client ID of its own.
+        val prompt = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setOnAudioFocusChangeListener { }
+            .build()
+        runBlocking {
+            val reply = player.speak("This is a long reply. It has several sentences. Each of them takes a while. A prompt stops it.")
+            delay(1_500)
+            val requestedAt = SystemClock.elapsedRealtime()
+            try {
+                assertEquals(AudioManager.AUDIOFOCUS_REQUEST_GRANTED, audio.requestAudioFocus(prompt))
+                // Section 14.6: the reply counts as interrupted, so that its text goes to the bar.
+                assertEquals(Spoke.INTERRUPTED, withTimeout(10_000) { reply.await() })
+                val millis = SystemClock.elapsedRealtime() - requestedAt
+                VoiceTests.log("Voice output: another app's focus stopped the reply in $millis ms")
+                assertTrue("Stopping took $millis ms", millis < 500)
+            } finally {
+                audio.abandonAudioFocusRequest(prompt)
+            }
+            assertEquals(Spoke.FINISHED, withTimeout(10_000) { player.speak("Done.").await() })
+        }
+    }
+
+    @Test
+    fun aSoundThatLetsKestrelDuckLeavesTheReplyPlaying() = withPlayer { player ->
+        val audio = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(AudioManager::class.java)
+        // A notification's sound, as Android's notification player asks for it, with a listener of its own.
+        val sound = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            .setOnAudioFocusChangeListener { }
+            .build()
+        runBlocking {
+            val reply = player.speak("This is a long reply. It has several sentences. A short sound comes while it plays.")
+            delay(1_500)
+            try {
+                assertEquals(AudioManager.AUDIOFOCUS_REQUEST_GRANTED, audio.requestAudioFocus(sound))
+                delay(500)
+            } finally {
+                audio.abandonAudioFocusRequest(sound)
+            }
+            // Section 8.4: Kestrel spoke on under the sound, more quietly, and finished the reply.
+            assertEquals(Spoke.FINISHED, withTimeout(30_000) { reply.await() })
         }
     }
 

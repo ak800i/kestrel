@@ -791,8 +791,8 @@ class Listening internal constructor(
             Reply.SettingsNeedService -> ListeningTexts.SETTINGS_NEED_SERVICE
             is Reply.Text -> reply.text
         }
-        // Section 14.6: a reply that Kestrel cannot speak goes to the bar, except "Yes?", which the bar shows already
-        // at the start of the wait for the task (Feedback.AwaitingTask).
+        // Section 14.6: a reply that Kestrel cannot speak, or that Android interrupted, goes to the bar, except "Yes?",
+        // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask).
         val showInstead = { if (reply != Reply.Yes) bar.show(text) }
         val current = session
         if (current == null) {
@@ -806,7 +806,7 @@ class Listening internal constructor(
             if (error != null && error !is CancellationException) {
                 report("A reply", error)
                 showInstead()
-            } else if (error == null && spoken.getCompleted() == Spoke.REFUSED) {
+            } else if (error == null && spoken.getCompleted().let { it == Spoke.REFUSED || it == Spoke.INTERRUPTED }) {
                 showInstead()
             }
             send(Event.SpeechEnded)

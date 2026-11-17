@@ -92,7 +92,10 @@ sealed interface Event {
     /** A keyword from the spotter that was not Kestrel's own voice. */
     data class Spotted(val keyword: Keyword) : Event
 
-    /** A reply has been spoken, stopped or refused, or speaking it failed. Send it once for each reply, or recognition stays off. */
+    /**
+     * A reply has been spoken, stopped, interrupted or refused, or speaking it failed. Send it once for each reply, or
+     * recognition stays off.
+     */
     data object SpeechEnded : Event
 
     /** Task number [task] ended, with a [reply] for the owner or none. */

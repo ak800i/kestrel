@@ -2,9 +2,7 @@ package dev.kestrel.voice.speak
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.SystemClock
@@ -40,26 +38,40 @@ enum class Spoke {
     /** [VoicePlayer.stop] or [VoicePlayer.close] ended it early, or before it began. */
     STOPPED,
 
-    /** Android refused audio focus, so Kestrel spoke nothing (B5). */
+    /**
+     * Android refused audio focus, so Kestrel spoke nothing: in the background without a suitable foreground service
+     * (B5), or while a call rings or lasts (prototype P3).
+     */
     REFUSED,
+
+    /**
+     * Android took Kestrel's audio focus away while the reply played or waited, as for a ringing call or an app that asks
+     * for exclusive focus, so Kestrel stopped it as [VoicePlayer.stop] would (design spec, section 14.6). The caller shows
+     * its text instead.
+     */
+    INTERRUPTED,
 }
 
 /**
  * Speaks replies in Kestrel's voice (design spec, section 8.4). It speaks sentence by sentence and synthesizes the next
  * sentence while one plays, so that it starts soon and [stop] takes effect at once. The audio has the usage "assistant",
- * and other apps lower their volume while Kestrel speaks. Android 17 refuses audio focus to an app in the background
- * without a suitable foreground service (B5); then the player speaks nothing and returns [Spoke.REFUSED]. One reply
- * plays at a time, in the order of the [speak] calls.
+ * and other apps lower their volume while Kestrel speaks. Kestrel keeps its audio focus between the replies of a queue
+ * and gives it up once no reply waits. Android 17 refuses audio focus to an app in the background without a suitable
+ * foreground service (B5), and to every app while a call rings or lasts (prototype P3); then the player speaks nothing
+ * and returns [Spoke.REFUSED]. When another app only lets Kestrel lower its volume, as for a notification's sound, the
+ * player speaks on more quietly until the focus comes back. When Android takes the focus away while Kestrel speaks, for
+ * a ringing call or an app that asks for exclusive focus, the player stops at once, and the replies that played or
+ * waited return [Spoke.INTERRUPTED]. One reply plays at a time, in the order of the [speak] calls.
  *
  * The player skips every sentence that has no letter and no digit, such as "…", "!?" or an emoji, because there is
  * nothing in it to say, and sherpa-onnx would write such a sentence to the log (design spec, section 13.5).
  */
 class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
-    private val audio = context.getSystemService(AudioManager::class.java)
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANT)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
+    private val focus = ReplyFocus(AndroidAudioFocus(context, attributes) { change -> focusChanged(change) })
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val turn = Mutex()
     private val generation = AtomicInteger()
@@ -67,6 +79,9 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     private val lock = Any()
     private var track: AudioTrack? = null
     private var clips: Channel<Clip>? = null
+
+    // The generations whose replies a loss of the audio focus ended. Only code that holds [lock] uses it.
+    private val interruptedGenerations = mutableSetOf<Int>()
 
     // The synthesis of the reply that played last. Only the reply that holds the turn reads or sets it.
     private var synthesis: Job? = null
@@ -78,10 +93,10 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     }
 
     /**
-     * Speaks [text] after the replies that came before it, and completes when it has been spoken, stopped or refused, or
-     * with the error when synthesis or the audio output fails. A [stop] after this call ends the reply, also when it has
-     * not begun yet. A reply whose sentences all lack letters and digits plays nothing and completes with
-     * [Spoke.FINISHED]. After [close], the reply completes with [Spoke.STOPPED] at once.
+     * Speaks [text] after the replies that came before it, and completes when it has been spoken, stopped, interrupted
+     * or refused, or with the error when synthesis or the audio output fails. A [stop] after this call ends the reply,
+     * also when it has not begun yet. A reply whose sentences all lack letters and digits plays nothing and completes
+     * with [Spoke.FINISHED]. After [close], the reply completes with [Spoke.STOPPED] at once.
      */
     fun speak(text: String): Deferred<Spoke> {
         // A cancelled Deferred would throw CancellationException into a caller that is not cancelled itself.
@@ -89,34 +104,63 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
         val mine = generation.get()
         // Undispatched, the caller's thread takes the turn or joins the queue for it, so replies keep the order of the calls.
         return scope.async(start = CoroutineStart.UNDISPATCHED) {
-            turn.withLock {
-                yield()
-                if (generation.get() != mine) return@withLock Spoke.STOPPED
-                // The synthesizer serves one sentence at a time, and a stopped reply's last sentence may still be in it.
-                synthesis?.join()
-                val sentences = Sentences.split(text).filter { sentence -> sentence.any(Char::isLetterOrDigit) }
-                when {
-                    generation.get() != mine -> Spoke.STOPPED
-                    sentences.isEmpty() -> Spoke.FINISHED
-                    else -> withFocus { withTrack { output -> play(output, sentences, mine) } }
+            // Counted before the reply waits for its turn, so that the focus stays while it waits (section 8.4).
+            focus.asked()
+            try {
+                val spoke = turn.withLock {
+                    yield()
+                    if (generation.get() != mine) return@withLock Spoke.STOPPED
+                    // The synthesizer serves one sentence at a time, and a stopped reply's last sentence may still be
+                    // in it.
+                    synthesis?.join()
+                    val sentences = Sentences.split(text).filter { sentence -> sentence.any(Char::isLetterOrDigit) }
+                    when {
+                        generation.get() != mine -> Spoke.STOPPED
+                        sentences.isEmpty() -> Spoke.FINISHED
+                        !focus.take() -> Spoke.REFUSED
+                        else -> withTrack { output -> play(output, sentences, mine) }
+                    }
                 }
+                // Section 14.6: a reply that a loss of the focus ended goes to the bar.
+                if (spoke == Spoke.STOPPED && wasInterrupted(mine)) Spoke.INTERRUPTED else spoke
+            } finally {
+                focus.finish()
             }
         }
     }
 
     /** Stops the reply that plays and the replies that were asked for before. Any thread may call it. */
     fun stop() {
-        // A reply that reads the new generation hands over its channel and track only after this section, so the stop
-        // never ends a reply that was asked for after it.
-        synchronized(lock) {
-            generation.incrementAndGet()
-            clips?.close()
-            track?.run {
-                pause()
-                flush()
+        synchronized(lock) { endGeneration() }
+    }
+
+    // Section 8.4: another app that only lets Kestrel lower its volume, such as a notification's sound, makes the reply
+    // quieter until the focus comes back. Section 14.6: when Android takes the focus away, for a call or an app that asks
+    // for exclusive focus, the replies that play or wait end as a stop ends them, and they count as interrupted. Android
+    // calls it on the main thread.
+    private fun focusChanged(change: Int) {
+        when (focus.changed(change)) {
+            FocusChange.NONE -> Unit
+            FocusChange.LOWER, FocusChange.RESTORE -> synchronized(lock) { track?.setVolume(focus.volume()) }
+            FocusChange.STOP -> synchronized(lock) {
+                interruptedGenerations += generation.get()
+                endGeneration()
             }
         }
     }
+
+    // A reply that reads the new generation hands over its channel and track only after the caller's section, so a stop
+    // never ends a reply that was asked for after it. The caller holds [lock].
+    private fun endGeneration() {
+        generation.incrementAndGet()
+        clips?.close()
+        track?.run {
+            pause()
+            flush()
+        }
+    }
+
+    private fun wasInterrupted(mine: Int): Boolean = synchronized(lock) { mine in interruptedGenerations }
 
     /**
      * Stops speaking, and returns when the synthesizer is no longer in use, so that its owner can close it. The player
@@ -128,16 +172,6 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     }
 
     private class Clip(val text: String, val samples: FloatArray)
-
-    private inline fun withFocus(speak: () -> Spoke): Spoke {
-        val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).setAudioAttributes(attributes).build()
-        if (audio.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return Spoke.REFUSED
-        try {
-            return speak()
-        } finally {
-            audio.abandonAudioFocusRequest(focus)
-        }
-    }
 
     private suspend fun withTrack(speak: suspend (AudioTrack) -> Spoke): Spoke {
         val rate = synthesizer.sampleRate
@@ -153,7 +187,11 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(maxOf(minimum, rate / 5 * Float.SIZE_BYTES))
             .build()
-        synchronized(lock) { track = output }
+        synchronized(lock) {
+            track = output
+            // A reply that starts while another app speaks over Kestrel starts quietly too (section 8.4).
+            output.setVolume(focus.volume())
+        }
         try {
             return speak(output)
         } finally {
