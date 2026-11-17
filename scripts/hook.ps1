@@ -35,6 +35,11 @@
 #                                           scripts\install.ps1 ends the process
 #   voice-clip -Clear                       drops the waiting clips, and gives Kestrel back the microphone that the
 #                                           first voice-clip replaced, from Kestrel's next start
+#   voice-call-commands [-On true|false]    answers whether "Commands during a call" is on, after storing -On; Kestrel
+#                                           takes a change a moment later, as from its settings
+#   voice-choice [-Voice piper|kokoro]      answers the stored voice and speed, and whether Kokoro was chosen and Piper
+#                                           spoke the last time that a voice session opened, after storing -Voice at
+#                                           the stored speed; a new voice counts from Kestrel's next start
 # The voice corpus (scripts\make-corpus.ps1 and scripts\voice-eval.ps1 run these). A clip is a 16 kHz WAV file in
 # Kestrel's folder Android/data/dev.kestrel/files/eval, which -File names without '.wav':
 #   voice-synth -Text 'text' -File name [-Voice piper|kokoro]
@@ -42,7 +47,10 @@
 #   voice-synth -Close                      closes the voice that voice-synth keeps loaded
 #   voice-record -File name -Seconds n      starts recording the microphone for n seconds, at most 15, into a clip, and
 #                                           answers recording once the microphone records; Kestrel must be off and in
-#                                           front
+#                                           front. It checks only at its start that Kestrel is off, and never the
+#                                           screen: a voice session that opens during the recording shares the
+#                                           microphone, and Android silences a recording from the background, which
+#                                           the answer shows
 #   voice-record -Result                    answers recording until the recording has ended, then its length, the
 #                                           loudest sample and whether Android silenced it, never the sound
 #   voice-eval -Load                        loads a recogniser with the boost words of Kestrel's voice session in the
@@ -55,16 +63,21 @@
 #                                           name starts with gen-; -NoBoost transcribes without the boost words
 #   voice-eval -Close                       closes that recogniser
 # The A71 session (scripts\a71-session.ps1 runs these):
-#   voice-counts                            how many waits for a task and how many tasks Kestrel started in its process,
-#                                           and how many words the last slow task had
+#   voice-counts                            the number of Kestrel's latest wait for a task, which rises with each wait and
+#                                           also when a wait starts again, how many tasks Kestrel started in its process,
+#                                           how many words the last slow task had, and how many keyword hits its voice
+#                                           sessions reported, without those of its own voice
 #   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
 #                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
 #   voice-task -Clear                       each task ends at once again, as in sub-project 2
 #   voice-echo -Text 'text' [-Voice piper|kokoro]
 #                                           starts playing the text in Kestrel's voice while the real microphone feeds the
-#                                           keyword spotter, and answers playing; Kestrel must be off and in front
+#                                           keyword spotter, and answers playing; Kestrel must be off and in front. As
+#                                           voice-record, it checks Kestrel's state only at its start, and never the screen
 #   voice-echo -Result                      answers playing until the check has ended, then how the reply ended, the
-#                                           keyword hits and those that the echo filter took for Kestrel's own voice
+#                                           keyword hits, those that the echo filter took for Kestrel's own voice, the
+#                                           loudest sample in percent and whether Android silenced the microphone; a
+#                                           failure of the microphone fails the check
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -85,8 +98,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
-        'voice-state', 'voice-clip', 'voice-synth', 'voice-record', 'voice-eval', 'voice-counts', 'voice-task', 'voice-echo',
-        'location', 'spike-results', 'files', 'watch')][string]$Command,
+        'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
+        'voice-counts', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files', 'watch')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,

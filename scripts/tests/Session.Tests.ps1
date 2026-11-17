@@ -36,6 +36,57 @@ Describe 'The helpers of the A71 session' {
         ConvertTo-UidLabel -UserId $userId | Should -BeExactly 'u0a234'
     }
 
+    It 'reads the UID also as Android 17 prints it, and from the list of packages' {
+        Get-AppUserId -Dump @('  Package [dev.kestrel] (1a2b3c):', '    appId=10331') | Should -Be 10331
+        $list = @('package:dev.kestrel.test uid:10332', 'package:dev.kestrel uid:10331', 'package:dev.kestrel.testapp uid:10303')
+        Get-ListedUserId -List $list -Package 'dev.kestrel' | Should -Be 10331
+        Get-ListedUserId -List @('package:dev.kestrel.test uid:10332') -Package 'dev.kestrel' | Should -BeNullOrEmpty
+    }
+
+    It 'says why batterystats gave no estimate for the UID' {
+        $estimates = @('  Estimated power use (mAh):', '    Capacity: 3000, Computed drain: 0, actual drain: 0')
+
+        Get-BatteryUseGap -Dump @('Statistics since last charge:') -Uid 'u0a331' | Should -Match 'no estimates of power use'
+        Get-BatteryUseGap -Dump @('  Estimated power use (mAh):') -Uid 'u0a331' | Should -Match 'no battery capacity'
+        Get-BatteryUseGap -Dump ($estimates + '    UID u0a196: 0.132') -Uid 'u0a331' | Should -Match "no estimate for Kestrel's UID u0a331"
+        Get-BatteryUseGap -Dump ($estimates + '    UID u0a331: 0.00339 bg: 0.00000700') -Uid 'u0a331' | Should -BeNullOrEmpty
+    }
+
+    It 'reads the mode of an app op from the package''s line only' {
+        Get-AppOpMode -Answer @('No operations.', 'Default mode: allow') -Op RUN_ANY_IN_BACKGROUND | Should -BeNullOrEmpty
+        Get-AppOpMode -Answer @('RUN_ANY_IN_BACKGROUND: allow; time=+1m2s ago') -Op RUN_ANY_IN_BACKGROUND | Should -BeExactly 'allow'
+        Get-AppOpMode -Answer @('Uid mode: RUN_ANY_IN_BACKGROUND: ignore', 'RUN_ANY_IN_BACKGROUND: allow') -Op RUN_ANY_IN_BACKGROUND |
+            Should -BeExactly 'allow'
+    }
+
+    It 'puts the battery restriction back as allow or ignore, never as default' {
+        Get-BackgroundOpRestore -Answer @('No operations.') | Should -BeExactly 'allow'
+        Get-BackgroundOpRestore -Answer @('RUN_ANY_IN_BACKGROUND: default') | Should -BeExactly 'allow'
+        Get-BackgroundOpRestore -Answer @('RUN_ANY_IN_BACKGROUND: allow; time=+5s ago') | Should -BeExactly 'allow'
+        Get-BackgroundOpRestore -Answer @('RUN_ANY_IN_BACKGROUND: ignore; rejectTime=+2s ago') | Should -BeExactly 'ignore'
+    }
+
+    It 'names the tests that did not pass, and tells whether a class passed' {
+        $folder = Join-Path $TestDrive 'connected'
+        New-Item -ItemType Directory -Force -Path $folder | Out-Null
+        $xml = @(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<testsuite name="all" tests="4" failures="1" errors="0" skipped="1">'
+            '  <testcase name="loadsBoth" classname="dev.kestrel.app.voice.OnnxRuntimeTogetherTest" time="1.0" />'
+            '  <testcase name="hearsIt" classname="dev.kestrel.app.voice.EvalHookTest" time="1.0"><failure message="m">trace</failure></testcase>'
+            '  <testcase name="speaks" classname="dev.kestrel.app.voice.SynthesizerTest" time="1.0"><skipped /></testcase>'
+            '  <testcase name="counts" classname="dev.kestrel.app.voice.AppNamesTest" time="1.0" />'
+            '</testsuite>'
+        ) -join "`n"
+        Set-Content -LiteralPath (Join-Path $folder 'TEST-device.xml') -Value $xml
+
+        Get-UnpassedTests -Folder $folder | Should -Be @('EvalHookTest#hearsIt failed', 'SynthesizerTest#speaks skipped')
+        Test-ClassPassed -Folder $folder -Class 'OnnxRuntimeTogetherTest' | Should -BeTrue
+        Test-ClassPassed -Folder $folder -Class 'EvalHookTest' | Should -BeFalse
+        Test-ClassPassed -Folder $folder -Class 'MissingTest' | Should -BeFalse
+        @(Get-UnpassedTests -Folder (Join-Path $TestDrive 'none')).Count | Should -Be 0
+    }
+
     It 'computes the share of the battery per hour from the estimate of batterystats' {
         $dump = @(
             'Estimated power use (mAh):'
@@ -91,5 +142,22 @@ Describe 'The helpers of the A71 session' {
         $failures[0].Count | Should -Be 1
         $failures[1].What | Should -BeExactly 'The microphone'
         $failures[1].Count | Should -Be 2
+    }
+}
+
+Describe 'The app ops that the scripts set' {
+    # Android counts the mode 'default' of RUN_ANY_IN_BACKGROUND and TAKE_AUDIO_FOCUS as restricted (prototype P2), so a
+    # script that puts one back must name the op's normal mode, allow or foreground, or ignore.
+    It 'sets RUN_ANY_IN_BACKGROUND and TAKE_AUDIO_FOCUS only to allow, ignore or foreground' {
+        $scripts = @(Get-ChildItem -Path "$PSScriptRoot\..", "$PSScriptRoot\..\lib" -Filter '*.ps1' -File)
+        $lines = @($scripts | Select-String -Pattern 'appops set \S+ (RUN_ANY_IN_BACKGROUND|TAKE_AUDIO_FOCUS)\b(.*)$')
+
+        $lines.Count | Should -BeGreaterThan 0
+        foreach ($line in $lines) {
+            $modes = @([regex]::Matches($line.Matches[0].Groups[2].Value, '\b(allow|ignore|foreground|default|deny|errored)\b') | ForEach-Object { $_.Value })
+            $where = "$($line.Filename):$($line.LineNumber)"
+            $modes.Count | Should -BeGreaterThan 0 -Because "$where must name the mode itself"
+            @($modes | Where-Object { $_ -notin 'allow', 'ignore', 'foreground' }) | Should -BeNullOrEmpty -Because "$where must not set another mode"
+        }
     }
 }

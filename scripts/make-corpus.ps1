@@ -1,10 +1,11 @@
 # Makes the generated voice corpus (design spec, section 16.4): a test device says every utterance of
 # corpus\commands.txt in one of Kestrel's voices, through the hook voice-synth, as a WAV clip of 16 kHz, and the script
-# copies the clips into corpus\generated\<voice>, which git ignores. It replaces the clips of an earlier run. It needs
-# Kestrel's debug build, its speech models (scripts\push-models.ps1, with -Kokoro for -Voice kokoro) and PowerShell 7.3
-# or newer, as scripts\hook.ps1 does. The device writes each clip into Kestrel's folder Android/data/dev.kestrel/files/eval;
-# the script deletes it there once it has copied it, and at the end it deletes the folder's clips and closes the voice
-# that the hook keeps loaded, also when it fails or is interrupted.
+# copies the clips into corpus\generated\<voice>, which git ignores. It overwrites the clips of the utterances that the
+# file still has; a clip whose utterance was removed from the file stays, and scripts\voice-eval.ps1 does not measure it.
+# It needs Kestrel's debug build, its speech models (scripts\push-models.ps1, with -Kokoro for -Voice kokoro) and
+# PowerShell 7.3 or newer, as scripts\hook.ps1 does. The device writes each clip into Kestrel's folder
+# Android/data/dev.kestrel/files/eval; the script deletes it there once it has copied it, and at the end it deletes the
+# folder's clips and closes the voice that the hook keeps loaded, also when it fails or is interrupted.
 # Example: scripts\make-corpus.ps1 -Serial emulator-5554 -Voice kokoro
 #Requires -Version 7.3
 param(

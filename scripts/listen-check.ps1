@@ -16,16 +16,28 @@
 #   call      on an emulator only, because only its console can place a call ('gsm call', 'gsm cancel'): with the
 #             accessibility service on and Kestrel in the background, a call rings, Kestrel shows Ringing and Android
 #             does not silence its recording; "decline" (a transcript that the hook sends) declines it, and "answer"
-#             answers the next one, both through the call's heads-up notification; Kestrel shows In call, and listening
-#             comes back when the call ends. Then, with the permission to answer calls, a plain "answer" answers a third
-#             call through Android's call API and leaves the in-call screen behind, and "answer on speaker" answers a
-#             fourth one, brings the in-call screen to the front and leaves its speaker control on (the emulator has no
-#             earpiece, so its calls are on the speaker from the start). Last, with the swipe lock screen on, a call
+#             answers the next one, both through the call's heads-up notification; Kestrel shows In call. During that
+#             call, with "Commands during a call" on (through the hook voice-call-commands, which the check puts back),
+#             the debug build's screen with a "Mute" switch comes to the front, as another app's control with the label
+#             of an in-call control: "Kestrel, mute" must bring the in-call screen to the front and turn its mute
+#             control on, a second "Kestrel, mute" must leave the call muted, and the other screen's switch must stay
+#             off. The check reads whether the call is muted in 'dumpsys audio', and the controls with 'uiautomator
+#             dump' once Kestrel is done, because a dump while Kestrel searched for the control made the search fail.
+#             Listening comes back when the call ends. Then, with the permission to answer calls, a plain "answer"
+#             answers a third call through Android's call API and leaves the in-call screen behind, and "answer on
+#             speaker" answers a fourth one, brings the in-call screen to the front and leaves its speaker control on
+#             (the emulator has no earpiece, so its calls are on the speaker from the start). Last, with the swipe lock screen on, a call
 #             that wakes the locked screen starts Kestrel's recording, which Android must not silence, and "decline"
 #             declines it (design spec, section 8.7; spike S1). On a phone the check is skipped and changes nothing
 #   restart   after Android ended Kestrel's process ('am crash'), listening comes back once the accessibility service has
 #             connected again. Android does not restart an app that crashed twice within 2 minutes, so wait 2 minutes
 #             before you run the script again.
+#   role      last, with Kestrel as the holder of the assistant role and its accessibility service off: the role alone
+#             lets the hook start listening with Kestrel in the background, without silencing, and after 'am crash'
+#             listening comes back once the assistant service is ready (design spec, sections 8.5 and 8.6). Without
+#             -Reboot, the check first waits until 2 minutes have passed since the restart check's crash. The holders
+#             of the role and the settings assistant, voice_interaction_service and voice_recognition_service are put
+#             back afterwards.
 #   reboot    with -Reboot: listening comes back after a reboot. On a phone, the script runs 'adb reboot'. On an emulator,
 #             'adb reboot' has crashed or frozen this computer's emulator in about half of the runs, also soon after a
 #             cold boot, so the script instead runs 'sync' on it, closes it with 'adb emu kill', waits until its qemu
@@ -42,12 +54,14 @@
 # ran, also when a later check fails with an error.
 # While it runs, it grants Kestrel the microphone and notification permissions, replaces the list of enabled
 # accessibility services, sets the target of the accessibility shortcut, opens the notification shade for the
-# notification check, and puts Kestrel's tile first in Quick Settings and opens the panel for the tile check. On an
-# emulator, it also grants Kestrel the permission to read the phone state, takes away its permission to answer calls
-# until the call check needs it, and turns the swipe lock screen on during the call check.
+# notification check, puts Kestrel's tile first in Quick Settings and opens the panel for the tile check, and makes
+# Kestrel the assistant for the role check. On an emulator, it also grants Kestrel the permission to read the phone
+# state, takes away its permission to answer calls until the call check needs it, turns on "Commands during a call"
+# during the call, and turns the swipe lock screen on during the call check.
 # Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the tiles, the
-# accessibility settings, the lock screen and the permissions, deletes the calls that it made from the call log, and
-# deletes the dump of the screen. When Kestrel's accessibility service was off before the run, Kestrel's notification
+# assistant role, "Commands during a call", the accessibility settings, the lock screen and the permissions, deletes the
+# calls that it made from the call log, and deletes the dump of the screen. When Kestrel's accessibility service was off
+# before the run, Kestrel's notification
 # that the service is off stays afterwards, because the shell cannot remove another app's notification; swipe it away.
 # If it cannot put something back, also because Ctrl+C interrupted it while it put things back, it says at the end what
 # is left and how to put it back by hand. Then, after
@@ -84,10 +98,15 @@ $uiDumpFile = '/data/local/tmp/kestrel-ui.xml'
 $phoneStatePermission = 'android.permission.READ_PHONE_STATE'
 $answerCallsPermission = 'android.permission.ANSWER_PHONE_CALLS'
 $testNumber = '5550175'
-# The label of the in-call screen's speaker control (Step 1 of plan 2D's Task 3 looked at it), and Google's in-call
-# screen in front (prototype P3).
+# The labels of the in-call screen's speaker and mute controls (Step 1 of plan 2D's Task 3 looked at them), and Google's
+# in-call screen in front (prototype P3).
 $speakerLabel = 'Speaker'
+$muteLabel = 'Mute'
 $inCallScreenPattern = 'topResumedActivity=ActivityRecord\{[^}]* com\.google\.android\.dialer/\S*InCallActivity'
+# The debug build's screen with a "Mute" switch, which stands for another app's control with an in-call control's label.
+$fixture = 'dev.kestrel/dev.kestrel.app.debug.CallFixtureActivity'
+$fixturePattern = 'topResumedActivity=ActivityRecord\{[^}]* dev\.kestrel/\.app\.debug\.CallFixtureActivity'
+$assistantRole = 'android.app.role.ASSISTANT'
 
 # Runs a command on the device and fails when it fails. A busy device sometimes fails a command, so it is repeated.
 function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
@@ -127,13 +146,25 @@ function Test-InCallScreen {
     ((Invoke-Checked 'dumpsys activity activities') -join "`n") -match $inCallScreenPattern
 }
 
-# Whether the in-call screen's speaker control is on: the element labelled $speakerLabel, or a parent of it, is checked.
-# Only the answer leaves this function, because the dump names the call.
-function Test-SpeakerOn {
+# Whether the call is muted: Telecom mutes the microphone through Android's audio service, whose dump then shows
+# 'mic mute ... FromApi=true'. Unlike 'uiautomator dump', it leaves Kestrel's accessibility service undisturbed while it
+# clicks: on kestrel-api37, a dump during Kestrel's search for the control made the search fail.
+function Test-CallMuted {
+    [bool](@(Invoke-Checked 'dumpsys audio') -match '^\s*mic mute .*\bFromApi=true\b')
+}
+
+# Whether the fixture with the "Mute" switch is in front.
+function Test-FixtureInFront {
+    ((Invoke-Checked 'dumpsys activity activities') -join "`n") -match $fixturePattern
+}
+
+# Whether the control on the screen with the label, such as the in-call screen's speaker control, is on: the element
+# labelled $Label, or a parent of it, is checked. Only the answer leaves this function, because the dump names the call.
+function Test-ControlOn([string]$Label) {
     $xml = New-Object System.Xml.XmlDocument
     try { $xml.LoadXml((Get-UiDump)) } catch { return $false }
     foreach ($node in @($xml.SelectNodes('//node'))) {
-        if ($node.GetAttribute('content-desc').Trim() -ne $speakerLabel -and $node.GetAttribute('text').Trim() -ne $speakerLabel) {
+        if ($node.GetAttribute('content-desc').Trim() -ne $Label -and $node.GetAttribute('text').Trim() -ne $Label) {
             continue
         }
         for ($at = $node; $at -and $at.LocalName -eq 'node'; $at = $at.ParentNode) {
@@ -458,6 +489,44 @@ function Invoke-SettingsCheck {
     "failed: Kestrel's settings did not come to the front within 10 s of 'Kestrel, open settings'"
 }
 
+# During the answered call, with "Commands during a call" on: "Kestrel, mute" with another app's "Mute" in front, here
+# the debug build's fixture, must mute the call with the in-call screen's control and leave the other app's control
+# alone, and a second "Kestrel, mute" must leave the call muted (design spec, section 8.7). Returns nothing when it
+# worked, and otherwise why not. It puts the setting back itself; the restore at the end also covers a Ctrl+C.
+function Invoke-MuteCheck {
+    Invoke-Hook voice-call-commands -On true | Out-Null
+    try {
+        # Kestrel takes the setting a moment after the store has it.
+        Start-Sleep -Seconds 2
+        Invoke-Checked "am start -n $fixture" | Out-Null
+        if (-not (Wait-Condition -TimeoutSeconds 10 { Test-FixtureInFront })) {
+            return 'the screen with another app''s "Mute" did not come to the front within 10 s'
+        }
+        if (Test-CallMuted) { return 'the call was muted before "Kestrel, mute"' }
+        Invoke-Hook voice -Send heard -Text 'Kestrel, mute.' -Named | Out-Null
+        # Kestrel waits up to 3 s for the in-call screen to come to the front, and then up to 3 s for the control.
+        if (-not (Wait-Condition -TimeoutSeconds 15 { (Test-InCallScreen) -and (Test-CallMuted) })) {
+            if (-not (Test-InCallScreen)) { return '"Kestrel, mute" during the call did not bring the in-call screen to the front within 15 s' }
+            return '"Kestrel, mute" during the call brought the in-call screen to the front, but the call was not muted within 15 s'
+        }
+        # The in-call screen's control shows the state too, which a second "mute" must leave on. Kestrel is done, so the
+        # dump disturbs nothing.
+        if (-not (Test-ControlOn $muteLabel)) { return 'the call was muted, but the in-call screen''s mute control was not on' }
+        Invoke-Hook voice -Send heard -Text 'Kestrel, mute.' -Named | Out-Null
+        Start-Sleep -Seconds 5
+        if (-not (Test-CallMuted)) { return 'a second "Kestrel, mute" unmuted the call' }
+        Invoke-Checked "am start -n $fixture" | Out-Null
+        if (-not (Wait-Condition -TimeoutSeconds 10 { Test-FixtureInFront })) {
+            return 'the screen with another app''s "Mute" did not come back to the front'
+        }
+        if (Test-ControlOn $muteLabel) { return '"Kestrel, mute" switched on the "Mute" of another app' }
+    } finally {
+        Invoke-Hook voice-call-commands -On $(if ($callCommandsBefore) { 'true' } else { 'false' }) | Out-Null
+        # The fixture closes, so that it is not in front during the next call.
+        if (Test-FixtureInFront) { Invoke-Checked 'input keyevent KEYCODE_BACK' | Out-Null }
+    }
+}
+
 function Invoke-CallCheck {
     if (-not $isEmulator) { return 'skipped: only an emulator can place a call to itself' }
     Stop-Kestrel
@@ -483,6 +552,8 @@ function Invoke-CallCheck {
         if ((Wait-Mode ringing 15) -lt 0) { return 'failed: Kestrel did not show Ringing for the second call within 15 s' }
         Invoke-Hook voice -Send heard -Text 'Answer.' | Out-Null
         if ((Wait-Mode in_call 15) -lt 0) { return 'failed: "answer" did not answer the call within 15 s' }
+        $mute = Invoke-MuteCheck
+        if ($mute) { return "failed: $mute" }
         Invoke-Emulator "gsm cancel $testNumber"
         if ((Wait-Mode listening 15) -lt 0) { return 'failed: listening did not come back within 15 s of the end of the call' }
         # With the permission, Kestrel answers through Android's call API, which leaves the in-call screen behind
@@ -510,7 +581,7 @@ function Invoke-CallCheck {
         # speaker control for up to 3 s.
         $shown = Wait-Condition -TimeoutSeconds 15 { Test-InCallScreen }
         if ($shown) { Start-Sleep -Seconds 4 }
-        $speakerOn = $shown -and (Test-SpeakerOn)
+        $speakerOn = $shown -and (Test-ControlOn $speakerLabel)
         Invoke-Emulator "gsm cancel $testNumber"
         if (-not $shown) { return 'failed: "answer on speaker" answered the call, but the in-call screen did not come to the front within 15 s' }
         if (-not $speakerOn) { return 'failed: "answer on speaker" brought the in-call screen to the front, but its speaker control was not on' }
@@ -528,7 +599,9 @@ function Invoke-CallCheck {
         if ($problem) { return "failed: Ringing on the lock screen, but $problem" }
         Invoke-Hook voice -Send heard -Text 'Decline.' | Out-Null
         if ((Wait-Mode listening 15) -lt 0) { return 'failed: "decline" did not end the call on the lock screen within 15 s' }
-        ('ok: "decline" and "answer" worked through the call''s notification, a plain "answer" through the call API left ' +
+        ('ok: "decline" and "answer" worked through the call''s notification, "Kestrel, mute" during the call with another ' +
+            'app''s "Mute" in front muted the call with the in-call screen''s control and left the other app''s alone, a ' +
+            'second "Kestrel, mute" left the call muted, a plain "answer" through the call API left ' +
             'the in-call screen behind, "answer on speaker" brought it to the front with the speaker on, and "decline" ' +
             'worked with the permission to answer calls on the lock screen, where Kestrel recorded while the call rang')
     } finally {
@@ -554,6 +627,8 @@ function Invoke-RestartCheck {
     $before = Get-KestrelProcess
     $watch = [Diagnostics.Stopwatch]::StartNew()
     Invoke-Once 'am crash dev.kestrel'
+    # Android does not restart an app that crashed twice within 2 minutes, which the check with the role needs to know.
+    $script:crashWatch = [Diagnostics.Stopwatch]::StartNew()
     $after = ''
     while ($watch.Elapsed.TotalSeconds -lt 60) {
         Start-Sleep -Seconds 1
@@ -569,6 +644,58 @@ function Invoke-RestartCheck {
     $problem = Get-RecordingProblem $recording
     if ($problem) { return "failed: listening again $again s after Android ended Kestrel's process, but $problem" }
     "ok: listening again $again s after Android ended Kestrel's process"
+}
+
+function Get-AssistantHolders {
+    @("$((Invoke-Checked "cmd role get-role-holders $assistantRole") -join ' ')" -split '[;\s]+' | Where-Object { $_ })
+}
+
+# With only the assistant role, without Kestrel's accessibility service: the role lets Kestrel start listening in the
+# background (prototype P3), and after Android ended Kestrel's process, the assistant service's onReady restores
+# listening (design spec, section 8.5). A reboot in between, or 2 minutes since the restart check's crash, lets Android
+# restart Kestrel after this crash.
+function Invoke-RoleRestartCheck {
+    Stop-Kestrel
+    Set-KestrelService $false
+    Invoke-Checked "cmd role add-role-holder $assistantRole dev.kestrel" | Out-Null
+    if (-not (Wait-Condition { (Get-AssistantHolders) -contains 'dev.kestrel' })) { return 'failed: Android did not make Kestrel the assistant' }
+    if ($crashWatch -and -not $rebooted) {
+        $left = 125 - $crashWatch.Elapsed.TotalSeconds
+        if ($left -gt 0) {
+            Write-Host "Waiting $([int][math]::Ceiling($left)) s, so that 2 minutes have passed since the restart check's crash."
+            Start-Sleep -Seconds ([int][math]::Ceiling($left))
+        }
+    }
+    Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
+    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    # Not the exemption of an app that was in front a moment ago (prototype P2).
+    Start-Sleep -Seconds 10
+    $recording = Get-KestrelRecording
+    Invoke-Hook voice -Send toggle | Out-Null
+    $on = Wait-Mode listening 60
+    if ($on -lt 0) { return "failed: with only the assistant role, Kestrel did not start listening in the background within 60 s$modelsHint" }
+    $problem = Get-RecordingProblem $recording
+    if ($problem) { return "failed: with only the assistant role, Kestrel listened in the background after $on s, but $problem" }
+    # As in the restart check: Kestrel stores Listening a moment after its voice session opened.
+    Start-Sleep -Seconds 2
+    $recording = Get-KestrelRecording
+    $before = Get-KestrelProcess
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    Invoke-Once 'am crash dev.kestrel'
+    $after = ''
+    while ($watch.Elapsed.TotalSeconds -lt 60) {
+        Start-Sleep -Seconds 1
+        $after = Get-KestrelProcess
+        if ($after -and $after -ne $before) { break }
+    }
+    if (-not $after -or $after -eq $before) {
+        return 'failed: with only the assistant role, Kestrel''s process did not start again within 60 s of its end'
+    }
+    if ((Wait-Mode listening 120) -lt 0) { return 'failed: with only the assistant role, Kestrel did not listen again within 120 s of its new start' }
+    $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    $problem = Get-RecordingProblem $recording
+    if ($problem) { return "failed: with only the assistant role, listening again $again s after Android ended Kestrel's process, but $problem" }
+    "ok: with only the assistant role, Kestrel started listening in the background after $on s, and listened again $again s after Android ended its process"
 }
 
 function Invoke-RebootCheck {
@@ -603,6 +730,8 @@ function Invoke-RebootCheck {
             return "failed: $($_.Exception.Message)"
         }
     }
+    # Android forgets the crash of the restart check with the reboot.
+    $script:rebooted = $true
     if ((Wait-Mode listening 240) -lt 0) { return 'failed: Kestrel did not listen again within 240 s of the device''s start' }
     $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
     # On a phone, the screen is off or locked after the reboot, and Kestrel records only while it is on and unlocked.
@@ -679,10 +808,24 @@ $accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services'
             "settings delete secure $setting"
         }
     }) -join '; '
+# The call check's choice "Commands during a call", which it turns on for the mute check and puts back.
+$callCommandsBefore = $isEmulator -and (Invoke-Hook voice-call-commands) -eq 'callCommands=on'
+# The holders of the assistant role and the settings that name the assistant's services, which the role check changes.
+$assistantHolders = @(Get-AssistantHolders)
+$assistantSettings = [ordered]@{}
+foreach ($name in 'assistant', 'voice_interaction_service', 'voice_recognition_service') { $assistantSettings[$name] = Get-SecureSetting -Serial $Serial -Name $name }
+$assistantByHand = if ($assistantHolders) {
+    Format-DeviceCommand "cmd role add-role-holder $assistantRole $($assistantHolders -join ' ')"
+} else {
+    Format-DeviceCommand "cmd role remove-role-holder $assistantRole dev.kestrel"
+}
 $completed = $false
 $failed = $false
 # Set by the reboot check when the device did not answer after the reboot. The script then runs no command on it.
 $deviceLost = $false
+# The restart check's crash, and whether a reboot came after it.
+$crashWatch = $null
+$rebooted = $false
 $restoresAtEnd = @(
     # First, so that Kestrel stores Off and does not come back at the next start of its process.
     Register-Restore "Kestrel's mode Off" "Run: scripts\hook.ps1 -Serial $Serial voice -Send off" {
@@ -705,6 +848,30 @@ $restoresAtEnd = @(
             # SystemUI overwrites a write that it does not follow within a moment.
             Start-Sleep -Seconds 1
             if ((Get-Tiles) -cne $tilesBefore) { throw 'the list of tiles differs from before' }
+        }
+    }
+    # Kestrel loses the role first, so that the settings below are those of the holders before the run.
+    Register-Restore 'the holders of the assistant role and its settings' $assistantByHand {
+        Assert-TestDevice -Serial $Serial
+        if ((@(Get-AssistantHolders | Sort-Object) -join ',') -ne (@($assistantHolders | Sort-Object) -join ',')) {
+            if ($assistantHolders -notcontains 'dev.kestrel') { Invoke-Checked "cmd role remove-role-holder $assistantRole dev.kestrel" | Out-Null }
+            foreach ($holder in $assistantHolders) { Invoke-Checked "cmd role add-role-holder $assistantRole $holder" | Out-Null }
+            # Android points the settings at the holder's services a moment after the change, as voice-test.ps1 knows.
+            Start-Sleep -Seconds 2
+        }
+        foreach ($name in $assistantSettings.Keys) {
+            if ((Get-SecureSetting -Serial $Serial -Name $name) -cne $assistantSettings[$name] -and
+                -not (Set-SecureSetting -Serial $Serial -Name $name -Value $assistantSettings[$name])) {
+                throw "the setting $name differs from before"
+            }
+        }
+        if ((@(Get-AssistantHolders | Sort-Object) -join ',') -ne (@($assistantHolders | Sort-Object) -join ',')) {
+            throw 'the holders of the assistant role differ from before'
+        }
+    }
+    if ($isEmulator) {
+        Register-Restore 'the choice "Commands during a call"' "Run: scripts\hook.ps1 -Serial $Serial voice-call-commands -On $(if ($callCommandsBefore) { 'true' } else { 'false' })" {
+            Invoke-Hook voice-call-commands -On $(if ($callCommandsBefore) { 'true' } else { 'false' }) | Out-Null
         }
     }
     Register-Restore 'the accessibility settings' (Format-DeviceCommand $accessibilityByHand) {
@@ -791,6 +958,7 @@ try {
     $results['call'] = Invoke-CallCheck
     $results['restart'] = Invoke-RestartCheck
     if ($Reboot) { $results['reboot'] = Invoke-RebootCheck }
+    if (-not $deviceLost) { $results['role'] = Invoke-RoleRestartCheck }
     $completed = $true
 } catch {
     $failed = $true

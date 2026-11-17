@@ -23,10 +23,20 @@ function Get-TotalPss([string[]]$Dump) {
     $null
 }
 
-# The user ID of a package, from 'dumpsys package <package>' ('userId=10234'), or $null.
+# The user ID of a package, from 'dumpsys package <package>', or $null. Android 13 prints 'userId=10234', and later
+# versions, such as Android 17, print 'appId=10234'.
 function Get-AppUserId([string[]]$Dump) {
     foreach ($line in $Dump) {
-        if ($line -match '\buserId=(\d+)') { return [int]$Matches[1] }
+        if ($line -match '\b(?:userId|appId)=(\d+)') { return [int]$Matches[1] }
+    }
+    $null
+}
+
+# The user ID of $Package from 'pm list packages -U <package>', which lists every package whose name contains the text,
+# such as 'package:dev.kestrel uid:10234', or $null.
+function Get-ListedUserId([string[]]$List, [string]$Package) {
+    foreach ($line in $List) {
+        if ($line -match "^\s*package:$([regex]::Escape($Package)) uid:(\d+)") { return [int]$Matches[1] }
     }
     $null
 }
@@ -54,6 +64,56 @@ function Get-BatteryUse([string[]]$Dump, [string]$Uid, [double]$Hours) {
         Capacity = $capacity
         PercentPerHour = [math]::Round($used / $Hours / $capacity * 100, 2)
     }
+}
+
+# Why 'dumpsys batterystats --charged' gave Get-BatteryUse no estimate for the UID $Uid, as a text for the results, or
+# $null when it has one. The emulator has an estimate; a device whose power profile has no values may print no section
+# of estimates at all.
+function Get-BatteryUseGap([string[]]$Dump, [string]$Uid) {
+    if (-not ($Dump -match 'Estimated power use')) { return 'batterystats printed no estimates of power use, as on a device whose power profile has no values' }
+    if (-not ($Dump -match '^\s*Capacity:\s*\d')) { return 'batterystats named no battery capacity' }
+    if (-not ($Dump -match "^\s*Uid\s+$([regex]::Escape($Uid)):\s*[\d.]")) { return "batterystats had no estimate for Kestrel's UID $Uid" }
+    $null
+}
+
+# The mode of the app op $Op in the answer of 'cmd appops get <package> <op>', such as 'allow' from
+# 'RUN_ANY_IN_BACKGROUND: allow; time=+1m2s ago', or $null when the package has no entry for the op ('No operations.').
+# A line of the UID's mode ('Uid mode: ...') does not count.
+function Get-AppOpMode([string[]]$Answer, [string]$Op) {
+    foreach ($line in $Answer) {
+        if ($line -match "^\s*$([regex]::Escape($Op)):\s*(\w+)") { return $Matches[1] }
+    }
+    $null
+}
+
+# The mode that puts back Kestrel's battery restriction (the app op RUN_ANY_IN_BACKGROUND) as the answer of
+# 'cmd appops get' showed it: 'ignore' when it was restricted, otherwise 'allow', the op's normal mode, also when the op
+# had no entry. Never 'default', which Android counts as restricted too (prototype P2).
+function Get-BackgroundOpRestore([string[]]$Answer) {
+    if ((Get-AppOpMode -Answer $Answer -Op RUN_ANY_IN_BACKGROUND) -in 'ignore', 'deny', 'errored') { 'ignore' } else { 'allow' }
+}
+
+# Each test of the JUnit XML files in $Folder that did not pass, as 'Class#method failed' or 'Class#method skipped', with
+# the class's short name; the names of tests hold no private data.
+function Get-UnpassedTests([string]$Folder) {
+    if (-not (Test-Path -LiteralPath $Folder)) { return @() }
+    @(foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -Filter 'TEST-*.xml') {
+            [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
+            foreach ($case in @($xml.SelectNodes('//testcase'))) {
+                $outcome = if ($case.SelectSingleNode('failure|error')) { 'failed' } elseif ($case.SelectSingleNode('skipped')) { 'skipped' }
+                if ($outcome) { "$(($case.classname -split '\.')[-1])#$($case.name) $outcome" }
+            }
+        })
+}
+
+# Whether the JUnit XML files in $Folder hold the test class $Class (its short name) and each of its tests passed.
+function Test-ClassPassed([string]$Folder, [string]$Class) {
+    if (-not (Test-Path -LiteralPath $Folder)) { return $false }
+    $cases = @(foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -Filter 'TEST-*.xml') {
+            [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
+            @($xml.SelectNodes('//testcase')) | Where-Object { ($_.classname -split '\.')[-1] -eq $Class }
+        })
+    $cases.Count -gt 0 -and -not @($cases | Where-Object { $_.SelectSingleNode('failure|error|skipped') })
 }
 
 # The actions of the activities that Android started, from the lines 'START u0 {act=...' of its log, each once. The rest

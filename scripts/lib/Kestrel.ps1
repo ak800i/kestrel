@@ -286,7 +286,14 @@ function Invoke-TimedProcess([string]$FilePath, [string[]]$ArgumentList = @(), [
         $null = $process.StandardError.ReadToEndAsync()
         $completed = $process.WaitForExit($TimeoutSeconds * 1000)
         if (-not $completed) {
-            try { $process.Kill() } catch { Write-Verbose "Could not stop $FilePath ($($_.Exception.Message))." }
+            # Kill() only starts the end of the process, so the function waits for it: a program that has not ended in
+            # time is stopped when the function returns.
+            try {
+                $process.Kill()
+                $null = $process.WaitForExit(5000)
+            } catch {
+                Write-Verbose "Could not stop $FilePath ($($_.Exception.Message))."
+            }
         }
         # A process that adb starts, such as its server, can keep the output open after adb has ended.
         $text = if ($completed -and $output.Wait(5000)) { $output.Result } else { '' }
