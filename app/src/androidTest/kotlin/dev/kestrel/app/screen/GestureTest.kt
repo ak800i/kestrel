@@ -66,7 +66,7 @@ class GestureTest {
     fun aPointOutsideTheScreenFailsInsteadOfThrowing() = runBlocking {
         openPad()
 
-        assertEquals(ActionResult.Failed("The point is outside the screen"), actions.tapAt(-5, 100))
+        assertEquals(ActionResult.Failed("The point is outside the screen."), actions.tapAt(-5, 100))
     }
 
     @Test

@@ -26,6 +26,12 @@ internal interface CommandRunner {
 
 /** How a running command talks to the owner (design spec, section 7.3). */
 internal interface CommandConversation {
+    /**
+     * When the owner began to say the command, in `SystemClock.uptimeMillis()`, or null when it is not known, as for an
+     * answer to "Which one?" that is read as a new command. A number that changed since names another element (section 9.4).
+     */
+    val spokeAt: Long? get() = null
+
     /** Says [text] and shows it on the bar; returns when the reply has ended in any way, or at once without a voice session. */
     suspend fun say(text: String)
 

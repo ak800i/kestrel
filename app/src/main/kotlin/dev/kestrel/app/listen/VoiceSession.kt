@@ -52,6 +52,9 @@ internal class VoiceSession(
     private val closed = AtomicBoolean(false)
     private val player = VoicePlayer(context, synthesizer)
     private val echo = EchoFilter()
+
+    // Only the collector of the pipeline's events uses it, one event at a time.
+    private val starts = UtteranceStarts(SystemClock::uptimeMillis)
     private val pipeline = ListeningPipeline(
         detector = detector,
         spotter = spotter,
@@ -120,13 +123,20 @@ internal class VoiceSession(
 
     private fun forward(event: VoiceEvent) {
         when (event) {
-            is VoiceEvent.Heard -> listener.send(Event.Heard(event.text, event.named))
+            is VoiceEvent.Heard -> listener.send(Event.Heard(event.text, event.named, starts.ended()))
             is VoiceEvent.Spotted -> listener.send(Event.Spotted(event.keyword))
-            VoiceEvent.SpeechStarted -> listener.send(Event.Speaking)
+            VoiceEvent.SpeechStarted -> {
+                starts.speechStarted()
+                listener.send(Event.Speaking)
+            }
             // An utterance without a transcript gives the owner the whole wait for a task again, but it is not an empty
             // transcript, which counts towards the hint of section 14.6 (Rules, Event.NothingHeard).
-            VoiceEvent.Dropped -> listener.send(Event.NothingHeard)
+            VoiceEvent.Dropped -> {
+                starts.ended()
+                listener.send(Event.NothingHeard)
+            }
             is VoiceEvent.Failed -> {
+                starts.ended()
                 listener.transcriptionFailed(event.error)
                 listener.send(Event.NothingHeard)
             }

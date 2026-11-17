@@ -56,6 +56,39 @@ class BoostWordBudgetTest {
         assertEquals(emptyList<String>(), BoostWordBudget.screenNames(snapshot))
     }
 
+    @Test
+    fun aNameInCapitalsGoesInSmallLettersUnlessItIsShortAndSpelledOut() {
+        val snapshot = snapshot(
+            element("a", top = 100, label = "SEND", clickable = true),
+            element("b", top = 200, label = "SHOW DIALOG", clickable = true),
+            // Short names in capitals are often spoken letter by letter.
+            element("c", top = 300, label = "USB", clickable = true),
+            element("d", top = 400, contentDescription = "GPS", clickable = true),
+            element("e", top = 500, label = "Wi-Fi", clickable = true),
+        )
+
+        assertEquals(listOf("send", "show dialog", "USB", "GPS", "Wi-Fi"), BoostWordBudget.screenNames(snapshot))
+    }
+
+    @Test
+    fun theScreenGivesNoNameOfAnElementThatAWindowAboveCoversWhole() {
+        val dialog = WindowSummary(id = DIALOG, kind = WindowKind.APPLICATION, bounds = IntRect(0, 800, 1080, 1400), layer = 3)
+        val snapshot = ScreenSnapshot(
+            takenAtMillis = 0,
+            windows = listOf(dialog, WindowSummary(id = APP, kind = WindowKind.APPLICATION, bounds = IntRect(0, 0, 1080, 2400), layer = 1)),
+            elements = listOf(
+                element("a", top = 100, label = "Inbox", clickable = true),
+                // Behind the dialog, a finger cannot reach it, so no command can act on it either.
+                element("b", top = 900, label = "Archive", clickable = true),
+                element("c", top = 1000, label = "Allow", clickable = true, windowId = DIALOG),
+                // Only partly behind the dialog: a finger still reaches the rest.
+                element("d", top = 750, label = "Starred", clickable = true),
+            ),
+        )
+
+        assertEquals(listOf("Inbox", "Starred", "Allow"), BoostWordBudget.screenNames(snapshot))
+    }
+
     private fun snapshot(vararg elements: ScreenElement) = ScreenSnapshot(
         takenAtMillis = 0,
         windows = listOf(
@@ -98,5 +131,6 @@ class BoostWordBudgetTest {
     private companion object {
         const val APP = 1
         const val KEYBOARD = 2
+        const val DIALOG = 3
     }
 }

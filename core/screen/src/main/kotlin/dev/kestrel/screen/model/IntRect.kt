@@ -16,4 +16,7 @@ data class IntRect(val left: Int, val top: Int, val right: Int, val bottom: Int)
         val overlap = IntRect(maxOf(left, other.left), maxOf(top, other.top), minOf(right, other.right), minOf(bottom, other.bottom))
         return overlap.takeUnless { it.isEmpty }
     }
+
+    /** Whether [other] lies inside this rectangle, its edges included. */
+    fun contains(other: IntRect): Boolean = left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom
 }

@@ -66,7 +66,7 @@ class TypeTest {
         screen.open("ViewsActivity", "Views fixture")
         val disabled = screen.awaitElement { it.editable && it.label == "Disabled field" }
 
-        assertEquals(ActionResult.Failed("The element is disabled"), actions.setText(disabled.key, "Hello"))
+        assertEquals(ActionResult.Failed("It's disabled."), actions.setText(disabled.key, "Hello"))
         assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(field("message_field").key, "Hello"))
     }
 

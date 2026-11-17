@@ -1,5 +1,7 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.commands.Command
+import dev.kestrel.commands.SpokenNumbers
 import dev.kestrel.commands.Target
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.MatchCandidate
@@ -14,7 +16,6 @@ import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
-import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.overlay.Badge
 import dev.kestrel.screen.overlay.Grid
 import kotlinx.coroutines.Dispatchers
@@ -102,26 +103,32 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
         again: Target.Label? = null,
         kind: TargetKind = TargetKind.TAP,
         strictness: Strictness = Strictness.NORMAL,
-    ): ScreenElement? {
-        val session = screen() ?: return null
-        return check(session.snapshots.current().snapshot, chosen, again, kind, strictness)
-    }
+    ): ScreenElement? = (checked(chosen, again, kind, strictness) as? Checked.Found)?.element
 
-    /** Where a gesture on [element] starts or ends in the current snapshot (see the companion's [gesturePoint]). */
-    suspend fun gesturePoint(element: ScreenElement): ScreenPoint? {
-        val session = screen() ?: return null
-        return gesturePoint(session.snapshots.current().snapshot, element)
+    /**
+     * As [still], and tells a chosen element that windows above now cover whole from one that changed, and gives the
+     * snapshot that the check read, so that a gesture's point comes from the same snapshot as its element.
+     */
+    suspend fun checked(
+        chosen: ChosenElement,
+        again: Target.Label? = null,
+        kind: TargetKind = TargetKind.TAP,
+        strictness: Strictness = Strictness.NORMAL,
+    ): Checked {
+        val session = screen() ?: return Checked.Changed
+        return checkIn(session.snapshots.current().snapshot, chosen, again, kind, strictness)
     }
 
     companion object {
         private const val MAX_DEPTH = 20
 
         /**
-         * The candidates of [kind] in [snapshot], in the snapshot's order. The keyboard's window never gives candidates,
-         * and an element that a window above covers whole is no candidate, because a finger could not reach it.
+         * The candidates of [kind] in [snapshot], in the snapshot's order. Only elements that a finger can reach are
+         * candidates ([ScreenSnapshot.reachable]): the keyboard's window never gives candidates, and neither does an
+         * element that a window above covers whole.
          */
         fun candidates(snapshot: ScreenSnapshot, kind: TargetKind): List<ScreenElement> {
-            val shown = snapshot.elements.filter { reachable(snapshot, it) }
+            val shown = snapshot.elements.filter { snapshot.reachable(it) }
             return when (kind) {
                 TargetKind.TAP -> {
                     val near = nearActionable(snapshot)
@@ -175,11 +182,26 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             again: Target.Label?,
             kind: TargetKind,
             strictness: Strictness,
-        ): ScreenElement? {
-            snapshot.element(chosen.key)?.takeIf { same(chosen, it) && reachable(snapshot, it) }?.let { return it }
-            if (again == null) return null
-            val decided = label(snapshot, again.spoken, candidates(snapshot, kind), strictness) as? Resolution.One ?: return null
-            return snapshot.element(decided.element.key)
+        ): ScreenElement? = (checkIn(snapshot, chosen, again, kind, strictness) as? Checked.Found)?.element
+
+        /**
+         * As [check], but an element that is still the same and that a finger cannot reach any more, because windows
+         * above now cover it whole, is [Checked.Covered] and not decided once more: "The screen changed" would be untrue,
+         * and saying the command again would give the same answer.
+         */
+        fun checkIn(
+            snapshot: ScreenSnapshot,
+            chosen: ChosenElement,
+            again: Target.Label?,
+            kind: TargetKind,
+            strictness: Strictness,
+        ): Checked {
+            snapshot.element(chosen.key)?.takeIf { same(chosen, it) }?.let {
+                return if (snapshot.reachable(it)) Checked.Found(it, snapshot) else Checked.Covered
+            }
+            if (again == null) return Checked.Changed
+            val decided = label(snapshot, again.spoken, candidates(snapshot, kind), strictness) as? Resolution.One ?: return Checked.Changed
+            return snapshot.element(decided.element.key)?.let { Checked.Found(it, snapshot) } ?: Checked.Changed
         }
 
         /**
@@ -187,11 +209,38 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
          * such as the keyboard or a popup, cover the centre, the point that a fallback tap would use (section 9.3). Null
          * when they cover every point of it, because the gesture would then act on the window above.
          */
-        fun gesturePoint(snapshot: ScreenSnapshot, element: ScreenElement): ScreenPoint? {
-            val window = snapshot.windows.firstOrNull { it.id == element.windowId }
-            val covers = if (window == null) emptyList() else snapshot.windows.filter { it.layer > window.layer }.map { it.bounds }
-            return GesturePaths.pointOn(element.bounds, covers)
+        fun gesturePoint(snapshot: ScreenSnapshot, element: ScreenElement): ScreenPoint? =
+            GesturePaths.pointOn(element.bounds, snapshot.windowsAbove(element.windowId))
+
+        /**
+         * What the actions of `ScreenActions` check, on every snapshot that they act on, before they act on the element
+         * that a key names: that it is still [element] (see [same]).
+         */
+        fun sameAs(element: ScreenElement): (ScreenElement) -> Boolean {
+            val chosen = chosen(element)
+            return { same(chosen, it) }
         }
+
+        /**
+         * Why "expand" ([expand]) or "collapse" cannot act on [element], or null when it can: an element that offers
+         * neither action, such as a button that a number names, is refused, because a tap would do whatever it does.
+         */
+        fun cannotExpand(element: ScreenElement, expand: Boolean): String? =
+            if (ElementAction.EXPAND in element.actions || ElementAction.COLLAPSE in element.actions) {
+                null
+            } else if (expand) {
+                CommandTexts.CANT_EXPAND
+            } else {
+                CommandTexts.CANT_COLLAPSE
+            }
+
+        /**
+         * Whether [command] names a number that may name another element by now: the owner began to say it at [spokeAt]
+         * (in `SystemClock.uptimeMillis()`, null when it is not known), and the numbers or the grid changed at
+         * [changedAt], after that (design spec, section 9.4).
+         */
+        fun numbersChanged(command: Command, spokeAt: Long?, changedAt: Long): Boolean =
+            spokeAt != null && changedAt > spokeAt && SpokenNumbers.namesNumber(command)
 
         /**
          * The label that [act][ScreenCommands.act] and a bare label decide once more when their element has changed: a
@@ -326,15 +375,19 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             }
             return near
         }
-
-        // A finger reaches an element outside the keyboard's window that no window above covers whole.
-        private fun reachable(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
-            val window = snapshot.windows.firstOrNull { it.id == element.windowId } ?: return true
-            if (window.kind == WindowKind.INPUT_METHOD) return false
-            return snapshot.windows.none { it.layer > window.layer && it.bounds.contains(element.bounds) }
-        }
-
-        private fun IntRect.contains(other: IntRect): Boolean =
-            left <= other.left && top <= other.top && right >= other.right && bottom >= other.bottom
     }
+}
+
+/** What the check right before an action found (see [ScreenTargets.checkIn]). */
+internal sealed interface Checked {
+    /** The element to act on, in the [snapshot] that the check read. */
+    data class Found(val element: ScreenElement, val snapshot: ScreenSnapshot) : Checked {
+        override fun toString() = "Found(${snapshot.elements.size} elements)"
+    }
+
+    /** The chosen element is still there, but windows above now cover it whole. */
+    data object Covered : Checked
+
+    /** The chosen element has changed or gone, and no label decided another one. */
+    data object Changed : Checked
 }

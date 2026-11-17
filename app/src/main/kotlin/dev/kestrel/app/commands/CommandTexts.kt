@@ -40,6 +40,14 @@ internal object CommandTexts {
     const val ALREADY_OFF = "It's already off."
     const val ALREADY_EXPANDED = "It's already expanded."
     const val ALREADY_COLLAPSED = "It's already collapsed."
+    const val CANT_EXPAND = "It can't expand."
+    const val CANT_COLLAPSE = "It can't collapse."
     const val NOT_CHECKABLE = "It isn't a check box or a switch."
     const val CANT_UNCHECK_RADIO = "A radio button turns off only when you check another one."
+
+    /** An answer to "Which one?" that names a number with another verb, such as "long press 2" (design spec, section 9.4). */
+    const val SAY_ONLY_THE_NUMBER = "Say only the number."
+
+    /** A number that the owner began to say before the numbers on the screen or the grid changed (section 9.4). */
+    const val NUMBERS_CHANGED = "The numbers changed. Say it again."
 }

@@ -52,6 +52,32 @@ object SpokenNumbers {
         return number(words, lone = true)
     }
 
+    /**
+     * Whether [command] names an element or a square by its number, with any verb: "long press 2", "check 2", "drag 2 to
+     * 5", "what is 2", a bare number, and the like. An answer to "Which one?" that does so ends the question, because
+     * its number would otherwise name an element of "show numbers" or a square of the grid (design spec, section 9.4).
+     */
+    fun namesNumber(command: Command?): Boolean = when (command) {
+        is Command.Bare -> command.number != null
+        is Command.WhatIs -> true
+        is Command.Tap -> command.target is Target.Number
+        is Command.LongPress -> command.target is Target.Number
+        is Command.Check -> command.target is Target.Number
+        is Command.Switch -> command.target is Target.Number
+        is Command.Expand -> command.target is Target.Number
+        is Command.Collapse -> command.target is Target.Number
+        is Command.Dismiss -> command.target is Target.Number
+        is Command.Drag -> command.from is Target.Number || command.to is Target.Number
+        is Command.Scroll -> command.target is Target.Number
+        is Command.ScrollToEnd -> command.target is Target.Number
+        is Command.Swipe -> command.target is Target.Number
+        is Command.Pinch -> command.target is Target.Number
+        is Command.Slider -> command.target is Target.Number
+        is Command.CommandsFor -> command.target is Target.Number
+        is TextCommand.StartEditing -> command.target is Target.Number
+        else -> false
+    }
+
     // [ones "hundred" ["and"]] [tens [ones]] or [ones], with every word used.
     private fun words(words: List<String>): Int? {
         var index = 0

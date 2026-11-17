@@ -62,11 +62,22 @@ class TapTest {
     }
 
     @Test
+    fun aKeyThatNamesAnotherElementThanTheCallerExpectedTapsNothing() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val send = screen.awaitElement { it.label == "SEND" }
+
+        // As when a look-alike of another row has taken the key since the caller's check (design spec, section 9.2).
+        assertEquals(ActionResult.CHANGED, actions.tap(send.key, expected = { it.label != "SEND" }))
+        assertEquals(ActionResult.CHANGED, actions.longPress(send.key, expected = { it.label != "SEND" }))
+        assertTrue(screen.session.snapshots.current().snapshot.elements.any { it.label == "Ready" })
+    }
+
+    @Test
     fun aDisabledElementIsNotTappedAndTheTapDoesNotReachItsParent() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
         val addToCart = screen.awaitElement { it.label == "ADD TO CART" }
 
-        assertEquals(ActionResult.Failed("The element is disabled"), actions.tap(addToCart.key))
+        assertEquals(ActionResult.Failed("It's disabled."), actions.tap(addToCart.key))
         assertTrue(screen.session.snapshots.current().snapshot.elements.any { it.label == "Ready" })
     }
 

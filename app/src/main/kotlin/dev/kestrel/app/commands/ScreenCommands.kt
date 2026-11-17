@@ -2,6 +2,7 @@ package dev.kestrel.app.commands
 
 import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.commands.Command
+import dev.kestrel.commands.CommandParser
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Direction
 import dev.kestrel.commands.Edge
@@ -41,7 +42,8 @@ internal sealed interface Choice {
 
 /**
  * The screen commands (design spec, sections 9.2 to 9.6, and Appendix A): tap and long press by label, by number and on
- * the grid, bare labels and bare numbers.
+ * the grid, bare labels and bare numbers, check and switch, expand, collapse and dismiss, the sliders, scrolling, swipes,
+ * pinches and drags, numbers, labels and the grid, "What is N?", "Show commands for X" and help.
  */
 internal class ScreenCommands(private val environment: CommandEnvironment) : CommandPart {
     private val targets: ScreenTargets get() = environment.targets
@@ -50,7 +52,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         val screen = environment.screen() ?: return null
         return when (command) {
             is Command.Tap -> act(screen, command.target, TargetKind.TAP, conversation, onCell = { tapAt(screen, it) }) {
-                screen.actions.tap(it.key)
+                screen.actions.tap(it.key, ScreenTargets.sameAs(it))
             }
             is Command.LongPress -> act(
                 screen,
@@ -58,17 +60,17 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
                 TargetKind.TAP,
                 conversation,
                 onCell = { screen.actions.longPressAt(it.centerX, it.centerY) },
-            ) { screen.actions.longPress(it.key) }
+            ) { screen.actions.longPress(it.key, ScreenTargets.sameAs(it)) }
             is Command.Bare -> bare(screen, command)
             is Command.Check -> check(screen, command.target, command.on, conversation)
             is Command.Switch -> check(screen, command.target, command.on, conversation)
             is Command.Expand -> expandOrCollapse(screen, command.target, expand = true, conversation)
             is Command.Collapse -> expandOrCollapse(screen, command.target, expand = false, conversation)
             is Command.Dismiss -> act(screen, command.target, TargetKind.DISMISS, conversation) {
-                screen.actions.dismiss(it.key)
+                screen.actions.dismiss(it.key, ScreenTargets.sameAs(it))
             }
             is Command.Slider -> act(screen, command.target, TargetKind.SLIDER, conversation) {
-                screen.actions.adjust(it.key, command.increase)
+                screen.actions.adjust(it.key, command.increase, ScreenTargets.sameAs(it))
             }
             is Command.Scroll -> scroll(screen, command, conversation)
             is Command.ScrollToEnd -> scrollToEnd(screen, command, conversation)
@@ -88,7 +90,6 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             is Command.WhatIs -> whatIs(screen, command.number)
             is Command.CommandsFor -> commandsFor(screen, command.target, conversation)
             is Command.Help -> help()
-            // Tasks 5 to 9 add their commands above this line.
             else -> null
         }
     }
@@ -106,6 +107,16 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         conversation: CommandConversation,
         onCell: (suspend (IntRect) -> ActionResult)? = null,
         onElement: suspend (ScreenElement) -> ActionResult,
+    ): CommandResult = actOn(screen, target, kind, conversation, onCell) { onElement(it.element) }
+
+    /** As [act], and gives [onFound] the snapshot that the check read too, from which a gesture takes its point. */
+    private suspend fun actOn(
+        screen: ScreenSession,
+        target: Target?,
+        kind: TargetKind,
+        conversation: CommandConversation,
+        onCell: (suspend (IntRect) -> ActionResult)? = null,
+        onFound: suspend (Checked.Found) -> ActionResult,
     ): CommandResult {
         val found = targets.resolve(target, kind, cells = onCell != null)
         val chosen = when (found) {
@@ -123,13 +134,18 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         }
         // A key names a position (section 9.2). A label is decided once more on the new screen; a number or an answer may
         // name another element by now.
-        val element = targets.still(chosen, ScreenTargets.again(target, found), kind) ?: return changed()
-        return done(onElement(element))
+        return when (val checked = targets.checked(chosen, ScreenTargets.again(target, found), kind)) {
+            is Checked.Found -> done(onFound(checked))
+            Checked.Covered -> covered()
+            Checked.Changed -> changed()
+        }
     }
 
     /**
      * Shows "Which one?" numbers on [choices] and asks "Which one?" (section 9.4). The answer is a number; an answer that
-     * is none ends the command and is read as a new utterance, and the question ends when its numbers go because the
+     * names a number with another verb, such as "long press 2", ends the command with "Say only the number.", because
+     * the "Which one?" numbers go before a new command could act, and its number would name another element. Any other
+     * answer ends the command and is read as a new utterance, and the question ends when its numbers go because the
      * screen changed. The numbers go when the question ends.
      */
     suspend fun choose(screen: ScreenSession, choices: List<ChosenElement>, conversation: CommandConversation): Choice {
@@ -142,7 +158,13 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
                 Asked.ScreenChanged -> return Choice.Ends(changed())
                 is Asked.Answer -> asked.text ?: return Choice.Ends(CommandResult(Outcome.CANCELLED))
             }
-            val number = SpokenNumbers.answer(answer) ?: return Choice.Ends(CommandResult(Outcome.CANCELLED, passOn = answer))
+            val number = SpokenNumbers.answer(answer)
+            if (number == null) {
+                if (SpokenNumbers.namesNumber(CommandParser.parse(answer))) {
+                    return Choice.Ends(CommandResult(Outcome.FAILED, show = CommandTexts.SAY_ONLY_THE_NUMBER))
+                }
+                return Choice.Ends(CommandResult(Outcome.CANCELLED, passOn = answer))
+            }
             val badge = badges.firstOrNull { it.number == number }
                 ?: return Choice.Ends(CommandResult(Outcome.FAILED, show = CommandTexts.noNumber(number)))
             val element = choices.firstOrNull { it.key == badge.key } ?: return Choice.Ends(changed())
@@ -207,8 +229,11 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             is Resolution.One -> {
                 // As in act: a clear label is decided once more, as strictly, when its element has changed (section 9.6).
                 val again = ScreenTargets.again(target, found)
-                val element = targets.still(found.element, again, TargetKind.BARE, Strictness.STRICT) ?: return changed()
-                done(screen.actions.tap(element.key))
+                when (val checked = targets.checked(found.element, again, TargetKind.BARE, Strictness.STRICT)) {
+                    is Checked.Found -> done(screen.actions.tap(checked.element.key, ScreenTargets.sameAs(checked.element)))
+                    Checked.Covered -> covered()
+                    Checked.Changed -> changed()
+                }
             }
             else -> CommandResult(Outcome.IGNORED)
         }
@@ -231,7 +256,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
                     // Nothing to click: the element is as the owner wants it.
                     ActionResult.Done(ActionMethod.ACTION)
                 }
-                else -> screen.actions.tap(element.key)
+                else -> screen.actions.tap(element.key, ScreenTargets.sameAs(element))
             }
         }
         if (!already || result.outcome != Outcome.DONE) return result
@@ -240,7 +265,9 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
 
     /**
      * "Expand" and "collapse". The target may offer only the other action, whether the owner names it, gives its number or
-     * names none: it already is as the owner asks, so nothing is done, and the bar says so; a tap would toggle it back.
+     * names none: it already is as the owner asks, so nothing is done, and the bar says so; a tap would toggle it back. A
+     * number may also name an element that offers neither action, such as a button: it is refused, because a tap would
+     * do whatever the button does.
      */
     private suspend fun expandOrCollapse(
         screen: ScreenSession,
@@ -251,13 +278,15 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         var already = false
         val (wanted, other) = if (expand) ElementAction.EXPAND to ElementAction.COLLAPSE else ElementAction.COLLAPSE to ElementAction.EXPAND
         val result = act(screen, target, if (expand) TargetKind.EXPAND else TargetKind.COLLAPSE, conversation) { element ->
+            val refused = ScreenTargets.cannotExpand(element, expand)
             when {
+                refused != null -> ActionResult.Failed(refused)
                 wanted !in element.actions && other in element.actions -> {
                     already = true
                     ActionResult.Done(ActionMethod.ACTION)
                 }
-                expand -> screen.actions.expand(element.key)
-                else -> screen.actions.collapse(element.key)
+                expand -> screen.actions.expand(element.key, ScreenTargets.sameAs(element))
+                else -> screen.actions.collapse(element.key, ScreenTargets.sameAs(element))
             }
         }
         if (!already || result.outcome != Outcome.DONE) return result
@@ -268,7 +297,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     private suspend fun scroll(screen: ScreenSession, command: Command.Scroll, conversation: CommandConversation): CommandResult {
         val direction = scrollDirection(command.direction)
         val target = command.target ?: return done(screen.actions.scroll(direction))
-        return act(screen, target, TargetKind.SCROLL, conversation) { screen.actions.scroll(direction, it.key) }
+        return act(screen, target, TargetKind.SCROLL, conversation) { screen.actions.scroll(direction, it.key, ScreenTargets.sameAs(it)) }
     }
 
     /**
@@ -289,8 +318,9 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
     // (section 9.2): a list that loads a new view or an app that navigates can give the key to another element.
     private suspend fun scrollAllTheWay(screen: ScreenSession, direction: ScrollDirection, list: ScreenElement?): ActionResult {
         val chosen = list?.let(ScreenTargets::chosen)
+        val expected = list?.let(ScreenTargets::sameAs)
         return ScrollToEnd.scroll(
-            scroll = { screen.actions.scroll(direction, list?.key) },
+            scroll = { screen.actions.scroll(direction, list?.key, expected) },
             content = { content(screen) },
             stillThere = { chosen == null || targets.still(chosen) != null },
         )
@@ -329,8 +359,8 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             if (line == null) OFF_SCREEN else screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY)
         }
         val target = command.target ?: return screen.screenBounds.let { done(swipeFrom(it.centerX, it.centerY)) }
-        return act(screen, target, TargetKind.TAP, conversation, onCell = { swipeFrom(it.centerX, it.centerY) }) { element ->
-            targets.gesturePoint(element)?.let { swipeFrom(it.x, it.y) } ?: COVERED
+        return actOn(screen, target, TargetKind.TAP, conversation, onCell = { swipeFrom(it.centerX, it.centerY) }) { found ->
+            gestureAt(found) { x, y -> swipeFrom(x, y) }
         }
     }
 
@@ -344,8 +374,8 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             if (line == null) OFF_SCREEN else screen.actions.pinch(line.centerX, line.centerY, line.startSpan, line.endSpan)
         }
         val target = command.target ?: return screen.screenBounds.let { done(pinchAround(it.centerX, it.centerY)) }
-        return act(screen, target, TargetKind.TAP, conversation, onCell = { pinchAround(it.centerX, it.centerY) }) { element ->
-            targets.gesturePoint(element)?.let { pinchAround(it.x, it.y) } ?: COVERED
+        return actOn(screen, target, TargetKind.TAP, conversation, onCell = { pinchAround(it.centerX, it.centerY) }) { found ->
+            gestureAt(found) { x, y -> pinchAround(x, y) }
         }
     }
 
@@ -382,19 +412,27 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             val from = if (cell != null) {
                 ScreenPoint(cell.centerX, cell.centerY)
             } else {
-                val start = source?.let { targets.still(it) }
-                if (start == null) {
-                    moved = true
-                    return@dragTo FOUND
+                when (val start = source?.let { targets.checked(it) } ?: Checked.Changed) {
+                    is Checked.Found -> ScreenTargets.gesturePoint(start.snapshot, start.element) ?: return@dragTo ActionResult.COVERED
+                    Checked.Covered -> return@dragTo ActionResult.COVERED
+                    Checked.Changed -> {
+                        moved = true
+                        return@dragTo FOUND
+                    }
                 }
-                targets.gesturePoint(start) ?: return@dragTo COVERED
             }
             screen.actions.drag(from.x, from.y, toX, toY)
         }
-        val result = act(screen, to, TargetKind.TAP, conversation, onCell = { dragTo(it.centerX, it.centerY) }) { element ->
-            targets.gesturePoint(element)?.let { dragTo(it.x, it.y) } ?: COVERED
+        val result = actOn(screen, to, TargetKind.TAP, conversation, onCell = { dragTo(it.centerX, it.centerY) }) { found ->
+            gestureAt(found) { x, y -> dragTo(x, y) }
         }
         return if (moved) changed() else result
+    }
+
+    /** Runs [gesture] at the point of [found] that a finger reaches, in the snapshot that the check read. */
+    private suspend fun gestureAt(found: Checked.Found, gesture: suspend (Int, Int) -> ActionResult): ActionResult {
+        val point = ScreenTargets.gesturePoint(found.snapshot, found.element) ?: return ActionResult.COVERED
+        return gesture(point.x, point.y)
     }
 
     /** The answer to "Drag it where?": a number, a name, or either after "to". A lone "to" is the number 2. */
@@ -422,10 +460,7 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         val LEADING_TO = Regex("^\\s*to\\b[\\s,]*", RegexOption.IGNORE_CASE)
 
         /** A gesture whose point lies outside the screen, or too close to its edge to move. */
-        val OFF_SCREEN = ActionResult.Failed("The gesture would leave the screen")
-
-        /** A gesture on an element that windows above, such as the keyboard or a popup, cover everywhere. */
-        val COVERED = ActionResult.Failed("Other windows cover it.")
+        val OFF_SCREEN = ActionResult.Failed("The gesture would leave the screen.")
 
         /** What a step that only finds its element gives `act`: nothing has moved yet. */
         val FOUND = ActionResult.Done(ActionMethod.ACTION)
@@ -484,13 +519,18 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
 
     private suspend fun tapAt(screen: ScreenSession, bounds: IntRect): ActionResult = screen.actions.tapAt(bounds.centerX, bounds.centerY)
 
-    // The reasons of ScreenActions are fixed texts without the screen's words, which the bar may show.
+    // The reasons of ScreenActions are fixed texts without the screen's words, which the bar may show. An element that the
+    // key names now is another one than Kestrel checked: the screen changed between the check and the action.
     private fun done(result: ActionResult): CommandResult = when (result) {
         is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+        ActionResult.CHANGED -> changed()
         is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
     }
 
     private fun changed() = CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+
+    // The same text as a tap's or a gesture's on an element that windows above cover everywhere.
+    private fun covered() = CommandResult(Outcome.FAILED, show = ActionResult.COVERED.reason)
 }
 
 /**

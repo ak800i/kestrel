@@ -1,5 +1,6 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.Target
@@ -304,4 +305,56 @@ class ScreenTargetsTest {
         kind: TargetKind = TargetKind.TAP,
         strictness: Strictness = Strictness.NORMAL,
     ) = ScreenTargets.check(snapshot, chosen, again, kind, strictness)
+
+    @Test
+    fun theCheckTellsAnElementThatWindowsAboveNowCoverFromOneThatChanged() {
+        val send = snapshot.element("send")!!
+        val chosen = ScreenTargets.chosen(send)
+        assertEquals(Checked.Found(send, snapshot), checkIn(snapshot, chosen))
+
+        // A dialog now covers it whole: saying the command again would give the same answer, so it is no change.
+        val dialog = WindowSummary(3, WindowKind.APPLICATION, bounds = IntRect(0, 0, 1080, 1000), layer = 1)
+        val covered = ScreenSnapshot(0, listOf(keyboard, dialog, app), elements)
+        assertEquals(Checked.Covered, checkIn(covered, chosen, Target.Label("Send")))
+        assertEquals(Checked.Covered, checkIn(covered, chosen))
+        // Gone, and not decided again.
+        assertEquals(Checked.Changed, checkIn(ScreenSnapshot(0, listOf(keyboard, app), elements.drop(1)), chosen))
+    }
+
+    @Test
+    fun theActionsCheckTheElementThatTheirKeyNamesAgainstTheCheckedOne() {
+        val delete = snapshot.element("delete1")!!
+        val expected = ScreenTargets.sameAs(delete)
+
+        assertTrue(expected(delete))
+        // The next row's look-alike has taken the key after a row above it went.
+        assertFalse(expected(snapshot.element("delete2")!!.copy(key = "delete1")))
+    }
+
+    @Test
+    fun expandAndCollapseRefuseAnElementThatOffersNeither() {
+        val button = snapshot.element("send")!!
+        assertEquals(CommandTexts.CANT_EXPAND, ScreenTargets.cannotExpand(button, expand = true))
+        assertEquals(CommandTexts.CANT_COLLAPSE, ScreenTargets.cannotExpand(button, expand = false))
+
+        // A row that offers either action is no refusal: it expands, or it is already as asked.
+        val details = snapshot.element("details")!!
+        assertNull(ScreenTargets.cannotExpand(details, expand = true))
+        assertNull(ScreenTargets.cannotExpand(details, expand = false))
+    }
+
+    @Test
+    fun aNumberThatTheOwnerBeganToSayBeforeTheNumbersChangedIsRefused() {
+        val tap = Command.Tap(Target.Number(5))
+
+        assertTrue(ScreenTargets.numbersChanged(tap, spokeAt = 1_000, changedAt = 1_500))
+        assertTrue(ScreenTargets.numbersChanged(Command.Bare("5", 5), spokeAt = 1_000, changedAt = 1_500))
+        assertFalse(ScreenTargets.numbersChanged(tap, spokeAt = 1_000, changedAt = 900))
+        // Without the start of the utterance, as for an answer read as a new command, nothing is refused.
+        assertFalse(ScreenTargets.numbersChanged(tap, spokeAt = null, changedAt = 1_500))
+        assertFalse(ScreenTargets.numbersChanged(Command.Tap(Target.Label("Send")), spokeAt = 1_000, changedAt = 1_500))
+    }
+
+    private fun checkIn(snapshot: ScreenSnapshot, chosen: ChosenElement, again: Target.Label? = null) =
+        ScreenTargets.checkIn(snapshot, chosen, again, TargetKind.TAP, Strictness.NORMAL)
 }

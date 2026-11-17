@@ -30,6 +30,11 @@ internal class InstantCommands(private val environment: CommandEnvironment) : Co
             return if (command is Command.Bare) CommandResult(Outcome.IGNORED) else CommandResult(Outcome.FAILED, say = CommandTexts.SERVICE_OFF)
         }
         val talk = if (session == null) conversation else TouchCancels(conversation, session)
+        // Section 9.4: a number that the owner began to say before the numbers or the grid changed may name another
+        // element, so the command ends before any part acts on it.
+        if (session != null && ScreenTargets.numbersChanged(command, conversation.spokeAt, session.numbersChangedAt)) {
+            return CommandResult(Outcome.FAILED, say = CommandTexts.NUMBERS_CHANGED)
+        }
         for (part in listOf(text, phone, screen)) {
             part.run(command, heard, talk)?.let { return it }
         }
@@ -51,6 +56,8 @@ internal class InstantCommands(private val environment: CommandEnvironment) : Co
  * command ends as cancelled.
  */
 private class TouchCancels(private val inner: CommandConversation, private val screen: ScreenSession) : CommandConversation {
+    override val spokeAt: Long? get() = inner.spokeAt
+
     override suspend fun say(text: String) = inner.say(text)
 
     override fun keep(text: String) = inner.keep(text)

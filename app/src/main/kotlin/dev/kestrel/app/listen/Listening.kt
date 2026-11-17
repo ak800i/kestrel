@@ -143,6 +143,7 @@ internal object ListeningTexts {
     const val CANCELLED = "Cancelled"
     const val BUSY = "Still busy with the last command."
     const val NOTHING_TO_REPEAT = "There's no command to repeat."
+    const val QUESTION_ENDED = "The question ended. Say it again."
     const val PRIVATE_INPUT = "Typing in a password field."
     const val COMMAND_FAILED = "The command failed."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on or I am your " +
@@ -1082,6 +1083,7 @@ class Listening internal constructor(
         Feedback.CommandCancelled -> ListeningTexts.CANCELLED
         Feedback.CommandBusy -> ListeningTexts.BUSY
         Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
+        Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
     }
 
     private fun privateInput(): Boolean = try {
@@ -1132,7 +1134,7 @@ class Listening internal constructor(
             publish(CommandReport(effect.command, kind, Outcome.CANCELLED))
             return
         }
-        val talk = Conversation(effect.command)
+        val talk = Conversation(effect.command, effect.spokeAt)
         conversation = talk
         startedCommand = effect.command
         // One report per command: a cancel that comes after the body's last check changes nothing. The body writes it
@@ -1192,7 +1194,7 @@ class Listening internal constructor(
      * How command number [command] talks to the owner (section 7.3). The Orchestrator speaks and shows what it says and
      * asks; [answered] and [held] come from its effects on [thread].
      */
-    private inner class Conversation(private val command: Int) : CommandConversation {
+    private inner class Conversation(private val command: Int, override val spokeAt: Long? = null) : CommandConversation {
         @Volatile
         private var spoken: CompletableDeferred<Unit>? = null
 

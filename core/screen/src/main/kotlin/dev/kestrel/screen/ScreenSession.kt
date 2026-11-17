@@ -104,6 +104,15 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /** The numbers on the screen now, for commands such as "tap 5". */
     val numberBadges: List<Badge> get() = numbers.badges
 
+    @Volatile
+    private var numbersChanged = 0L
+
+    /**
+     * When the numbers on the screen or the grid's squares last changed, in `SystemClock.uptimeMillis()`, or 0 when they
+     * never did. A number that the owner began to say before then may name another element (design spec, section 9.4).
+     */
+    val numbersChangedAt: Long get() = numbersChanged
+
     val labelsShowing: Boolean get() = labels.isShowing
 
     /** The grid on the screen now, or null. "Tap 5" taps the centre of the grid's cell 5. */
@@ -160,7 +169,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
         whichOneShownOn = null
         whichOne.value = false
         numbersMode = mode
-        numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
+        val snapshot = snapshots.current().snapshot
+        changing { numbers.show(Numbering.forScreen(snapshot, mode)) }
     }
 
     /**
@@ -170,27 +180,34 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     suspend fun showWhichOne(keys: Collection<String>) = withContext(Dispatchers.Main) {
         val snapshot = snapshots.current().snapshot
         whichOneShownOn = contentOf(snapshot)
-        numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys }))
+        changing { numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys })) }
         whichOne.value = true
     }
 
     /**
      * Removes the "Which one?" numbers of a command that has ended: the numbers of "show numbers" come back when it is
-     * on, and otherwise the numbers go. Nothing changes when no "Which one?" numbers show.
+     * on, and otherwise the numbers go. Nothing changes when no "Which one?" numbers show. The numbers come back from the
+     * newest snapshot, without waiting for a quiet screen: the screen watcher, which runs while numbers show, numbers the
+     * screen again after its next change.
      */
     suspend fun endWhichOne() = withContext(Dispatchers.Main) {
         if (whichOneShownOn == null) return@withContext
         whichOneShownOn = null
         whichOne.value = false
         val mode = numbersMode
-        if (mode == null) numbers.hide() else numbers.show(Numbering.forScreen(snapshots.current().snapshot, mode))
+        if (mode == null) {
+            changing { numbers.hide() }
+        } else {
+            val snapshot = (snapshots.latest() ?: snapshots.current()).snapshot
+            changing { numbers.show(Numbering.forScreen(snapshot, mode)) }
+        }
     }
 
     suspend fun hideNumbers() = withContext(Dispatchers.Main) {
         numbersMode = null
         whichOneShownOn = null
         whichOne.value = false
-        numbers.hide()
+        changing { numbers.hide() }
     }
 
     /** Shows names next to the actionable elements until the screen content changes (design spec, section 9.4). */
@@ -207,10 +224,26 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** Shows [grid], by default one over the whole screen. "More squares" shows `grid.more()` (design spec, section 9.4). */
     suspend fun showGrid(grid: Grid? = null) = withContext(Dispatchers.Main) {
-        gridOverlay.show(grid ?: Grid.over(overlays.screenBounds()))
+        changing { gridOverlay.show(grid ?: Grid.over(overlays.screenBounds())) }
     }
 
-    suspend fun hideGrid() = withContext(Dispatchers.Main) { gridOverlay.hide() }
+    suspend fun hideGrid() = withContext(Dispatchers.Main) { changing { gridOverlay.hide() } }
+
+    /**
+     * Ends "show numbers" and the "Which one?" numbers, and hides the labels and the grid, as when Kestrel stops listening
+     * (design spec, section 9.4). The feedback bar stays.
+     */
+    suspend fun hideOverlays() = withContext(Dispatchers.Main) {
+        numbersMode = null
+        whichOneShownOn = null
+        whichOne.value = false
+        labelsShownOn = null
+        labels.hide()
+        changing {
+            numbers.hide()
+            gridOverlay.hide()
+        }
+    }
 
     /**
      * Shows [text] on the feedback bar, which fades after a few seconds (design spec, section 8.9). With [keep], the text
@@ -272,12 +305,20 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
             // The candidates belong to the screen on which "Which one?" was asked.
             whichOneShownOn = null
             whichOne.value = false
-            if (numbersMode == null) numbers.hide()
+            if (numbersMode == null) changing { numbers.hide() }
         }
         numbersMode?.let { mode ->
             val badges = Numbering.forScreen(snapshot, mode)
-            if (badges != numbers.badges) numbers.show(badges)
+            if (badges != numbers.badges) changing { numbers.show(badges) }
         }
+    }
+
+    /** Runs [change] on the main thread, and notes the time when it changed the numbers or the grid. */
+    private inline fun changing(change: () -> Unit) {
+        val badges = numbers.badges
+        val grid = gridOverlay.grid
+        change()
+        if (numbers.badges != badges || gridOverlay.grid != grid) numbersChanged = SystemClock.uptimeMillis()
     }
 
     /** What the overlays depend on: the actionable elements and where they are. Kestrel's own overlays are not part of it. */

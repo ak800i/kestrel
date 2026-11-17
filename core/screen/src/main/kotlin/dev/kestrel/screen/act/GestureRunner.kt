@@ -5,6 +5,9 @@ import android.accessibilityservice.GestureDescription
 import android.os.RemoteException
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -30,21 +33,16 @@ class GestureRunner(private val service: AccessibilityService) {
 
     /**
      * Runs the [parts] of one gesture in order, such as the hold and the move of a drag, and stops at a failed part.
-     * When the caller cancels it, Android still runs the part that it has started, so the gesture counts as running
-     * until that part's planned end.
+     * When the caller cancels it, Android still runs the part that it has started, so Kestrel still waits for that part's
+     * answer, and only then throws the cancellation, without starting another part: the caller's job completes only once
+     * the finger has lifted, so that nothing new acts on the screen before (design spec, section 7.3).
      */
     suspend fun perform(vararg parts: GestureDescription): GestureOutcome = mutex.withLock {
         require(parts.isNotEmpty()) { "A gesture needs at least one part" }
         busyUntil = Long.MAX_VALUE
         var plannedEnd = 0L
         try {
-            var outcome = GestureOutcome.COMPLETED
-            for (part in parts) {
-                plannedEnd = SystemClock.uptimeMillis() + part.durationMillis()
-                outcome = dispatch(part)
-                if (outcome != GestureOutcome.COMPLETED) break
-            }
-            outcome
+            inOrder(parts.asList(), started = { plannedEnd = SystemClock.uptimeMillis() + it.durationMillis() }, dispatch = ::dispatch)
         } finally {
             busyUntil = maxOf(SystemClock.uptimeMillis(), plannedEnd) + SETTLE_MILLIS
         }
@@ -80,5 +78,23 @@ class GestureRunner(private val service: AccessibilityService) {
 
         /** How long after a gesture's planned end Kestrel still waits for Android's answer. */
         const val ANSWER_MARGIN_MILLIS = 2_000L
+
+        /**
+         * Calls [started] and then [dispatch] for each of [parts] in order, and stops at the first part that does not
+         * complete. The wait for a started part's answer is not cancelled, because Android runs that part to its end, and
+         * [dispatch] already gives up after the part's planned end and a margin; a cancelled caller then starts no
+         * further part and gets the cancellation.
+         */
+        internal suspend fun <T> inOrder(parts: List<T>, started: (T) -> Unit, dispatch: suspend (T) -> GestureOutcome): GestureOutcome {
+            var outcome = GestureOutcome.COMPLETED
+            for (part in parts) {
+                currentCoroutineContext().ensureActive()
+                started(part)
+                outcome = withContext(NonCancellable) { dispatch(part) }
+                currentCoroutineContext().ensureActive()
+                if (outcome != GestureOutcome.COMPLETED) break
+            }
+            return outcome
+        }
     }
 }

@@ -1,6 +1,8 @@
 package dev.kestrel.app.commands
 
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.commands.Outcome
@@ -154,6 +156,34 @@ class OverlayCommandsTest {
 
         assertNull(shown)
         assertTrue(session.numberBadges.isNotEmpty())
+    }
+
+    @Test
+    fun theOverlaysGoWhenKestrelPausesOrTurnsOff() = runBlocking<Unit> {
+        screen.open("CommandsActivity", "Commands fixture")
+        val session = screen.session
+        val listening = CommandTests.graph.listening
+
+        // Only voice removes them, and no command works while Kestrel is paused.
+        assertEquals(Outcome.DONE, CommandTests.say("show numbers").outcome)
+        assertEquals(Outcome.DONE, CommandTests.say("show labels").outcome)
+        assertEquals(Outcome.DONE, CommandTests.say("show grid").outcome)
+        listening.send(Event.Pause)
+        awaitNoOverlays()
+
+        // The numbers of "I can't find X" and the grid go when Kestrel turns off.
+        listening.send(Event.Resume)
+        withTimeout(5_000) { while (listening.state.value.mode != Mode.LISTENING) delay(50) }
+        assertEquals(Outcome.FAILED, CommandTests.say("tap Weather").outcome)
+        assertTrue(session.numberBadges.isNotEmpty())
+        assertEquals(Outcome.DONE, CommandTests.say("show grid").outcome)
+        CommandTests.stop()
+        awaitNoOverlays()
+    }
+
+    private suspend fun awaitNoOverlays() = withTimeout(5_000) {
+        val session = screen.session
+        while (session.numberBadges.isNotEmpty() || session.grid != null || session.labelsShowing) delay(50)
     }
 
     private suspend fun awaitStatus(text: String) = screen.awaitElement { it.viewId == "$FIXTURES:id/status" && it.label == text }

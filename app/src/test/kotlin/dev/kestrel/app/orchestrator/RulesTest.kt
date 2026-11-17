@@ -482,6 +482,51 @@ class RulesTest {
     }
 
     @Test
+    fun theTranscriptOfTheSpottersStopOfAReplyNamesNoButton() {
+        // A command's spoken result, after the command has ended: the spotter's "stop" only stops the reply.
+        for (keyword in listOf(Keyword.STOP, Keyword.CANCEL)) {
+            val stopped = Rules.next(listening.copy(speeches = 1), Event.Spotted(keyword))
+            assertEquals("$keyword", listOf(Effect.StopSaying), stopped.effects)
+
+            // The rest of the same utterance, such as the second word of "stop, stop", taps no "Stop" button.
+            val heard = Rules.next(stopped.state, Event.Heard("Stop.", named = false))
+            assertEquals("$keyword", listOf(Effect.Show(Feedback.Heard("Stop."))), heard.effects)
+            assertFalse("$keyword", heard.state.spottedStop)
+        }
+    }
+
+    @Test
+    fun aNumberRightAfterAQuestionEndedWithoutAnAnswerIsOnlyShown() {
+        val asked = Rules.next(runningCommand, Event.CommandAsks(1, "Which one?")).state
+        val unanswered = Rules.next(asked, Event.AnswerWaitEnded(asked.wait)).state
+        val ended = Rules.next(unanswered, Event.CommandEnded(1, CommandResult(Outcome.CANCELLED))).state
+
+        // An answer that the owner began just before the wait ran out arrives as a new utterance: it acts on nothing.
+        for (late in listOf("2", "Number 2.", "Tap 2.", "Long press 2.")) {
+            val step = Rules.next(ended, Event.Heard(late, named = false))
+            assertEquals(late, listOf(Effect.Show(Feedback.Heard(late)), Effect.Show(Feedback.QuestionEnded)), step.effects)
+            assertEquals(late, Work.IDLE, step.state.work)
+        }
+        // Only the first transcript after the question: a number acts again after it, and another command acts at once.
+        val shown = Rules.next(ended, Event.Heard("2", named = false)).state
+        assertEquals(Effect.RunCommand(2, Command.Bare("2", 2), "2"), Rules.next(shown, Event.Heard("2", named = false)).effects.last())
+        val scrolled = Rules.next(ended, Event.Heard("Scroll down", named = false))
+        assertEquals(Effect.RunCommand(2, Command.Scroll(Direction.DOWN, null), "Scroll down"), scrolled.effects.last())
+        val afterScroll = Rules.next(scrolled.state, Event.CommandEnded(2, CommandResult(Outcome.DONE))).state
+        assertEquals(Effect.RunCommand(3, Command.Bare("2", 2), "2"), Rules.next(afterScroll, Event.Heard("2", named = false)).effects.last())
+        // An answered question leaves nothing behind.
+        val answered = Rules.next(Rules.next(asked, Event.Heard("3", named = false)).state, Event.CommandEnded(1, CommandResult(Outcome.DONE)))
+        assertEquals(Effect.RunCommand(2, Command.Bare("2", 2), "2"), Rules.next(answered.state, Event.Heard("2", named = false)).effects.last())
+    }
+
+    @Test
+    fun theStartOfTheUtteranceGoesWithItsCommand() {
+        val step = Rules.next(listening, Event.Heard("Tap 5.", named = false, spokeAt = 1_234L))
+
+        assertEquals(Effect.RunCommand(1, Command.Tap(Target.Number(5)), "Tap 5.", spokeAt = 1_234L), step.effects.last())
+    }
+
+    @Test
     fun aChangeOfModeOrTheScreenTurningOffCancelsTheCommand() {
         for (event in listOf(Event.Toggle, Event.Pause, Event.TurnOff, Event.Screen(on = false), Event.CallState(CallState.RINGING))) {
             val step = Rules.next(runningCommand, event)
@@ -559,8 +604,14 @@ class RulesTest {
     fun leavingACommandWhileKestrelSpeaksStopsTheReplyOnce() {
         val speaking = runningCommand.copy(speeches = 1)
 
-        for (event in listOf(Event.TurnOff, Event.Spotted(Keyword.KESTREL))) {
-            val effects = Rules.next(speaking, event).effects
+        // "Kestrel, turn off" while a question is spoken leaves the command, then turns Kestrel off.
+        val asking = speaking.copy(asking = true, wait = 1)
+        for ((from, event) in listOf(
+            speaking to Event.TurnOff,
+            speaking to Event.Spotted(Keyword.KESTREL),
+            asking to Event.Heard("Kestrel, turn off.", named = true),
+        )) {
+            val effects = Rules.next(from, event).effects
             assertEquals("$event", 1, effects.count { it == Effect.StopSaying })
             assertTrue("$event", effects.indexOf(Effect.StopSaying) > effects.indexOf(Effect.CancelCommand))
         }

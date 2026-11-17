@@ -1,6 +1,7 @@
 package dev.kestrel.screen.act
 
 import dev.kestrel.screen.model.IntRect
+import kotlin.math.abs
 
 /**
  * Finds the parts of an element or a list that the windows above it leave uncovered, such as the keyboard, a popup or
@@ -59,6 +60,20 @@ internal object Uncovered {
         }
         if (bestEnd - bestStart < maxOf(1, minLength)) return null
         return if (vertical) IntRect(area.left, bestStart, area.right, bestEnd) else IntRect(bestStart, area.top, bestEnd, area.bottom)
+    }
+
+    /**
+     * The height, inside [bounds], of the sideways line from [fromX] to [toX] that no rectangle of [covers] crosses: the
+     * middle line when it is free, otherwise the free line of [GRID] rows over [bounds] that lies nearest to the middle,
+     * or null when [covers] cross every one of them.
+     */
+    fun line(bounds: IntRect, covers: List<IntRect>, fromX: Int, toX: Int): Int? {
+        if (bounds.isEmpty) return null
+        val left = minOf(fromX, toX)
+        val right = maxOf(fromX, toX)
+        val rows = (0 until GRID).map { bounds.top + (2 * it + 1) * bounds.height / (2 * GRID) }
+        return (listOf(bounds.centerY) + rows.sortedBy { abs(it - bounds.centerY) })
+            .firstOrNull { y -> covers.none { y in it.top until it.bottom && it.left <= right && it.right > left } }
     }
 
     private fun IntRect.contains(point: ScreenPoint) = point.x in left until right && point.y in top until bottom

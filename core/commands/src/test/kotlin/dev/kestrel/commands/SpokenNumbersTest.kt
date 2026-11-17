@@ -1,7 +1,9 @@
 package dev.kestrel.commands
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SpokenNumbersTest {
@@ -70,5 +72,19 @@ class SpokenNumbersTest {
         assertNull(SpokenNumbers.answer("can you"))
         assertNull(SpokenNumbers.answer("scroll down"))
         assertNull(SpokenNumbers.answer("tap send"))
+    }
+
+    @Test
+    fun aCommandThatNamesANumberWithAnyVerbIsNoPlainAnswer() {
+        for (said in listOf(
+            "long press 2", "check 2", "uncheck 2", "switch off 2", "dismiss 2", "expand 2", "increment 2", "drag 2 to 5",
+            "drag Photo to 5", "scroll down on 2", "swipe left on 2", "pinch out 2", "what is 2", "show commands for 2",
+        )) {
+            assertTrue(said, SpokenNumbers.namesNumber(CommandParser.parse(said)))
+        }
+        for (said in listOf("scroll down", "long press Send", "check Remember me", "drag Photo to Album", "send", "thank you")) {
+            assertFalse(said, SpokenNumbers.namesNumber(CommandParser.parse(said)))
+        }
+        assertFalse(SpokenNumbers.namesNumber(null))
     }
 }

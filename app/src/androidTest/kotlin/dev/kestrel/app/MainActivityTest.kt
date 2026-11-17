@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.annotation.StringRes
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasText
@@ -86,6 +87,30 @@ class MainActivityTest {
         }
 
         await(hasText(text(R.string.commands_list)))
+    }
+
+    @Test
+    fun theOwnersPageStaysWhenTheActivityIsMadeAgainAfterAnIntentWithAPage() {
+        await(hasText(text(R.string.settings_checklist)))
+        compose.runOnUiThread {
+            // A copy of the activity's intent, as in anIntentWithAPageOpensThatPageInTheRunningApp.
+            compose.activity.startActivity(
+                Intent(compose.activity.intent)
+                    .putExtra(MainActivity.EXTRA_PAGE, SettingsPage.COMMANDS.name)
+                    .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+        await(hasText(text(R.string.commands_list)))
+        // The owner moves on to another page.
+        compose.onNodeWithText(text(R.string.settings_back)).performClick()
+        compose.onNodeWithText(text(R.string.settings_safety)).performClick()
+        await(hasText(text(R.string.safety_test_mode)))
+
+        // As after a rotation: the activity's intent still names the page of "What can I say?".
+        compose.activityRule.scenario.recreate()
+
+        await(hasText(text(R.string.safety_test_mode)))
+        compose.onAllNodesWithText(text(R.string.commands_list)).assertCountEquals(0)
     }
 
     @Test

@@ -59,6 +59,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -293,15 +295,24 @@ class AppGraph(context: Context) {
     private val screenLabels = ScreenBoostWords { screen.value }
 
     /**
-     * While a voice session is open and Kestrel listens, the screen session builds a snapshot after each settled change
-     * of the screen, so that each utterance's boost words read a current one without waiting (section 8.3). A screen
-     * session that connects while Kestrel listens is kept fresh too.
+     * While a voice session is open and Kestrel listens with the screen on and the phone unlocked, the screen session
+     * builds a snapshot after each settled change of the screen, so that each utterance's boost words read a current one
+     * without waiting (section 8.3). A screen session that connects while Kestrel listens is kept fresh too. When the mode
+     * leaves Listening, for a pause, a call or off, the numbers, the "Which one?" numbers, the labels and the grid go,
+     * because only voice removes them and no command works then (section 9.4); a screen that turns off leaves them, as
+     * they come back with it.
      */
     private fun keepScreenFresh(listening: Listening) {
         scope.launch {
             combine(screens, listening.state, listening.sessionOpen) { session, state, open ->
-                session to (open && state.mode == Mode.LISTENING)
+                session to (open && state.mode == Mode.LISTENING && state.screenOn)
             }.collect { (session, fresh) -> session?.keepFresh = fresh }
+        }
+        scope.launch {
+            listening.state.map { it.mode }.distinctUntilChanged().collect { mode ->
+                // One task per change, as the bar's, so that a failure ends only that call.
+                if (mode != Mode.LISTENING) screens.value?.let { session -> scope.launch { session.hideOverlays() } }
+            }
         }
     }
 

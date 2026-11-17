@@ -70,4 +70,14 @@ class UncoveredTest {
 
         assertEquals(area, Uncovered.area(area, listOf(keyboard), vertical = true))
     }
+
+    @Test
+    fun aSidewaysLineAcrossARowAvoidsTheWindowsAbove() {
+        val row = IntRect(0, 2200, 1080, 2400)
+        // Nothing crosses the middle line, and a window beside the line's ends does not count.
+        assertEquals(2300, Uncovered.line(row, listOf(IntRect(1000, 2250, 1080, 2350)), fromX = 108, toX = 971))
+        // The navigation bar covers the lower half: the free line of the 8 rows that lies nearest to the middle.
+        assertEquals(2287, Uncovered.line(row, listOf(IntRect(0, 2300, 1080, 2400)), fromX = 108, toX = 971))
+        assertNull(Uncovered.line(row, listOf(IntRect(0, 2100, 1080, 2400)), fromX = 108, toX = 971))
+    }
 }

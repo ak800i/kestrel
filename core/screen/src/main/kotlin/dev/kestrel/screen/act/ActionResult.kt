@@ -26,6 +26,15 @@ sealed interface ActionResult {
 
     companion object {
         /** What `ScreenActions.scroll` gives when nothing on the screen scrolls in the asked direction. */
-        val NOTHING_SCROLLS = Failed("Nothing on the screen scrolls that way")
+        val NOTHING_SCROLLS = Failed("Nothing on the screen scrolls that way.")
+
+        /** A tap or a gesture on an element that windows above, such as the keyboard or a popup, cover everywhere. */
+        val COVERED = Failed("Other windows cover it.")
+
+        /**
+         * The element that the key names now is not the one that the caller expected, because a key names a position
+         * (design spec, section 9.2). The instant commands say "The screen changed. Say it again." for it.
+         */
+        val CHANGED = Failed("The element changed.")
     }
 }

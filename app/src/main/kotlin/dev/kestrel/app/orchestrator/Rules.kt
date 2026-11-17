@@ -6,6 +6,7 @@ import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.GlobalCommand
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.PhoneCommand
+import dev.kestrel.commands.SpokenNumbers
 import dev.kestrel.commands.TextCommand
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.voice.Keyword
@@ -55,8 +56,10 @@ enum class Work {
  * [running] is the command that runs and [heard] its transcript; [asking]: it waits for the answer to its question;
  * [counting]: it counts down, as before a call. [lastCommand] and [lastHeard] are the last command that ended as
  * repeatable and its transcript, for "again" (section 9.5); off forgets them. [spottedStop]: the spotter's "stop" or
- * "cancel" cancelled the command, so the transcript of the same word names no button. It lasts until the next transcript
- * that reaches the commands, so when the pipeline dropped that word, one later "stop…" or "cancel…" is only shown.
+ * "cancel" cancelled the command, or stopped a reply while no command ran, so the transcript of the same word names no
+ * button. It lasts until the next transcript that reaches the commands, so when the pipeline dropped that word, one
+ * later "stop…" or "cancel…" is only shown. [questionEnded]: a command's question ended without an answer, so the next
+ * transcript that reaches the commands, when it names a number, may be a late answer and is only shown (section 9.4).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -83,6 +86,7 @@ data class State(
     val lastCommand: Command? = null,
     val lastHeard: String? = null,
     val spottedStop: Boolean = false,
+    val questionEnded: Boolean = false,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -93,7 +97,7 @@ data class State(
             "callCommands=$callCommands, onWakeUp=$onWakeUp, pauseAfterSilence=$pauseAfterSilence, silence=$silence, " +
             "screenSeen=$screenSeen, command=$command, running=${running?.javaClass?.simpleName}, heard=${heard?.length}, " +
             "asking=$asking, counting=$counting, lastCommand=${lastCommand?.javaClass?.simpleName}, " +
-            "lastHeard=${lastHeard?.length}, spottedStop=$spottedStop)"
+            "lastHeard=${lastHeard?.length}, spottedStop=$spottedStop, questionEnded=$questionEnded)"
 
     /** Whether a call rings or is active (section 8.7). */
     val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
@@ -149,8 +153,12 @@ sealed interface Event {
     /** The notification's Stop action. */
     data object TurnOff : Event
 
-    /** A transcript. [named] is true when the keyword spotter heard "Kestrel" at its start. */
-    data class Heard(val text: String, val named: Boolean) : Event {
+    /**
+     * A transcript. [named] is true when the keyword spotter heard "Kestrel" at its start. [spokeAt] is when the owner
+     * began to say it, in `SystemClock.uptimeMillis()`, or null when it is not known; a command that names a number
+     * ends when the numbers changed after it (section 9.4).
+     */
+    data class Heard(val text: String, val named: Boolean, val spokeAt: Long? = null) : Event {
         override fun toString() = "Heard(${text.length} characters, named=$named)"
     }
 
@@ -293,6 +301,12 @@ sealed interface Feedback {
 
     /** "Again" without a command to repeat. */
     data object NothingToRepeat : Feedback
+
+    /**
+     * A number came as the first transcript after a command's question ended without an answer: it may be a late answer,
+     * whose number would name another element now, so it did nothing (section 9.4).
+     */
+    data object QuestionEnded : Feedback
 }
 
 /** What the Orchestrator asks of the rest of Kestrel. The microphone and recognition follow [State] instead. */
@@ -309,9 +323,10 @@ sealed interface Effect {
 
     /**
      * Runs instant command number [command], [parsed] from the transcript [heard], which the executor needs for its
-     * fallback to a bare label and for dictation. It must send [Event.CommandEnded] once it ends (section 7.3).
+     * fallback to a bare label and for dictation. [spokeAt] is when the owner began to say it, as in [Event.Heard]. It
+     * must send [Event.CommandEnded] once it ends (section 7.3).
      */
-    data class RunCommand(val command: Int, val parsed: Command, val heard: String) : Effect {
+    data class RunCommand(val command: Int, val parsed: Command, val heard: String, val spokeAt: Long? = null) : Effect {
         override fun toString() = "RunCommand($command, ${parsed.javaClass.simpleName}, ${heard.length} characters)"
     }
 
@@ -440,7 +455,7 @@ object Rules {
         return when (counted.work) {
             Work.RUNNING_TASK -> whileTaskRuns(counted, request, shown)
             Work.AWAITING_TASK -> whileAwaitingTask(counted, request, shown)
-            Work.IDLE -> whileIdle(counted, request, event.text, shown)
+            Work.IDLE -> whileIdle(counted, request, event.text, shown, event.spokeAt)
             // duringCommand() reads the transcripts of a running command.
             Work.RUNNING_COMMAND -> Step(counted)
         }
@@ -486,7 +501,7 @@ object Rules {
         is Request.Call -> Step(state)
     }
 
-    private fun whileIdle(state: State, request: Request, text: String, shown: Effect): Step = when (request) {
+    private fun whileIdle(state: State, request: Request, text: String, shown: Effect, spokeAt: Long? = null): Step = when (request) {
         is Request.Task -> runTask(state, request.text, shown)
         Request.Name -> askForTask(state, shown)
         Request.WakeUp -> changeMode(state, Mode.LISTENING, shown)
@@ -497,39 +512,45 @@ object Rules {
             // "Kestrel, stop" with nothing running only ends the speech; plain "stop" may name a button.
             Step(state, listOfNotNull(shown, Effect.StopSaying.takeIf { state.speaking }))
         } else {
-            command(state, text.trim(), shown)
+            command(state, text.trim(), shown, spokeAt)
         }
-        is Request.Other -> command(state, request.text, shown)
+        is Request.Other -> command(state, request.text, shown, spokeAt)
         // Requests.read never returns a call command; only readCall does.
         is Request.Call -> Step(state)
     }
 
     // Instant commands work only while Kestrel listens (sections 8.5 and 9.5), and only with the screen on and the phone
     // unlocked. "Again" runs the last repeatable command again, with its transcript.
-    private fun command(state: State, text: String, shown: Effect): Step {
+    private fun command(state: State, text: String, shown: Effect, spokeAt: Long?): Step {
         val spotted = state.spottedStop
-        val fresh = if (spotted) state.copy(spottedStop = false) else state
+        val late = state.questionEnded
+        val fresh = if (spotted || late) state.copy(spottedStop = false, questionEnded = false) else state
         if (fresh.mode != Mode.LISTENING || !fresh.screenOn) return Step(fresh)
         // Design D2: the transcript of the "stop" or "cancel" whose keyword already cancelled the command names no button.
         if (spotted && startsWithStop(text)) return Step(fresh, listOf(shown))
-        return startCommand(fresh, text, shown)
+        // An answer that the owner began just before the question's wait ran out arrives after the command has ended. Its
+        // number would name an element of "show numbers" or a square of the grid by now (section 9.4).
+        if (late && namesNumber(text)) return Step(fresh, listOf(shown, Effect.Show(Feedback.QuestionEnded)))
+        return startCommand(fresh, text, shown, spokeAt)
     }
 
-    private fun startCommand(state: State, text: String, shown: Effect): Step {
+    private fun namesNumber(text: String): Boolean = SpokenNumbers.answer(text) != null || SpokenNumbers.namesNumber(CommandParser.parse(text))
+
+    private fun startCommand(state: State, text: String, shown: Effect, spokeAt: Long?): Step {
         val parsed = CommandParser.parse(text) ?: return Step(state, listOf(shown))
-        if (parsed != Command.Again) return runCommand(state, parsed, text, shown)
+        if (parsed != Command.Again) return runCommand(state, parsed, text, spokeAt, shown)
         val last = state.lastCommand
         val lastHeard = state.lastHeard
         if (last == null || lastHeard == null) return Step(state, listOf(shown, Effect.Show(Feedback.NothingToRepeat)))
-        return runCommand(state, last, lastHeard, shown)
+        return runCommand(state, last, lastHeard, spokeAt, shown)
     }
 
     // Every command gets the next number, so that the end of an older one changes nothing.
-    private fun runCommand(state: State, command: Command, heard: String, vararg first: Effect): Step {
+    private fun runCommand(state: State, command: Command, heard: String, spokeAt: Long?, vararg first: Effect): Step {
         val number = state.command + 1
         return Step(
             state.copy(work = Work.RUNNING_COMMAND, command = number, running = command, heard = heard),
-            first.toList() + Effect.RunCommand(number, command, heard),
+            first.toList() + Effect.RunCommand(number, command, heard, spokeAt),
         )
     }
 
@@ -545,7 +566,7 @@ object Rules {
         }
         is Event.CommandCounts -> if (event.command == state.command) Step(state.copy(counting = event.counting)) else Step(state)
         is Event.AnswerWaitEnded -> if (state.asking && event.wait == state.wait) {
-            Step(state.copy(asking = false), listOf(Effect.AnswerCommand(state.command, null)))
+            Step(state.copy(asking = false, questionEnded = true), listOf(Effect.AnswerCommand(state.command, null)))
         } else {
             Step(state)
         }
@@ -666,7 +687,7 @@ object Rules {
         if (state.counting && request != Request.PauseListening && request != Request.TurnOff) {
             return Step(counted, listOf(shown, Effect.HoldCommand(state.command, hold = false)))
         }
-        if (request !is Request.Other) return leaveCommand(counted).then { whileIdle(it, request, event.text, shown) }
+        if (request !is Request.Other) return leaveCommand(counted).then { whileIdle(it, request, event.text, shown) }.stopSayingOnce()
         if (state.asking) {
             return Step(counted.copy(asking = false), listOf(shown, Effect.AnswerCommand(state.command, request.text)))
         }
@@ -722,8 +743,13 @@ object Rules {
     private fun spotted(state: State, keyword: Keyword): Step {
         if (!state.speaking || state.mode == Mode.OFF || state.inCall) return Step(state)
         return when (keyword) {
+            // As after a cancelled command, the transcript of the same word then names no button (design D2).
             Keyword.STOP, Keyword.CANCEL ->
-                if (state.work == Work.RUNNING_TASK) cancelTask(state) else Step(state.copy(work = Work.IDLE), listOf(Effect.StopSaying))
+                if (state.work == Work.RUNNING_TASK) {
+                    cancelTask(state.copy(spottedStop = true))
+                } else {
+                    Step(state.copy(work = Work.IDLE, spottedStop = true), listOf(Effect.StopSaying))
+                }
             // Kestrel does not wait for a task while a task runs or the screen is off.
             Keyword.KESTREL ->
                 if (state.work == Work.RUNNING_TASK || !state.screenOn) {
@@ -796,6 +822,7 @@ object Rules {
             lastCommand = null,
             lastHeard = null,
             spottedStop = false,
+            questionEnded = false,
         ),
         first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },

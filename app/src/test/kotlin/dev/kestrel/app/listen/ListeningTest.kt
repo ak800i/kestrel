@@ -312,6 +312,21 @@ class ListeningTest {
     }
 
     @Test
+    fun aCommandKnowsWhenTheOwnerBeganToSayIt() = runTest {
+        val listening = listeningWithSession()
+        var spokeAt: Long? = null
+        runner.action = { conversation ->
+            spokeAt = conversation.spokeAt
+            CommandResult(Outcome.DONE)
+        }
+
+        listening.send(Event.Heard("Tap 5", named = false, spokeAt = 4_321L))
+        runCurrent()
+
+        assertEquals(4_321L, spokeAt)
+    }
+
+    @Test
     fun aNewCommandWaitsUntilTheCancelledOneHasCompleted() = runTest {
         val listening = listeningWithSession()
         collectReports(listening)

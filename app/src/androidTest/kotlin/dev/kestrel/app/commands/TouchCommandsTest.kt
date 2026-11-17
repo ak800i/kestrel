@@ -113,16 +113,29 @@ class TouchCommandsTest {
     }
 
     @Test
-    fun anAnswerWhoseElementAWindowNowCoversEndsWithTheScreenChanged() = runBlocking<Unit> {
+    fun anAnswerThatNamesANumberWithAnotherVerbEndsTheQuestion() = runBlocking<Unit> {
+        assertEquals(Outcome.DONE, CommandTests.say("show numbers").outcome)
+        assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
+
+        // Read as a new command once the question's numbers had gone, "long press 2" would long-press number 2 of "show
+        // numbers", another element than the question's number 2.
+        assertEquals(Outcome.FAILED, CommandTests.answer("long press 2").outcome)
+        awaitBar(CommandTexts.SAY_ONLY_THE_NUMBER)
+    }
+
+    @Test
+    fun anAnswerWhoseElementAWindowNowCoversEndsWithOtherWindowsCoverIt() = runBlocking<Unit> {
         val cover = screen.awaitElement { it.label == "Cover Dan" }
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
 
         // A click through accessibility, not a touch, so the question goes on. The cover adds nothing to tap, so the
-        // numbers stay, and the answer reaches the check right before the action.
+        // numbers stay, and the answer reaches the check right before the action. The screen did not change otherwise,
+        // and saying it again would give the same answer, so Kestrel does not say "The screen changed".
         assertTrue(screen.session.actions.tap(cover.key) is ActionResult.Done)
         screen.awaitElement { it.label == "Covered" }
         assertEquals(Outcome.FAILED, CommandTests.answer("number two").outcome)
-        CommandTests.awaitSaid(CommandTexts.SCREEN_CHANGED)
+        awaitBar(ActionResult.COVERED.reason)
+        assertFalse(CommandTexts.SCREEN_CHANGED in CommandTests.spoken)
         // Nothing was deleted under the cover.
         awaitStatus("Covered Dan")
     }

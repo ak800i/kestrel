@@ -84,7 +84,12 @@ class ScreenBoostWordsTest {
             val dropped = CommandVocabulary.BOOST.filter { recognizer.keptBoostWords(listOf(it)) == 0 }
             assertEquals("sherpa-onnx drops these phrases of the command vocabulary", emptyList<String>(), dropped)
 
-            val words = BoostWordBudget.combine(listOf(BoostWordSource.NAME), listOf("Send", "Remember me", "Show dialog"), CommandVocabulary.BOOST)
+            // "USB": a short name in capitals stays in capitals (BoostWordBudget.screenNames), so the model must keep it.
+            val words = BoostWordBudget.combine(
+                listOf(BoostWordSource.NAME),
+                listOf("Send", "Remember me", "Show dialog", "USB"),
+                CommandVocabulary.BOOST,
+            )
             assertEquals(words.size, recognizer.keptBoostWords(words))
         }
     }

@@ -57,7 +57,7 @@ class ScrollTest {
     fun scrollRightNeverSwipesAcrossAListThatMovesUpAndDown() = runBlocking {
         screen.open("ScrollActivity", "Scroll fixture")
 
-        assertEquals(ActionResult.Failed("Nothing on the screen scrolls that way"), actions.scroll(ScrollDirection.RIGHT))
+        assertEquals(ActionResult.Failed("Nothing on the screen scrolls that way."), actions.scroll(ScrollDirection.RIGHT))
     }
 
     @Test

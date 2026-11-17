@@ -96,4 +96,25 @@ data class ScreenSnapshot(
     val elements: List<ScreenElement>,
 ) {
     fun element(key: String): ScreenElement? = elements.firstOrNull { it.key == key }
+
+    /**
+     * The bounds of the windows above the window with [windowId], such as the keyboard, a popup or the status bar; none
+     * when the snapshot has no such window. A tap or a gesture goes only where they leave the element uncovered (design
+     * spec, section 9.3).
+     */
+    fun windowsAbove(windowId: Int?): List<IntRect> {
+        val window = windows.firstOrNull { it.id == windowId } ?: return emptyList()
+        return windows.filter { it.layer > window.layer }.map { it.bounds }
+    }
+
+    /**
+     * Whether a finger can reach [element]: it lies outside the keyboard's window, and no window above covers it whole.
+     * Commands act only on such elements, and only their names become boost words (design spec, sections 8.3 and 9.6).
+     */
+    fun reachable(element: ScreenElement): Boolean {
+        val window = windows.firstOrNull { it.id == element.windowId } ?: return true
+        if (window.kind == WindowKind.INPUT_METHOD) return false
+        val bounds = element.bounds
+        return windows.none { it.layer > window.layer && it.bounds.contains(bounds) }
+    }
 }

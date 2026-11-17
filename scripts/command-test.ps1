@@ -8,7 +8,9 @@
 # were not granted before. Kestrel's microphone and notification permissions, which the tests grant, stay granted, as
 # after voice-test.ps1, because revoking a permission ends Kestrel's process. When a read of that state fails, the script
 # puts back nothing. connected-test.ps1, which runs the tests, puts back the accessibility settings, the magnification's
-# among them, and turning Kestrel's accessibility service off ends a magnification that it started.
+# among them, and turning Kestrel's accessibility service off ends a magnification that it started. It does not put back
+# Kestrel's own settings: the tests store the default options of the instant commands and Off as the listening mode, so
+# a run leaves Kestrel off with the default command options.
 # It passes the instrumentation argument kestrelCommands=true, without which every command test skips itself, so a run
 # with a skipped test, or without tests, fails. Kestrel and its test APK stay installed. After Ctrl+C, it ends with exit
 # code 1. Each command at the end runs only if the serial still names the emulator that the script accepted at the start;
