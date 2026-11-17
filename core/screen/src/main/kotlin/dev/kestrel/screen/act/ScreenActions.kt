@@ -165,7 +165,7 @@ class ScreenActions internal constructor(
         val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
         if (!node.isEnabled) return DISABLED
         // A number can name an element that is no slider, such as a list, whose scroll action would move it instead.
-        val range = node.rangeInfo ?: return ActionResult.Failed("The element is not a slider")
+        val range = node.rangeInfo ?: return ActionResult.Failed("It isn't a slider.")
         val step = if (increase) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         if (node.offers(step) && node.performAction(step)) return settled(ActionMethod.ACTION)
         if (node.offers(SET_PROGRESS)) {
@@ -179,12 +179,12 @@ class ScreenActions internal constructor(
                 return if (node.performAction(SET_PROGRESS, arguments)) {
                     settled(ActionMethod.ACTION)
                 } else {
-                    ActionResult.Failed("The slider refused the change")
+                    ActionResult.Failed("The slider didn't move.")
                 }
             }
         }
         // Apps offer a step's action only while the slider can move that way.
-        return ActionResult.Failed(if (increase) "The slider is at its highest" else "The slider is at its lowest")
+        return ActionResult.Failed(if (increase) "The slider is at its highest." else "The slider is at its lowest.")
     }
 
     /**
@@ -205,8 +205,8 @@ class ScreenActions internal constructor(
         val expanding = action == AccessibilityNodeInfo.ACTION_EXPAND
         // An element that offers only the other action is already as the owner wants it: a tap would toggle it back.
         val other = if (expanding) AccessibilityNodeInfo.ACTION_COLLAPSE else AccessibilityNodeInfo.ACTION_EXPAND
-        if (node.offers(other)) return ActionResult.Failed(if (expanding) "It's already expanded" else "It's already collapsed")
-        if (element.packageName == SYSTEM_UI) return ActionResult.Failed(if (expanding) "It can't expand" else "It can't collapse")
+        if (node.offers(other)) return ActionResult.Failed(if (expanding) "It's already expanded." else "It's already collapsed.")
+        if (element.packageName == SYSTEM_UI) return ActionResult.Failed(if (expanding) "It can't expand." else "It can't collapse.")
         return tap(key)
     }
 

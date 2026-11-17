@@ -229,6 +229,7 @@ class TouchCommandsTest {
         val numbered = screen.session.numberBadges.map { it.key }
         assertTrue("The seek bar has no number", seekBar.key in numbered)
         val progress = screen.session.snapshots.current().snapshot.elements.filter { it.viewId == "$FIXTURES:id/progress_bar" }
+        assertTrue("The progress bar is not in the snapshot", progress.isNotEmpty())
         assertTrue("The progress bar has a number", progress.none { it.key in numbered })
     }
 
