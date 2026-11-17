@@ -16,10 +16,16 @@
 #   restart   after Android ended Kestrel's process ('am crash'), listening comes back once the accessibility service has
 #             connected again. Android does not restart an app that crashed twice within 2 minutes, so wait 2 minutes
 #             before you run the script again.
-#   reboot    with -Reboot: listening comes back after a reboot. On the emulator, start a run with -Reboot from a cold boot:
-#             run & $adb -s $serial emu kill, wait until the emulator has closed, and then run
-#             $serial = scripts\start-emulator.ps1 -ColdBoot. On this computer, 'adb reboot' has crashed and frozen an
-#             emulator that had run for many hours. The check fails when 'adb reboot' has not returned within 60 s.
+#   reboot    with -Reboot: listening comes back after a reboot. On a phone, the script runs 'adb reboot'. On an emulator,
+#             'adb reboot' has crashed or frozen this computer's emulator in about half of the runs, also soon after a
+#             cold boot, so the script instead runs 'sync' on it, closes it with 'adb emu kill', waits until its qemu
+#             process has ended, and starts it again with scripts\start-emulator.ps1 -ColdBoot, which must give it the
+#             same serial. For Kestrel, both end its process with the device and connect its accessibility service after
+#             the start. Start a run with -Reboot on an emulator from a cold boot too: run & $adb -s $serial emu kill,
+#             wait until the emulator has closed, and then run $serial = scripts\start-emulator.ps1 -ColdBoot. When the
+#             device does not come back ('adb reboot' or 'adb emu kill' has not returned within its limit, or the device
+#             does not answer within 5 minutes), the script puts nothing back on it: it lists what is left with the
+#             commands that put it back by hand, and ends with exit code 1.
 # Kestrel is in the background for each check, and it listens with its own microphone. Every check except the settings
 # check also checks in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
 # with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that
@@ -29,12 +35,12 @@
 # notification check, and puts Kestrel's tile first in Quick Settings and opens the panel for the tile check.
 # Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the tiles, the
 # accessibility settings and the permissions, and it deletes the dump of the screen. When Kestrel's accessibility
-# service was off before the run, Kestrel's notification that the service is off stays afterwards; swipe it away. If
-# it cannot put something back, also because Ctrl+C interrupted
-# it while it put things back, it says at the end what is left and how to put it back by hand. Then, after Ctrl+C, and
-# when a check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With -Reboot it
-# reboots the device; a phone with a PIN, pattern or password asks you to unlock it after the reboot. It needs
-# PowerShell 7.3 or newer, as scripts\hook.ps1 does.
+# service was off before the run, Kestrel's notification that the service is off stays afterwards, because the shell
+# cannot remove another app's notification; swipe it away. If it cannot put something back, also because Ctrl+C
+# interrupted it while it put things back, it says at the end what is left and how to put it back by hand. Then, after
+# Ctrl+C, and when a check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
+# -Reboot it reboots a phone, or closes an emulator and starts it from a cold boot; a phone with a PIN, pattern or
+# password asks you to unlock it after the reboot. It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
 # Example: scripts\listen-check.ps1 -Serial emulator-5554 -Reboot
 #Requires -Version 7.3
 param(
@@ -147,27 +153,53 @@ function Test-KestrelPermission([string]$Permission) {
     ((Invoke-Checked 'dumpsys package dev.kestrel') -join "`n") -match "$([regex]::Escape($Permission)): granted=true"
 }
 
-# Waits until the device has started again after a reboot, which a new boot ID shows, and until Android has unlocked the
+# Runs a command in the device's shell with a limit of 10 s, because a frozen device can keep adb waiting without one,
+# and returns its output, or an empty text when it failed or did not end in time.
+function Get-ShellAnswer([string]$Command) {
+    $answer = Invoke-TimedProcess -FilePath $adb -ArgumentList (@('-s', $Serial, 'shell') + @($Command -split ' ')) -TimeoutSeconds 10
+    if ($answer.Completed -and $answer.ExitCode -eq 0) { $answer.Output.Trim() } else { '' }
+}
+
+# Waits until the phone has started again after a reboot, which a new boot ID shows, and until Android has unlocked the
 # user's storage, without which Kestrel cannot run. On a phone with a PIN, the owner has to unlock it first. It waits for
-# at most 5 minutes.
+# at most 5 minutes, and returns whether the phone came back.
 function Wait-Reboot([string]$BootId) {
-    # adb complains while the device is offline, and that must not stop the wait.
-    $ErrorActionPreference = 'Continue'
     $deadline = (Get-Date).AddMinutes(5)
     $lockedChecks = 0
     do {
         Start-Sleep -Seconds 3
-        $id = "$(& $adb -s $Serial shell cat /proc/sys/kernel/random/boot_id 2>$null)".Trim()
-        $booted = $id -and $id -ne $BootId -and "$(& $adb -s $Serial shell getprop sys.boot_completed 2>$null)".Trim() -eq '1'
-        $unlocked = $booted -and "$(& $adb -s $Serial shell am get-started-user-state 0 2>$null)" -match 'RUNNING_UNLOCKED'
+        $id = Get-ShellAnswer 'cat /proc/sys/kernel/random/boot_id'
+        $booted = $id -and $id -ne $BootId -and (Get-ShellAnswer 'getprop sys.boot_completed') -eq '1'
+        $unlocked = $booted -and (Get-ShellAnswer 'am get-started-user-state 0') -match 'RUNNING_UNLOCKED'
         # Without a PIN, Android unlocks the storage a few seconds after the start.
-        if ($booted -and -not $unlocked -and ++$lockedChecks -eq 2 -and -not $isEmulator) {
+        if ($booted -and -not $unlocked -and ++$lockedChecks -eq 2) {
             Read-Host 'Unlock the phone, then press Enter' | Out-Null
         }
     } until ($unlocked -or (Get-Date) -gt $deadline)
-    if (-not $unlocked) { throw "$Serial did not start again within 5 minutes of the reboot." }
-    # If the emulator itself ended during the reboot, another emulator that started meanwhile can have this serial now.
-    Assert-TestDevice -Serial $Serial
+    $unlocked
+}
+
+# Closes the emulator kestrel-api37 and starts it again from a cold boot, in place of a reboot inside the emulator,
+# which has crashed or frozen this computer's emulator. Kestrel stores each mode when it changes, so its process ends as
+# in a reboot. Returns nothing when the emulator answers again with the same serial, and otherwise why the check fails.
+function Restart-Emulator {
+    # Kestrel's stored mode must be on the emulator's disk, and not only in Android's memory, when the emulator ends.
+    Invoke-Checked 'sync' | Out-Null
+    $kill = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'kill' -TimeoutSeconds 30
+    if (-not $kill.Completed) { return "'adb emu kill' did not return within 30 s, so the emulator may have frozen" }
+    # The emulator saves its Quick Boot snapshot before it ends.
+    $deadline = (Get-Date).AddMinutes(2)
+    while ((Get-EmulatorProcess 'kestrel-api37') -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+    $left = @(Get-EmulatorProcess 'kestrel-api37')
+    if ($left) { return "kestrel-api37 did not close within 2 minutes of 'adb emu kill' (its qemu process has the ID $($left[0].ProcessId))" }
+    try {
+        $started = "$(& "$PSScriptRoot\start-emulator.ps1" -ColdBoot | Select-Object -Last 1)".Trim()
+    } catch {
+        return "the emulator did not start again: $($_.Exception.Message)"
+    }
+    if ($started -ne $Serial) { return "kestrel-api37 started again as '$started', not as $Serial" }
+    # The serial now names a new emulator, so the device check runs again before any other command.
+    try { Assert-TestDevice -Serial $Serial } catch { return $_.Exception.Message }
 }
 
 # The riids of Kestrel's recordings that 'dumpsys audio' lists now.
@@ -402,18 +434,32 @@ function Invoke-RebootCheck {
     if ((Wait-Mode listening 60) -lt 0) { return "failed: Kestrel did not start listening before the reboot$modelsHint" }
     # As in the restart check: Kestrel stores Listening a moment after its voice session opened.
     Start-Sleep -Seconds 2
-    $bootId = ((Invoke-Checked 'cat /proc/sys/kernel/random/boot_id') -join '').Trim()
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    # 'adb reboot' has not returned when an emulator froze during the reboot, so it gets 60 s. Ctrl+C still works meanwhile.
-    $call = Start-Process -FilePath $adb -ArgumentList '-s', $Serial, 'reboot' -NoNewWindow -PassThru
-    $deadline = (Get-Date).AddSeconds(60)
-    while (-not $call.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
-    if (-not $call.HasExited) {
-        Stop-Process -Id $call.Id
-        return ("failed: 'adb reboot' did not return within 60 s, so the emulator may have frozen; close it, start it " +
-            'again with scripts\start-emulator.ps1 -ColdBoot, and run the script again')
+    if ($isEmulator) {
+        $problem = Restart-Emulator
+        if ($problem) {
+            $script:deviceLost = $true
+            return "failed: $problem"
+        }
+    } else {
+        $bootId = ((Invoke-Checked 'cat /proc/sys/kernel/random/boot_id') -join '').Trim()
+        # A phone that does not come back must not keep the script waiting, so 'adb reboot' gets 60 s.
+        $call = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'reboot' -TimeoutSeconds 60
+        if (-not $call.Completed) {
+            $script:deviceLost = $true
+            return "failed: 'adb reboot' did not return within 60 s"
+        }
+        if (-not (Wait-Reboot $bootId)) {
+            $script:deviceLost = $true
+            return "failed: $Serial did not start again within 5 minutes of the reboot"
+        }
+        try {
+            Assert-TestDevice -Serial $Serial
+        } catch {
+            $script:deviceLost = $true
+            return "failed: $($_.Exception.Message)"
+        }
     }
-    Wait-Reboot $bootId
     if ((Wait-Mode listening 240) -lt 0) { return 'failed: Kestrel did not listen again within 240 s of the device''s start' }
     $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
     # 'dumpsys audio' starts its history afresh at each boot, so every recording of Kestrel's that it lists is new.
@@ -480,6 +526,8 @@ $accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services'
     }) -join '; '
 $completed = $false
 $failed = $false
+# Set by the reboot check when the device did not answer after the reboot. The script then runs no command on it.
+$deviceLost = $false
 $restoresAtEnd = @(
     # First, so that Kestrel stores Off and does not come back at the next start of its process.
     Register-Restore "Kestrel's mode Off" "Run: scripts\hook.ps1 -Serial $Serial voice -Send off" {
@@ -552,10 +600,18 @@ try {
     throw
 } finally {
     try {
-        Invoke-Restore $restoresAtEnd
+        if ($deviceLost) {
+            # A command to a device that does not answer can wait without a limit, so every restore is left for later.
+            foreach ($restore in $pending) { $restore.Reason = "$Serial did not answer after the reboot" }
+        } else {
+            Invoke-Restore $restoresAtEnd
+        }
     } finally {
         # Also when a check failed with an error, so that the lines of the checks that ran are not lost.
         $results.GetEnumerator() | ForEach-Object { Write-Host ('{0,-12} {1}' -f $_.Key, $_.Value) }
+        if ($deviceLost) {
+            Write-Warning "$Serial did not answer after the reboot, so the script put nothing back on it. Once it answers, put back what follows."
+        }
         foreach ($restore in $pending) {
             Write-Warning "Could not put back $($restore.What) on $Serial ($($restore.Reason)). $($restore.ByHand)"
         }

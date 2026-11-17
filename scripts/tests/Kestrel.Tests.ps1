@@ -412,3 +412,52 @@ Describe 'Get-UiNodeCentre' {
         Get-UiNodeCentre -Dump $_ -Text 'Start listening' | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Invoke-TimedProcess' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        # The shell that runs the tests, Windows PowerShell 5.1 or PowerShell 7, stands in for adb.
+        $shell = (Get-Process -Id $PID).Path
+    }
+
+    It 'returns the output and the exit code of a program that ends in time, with each argument as one word' {
+        $result = Invoke-TimedProcess -FilePath $shell -ArgumentList '-NoProfile', '-Command', "[Console]::Out.Write('one two'); [Console]::Error.Write('a complaint'); exit 3" -TimeoutSeconds 60
+
+        $result.Completed | Should -BeTrue
+        $result.ExitCode | Should -Be 3
+        # The error output is dropped, as adb's complaints while a device starts.
+        $result.Output | Should -BeExactly 'one two'
+    }
+
+    It 'stops a program that has not ended in time, and says so' {
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-TimedProcess -FilePath $shell -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 60' -TimeoutSeconds 3
+
+        $result.Completed | Should -BeFalse
+        $result.ExitCode | Should -BeNullOrEmpty
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 30
+        Get-Process -Id $result.Id -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Get-EmulatorProcess' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        $processes = @(
+            [pscustomobject]@{ ProcessId = 11; CommandLine = 'qemu-system-x86_64.exe -avd zoran -no-boot-anim' }
+            [pscustomobject]@{ ProcessId = 12; CommandLine = 'qemu-system-x86_64.exe -avd kestrel-api37-old -gpu swiftshader' }
+            [pscustomobject]@{ ProcessId = 13; CommandLine = 'qemu-system-x86_64.exe -avd kestrel-api37 -no-boot-anim' }
+            [pscustomobject]@{ ProcessId = 14; CommandLine = $null }
+        )
+        Mock Get-CimInstance { $processes }
+    }
+
+    It 'returns the qemu process of the AVD with exactly that name' {
+        @(Get-EmulatorProcess -AvdName kestrel-api37).ProcessId | Should -Be @(13)
+        @(Get-EmulatorProcess -AvdName zoran).ProcessId | Should -Be @(11)
+    }
+
+    It 'returns nothing when no qemu process runs the AVD' {
+        Get-EmulatorProcess -AvdName kestrel | Should -BeNullOrEmpty
+    }
+}

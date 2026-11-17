@@ -261,3 +261,44 @@ function Get-UiNodeCentre([string]$Dump, [string]$Text) {
     }
     $null
 }
+
+# Runs a program, such as adb, and waits at most $TimeoutSeconds for it to end, because an adb call to a frozen emulator
+# can wait without a limit. Each argument reaches the program as one word. Returns an object: Completed, whether the
+# program ended in time; ExitCode, null when it did not; Output, its standard output as one text; and Id, the ID of its
+# process. A program that has not ended in time is stopped. Its error output is dropped, as adb's complaints while a
+# device starts.
+function Invoke-TimedProcess([string]$FilePath, [string[]]$ArgumentList = @(), [int]$TimeoutSeconds) {
+    # Windows splits a command line into words at spaces outside double quotes; a backslash before a quote escapes it.
+    $words = foreach ($argument in $ArgumentList) {
+        if ($argument -and $argument -notmatch '[\s"]') { $argument } else { '"' + (($argument -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' }
+    }
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $FilePath
+    $info.Arguments = @($words) -join ' '
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($info)
+    try {
+        # Both streams are read while the program runs, so that a full pipe never stops it.
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $null = $process.StandardError.ReadToEndAsync()
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            try { $process.Kill() } catch { Write-Verbose "Could not stop $FilePath ($($_.Exception.Message))." }
+        }
+        # A process that adb starts, such as its server, can keep the output open after adb has ended.
+        $text = if ($completed -and $output.Wait(5000)) { $output.Result } else { '' }
+        [pscustomobject]@{ Completed = $completed; ExitCode = $(if ($completed) { $process.ExitCode } else { $null }); Output = $text; Id = $process.Id }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+# Returns the qemu process that runs the emulator with the AVD $AvdName, or nothing. While an emulator starts or closes,
+# adb does not list it, but its process runs.
+function Get-EmulatorProcess([string]$AvdName) {
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
+        Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($AvdName))(\s|$)" }
+}
