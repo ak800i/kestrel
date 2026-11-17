@@ -128,4 +128,41 @@ class DictationTest {
         assertEquals("Tuesday,", Dictation.phrase("Tuesday comma"))
         assertEquals("next week", Dictation.phrase("next week."))
     }
+
+    @Test
+    fun theRecognisersDotColonAndAtSignInsideAWordStay() {
+        assertEquals("My site is example.com|", dictate("My site is |", "example.com."))
+        assertEquals("Mail john@example.com|", dictate("Mail |", "john@example.com."))
+        assertEquals("Ratio a:b|", dictate("Ratio |", "a:b."))
+        assertEquals("Try v2.beta now|", dictate("Try |", "v2.beta now."))
+        // A comma between letters still goes.
+        assertEquals("Yes no|", dictate("|", "Yes,no."))
+    }
+
+    @Test
+    fun noSpaceAfterAJoiningMarkAtTheEndOfTheField() {
+        assertEquals("john@example.com|", dictate("john@|", "example dot com"))
+        assertEquals("my_name|", dictate("my_|", "name"))
+        assertEquals("and/or|", dictate("and/|", "or"))
+        assertEquals("well-known|", dictate("well-|", "known"))
+        assertEquals("my_abc|", dictate("my_|", "a b c"))
+        // A mark after a space is no joining mark, and a full stop still ends a sentence.
+        assertEquals("wait - no|", dictate("wait -|", "no"))
+        assertEquals("Done. See you|", dictate("Done.|", "see you"))
+    }
+
+    @Test
+    fun anUtteranceWithoutWordsChangesNothing() {
+        assertEquals(emptyList<DictationPart>(), Dictation.insert(Marks.state("hel|lo"), ".", password = false))
+        assertEquals(emptyList<DictationPart>(), Dictation.insert(Marks.state("hello [world]"), "?", password = false))
+        assertEquals(emptyList<DictationPart>(), Dictation.insert(Marks.state("[secret]"), ". ,", password = true))
+        assertEquals(EditStep.Change(3, 3, "", 3, 3), Dictation.render(Marks.state("hel|lo"), ".", startsUtterance = false))
+    }
+
+    @Test
+    fun singleQuotesOpenAndCloseByHowManyLoneOnesComeBefore() {
+        assertEquals("'Hi'|", dictate("|", "single quote hi single quote"))
+        assertEquals("don't say 'hi'|", dictate("don't say 'hi|", "single quote"))
+        assertEquals("He said 'hi' and 'bye|", dictate("He said 'hi' and|", "single quote bye"))
+    }
 }

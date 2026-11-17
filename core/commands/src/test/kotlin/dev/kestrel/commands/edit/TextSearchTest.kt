@@ -35,4 +35,12 @@ class TextSearchTest {
         assertNull(TextSearch.find("the meeting is at noon", "dinner", 0))
         assertNull(TextSearch.find("anything", "", 0))
     }
+
+    @Test
+    fun anExactHitWithoutTheArticleWinsOverASimilarOneWithIt() {
+        assertEquals(8..14, TextSearch.find("Is that meeting on", "the meeting", 18))
+        assertEquals(5..9, TextSearch.find("then lunch at noon", "the lunch", 18))
+        assertEquals(10..14, TextSearch.find("pears and apple", "an apple", 15))
+        assertEquals(8..11, TextSearch.find("talk at noon", "a noon", 12))
+    }
 }

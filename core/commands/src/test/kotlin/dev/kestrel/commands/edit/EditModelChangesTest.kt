@@ -42,6 +42,19 @@ class EditModelChangesTest {
     }
 
     @Test
+    fun aSpokenLineBreakInTheNewWordsFails() {
+        assertEquals("Fail LINE_BREAK", edit(Insert("new line", Place.Before("world")), "hello world|"))
+        assertEquals("Fail LINE_BREAK", edit(Insert("thanks new paragraph", Place.End), "hello world|"))
+        assertEquals("Fail LINE_BREAK", edit(Replace("hello", "hi new line there"), "hello world|"))
+        assertEquals("Fail LINE_BREAK", edit(ReplaceBetween("hello", "world", "new line"), "hello big world|"))
+    }
+
+    @Test
+    fun replaceTheArticleAndAWordReplacesOnlyTheWord() {
+        assertEquals("Is that call| on", edit(Replace("the meeting", "call"), "Is that meeting on|"))
+    }
+
+    @Test
     fun capitalizeUppercaseAndLowercase() {
         assertEquals("i love Paris| and london", edit(ChangeCase(TextCase.CAPITALIZE, "paris"), "i love paris and london|"))
         assertEquals("in New York|", edit(ChangeCase(TextCase.CAPITALIZE, "new york"), "in new york|"))

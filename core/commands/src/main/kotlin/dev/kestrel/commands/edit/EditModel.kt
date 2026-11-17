@@ -124,27 +124,38 @@ object EditModel {
     }
 
     /**
-     * [first] nearest to the cursor, and [second] nearest after it (or else nearest before it), in the order in which
-     * they stand in the text.
+     * [first] and [second] in the spoken order: of the pairs where a [first] comes before its nearest [second], with no
+     * other [first] between them, the one nearest to the cursor. Only when the text has no such pair, [first] nearest to
+     * the cursor with [second] nearest before it. Either way, in the order in which they stand in the text.
      */
     private fun pair(text: String, first: String, second: String, cursor: Int): PairLookup {
-        val one = TextSearch.find(text, first, cursor)
-            ?: return PairLookup.Missing(EditStep.Fail(EditFailure.NOT_FOUND, first))
-        val others = TextSearch.all(text, second).filter { it != one }
-        val after = others.filter { it.first > one.last }.minByOrNull { it.first }
-        if (after != null) return PairLookup.Both(one, after)
-        val before = others.filter { it.last < one.first }.maxByOrNull { it.last }
+        val ones = TextSearch.all(text, first)
+        if (ones.isEmpty()) return PairLookup.Missing(EditStep.Fail(EditFailure.NOT_FOUND, first))
+        val others = TextSearch.all(text, second)
+        val ordered = ones.mapNotNull { one ->
+            val after = others.filter { it != one && it.first > one.last }.minByOrNull { it.first } ?: return@mapNotNull null
+            val closer = ones.any { it.first > one.last && it.last < after.first }
+            if (closer) null else PairLookup.Both(one, after)
+        }
+        val spans = ordered.map { it.first.first..it.second.last }
+        TextSearch.nearest(spans, cursor)?.let { return ordered[spans.indexOf(it)] }
+        val one = checkNotNull(TextSearch.nearest(ones, cursor))
+        val before = others.filter { it != one && it.last < one.first }.maxByOrNull { it.last }
             ?: return PairLookup.Missing(EditStep.Fail(EditFailure.NOT_FOUND, second))
         return PairLookup.Both(before, one)
     }
 
-    private fun insert(spoken: String, place: Place, state: TextState): EditStep = when (val found = offset(place, state)) {
-        is Missing -> found.step
-        // The words go in as dictation at that place, with spoken punctuation and the spaces around them.
-        is Found -> Dictation.render(TextState(state.text, found.range.first, found.range.first), spoken, startsUtterance = false)
+    private fun insert(spoken: String, place: Place, state: TextState): EditStep {
+        if (breaksLine(spoken)) return EditStep.Fail(EditFailure.LINE_BREAK)
+        return when (val found = offset(place, state)) {
+            is Missing -> found.step
+            // The words go in as dictation at that place, with spoken punctuation and the spaces around them.
+            is Found -> Dictation.render(TextState(state.text, found.range.first, found.range.first), spoken, startsUtterance = false)
+        }
     }
 
     private fun replace(old: String, new: String, state: TextState): EditStep {
+        if (breaksLine(new)) return EditStep.Fail(EditFailure.LINE_BREAK)
         val range = TextSearch.find(state.text, old, state.selectionEnd) ?: return EditStep.Fail(EditFailure.NOT_FOUND, old)
         val replacement = Dictation.phrase(new)
         val end = range.first + replacement.length
@@ -152,6 +163,7 @@ object EditModel {
     }
 
     private fun replaceBetween(command: TextCommand.ReplaceBetween, state: TextState): EditStep {
+        if (breaksLine(command.new)) return EditStep.Fail(EditFailure.LINE_BREAK)
         val text = state.text
         val both = when (val found = pair(text, command.from, command.to, state.selectionEnd)) {
             is PairLookup.Missing -> return found.step
@@ -200,6 +212,9 @@ object EditModel {
     }
 
     private fun removal(start: Int, end: Int) = EditStep.Change(start, end, "", start, start)
+
+    /** Whether [spoken] holds a spoken "new line" or "new paragraph", which only the Enter key may type (design D8). */
+    private fun breaksLine(spoken: String): Boolean = '\n' in Dictation.phrase(spoken)
 
     /**
      * Deletes [start] until [end] with one space next to it, so that no double space and no space before punctuation

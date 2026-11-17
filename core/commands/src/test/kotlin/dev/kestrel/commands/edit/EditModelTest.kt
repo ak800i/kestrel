@@ -115,6 +115,40 @@ class EditModelTest {
     }
 
     @Test
+    fun fromToPrefersThePairInTheSpokenOrderNearestTheCursor() {
+        assertEquals("[hello A world] B hello", edit(Select(TextScope.FromTo("hello", "world")), "hello A world B hello|"))
+        assertEquals("|B hello", edit(Delete(TextScope.FromTo("hello", "world")), "hello A world B hello|"))
+        assertEquals("hello| world B hello", edit(MoveCursor(Place.Between("hello", "world")), "hello world B hello|"))
+        // Of several pairs in the spoken order, the one nearest the cursor, from the last "hello" before its "world".
+        assertEquals("hello A world [hello B world]", edit(Select(TextScope.FromTo("hello", "world")), "hello A world hello B world|"))
+        assertEquals("hello [hello world] then world", edit(Select(TextScope.FromTo("hello", "world")), "hello hello world then world|"))
+        assertEquals("[hello A world] hello B world", edit(Select(TextScope.FromTo("hello", "world")), "|hello A world hello B world"))
+    }
+
+    @Test
+    fun deleteTheArticleAndTheNextWordWithItsAccentOrACharacterThatIsAnEmoji() {
+        assertEquals("Is that| on", edit(Delete(TextScope.Phrase("the meeting")), "Is that meeting on|"))
+        assertEquals("|ok", edit(Delete(TextScope.Units(1, TextUnit.WORD, forward = true)), "|cafe\u0301 ok"))
+        assertEquals("ok |", edit(Delete(TextScope.Units(1, TextUnit.CHARACTER, forward = false)), "ok \uD83C\uDDF7\uD83C\uDDF8|"))
+        assertEquals("ok |", edit(Delete(TextScope.Units(1, TextUnit.CHARACTER, forward = false)), "ok \uD83D\uDC4D\uD83C\uDFFD|"))
+    }
+
+    @Test
+    fun anEmptyLineIsALineToDelete() {
+        assertEquals("first\n|third", edit(Delete(TextScope.Units(1, TextUnit.LINE, forward = false)), "first\n\n|third"))
+        assertEquals("first\n|\nthird", edit(MoveCursor(Place.Units(1, TextUnit.LINE, forward = true)), "first|\n\nthird"))
+    }
+
+    @Test
+    fun aFieldsReportedSelectionIsMadeValid() {
+        assertEquals(TextState("hello", 5, 5), TextState.of("hello", -1, -1))
+        assertEquals(TextState("hello", 5, 5), TextState.of("hello", 2, -1))
+        assertEquals(TextState("hello", 1, 4), TextState.of("hello", 4, 1))
+        assertEquals(TextState("hello", 3, 5), TextState.of("hello", 3, 9))
+        assertEquals(TextState("hello", 5, 5), TextState.of("hello", 9, 7))
+    }
+
+    @Test
     fun nothingPrintsTheText() {
         val texts = listOf(
             TextState("secret", 0, 0).toString(),
@@ -123,5 +157,11 @@ class EditModelTest {
         )
 
         for (text in texts) assertFalse(text, "secret" in text)
+    }
+
+    @Test
+    fun aFailPrintsItsReasonAndOnlyThePhrasesLength() {
+        assertEquals("Fail(NOT_FOUND, phrase of 6 characters)", EditStep.Fail(EditFailure.NOT_FOUND, "secret").toString())
+        assertEquals("Fail(NOTHING_THERE, no phrase)", EditStep.Fail(EditFailure.NOTHING_THERE).toString())
     }
 }

@@ -51,6 +51,18 @@ class EditHistoryTest {
     }
 
     @Test
+    fun aRedoAfterTheTextChangedDropsTheFieldsHistory() {
+        val history = EditHistory()
+        history.record("app/field", empty, hello)
+        history.record("app/field", hello, helloWorld)
+        history.undo("app/field", helloWorld)
+
+        assertNull(history.redo("app/field", TextState("hello!", 6, 6)))
+        assertFalse(history.canRedo("app/field"))
+        assertFalse(history.canUndo("app/field"))
+    }
+
+    @Test
     fun itKeepsFiftyEditsOfTwentyFields() {
         val history = EditHistory()
         val states = (0..51).map { TextState("a".repeat(it), it, it) }

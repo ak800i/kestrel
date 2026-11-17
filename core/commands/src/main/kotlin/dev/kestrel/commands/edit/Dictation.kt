@@ -12,11 +12,12 @@ sealed interface DictationPart {
 /**
  * Turns dictated words into the text to insert (design spec, section 9.7). Kestrel types only the punctuation that the
  * owner says ("comma", "question mark", "new line" and the others) and drops the recogniser's own, which adds a full stop
- * to almost every short utterance. The first word of an utterance loses its capital unless it is "I" or is written in
- * capitals; the other words keep the recogniser's case. A word gets a capital at the start of an empty field and after a
- * full stop, question mark or exclamation mark, whether the owner says it now or the field had it already; "dot" joins
- * without a space and starts no sentence, as in "example.com". Words that spell something, such as "capital p one two
- * three", are joined without spaces, and in a password field every word is, with its spoken punctuation as marks.
+ * to almost every short utterance; a mark inside a word, as in "example.com" or "3.5", stays. The first word of an
+ * utterance loses its capital unless it is "I" or is written in capitals; the other words keep the recogniser's case. A
+ * word gets a capital at the start of an empty field and after a full stop, question mark or exclamation mark, whether
+ * the owner says it now or the field had it already; "dot" joins without a space and starts no sentence, as in
+ * "example.com". Words that spell something, such as "capital p one two three", are joined without spaces, and in a
+ * password field every word is, with its spoken punctuation as marks.
  */
 object Dictation {
     /**
@@ -25,6 +26,8 @@ object Dictation {
      * X", which do not start what the owner said.
      */
     fun insert(state: TextState, spoken: String, password: Boolean, startsUtterance: Boolean = true): List<DictationPart> {
+        // An utterance that leaves no words, such as the recogniser's lone ".", changes nothing.
+        if (words(spoken).isEmpty()) return emptyList()
         if (password) {
             val spelled = spell(words(spoken), password = true).orEmpty()
             val end = state.selectionStart + spelled.length
@@ -49,8 +52,14 @@ object Dictation {
         }
     }
 
-    /** One change that inserts [spoken] at [state]'s selection, with each line break as "\n". */
+    /**
+     * One change that inserts [spoken] at [state]'s selection, with each line break as "\n". Without words it changes
+     * nothing and keeps the selection.
+     */
     fun render(state: TextState, spoken: String, startsUtterance: Boolean): EditStep.Change {
+        if (words(spoken).isEmpty()) {
+            return EditStep.Change(state.selectionStart, state.selectionStart, "", state.selectionStart, state.selectionEnd)
+        }
         val before = state.text.substring(0, state.selectionStart)
         val after = state.text.substring(state.selectionEnd)
         val text = build(before, after, spoken, startsUtterance, capitals = true)
@@ -93,6 +102,8 @@ object Dictation {
         var previous = when {
             before.isEmpty() || before.last().isWhitespace() -> Kind.BREAK
             before.last() in OPENERS || (before.last() == '"' && quotes % 2 == 1) -> Kind.OPENING
+            // "john@|" or "my_|": the owner paused in the middle of an address or a name.
+            before.last() in JOINERS && before.length >= 2 && before[before.length - 2].isLetterOrDigit() -> Kind.JOINING
             else -> Kind.WORD
         }
         // Spelled words go in exactly as spelled.
@@ -138,13 +149,19 @@ object Dictation {
         return text.toString()
     }
 
-    /** The words of [spoken] without the recogniser's punctuation. Marks between digits stay, as in "3.5" and "10:30". */
+    /**
+     * The words of [spoken] without the recogniser's punctuation. Marks between digits stay, as in "3.5" and "10:30", and
+     * so do ".", ":" and "@" between letters or digits, as in "example.com" and "john@example.com".
+     */
     private fun words(spoken: String): List<String> = buildList {
         for (raw in spoken.split(WHITESPACE)) {
             val piece = StringBuilder()
             for ((index, char) in raw.withIndex()) {
-                val betweenDigits = index > 0 && index < raw.length - 1 && raw[index - 1].isDigit() && raw[index + 1].isDigit()
-                val dropped = (char in DROPPED && !(char in DIGIT_MARKS && betweenDigits)) ||
+                val inside = index > 0 && index < raw.length - 1
+                val betweenDigits = inside && raw[index - 1].isDigit() && raw[index + 1].isDigit()
+                val betweenWords = inside && raw[index - 1].isLetterOrDigit() && raw[index + 1].isLetterOrDigit()
+                val kept = (char in DIGIT_MARKS && betweenDigits) || (char in WORD_MARKS && betweenWords)
+                val dropped = (char in DROPPED && !kept) ||
                     (char in DASHES && raw.length == 1) ||
                     (char in LEADING_QUOTES && index == 0)
                 if (dropped) {
@@ -322,6 +339,11 @@ object Dictation {
     private val I_CONTRACTIONS = Regex("I['\u2019](m|ll|ve|d)")
     private val DROPPED = setOf('.', ',', '?', '!', ';', ':', '"', '\u201C', '\u201D', '\u201E', '\u2026', '\u00AB', '\u00BB')
     private val DIGIT_MARKS = setOf('.', ',', ':')
+    private val WORD_MARKS = setOf('.', ':', '@')
+
+    // The marks that join what comes after them when they follow a letter or digit at the cursor; "." is not one of
+    // them, because "Done." ends a sentence.
+    private val JOINERS = setOf('@', '_', '/', '-')
     private val DASHES = setOf('-', '\u2013', '\u2014')
     private val LEADING_QUOTES = setOf('\'', '\u2018')
     private val OPENERS = setOf('(', '[', '{')

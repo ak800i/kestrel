@@ -22,7 +22,7 @@ sealed interface EditStep {
 
     /** The command cannot act on this text. [phrase] is the owner's words that the text does not contain. */
     data class Fail(val reason: EditFailure, val phrase: String? = null) : EditStep {
-        override fun toString() = "Fail($reason, phrase of ${phrase?.length} characters)"
+        override fun toString() = "Fail($reason, ${phrase?.let { "phrase of ${it.length} characters" } ?: "no phrase"})"
     }
 }
 
@@ -39,4 +39,10 @@ enum class EditFailure {
 
     /** A text command that the editing model does not plan, such as "undo" or "copy". */
     NOT_AN_EDIT,
+
+    /**
+     * The new words of "insert", "replace" or "replace everything between" hold a spoken "new line" or "new paragraph". A
+     * line break goes only through the Enter key, which a single-line field refuses.
+     */
+    LINE_BREAK,
 }
