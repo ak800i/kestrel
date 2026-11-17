@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -48,6 +49,39 @@ class OrchestratorTest {
             performed,
         )
         assertEquals(emptyList<Exception>(), errors)
+    }
+
+    @Test
+    fun anUnansweredQuestionEndsFifteenSecondsAfterItWasSpoken() = runTest {
+        val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.Heard("tap Send", named = false))
+        orchestrator.send(Event.CommandAsks(1, "Which one?"))
+        runCurrent()
+        // The question took 5 s to say; the 15 s count from its end.
+        advanceTimeBy(5_000)
+        orchestrator.send(Event.SpeechEnded)
+        runCurrent()
+
+        advanceTimeBy(14_999)
+        runCurrent()
+        assertTrue(orchestrator.state.value.asking)
+        advanceTimeBy(2)
+        runCurrent()
+        assertFalse(orchestrator.state.value.asking)
+        assertEquals(Effect.AnswerCommand(1, null), performed.last())
+    }
+
+    @Test
+    fun aCommandThatCannotStartEndsAsFailed() = runTest {
+        val orchestrator = Orchestrator(backgroundScope, { if (it is Effect.RunCommand) error("No runner") }, { errors += it })
+
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+
+        assertEquals(Work.IDLE, orchestrator.state.value.work)
+        assertEquals(1, errors.size)
     }
 
     @Test

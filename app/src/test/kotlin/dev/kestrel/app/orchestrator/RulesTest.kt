@@ -1,5 +1,13 @@
 package dev.kestrel.app.orchestrator
 
+import dev.kestrel.commands.CallTarget
+import dev.kestrel.commands.Command
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Direction
+import dev.kestrel.commands.GlobalCommand
+import dev.kestrel.commands.Outcome
+import dev.kestrel.commands.PhoneCommand
+import dev.kestrel.commands.Target
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.listen.Recognition
 import org.junit.Assert.assertEquals
@@ -10,6 +18,8 @@ import org.junit.Test
 class RulesTest {
     private val listening = State(mode = Mode.LISTENING)
     private val paused = State(mode = Mode.PAUSED)
+    private val runningCommand =
+        listening.copy(work = Work.RUNNING_COMMAND, command = 1, running = Command.Tap(Target.Label("Send")), heard = "tap Send")
 
     @Test
     fun theToggleStartsListeningThenPausesAndListensAgain() {
@@ -239,13 +249,308 @@ class RulesTest {
     }
 
     @Test
-    fun otherSpeechGoesToTheCommandsOnlyWhileListening() {
+    fun otherSpeechRunsAnInstantCommandOnlyWhileListening() {
+        val step = Rules.next(listening, Event.Heard("Scroll down", named = false))
+
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Scroll down")), Effect.RunCommand("Scroll down")),
-            Rules.next(listening, Event.Heard("Scroll down", named = false)).effects,
+            listOf(Effect.Show(Feedback.Heard("Scroll down")), Effect.RunCommand(1, Command.Scroll(Direction.DOWN, null), "Scroll down")),
+            step.effects,
         )
+        assertEquals(Work.RUNNING_COMMAND, step.state.work)
+        assertEquals(1, step.state.command)
+        assertEquals(Recognition.ALL, step.state.recognition)
         assertEquals(Step(paused), Rules.next(paused, Event.Heard("Scroll down", named = true)))
-        assertEquals(Effect.RunCommand("Cancel!"), Rules.next(listening, Event.Heard("Cancel!", named = false)).effects.last())
+        // Plain "cancel" while nothing runs may name a button (section 9.5).
+        assertEquals(
+            Effect.RunCommand(1, Command.Bare("Cancel!", null), "Cancel!"),
+            Rules.next(listening, Event.Heard("Cancel!", named = false)).effects.last(),
+        )
+        val dark = listening.copy(screenOn = false)
+        assertEquals(Step(dark), Rules.next(dark, Event.Heard("Scroll down", named = false)))
+    }
+
+    @Test
+    fun aCommandEndsWithItsResultAndARepeatableOneBecomesTheLastCommand() {
+        val started = Rules.next(listening, Event.Heard("tap Send", named = false)).state
+
+        val ended = Rules.next(started, Event.CommandEnded(1, CommandResult(Outcome.DONE, show = "It's already on", repeatable = true)))
+
+        assertEquals(Work.IDLE, ended.state.work)
+        assertEquals(null, ended.state.running)
+        assertEquals(Command.Tap(Target.Label("Send")), ended.state.lastCommand)
+        assertEquals("tap Send", ended.state.lastHeard)
+        assertEquals(listOf(Effect.Show(Feedback.CommandText("It's already on"))), ended.effects)
+        // An older command's end, and an end after the work left the command, change nothing.
+        assertEquals(Step(started), Rules.next(started, Event.CommandEnded(0, CommandResult(Outcome.DONE))))
+        assertEquals(Step(ended.state), Rules.next(ended.state, Event.CommandEnded(1, CommandResult(Outcome.DONE))))
+        // A spoken result of a command that is not repeatable, and a cancel, which the bar shows.
+        val said = Rules.next(started, Event.CommandEnded(1, CommandResult(Outcome.FAILED, say = "I can't find Send.")))
+        assertEquals(listOf(Effect.Say(Reply.Text("I can't find Send."))), said.effects)
+        assertEquals(1, said.state.speeches)
+        assertEquals(null, said.state.lastCommand)
+        assertEquals(
+            listOf(Effect.Show(Feedback.CommandCancelled)),
+            Rules.next(started, Event.CommandEnded(1, CommandResult(Outcome.CANCELLED))).effects,
+        )
+        // A touch that cancels a question while Kestrel still says it stops the question too.
+        assertEquals(
+            listOf(Effect.Show(Feedback.CommandCancelled), Effect.StopSaying),
+            Rules.next(started.copy(speeches = 1), Event.CommandEnded(1, CommandResult(Outcome.CANCELLED))).effects,
+        )
+    }
+
+    @Test
+    fun againRepeatsTheCommandThatActedWithItsTranscript() {
+        val started = Rules.next(listening, Event.Heard("tap Delete", named = false)).state
+        // The executor fell back to the bare label, and that command acted.
+        val acted = CommandResult(Outcome.DONE, repeatable = true, acted = Command.Bare("Delete", null))
+        val ended = Rules.next(started, Event.CommandEnded(1, acted)).state
+
+        val again = Rules.next(ended, Event.Heard("Again.", named = false))
+
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Again.")), Effect.RunCommand(2, Command.Bare("Delete", null), "tap Delete")),
+            again.effects,
+        )
+        assertEquals(Command.Bare("Delete", null), again.state.running)
+        // Off forgets it, so that "again" never repeats a command of an earlier run.
+        assertEquals(null, Rules.next(ended, Event.TurnOff).state.lastCommand)
+        // Without a repeatable command, the bar says so.
+        assertEquals(
+            Step(listening, listOf(Effect.Show(Feedback.Heard("again")), Effect.Show(Feedback.NothingToRepeat))),
+            Rules.next(listening, Event.Heard("again", named = false)),
+        )
+    }
+
+    @Test
+    fun stopCancelAndSpeechThatStartsWithThemCancelACommand() {
+        for (said in listOf("Stop.", "cancel", "Kestrel, stop.", "Cancel it, Kestrel.", "Stop scrolling", "Okay, stop scrolling")) {
+            val step = Rules.next(runningCommand, Event.Heard(said, named = false))
+            assertEquals(said, Work.IDLE, step.state.work)
+            assertEquals(said, listOf(Effect.Show(Feedback.Heard(said)), Effect.CancelCommand, Effect.Show(Feedback.CommandCancelled)), step.effects)
+        }
+        // A question or an announcement in progress stops too.
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.CancelCommand, Effect.StopSaying, Effect.Show(Feedback.CommandCancelled)),
+            Rules.next(runningCommand.copy(speeches = 1), Event.Heard("Stop.", named = false)).effects,
+        )
+    }
+
+    @Test
+    fun kestrelsOwnRequestsCancelTheCommandFirstAndThenAct() {
+        val task = Rules.next(runningCommand, Event.Heard("Kestrel, open Viber.", named = true))
+        assertEquals(
+            listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Kestrel, open Viber.")), Effect.RunTask(1, "open Viber.")),
+            task.effects,
+        )
+        assertEquals(Work.RUNNING_TASK, task.state.work)
+
+        val settings = Rules.next(runningCommand, Event.Heard("Kestrel, open settings.", named = true))
+        assertEquals(
+            listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Kestrel, open settings.")), Effect.OpenSettings),
+            settings.effects,
+        )
+
+        val pausing = Rules.next(runningCommand, Event.Heard("Stop listening.", named = false))
+        assertEquals(Mode.PAUSED, pausing.state.mode)
+        assertEquals(Effect.CancelCommand, pausing.effects.first())
+
+        val assisted = Rules.next(runningCommand, Event.Assist)
+        assertEquals(Effect.CancelCommand, assisted.effects.first())
+        assertEquals(Work.AWAITING_TASK, assisted.state.work)
+    }
+
+    @Test
+    fun aCommandThatArrivesWhileAnotherRunsIsDropped() {
+        assertEquals(
+            Step(runningCommand, listOf(Effect.Show(Feedback.Heard("Scroll down")), Effect.Show(Feedback.CommandBusy))),
+            Rules.next(runningCommand, Event.Heard("Scroll down", named = false)),
+        )
+        assertEquals(Effect.Show(Feedback.CommandBusy), Rules.next(runningCommand, Event.Heard("Again", named = false)).effects.last())
+        // Bare speech may be conversation, so the bar does not say so, except while dictation may run.
+        assertEquals(
+            Step(runningCommand, listOf(Effect.Show(Feedback.Heard("Hello there")))),
+            Rules.next(runningCommand, Event.Heard("Hello there", named = false)),
+        )
+        val dictating = runningCommand.copy(running = Command.Bare("Hello", null))
+        assertEquals(Effect.Show(Feedback.CommandBusy), Rules.next(dictating, Event.Heard("Hello there", named = false)).effects.last())
+    }
+
+    @Test
+    fun aQuestionIsSpokenKeptOnTheBarAndTheNextTranscriptAnswersIt() {
+        val asked = Rules.next(runningCommand, Event.CommandAsks(1, "Which one?"))
+
+        assertTrue(asked.state.asking)
+        assertEquals(
+            listOf(Effect.Show(Feedback.CommandText("Which one?", keep = true)), Effect.Say(Reply.Command(1, "Which one?")), Effect.WaitForAnswer()),
+            asked.effects,
+        )
+        val answered = Rules.next(asked.state, Event.Heard("To.", named = false))
+        assertFalse(answered.state.asking)
+        assertEquals(Work.RUNNING_COMMAND, answered.state.work)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("To.")), Effect.AnswerCommand(1, "To.")), answered.effects)
+        // A question of an older command changes nothing.
+        assertEquals(Step(runningCommand), Rules.next(runningCommand, Event.CommandAsks(0, "Which one?")))
+    }
+
+    @Test
+    fun theWaitForAnAnswerStartsAgainWhenTheQuestionWasSpokenAndGrowsWhenTheOwnerAnswers() {
+        val asked = Rules.next(runningCommand, Event.CommandAsks(1, "Which one?")).state
+
+        val spoken = Rules.next(asked, Event.SpeechEnded)
+        assertEquals(listOf(Effect.WaitForAnswer()), spoken.effects)
+        assertEquals(2, spoken.state.wait)
+        val answering = Rules.next(spoken.state, Event.Speaking)
+        assertEquals(listOf(Effect.WaitForAnswer(answering = true)), answering.effects)
+        // The end of an older wait changes nothing; the end of the latest one ends the question without an answer.
+        assertEquals(Step(answering.state), Rules.next(answering.state, Event.AnswerWaitEnded(2)))
+        val ended = Rules.next(answering.state, Event.AnswerWaitEnded(3))
+        assertFalse(ended.state.asking)
+        assertEquals(listOf(Effect.AnswerCommand(1, null)), ended.effects)
+        // An utterance without a transcript gives the owner the whole wait again.
+        assertEquals(listOf(Effect.WaitForAnswer()), Rules.next(answering.state, Event.NothingHeard).effects)
+    }
+
+    @Test
+    fun aCountdownHoldsWhileTheOwnerSpeaksAndOnlyCancelStopNoOrAModeChangeEndIt() {
+        val counting = Rules.next(runningCommand, Event.CommandCounts(1, counting = true)).state
+        assertTrue(counting.counting)
+        assertEquals(listOf(Effect.HoldCommand(1, hold = true)), Rules.next(counting, Event.Speaking).effects)
+        // Anything else lets the countdown go on: other speech, Kestrel's other requests, and an utterance without words.
+        for (said in listOf("What time is it?", "Kestrel, open settings.", "Kestrel", "tap Save", "I have no idea.")) {
+            val step = Rules.next(counting, Event.Heard(said, named = false))
+            assertEquals(said, listOf(Effect.Show(Feedback.Heard(said)), Effect.HoldCommand(1, hold = false)), step.effects)
+            assertEquals(said, counting, step.state)
+        }
+        assertEquals(listOf(Effect.HoldCommand(1, hold = false)), Rules.next(counting, Event.NothingHeard).effects)
+        assertEquals(Step(counting), Rules.next(counting, Event.Assist))
+        // "Cancel", "stop" and "no", with or without the name, cancel it.
+        for (said in listOf(
+            "Cancel.", "Stop", "No.", "No, no.", "Kestrel, no.", "Stop that.", "Cancel it, Kestrel.", "Hey Kestrel, no.",
+            "No, Castrel.", "Oh no!", "No, no, wait.", "No, not her.", "No, I said Anja.", "Thank you, no.",
+        )) {
+            val step = Rules.next(counting, Event.Heard(said, named = false))
+            assertEquals(said, Effect.CancelCommand, step.effects[1])
+            assertFalse(said, step.state.counting)
+        }
+        // A change of mode cancels it and then acts.
+        val pausing = Rules.next(counting, Event.Heard("Stop listening.", named = false))
+        assertEquals(Mode.PAUSED, pausing.state.mode)
+        assertEquals(Effect.CancelCommand, pausing.effects.first())
+        assertEquals(Mode.OFF, Rules.next(counting, Event.Heard("Kestrel, turn off.", named = false)).state.mode)
+        assertFalse(Rules.next(counting, Event.CommandCounts(1, counting = false)).state.counting)
+    }
+
+    @Test
+    fun theSpottersStopOrCancelEndsACountdownAtOnceAndACommandWhileKestrelSpeaks() {
+        val counting = runningCommand.copy(counting = true)
+        assertEquals(
+            Step(listening.copy(command = 1, spottedStop = true), listOf(Effect.CancelCommand, Effect.Show(Feedback.CommandCancelled))),
+            Rules.next(counting, Event.Spotted(Keyword.CANCEL)),
+        )
+        // While Kestrel is silent and no countdown runs, the transcript decides.
+        assertEquals(Step(runningCommand), Rules.next(runningCommand, Event.Spotted(Keyword.STOP)))
+        val speaking = runningCommand.copy(speeches = 1)
+        assertEquals(
+            listOf(Effect.CancelCommand, Effect.StopSaying, Effect.Show(Feedback.CommandCancelled)),
+            Rules.next(speaking, Event.Spotted(Keyword.STOP)).effects,
+        )
+        // "Kestrel" over Kestrel's voice cancels the command and waits for a task, but not during a countdown.
+        val named = Rules.next(speaking, Event.Spotted(Keyword.KESTREL))
+        assertEquals(Effect.CancelCommand, named.effects.first())
+        assertEquals(Work.AWAITING_TASK, named.state.work)
+        assertEquals(Step(counting.copy(speeches = 1)), Rules.next(counting.copy(speeches = 1), Event.Spotted(Keyword.KESTREL)))
+    }
+
+    @Test
+    fun theTranscriptOfTheSpottersCancelNamesNoButton() {
+        val cancelled = Rules.next(runningCommand.copy(counting = true), Event.Spotted(Keyword.CANCEL)).state
+
+        // The same word's transcript comes once the command has ended: it is only shown.
+        val heard = Rules.next(cancelled, Event.Heard("Cancel.", named = false))
+        assertEquals(Step(cancelled.copy(spottedStop = false), listOf(Effect.Show(Feedback.Heard("Cancel.")))), heard)
+        // A later "cancel" may name a button again.
+        assertEquals(
+            Effect.RunCommand(2, Command.Bare("Cancel.", null), "Cancel."),
+            Rules.next(heard.state, Event.Heard("Cancel.", named = false)).effects.last(),
+        )
+        // Another transcript runs as usual.
+        assertEquals(
+            Effect.RunCommand(2, Command.Scroll(Direction.DOWN, null), "Scroll down"),
+            Rules.next(cancelled, Event.Heard("Scroll down", named = false)).effects.last(),
+        )
+    }
+
+    @Test
+    fun aChangeOfModeOrTheScreenTurningOffCancelsTheCommand() {
+        for (event in listOf(Event.Toggle, Event.Pause, Event.TurnOff, Event.Screen(on = false), Event.CallState(CallState.RINGING))) {
+            val step = Rules.next(runningCommand, event)
+            assertEquals("$event", Effect.CancelCommand, step.effects.first())
+            assertEquals("$event", Work.IDLE, step.state.work)
+            assertEquals("$event", null, step.state.running)
+        }
+        assertEquals(Mode.PAUSED, Rules.next(runningCommand, Event.Toggle).state.mode)
+    }
+
+    @Test
+    fun lockingTheScreenAndTheCallThatACommandPlacedLeaveItRunning() {
+        val locking = runningCommand.copy(running = PhoneCommand.Global(GlobalCommand.LOCK_SCREEN))
+        val dark = Rules.next(locking, Event.Screen(on = false))
+        assertEquals(Step(locking.copy(screenOn = false)), dark)
+        assertEquals(Work.IDLE, Rules.next(dark.state, Event.CommandEnded(1, CommandResult(Outcome.DONE))).state.work)
+
+        val calling = runningCommand.copy(running = PhoneCommand.Call(CallTarget.Number("0641234567")))
+        val active = Rules.next(calling, Event.CallState(CallState.ACTIVE))
+        assertEquals(Mode.IN_CALL, active.state.mode)
+        assertEquals(Work.RUNNING_COMMAND, active.state.work)
+        assertFalse(Effect.CancelCommand in active.effects)
+        assertEquals(Work.IDLE, Rules.next(active.state, Event.CommandEnded(1, CommandResult(Outcome.DONE))).state.work)
+    }
+
+    @Test
+    fun everyEventKeepsARunningCommandOrCancelsIt() {
+        val events = listOf(
+            Event.Toggle, Event.Start(), Event.Pause, Event.Resume, Event.TurnOff, Event.Heard("Scroll down", named = false),
+            Event.Heard("Stop.", named = false), Event.Heard("", named = false), Event.Heard("Kestrel", named = true),
+            Event.Speaking, Event.Spotted(Keyword.STOP), Event.Spotted(Keyword.CANCEL), Event.Spotted(Keyword.KESTREL),
+            Event.SpeechEnded, Event.TaskEnded(1, "Done."), Event.MicBusy(true), Event.MicBusy(false), Event.Screen(on = true),
+            Event.Screen(on = false), Event.WaitEnded(1), Event.SettingsUnavailable, Event.NothingHeard,
+            Event.CallState(CallState.IDLE), Event.CallState(CallState.RINGING), Event.CallState(CallState.ACTIVE), Event.Assist,
+            Event.Options(WakeUpMode.STAY_OFF, pauseAfterSilence = true, callCommands = true), Event.Silent(1),
+            Event.CommandAsks(1, "Which one?"), Event.CommandSays(1, "Calling."), Event.CommandCounts(1, counting = true),
+            Event.AnswerWaitEnded(1), Event.CommandEnded(2, CommandResult(Outcome.DONE)),
+        )
+        val starts = listOf(
+            runningCommand,
+            runningCommand.copy(speeches = 1),
+            runningCommand.copy(asking = true, wait = 1),
+            runningCommand.copy(counting = true),
+        )
+        for (from in starts) {
+            for (event in events) {
+                val step = Rules.next(from, event)
+                val goesOn = step.state.work == Work.RUNNING_COMMAND && step.state.command == 1 && step.state.running == from.running
+                assertTrue("$event from $from", goesOn || Effect.CancelCommand in step.effects)
+            }
+        }
+    }
+
+    @Test
+    fun anAnswerThatWasNoAnswerIsReadAsANewUtterance() {
+        val ended = Rules.next(runningCommand, Event.CommandEnded(1, CommandResult(Outcome.CANCELLED, passOn = "Scroll down")))
+
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Scroll down")), Effect.RunCommand(2, Command.Scroll(Direction.DOWN, null), "Scroll down")),
+            ended.effects,
+        )
+        assertEquals(2, ended.state.command)
+    }
+
+    @Test
+    fun theStatePrintsNoWords() {
+        val printed = runningCommand.copy(lastCommand = Command.Bare("secret words", null), lastHeard = "secret words").toString()
+
+        assertFalse(printed, printed.contains("secret") || printed.contains("Send"))
     }
 
     @Test

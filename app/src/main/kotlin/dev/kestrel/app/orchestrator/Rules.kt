@@ -1,5 +1,13 @@
 package dev.kestrel.app.orchestrator
 
+import dev.kestrel.commands.Command
+import dev.kestrel.commands.CommandParser
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.GlobalCommand
+import dev.kestrel.commands.Outcome
+import dev.kestrel.commands.PhoneCommand
+import dev.kestrel.commands.TextCommand
+import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.listen.Recognition
 
@@ -27,6 +35,9 @@ enum class Work {
 
     /** A task runs, and only "stop" and "cancel" count (section 11.10). */
     RUNNING_TASK,
+
+    /** An instant command runs (section 7.3): it may ask a question or count down, and "stop" or "cancel" cancel it. */
+    RUNNING_COMMAND,
 }
 
 /**
@@ -40,7 +51,12 @@ enum class Work {
  * and [pauseAfterSilence] pauses listening after 30 s without speech (section 8.5); [silence] is the number of the
  * latest timer of that pause, so that the end of an older one changes nothing. [screenSeen]: since Kestrel turned on,
  * the running ListeningService has reported the screen on and the phone unlocked, so that the next unlock is a wake-up
- * (section 8.5).
+ * (section 8.5). [command] is the number of the latest instant command, so that the end of an older one changes nothing;
+ * [running] is the command that runs and [heard] its transcript; [asking]: it waits for the answer to its question;
+ * [counting]: it counts down, as before a call. [lastCommand] and [lastHeard] are the last command that ended as
+ * repeatable and its transcript, for "again" (section 9.5); off forgets them. [spottedStop]: the spotter's "stop" or
+ * "cancel" cancelled the command, so the transcript of the same word names no button. It lasts until the next transcript
+ * that reaches the commands, so when the pipeline dropped that word, one later "stop…" or "cancel…" is only shown.
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -59,8 +75,25 @@ data class State(
     val pauseAfterSilence: Boolean = false,
     val silence: Int = 0,
     val screenSeen: Boolean = false,
+    val command: Int = 0,
+    val running: Command? = null,
+    val heard: String? = null,
+    val asking: Boolean = false,
+    val counting: Boolean = false,
+    val lastCommand: Command? = null,
+    val lastHeard: String? = null,
+    val spottedStop: Boolean = false,
 ) {
     val speaking: Boolean get() = speeches > 0
+
+    // The owner's words never reach a log (section 13.5): only the commands' kinds and the transcripts' lengths.
+    override fun toString() =
+        "State(mode=$mode, work=$work, speeches=$speeches, task=$task, wait=$wait, cancelled=$cancelled, screenOn=$screenOn, " +
+            "micBusy=$micBusy, emptyTranscripts=$emptyTranscripts, noWordsShown=$noWordsShown, beforeCall=$beforeCall, " +
+            "callCommands=$callCommands, onWakeUp=$onWakeUp, pauseAfterSilence=$pauseAfterSilence, silence=$silence, " +
+            "screenSeen=$screenSeen, command=$command, running=${running?.javaClass?.simpleName}, heard=${heard?.length}, " +
+            "asking=$asking, counting=$counting, lastCommand=${lastCommand?.javaClass?.simpleName}, " +
+            "lastHeard=${lastHeard?.length}, spottedStop=$spottedStop)"
 
     /** Whether a call rings or is active (section 8.7). */
     val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
@@ -186,6 +219,25 @@ sealed interface Event {
 
     /** Timer number [silence] of the pause after 30 s without speech has run out (section 8.5). */
     data class Silent(val silence: Int) : Event
+
+    /** Instant command number [command] ended with [result] (section 7.3). Listening sends it for every command that ran. */
+    data class CommandEnded(val command: Int, val result: CommandResult) : Event
+
+    /** Command number [command] asks [question] and waits for the answer. */
+    data class CommandAsks(val command: Int, val question: String) : Event {
+        override fun toString() = "CommandAsks($command, ${question.length} characters)"
+    }
+
+    /** Command number [command] says [text], such as a call's announcement. */
+    data class CommandSays(val command: Int, val text: String) : Event {
+        override fun toString() = "CommandSays($command, ${text.length} characters)"
+    }
+
+    /** Command number [command] starts ([counting]) or ends a countdown, as before a call (section 13.6). */
+    data class CommandCounts(val command: Int, val counting: Boolean) : Event
+
+    /** Wait number [wait] for the answer to a command's question has lasted long enough. */
+    data class AnswerWaitEnded(val wait: Int) : Event
 }
 
 /** What Kestrel says. */
@@ -201,6 +253,11 @@ sealed interface Reply {
 
     data class Text(val text: String) : Reply {
         override fun toString() = "Text(${text.length} characters)"
+    }
+
+    /** What instant command number [command] says or asks. */
+    data class Command(val command: Int, val text: String) : Reply {
+        override fun toString() = "Command($command, ${text.length} characters)"
     }
 }
 
@@ -222,6 +279,20 @@ sealed interface Feedback {
 
     /** Three transcripts in a row had no words, so the owner may check the microphone (section 14.6). */
     data object NoWords : Feedback
+
+    /** What an instant command shows. With [keep], the text stays until the command ends or the next text. */
+    data class CommandText(val text: String, val keep: Boolean = false) : Feedback {
+        override fun toString() = "CommandText(${text.length} characters, keep=$keep)"
+    }
+
+    /** "Cancelled": a command was cancelled, or its question was not answered. */
+    data object CommandCancelled : Feedback
+
+    /** A command came while another ran, and was dropped (decision 3 of sub-project 3). */
+    data object CommandBusy : Feedback
+
+    /** "Again" without a command to repeat. */
+    data object NothingToRepeat : Feedback
 }
 
 /** What the Orchestrator asks of the rest of Kestrel. The microphone and recognition follow [State] instead. */
@@ -236,10 +307,30 @@ sealed interface Effect {
 
     data object CancelTask : Effect
 
-    /** Speech for the instant commands of sub-project 3. */
-    data class RunCommand(val text: String) : Effect {
-        override fun toString() = "RunCommand(${text.length} characters)"
+    /**
+     * Runs instant command number [command], [parsed] from the transcript [heard], which the executor needs for its
+     * fallback to a bare label and for dictation. It must send [Event.CommandEnded] once it ends (section 7.3).
+     */
+    data class RunCommand(val command: Int, val parsed: Command, val heard: String) : Effect {
+        override fun toString() = "RunCommand($command, ${parsed.javaClass.simpleName}, ${heard.length} characters)"
     }
+
+    /** Cancels the running instant command. Nothing new may act on the screen until its job has completed. */
+    data object CancelCommand : Effect
+
+    /** The answer to the question of command number [command], or null when the wait for it ended. */
+    data class AnswerCommand(val command: Int, val text: String?) : Effect {
+        override fun toString() = "AnswerCommand($command, ${text?.length} characters)"
+    }
+
+    /** Holds the countdown of command number [command] while the owner speaks ([hold]), or lets it go on. */
+    data class HoldCommand(val command: Int, val hold: Boolean) : Effect
+
+    /**
+     * Starts the timer that ends the latest wait for the answer to a command's question, in place of the one that runs.
+     * [answering]: the owner has started to answer. The Orchestrator runs it itself.
+     */
+    data class WaitForAnswer(val answering: Boolean = false) : Effect
 
     data class Show(val feedback: Feedback) : Effect
 
@@ -273,7 +364,19 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 object Rules {
     fun next(state: State, event: Event): Step = silenceTimer(state, event, react(state, event))
 
-    private fun react(state: State, event: Event): Step = when (event) {
+    private val STOP_WORDS = setOf("stop", "cancel")
+
+    // Words that may come before "stop" or "cancel", as in "Okay, stop scrolling" or "No, cancel the drag".
+    private val BEFORE_STOP = setOf("ok", "okay", "please", "now", "no", "hey", "oh", "just", "wait", "so")
+
+    // Words that may come before or with "no" during a countdown, as in "Oh no", "Wait, no" or "Thank you, no".
+    private val NO_FILLERS =
+        setOf("oh", "wait", "please", "now", "ok", "okay", "hey", "just", "not", "thanks", "thank", "you", "dont")
+
+    private fun react(state: State, event: Event): Step =
+        if (state.work == Work.RUNNING_COMMAND) duringCommand(state, event) else withoutCommand(state, event)
+
+    private fun withoutCommand(state: State, event: Event): Step = when (event) {
         Event.Toggle -> when {
             state.inCall -> afterCall(state, if (state.beforeCall == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
             else -> switch(state, if (state.mode == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
@@ -315,6 +418,9 @@ object Rules {
             state.copy(onWakeUp = event.onWakeUp, pauseAfterSilence = event.pauseAfterSilence, callCommands = event.callCommands),
         )
         is Event.Silent -> silent(state, event.silence)
+        // A command that has ended or was cancelled may still report; nothing changes then.
+        is Event.CommandEnded, is Event.CommandAsks, is Event.CommandSays, is Event.CommandCounts, is Event.AnswerWaitEnded ->
+            Step(state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
@@ -335,6 +441,8 @@ object Rules {
             Work.RUNNING_TASK -> whileTaskRuns(counted, request, shown)
             Work.AWAITING_TASK -> whileAwaitingTask(counted, request, shown)
             Work.IDLE -> whileIdle(counted, request, event.text, shown)
+            // duringCommand() reads the transcripts of a running command.
+            Work.RUNNING_COMMAND -> Step(counted)
         }
     }
 
@@ -396,9 +504,214 @@ object Rules {
         is Request.Call -> Step(state)
     }
 
-    // Instant commands work only while Kestrel listens (sections 8.5 and 9.5), and not after the screen turned off.
-    private fun command(state: State, text: String, shown: Effect): Step =
-        if (state.mode == Mode.LISTENING && state.screenOn) Step(state, listOf(shown, Effect.RunCommand(text))) else Step(state)
+    // Instant commands work only while Kestrel listens (sections 8.5 and 9.5), and only with the screen on and the phone
+    // unlocked. "Again" runs the last repeatable command again, with its transcript.
+    private fun command(state: State, text: String, shown: Effect): Step {
+        val spotted = state.spottedStop
+        val fresh = if (spotted) state.copy(spottedStop = false) else state
+        if (fresh.mode != Mode.LISTENING || !fresh.screenOn) return Step(fresh)
+        // Design D2: the transcript of the "stop" or "cancel" whose keyword already cancelled the command names no button.
+        if (spotted && startsWithStop(text)) return Step(fresh, listOf(shown))
+        return startCommand(fresh, text, shown)
+    }
+
+    private fun startCommand(state: State, text: String, shown: Effect): Step {
+        val parsed = CommandParser.parse(text) ?: return Step(state, listOf(shown))
+        if (parsed != Command.Again) return runCommand(state, parsed, text, shown)
+        val last = state.lastCommand
+        val lastHeard = state.lastHeard
+        if (last == null || lastHeard == null) return Step(state, listOf(shown, Effect.Show(Feedback.NothingToRepeat)))
+        return runCommand(state, last, lastHeard, shown)
+    }
+
+    // Every command gets the next number, so that the end of an older one changes nothing.
+    private fun runCommand(state: State, command: Command, heard: String, vararg first: Effect): Step {
+        val number = state.command + 1
+        return Step(
+            state.copy(work = Work.RUNNING_COMMAND, command = number, running = command, heard = heard),
+            first.toList() + Effect.RunCommand(number, command, heard),
+        )
+    }
+
+    // Section 7.3: while an instant command runs. A step that leaves RUNNING_COMMAND other than through the command's own
+    // end goes through leaveCommand(), which cancels the command's job first.
+    private fun duringCommand(state: State, event: Event): Step = when (event) {
+        is Event.CommandEnded -> if (event.command == state.command) commandEnded(state, event.result) else Step(state)
+        is Event.CommandAsks -> if (event.command == state.command) ask(state, event.question) else Step(state)
+        is Event.CommandSays -> if (event.command == state.command) {
+            say(state, Reply.Command(event.command, event.text), Effect.Show(Feedback.CommandText(event.text)))
+        } else {
+            Step(state)
+        }
+        is Event.CommandCounts -> if (event.command == state.command) Step(state.copy(counting = event.counting)) else Step(state)
+        is Event.AnswerWaitEnded -> if (state.asking && event.wait == state.wait) {
+            Step(state.copy(asking = false), listOf(Effect.AnswerCommand(state.command, null)))
+        } else {
+            Step(state)
+        }
+        is Event.Heard -> heardDuringCommand(state, event)
+        // The owner starts to speak: a countdown holds until the transcript decides, and an answer gets the longer wait.
+        Event.Speaking -> when {
+            state.counting -> Step(state, listOf(Effect.HoldCommand(state.command, hold = true)))
+            state.asking && !state.speaking -> waitForAnswer(state, answering = true)
+            else -> Step(state)
+        }
+        // An utterance without a transcript lets a held countdown go on, and gives an answer the whole wait again.
+        Event.NothingHeard -> when {
+            state.counting -> Step(state, listOf(Effect.HoldCommand(state.command, hold = false)))
+            state.asking -> waitForAnswer(state)
+            else -> Step(state)
+        }
+        is Event.Spotted -> spottedDuringCommand(state, event.keyword)
+        // The wait for the answer starts again when the question has been spoken.
+        Event.SpeechEnded ->
+            speechEnded(state).let { ended -> if (state.speeches == 1 && state.asking) ended.then { waitForAnswer(it) } else ended }
+        is Event.TaskEnded -> lateTaskEnded(state, event)
+        // A countdown ignores the assistant gesture, as it ignores Kestrel's other requests.
+        Event.Assist -> if (state.counting) Step(state) else keepOrLeave(state, event)
+        // The screen that "lock screen" turned off is what the command did; its end still comes.
+        is Event.Screen -> if (!event.on && !locksScreen(state.running)) leaveFor(state, event) else keepOrLeave(state, event)
+        // The call that "call X" placed becomes active: the command goes on in the mode In call, and its end still counts.
+        is Event.CallState -> if (event.state == CallState.ACTIVE && state.running is PhoneCommand.Call) {
+            withoutCommand(state, event).let { Step(it.state.copy(work = Work.RUNNING_COMMAND), it.effects) }
+        } else {
+            keepOrLeave(state, event)
+        }
+        else -> keepOrLeave(state, event)
+    }
+
+    // An event that leaves the work and the mode alone keeps the command; any other cancels it first and then acts as it
+    // would without a command.
+    private fun keepOrLeave(state: State, event: Event): Step {
+        val step = withoutCommand(state, event)
+        return if (step.state.work == Work.RUNNING_COMMAND && step.state.mode == state.mode) step else leaveFor(state, event)
+    }
+
+    private fun leaveFor(state: State, event: Event): Step = leaveCommand(state).then { withoutCommand(it, event) }
+
+    // Cancels the running command's job, and stops a question or an announcement in progress.
+    private fun leaveCommand(state: State, vararg first: Effect): Step = Step(
+        state.copy(work = Work.IDLE, running = null, heard = null, asking = false, counting = false),
+        first.toList() + Effect.CancelCommand + listOfNotNull(Effect.StopSaying.takeIf { state.speaking }),
+    )
+
+    // "Stop" or "cancel": the command is cancelled, and the bar says so.
+    private fun cancelCommand(state: State, vararg first: Effect): Step =
+        leaveCommand(state, *first).let { Step(it.state, it.effects + Effect.Show(Feedback.CommandCancelled)) }
+
+    private fun locksScreen(command: Command?): Boolean = (command as? PhoneCommand.Global)?.action == GlobalCommand.LOCK_SCREEN
+
+    // The command's result: the bar shows it or "Cancelled", Kestrel says what it must say, a repeatable command becomes
+    // the one that "again" repeats, and an answer that did not answer the question is read as a new utterance.
+    private fun commandEnded(state: State, result: CommandResult): Step {
+        val cancelled = result.outcome == Outcome.CANCELLED
+        val repeat = result.repeatable && result.outcome == Outcome.DONE
+        val ended = state.copy(
+            work = Work.IDLE,
+            running = null,
+            heard = null,
+            asking = false,
+            counting = false,
+            lastCommand = if (repeat) result.acted ?: state.running else state.lastCommand,
+            lastHeard = if (repeat) state.heard else state.lastHeard,
+        )
+        // Copied, because a property of another module allows no smart cast.
+        val show = result.show
+        val said = result.say
+        val passOn = result.passOn
+        val shown = when {
+            show != null -> Effect.Show(Feedback.CommandText(show))
+            cancelled && passOn == null -> Effect.Show(Feedback.CommandCancelled)
+            else -> null
+        }
+        // A touch that cancelled a question also stops it while Kestrel still says it (section 14.1).
+        var step = Step(ended, listOfNotNull(shown, Effect.StopSaying.takeIf { cancelled && state.speaking }))
+        if (said != null) step = step.then { say(it, Reply.Text(said)) }
+        if (passOn == null) return step
+        return step.then { heard(it, Event.Heard(passOn, named = false)) }
+    }
+
+    // The question stays on the bar until the command ends. The wait for the answer starts now and again when the
+    // question has been spoken.
+    private fun ask(state: State, question: String): Step = say(
+        state.copy(asking = true),
+        Reply.Command(state.command, question),
+        Effect.Show(Feedback.CommandText(question, keep = true)),
+    ).then { waitForAnswer(it) }
+
+    // Every wait gets the next number, as the waits for a task do, so that the end of an older wait changes nothing.
+    private fun waitForAnswer(state: State, answering: Boolean = false): Step =
+        Step(state.copy(wait = state.wait + 1), listOf(Effect.WaitForAnswer(answering)))
+
+    // Section 7.3 and design D2 of sub-project 3: a transcript while a command runs. "Stop", "cancel", and a transcript
+    // that starts with either, cancel it; so does "no" during a countdown. During a countdown, only those and the changes
+    // of mode count, and anything else lets it go on. Kestrel's own requests cancel the command and then run. While the
+    // command asks, the transcript is the answer; otherwise the new command is dropped.
+    private fun heardDuringCommand(state: State, event: Event.Heard): Step {
+        if (state.inCall) return callCommand(state, event)
+        val request = Requests.read(event.text, event.named)
+            ?: return if (state.screenOn) withoutWordsDuringCommand(state) else Step(state)
+        val counted = state.copy(emptyTranscripts = 0)
+        if (!counted.screenOn && !stopsSomething(request)) return Step(counted)
+        val shown = Effect.Show(Feedback.Heard(event.text))
+        val stops = request is Request.Stop || (request is Request.Other && startsWithStop(event.text)) ||
+            (state.counting && saysNo(event.text, event.named))
+        if (stops) return cancelCommand(counted, shown)
+        if (state.counting && request != Request.PauseListening && request != Request.TurnOff) {
+            return Step(counted, listOf(shown, Effect.HoldCommand(state.command, hold = false)))
+        }
+        if (request !is Request.Other) return leaveCommand(counted).then { whileIdle(it, request, event.text, shown) }
+        if (state.asking) {
+            return Step(counted.copy(asking = false), listOf(shown, Effect.AnswerCommand(state.command, request.text)))
+        }
+        return busy(counted, request.text, shown)
+    }
+
+    private fun withoutWordsDuringCommand(state: State): Step {
+        val counted = withoutWords(state, awaiting = false)
+        return when {
+            state.counting -> Step(counted.state, counted.effects + Effect.HoldCommand(state.command, hold = false))
+            state.asking -> counted.then { waitForAnswer(it) }
+            else -> counted
+        }
+    }
+
+    private fun startsWithStop(text: String): Boolean = Normalizer.words(text).firstOrNull { it !in BEFORE_STOP } in STOP_WORDS
+
+    // "No", "Kestrel, no", "oh no, wait" or "no, not her": the first word that is neither a filler nor the name is "no",
+    // whatever follows it. The name may come anywhere, misspelt too: a word counts as the name when Requests reads it
+    // alone as the name.
+    private fun saysNo(text: String, named: Boolean): Boolean =
+        Normalizer.words(text).firstOrNull { it !in NO_FILLERS && Requests.read(it, named) != Request.Name } == "no"
+
+    // Decision 3 of sub-project 3: a command that arrives while another runs is dropped. A recognised one says so on the
+    // bar; bare speech may be conversation, so the bar says so only while dictation may run (a text or a bare command).
+    private fun busy(state: State, text: String, shown: Effect): Step {
+        val parsed = CommandParser.parse(text)
+        val dictating = state.running is TextCommand || state.running is Command.Bare
+        return if (parsed != null && (parsed !is Command.Bare || dictating)) {
+            Step(state, listOf(shown, Effect.Show(Feedback.CommandBusy)))
+        } else {
+            Step(state, listOf(shown))
+        }
+    }
+
+    // The spotter's "stop" or "cancel" cancels the command while Kestrel speaks or a countdown runs, at once. Its "Kestrel"
+    // over Kestrel's voice cancels the command and waits for a task, as when idle, except during a countdown.
+    private fun spottedDuringCommand(state: State, keyword: Keyword): Step = when {
+        state.inCall -> Step(state)
+        keyword != Keyword.KESTREL ->
+            if (state.counting || state.speaking) cancelCommand(state.copy(spottedStop = true)) else Step(state)
+        state.speaking && !state.counting -> leaveCommand(state).then { spotted(it, keyword) }
+        else -> Step(state)
+    }
+
+    // A task that was cancelled before the command started may still report what it did.
+    private fun lateTaskEnded(state: State, event: Event.TaskEnded): Step {
+        if (event.task != state.task || !state.cancelled) return Step(state)
+        val ended = state.copy(cancelled = false)
+        return if (event.reply == null) Step(ended) else say(ended, Reply.Text(event.reply))
+    }
 
     private fun spotted(state: State, keyword: Keyword): Step {
         if (!state.speaking || state.mode == Mode.OFF || state.inCall) return Step(state)
@@ -473,6 +786,10 @@ object Rules {
             beforeCall = null,
             // The next run's reports start the count of wake-ups again (section 8.5).
             screenSeen = false,
+            // "Again" never repeats a command of an earlier run, and the owner's last words go.
+            lastCommand = null,
+            lastHeard = null,
+            spottedStop = false,
         ),
         first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },

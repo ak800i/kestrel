@@ -146,8 +146,14 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     suspend fun hideGrid() = withContext(Dispatchers.Main) { gridOverlay.hide() }
 
-    /** Shows [text] on the feedback bar, which fades after a few seconds (design spec, section 8.9). */
-    suspend fun showFeedback(text: String) = withContext(Dispatchers.Main) { feedback.show(text) }
+    /**
+     * Shows [text] on the feedback bar, which fades after a few seconds (design spec, section 8.9). With [keep], the text
+     * stays until [releaseFeedback] or the next text, as an instant command's question does.
+     */
+    suspend fun showFeedback(text: String, keep: Boolean = false) = withContext(Dispatchers.Main) { feedback.show(text, keep) }
+
+    /** A kept text on the feedback bar fades from now on. */
+    suspend fun releaseFeedback() = withContext(Dispatchers.Main) { feedback.release() }
 
     /**
      * Asks [question] on a confirmation card and returns true when the owner taps Confirm. It returns false when the

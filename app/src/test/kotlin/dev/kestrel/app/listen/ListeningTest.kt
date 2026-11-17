@@ -1,11 +1,18 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.commands.CommandConversation
+import dev.kestrel.app.commands.CommandReport
+import dev.kestrel.app.commands.CommandRunner
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.orchestrator.Work
+import dev.kestrel.commands.Command
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Direction
+import dev.kestrel.commands.Outcome
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceChoice
@@ -20,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
@@ -29,9 +37,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -58,6 +68,25 @@ class ListeningTest {
     private val calls = FakeCallMonitor()
     private val callActions = FakeCallControl()
     private val storedOptions = MutableStateFlow(ListeningOptions())
+
+    // The texts that the bar keeps until they are released, and how often a kept text was released.
+    private val kept = mutableListOf<String>()
+    private var releases = 0
+    private val bar = object : FeedbackBar {
+        override fun show(text: String, keep: Boolean) {
+            shown += text
+            if (keep) kept += text
+        }
+
+        override fun release() {
+            releases++
+        }
+    }
+    private val runner = FakeRunner()
+    private val commandReports = mutableListOf<CommandReport>()
+
+    // How often a countdown of countDown() ran out, as a call would be placed then.
+    private var placedCalls = 0
 
     // The wall clock, in milliseconds.
     private var now = 1_000_000L
@@ -264,6 +293,386 @@ class ListeningTest {
         listening.send(Event.Heard("Open the settings.", named = false))
         runCurrent()
         assertEquals(ListeningTexts.NO_TASKS, shown.last())
+    }
+
+    @Test
+    fun aCommandRunsAsOneJobAndReportsItsEnd() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+
+        assertEquals(listOf<Command>(Command.Scroll(Direction.DOWN, null)), runner.started)
+        assertEquals(listOf("Scroll down"), runner.heard)
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(Command.Scroll(Direction.DOWN, null), listening.state.value.lastCommand)
+        assertEquals(listOf(CommandReport(1, "Scroll", Outcome.DONE)), commandReports)
+        assertEquals(CommandReport(1, "Scroll", Outcome.DONE), listening.lastReport)
+    }
+
+    @Test
+    fun aNewCommandWaitsUntilTheCancelledOneHasCompleted() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        val gate = CompletableDeferred<Unit>()
+        // Like a gesture or a binder call that Android finishes, the first command ignores its cancellation for a while.
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+
+        runner.action = { CommandResult(Outcome.DONE) }
+        listening.send(Event.Heard("Stop.", named = false))
+        listening.send(Event.Heard("Scroll up", named = false))
+        runCurrent()
+        assertEquals(1, runner.started.size)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf<Command>(Command.Scroll(Direction.DOWN, null), Command.Scroll(Direction.UP, null)), runner.started)
+        assertEquals(listOf(Outcome.CANCELLED, Outcome.DONE), commandReports.map { it.outcome })
+    }
+
+    @Test
+    fun aStuckCancelledCommandHoldsTheNextOneForAtMostThreeSeconds() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        runner.action = { CommandResult(Outcome.DONE) }
+        listening.send(Event.Heard("Stop.", named = false))
+        listening.send(Event.Heard("Scroll up", named = false))
+        runCurrent()
+
+        advanceTimeBy(2_999)
+        runCurrent()
+        assertEquals(1, runner.started.size)
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(Command.Scroll(Direction.UP, null), runner.started.last())
+        assertEquals("A cancelled instant command", reports.last().first)
+        // Kestrel goes on without the stuck job: the next command starts at once.
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        assertEquals(3, runner.started.size)
+        gate.complete(Unit)
+        runCurrent()
+    }
+
+    @Test
+    fun theSettingsWaitUntilTheCancelledCommandHasCompleted() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        log.clear()
+
+        // The request cancels the command first; the settings open only once its job has completed.
+        listening.send(Event.Heard("Kestrel, open settings.", named = true))
+        runCurrent()
+        assertFalse("open settings" in log)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertTrue("open settings" in log)
+    }
+
+    @Test
+    fun sayReturnsAtOnceWhenTheReplyCannotStart() = runTest {
+        val listening = listeningWithSession()
+        sessions.opened.single().speakFailure = IllegalStateException("No voice")
+        var said = false
+        runner.action = { conversation ->
+            conversation.say("Calling 112.")
+            said = true
+            CommandResult(Outcome.DONE)
+        }
+
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+
+        assertTrue(said)
+        assertEquals(Work.IDLE, listening.state.value.work)
+    }
+
+    @Test
+    fun aRefusedQuestionStaysOnTheBarAsTheKeptText() = runTest {
+        val listening = listeningWithSession()
+        runner.action = { conversation ->
+            conversation.ask("Which one?")
+            CommandResult(Outcome.CANCELLED)
+        }
+        listening.send(Event.Heard("tap Delete", named = false))
+        runCurrent()
+        val before = shown.size
+
+        // Android refuses the question's reply: the bar keeps the question, and shows no copy of it that would fade.
+        sessions.opened.single().replies.last().complete(Spoke.REFUSED)
+        runCurrent()
+
+        assertEquals(before, shown.size)
+        assertEquals(listOf("Which one?"), kept)
+    }
+
+    @Test
+    fun aCommandCancelledBeforeItStartedNeverRuns() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        listening.send(Event.Heard("Stop.", named = false))
+        listening.send(Event.Heard("Scroll up", named = false))
+        listening.send(Event.Heard("Stop.", named = false))
+        runCurrent()
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(1, runner.started.size)
+        assertEquals(listOf(CommandReport(1, "Scroll", Outcome.CANCELLED), CommandReport(2, "Scroll", Outcome.CANCELLED)), commandReports)
+        assertEquals(Work.IDLE, listening.state.value.work)
+    }
+
+    @Test
+    fun aQuestionIsSpokenAndTheNextTranscriptIsItsAnswer() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        var answer: String? = "none"
+        runner.action = { conversation ->
+            answer = conversation.ask("Which one?")
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        assertEquals(listOf("Which one?"), session.said)
+        assertEquals(listOf("Which one?"), kept)
+        assertTrue(listening.state.value.asking)
+
+        session.replies.single().complete(Spoke.FINISHED)
+        listening.send(Event.Heard("Number two.", named = false))
+        runCurrent()
+
+        assertEquals("Number two.", answer)
+        assertEquals(Work.IDLE, listening.state.value.work)
+        // The kept question fades once the command has ended.
+        assertEquals(1, releases)
+    }
+
+    @Test
+    fun aQuestionWithoutAnAnswerEndsFifteenSecondsAfterItWasSpoken() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        var answer: String? = "none"
+        runner.action = { conversation ->
+            answer = conversation.ask("Which one?")
+            CommandResult(if (answer == null) Outcome.CANCELLED else Outcome.DONE)
+        }
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        advanceTimeBy(3_000)
+        session.replies.single().complete(Spoke.FINISHED)
+        runCurrent()
+
+        advanceTimeBy(14_999)
+        runCurrent()
+        assertEquals("none", answer)
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(null, answer)
+        assertEquals(ListeningTexts.CANCELLED, shown.last())
+    }
+
+    @Test
+    fun sayReturnsWhenTheReplyHasEnded() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        var said = false
+        runner.action = { conversation ->
+            conversation.say("Calling 112.")
+            said = true
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        assertEquals(listOf("Calling 112."), session.said)
+        assertEquals("Calling 112.", shown.last())
+        assertFalse(said)
+
+        // A reply that Android interrupted has ended too.
+        session.replies.single().complete(Spoke.INTERRUPTED)
+        runCurrent()
+        assertTrue(said)
+    }
+
+    @Test
+    fun theOwnersSpeechHoldsTheCountdownAndALateCancelStillStopsIt() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        countDown()
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        assertEquals("Calling in 4", kept.last())
+
+        advanceTimeBy(1_000)
+        listening.send(Event.Speaking)
+        runCurrent()
+        // The transcript of "cancel" comes 5 s after the word, later than the countdown would have ended.
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(0, placedCalls)
+        listening.send(Event.Heard("Cancel.", named = false))
+        runCurrent()
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        assertEquals(0, placedCalls)
+        assertEquals(Outcome.CANCELLED, commandReports.single().outcome)
+        assertEquals(ListeningTexts.CANCELLED, shown.last())
+    }
+
+    @Test
+    fun otherSpeechLetsTheCountdownGoOnFromWhereItStopped() = runTest {
+        val listening = listeningWithSession()
+        countDown()
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        advanceTimeBy(1_000)
+        listening.send(Event.Speaking)
+        runCurrent()
+        advanceTimeBy(5_000)
+        listening.send(Event.Heard("What time is it?", named = false))
+        runCurrent()
+
+        // 3 s of the countdown were left when the owner started to speak.
+        advanceTimeBy(2_900)
+        runCurrent()
+        assertEquals(0, placedCalls)
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(1, placedCalls)
+    }
+
+    @Test
+    fun theSpottersCancelStopsTheCountdownAtOnceWhileKestrelIsSilent() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        countDown()
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        advanceTimeBy(1_000)
+
+        listening.send(Event.Spotted(Keyword.CANCEL))
+        runCurrent()
+
+        assertEquals(Outcome.CANCELLED, commandReports.single().outcome)
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(0, placedCalls)
+    }
+
+    @Test
+    fun anUtteranceWithoutATranscriptLetsTheCountdownGoOn() = runTest {
+        val listening = listeningWithSession()
+        countDown()
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        advanceTimeBy(1_000)
+        listening.send(Event.Speaking)
+        runCurrent()
+        advanceTimeBy(1_000)
+        listening.send(Event.NothingHeard)
+        runCurrent()
+
+        advanceTimeBy(2_900)
+        runCurrent()
+        assertEquals(0, placedCalls)
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(1, placedCalls)
+    }
+
+    @Test
+    fun thirtySecondsOfHoldsGiveTheCountdownUp() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        countDown()
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        advanceTimeBy(1_000)
+        // A television that keeps talking: the owner never seems to finish.
+        listening.send(Event.Speaking)
+        runCurrent()
+
+        advanceTimeBy(29_800)
+        runCurrent()
+        assertTrue(commandReports.isEmpty())
+        advanceTimeBy(400)
+        runCurrent()
+
+        assertEquals(0, placedCalls)
+        assertEquals(Outcome.CANCELLED, commandReports.single().outcome)
+        assertEquals(ListeningTexts.CANCELLED, shown.last())
+    }
+
+    @Test
+    fun whileAPasswordFieldHasTheFocusTheBarHidesWhatKestrelHeard() = runTest {
+        val listening = listeningWithSession()
+        runner.password = true
+
+        listening.send(Event.Heard("Hunter two", named = false))
+        runCurrent()
+
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.PRIVATE_INPUT), shown)
+    }
+
+    @Test
+    fun aRunnerThatThrowsEndsTheCommandAsFailed() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        runner.action = { throw IllegalStateException("The screen went away") }
+
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(ListeningTexts.COMMAND_FAILED, shown.last())
+        assertEquals("An instant command", reports.single().first)
+        assertEquals(Outcome.FAILED, commandReports.single().outcome)
+    }
+
+    @Test
+    fun aTextThatTheCommandKeepsIsReleasedWhenItEnds() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = { conversation ->
+            conversation.keep("1, Ana. 2, Anja.")
+            gate.await()
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        assertEquals(listOf("1, Ana. 2, Anja."), kept)
+        assertEquals(0, releases)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(1, releases)
     }
 
     @Test
@@ -2153,7 +2562,7 @@ class ListeningTest {
         thread = StandardTestDispatcher(testScheduler),
         sessions = sessions,
         services = services,
-        bar = { shown += it },
+        bar = bar,
         report = { what, error -> reports += what to error },
         openSettings = {
             log += "open settings"
@@ -2167,6 +2576,7 @@ class ListeningTest {
         clock = { now },
         calls = calls,
         callActions = callActions,
+        commands = runner,
         options = options,
         microphones = { microphone },
     )
@@ -2188,6 +2598,40 @@ class ListeningTest {
         listening.onForeground(service)
         runCurrent()
         return listening
+    }
+
+    /** Collects the command reports of [listening] from now on. */
+    private fun TestScope.collectReports(listening: Listening) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { listening.commandReports.collect { commandReports += it } }
+    }
+
+    /** The next command counts down 4 s, as a call does, and counts a call when the countdown runs out. */
+    private fun countDown() {
+        runner.action = { conversation ->
+            if (conversation.countdown(4_000) { "Calling in $it" }) {
+                placedCalls++
+                CommandResult(Outcome.DONE)
+            } else {
+                CommandResult(Outcome.CANCELLED)
+            }
+        }
+    }
+
+    private class FakeRunner : CommandRunner {
+        val started = mutableListOf<Command>()
+        val heard = mutableListOf<String>()
+        var password = false
+
+        // What the next command does; by default it ends at once, done and repeatable.
+        var action: suspend (CommandConversation) -> CommandResult = { CommandResult(Outcome.DONE, repeatable = true) }
+
+        override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult {
+            started += command
+            this.heard += heard
+            return action(conversation)
+        }
+
+        override fun privateInput() = password
     }
 
     private inner class FakeSessions : VoiceSessions {
@@ -2416,7 +2860,7 @@ class ListeningTest {
             thread = StandardTestDispatcher(testScheduler),
             sessions = sessions,
             services = services,
-            bar = { shown += it },
+            bar = bar,
             report = { what, error -> reports += what to error },
             openSettings = { true },
             conditions = conditions,
@@ -2425,6 +2869,7 @@ class ListeningTest {
             clock = { now },
             calls = calls,
             callActions = callActions,
+            commands = runner,
             options = storedOptions,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {

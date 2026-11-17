@@ -93,6 +93,24 @@ class ListeningPipelineTest {
     }
 
     @Test
+    fun theSpottersHitsComeWhileKestrelIsSilentAndRecognitionIsOn() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.ALL
+        detector.hearsSpeech = true
+
+        spotter.next.addLast(listOf(KeywordHit(Keyword.CANCEL, 0.02f)))
+        pipeline.feed()
+        spotter.next.addLast(listOf(KeywordHit(Keyword.STOP, 0.04f)))
+        pipeline.feed()
+
+        // Design D2: a call's countdown stops at the spotter's "cancel" or "stop" also while Kestrel is silent.
+        assertEquals(
+            listOf(VoiceEvent.Spotted(Keyword.CANCEL), VoiceEvent.Spotted(Keyword.STOP)),
+            events.filterIsInstance<VoiceEvent.Spotted>(),
+        )
+    }
+
+    @Test
     fun kestrelsOwnKeywordsAreIgnored() = runTest {
         val pipeline = pipeline()
         ownVoice = setOf(Keyword.STOP)

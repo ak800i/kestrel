@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
+import dev.kestrel.app.commands.CommandConversation
+import dev.kestrel.app.commands.CommandRunner
 import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidCallScreen
@@ -31,6 +33,9 @@ import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.commands.Command
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Outcome
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.NetworkGateway
@@ -163,8 +168,16 @@ class AppGraph(context: Context) {
                     }
             },
             services = ListeningService.control(appContext),
-            // One main-thread task per text, in order, so that an earlier text never replaces a later one.
-            bar = FeedbackBar { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text) } },
+            // One main-thread task per call, in order, so that an earlier text never replaces a later one.
+            bar = object : FeedbackBar {
+                override fun show(text: String, keep: Boolean) {
+                    scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text, keep) }
+                }
+
+                override fun release() {
+                    scope.launch(Dispatchers.Main) { screen.value?.releaseFeedback() }
+                }
+            },
             report = reportFailure,
             notices = problems,
             // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity.
@@ -204,6 +217,13 @@ class AppGraph(context: Context) {
             // the accessibility service while it runs. Listening runs them on Dispatchers.IO.
             callActions = CallActions(AndroidCallApi(appContext)) {
                 screen.value?.let { session -> AndroidCallScreen(appContext, session.actions) }
+            },
+            // The executor of the instant commands comes with the next task; until then every command is ignored.
+            commands = object : CommandRunner {
+                override suspend fun run(command: Command, heard: String, conversation: CommandConversation) =
+                    CommandResult(Outcome.IGNORED)
+
+                override fun privateInput() = false
             },
             // Section 15: encrypted like every setting. Listening passes a change on at once.
             options = settings.observe(SettingKeys.LISTENING_OPTIONS),

@@ -6,6 +6,7 @@ import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.app.settings.speedText
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.SAMPLE_RATE
@@ -58,9 +59,18 @@ internal class VoiceHooks(private val graph: AppGraph) {
         val state = graph.listening.state.value
         val session = if (graph.listening.sessionOpen.value) "open" else "closed"
         val clips = if (graph.listening.microphones === clipFactory) "on" else "off"
+        // The latest instant command: its number, its kind and how it ended, never its words.
+        val report = graph.listening.lastReport?.takeIf { it.command == state.command }
+        val kind = state.running?.javaClass?.simpleName ?: report?.kind ?: "none"
+        val outcome = when {
+            state.work == Work.RUNNING_COMMAND -> "running"
+            report != null -> report.outcome.name.lowercase()
+            else -> "none"
+        }
         return "mode=${state.mode.name.lowercase()} work=${state.work.name.lowercase()} speaking=${state.speaking} " +
             "microphone=${state.microphone} recognition=${state.recognition.name.lowercase()} " +
-            "screenOn=${state.screenOn} micBusy=${state.micBusy} session=$session clips=$clips"
+            "screenOn=${state.screenOn} micBusy=${state.micBusy} command=${state.command} kind=$kind outcome=$outcome " +
+            "session=$session clips=$clips"
     }
 
     private suspend fun clip(intent: Intent): String {

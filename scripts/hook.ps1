@@ -24,8 +24,9 @@
 #   voice -Send heard -Text 'text' [-Named] sends a transcript, as if Kestrel had heard it; -Named as if the keyword
 #                                           spotter had heard "Kestrel" at its start
 #   voice-state                             the Orchestrator's mode, work, speaking, microphone, recognition, screen and
-#                                           "mic busy", whether the voice session is open, and whether Kestrel's next
-#                                           start uses the clip microphone (clips=on); never text
+#                                           "mic busy", the latest instant command's number, kind and outcome, whether
+#                                           the voice session is open, and whether Kestrel's next start uses the clip
+#                                           microphone (clips=on); never text
 #   voice-clip -Text 'text'                 says the text in Kestrel's voice into a stand-in microphone, the clip
 #                                           microphone, and makes it Kestrel's microphone from Kestrel's next start.
 #                                           Kestrel hears the text when the clip microphone records: from that start,

@@ -11,7 +11,8 @@ import android.widget.TextView
 
 /**
  * A thin bar at the top of the screen with what Kestrel heard and does. It never takes touches, and its text
- * fades after a few seconds without a new one (design spec, section 8.9). Use it on the main thread.
+ * fades after a few seconds without a new one (design spec, section 8.9), except a kept text, such as an instant
+ * command's question, which stays until it is released or the next text replaces it. Use it on the main thread.
  */
 internal class FeedbackBar(private val host: OverlayHost) {
     private val handler = Handler(Looper.getMainLooper())
@@ -29,22 +30,36 @@ internal class FeedbackBar(private val host: OverlayHost) {
     var text: String? = null
         private set
 
-    fun show(text: String) {
+    // Whether the text on the bar stays until release().
+    private var kept = false
+
+    /** Shows [text]. With [keep], it stays until [release] or the next text; otherwise it fades after a few seconds. */
+    fun show(text: String, keep: Boolean = false) {
         handler.removeCallbacks(fade)
         view.animate().cancel()
         view.alpha = 1f
         view.text = text
         if (host.show(view, params())) {
             this.text = text
-            handler.postDelayed(fade, FADE_AFTER_MILLIS)
+            kept = keep
+            if (!keep) handler.postDelayed(fade, FADE_AFTER_MILLIS)
         } else {
             this.text = null
+            kept = false
         }
+    }
+
+    /** A kept text fades from now on, as any other text does. */
+    fun release() {
+        if (!kept || text == null) return
+        kept = false
+        handler.postDelayed(fade, FADE_AFTER_MILLIS)
     }
 
     fun hide() {
         handler.removeCallbacks(fade)
         text = null
+        kept = false
         host.hide(view)
     }
 

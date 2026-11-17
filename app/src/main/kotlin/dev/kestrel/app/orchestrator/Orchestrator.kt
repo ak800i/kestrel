@@ -1,5 +1,7 @@
 package dev.kestrel.app.orchestrator
 
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Outcome
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -19,7 +21,9 @@ import kotlinx.coroutines.launch
  * effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
  * that TODO() throws, is not caught and ends the Orchestrator's loop. The timer that ends the wait for a task after
  * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
- * does the timer of the pause after [silenceMillis] without speech (section 8.5).
+ * does the timer of the pause after [silenceMillis] without speech (section 8.5), and the timer of the answer to an
+ * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
+ * started it. A [Effect.RunCommand] that throws counts as a command that ended as failed.
  */
 class Orchestrator(
     private val scope: CoroutineScope,
@@ -28,12 +32,14 @@ class Orchestrator(
     private val waitMillis: Long = WAIT_MILLIS,
     private val answerMillis: Long = ANSWER_MILLIS,
     private val silenceMillis: Long = SILENCE_MILLIS,
+    private val questionMillis: Long = QUESTION_MILLIS,
 ) {
     // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
     private val events = Channel<Pair<Event, () -> Boolean>>(Channel.UNLIMITED)
     private val current = MutableStateFlow(State())
     private var wait: Job? = null
     private var silence: Job? = null
+    private var answer: Job? = null
 
     /** The state after the last event. */
     val state: StateFlow<State> = current.asStateFlow()
@@ -67,6 +73,10 @@ class Orchestrator(
             silence?.cancel()
             silence = null
         }
+        if (!step.state.asking) {
+            answer?.cancel()
+            answer = null
+        }
         val notStarted = mutableListOf<Event>()
         for (effect in step.effects) {
             if (effect is Effect.WaitForTask) {
@@ -76,6 +86,14 @@ class Orchestrator(
                 wait = scope.launch {
                     delay(millis)
                     send(Event.WaitEnded(number))
+                }
+            } else if (effect is Effect.WaitForAnswer) {
+                val number = step.state.wait
+                val millis = if (effect.answering) answerMillis else questionMillis
+                answer?.cancel()
+                answer = scope.launch {
+                    delay(millis)
+                    send(Event.AnswerWaitEnded(number))
                 }
             } else if (effect == Effect.TimeSilence) {
                 val number = step.state.silence
@@ -94,6 +112,7 @@ class Orchestrator(
                     when (effect) {
                         is Effect.Say -> notStarted += Event.SpeechEnded
                         is Effect.RunTask -> notStarted += Event.TaskEnded(effect.task, reply = null)
+                        is Effect.RunCommand -> notStarted += Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED))
                         else -> {}
                     }
                 }
@@ -115,5 +134,9 @@ class Orchestrator(
 
         // Section 8.5: the optional pause after 30 s without speech.
         const val SILENCE_MILLIS = 30_000L
+
+        // Design D2 of sub-project 3: the owner has 15 s to start answering an instant command's question, counted from
+        // the end of the question.
+        const val QUESTION_MILLIS = 15_000L
     }
 }

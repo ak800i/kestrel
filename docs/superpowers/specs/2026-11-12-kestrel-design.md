@@ -155,6 +155,8 @@ The Orchestrator tracks three things:
 
 Each transition is defined in one place and covered by unit tests: the Orchestrator lives in `:app`, and its rules are one pure function from the state and an event to the new state and a list of effects, such as speaking or running a task. The microphone and recognition are not effects; they follow from the state, so they cannot drift from it. Section 11.10 describes which speech Kestrel accepts while a task runs.
 
+An instant command runs as one job, which gets the next number, so that the end of an older command changes nothing. Kestrel cancels it on "stop" or "cancel" (also a transcript that starts with either, after a word such as "okay"), on a change of mode, when the screen turns off, and before its own requests, which then run; two exceptions are a "lock screen" command that turns the screen off and the call that a command placed, because the command caused them. A cancelled job must complete, for at most 3 s, before a new command, a task or the settings may act; after that, Kestrel goes on without it. A command may ask a question, such as "Which one?": the next transcript that is not Kestrel's own request is the answer, and the owner has 15 s from the end of the question to start answering, and 35 s once speaking. A call's countdown (section 13.6) holds while the owner speaks, so that a "cancel" whose transcript comes late still counts, and the keyword spotter's "stop" or "cancel" ends it at once; the transcript of that same word then names no button. During a countdown, "no" also cancels it, with or without the name and also when other words follow it, as in "No, not her"; Kestrel's other requests and the assistant gesture are ignored, and the holds give up after 30 s in total. A "no" whose transcript comes only after the countdown has run out is too late, because the spotter does not listen for "no".
+
 ### 7.4 Modules
 
 Each Gradle module has one job. Most of them are plain Kotlin, so their tests run on the PC without a phone.
@@ -290,7 +292,7 @@ The notification's Pause, Resume and Stop reach Kestrel as broadcasts to a recei
 
 ### 8.9 Feedback bar
 
-A thin overlay at the top of the screen shows the listening mode, the last thing that Kestrel heard, the current task step and any question that Kestrel is asking: when Kestrel starts to wait for a task, after "Kestrel" on its own or after an interruption with "Kestrel", it shows "Yes?", also when it does not say it. When Kestrel turns itself off, it shows why in place of "Off" (section 14.6). It never receives touches. Its text fades after a few seconds without activity.
+A thin overlay at the top of the screen shows the listening mode, the last thing that Kestrel heard, the current task step and any question that Kestrel is asking: when Kestrel starts to wait for a task, after "Kestrel" on its own or after an interruption with "Kestrel", it shows "Yes?", also when it does not say it. When Kestrel turns itself off, it shows why in place of "Off" (section 14.6). It never receives touches. Its text fades after a few seconds without activity, except an instant command's question or countdown, which stays until the command ends or the next text replaces it.
 
 ### 8.10 Model files
 
@@ -352,7 +354,9 @@ Before Kestrel takes a screenshot for OCR or for the LLM, it hides its overlays.
 
 - A deterministic parser reads the normalised transcript. Appendix A lists every supported command, based on Google's published Voice Access command list.
 - A "require verbs" setting, off by default as in Voice Access, stops bare labels such as "Save" from tapping. With it on, only "tap Save" works.
-- "Again" repeats the last instant command. "Cancel" cancels the current multi-step command, such as a drag or a grid action, or a running task.
+- "Again" (also "repeat that" and "do it again") repeats the last instant command that acted, on the current screen. A call, help, an edit of a password field, and a command that failed or was cancelled are not repeated.
+- "Stop" or "cancel", with or without Kestrel's name, cancels the running instant command, such as a "Which one?" question, a drag or a call's countdown, or a running task. While nothing runs, "stop" and "cancel" alone are bare labels, which may tap a button with that name.
+- A command that comes while another runs is dropped, and the bar says "Still busy with the last command."; bare speech is dropped without a word, because it may be conversation, except during dictation.
 - **Instant commands are the owner's direct control, like Voice Access.** The safety check does not inspect them, they work inside agent-free apps, and they can press buttons that the agent may never press, for example "Allow" in a permission dialog.
 
 ### 9.6 Matching spoken words to the screen

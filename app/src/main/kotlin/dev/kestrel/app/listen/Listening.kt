@@ -1,5 +1,8 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.commands.CommandConversation
+import dev.kestrel.app.commands.CommandReport
+import dev.kestrel.app.commands.CommandRunner
 import dev.kestrel.app.orchestrator.Effect
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Feedback
@@ -8,19 +11,26 @@ import dev.kestrel.app.orchestrator.Orchestrator
 import dev.kestrel.app.orchestrator.Reply
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.State
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Outcome
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filterNotNull
@@ -28,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Starts and stops ListeningService. Any thread may call it. */
@@ -47,9 +58,15 @@ internal interface ServiceControl {
     fun stop(instance: Any?, startId: Int)
 }
 
-/** Shows a text on the feedback bar (design spec, section 8.9), or nothing while the accessibility service is off. */
-internal fun interface FeedbackBar {
-    fun show(text: String)
+/**
+ * Shows a text on the feedback bar (design spec, section 8.9), or nothing while the accessibility service is off. A text
+ * that an instant command keeps stays until [release] or the next text; any other fades after a few seconds.
+ */
+internal interface FeedbackBar {
+    fun show(text: String, keep: Boolean = false)
+
+    /** A kept text fades from now on. */
+    fun release()
 }
 
 /** A mode that Kestrel stored, with the wall-clock times of [ListeningSetting]; a time is null when it is not known. */
@@ -121,6 +138,13 @@ internal object ListeningTexts {
     const val CRASHED_AFTER_RESTORE = "Kestrel stopped soon after it came back, so it stays off."
     const val NO_WORDS = "Kestrel hears sound but no words. Check the microphone."
     const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
+
+    // The instant commands (sections 7.3 and 9.5).
+    const val CANCELLED = "Cancelled"
+    const val BUSY = "Still busy with the last command."
+    const val NOTHING_TO_REPEAT = "There's no command to repeat."
+    const val PRIVATE_INPUT = "Typing in a password field."
+    const val COMMAND_FAILED = "The command failed."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on or I am your " +
         "assistant app. Tap my listening notification, or open Kestrel from the launcher."
 }
@@ -209,11 +233,14 @@ internal interface StopNotices {
  * and the bar shows why one failed. [assist] turns Kestrel on for the assistant gesture and asks for a task once the
  * voice session is open (section 8.6). [options] are the owner's choices for listening (section 15); Listening collects
  * them on [thread], passes them to the Orchestrator, and keeps the newest in [currentOptions].
+ * [commands] runs the instant commands (sections 7.3 and 9.5): one job at a time in [scope]. A cancelled job stays the
+ * stopping job, and a new command, a task or the settings wait until it has completed, for at most 3 s, so that two parts
+ * of Kestrel never drive the screen at once. Every command that started gets one report in [commandReports].
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
     private val thread: CoroutineDispatcher,
-    private val sessions: VoiceSessions,
+    sessions: VoiceSessions,
     private val services: ServiceControl,
     private val bar: FeedbackBar,
     private val report: (String, Throwable) -> Unit,
@@ -225,6 +252,7 @@ class Listening internal constructor(
     private val clock: () -> Long,
     private val calls: CallMonitor,
     private val callActions: CallControl,
+    private val commands: CommandRunner,
     options: Flow<ListeningOptions>,
     microphones: () -> Microphone,
 ) {
@@ -236,6 +264,10 @@ class Listening internal constructor(
     /** Makes the microphone of the next session. The device tests and the debug hooks replace it. */
     @Volatile
     internal var microphones: () -> Microphone = microphones
+
+    /** Opens the voice sessions. The command device tests replace it with sessions that need no speech models. */
+    @Volatile
+    internal var sessions: VoiceSessions = sessions
 
     /**
      * Runs task number `task`, and must send [Event.TaskEnded] for it once it ends. Sub-project 5 runs tasks with the
@@ -286,6 +318,25 @@ class Listening internal constructor(
     // Only [thread] uses it. The assistant gesture came while no voice session was open: the session asks for the task
     // once it opens, so that "Yes?" is spoken and the wait counts from there (section 8.6).
     private var assistWhenOpen = false
+
+    // Only [thread] uses these (section 7.3): the running command's job and conversation, the cancelled job that may
+    // still act, the number of the newest command to run, and the newest number that was cancelled, also before its job
+    // started.
+    private var commandJob: Job? = null
+    private var conversation: Conversation? = null
+    private var stopping: Job? = null
+    private var newestCommand = 0
+    private var cancelledCommand = 0
+
+    private val reports = MutableSharedFlow<CommandReport>(extraBufferCapacity = 64)
+
+    /** One report for every instant command that started: its number, its kind and its outcome, never words. */
+    internal val commandReports: SharedFlow<CommandReport> = reports.asSharedFlow()
+
+    /** The newest of [commandReports], for the hook voice-state. */
+    @Volatile
+    internal var lastReport: CommandReport? = null
+        private set
 
     // When the restore of this process turned Kestrel on, until Kestrel next turns off; null otherwise. Written on
     // [thread], and stored with every mode by the mode's writer, so that a crash in the restored process finds it.
@@ -890,9 +941,17 @@ class Listening internal constructor(
         when (effect) {
             is Effect.Say -> say(effect.reply)
             Effect.StopSaying -> session?.stopSpeaking()
-            is Effect.RunTask -> runTask(effect.task, effect.text)
-            // Nothing runs that could be cancelled yet, and the instant commands come with sub-project 3.
-            Effect.CancelTask, is Effect.RunCommand -> Unit
+            is Effect.RunTask ->
+                afterStopping({ send(Event.TaskEnded(effect.task, reply = null)) }) { runTask(effect.task, effect.text) }
+            // Nothing runs that could be cancelled yet; the tasks come with sub-project 5.
+            Effect.CancelTask -> Unit
+            is Effect.RunCommand -> {
+                newestCommand = effect.command
+                afterStopping({ send(Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED))) }) { startCommand(effect) }
+            }
+            Effect.CancelCommand -> cancelCommand()
+            is Effect.AnswerCommand -> conversation?.answered(effect.command, effect.text)
+            is Effect.HoldCommand -> conversation?.held(effect.command, effect.hold)
             is Effect.Show -> {
                 (effect.feedback as? Feedback.ModeChanged)?.let { noteMode(it.mode) }
                 if (effect.feedback == Feedback.MicBusy && demotedByBattery()) {
@@ -901,13 +960,14 @@ class Listening internal constructor(
                     // "Microphone blocked" until Android stops the service, and destroyed() then names the battery.
                     stopBecause(StopReason.BATTERY_RESTRICTED)
                 } else {
-                    bar.show(text(effect.feedback))
+                    bar.show(text(effect.feedback), keep = (effect.feedback as? Feedback.CommandText)?.keep == true)
                 }
             }
             // The Orchestrator runs the timers itself.
-            is Effect.WaitForTask, Effect.TimeSilence -> Unit
+            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer -> Unit
             Effect.StopService -> shutdown()
-            Effect.OpenSettings -> openSettingsOrSayWhy()
+            Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
+            // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.
             is Effect.CallCommand -> carryOut(effect.command)
         }
     }
@@ -958,14 +1018,19 @@ class Listening internal constructor(
             Reply.Yes -> ListeningTexts.YES
             Reply.SettingsNeedService -> ListeningTexts.SETTINGS_NEED_SERVICE
             is Reply.Text -> reply.text
+            is Reply.Command -> reply.text
         }
+        // A command's say() waits for this reply, and returns once it has ended in any way.
+        val ended = (reply as? Reply.Command)?.let { conversation?.takeSpoken(it.command) }
         // Section 14.6: a reply that Kestrel cannot speak, or that Android interrupted, goes to the bar, except "Yes?",
-        // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask).
-        val showInstead = { if (reply != Reply.Yes) bar.show(text) }
+        // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask), and a command's
+        // text, which the Rules showed already, a question kept until the command ends.
+        val showInstead = { if (reply != Reply.Yes && reply !is Reply.Command) bar.show(text) }
         val current = session
         if (current == null) {
             // Thrown before the reply starts, so that the Orchestrator ends the reply in its place.
             showInstead()
+            ended?.complete(Unit)
             error("No voice session")
         }
         // Section 14.6: a reply that Android refused or interrupted goes to the bar, and so does one that a call stopped,
@@ -974,7 +1039,12 @@ class Listening internal constructor(
         val unspoken = { spoke: Spoke ->
             spoke == Spoke.REFUSED || spoke == Spoke.INTERRUPTED || (spoke == Spoke.STOPPED && state.value.inCall)
         }
-        val spoken = current.speak(text)
+        val spoken = try {
+            current.speak(text)
+        } catch (e: Exception) {
+            ended?.complete(Unit)
+            throw e
+        }
         // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time.
         spoken.invokeOnCompletion { error ->
             if (error != null && error !is CancellationException) {
@@ -983,6 +1053,7 @@ class Listening internal constructor(
             } else if (error == null && unspoken(spoken.getCompleted())) {
                 showInstead()
             }
+            ended?.complete(Unit)
             send(Event.SpeechEnded)
         }
     }
@@ -995,10 +1066,186 @@ class Listening internal constructor(
             Mode.IN_CALL -> ListeningTexts.IN_CALL
             Mode.OFF -> (offReason ?: ListeningTexts.OFF).also { offReason = null }
         }
-        is Feedback.Heard -> feedback.text
+        // Section 13.5: while a password field has the focus, the bar never shows what Kestrel heard.
+        is Feedback.Heard -> if (privateInput()) ListeningTexts.PRIVATE_INPUT else feedback.text
         Feedback.MicBusy -> ListeningTexts.MIC_BUSY
         Feedback.AwaitingTask -> ListeningTexts.YES
         Feedback.NoWords -> ListeningTexts.NO_WORDS
+        is Feedback.CommandText -> feedback.text
+        Feedback.CommandCancelled -> ListeningTexts.CANCELLED
+        Feedback.CommandBusy -> ListeningTexts.BUSY
+        Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
+    }
+
+    private fun privateInput(): Boolean = try {
+        commands.privateInput()
+    } catch (e: Exception) {
+        report("Checking for a password field", e)
+        false
+    }
+
+    /**
+     * Runs [action] at once, or, while a cancelled command's job has not completed, on [thread] once it has, but after
+     * at most [STOPPING_MILLIS] (section 7.3). A deferred action that throws is reported, and then [failed] runs.
+     */
+    private fun afterStopping(failed: () -> Unit = {}, action: () -> Unit) {
+        // A cancelled job is no longer active, but it may still run until it completes.
+        val job = stopping?.takeIf { !it.isCompleted }
+        stopping = job
+        if (job == null) {
+            action()
+            return
+        }
+        scope.launch(thread) {
+            if (withTimeoutOrNull(STOPPING_MILLIS) { job.join() } == null) {
+                report("A cancelled instant command", StuckCommandException())
+                // Kestrel goes on without it: nothing later waits for it again.
+                if (stopping === job) stopping = null
+            }
+            try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("An effect", e)
+                failed()
+            } catch (e: Error) {
+                // As in perform(): such as an OutOfMemoryError. Off also ends a command that never started.
+                report("An effect", e)
+                send(Event.TurnOff)
+            }
+        }
+    }
+
+    // Section 7.3: the command's job in [scope]. Its end goes to the Orchestrator, and its report to [commandReports].
+    private fun startCommand(effect: Effect.RunCommand) {
+        val kind = effect.parsed.javaClass.simpleName
+        // A command that was cancelled while it waited for the stopping job never runs.
+        if (effect.command <= cancelledCommand) {
+            publish(CommandReport(effect.command, kind, Outcome.CANCELLED))
+            return
+        }
+        val talk = Conversation(effect.command)
+        conversation = talk
+        // One report per command: a cancel that comes after the body's last check changes nothing. The body writes it
+        // before the job completes, and the handler runs only after that.
+        var reported = false
+        val job = scope.launch {
+            val result = try {
+                commands.run(effect.parsed, effect.heard, talk)
+            } catch (e: Exception) {
+                // A cancellation that is not the job's own, such as a timeout inside the command, is a failure.
+                ensureActive()
+                report("An instant command", e)
+                CommandResult(Outcome.FAILED, show = ListeningTexts.COMMAND_FAILED)
+            } finally {
+                // A text that the command kept on the bar fades from now on.
+                bar.release()
+            }
+            // A command that was cancelled while Android finished its last call ends here, without a result.
+            ensureActive()
+            send(Event.CommandEnded(effect.command, result))
+            reported = true
+            publish(CommandReport(effect.command, kind, result.outcome))
+        }
+        job.invokeOnCompletion { error ->
+            if (reported) return@invokeOnCompletion
+            when (error) {
+                null -> Unit
+                is CancellationException -> publish(CommandReport(effect.command, kind, Outcome.CANCELLED))
+                else -> {
+                    // Such as an OutOfMemoryError: the command still ends, or Kestrel would wait for it for ever.
+                    send(Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED, show = ListeningTexts.COMMAND_FAILED)))
+                    publish(CommandReport(effect.command, kind, Outcome.FAILED))
+                }
+            }
+        }
+        commandJob = job
+    }
+
+    // Section 7.3: the cancelled job is kept as the stopping job, so that nothing new acts on the screen before it has
+    // completed, also when Android finishes a gesture or a binder call of it.
+    private fun cancelCommand() {
+        cancelledCommand = newestCommand
+        conversation = null
+        val job = commandJob ?: return
+        commandJob = null
+        job.cancel()
+        stopping = job
+    }
+
+    private fun publish(done: CommandReport) {
+        lastReport = done
+        reports.tryEmit(done)
+    }
+
+    /**
+     * How command number [command] talks to the owner (section 7.3). The Orchestrator speaks and shows what it says and
+     * asks; [answered] and [held] come from its effects on [thread].
+     */
+    private inner class Conversation(private val command: Int) : CommandConversation {
+        @Volatile
+        private var spoken: CompletableDeferred<Unit>? = null
+
+        @Volatile
+        private var answer: CompletableDeferred<String?>? = null
+
+        @Volatile
+        private var held = false
+
+        override suspend fun say(text: String) {
+            val ended = CompletableDeferred<Unit>()
+            spoken = ended
+            send(Event.CommandSays(command, text))
+            ended.await()
+        }
+
+        override suspend fun ask(question: String): String? {
+            val reply = CompletableDeferred<String?>()
+            answer = reply
+            send(Event.CommandAsks(command, question))
+            return reply.await()
+        }
+
+        override fun keep(text: String) = bar.show(text, keep = true)
+
+        override suspend fun countdown(millis: Long, text: (secondsLeft: Int) -> String): Boolean {
+            held = false
+            send(Event.CommandCounts(command, counting = true))
+            try {
+                var left = millis
+                var heldFor = 0L
+                var shown = -1
+                while (left > 0) {
+                    val seconds = ((left + 999) / 1_000).toInt()
+                    if (!held && seconds != shown) {
+                        keep(text(seconds))
+                        shown = seconds
+                    }
+                    delay(TICK_MILLIS)
+                    if (!held) {
+                        left -= TICK_MILLIS
+                    } else {
+                        heldFor += TICK_MILLIS
+                        if (heldFor >= HOLD_LIMIT_MILLIS) return false
+                    }
+                }
+                return true
+            } finally {
+                send(Event.CommandCounts(command, counting = false))
+            }
+        }
+
+        /** The waiting say() of this command, which the reply that starts now ends; null when none waits. */
+        fun takeSpoken(number: Int): CompletableDeferred<Unit>? = if (number == command) spoken.also { spoken = null } else null
+
+        fun answered(number: Int, text: String?) {
+            if (number == command) answer?.complete(text)
+        }
+
+        fun held(number: Int, hold: Boolean) {
+            if (number == command) held = hold
+        }
     }
 
     /**
@@ -1046,5 +1293,16 @@ class Listening internal constructor(
         // Section 8.5: a crash within this time after a restore keeps Kestrel off, so that a start that crashes does
         // not come back after every crash.
         const val CRASH_AFTER_RESTORE_MILLIS = 120_000L
+
+        // Section 7.3: how long a new command, a task or the settings wait for a cancelled command's job.
+        const val STOPPING_MILLIS = 3_000L
+
+        // How often a countdown looks at its hold, and how long the holds may last in all before it gives up, so that
+        // speech in the background cannot hold a call for ever (design D2 of sub-project 3).
+        const val TICK_MILLIS = 100L
+        const val HOLD_LIMIT_MILLIS = 30_000L
     }
 }
+
+/** A cancelled instant command's job had not completed after 3 s; Kestrel went on without it. */
+private class StuckCommandException : Exception()
