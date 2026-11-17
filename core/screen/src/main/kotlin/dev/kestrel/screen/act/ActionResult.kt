@@ -23,4 +23,9 @@ sealed interface ActionResult {
     data class Done(val method: ActionMethod) : ActionResult
 
     data class Failed(val reason: String) : ActionResult
+
+    companion object {
+        /** What `ScreenActions.scroll` gives when nothing on the screen scrolls in the asked direction. */
+        val NOTHING_SCROLLS = Failed("Nothing on the screen scrolls that way")
+    }
 }

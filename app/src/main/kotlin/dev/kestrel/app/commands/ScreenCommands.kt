@@ -2,6 +2,8 @@ package dev.kestrel.app.commands
 
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Direction
+import dev.kestrel.commands.Edge
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.SpokenNumbers
 import dev.kestrel.commands.Target
@@ -10,6 +12,9 @@ import dev.kestrel.commands.text.Strictness
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
+import dev.kestrel.screen.act.GesturePaths
+import dev.kestrel.screen.act.ScreenEdge
+import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
@@ -20,6 +25,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal fun screenCommands(environment: CommandEnvironment): CommandPart = ScreenCommands(environment)
 
@@ -61,6 +67,13 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             is Command.Slider -> act(screen, command.target, TargetKind.SLIDER, conversation) {
                 screen.actions.adjust(it.key, command.increase)
             }
+            is Command.Scroll -> scroll(screen, command, conversation)
+            is Command.ScrollToEnd -> scrollToEnd(screen, command, conversation)
+            is Command.SwipePage -> swipePage(screen, command.forward)
+            is Command.SwipeFromEdge -> swipeFromEdge(screen, command.edge)
+            is Command.Swipe -> swipe(screen, command, conversation)
+            is Command.Pinch -> pinch(screen, command, conversation)
+            is Command.Drag -> drag(screen, command, conversation)
             // Tasks 5 to 9 add their commands above this line.
             else -> null
         }
@@ -232,6 +245,168 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         }
         if (!already || result.outcome != Outcome.DONE) return result
         return result.copy(show = if (expand) CommandTexts.ALREADY_EXPANDED else CommandTexts.ALREADY_COLLAPSED)
+    }
+
+    /** "Scroll down", and "scroll down on Messages" with a list that the owner names (design spec, Appendix A). */
+    private suspend fun scroll(screen: ScreenSession, command: Command.Scroll, conversation: CommandConversation): CommandResult {
+        val direction = scrollDirection(command.direction)
+        val target = command.target ?: return done(screen.actions.scroll(direction))
+        return act(screen, target, TargetKind.SCROLL, conversation) { screen.actions.scroll(direction, it.key) }
+    }
+
+    /**
+     * "Scroll to top" and "scroll to bottom": scrolls until the list stops moving, that is until the action fails or the
+     * screen's content stays the same, at most [MAX_SCROLLS] times and for [SCROLL_TO_END_MILLIS].
+     */
+    private suspend fun scrollToEnd(
+        screen: ScreenSession,
+        command: Command.ScrollToEnd,
+        conversation: CommandConversation,
+    ): CommandResult {
+        val direction = if (command.top) ScrollDirection.UP else ScrollDirection.DOWN
+        val target = command.target ?: return done(scrollAllTheWay(screen, direction, null))
+        return act(screen, target, TargetKind.SCROLL, conversation) { scrollAllTheWay(screen, direction, it.key) }
+    }
+
+    private suspend fun scrollAllTheWay(screen: ScreenSession, direction: ScrollDirection, key: String?): ActionResult {
+        var before = content(screen)
+        var last = screen.actions.scroll(direction, key)
+        if (last is ActionResult.Failed) return last
+        withTimeoutOrNull(SCROLL_TO_END_MILLIS) {
+            repeat(MAX_SCROLLS - 1) {
+                val now = content(screen)
+                if (now == before) return@withTimeoutOrNull
+                before = now
+                val next = screen.actions.scroll(direction, key)
+                if (next is ActionResult.Failed) return@withTimeoutOrNull
+                last = next
+            }
+        }
+        return last
+    }
+
+    /** What moves when a list scrolls: the names on the screen and where they are. */
+    private suspend fun content(screen: ScreenSession) = screen.snapshots.current().snapshot.elements.map { it.label to it.bounds }
+
+    /**
+     * "Swipe forwards" shows the next page of a list or pager that moves sideways, and "swipe backwards" the one before.
+     * When nothing moves sideways the bar says so; any other failure, such as a touch that cancelled the swipe, shows its
+     * own reason.
+     */
+    private suspend fun swipePage(screen: ScreenSession, forward: Boolean): CommandResult =
+        when (val result = screen.actions.scroll(if (forward) ScrollDirection.RIGHT else ScrollDirection.LEFT)) {
+            ActionResult.NOTHING_SCROLLS -> CommandResult(Outcome.FAILED, show = CommandTexts.NOTHING_SWIPES_SIDEWAYS)
+            else -> done(result)
+        }
+
+    /** "Swipe from the bottom edge" and the other edges: from one pixel inside the edge, a third of the screen inwards. */
+    private suspend fun swipeFromEdge(screen: ScreenSession, edge: Edge): CommandResult {
+        val line = GesturePaths.fromEdge(screen.screenBounds, screenEdge(edge))
+        return done(screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY))
+    }
+
+    /**
+     * "Swipe up", "swipe up on 5" and "swipe 5 up": from the screen's centre, or from the centre of a grid's square or of
+     * an element, a third of the screen in the direction that the owner names, which is the finger's direction. The owner
+     * may name a sideways swipe across a list; spec 9.3's rule against them binds Kestrel's own choices.
+     */
+    private suspend fun swipe(screen: ScreenSession, command: Command.Swipe, conversation: CommandConversation): CommandResult {
+        val direction = scrollDirection(command.direction)
+        val swipeFrom: suspend (Int, Int) -> ActionResult = { x, y ->
+            val line = GesturePaths.limit(screen.screenBounds, x, y, direction)
+            if (line == null) OFF_SCREEN else screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY)
+        }
+        val target = command.target ?: return screen.screenBounds.let { done(swipeFrom(it.centerX, it.centerY)) }
+        return act(screen, target, TargetKind.TAP, conversation, onCell = { swipeFrom(it.centerX, it.centerY) }) {
+            swipeFrom(it.bounds.centerX, it.bounds.centerY)
+        }
+    }
+
+    /** "Pinch out" and "pinch in", around the screen's centre or the centre of a grid's square or of an element. */
+    private suspend fun pinch(screen: ScreenSession, command: Command.Pinch, conversation: CommandConversation): CommandResult {
+        val pinchAround: suspend (Int, Int) -> ActionResult = { x, y ->
+            val line = GesturePaths.limit(screen.screenBounds, x, y, command.out)
+            if (line == null) OFF_SCREEN else screen.actions.pinch(line.centerX, line.centerY, line.startSpan, line.endSpan)
+        }
+        val target = command.target ?: return screen.screenBounds.let { done(pinchAround(it.centerX, it.centerY)) }
+        return act(screen, target, TargetKind.TAP, conversation, onCell = { pinchAround(it.centerX, it.centerY) }) {
+            pinchAround(it.bounds.centerX, it.bounds.centerY)
+        }
+    }
+
+    /**
+     * "Drag Drag me to Drop here" or "drag 5 to 9": presses and holds the centre of the first element or square and moves
+     * to the second's. "Drag 5" asks "Drag it where?" and takes the answer as the second.
+     */
+    private suspend fun drag(screen: ScreenSession, command: Command.Drag, conversation: CommandConversation): CommandResult {
+        var source: ChosenElement? = null
+        var square: IntRect? = null
+        // This act only finds where the drag starts; the finger moves once the target is known.
+        val found = act(
+            screen,
+            command.from,
+            TargetKind.TAP,
+            conversation,
+            onCell = { cell ->
+                square = cell
+                FOUND
+            },
+        ) { element ->
+            source = ScreenTargets.chosen(element)
+            FOUND
+        }
+        if (source == null && square == null) return found
+        val to = command.to ?: dragTarget(conversation.ask(CommandTexts.DRAG_WHERE) ?: return CommandResult(Outcome.CANCELLED))
+        var moved = false
+        // The question, or "Which one?" for the target, can take many seconds, so the start is checked again right before
+        // the finger moves, as the target is (section 9.2). A square of the grid is a fixed point of the screen.
+        val dragTo: suspend (Int, Int) -> ActionResult = { toX, toY ->
+            val from = square ?: source?.let { targets.still(it) }?.bounds
+            if (from == null) {
+                moved = true
+                FOUND
+            } else {
+                screen.actions.drag(from.centerX, from.centerY, toX, toY)
+            }
+        }
+        val result = act(screen, to, TargetKind.TAP, conversation, onCell = { dragTo(it.centerX, it.centerY) }) {
+            dragTo(it.bounds.centerX, it.bounds.centerY)
+        }
+        return if (moved) changed() else result
+    }
+
+    /** The answer to "Drag it where?": a number, a name, or either after "to". A lone "to" is the number 2. */
+    private fun dragTarget(answer: String): Target {
+        val rest = answer.replace(LEADING_TO, "").trim().ifEmpty { answer }
+        return SpokenNumbers.answer(rest)?.let { Target.Number(it) } ?: Target.Label(rest)
+    }
+
+    private fun scrollDirection(direction: Direction): ScrollDirection = when (direction) {
+        Direction.UP -> ScrollDirection.UP
+        Direction.DOWN -> ScrollDirection.DOWN
+        Direction.LEFT -> ScrollDirection.LEFT
+        Direction.RIGHT -> ScrollDirection.RIGHT
+    }
+
+    private fun screenEdge(edge: Edge): ScreenEdge = when (edge) {
+        Edge.TOP -> ScreenEdge.TOP
+        Edge.BOTTOM -> ScreenEdge.BOTTOM
+        Edge.LEFT -> ScreenEdge.LEFT
+        Edge.RIGHT -> ScreenEdge.RIGHT
+    }
+
+    private companion object {
+        const val MAX_SCROLLS = 30
+        const val SCROLL_TO_END_MILLIS = 15_000L
+
+        /** "to" at the start of an answer, as in "to Drop here". */
+        val LEADING_TO = Regex("^\\s*to\\b[\\s,]*", RegexOption.IGNORE_CASE)
+
+        /** A gesture whose point lies outside the screen, or too close to its edge to move. */
+        val OFF_SCREEN = ActionResult.Failed("The gesture would leave the screen")
+
+        /** What a step that only finds its element gives `act`: nothing has moved yet. */
+        val FOUND = ActionResult.Done(ActionMethod.ACTION)
     }
 
     private suspend fun tapAt(screen: ScreenSession, bounds: IntRect): ActionResult = screen.actions.tapAt(bounds.centerX, bounds.centerY)

@@ -123,7 +123,7 @@ class ScreenActions internal constructor(
         val list = (target ?: node?.selfOrParent { it.isScrollable && it.movesAlong(direction) })?.node?.screenBounds()
         val area = (if (list != null && window != null) list.intersect(window.bounds) else list)
             ?: window?.bounds?.takeIf { direction.isVertical }
-            ?: return ActionResult.Failed("Nothing on the screen scrolls that way")
+            ?: return ActionResult.NOTHING_SCROLLS
         // A swipe that started on the keyboard or on a popup above the list would act on that instead, and a swipe
         // shorter than Android's touch slop would tap or long-press a row of the list.
         val shortest = SwipePaths.shortestScrollArea(ViewConfiguration.get(service).scaledTouchSlop)

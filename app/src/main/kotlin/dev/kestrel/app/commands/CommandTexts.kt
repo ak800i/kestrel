@@ -13,6 +13,9 @@ internal object CommandTexts {
 
     fun noNumber(number: Int) = "There's no number $number on the screen."
 
+    const val NOTHING_SWIPES_SIDEWAYS = "Nothing on the screen swipes sideways."
+    const val DRAG_WHERE = "Drag it where?"
+
     const val ALREADY_ON = "It's already on."
     const val ALREADY_OFF = "It's already off."
     const val ALREADY_EXPANDED = "It's already expanded."

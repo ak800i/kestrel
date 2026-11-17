@@ -91,6 +91,9 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /** The grid on the screen now, or null. "Tap 5" taps the centre of the grid's cell 5. */
     val grid: Grid? get() = gridOverlay.grid
 
+    /** The whole screen in pixels, for the swipes and pinches that the owner names (design spec, section 9.3). */
+    val screenBounds: IntRect get() = overlays.screenBounds()
+
     /** The feedback bar's text now, or null while the bar is hidden. */
     val feedbackText: String? get() = feedback.text
 
