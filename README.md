@@ -101,6 +101,21 @@ These scripts check assumptions of the design on a test device (design spec, sec
 - `scripts\spike-s7.ps1 -Serial $serial` pushes a file of random bytes into Kestrel's external files folder with `adb push`, where the model files will live, and checks that Kestrel reads the same bytes. While it runs, it creates folders in Kestrel's external files folder, also `Android/data/dev.kestrel` and its `files` folder if they are not there, and it writes the file in the temporary folder of this computer. It also reinstalls Kestrel with `adb install -r`, which stays, as after `scripts\install.ps1`. Afterwards, also when it fails or is interrupted, it deletes the folders that it created and the file. If it cannot delete something, also because Ctrl+C interrupted it while it deleted things, it says at the end what is left and the command that deletes it, and it ends with exit code 1. After Ctrl+C, it also ends with exit code 1.
 - Spike S8, whether sherpa-onnx's own ONNX Runtime and onnxruntime-android work in one process, is the device test `OnnxRuntimeTogetherTest`, which `scripts\voice-test.ps1 -Serial $serial` runs with the other voice tests.
 
+### The A71 session
+
+`scripts\a71-session.ps1 -Serial $serial` takes the owner through one session on the Galaxy A71, about 5 to 5.5 hours, of which about 2 hours need your hands and voice and the rest runs while you may leave, with every check of the voice features that needs the A71 or the owner (design spec, section 19.1): the voice device tests, `listen-check.ps1 -Reboot`, Android's and Samsung's battery rules, three restarts of the phone, the unlock paths, the activation methods, Kestrel as the assistant with the assistant gesture and the Galaxy Buds gesture, the earbud microphone, the owner's recordings of the voice corpus and their measurements, the owner's voice with Kestrel, Kestrel's memory, an hour of ordinary room audio and the battery test. It asks before each step, and before it first reads the device; a step that needs your hands says what to do and waits, and `s` skips, `q` stops. `-Step` runs only the named steps. It refuses every device but the A71 and `kestrel-api37`. The results go into `corpus\owner\session-<time>.txt` and the recordings into `corpus\owner\clips`; git ignores both, and neither the results nor the console ever hold what Kestrel heard. While the session runs, the phone's screen stays on while it is plugged in. Afterwards, also when a step fails or Ctrl+C stops it, the script puts back Kestrel's mode Off, the hooks' slow task, the setting "Stay awake", the assistant role and its settings, Kestrel's battery restriction, the accessibility settings, the screen's timeout, the battery's state and the clips in Kestrel's files folder. The battery test resets the phone's battery statistics, which cannot be put back, and the script asks you to turn "Use the earbud microphone" off again if you turned it on. `-DryRun` runs the session on `kestrel-api37` without the owner, to try a change of the script; it answers its own questions, sends what the owner would say through the voice hook, skips what needs the owner's hands otherwise, and shortens the waits. It needs PowerShell 7.3 or newer, as `hook.ps1` does.
+
+The session's measurements, with the targets of the design spec (section 5.3):
+
+| Measure | Target | Galaxy A71 |
+|---|---|---|
+| Transcription time of a command | at most 4 s | not measured yet |
+| Kestrel's memory while it listens (PSS) | at most 2 GB | not measured yet |
+| Battery use while listening | at most 2 % per hour | not measured yet |
+| Word error rate and requests read as intended, with the owner's recordings | none yet | not measured yet |
+| Kestrel's reactions in an hour of ordinary room audio | none yet | not measured yet |
+| Piper's and Kokoro's speed (real-time factor) | below 1, so that Kestrel speaks without gaps | not measured yet |
+
 ## Setting up Kestrel
 
 Open Kestrel from the launcher. The first entry of its settings app is the setup checklist, which says how many of its steps are done (design spec, section 15). Whenever Kestrel comes to the front, the checklist reads the state of steps 3 to 7 and 9 from Android, so it shows the changes that you make in Android's settings. Kestrel checks the speech model files for step 2 then too, and also whenever the checklist or the About page opens.

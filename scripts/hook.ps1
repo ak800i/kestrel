@@ -54,6 +54,17 @@
 #                                           memory; -Reveal adds what Kestrel heard, only for a generated clip, whose
 #                                           name starts with gen-; -NoBoost transcribes without the boost words
 #   voice-eval -Close                       closes that recogniser
+# The A71 session (scripts\a71-session.ps1 runs these):
+#   voice-counts                            how many waits for a task and how many tasks Kestrel started in its process,
+#                                           and how many words the last slow task had
+#   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
+#                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
+#   voice-task -Clear                       each task ends at once again, as in sub-project 2
+#   voice-echo -Text 'text' [-Voice piper|kokoro]
+#                                           starts playing the text in Kestrel's voice while the real microphone feeds the
+#                                           keyword spotter, and answers playing; Kestrel must be off and in front
+#   voice-echo -Result                      answers playing until the check has ended, then how the reply ended, the
+#                                           keyword hits and those that the echo filter took for Kestrel's own voice
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -74,7 +85,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
-        'voice-state', 'voice-clip', 'voice-synth', 'voice-record', 'voice-eval', 'location', 'spike-results', 'files', 'watch')][string]$Command,
+        'voice-state', 'voice-clip', 'voice-synth', 'voice-record', 'voice-eval', 'voice-counts', 'voice-task', 'voice-echo',
+        'location', 'spike-results', 'files', 'watch')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -99,6 +111,7 @@ param(
     [switch]$Reveal,
     [switch]$Load,
     [switch]$Close,
+    [string]$Reply,
     [switch]$Result,
     [switch]$NoBoost,
     [string]$Create,
@@ -153,6 +166,7 @@ if ($Reveal) { $extras += '--ez reveal true' }
 if ($Load) { $extras += '--ez load true' }
 if ($Close) { $extras += '--ez close true' }
 if ($Result) { $extras += '--ez result true' }
+if ($Reply) { $extras += "--es reply $(ConvertTo-ShellText $Reply)" }
 if ($NoBoost) { $extras += '--ez noBoost true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')

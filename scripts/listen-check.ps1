@@ -53,7 +53,9 @@
 # is left and how to put it back by hand. Then, after
 # Ctrl+C, and when a check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
 # -Reboot it reboots a phone, or closes an emulator and starts it from a cold boot; a phone with a PIN, pattern or
-# password asks you to unlock it after the reboot. It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
+# password asks you to unlock it after the reboot, and on a phone the script also wakes the screen and asks you to
+# unlock it before it checks the recording, because Kestrel records only while the screen is on and the phone unlocked.
+# It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
 # Example: scripts\listen-check.ps1 -Serial emulator-5554 -Reboot
 #Requires -Version 7.3
 param(
@@ -603,6 +605,11 @@ function Invoke-RebootCheck {
     }
     if ((Wait-Mode listening 240) -lt 0) { return 'failed: Kestrel did not listen again within 240 s of the device''s start' }
     $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    # On a phone, the screen is off or locked after the reboot, and Kestrel records only while it is on and unlocked.
+    if (-not $isEmulator) {
+        Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
+        Read-Host 'Unlock the phone, then press Enter' | Out-Null
+    }
     # 'dumpsys audio' starts its history afresh at each boot, so every recording of Kestrel's that it lists is new.
     $problem = Get-RecordingProblem @()
     if ($problem) { return "failed: listening again $again s after the reboot, but $problem" }

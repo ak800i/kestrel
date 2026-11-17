@@ -235,6 +235,14 @@ class Listening internal constructor(
     @Volatile
     internal var microphones: () -> Microphone = microphones
 
+    /**
+     * Runs task number `task`, and must send [Event.TaskEnded] for it once it ends. Sub-project 5 runs tasks with the
+     * agent; until then every task ends at once with a reply that says so, or Kestrel would wait for it for ever. The
+     * debug hooks replace it with a task that takes its time. Called on the controller's thread; it must not block.
+     */
+    @Volatile
+    internal var runTask: (task: Int, text: String) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.NO_TASKS)) }
+
     // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start(),
     // onStartAction() and shutdown() change it together with [serviceState], so it always equals
     // serviceState != STOPPED, and foreground() relies on that. [running]: the service's instance that runs in the
@@ -854,8 +862,7 @@ class Listening internal constructor(
         when (effect) {
             is Effect.Say -> say(effect.reply)
             Effect.StopSaying -> session?.stopSpeaking()
-            // Sub-project 5 runs tasks. Until then every task ends at once, or Kestrel would wait for it for ever.
-            is Effect.RunTask -> send(Event.TaskEnded(effect.task, ListeningTexts.NO_TASKS))
+            is Effect.RunTask -> runTask(effect.task, effect.text)
             // Nothing runs that could be cancelled yet, and the instant commands come with sub-project 3.
             Effect.CancelTask, is Effect.RunCommand -> Unit
             is Effect.Show -> {
