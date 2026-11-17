@@ -149,6 +149,17 @@ class RulesTest {
     }
 
     @Test
+    fun anEmptyAnswerToYesCountsTowardsTheHint() {
+        val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1, emptyTranscripts = 2)
+
+        val step = Rules.next(waiting, Event.Heard("", named = false))
+
+        assertEquals(listOf(Effect.Show(Feedback.NoWords), Effect.WaitForTask()), step.effects)
+        assertEquals(3, step.state.emptyTranscripts)
+        assertEquals(Work.AWAITING_TASK, step.state.work)
+    }
+
+    @Test
     fun onlyTheEndOfTheLastReplyRestartsTheWait() {
         val twoReplies = listening.copy(work = Work.AWAITING_TASK, wait = 1, speeches = 2)
 

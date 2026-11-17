@@ -14,6 +14,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -50,6 +51,11 @@ class AccessibilityNoticeTest {
                 context.getString(R.string.problem_service_off_title),
                 notice!!.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
             )
+            // A quiet channel of its own, because the owner usually turned the service off on purpose.
+            assertEquals("accessibility", notice.channelId)
+            assertEquals(NotificationManager.IMPORTANCE_LOW, notifications.getNotificationChannel(notice.channelId)?.importance)
+            // A tap opens Android's accessibility settings.
+            assertTrue("A tap on the notification opens no activity", notice.contentIntent?.isActivity == true)
 
             screen.shell("settings put secure enabled_accessibility_services $SERVICE")
             screen.shell("settings put secure accessibility_enabled 1")

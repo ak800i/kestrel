@@ -98,11 +98,13 @@ class SettingsAppTest {
 
     @Test
     fun stepsThatNeedAttentionSayWhy() {
-        show(NOTHING_SET_UP.copy(serviceEnabled = true, batteryRestricted = true))
+        // On a Samsung, the battery step's warning keeps "Never sleeping apps".
+        show(NOTHING_SET_UP.copy(serviceEnabled = true, batteryRestricted = true, samsung = true))
         openChecklist()
 
         compose.onNodeWithText(text(R.string.setup_service_warning)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.setup_battery_warning)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.setup_battery_never_sleeping)).performScrollTo().assertIsDisplayed()
     }
 
     @Test

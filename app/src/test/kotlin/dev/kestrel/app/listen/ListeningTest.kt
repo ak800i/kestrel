@@ -289,6 +289,22 @@ class ListeningTest {
     }
 
     @Test
+    fun aServiceThatAndroidRefusesWithoutTheMicrophonePermissionButWithoutASecurityExceptionIsABackgroundStart() = runTest {
+        // Only a SecurityException from startForeground() means the missing permission; startForegroundService() throws
+        // another exception when Android refuses a start in the background.
+        conditions.microphone = false
+        services.failure = IllegalStateException("Not allowed in the background")
+        val listening = listening()
+
+        listening.send(Event.Toggle)
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.BACKGROUND_START), shown)
+        assertEquals(listOf(StopReason.BACKGROUND_START), notices.shown)
+    }
+
+    @Test
     fun aMicrophoneThatDoesNotStartWithoutThePermissionAsksForIt() = runTest {
         // Android 13, as on the A71, starts the service, and the microphone fails instead.
         conditions.microphone = false
@@ -624,9 +640,9 @@ class ListeningTest {
     }
 
     @Test
-    fun aRestoredProcessThatEndedWithoutACrashBeforeItsSessionOpenedStaysOff() = runTest {
+    fun aRestoredProcessThatEndedWithoutACrashBeforeItsSessionOpenedStaysOffAndSaysSo() = runTest {
         // The last restore stored Off and turned Kestrel on, and Android ended the process while the models loaded, for
-        // example with the low-memory killer. "Off first" keeps Kestrel off, and there is nothing to say.
+        // example with the low-memory killer. "Off first" keeps Kestrel off, and the owner did not choose that.
         memory.stored = Mode.OFF
         memory.writtenAt = 500_000
         memory.restoredAt = 500_000
@@ -638,9 +654,60 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertTrue(log.isEmpty())
+        assertEquals(listOf(ListeningTexts.CRASHED_AFTER_RESTORE), shown)
+        assertEquals(listOf(StopReason.CRASHED_AFTER_RESTORE), notices.shown)
+        assertEquals(null, memory.restoredAt)
+    }
+
+    @Test
+    fun aRestoredProcessThatTheOwnerStoppedBeforeItsSessionOpenedStaysOffSilently() = runTest {
+        memory.stored = Mode.OFF
+        memory.writtenAt = 500_000
+        memory.restoredAt = 500_000
+        exits.record = ExitRecord(ExitReason.OWNER_STOPPED, timestamp = 530_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
         assertTrue(shown.isEmpty())
         assertTrue(notices.shown.isEmpty())
         assertEquals(null, memory.restoredAt)
+    }
+
+    @Test
+    fun aRestoredProcessThatEndedBeforeItsSessionOpenedSaysSoAlsoWithoutTheRecords() = runTest {
+        memory.stored = Mode.OFF
+        memory.writtenAt = 500_000
+        memory.restoredAt = 500_000
+        exits.failure = SecurityException("No access to the records")
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals("Reading the exit records", reports.single().first)
+        assertEquals(listOf(StopReason.CRASHED_AFTER_RESTORE), notices.shown)
+    }
+
+    @Test
+    fun anOffWithoutTheTimeOfARestoreDoesNotReadTheRecords() = runTest {
+        // The owner's Off, or a restore's decision to stay off.
+        memory.stored = Mode.OFF
+        memory.writtenAt = 500_000
+        exits.record = ExitRecord(ExitReason.CRASH, timestamp = 530_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(0, exits.reads)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(notices.shown.isEmpty())
     }
 
     @Test
@@ -868,6 +935,29 @@ class ListeningTest {
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertEquals(listOf("close", "closed", "stop"), log)
         assertEquals(ListeningTexts.STOPPED_BY_ANDROID, shown.last())
+        // The stop names no start: the destroyed instance is not kept, and a new instance counts its starts anew.
+        assertEquals(listOf<Pair<Any?, Int>>(null to 0), services.stops)
+    }
+
+    @Test
+    fun anEndOfTheAdoptedStartActionsServiceBeforeItsStartIsHandledStartsANewService() = runTest {
+        val listening = listening()
+
+        // Android destroys the service that "Start listening" started before the Orchestrator has handled its
+        // Event.Start, so the mode is still Off.
+        listening.onStartAction(service)
+        listening.onServiceDestroyed(service)
+        runCurrent()
+
+        // The Event.Start asks Android for a new service, and no session opens without one.
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf("start"), log)
+        assertFalse(listening.sessionOpen.value)
+
+        listening.onForeground(Any())
+        runCurrent()
+        assertEquals(listOf("start", "open", "recognition ALL", "microphone on"), log)
+        assertTrue(listening.sessionOpen.value)
     }
 
     @Test
@@ -1811,8 +1901,10 @@ class ListeningTest {
         var record: ExitRecord? = null
         var failure: Exception? = null
         var reading: CompletableDeferred<Unit>? = null
+        var reads = 0
 
         override suspend fun newest(): ExitRecord? {
+            reads++
             reading?.await()
             failure?.let { throw it }
             return record

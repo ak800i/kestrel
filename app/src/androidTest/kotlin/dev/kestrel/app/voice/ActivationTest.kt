@@ -43,16 +43,12 @@ class ActivationTest {
         try {
             VoiceTests.stopListening()
         } finally {
-            turnOffTheAccessibilityService()
+            // The voice tests after this one run without Kestrel's accessibility service, as they did before this test
+            // existed. Its binding alone lets Kestrel record and play in the background while the screen is on
+            // (prototype P1, Q1), which would hide a ListeningService that does not give Kestrel these rights
+            // (ConversationTest, B5).
+            VoiceTests.turnOffAccessibilityService()
         }
-    }
-
-    // The voice tests after this one run without Kestrel's accessibility service, as they did before this test existed. Its
-    // binding alone lets Kestrel record and play in the background while the screen is on (prototype P1, Q1), which would
-    // hide a ListeningService that does not give Kestrel these rights (ConversationTest, B5).
-    private fun turnOffTheAccessibilityService() {
-        VoiceTests.shell("settings delete secure enabled_accessibility_services")
-        check(VoiceTests.waitUntil(10_000) { VoiceTests.graph.screen.value == null }) { "Kestrel's accessibility service is still connected" }
     }
 
     @Test

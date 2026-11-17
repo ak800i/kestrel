@@ -97,6 +97,7 @@
     <string name="setup_battery_detail">So that Android does not stop Kestrel\'s listening in the background.</string>
     <string name="setup_battery_detail_samsung">So that Android does not stop Kestrel\'s listening in the background. Also add Kestrel to \"Never sleeping apps\" in the battery settings.</string>
     <string name="setup_battery_warning">Kestrel\'s battery use is Restricted, so Android stops its listening in the background. Set it to Unrestricted.</string>
+    <string name="setup_battery_never_sleeping">Also add Kestrel to \"Never sleeping apps\" in the battery settings.</string>
     <string name="setup_assistant_title">Make Kestrel the default digital assistant</string>
     <string name="setup_assistant_detail">Optional: for the side key and earbuds. This step comes with Kestrel\'s voice features.</string>
     <string name="setup_provider_title">Sign in to an AI provider and choose the models</string>

@@ -1,6 +1,7 @@
 package dev.kestrel.app.voice
 
 import android.Manifest
+import android.app.NotificationManager
 import android.app.UiAutomation
 import android.os.Build
 import android.os.Debug
@@ -11,6 +12,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.debug.ClipMicrophone
+import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.voice.SAMPLE_RATE
@@ -106,6 +108,21 @@ internal object VoiceTests {
     fun grantListeningPermissions() {
         automation.grantRuntimePermission(PACKAGE, Manifest.permission.RECORD_AUDIO)
         automation.grantRuntimePermission(PACKAGE, Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /**
+     * Turns Kestrel's accessibility service off, as the voice tests expect it, and waits until Kestrel has seen it.
+     * Kestrel then posts its notification that the service is off, right after it detached the screen session (about
+     * 50 ms after the change, prototype P2). The test process is Kestrel's, so it removes the notification, which would
+     * otherwise stay in the shade after the tests.
+     */
+    fun turnOffAccessibilityService() {
+        shell("settings delete secure enabled_accessibility_services")
+        check(waitUntil(10_000) { graph.screen.value == null }) { "Kestrel's accessibility service is still connected" }
+        val notifications = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(NotificationManager::class.java)
+        // Without the notification permission, none comes.
+        waitUntil(2_000) { notifications.activeNotifications.any { it.id == ProblemNotifications.ACCESSIBILITY_ID } }
+        notifications.cancel(ProblemNotifications.ACCESSIBILITY_ID)
     }
 
     /** Whether Kestrel's ListeningService runs. */

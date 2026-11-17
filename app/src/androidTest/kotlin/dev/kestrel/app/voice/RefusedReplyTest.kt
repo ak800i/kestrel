@@ -51,10 +51,7 @@ class RefusedReplyTest {
         try {
             VoiceTests.stopListening()
         } finally {
-            VoiceTests.shell("settings delete secure enabled_accessibility_services")
-            check(VoiceTests.waitUntil(10_000) { VoiceTests.graph.screen.value == null }) {
-                "Kestrel's accessibility service is still connected"
-            }
+            VoiceTests.turnOffAccessibilityService()
         }
     }
 

@@ -14,7 +14,10 @@ internal enum class ExitReason {
      */
     OWNER_STOPPED,
 
-    /** Kestrel crashed, in its own code or in a native library. */
+    /**
+     * Kestrel crashed, in its own code or in a native library, or Android ended it because it stopped answering (an ANR),
+     * which a new start soon after a restore could repeat.
+     */
     CRASH,
 
     /** Anything else, such as a low-memory kill or a package update. */
@@ -39,14 +42,18 @@ internal class AndroidExitRecords(private val context: Context) : ExitRecords {
         context.getSystemService(ActivityManager::class.java)
             .getHistoricalProcessExitReasons(context.packageName, 0, 1)
             .firstOrNull()
-            ?.let { ExitRecord(reasonOf(it.reason), it.timestamp) }
+            ?.let { ExitRecord(exitReasonOf(it.reason), it.timestamp) }
     }
+}
 
-    private fun reasonOf(reason: Int): ExitReason = when (reason) {
-        // A force stop, "Stop app" and Stop in "Active apps" (prototype P2). REASON_USER_STOPPED is not the owner's:
-        // Android stopped the user profile that the process ran in.
-        ApplicationExitInfo.REASON_USER_REQUESTED -> ExitReason.OWNER_STOPPED
-        ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_CRASH_NATIVE -> ExitReason.CRASH
-        else -> ExitReason.OTHER
-    }
+/** What an [ApplicationExitInfo]'s reason [reason], one of its `REASON_*` values, means for the restore (section 8.5). */
+internal fun exitReasonOf(reason: Int): ExitReason = when (reason) {
+    // A force stop, "Stop app" and Stop in "Active apps" (prototype P2). REASON_USER_STOPPED is not the owner's:
+    // Android stopped the user profile that the process ran in.
+    ApplicationExitInfo.REASON_USER_REQUESTED -> ExitReason.OWNER_STOPPED
+    ApplicationExitInfo.REASON_CRASH,
+    ApplicationExitInfo.REASON_CRASH_NATIVE,
+    ApplicationExitInfo.REASON_ANR,
+    -> ExitReason.CRASH
+    else -> ExitReason.OTHER
 }

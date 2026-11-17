@@ -47,8 +47,12 @@ private fun StepCard(
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(texts.title), style = MaterialTheme.typography.titleMedium)
             Text(stringResource(stateLabel(state)), style = MaterialTheme.typography.labelLarge)
-            val detail = if (state == StepState.WARNING && texts.warning != null) texts.warning else texts.detail
-            Text(stringResource(detail), style = MaterialTheme.typography.bodyMedium)
+            val warning = texts.warning.takeIf { state == StepState.WARNING }
+            Text(stringResource(warning ?: texts.detail), style = MaterialTheme.typography.bodyMedium)
+            // A part of the step that the warning does not cover, such as Samsung's "Never sleeping apps".
+            if (warning != null && texts.alsoWithWarning != null) {
+                Text(stringResource(texts.alsoWithWarning), style = MaterialTheme.typography.bodyMedium)
+            }
             details()
             if (texts.action != null && texts.actionLabel != null && state in NEEDS_ACTION) {
                 Button(onClick = { onAction(texts.action) }) { Text(stringResource(texts.actionLabel)) }
@@ -77,6 +81,7 @@ private class StepTexts(
     val action: SetupAction? = null,
     @StringRes val actionLabel: Int? = null,
     @StringRes val warning: Int? = null,
+    @StringRes val alsoWithWarning: Int? = null,
 )
 
 private fun texts(step: SetupStep, samsung: Boolean): StepTexts = when (step) {
@@ -102,6 +107,7 @@ private fun texts(step: SetupStep, samsung: Boolean): StepTexts = when (step) {
         SetupAction.APP_SETTINGS,
         R.string.setup_open_app_settings,
         R.string.setup_battery_warning,
+        if (samsung) R.string.setup_battery_never_sleeping else null,
     )
     SetupStep.DEFAULT_ASSISTANT -> StepTexts(R.string.setup_assistant_title, R.string.setup_assistant_detail)
     SetupStep.PROVIDER -> StepTexts(R.string.setup_provider_title, R.string.setup_provider_detail)

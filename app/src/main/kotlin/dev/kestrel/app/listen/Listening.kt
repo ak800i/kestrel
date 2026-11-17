@@ -102,7 +102,7 @@ internal object ListeningTexts {
     const val NO_WORDS = "Kestrel hears sound but no words. Check the microphone."
     const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on. Tap my " +
-        "listening notification instead."
+        "listening notification, or open Kestrel from the launcher."
 }
 
 /**
@@ -135,7 +135,8 @@ internal enum class StopReason(val text: String, val restart: Boolean, val start
     BATTERY_RESTRICTED(ListeningTexts.BATTERY_RESTRICTED, restart = false, starting = false),
 
     /**
-     * Kestrel crashed less than 2 minutes after a restore had turned it on, so the restore leaves it off (section 8.5).
+     * Kestrel crashed less than 2 minutes after a restore had turned it on, or the restored process ended in any way but
+     * the owner's stop before its voice session opened, so the restore leaves it off (section 8.5).
      */
     CRASHED_AFTER_RESTORE(ListeningTexts.CRASHED_AFTER_RESTORE, restart = true, starting = false),
 }
@@ -165,8 +166,9 @@ internal interface StopNotices {
  * first time in a process in which Kestrel has not been on, it stores Off and turns Kestrel on in the stored mode, so
  * that listening comes back after Android ended Kestrel's process or the phone restarted, while a start that ends the
  * process does not come back at every start. It stays off when the newest of [exits] says that the owner stopped
- * Kestrel, or that Kestrel crashed less than 2 minutes after the last restore. A task never comes back (sections 8.5
- * and 14.4). [clock] gives the wall-clock time in milliseconds, which the exit records also use.
+ * Kestrel, or that Kestrel crashed less than 2 minutes after the last restore, and when the restored process ended before
+ * its voice session opened. A task never comes back (sections 8.5 and 14.4). [clock] gives the wall-clock time in
+ * milliseconds, which the exit records also use.
  *
  * Threads: the Orchestrator's loop, its effects, the following of the state, the microphone's start and stop, and the
  * open session's events run on [thread], one at a time. A session opens and closes in a coroutine of [scope] behind
@@ -200,7 +202,7 @@ class Listening internal constructor(
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
 
-    /** What the restore does: start in the stored mode, stay off, or stay off and say that Kestrel crashed. */
+    /** What the restore does: start in the stored mode, stay off, or stay off and say why. */
     private enum class Restore { START, STAY_OFF, CRASHED }
 
     /** Makes the microphone of the next session. The device tests and the debug hooks replace it. */
@@ -294,7 +296,7 @@ class Listening internal constructor(
      * stored, unless the newest exit record says that the owner stopped Kestrel, or that Kestrel crashed soon after the
      * last restore (section 8.5); Android lets it start its foreground service from the background from now on
      * (prototype P1). A stored Off that carries the time of a restore means that the restored process ended before its
-     * voice session opened: Kestrel stays off, and says why after a crash. Any thread may call it.
+     * voice session opened: Kestrel stays off, and says why unless the owner stopped it. Any thread may call it.
      */
     fun onAccessibilityServiceConnected() {
         scope.launch(thread) {
@@ -326,10 +328,11 @@ class Listening internal constructor(
             // Also when the owner chose a mode while the record was read.
             if (wasOn || state.value.mode != Mode.OFF) return@launch
             // An Off with the time of a restore: that restore turned Kestrel on, and its process ended before the voice
-            // session opened, for example with a native crash while the models loaded. Kestrel does not start again,
-            // and says why when that end was a crash soon after the restore.
+            // session opened, for example with a native crash or a low-memory kill while the models loaded. Kestrel does
+            // not start again, and says why unless the owner stopped it after that Off was written (section 14: Kestrel
+            // never fails silently). Without a record, too, it says why.
             val decided = restoreAfter(stored, exit)
-            val restore = if (stored.mode == Mode.OFF && decided == Restore.START) Restore.STAY_OFF else decided
+            val restore = if (stored.mode == Mode.OFF && decided == Restore.START) Restore.CRASHED else decided
             val now = clock()
             // Off first: if this start ends Kestrel's process, for example with a native crash while the models load,
             // the next start of the process finds Off and does not try again. The mode is stored again once the voice
@@ -343,6 +346,8 @@ class Listening internal constructor(
                 report("Storing the listening mode", e)
                 return@launch
             }
+            // An event of the owner's that is queued but not yet handled passes this check: the restore then starts and
+            // sets restoredAt, and when the owner's own start follows, it carries the restore's time until the next Off.
             if (wasOn || state.value.mode != Mode.OFF) return@launch
             when (restore) {
                 Restore.START -> {
@@ -359,7 +364,10 @@ class Listening internal constructor(
     /** Section 8.5: what the newest exit record [exit] says about the restore of [stored]. */
     private fun restoreAfter(stored: StoredMode, exit: ExitRecord?): Restore {
         // A record from before the stored mode was written belongs to an older process; a reboot leaves no record of
-        // its own. A mode that an earlier version stored has no time, so its newest record decides.
+        // its own. A mode that an earlier version stored has no time, so its newest record decides. The times are the
+        // wall clock's, as Android's records are, so a change of the clock between them can make a record count wrongly:
+        // a stop after the clock moved back looks older than the write, and an older record can look newer than a write
+        // made while the clock was behind. Most such cases fall back to the behaviour before the records were read.
         if (exit == null || (stored.writtenAt != null && exit.timestamp < stored.writtenAt)) return Restore.START
         return when (exit.reason) {
             ExitReason.OWNER_STOPPED -> Restore.STAY_OFF
@@ -521,10 +529,21 @@ class Listening internal constructor(
     }
 
     private fun destroyed(instance: Any) {
+        // A stop must never name an instance that Android has destroyed; a new instance counts its starts anew.
+        if (instance === reported) {
+            reported = null
+            reportedStartId = 0
+        }
         if (instance !== running) return
         // Android ended the service on its own, so Kestrel no longer listens, and the Orchestrator must know it.
         // Kestrel says so in place of "Off" (section 14.6).
         running = null
+        if (state.value.mode == Mode.OFF) {
+            // Android destroyed a service that "Start listening" started before the Orchestrator handled its
+            // Event.Start, so no TurnOff follows. That Event.Start must ask Android for a new service.
+            serviceState = ServiceState.STOPPED
+            requested = false
+        }
         // Under the battery restriction, Android stops the service a minute after it took its foreground (prototype
         // P2).
         stopBecause(if (conditions.backgroundRestricted()) StopReason.BATTERY_RESTRICTED else StopReason.STOPPED_BY_ANDROID)
