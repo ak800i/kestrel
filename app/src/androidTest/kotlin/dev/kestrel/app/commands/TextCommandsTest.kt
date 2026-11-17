@@ -276,5 +276,21 @@ class TextCommandsTest {
         screen.awaitLine("Password: 0 characters")
     }
 
+    @Test
+    fun whatADictationTypedBeforeStopCancelledItCanBeUndone() {
+        editNotes()
+        val words = listOf("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima")
+
+        // Each new line goes in on its own, so "stop" cancels the dictation between two of its parts.
+        CommandTests.send(words.joinToString(" new line "))
+        runBlocking {
+            screen.awaitElement { it.packageName == ScreenServiceRule.FIXTURES && it.label?.startsWith("Notes: \"Alpha") == true }
+        }
+        assertEquals(Outcome.CANCELLED, CommandTests.say("stop").outcome)
+
+        done("undo")
+        screen.awaitLine("Notes: \"\" 0-0")
+    }
+
     // Tasks 6 and 7 add their tests above this line.
 }

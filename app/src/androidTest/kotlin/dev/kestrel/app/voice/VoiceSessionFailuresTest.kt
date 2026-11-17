@@ -25,6 +25,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -186,6 +188,53 @@ class VoiceSessionFailuresTest {
         assertFalse(recognizerLoaded)
     }
 
+    @Test
+    fun aStartFromBeforeRecognitionResumedGoesToNoTranscript() = runBlocking {
+        val session = session()
+        try {
+            // Paused recognition skips an utterance without the name, which then ends without any event.
+            session.recognition = Recognition.NAMED
+            session.startMicrophone()
+            detector.hearsSpeech = true
+            microphone.feed(0.02f)
+            listener.await { it == Event.Speaking }
+            detector.hearsSpeech = false
+            microphone.feed(0.02f)
+
+            // The setter drops that start only when it compares the recognition from before its write.
+            session.recognition = Recognition.ALL
+            detector.next.add(Utterance(0, FloatArray(seconds(0.5f).toInt())))
+            microphone.feed(0.02f)
+
+            val heard = listener.await { it is Event.Heard } as Event.Heard
+            assertNull(heard.spokeAt)
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun speechThatTheMicrophoneHearsAsItStartsKeepsItsStart() = runBlocking {
+        val session = session()
+        try {
+            // The recording delivers speech before start() returns, so the session must drop old starts before it.
+            microphone.onStart = {
+                detector.hearsSpeech = true
+                microphone.feed(0.02f)
+                runBlocking { listener.await { it == Event.Speaking } }
+            }
+            session.startMicrophone()
+            detector.hearsSpeech = false
+            detector.next.add(Utterance(0, FloatArray(seconds(0.5f).toInt())))
+            microphone.feed(0.02f)
+
+            val heard = listener.await { it is Event.Heard } as Event.Heard
+            assertNotNull(heard.spokeAt)
+        } finally {
+            session.close()
+        }
+    }
+
     private fun session() = VoiceSession(context, detector, spotter, recognizer, synthesizer, microphone, listener)
 
     private fun seconds(value: Float): Long = (value * SAMPLE_RATE).toLong()
@@ -212,7 +261,7 @@ class VoiceSessionFailuresTest {
         fun checkOpen() = check(!closed) { "The fake $name is closed" }
     }
 
-    /** Hears no speech, and returns the utterances in [next], one on each frame. */
+    /** Hears speech while [hearsSpeech], and returns the utterances in [next], one on each frame. */
     private class FakeDetector(closes: MutableList<String>) : FakeEngine("detector", closes), SpeechDetector {
         val next = ConcurrentLinkedQueue<Utterance>()
 
@@ -226,7 +275,8 @@ class VoiceSessionFailuresTest {
             return emptyList()
         }
 
-        override val hearsSpeech = false
+        @Volatile
+        override var hearsSpeech = false
     }
 
     private class FakeSpotter(closes: MutableList<String>) : FakeEngine("spotter", closes), KeywordSpotter {
@@ -267,11 +317,15 @@ class VoiceSessionFailuresTest {
         override val echoCancelling = false
         var starts = 0
         var stopFailure: Exception? = null
+
+        /** Runs at the end of each [start], as a recording that delivers its first frames before start() returns. */
+        var onStart: (() -> Unit)? = null
         private var onFrame: ((FloatArray) -> Unit)? = null
 
         override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
             starts++
             this.onFrame = onFrame
+            onStart?.invoke()
         }
 
         override fun stop() {

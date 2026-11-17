@@ -97,19 +97,19 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
         val before = state.toTextState()
         val parts = Dictation.insert(before, spoken, password = false, startsUtterance = startsUtterance)
         if (parts.isEmpty()) return CommandResult(Outcome.IGNORED)
-        for ((index, part) in parts.withIndex()) {
-            val result = when (part) {
-                is DictationPart.Text -> if (index == 0) apply(screen, field, part.change) else atCursor(screen, field, part.change.replacement)
-                DictationPart.NewLine -> screen.text.newLine(field.key)
+        try {
+            for ((index, part) in parts.withIndex()) {
+                val result = when (part) {
+                    is DictationPart.Text -> if (index == 0) apply(screen, field, part.change) else atCursor(screen, field, part.change.replacement)
+                    DictationPart.NewLine -> screen.text.newLine(field.key)
+                }
+                if (result is ActionResult.Failed) return failed(result)
             }
-            if (result is ActionResult.Failed) {
-                // What went in before the failure can still be undone.
-                record(screen, field, before)
-                return failed(result)
-            }
+            return CommandResult(Outcome.DONE, repeatable = true)
+        } finally {
+            // What went in before a failure, or before "stop" cancelled the command between two parts, can still be undone.
+            withContext(kotlinx.coroutines.NonCancellable) { record(screen, field, before) }
         }
-        record(screen, field, before)
-        return CommandResult(Outcome.DONE, repeatable = true)
     }
 
     /** A phone number replaces the selection as it is, without the spaces and capitals of dictation. */
@@ -155,10 +155,11 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
 
     /** "Stop editing" ends dictation into the focused field and hides the keyboard. */
     private suspend fun stopEditing(screen: ScreenSession): CommandResult {
-        val snapshot = screen.snapshots.current().snapshot
-        val field = TextFields.focused(snapshot) ?: return CommandResult(Outcome.DONE)
+        val field = TextFields.focused(screen.snapshots.current().snapshot) ?: return CommandResult(Outcome.DONE)
         editing.stop(field)
-        if (TextFields.keyboardShows(snapshot)) screen.actions.global(GlobalAction.BACK)
+        // Read on the live screen right before the press: Back without the keyboard would leave the screen.
+        screen.snapshots.invalidate()
+        if (TextFields.keyboardShows(screen.snapshots.current().snapshot)) screen.actions.global(GlobalAction.BACK)
         return CommandResult(Outcome.DONE)
     }
 
@@ -186,11 +187,20 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
             return CommandResult(Outcome.FAILED, show = if (redo) TextCommandTexts.NOTHING_TO_REDO else TextCommandTexts.NOTHING_TO_UNDO)
         }
         val current = state.toTextState()
-        val target = (if (redo) history.redo(id, current) else history.undo(id, current))
-            ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.textChanged(redo))
-        return when (val result = apply(screen, field, EditModel.between(current.text, target))) {
-            is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
-            is ActionResult.Failed -> failed(result)
+        val target = history.peek(id, current, redo) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.textChanged(redo))
+        var took = false
+        try {
+            val result = apply(screen, field, EditModel.between(current.text, target))
+            took = result is ActionResult.Done
+            return when (result) {
+                is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+                is ActionResult.Failed -> failed(result)
+            }
+        } finally {
+            // The history moves only when the field took the state: a failed or cancelled edit leaves it as it was, and
+            // one cancelled after the field took it moves it, so that the history still fits the field.
+            if (!took) took = withContext(kotlinx.coroutines.NonCancellable) { screen.text.read(field.key)?.text == target.text }
+            if (took) history.step(id, redo)
         }
     }
 

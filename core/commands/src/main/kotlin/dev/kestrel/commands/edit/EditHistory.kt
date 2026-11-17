@@ -45,30 +45,37 @@ class EditHistory(private val maxEdits: Int = 50, private val maxFields: Int = 2
      * after that edit; then the field's history is dropped.
      */
     @Synchronized
-    fun undo(field: String, current: TextState): TextState? {
-        val edits = fields[field] ?: return null
-        if (edits.applied == 0) return null
-        val edit = edits.edits[edits.applied - 1]
-        if (current.text != edit.after.text) {
-            fields.remove(field)
-            return null
-        }
-        edits.applied--
-        return edit.before
-    }
+    fun undo(field: String, current: TextState): TextState? =
+        peek(field, current, redo = false)?.also { step(field, redo = false) }
 
     /** The state after the edit that "undo" took back last, in the same way as [undo]. */
     @Synchronized
-    fun redo(field: String, current: TextState): TextState? {
+    fun redo(field: String, current: TextState): TextState? =
+        peek(field, current, redo = true)?.also { step(field, redo = true) }
+
+    /**
+     * What [undo], or [redo] when [redo] is true, would put back, without moving the history, so that an edit that the
+     * field did not take, or that was cancelled, changes nothing; [step] moves it once the field shows the state. Null
+     * in the same cases as [undo] and [redo], which drop the field's history in the same way.
+     */
+    @Synchronized
+    fun peek(field: String, current: TextState, redo: Boolean): TextState? {
         val edits = fields[field] ?: return null
-        if (edits.applied == edits.edits.size) return null
-        val edit = edits.edits[edits.applied]
-        if (current.text != edit.before.text) {
+        if (if (redo) edits.applied == edits.edits.size else edits.applied == 0) return null
+        val edit = edits.edits[if (redo) edits.applied else edits.applied - 1]
+        if (current.text != (if (redo) edit.before else edit.after).text) {
             fields.remove(field)
             return null
         }
-        edits.applied++
-        return edit.after
+        return if (redo) edit.after else edit.before
+    }
+
+    /** Moves [field]'s history one edit back, or forward when [redo] is true, after the field took what [peek] gave. */
+    @Synchronized
+    fun step(field: String, redo: Boolean) {
+        val edits = fields[field] ?: return
+        if (redo && edits.applied < edits.edits.size) edits.applied++
+        if (!redo && edits.applied > 0) edits.applied--
     }
 
     override fun toString() = "EditHistory(${fields.size} fields)"

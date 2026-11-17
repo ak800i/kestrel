@@ -76,6 +76,8 @@ internal class VoiceSession(
     override var recognition: Recognition
         get() = pipeline.recognition
         set(value) {
+            // Before the write: the pipeline's report of speech that the change brings must come after the drop, and the
+            // call needs the recognition from before the change (VoiceSessionFailuresTest checks the order).
             starts.recognitionChanged(pipeline.recognition, value)
             pipeline.recognition = value
         }
@@ -83,6 +85,7 @@ internal class VoiceSession(
     override fun startMicrophone() {
         // A frame would reach a closed engine, and the recording would stay open with nobody to stop it.
         check(!closed.get()) { "The session is closed" }
+        // Before the start, so that the drop never takes the start of speech that the new recording hears.
         starts.microphoneStarted()
         microphone.start(onFrame = pipeline::accept, onError = listener::microphoneFailed)
     }

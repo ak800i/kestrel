@@ -83,7 +83,6 @@ internal object TextFields {
         }.singleOrNull()
     }
 
-    /** A search field by its names (its hint among them) or its view ID, as `SearchView`'s box `search_src_text`. */
     /**
      * Whether [target] names an element in [view] that is no text field, so that "start editing" taps nothing: a number
      * names the element of its badge, whatever it is (plan 3A), such as the phone app's Call button, and a name that no
@@ -118,6 +117,7 @@ internal object TextFields {
         return number.toString().takeIf { text -> text.any { it in '0'..'9' || it == '*' || it == '#' } }
     }
 
+    /** A search field by its names (its hint among them) or its view ID, as `SearchView`'s box `search_src_text`. */
     private fun isSearchField(snapshot: ScreenSnapshot, element: ScreenElement): Boolean =
         ScreenTargets.names(snapshot, element).any { "search" in Normalizer.words(it) } || idSaysSearch(element)
 

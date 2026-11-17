@@ -63,6 +63,23 @@ class EditHistoryTest {
     }
 
     @Test
+    fun anUndoOrRedoThatTheFieldDidNotTakeLeavesTheHistoryAsItWas() {
+        val history = EditHistory()
+        history.record("app/field", empty, hello)
+        history.record("app/field", hello, helloWorld)
+
+        // The field refused the state, or the command was cancelled: the history does not move.
+        assertEquals(hello, history.peek("app/field", helloWorld, redo = false))
+        assertEquals(hello, history.peek("app/field", helloWorld, redo = false))
+        history.step("app/field", redo = false)
+        assertEquals(empty, history.peek("app/field", hello, redo = false))
+        assertEquals(helloWorld, history.peek("app/field", hello, redo = true))
+        assertEquals(helloWorld, history.redo("app/field", hello))
+        assertTrue(history.canUndo("app/field"))
+        assertFalse(history.canRedo("app/field"))
+    }
+
+    @Test
     fun itKeepsFiftyEditsOfTwentyFields() {
         val history = EditHistory()
         val states = (0..51).map { TextState("a".repeat(it), it, it) }
