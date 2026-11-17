@@ -1,0 +1,190 @@
+package dev.kestrel.commands.edit
+
+import dev.kestrel.commands.Place
+import dev.kestrel.commands.TextCommand
+import dev.kestrel.commands.TextScope
+import dev.kestrel.commands.TextUnit
+
+/**
+ * Plans the editing commands (design spec, section 9.7): every offset, move and range comes from the field's text and
+ * selection, never from Android's movement actions, which WebView and Chrome take from their own cursor. A phrase is
+ * found with [TextSearch], nearest to the cursor.
+ */
+object EditModel {
+    fun plan(command: TextCommand, state: TextState): EditStep = when (command) {
+        is TextCommand.Delete -> delete(command.scope, state)
+        is TextCommand.Select -> select(command.scope, state)
+        TextCommand.Unselect -> EditStep.Select(state.selectionEnd, state.selectionEnd)
+        is TextCommand.MoveCursor -> move(command.place, state)
+        else -> EditStep.Fail(EditFailure.NOT_AN_EDIT)
+    }
+
+    /** The change that turns [from] into [to]: only the range that differs, then [to]'s selection. Undo and redo use it. */
+    fun between(from: String, to: TextState): EditStep.Change {
+        val shorter = minOf(from.length, to.text.length)
+        var prefix = 0
+        while (prefix < shorter && from[prefix] == to.text[prefix]) prefix++
+        var suffix = 0
+        while (suffix < shorter - prefix && from[from.length - 1 - suffix] == to.text[to.text.length - 1 - suffix]) suffix++
+        val replacement = to.text.substring(prefix, to.text.length - suffix)
+        return EditStep.Change(prefix, from.length - suffix, replacement, to.selectionStart, to.selectionEnd)
+    }
+
+    private fun delete(scope: TextScope?, state: TextState): EditStep {
+        val text = state.text
+        if (scope == null) {
+            if (state.hasSelection) return removal(state.selectionStart, state.selectionEnd)
+            // A bare "delete" deletes the word before the cursor, as Ctrl+Backspace does.
+            val start = TextUnits.move(text, state.selectionStart, 1, TextUnit.WORD, forward = false)
+            if (start == state.selectionStart) return EditStep.Fail(EditFailure.NOTHING_THERE)
+            return tidied(text, start, state.selectionStart)
+        }
+        val range = when (val found = range(scope, state)) {
+            is Missing -> return found.step
+            is Found -> found.range
+        }
+        if (range.isEmpty()) return EditStep.Fail(EditFailure.NOTHING_THERE)
+        val end = range.last + 1
+        return when {
+            scope is TextScope.Phrase || scope is TextScope.FromTo || scope is TextScope.Between -> tidied(text, range.first, end)
+            scope is TextScope.Units && (scope.unit == TextUnit.WORD || scope.unit == TextUnit.SENTENCE) ->
+                tidied(text, range.first, end)
+            scope is TextScope.Units && (scope.unit == TextUnit.LINE || scope.unit == TextUnit.PARAGRAPH) ->
+                lineTidied(text, range.first, end, paragraph = scope.unit == TextUnit.PARAGRAPH)
+            else -> removal(range.first, end)
+        }
+    }
+
+    private fun select(scope: TextScope, state: TextState): EditStep = when (val found = range(scope, state)) {
+        is Missing -> found.step
+        is Found -> EditStep.Select(found.range.first, found.range.last + 1)
+    }
+
+    private fun move(place: Place, state: TextState): EditStep = when (val found = offset(place, state)) {
+        is Missing -> found.step
+        is Found -> EditStep.Select(found.range.first, found.range.first)
+    }
+
+    /** Where [place] is in [state]'s text, as an empty range at that offset. */
+    private fun offset(place: Place, state: TextState): Lookup {
+        val text = state.text
+        val cursor = state.selectionEnd
+        val offset = when (place) {
+            Place.Start -> 0
+            Place.End -> text.length
+            is Place.Before -> (TextSearch.find(text, place.phrase, cursor) ?: return notFound(place.phrase)).first
+            is Place.After -> (TextSearch.find(text, place.phrase, cursor) ?: return notFound(place.phrase)).last + 1
+            is Place.Between -> when (val both = pair(text, place.first, place.second, cursor)) {
+                is PairLookup.Missing -> return Missing(both.step)
+                is PairLookup.Both -> both.first.last + 1
+            }
+            is Place.Units -> {
+                val from = if (place.forward) state.selectionEnd else state.selectionStart
+                val to = TextUnits.move(text, from, place.count, place.unit, place.forward)
+                if (to == from && !state.hasSelection) return Missing(EditStep.Fail(EditFailure.NOTHING_THERE))
+                to
+            }
+        }
+        return Found(offset until offset)
+    }
+
+    /** The text that [scope] names in [state]. */
+    private fun range(scope: TextScope, state: TextState): Lookup {
+        val text = state.text
+        val cursor = state.selectionEnd
+        val range = when (scope) {
+            TextScope.Selection -> if (state.hasSelection) {
+                state.selectionStart until state.selectionEnd
+            } else {
+                return Missing(EditStep.Fail(EditFailure.NOTHING_SELECTED))
+            }
+            TextScope.All -> text.indices
+            TextScope.ToStart -> 0 until state.selectionEnd
+            TextScope.ToEnd -> state.selectionStart until text.length
+            is TextScope.Phrase -> TextSearch.find(text, scope.text, cursor) ?: return notFound(scope.text)
+            is TextScope.FromTo -> when (val both = pair(text, scope.from, scope.to, cursor)) {
+                is PairLookup.Missing -> return Missing(both.step)
+                is PairLookup.Both -> both.first.first..both.second.last
+            }
+            is TextScope.Between -> when (val both = pair(text, scope.from, scope.to, cursor)) {
+                is PairLookup.Missing -> return Missing(both.step)
+                is PairLookup.Both -> trimmed(text, both.first.last + 1, both.second.first)
+            }
+            is TextScope.Units -> TextUnits.span(state, scope.count, scope.unit, scope.forward)
+                ?: return Missing(EditStep.Fail(EditFailure.NOTHING_THERE))
+        }
+        return Found(range)
+    }
+
+    /**
+     * [first] nearest to the cursor, and [second] nearest after it (or else nearest before it), in the order in which
+     * they stand in the text.
+     */
+    private fun pair(text: String, first: String, second: String, cursor: Int): PairLookup {
+        val one = TextSearch.find(text, first, cursor)
+            ?: return PairLookup.Missing(EditStep.Fail(EditFailure.NOT_FOUND, first))
+        val others = TextSearch.all(text, second).filter { it != one }
+        val after = others.filter { it.first > one.last }.minByOrNull { it.first }
+        if (after != null) return PairLookup.Both(one, after)
+        val before = others.filter { it.last < one.first }.maxByOrNull { it.last }
+            ?: return PairLookup.Missing(EditStep.Fail(EditFailure.NOT_FOUND, second))
+        return PairLookup.Both(before, one)
+    }
+
+    private fun removal(start: Int, end: Int) = EditStep.Change(start, end, "", start, start)
+
+    /**
+     * Deletes [start] until [end] with one space next to it, so that no double space and no space before punctuation
+     * stays behind: the space before it, or at the start of a line the space after it.
+     */
+    private fun tidied(text: String, start: Int, end: Int): EditStep.Change {
+        val before = text.getOrNull(start - 1)
+        val after = text.getOrNull(end)
+        return when {
+            before == ' ' && (after == null || after.isWhitespace() || after in CLOSING) -> removal(start - 1, end)
+            (before == null || before == '\n') && after == ' ' -> removal(start, end + 1)
+            else -> removal(start, end)
+        }
+    }
+
+    /** Deletes whole lines or paragraphs with the line break, or the blank lines, that separated them from the rest. */
+    private fun lineTidied(text: String, start: Int, end: Int, paragraph: Boolean): EditStep.Change {
+        var from = start
+        var to = end
+        val endsLine = to == text.length || text[to] == '\n'
+        val startsLine = from == 0 || text[from - 1] == '\n'
+        if (endsLine && from > 0 && text[from - 1] == '\n') {
+            from--
+            if (paragraph) while (from > 0 && text[from - 1].isWhitespace()) from--
+        } else if (startsLine && to < text.length && text[to] == '\n') {
+            to++
+            if (paragraph) while (to < text.length && text[to].isWhitespace()) to++
+        }
+        return removal(from, to)
+    }
+
+    /** [start] until [end] without the whitespace at both ends. */
+    private fun trimmed(text: String, start: Int, end: Int): IntRange {
+        var from = start
+        var to = end
+        while (from < to && text[from].isWhitespace()) from++
+        while (to > from && text[to - 1].isWhitespace()) to--
+        return from until to
+    }
+
+    private fun notFound(phrase: String) = Missing(EditStep.Fail(EditFailure.NOT_FOUND, phrase))
+
+    private sealed interface Lookup
+
+    private class Found(val range: IntRange) : Lookup
+
+    private class Missing(val step: EditStep.Fail) : Lookup
+
+    private sealed interface PairLookup {
+        class Both(val first: IntRange, val second: IntRange) : PairLookup
+
+        class Missing(val step: EditStep.Fail) : PairLookup
+    }
+
+    private val CLOSING = setOf('.', ',', '!', '?', ';', ':', ')', ']')
+}
