@@ -85,7 +85,7 @@ internal object ListeningTexts {
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
-    const val RINGING = "A call is ringing. Say \"answer\" or \"decline\"."
+    const val RINGING = "A call is ringing. Say \"answer\" or \"decline\""
     const val IN_CALL = "Paused during the call"
 
     // Why a call command failed (section 8.7).

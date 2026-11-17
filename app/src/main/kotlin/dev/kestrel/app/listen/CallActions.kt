@@ -85,8 +85,8 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
 
     private suspend fun hangUp(): String? {
         if (api.allowed()) return if (api.end()) null else ListeningTexts.CANNOT_HANG_UP
-        // Google's phone app gives its end-call control no label (prototype P3), so without the permission this works
-        // only with a phone app that names it "End call".
+        // Without the permission, it clicks the in-call screen's "End call" control, which Google's phone app has on
+        // kestrel-api37 (plan 2D's Task 3), and says that it needs the permission only when it finds no such control.
         val controls = screen() ?: return ListeningTexts.HANG_UP_NEEDS_PERMISSION
         return if (clickInCall(controls, END_CALL, ifOff = false)) null else ListeningTexts.HANG_UP_NEEDS_PERMISSION
     }

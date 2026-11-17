@@ -68,7 +68,7 @@ class CallActionsTest {
 
         assertEquals(ListeningTexts.CANNOT_ANSWER, actions.perform(Request.Answer(speaker = false)))
         assertEquals(ListeningTexts.CANNOT_DECLINE, actions.perform(Request.Decline))
-        // The end-call control of Google's phone app has no label (prototype P3), so only the permission helps.
+        // Without the permission, Kestrel says that it needs it only when it finds no "End call" control.
         assertEquals(ListeningTexts.HANG_UP_NEEDS_PERMISSION, actions.perform(Request.HangUp))
         api.permitted = true
         api.ends = false

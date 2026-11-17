@@ -462,7 +462,11 @@ object Rules {
     // Kestrel stops speaking at once, because Android refuses its audio focus during a call (prototype P3). The call
     // cancels a running task and ends the wait for one; sub-project 5 asks "Continue the task?" afterwards (section 14.4).
     private fun enterCall(state: State, mode: Mode): Step = switch(
-        state.copy(beforeCall = state.mode, work = Work.IDLE, cancelled = state.cancelled || state.work == Work.RUNNING_TASK),
+        state.copy(
+            beforeCall = state.mode,
+            work = Work.IDLE,
+            cancelled = state.cancelled || state.work == Work.RUNNING_TASK,
+        ),
         mode,
         *listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },
@@ -473,7 +477,11 @@ object Rules {
     // During a call, the toggle, the pause and the resume choose the mode that comes back after the call, and the bar
     // shows it.
     private fun afterCall(state: State, mode: Mode): Step =
-        if (state.beforeCall == mode) Step(state) else Step(state.copy(beforeCall = mode), listOf(Effect.Show(Feedback.ModeChanged(mode))))
+        if (state.beforeCall == mode) {
+            Step(state)
+        } else {
+            Step(state.copy(beforeCall = mode), listOf(Effect.Show(Feedback.ModeChanged(mode))))
+        }
 
     /** This step, then the step that [next] makes from its state. */
     private fun Step.then(next: (State) -> Step): Step = next(state).let { Step(it.state, effects + it.effects) }

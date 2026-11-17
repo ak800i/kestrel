@@ -1894,6 +1894,39 @@ class ListeningTest {
         assertEquals(2, calls.starts)
     }
 
+    @Test
+    fun aCallReportThatComesAfterTheSessionClosedIsDropped() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        // Android's listener for the closed session reports a call that was on its way while the session closed.
+        calls.given.first().invoke(CallState.RINGING)
+        runCurrent()
+
+        assertEquals(2, calls.given.size)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aCallStateThatCannotBeUnwatchedIsReportedAndKestrelStillTurnsOff() = runTest {
+        calls.stopFailure = IllegalStateException("The telephony service has gone")
+        val listening = listeningWithSession()
+        log.clear()
+
+        listening.send(Event.TurnOff)
+        runCurrent()
+
+        assertEquals("Watching the call state", reports.single().first)
+        assertEquals(listOf("close", "closed", "stop"), log)
+        assertFalse(listening.sessionOpen.value)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+    }
+
     /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
     private fun readError() = IllegalStateException("The microphone failed with error -6")
 
@@ -2112,17 +2145,24 @@ class ListeningTest {
         var starts = 0
         var stops = 0
         var failure: Exception? = null
+        var stopFailure: Exception? = null
         private var report: ((CallState) -> Unit)? = null
+
+        // Every report that start() was given, also after stop(): one that is on its way while a session closes may
+        // still come.
+        val given = mutableListOf<(CallState) -> Unit>()
 
         override fun start(report: (CallState) -> Unit) {
             starts++
             failure?.let { throw it }
             this.report = report
+            given += report
         }
 
         override fun stop() {
             stops++
             report = null
+            stopFailure?.let { throw it }
         }
 
         /** The phone's call state changes to [state], as Android's listener reports it. */
