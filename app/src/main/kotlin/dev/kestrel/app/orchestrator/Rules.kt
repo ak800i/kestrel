@@ -83,9 +83,10 @@ data class State(
             speaking -> Recognition.NONE
             // While a call rings, the call commands may come without the name (section 8.7).
             mode == Mode.RINGING -> Recognition.ALL
-            // During a call with the setting, every utterance, as while Kestrel listens, so that a command whose "Kestrel"
-            // the spotter missed still counts; Requests reads only those that start with the name (section 8.7).
-            mode == Mode.IN_CALL -> if (callCommands) Recognition.ALL else Recognition.NONE
+            // During a call with the setting, only the utterances at whose start the keyword spotter heard "Kestrel", as
+            // while Kestrel is paused, so that Kestrel never transcribes the call's conversation; when the spotter misses
+            // the name, the owner says the command again (section 8.7).
+            mode == Mode.IN_CALL -> if (callCommands) Recognition.NAMED else Recognition.NONE
             // While Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the owner dictates the
             // task and may pause in it.
             work == Work.AWAITING_TASK -> Recognition.ANSWER

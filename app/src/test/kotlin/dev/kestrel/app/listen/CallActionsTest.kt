@@ -14,6 +14,10 @@ class CallActionsTest {
     // The controls with these labels are on the screen now, and those of them that are on.
     private var controls = setOf("Answer", "Decline")
     private var checked = emptySet<String>()
+
+    // The labels in SystemUI's windows, which lie above the app windows: the call's heads-up notification, or another
+    // app's.
+    private var systemUi = emptySet<String>()
     private var serviceOn = true
 
     // The in-call screen comes to the front at this check after Kestrel asked for it; until then another app is in front.
@@ -30,7 +34,18 @@ class CallActionsTest {
             return shown
         }
 
-        override fun click(label: String, ifOff: Boolean): Boolean {
+        override fun clickIncoming(label: String): Boolean {
+            if (label in systemUi) {
+                clicks += label
+                screenLog += "SystemUI $label"
+                return true
+            }
+            clicks += label
+            screenLog += label
+            return label in controls
+        }
+
+        override fun clickInCall(label: String, ifOff: Boolean): Boolean {
             if (ifOff && label in controls && label in checked) return true
             clicks += label
             screenLog += label
@@ -182,6 +197,31 @@ class CallActionsTest {
 
         assertTrue(clicks.isEmpty())
         assertTrue(screenLog.none { it == "in front" })
+    }
+
+    @Test
+    fun theInCallControlsAreNeverClickedInSystemUisWindows() = runTest {
+        // Another app's heads-up notification lies above the in-call screen, with actions of the same labels.
+        systemUi = setOf("Mute", "Speaker", "End call")
+        api.inCallControls = setOf("Mute", "Speaker", "End call")
+
+        assertNull(actions.perform(Request.Mute))
+        assertNull(actions.perform(Request.Speaker))
+        assertNull(actions.perform(Request.HangUp))
+
+        assertEquals(listOf("Mute", "Speaker", "End call"), clicks)
+        assertTrue(screenLog.none { it.startsWith("SystemUI") })
+    }
+
+    @Test
+    fun withoutThePermissionAnswerAndDeclineAreFoundInTheCallsHeadsUpNotification() = runTest {
+        controls = emptySet()
+        systemUi = setOf("Answer", "Decline")
+
+        assertNull(actions.perform(Request.Answer(speaker = false)))
+        assertNull(actions.perform(Request.Decline))
+
+        assertEquals(listOf("SystemUI Answer", "SystemUI Decline"), screenLog)
     }
 
     private inner class FakeCallApi : CallApi {

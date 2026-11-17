@@ -375,12 +375,18 @@ class Listening internal constructor(
     /**
      * Speaks [text] with the open voice session's voice when that voice speaks with [options], for "Try it" on the page
      * "Voice and speech" (section 15), so that no second copy of the voice is loaded beside the session's, and the echo
-     * filter knows the text. Returns how the reply ended, or null when no session is open or its voice differs. Any
-     * thread may call it.
+     * filter knows the text. Returns how the reply ended, or null when no session is open or its voice differs. A
+     * cancelled caller, such as a page that the owner left, stops this sample, and only this one. Any thread may call
+     * it.
      */
     internal suspend fun speakWithSessionVoice(options: VoiceOptions, text: String): Spoke? {
         val spoken = withContext(thread) { session?.takeIf { it.voice == options }?.speak(text) } ?: return null
-        return spoken.await()
+        try {
+            return spoken.await()
+        } catch (e: CancellationException) {
+            spoken.cancel()
+            throw e
+        }
     }
 
     /**

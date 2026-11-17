@@ -26,9 +26,10 @@
 #             Listening comes back when the call ends. Then, with the permission to answer calls, a plain "answer"
 #             answers a third call through Android's call API and leaves the in-call screen behind, and "answer on
 #             speaker" answers a fourth one, brings the in-call screen to the front and leaves its speaker control on
-#             (the emulator has no earpiece, so its calls are on the speaker from the start). Last, with the swipe lock screen on, a call
-#             that wakes the locked screen starts Kestrel's recording, which Android must not silence, and "decline"
-#             declines it (design spec, section 8.7; spike S1). On a phone the check is skipped and changes nothing
+#             (the emulator has no earpiece, so its calls are on the speaker from the start). Last, with the swipe lock
+#             screen on, a call that wakes the locked screen starts Kestrel's recording, which Android must not silence,
+#             and "decline" declines it (design spec, section 8.7; spike S1). On a phone the check is skipped and changes
+#             nothing
 #   restart   after Android ended Kestrel's process ('am crash'), listening comes back once the accessibility service has
 #             connected again. Android does not restart an app that crashed twice within 2 minutes, so wait 2 minutes
 #             before you run the script again.
@@ -61,11 +62,10 @@
 # Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the tiles, the
 # assistant role, "Commands during a call", the accessibility settings, the lock screen and the permissions, deletes the
 # calls that it made from the call log, and deletes the dump of the screen. When Kestrel's accessibility service was off
-# before the run, Kestrel's notification
-# that the service is off stays afterwards, because the shell cannot remove another app's notification; swipe it away.
-# If it cannot put something back, also because Ctrl+C interrupted it while it put things back, it says at the end what
-# is left and how to put it back by hand. Then, after
-# Ctrl+C, and when a check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
+# before the run, Kestrel's notification that the service is off stays afterwards, because the shell cannot remove
+# another app's notification; swipe it away. If it cannot put something back, also because Ctrl+C interrupted it while
+# it put things back, it says at the end what is left and how to put it back by hand. Then, after Ctrl+C, and when a
+# check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
 # -Reboot it reboots a phone, or closes an emulator and starts it from a cold boot; a phone with a PIN, pattern or
 # password asks you to unlock it after the reboot, and on a phone the script also wakes the screen and asks you to
 # unlock it before it checks the recording, because Kestrel records only while the screen is on and the phone unlocked.
@@ -158,21 +158,28 @@ function Test-FixtureInFront {
     ((Invoke-Checked 'dumpsys activity activities') -join "`n") -match $fixturePattern
 }
 
-# Whether the control on the screen with the label, such as the in-call screen's speaker control, is on: the element
-# labelled $Label, or a parent of it, is checked. Only the answer leaves this function, because the dump names the call.
-function Test-ControlOn([string]$Label) {
+# The state of the control on the screen with the label, such as the in-call screen's speaker control: 'on' when the
+# element labelled $Label, or a parent of it, is checked, 'off' when such an element is on the screen and is not, and
+# 'missing' when uiautomator could not read the screen or found no such element. Only the answer leaves this function,
+# because the dump names the call.
+function Get-ControlState([string]$Label) {
     $xml = New-Object System.Xml.XmlDocument
-    try { $xml.LoadXml((Get-UiDump)) } catch { return $false }
+    try { $xml.LoadXml((Get-UiDump)) } catch { return 'missing' }
+    $state = 'missing'
     foreach ($node in @($xml.SelectNodes('//node'))) {
         if ($node.GetAttribute('content-desc').Trim() -ne $Label -and $node.GetAttribute('text').Trim() -ne $Label) {
             continue
         }
+        $state = 'off'
         for ($at = $node; $at -and $at.LocalName -eq 'node'; $at = $at.ParentNode) {
-            if ($at.GetAttribute('checked') -eq 'true') { return $true }
+            if ($at.GetAttribute('checked') -eq 'true') { return 'on' }
         }
     }
-    $false
+    $state
 }
+
+# Whether the control on the screen with the label is on (see Get-ControlState).
+function Test-ControlOn([string]$Label) { (Get-ControlState $Label) -eq 'on' }
 
 # Quotes a text for the device's shell, in which a single quote becomes '\''.
 function Format-ShellText([string]$Text) { "'" + ($Text -replace "'", "'\''") + "'" }
@@ -519,7 +526,9 @@ function Invoke-MuteCheck {
         if (-not (Wait-Condition -TimeoutSeconds 10 { Test-FixtureInFront })) {
             return 'the screen with another app''s "Mute" did not come back to the front'
         }
-        if (Test-ControlOn $muteLabel) { return '"Kestrel, mute" switched on the "Mute" of another app' }
+        $other = Get-ControlState $muteLabel
+        if ($other -eq 'missing') { return 'uiautomator could not read the "Mute" of the other app, so the check cannot tell whether Kestrel left it alone' }
+        if ($other -eq 'on') { return '"Kestrel, mute" switched on the "Mute" of another app' }
     } finally {
         Invoke-Hook voice-call-commands -On $(if ($callCommandsBefore) { 'true' } else { 'false' }) | Out-Null
         # The fixture closes, so that it is not in front during the next call.

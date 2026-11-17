@@ -50,6 +50,22 @@ Describe 'The helpers of the A71 session' {
         Get-BatteryUseGap -Dump @('  Estimated power use (mAh):') -Uid 'u0a331' | Should -Match 'no battery capacity'
         Get-BatteryUseGap -Dump ($estimates + '    UID u0a196: 0.132') -Uid 'u0a331' | Should -Match "no estimate for Kestrel's UID u0a331"
         Get-BatteryUseGap -Dump ($estimates + '    UID u0a331: 0.00339 bg: 0.00000700') -Uid 'u0a331' | Should -BeNullOrEmpty
+        Get-BatteryUseGap -Dump @('  Estimated power use (mAh):', '    Capacity: 0, Computed drain: 0', '    UID u0a331: 0.1') -Uid 'u0a331' |
+            Should -Match 'capacity of 0 mAh'
+    }
+
+    It 'remembers the last crash of Kestrel for the device, and how long to wait after it' {
+        $path = Join-Path $TestDrive 'owner\session-state.txt'
+        $crash = [datetime]::new(2026, 11, 17, 10, 0, 0, [DateTimeKind]::Utc)
+
+        Read-SessionCrash -Path $path -Serial 'R58N12345AB' | Should -BeNullOrEmpty
+        Write-SessionCrash -Path $path -Serial 'R58N12345AB' -Time $crash
+
+        Read-SessionCrash -Path $path -Serial 'R58N12345AB' | Should -Be $crash
+        Read-SessionCrash -Path $path -Serial 'emulator-5554' | Should -BeNullOrEmpty
+        Get-CrashWait -LastCrash $crash -Now $crash.AddSeconds(5) | Should -Be 120
+        Get-CrashWait -LastCrash $crash -Now $crash.AddSeconds(130) | Should -Be 0
+        Get-CrashWait -LastCrash $null -Now $crash | Should -Be 0
     }
 
     It 'reads the mode of an app op from the package''s line only' {

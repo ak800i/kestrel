@@ -722,9 +722,10 @@ class RulesTest {
         assertEquals(Step(commands), Rules.next(commands, Event.Heard("Hang up.", named = false)))
         assertEquals(Step(commands), Rules.next(commands, Event.Heard("Mute.", named = false)))
         // With the setting, Kestrel records during the call while the phone is unlocked; the other person hears the
-        // commands too (section 8.7).
+        // commands too (section 8.7). It transcribes only the utterances at whose start the keyword spotter heard
+        // "Kestrel", so never the call's conversation.
         assertTrue(commands.microphone)
-        assertEquals(Recognition.ALL, commands.recognition)
+        assertEquals(Recognition.NAMED, commands.recognition)
         assertFalse(commands.copy(screenOn = false).microphone)
     }
 

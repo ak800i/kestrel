@@ -23,7 +23,9 @@
 #                 background, and whether Kestrel can answer "Yes?" after each start
 #   assistant     Kestrel as the assistant, with its accessibility service off: what the role alone does (a start in the
 #                 background, "Kestrel, open settings" and the restore through the assistant service after Android ended
-#                 Kestrel's process), the assistant gesture and the Galaxy Buds gesture (spike S2)
+#                 Kestrel's process), the assistant gesture and the Galaxy Buds gesture (spike S2). Before its crash of
+#                 Kestrel it waits, and says so, until 2 minutes have passed since the session's last crash, whose time
+#                 it keeps in corpus\owner\session-state.txt, also for a later run with -Step
 #   earbuds       the earbud microphone with the owner's earbuds, and replies in the earbuds
 #   recordings    the owner's recordings of the voice corpus: the lines of corpus\commands.txt marked for the owner; a
 #                 line that an earlier session recorded is kept unless the owner records all again
@@ -76,6 +78,8 @@ if ($DryRun -and $Serial -notlike 'emulator-*') { throw 'A dry run runs only on 
 $owner = Join-Path $PSScriptRoot '..\corpus\owner'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
 $resultsFile = if ($DryRun) { Join-Path $owner "session-dry-run-$stamp.txt" } else { Join-Path $owner "session-$stamp.txt" }
+# The session's state across its runs, such as a run with -Step: the time of its last crash of Kestrel.
+$stateFile = if ($DryRun) { Join-Path $owner 'session-dry-run-state.txt' } else { Join-Path $owner 'session-state.txt' }
 $clipsFolder = if ($DryRun) { Join-Path $owner "dry-run-clips-$stamp" } else { Join-Path $owner 'clips' }
 $corpusFile = Join-Path $PSScriptRoot '..\corpus\commands.txt'
 $remote = Get-EvalFolder
@@ -342,6 +346,10 @@ function Invoke-VoiceTestStep {
         return
     }
     $script:gradleUsed = $true
+    # An earlier run's results, such as the emulator's, must never count as this phone's, also when voice-test.ps1 fails
+    # before it deletes them itself.
+    $results = Join-Path $PSScriptRoot '..\app\build\outputs\androidTest-results\connected'
+    if (Test-Path -LiteralPath $results) { Remove-Item -LiteralPath $results -Recurse -Force }
     # The tests log only measurements, never what was said, and voice-test.ps1 prints those lines.
     $lines = @(& "$PSScriptRoot\voice-test.ps1" -Serial $Serial *>&1 | ForEach-Object { $text = "$_"; Write-Host $text; $text })
     $code = $LASTEXITCODE
@@ -350,7 +358,6 @@ function Invoke-VoiceTestStep {
     }
     if ($code -ne 0) { Add-Result voice-tests "ended with exit code $code; the results are in app\build\outputs\androidTest-results\connected" }
     # By name, because the next run of the device tests deletes the result files. Only the names of classes and tests.
-    $results = Join-Path $PSScriptRoot '..\app\build\outputs\androidTest-results\connected'
     foreach ($test in Get-UnpassedTests -Folder $results) { Add-Result voice-tests "did not pass: $test" }
     Add-Result voice-tests "spike S8, OnnxRuntimeTogetherTest: $(if (Test-ClassPassed -Folder $results -Class OnnxRuntimeTogetherTest) { 'passed' } else { 'did not pass' })"
     # connected-test.ps1 ends with 'am force-stop', which leaves a record of the owner's stop, so a restore keeps Kestrel
@@ -370,6 +377,8 @@ function Invoke-ListenCheckStep {
     }
     $lines = @(& "$PSScriptRoot\listen-check.ps1" -Serial $Serial -Reboot:(-not $DryRun) *>&1 | ForEach-Object { $text = "$_"; Write-Host $text; $text })
     $code = $LASTEXITCODE
+    # listen-check's restart and role checks end Kestrel's process with 'am crash'; its end is no earlier than the last.
+    Write-SessionCrash -Path $stateFile -Serial $Serial -Time (Get-Date)
     # Each check's line holds its name, ok, failed or skipped, and seconds.
     foreach ($line in $lines | Where-Object { $_ -match '^[a-z]+\s+(ok|failed|skipped)\b' }) { Add-Result listen-check $line }
     if ($code -ne 0) { Add-Result listen-check "ended with exit code $code" }
@@ -623,7 +632,8 @@ function Wait-SettingsInFront([double]$TimeoutSeconds) {
 # Final review of plan 2D (B, I1): with only the assistant role, without Kestrel's accessibility service and with Kestrel
 # in the background, a start through the hook, "Kestrel, open settings", and the restore through the assistant service's
 # onReady after Android ended Kestrel's process (design spec, sections 8.5, 8.6 and 14). None needs the owner's hands.
-# listen-check's restart came more than 2 minutes earlier, so Android restarts Kestrel's process after this crash.
+# Android does not restart an app that crashed twice within 2 minutes, so before its crash the step waits, if needed,
+# until 2 minutes have passed since the session's last crash of Kestrel, listen-check's or an earlier one of this step.
 function Invoke-RoleAloneChecks {
     Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
@@ -647,8 +657,14 @@ function Invoke-RoleAloneChecks {
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
     # Kestrel stores Listening a moment after its voice session opened; a crash before that write would leave Off stored.
     Start-Sleep -Seconds 2
+    $wait = Get-CrashWait -LastCrash (Read-SessionCrash -Path $stateFile -Serial $Serial) -Now (Get-Date)
+    if ($wait -gt 0) {
+        Write-Host "Waiting $wait s, so that 2 minutes have passed since the session's last crash of Kestrel; Android does not restart an app that crashed twice within 2 minutes."
+        Start-Sleep -Seconds $wait
+    }
     $recording = Get-KestrelRecording
     $process = Get-KestrelProcess
+    Write-SessionCrash -Path $stateFile -Serial $Serial -Time (Get-Date)
     Invoke-Once 'am crash dev.kestrel'
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $new = ''
@@ -1144,6 +1160,7 @@ function Invoke-RoomStep {
         $replies = 0
         $modeChanges = [System.Collections.Generic.List[string]]::new()
         $failedRestarts = 0
+        $failedStops = 0
         $batteryDone = $false
         # The tasks that Kestrel starts are counted exactly, within one process of Kestrel's; they also cover every wait
         # that room talk answered.
@@ -1178,7 +1195,7 @@ function Invoke-RoomStep {
                 # Batterystats gives an app the power of its recording only once the recording stops (seen on
                 # kestrel-api37, whose power profile has no values for the processor), so Kestrel turns off for the
                 # dump, and on again afterwards.
-                try { Stop-Kestrel } catch { $failedRestarts++ }
+                try { Stop-Kestrel } catch { $failedStops++ }
                 $charged = @(Invoke-Checked 'dumpsys batterystats --charged')
                 $use = Get-BatteryUse -Dump $charged -Uid $uid -Hours $batteryWatch.TotalHours
                 # Research r10, gap 2: Samsung's code may send its own plug events, and batterystats then stops counting.
@@ -1214,6 +1231,7 @@ function Invoke-RoomStep {
             'an unknown number of'
         }
         $failed = if ($failedRestarts -gt 0) { "; $failedRestarts restarts of listening failed" } else { '' }
+        if ($failedStops -gt 0) { $failed += "; the turn-off before the battery's dump failed" }
         Add-Result room ("in $minutes minutes of room audio, the keyword spotter had $hits hits, Kestrel started $tasks tasks, began " +
             "to wait for a task at least $waits times, began to speak at least $replies times and changed its mode " +
             "$($modeChanges.Count) times$changes$failed")

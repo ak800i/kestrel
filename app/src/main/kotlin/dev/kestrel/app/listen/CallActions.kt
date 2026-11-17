@@ -35,19 +35,28 @@ internal interface CallApi {
 
 /**
  * The call's controls on the screen, through Kestrel's accessibility service: only in the windows of the phone app,
- * which shows the incoming-call and in-call screens, and of SystemUI, which shows the call's heads-up notification, so
- * that a control with the same label in another app, such as a video player's "Mute", is never clicked.
+ * which shows the incoming-call and in-call screens, and, for the incoming call, of SystemUI, which shows the call's
+ * heads-up notification, so that a control with the same label in another app, such as a video player's "Mute", is
+ * never clicked.
  */
 internal interface CallScreen {
     /** Whether the phone app's in-call screen is the app window in front. */
     fun inCallShown(): Boolean
 
     /**
-     * Clicks the control whose content description or text is [label], in those windows only. With [ifOff], a control
-     * that is on already, such as a speaker control on a phone that puts the call on the speaker from the start, stays
-     * as it is. Returns whether a control took the click, or was on already.
+     * Clicks the incoming call's control whose content description or text is [label], in the windows of the phone app
+     * and of SystemUI only. Returns whether a control took the click.
      */
-    fun click(label: String, ifOff: Boolean): Boolean
+    fun clickIncoming(label: String): Boolean
+
+    /**
+     * Clicks the in-call screen's control whose content description or text is [label], in the phone app's windows
+     * only: SystemUI's windows lie above the in-call screen, and another app's heads-up notification there can have an
+     * action with the same label. With [ifOff], a control that is on already, such as a speaker control on a phone that
+     * puts the call on the speaker from the start, stays as it is. Returns whether a control took the click, or was on
+     * already.
+     */
+    fun clickInCall(label: String, ifOff: Boolean): Boolean
 }
 
 /**
@@ -57,8 +66,9 @@ internal interface CallScreen {
 internal class AndroidCallScreen(private val context: Context, private val actions: ScreenActions) : CallScreen {
     override fun inCallShown(): Boolean = actions.frontApp() in phoneApps()
 
-    override fun click(label: String, ifOff: Boolean): Boolean =
-        actions.clickLabelled(label, phoneApps() + SYSTEM_UI, ifOff)
+    override fun clickIncoming(label: String): Boolean = actions.clickLabelled(label, phoneApps() + SYSTEM_UI)
+
+    override fun clickInCall(label: String, ifOff: Boolean): Boolean = actions.clickLabelled(label, phoneApps(), ifOff)
 
     // Read at each use, because the owner can choose another phone app at any time.
     private fun phoneApps(): Set<String> =
@@ -76,9 +86,10 @@ internal class AndroidCallScreen(private val context: Context, private val actio
  * language. Without it, it clicks the incoming-call controls "Answer" and "Decline" through Kestrel's accessibility
  * service, which [screen] gives while the service runs: in the call's heads-up notification, or over the lock screen
  * (prototype P3). "Mute" and "Speaker" are only on the in-call screen, which it brings to the front first, and which
- * needs a moment to come there and to show them; it clicks only once that screen is in front. [screen] clicks only in
- * the phone app's and SystemUI's windows. The labels are the English ones of Google's phone app; the phone app's other
- * languages come with the matching of sub-project 3. It makes binder calls, so the caller runs it off the main thread.
+ * needs a moment to come there and to show them; it clicks only once that screen is in front, and only in the phone
+ * app's windows. "Answer" and "Decline" are searched in the phone app's and SystemUI's windows. The labels are the
+ * English ones of Google's phone app; the phone app's other languages come with the matching of sub-project 3. It makes
+ * binder calls, so the caller runs it off the main thread.
  */
 internal class CallActions(private val api: CallApi, private val screen: () -> CallScreen?) : CallControl {
     override suspend fun perform(command: Request.Call): String? = when (command) {
@@ -96,7 +107,7 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
             api.answer()
         } else {
             val controls = screen() ?: return ListeningTexts.CALLS_NEED_ACCESS
-            if (!waitFor(CONTROL_MILLIS) { controls.click(ANSWER, ifOff = false) }) return ListeningTexts.CANNOT_ANSWER
+            if (!waitFor(CONTROL_MILLIS) { controls.clickIncoming(ANSWER) }) return ListeningTexts.CANNOT_ANSWER
         }
         if (!speaker) return null
         // The in-call screen shows its speaker control once the call is active.
@@ -110,7 +121,7 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
     private suspend fun decline(): String? {
         if (api.allowed()) return if (api.end()) null else ListeningTexts.CANNOT_DECLINE
         val controls = screen() ?: return ListeningTexts.CALLS_NEED_ACCESS
-        return if (waitFor(CONTROL_MILLIS) { controls.click(DECLINE, ifOff = false) }) null else ListeningTexts.CANNOT_DECLINE
+        return if (waitFor(CONTROL_MILLIS) { controls.clickIncoming(DECLINE) }) null else ListeningTexts.CANNOT_DECLINE
     }
 
     private suspend fun hangUp(): String? {
@@ -140,7 +151,7 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
             shown
         }
         if (!inFront) return false
-        return waitFor(CONTROL_MILLIS) { controls.click(label, ifOff) }
+        return waitFor(CONTROL_MILLIS) { controls.clickInCall(label, ifOff) }
     }
 
     // Tries [condition] every POLL_MILLIS until it is true or [millis] have passed.

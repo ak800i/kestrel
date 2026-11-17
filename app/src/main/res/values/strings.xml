@@ -151,7 +151,7 @@
     <string name="listening_pause_after_silence">Pause after 30 s without speech</string>
     <string name="listening_pause_after_silence_detail">While Kestrel listens, 30 seconds without speech pause it. \"Kestrel, wake up\" resumes it.</string>
     <string name="listening_call_commands">Commands during a call</string>
-    <string name="listening_call_commands_detail">During a call, Kestrel listens for \"Kestrel, hang up\", \"Kestrel, mute\" and \"Kestrel, speaker\" while the phone is unlocked. Say the name first: Kestrel ignores these commands without it, because the other person\'s voice can come through the speaker. The other person hears these commands too. They need Kestrel\'s accessibility service: without it, Android silences Kestrel\'s microphone during a call.</string>
+    <string name="listening_call_commands_detail">During a call, Kestrel listens for \"Kestrel, hang up\", \"Kestrel, mute\" and \"Kestrel, speaker\" while the phone is unlocked. Say the name first: Kestrel ignores these commands without it, because the other person\'s voice can come through the speaker, and it writes down nothing of the call\'s conversation. If Kestrel does not react, say the command again. The other person hears these commands too. They need Kestrel\'s accessibility service: without it, Android silences Kestrel\'s microphone during a call.</string>
     <string name="listening_earbud_microphone">Use the earbud microphone</string>
     <string name="listening_earbud_microphone_detail">With Bluetooth earbuds connected, Kestrel records with their microphone. The earbuds then switch to their call profile, which makes music sound worse.</string>
     <string name="listening_activation">Ways to start Kestrel</string>

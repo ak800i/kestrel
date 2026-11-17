@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -147,6 +148,23 @@ class ListeningTest {
         listening.send(Event.TurnOff)
         runCurrent()
         assertNull(listening.speakWithSessionVoice(kokoro, "A sample."))
+    }
+
+    @Test
+    fun aSampleStopsWhenThePageThatAskedForItIsLeft() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        val piper = VoiceOptions()
+        session.voice = piper
+
+        val page = launch { listening.speakWithSessionVoice(piper, "A sample.") }
+        runCurrent()
+        page.cancel()
+        runCurrent()
+
+        // Only the sample stops, not a reply that the Orchestrator may have queued.
+        assertTrue(session.replies.single().isCancelled)
+        assertTrue(log.none { it == "stop speaking" })
     }
 
     @Test

@@ -71,9 +71,40 @@ function Get-BatteryUse([string[]]$Dump, [string]$Uid, [double]$Hours) {
 # of estimates at all.
 function Get-BatteryUseGap([string[]]$Dump, [string]$Uid) {
     if (-not ($Dump -match 'Estimated power use')) { return 'batterystats printed no estimates of power use, as on a device whose power profile has no values' }
-    if (-not ($Dump -match '^\s*Capacity:\s*\d')) { return 'batterystats named no battery capacity' }
+    $capacity = @($Dump | ForEach-Object { if ($_ -match '^\s*Capacity:\s*(\d+)') { [double]$Matches[1] } }) | Select-Object -First 1
+    if ($null -eq $capacity) { return 'batterystats named no battery capacity' }
+    if ($capacity -eq 0) { return 'batterystats gave the battery a capacity of 0 mAh' }
     if (-not ($Dump -match "^\s*Uid\s+$([regex]::Escape($Uid)):\s*[\d.]")) { return "batterystats had no estimate for Kestrel's UID $Uid" }
     $null
+}
+
+# Remembers in the file $Path that the session ended Kestrel's process with a crash on the device $Serial at $Time, so
+# that a later step, also in a later run of the session, can wait until Android restarts Kestrel after the next crash:
+# Android does not restart an app that crashed twice within 2 minutes.
+function Write-SessionCrash([string]$Path, [string]$Serial, [datetime]$Time) {
+    $folder = Split-Path -Parent $Path
+    if ($folder) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+    $utc = $Time.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+    [IO.File]::WriteAllText($Path, "$Serial`t$utc`n", [Text.UTF8Encoding]::new($false))
+}
+
+# The time of the session's last crash of Kestrel on the device $Serial, from the file of Write-SessionCrash, in UTC, or
+# $null when the file is missing, unreadable or names another device.
+function Read-SessionCrash([string]$Path, [string]$Serial) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $parts = "$(Get-Content -LiteralPath $Path -Raw)".Trim() -split "`t"
+    if ($parts.Count -ne 2 -or $parts[0] -cne $Serial) { return $null }
+    $time = [datetime]::MinValue
+    $styles = [Globalization.DateTimeStyles]::RoundtripKind
+    if (-not [datetime]::TryParse($parts[1], [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$time)) { return $null }
+    $time.ToUniversalTime()
+}
+
+# How many whole seconds to wait at $Now until $Seconds have passed since $LastCrash; 0 without a crash or when they have.
+function Get-CrashWait($LastCrash, [datetime]$Now, [int]$Seconds = 125) {
+    if ($null -eq $LastCrash) { return 0 }
+    $left = $Seconds - ($Now.ToUniversalTime() - ([datetime]$LastCrash).ToUniversalTime()).TotalSeconds
+    if ($left -le 0) { 0 } else { [int][math]::Ceiling($left) }
 }
 
 # The mode of the app op $Op in the answer of 'cmd appops get <package> <op>', such as 'allow' from
