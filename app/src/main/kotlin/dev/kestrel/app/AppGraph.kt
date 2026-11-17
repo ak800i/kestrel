@@ -27,6 +27,7 @@ import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.listen.ModeMemory
 import dev.kestrel.app.listen.ProblemNotifications
+import dev.kestrel.app.listen.ScreenBoostWords
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.StoredMode
@@ -55,6 +56,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -186,6 +188,8 @@ class AppGraph(context: Context) {
                             microphone,
                             listener,
                             boostWords,
+                            // The labels on the screen before each utterance, from the newest snapshot (section 8.3).
+                            screenWords = { screenLabels.words() },
                             // The owner's voice and speed, read at each start, so that a change counts from the next one.
                             // The page "Voice and speech" says when Kokoro did not load.
                             loadVoice = {
@@ -262,13 +266,29 @@ class AppGraph(context: Context) {
             },
             // The owner's choice as Listening read it last, on the controller's thread, where the microphone starts.
             microphones = { MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }) },
-        )
+        ).also(::keepScreenFresh)
     }
 
     private val screens = MutableStateFlow<ScreenSession?>(null)
 
     /** Kestrel's screen layer while its accessibility service is connected, otherwise null. */
     val screen: StateFlow<ScreenSession?> = screens.asStateFlow()
+
+    /** The labels on the screen as boost words (section 8.3). */
+    private val screenLabels = ScreenBoostWords { screen.value }
+
+    /**
+     * While a voice session is open and Kestrel listens, the screen session builds a snapshot after each settled change
+     * of the screen, so that each utterance's boost words read a current one without waiting (section 8.3). A screen
+     * session that connects while Kestrel listens is kept fresh too.
+     */
+    private fun keepScreenFresh(listening: Listening) {
+        scope.launch {
+            combine(screens, listening.state, listening.sessionOpen) { session, state, open ->
+                session to (open && state.mode == Mode.LISTENING)
+            }.collect { (session, fresh) -> session?.keepFresh = fresh }
+        }
+    }
 
     internal fun attachScreen(session: ScreenSession) {
         screens.value = session

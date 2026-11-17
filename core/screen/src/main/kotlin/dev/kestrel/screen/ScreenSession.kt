@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -57,8 +59,24 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     internal val gestures = GestureRunner(service)
     private val watcher = TouchWatcher(overlays, gestures)
 
+    private val builds = AtomicInteger()
+    private val buildMillis = AtomicLong()
+
     /** The current snapshot. A new one is built only after the screen has changed. */
-    val snapshots = SnapshotCache(tracker) { withContext(Dispatchers.IO) { reader.read() } }
+    val snapshots = SnapshotCache(tracker) {
+        val started = SystemClock.elapsedRealtime()
+        withContext(Dispatchers.IO) { reader.read() }.also {
+            builds.incrementAndGet()
+            buildMillis.addAndGet(SystemClock.elapsedRealtime() - started)
+        }
+    }
+
+    /**
+     * How many snapshots this session has built, and how long the builds took in all, so that the A71 session can
+     * measure what [keepFresh] costs (design spec, section 8.3).
+     */
+    val snapshotBuilds: Int get() = builds.get()
+    val snapshotMillis: Long get() = buildMillis.get()
 
     val actions = ScreenActions(service, snapshots, gestures, tracker)
 
@@ -100,13 +118,27 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /** Emits when the owner touches the screen while the touch watcher runs (design spec, section 14.1). */
     val ownerTouches: SharedFlow<Unit> get() = watcher.ownerTouches
 
+    /**
+     * While true, the session builds a snapshot after each settled change of the screen, so that `snapshots.latest()`
+     * stays current for the boost words of each utterance (design spec, section 8.3). AppGraph sets it while a voice
+     * session is open and Kestrel listens. Any thread may set it.
+     */
+    @Volatile
+    var keepFresh: Boolean = false
+        set(value) {
+            val starts = value && !field
+            field = value
+            // The newest snapshot may be old by now, so the first one is built at once.
+            if (starts) scope.launch { snapshots.current() }
+        }
+
     init {
         scope.launch {
             // collect, not collectLatest: on a screen that changes all the time, such as a stopwatch, collectLatest would
             // cancel every check before it ran. The version is a state, so the check after a slow one sees the latest
             // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
             tracker.version.collect {
-                if (numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
+                if (!keepFresh && numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
                 // A failed check must not end the watcher, or the numbers and labels would stop following the screen.
                 // The next screen change runs the next check.
                 try {

@@ -36,6 +36,13 @@ class SnapshotCache<T : Any>(private val tracker: ScreenChangeTracker, private v
     }
 
     /**
+     * The newest snapshot that was built, or null before the first build. It never waits and never builds, so it may be
+     * older than the screen: the recogniser's boost words read it before each utterance (design spec, section 8.3), and
+     * `ScreenSession.keepFresh` keeps it current while Kestrel listens.
+     */
+    fun latest(): T? = entry?.value
+
+    /**
      * Makes the next [current] call build a new snapshot, for example before an action is retried. This also holds
      * when another caller is building a snapshot at the same moment.
      */

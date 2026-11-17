@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -94,5 +95,21 @@ class SnapshotCacheTest {
         cache.invalidate()
 
         assertEquals(2, cache.current())
+    }
+
+    @Test
+    fun latestGivesTheNewestSnapshotWithoutWaitingOrBuilding() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        var builds = 0
+        val cache = SnapshotCache(tracker) { ++builds }
+        assertNull(cache.latest())
+        cache.current()
+        val changedAt = testScheduler.currentTime
+        tracker.onScreenChanged()
+
+        // The screen has changed, but latest() gives the snapshot that was built last, at once.
+        assertEquals(1, cache.latest())
+        assertEquals(1, builds)
+        assertEquals(changedAt, testScheduler.currentTime)
     }
 }

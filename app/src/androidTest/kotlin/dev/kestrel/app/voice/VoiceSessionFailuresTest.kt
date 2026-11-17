@@ -5,6 +5,7 @@ import dev.kestrel.app.listen.LoadedVoice
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.commands.CommandVocabulary
 import dev.kestrel.voice.KeywordHit
 import dev.kestrel.voice.KeywordSpotter
 import dev.kestrel.voice.ModelsNotReadyException
@@ -123,6 +124,7 @@ class VoiceSessionFailuresTest {
         val session = VoiceSession.open(
             context, VoiceTests.graph.voice, microphone, listener,
             boostWords = { listOf("Kestrel", "Viber") },
+            screenWords = { listOf("Send later") },
             loadSpeechDetector = { detector },
             loadKeywordSpotter = { spotter },
             loadVoice = { LoadedVoice(synthesizer, VoiceOptions()) },
@@ -135,7 +137,8 @@ class VoiceSessionFailuresTest {
             microphone.feed(0.02f)
             listener.await { it is Event.Heard }
 
-            assertEquals(listOf(listOf("Kestrel", "Viber")), recognizer.boostWords.toList())
+            // Each utterance: the name, the screen's labels, the command vocabulary, then the session's app names.
+            assertEquals(listOf(listOf("Kestrel", "Send later") + CommandVocabulary.BOOST + "Viber"), recognizer.boostWords.toList())
         } finally {
             session.close()
         }
