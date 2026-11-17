@@ -12,6 +12,7 @@ import dev.kestrel.screen.overlay.Badge
 import dev.kestrel.screen.overlay.Grid
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -170,7 +171,60 @@ class ScreenTargetsTest {
     }
 
     @Test
-    fun aChosenElementPrintsNoLabel() {
+    fun aChosenElementAndAnAnswerPrintOnlyLengths() {
         assertFalse(ScreenTargets.chosen(elements[0]).toString().contains("Send"))
+        assertEquals("ChosenElement(key of 3 characters, no label)", ScreenTargets.chosen(elements[2]).toString())
+        assertEquals("Answer(9 characters)", ScreenCommands.Asked.Answer("number 22").toString())
+        assertEquals("Answer(no answer)", ScreenCommands.Asked.Answer(null).toString())
     }
+
+    @Test
+    fun aChosenElementThatAWindowAboveNowCoversOrThatIsInTheKeyboardIsNoLongerThere() {
+        val send = snapshot.element("send")!!
+        assertEquals(send, check(snapshot, ScreenTargets.chosen(send)))
+
+        // A window without anything to tap, such as a progress window, now covers the element: a finger cannot reach it.
+        val cover = WindowSummary(3, WindowKind.APPLICATION, bounds = IntRect(0, 0, 1080, 1000), layer = 1)
+        val covered = ScreenSnapshot(0, listOf(keyboard, cover, app), elements)
+        assertNull(check(covered, ScreenTargets.chosen(send)))
+        assertNull(check(covered, ScreenTargets.chosen(send), Target.Label("Send")))
+        assertNull(check(snapshot, ScreenTargets.chosen(snapshot.element("q")!!)))
+    }
+
+    @Test
+    fun aLabelWhoseElementChangedIsDecidedAgainAndANumberOrAnAnswerIsNot() {
+        // The "Send" button has moved, so its key now names nothing.
+        val sendNow = element("send2", "Send", IntRect(600, 1300, 900, 1400))
+        val moved = ScreenSnapshot(0, listOf(keyboard, app), listOf(sendNow) + elements.drop(1))
+        val send = ScreenTargets.chosen(snapshot.element("send")!!)
+
+        assertEquals(sendNow, check(moved, send, Target.Label("Send")))
+        assertNull(check(moved, send))
+        // Decided again, a label that two elements fit acts on neither.
+        val deleteMoved = elements[4].copy(bounds = IntRect(800, 360, 1000, 460))
+        val shifted = ScreenSnapshot(0, listOf(keyboard, app), elements.toMutableList().also { it[4] = deleteMoved })
+        assertNull(check(shifted, ScreenTargets.chosen(elements[4]), Target.Label("Delete")))
+    }
+
+    @Test
+    fun aClearBareLabelWhoseElementChangedIsDecidedAgainAmongTheActionableElements() {
+        val send = ScreenTargets.chosen(snapshot.element("send")!!)
+        val button = element("send2", "Send", IntRect(600, 1300, 900, 1400))
+        val moved = ScreenSnapshot(0, listOf(keyboard, app), listOf(button) + elements.drop(1))
+        assertEquals(button, check(moved, send, Target.Label("Send"), TargetKind.BARE, Strictness.STRICT))
+
+        // Now only a text that cannot be tapped: a tap by name would tap it, a bare label does not.
+        val text = button.copy(clickable = false, className = "android.widget.TextView")
+        val plainText = ScreenSnapshot(0, listOf(keyboard, app), listOf(text) + elements.drop(1))
+        assertEquals(text, check(plainText, send, Target.Label("Send")))
+        assertNull(check(plainText, send, Target.Label("Send"), TargetKind.BARE, Strictness.STRICT))
+    }
+
+    private fun check(
+        snapshot: ScreenSnapshot,
+        chosen: ChosenElement,
+        again: Target.Label? = null,
+        kind: TargetKind = TargetKind.TAP,
+        strictness: Strictness = Strictness.NORMAL,
+    ) = ScreenTargets.check(snapshot, chosen, again, kind, strictness)
 }

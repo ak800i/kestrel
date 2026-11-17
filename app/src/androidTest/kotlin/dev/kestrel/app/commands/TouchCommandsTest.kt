@@ -112,6 +112,21 @@ class TouchCommandsTest {
     }
 
     @Test
+    fun anAnswerWhoseElementAWindowNowCoversEndsWithTheScreenChanged() = runBlocking<Unit> {
+        val cover = screen.awaitElement { it.label == "Cover Dan" }
+        assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
+
+        // A click through accessibility, not a touch, so the question goes on. The cover adds nothing to tap, so the
+        // numbers stay, and the answer reaches the check right before the action.
+        assertTrue(screen.session.actions.tap(cover.key) is ActionResult.Done)
+        screen.awaitElement { it.label == "Covered" }
+        assertEquals(Outcome.FAILED, CommandTests.answer("number two").outcome)
+        CommandTests.awaitSaid(CommandTexts.SCREEN_CHANGED)
+        // Nothing was deleted under the cover.
+        awaitStatus("Covered Dan")
+    }
+
+    @Test
     fun aNumberWithoutNumbersOnTheScreenAsksForThem() {
         assertEquals(Outcome.FAILED, CommandTests.say("tap 7").outcome)
         CommandTests.awaitSaid(CommandTexts.SHOW_NUMBERS_FIRST)

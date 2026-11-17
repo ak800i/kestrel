@@ -11,6 +11,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.Switch
@@ -31,10 +32,11 @@ import java.util.Locale
 
 /**
  * The fixture of the instant commands (design spec, section 16.3): similar labels, two "Delete" buttons in two rows, a
- * full-screen dialog with one "Delete" button, a check box, a switch named "Wi‑Fi" with a non-breaking hyphen, a View
- * slider without a name, a Compose slider, a determinate progress bar, an expandable row, a drag source and target, a
- * horizontal pager, a long-press counter and a Cyrillic label. The status line reports each action. The buttons show
- * their texts as they are, so that the labels in Kestrel's snapshots equal the texts.
+ * full-screen dialog with one "Delete" button, a button that covers Dan's row with a window that has nothing to tap, a
+ * check box, a switch named "Wi‑Fi" with a non-breaking hyphen, a View slider without a name, a Compose slider, a
+ * determinate progress bar, an expandable row, a drag source and target, a horizontal pager, a long-press counter and a
+ * Cyrillic label. The status line reports each action. The buttons show their texts as they are, so that the labels in
+ * Kestrel's snapshots equal the texts.
  */
 class CommandsActivity : ComponentActivity() {
     private lateinit var status: TextView
@@ -53,7 +55,8 @@ class CommandsActivity : ComponentActivity() {
             ),
         )
         page.addView(row(text("Message from Ana"), button("Delete") { report("Deleted Ana") }))
-        page.addView(row(text("Message from Dan"), button("Delete") { report("Deleted Dan") }))
+        val dan = row(text("Message from Dan"), button("Delete") { report("Deleted Dan") })
+        page.addView(dan)
         page.addView(row(button("Open dialog") { openDialog() }, counter(), button("Ђорђе") { report("Clicked Ђорђе") }))
         page.addView(
             row(
@@ -66,6 +69,7 @@ class CommandsActivity : ComponentActivity() {
                     text = "Wi\u2011Fi"
                     setOnCheckedChangeListener { _, on -> report(if (on) "Wi\u2011Fi on" else "Wi\u2011Fi off") }
                 },
+                button("Cover Dan") { cover(dan) },
             ),
         )
         page.addView(
@@ -153,6 +157,16 @@ class CommandsActivity : ComponentActivity() {
             report(if (longPresses == 1) "Long-pressed 1 time" else "Long-pressed $longPresses times")
             true
         }
+    }
+
+    // Covers [row] with a window of its own that has nothing to tap, as a progress window does. The "Which one?" numbers
+    // stay, because no actionable element changes, but a finger can no longer reach the row's "Delete".
+    private fun cover(row: View) {
+        val cover = text("Covered").apply { setBackgroundColor(0xFFFFFFFF.toInt()) }
+        val left = IntArray(2).also(row::getLocationOnScreen)[0]
+        // Three rows high and the screen's width, so that the window covers the row whole.
+        PopupWindow(cover, resources.displayMetrics.widthPixels, row.height * 3, false).showAsDropDown(row, -left, -2 * row.height)
+        report("Covered Dan")
     }
 
     // A full-screen dialog covers the page, so its "Delete" is the only one that a finger, and Kestrel, can reach.

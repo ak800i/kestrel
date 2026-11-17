@@ -96,10 +96,8 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         }
         // A key names a position (section 9.2). A label is decided once more on the new screen; a number or an answer may
         // name another element by now.
-        val element = targets.still(chosen)
-            ?: (if (target is Target.Label && found is Resolution.One) targets.resolve(target, kind) else null)
-                ?.let { (it as? Resolution.One)?.element }?.let { targets.still(it) }
-            ?: return changed()
+        val again = (target as? Target.Label)?.takeIf { found is Resolution.One }
+        val element = targets.still(chosen, again, kind) ?: return changed()
         return done(onElement(element))
     }
 
@@ -128,9 +126,9 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         }
     }
 
-    private sealed interface Asked {
+    internal sealed interface Asked {
         data class Answer(val text: String?) : Asked {
-            override fun toString() = "Answer(${text?.length} characters)"
+            override fun toString() = if (text == null) "Answer(no answer)" else "Answer(${text.length} characters)"
         }
 
         data object ScreenChanged : Asked
@@ -178,7 +176,9 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         return when (found) {
             is Resolution.Cell -> done(tapAt(screen, found.bounds))
             is Resolution.One -> {
-                val element = targets.still(found.element) ?: return changed()
+                // As in act: a clear label is decided once more, as strictly, when its element has changed (section 9.6).
+                val again = if (number == null) Target.Label(command.text) else null
+                val element = targets.still(found.element, again, TargetKind.BARE, Strictness.STRICT) ?: return changed()
                 done(screen.actions.tap(element.key))
             }
             else -> CommandResult(Outcome.IGNORED)

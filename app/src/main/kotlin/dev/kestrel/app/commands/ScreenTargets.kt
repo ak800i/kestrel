@@ -38,7 +38,8 @@ internal enum class TargetKind {
 
 /** The element that Kestrel chose, as it was then. [ScreenTargets.still] checks it again right before the action. */
 internal data class ChosenElement(val key: String, val className: String?, val label: String?, val bounds: IntRect) {
-    override fun toString() = "ChosenElement(key of ${key.length} characters, label of ${label?.length} characters)"
+    override fun toString() =
+        "ChosenElement(key of ${key.length} characters, ${if (label == null) "no label" else "label of ${label.length} characters"})"
 }
 
 /** What a command sees: the snapshot, the numbers on the screen and the grid. */
@@ -89,10 +90,19 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
         return decide(view, target, kind, strictness, cells)
     }
 
-    /** The element that [chosen] names in the current snapshot, when it is still the element that Kestrel chose. */
-    suspend fun still(chosen: ChosenElement): ScreenElement? {
+    /**
+     * The element that [chosen] names in the current snapshot, when it is still the element that Kestrel chose and a
+     * finger can still reach it. Otherwise a label that Kestrel decided, given as [again], is decided once more on the new
+     * screen among the candidates of [kind] (section 9.6).
+     */
+    suspend fun still(
+        chosen: ChosenElement,
+        again: Target.Label? = null,
+        kind: TargetKind = TargetKind.TAP,
+        strictness: Strictness = Strictness.NORMAL,
+    ): ScreenElement? {
         val session = screen() ?: return null
-        return session.snapshots.current().snapshot.element(chosen.key).takeIf { same(chosen, it) }
+        return check(session.snapshots.current().snapshot, chosen, again, kind, strictness)
     }
 
     companion object {
@@ -103,8 +113,7 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
          * and an element that a window above covers whole is no candidate, because a finger could not reach it.
          */
         fun candidates(snapshot: ScreenSnapshot, kind: TargetKind): List<ScreenElement> {
-            val keyboard = snapshot.windows.filter { it.kind == WindowKind.INPUT_METHOD }.map { it.id }.toSet()
-            val shown = snapshot.elements.filter { it.windowId !in keyboard && !covered(snapshot, it) }
+            val shown = snapshot.elements.filter { reachable(snapshot, it) }
             return when (kind) {
                 TargetKind.TAP -> {
                     val near = nearActionable(snapshot)
@@ -146,6 +155,24 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
         }
 
         fun chosen(element: ScreenElement) = ChosenElement(element.key, element.className, element.label, element.bounds)
+
+        /**
+         * The element that [chosen] names in [snapshot], when it is still the same (see [same]), lies outside the
+         * keyboard's window and no window above covers it whole. Otherwise the label [again] decided once more among the
+         * candidates of [kind] in [snapshot]; without [again], as for a number or an answer to "Which one?", null.
+         */
+        fun check(
+            snapshot: ScreenSnapshot,
+            chosen: ChosenElement,
+            again: Target.Label?,
+            kind: TargetKind,
+            strictness: Strictness,
+        ): ScreenElement? {
+            snapshot.element(chosen.key)?.takeIf { same(chosen, it) && reachable(snapshot, it) }?.let { return it }
+            if (again == null) return null
+            val decided = label(snapshot, again.spoken, candidates(snapshot, kind), strictness) as? Resolution.One ?: return null
+            return snapshot.element(decided.element.key)
+        }
 
         /** Whether [element] is still [chosen]: the same class and label, and bounds that cover at least half the chosen ones. */
         fun same(chosen: ChosenElement, element: ScreenElement?): Boolean {
@@ -228,9 +255,11 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             return near
         }
 
-        private fun covered(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
-            val window = snapshot.windows.firstOrNull { it.id == element.windowId } ?: return false
-            return snapshot.windows.any { it.layer > window.layer && it.bounds.contains(element.bounds) }
+        // A finger reaches an element outside the keyboard's window that no window above covers whole.
+        private fun reachable(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
+            val window = snapshot.windows.firstOrNull { it.id == element.windowId } ?: return true
+            if (window.kind == WindowKind.INPUT_METHOD) return false
+            return snapshot.windows.none { it.layer > window.layer && it.bounds.contains(element.bounds) }
         }
 
         private fun IntRect.contains(other: IntRect): Boolean =
