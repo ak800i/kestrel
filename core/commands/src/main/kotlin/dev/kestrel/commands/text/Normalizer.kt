@@ -23,7 +23,10 @@ object Normalizer {
         var lastEnd = 0
         var index = 0
         while (index < text.length) {
-            val next = text.offsetByCodePoints(index, 1)
+            // A letter folds together with the combining marks after it, so that its range covers them and a decomposed
+            // (NFD) letter folds as its composed form.
+            var next = text.offsetByCodePoints(index, 1)
+            while (next < text.length && isMark(text.codePointAt(next))) next = text.offsetByCodePoints(next, 1)
             for (char in fold(transliterate(text.substring(index, next)))) {
                 if (char in APOSTROPHES) continue
                 if (!char.isLetterOrDigit()) {
@@ -86,9 +89,12 @@ object Normalizer {
         return Folded(text.toString(), starts.toIntArray(), ends.toIntArray())
     }
 
-    /** [text] in lower case, with Cyrillic letters written in Latin ones that may still carry diacritics. */
+    /**
+     * [text] composed (NFC) and in lower case, with Cyrillic letters written in Latin ones that may still carry
+     * diacritics. Composing first makes a decomposed "й" or "č" the letter that the table and the phonetic key know.
+     */
     internal fun transliterate(text: String): String = buildString {
-        for (char in text.lowercase(Locale.ROOT)) append(CYRILLIC[char] ?: char)
+        for (char in Unicode.normalize(text, Unicode.Form.NFC).lowercase(Locale.ROOT)) append(CYRILLIC[char] ?: char)
     }
 
     /** [text] without diacritics, with the explicit rules first. Apostrophes and separators stay. */
@@ -100,15 +106,15 @@ object Normalizer {
                 continue
             }
             for (part in Unicode.normalize(char.toString(), Unicode.Form.NFD)) {
-                val type = Character.getType(part)
-                if (type == Character.NON_SPACING_MARK.toInt() || type == Character.ENCLOSING_MARK.toInt() ||
-                    type == Character.COMBINING_SPACING_MARK.toInt()
-                ) {
-                    continue
-                }
-                append(part)
+                if (!isMark(part.code)) append(part)
             }
         }
+    }
+
+    private fun isMark(codePoint: Int): Boolean {
+        val type = Character.getType(codePoint)
+        return type == Character.NON_SPACING_MARK.toInt() || type == Character.ENCLOSING_MARK.toInt() ||
+            type == Character.COMBINING_SPACING_MARK.toInt()
     }
 
     private val APOSTROPHES = setOf('\'', '\u2019', '\u2018', '\u02BC')
@@ -144,11 +150,31 @@ class Folded(val text: String, val starts: IntArray, val ends: IntArray) {
         }
     }
 
-    /** The range of the original text that made the folded characters `from until to`. */
-    fun source(from: Int, to: Int): IntRange = starts[from] until ends[to - 1]
+    /**
+     * The range of the original text that made the folded characters `from until to`, with `from <= to`. An empty range
+     * (`from == to`) gives the empty range where folded character `from` starts, or after the last folded character when
+     * `from` is the length of [text] (at 0 when there is none).
+     */
+    fun source(from: Int, to: Int): IntRange {
+        require(from in 0..to && to <= text.length) { "No folded characters $from until $to of ${text.length}" }
+        if (from < to) return starts[from] until ends[to - 1]
+        val at = if (from < text.length) starts[from] else ends.lastOrNull() ?: 0
+        return at until at
+    }
 
-    /** The range of the original text that made the words `fromWord until toWord`. */
-    fun span(fromWord: Int, toWord: Int): IntRange = source(words[fromWord].first, words[toWord - 1].last + 1)
+    /**
+     * The range of the original text that made the words `fromWord until toWord`, with `fromWord <= toWord`. An empty range
+     * (`fromWord == toWord`) gives the empty range where word `fromWord` starts, or after the last word when `fromWord` is
+     * the number of [words].
+     */
+    fun span(fromWord: Int, toWord: Int): IntRange {
+        require(fromWord in 0..toWord && toWord <= words.size) { "No words $fromWord until $toWord of ${words.size}" }
+        if (fromWord == toWord) {
+            val at = if (fromWord < words.size) words[fromWord].first else text.length
+            return source(at, at)
+        }
+        return source(words[fromWord].first, words[toWord - 1].last + 1)
+    }
 
     override fun toString() = "Folded(${text.length} characters, ${words.size} words)"
 }

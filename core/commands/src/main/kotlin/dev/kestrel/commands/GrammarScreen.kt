@@ -58,6 +58,10 @@ internal object GrammarScreen {
     fun targeted(words: List<String>, text: String): Command? {
         fun target(from: Int, to: Int = words.size) = TargetWords.read(words, text, from, to)
 
+        // A verb whose target may be left out takes no polite words as its target: "check please" is left to the parser's
+        // second try, which finds "check" (design D5). "Tap now" keeps "now", because a tap always names its target.
+        fun optional(from: Int) = if (CommandParser.politeOnly(words, from, words.size)) null else target(from)
+
         for (verb in LONG_PRESS_VERBS) {
             val from = after(words, verb)
             if (from > 0) return target(from)?.let { Command.LongPress(it) }
@@ -68,14 +72,16 @@ internal object GrammarScreen {
             if (from < words.size - 1 && words[from] == "on") from++
             return target(from)?.let { Command.Tap(it) }
         }
-        after(words, "check").takeIf { it > 0 }?.let { from -> return target(from)?.let { Command.Check(it, on = true) } }
-        after(words, "uncheck").takeIf { it > 0 }?.let { from -> return target(from)?.let { Command.Check(it, on = false) } }
+        after(words, "check").takeIf { it > 0 }?.let { from -> return optional(from)?.let { Command.Check(it, on = true) } }
+        after(words, "uncheck").takeIf { it > 0 }?.let { from -> return optional(from)?.let { Command.Check(it, on = false) } }
         switch(words, text)?.let { return it }
-        after(words, "expand").takeIf { it > 0 }?.let { from -> return target(from)?.let { Command.Expand(it) } }
-        after(words, "collapse").takeIf { it > 0 }?.let { from -> return target(from)?.let { Command.Collapse(it) } }
+        after(words, "expand").takeIf { it > 0 }?.let { from -> return optional(from)?.let { Command.Expand(it) } }
+        after(words, "collapse").takeIf { it > 0 }?.let { from -> return optional(from)?.let { Command.Collapse(it) } }
         after(words, "dismiss").takeIf { it > 0 }?.let { from -> return target(from)?.let { Command.Dismiss(it) } }
         if (words.size >= 2 && words[0] == "drag") {
-            val to = words.lastIndexOf("to")
+            // "Drag three to two" comes as "drag 3 to to": the place is the last "to".
+            val doubled = words.size >= 4 && words[words.size - 1] == "to" && words[words.size - 2] == "to"
+            val to = if (doubled) words.size - 2 else words.lastIndexOf("to")
             if (to in 2 until words.size - 1) {
                 val from = target(1, to) ?: return null
                 return Command.Drag(from, target(to + 1))
@@ -89,7 +95,7 @@ internal object GrammarScreen {
         pinch(words, text)?.let { return it }
         for ((verb, increase) in listOf("increment" to true, "increase" to true, "decrement" to false, "decrease" to false)) {
             val from = after(words, verb)
-            if (from > 0) return target(from)?.let { Command.Slider(increase, it) }
+            if (from > 0) return optional(from)?.let { Command.Slider(increase, it) }
         }
         for (prefix in listOf("what is", "whats")) {
             val from = after(words, prefix)
@@ -102,12 +108,14 @@ internal object GrammarScreen {
         return null
     }
 
-    // "switch on X", "turn off X", "switch X on", "turn X off".
+    // "switch on X", "turn off X", "switch X on", "turn X off". Polite words alone are no X, as in [targeted].
     private fun switch(words: List<String>, text: String): Command? {
         if (words.size < 3 || words[0] !in setOf("switch", "turn")) return null
         val state = mapOf("on" to true, "off" to false)
-        state[words[1]]?.let { on -> return TargetWords.read(words, text, 2)?.let { Command.Switch(it, on) } }
-        state[words.last()]?.let { on -> return TargetWords.read(words, text, 1, words.size - 1)?.let { Command.Switch(it, on) } }
+        fun target(from: Int, to: Int) =
+            if (CommandParser.politeOnly(words, from, to)) null else TargetWords.read(words, text, from, to)
+        state[words[1]]?.let { on -> return target(2, words.size)?.let { Command.Switch(it, on) } }
+        state[words.last()]?.let { on -> return target(1, words.size - 1)?.let { Command.Switch(it, on) } }
         return null
     }
 

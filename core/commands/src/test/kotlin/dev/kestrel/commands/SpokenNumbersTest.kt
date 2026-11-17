@@ -31,6 +31,8 @@ class SpokenNumbersTest {
         assertNull(number("send"))
         assertNull(number("twenty send"))
         assertNull(number("one hundred and"))
+        assertNull(number("one hundred zero"))
+        assertNull(number("one hundred and zero"))
         assertNull(number("five five"))
         assertNull(number("number"))
         assertNull(SpokenNumbers.number(emptyList()))
@@ -59,6 +61,13 @@ class SpokenNumbersTest {
         assertEquals(4, SpokenNumbers.answer("For."))
         assertEquals(2, SpokenNumbers.answer("Two, please."))
         assertEquals(3, SpokenNumbers.answer("Okay, number three now"))
+        // Every answer that the grammar reads as a tap on a number.
+        assertEquals(2, SpokenNumbers.answer("tap on two"))
+        assertEquals(2, SpokenNumbers.answer("Can you tap 2?"))
+        assertEquals(2, SpokenNumbers.answer("click on number two"))
+        assertEquals(2, SpokenNumbers.answer("Could you press on to, please"))
+        assertNull(SpokenNumbers.answer("tap on"))
+        assertNull(SpokenNumbers.answer("can you"))
         assertNull(SpokenNumbers.answer("scroll down"))
         assertNull(SpokenNumbers.answer("tap send"))
     }

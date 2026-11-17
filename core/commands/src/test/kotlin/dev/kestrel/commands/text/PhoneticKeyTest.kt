@@ -13,6 +13,8 @@ class PhoneticKeyTest {
         assertEquals("jrj", PhoneticKey.of("Giorgie"))
         assertEquals("tnch", PhoneticKey.of("Tonči"))
         assertEquals("tnch", PhoneticKey.of("Tonchi"))
+        // A decomposed "č" (NFD) is the same letter.
+        assertEquals("tnch", PhoneticKey.of("Tonc\u030Ci"))
     }
 
     @Test

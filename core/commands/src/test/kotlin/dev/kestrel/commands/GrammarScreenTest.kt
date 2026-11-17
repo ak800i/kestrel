@@ -64,6 +64,9 @@ class GrammarScreenTest {
         // A last "to" without a place: Kestrel asks "Drag it where?".
         "drag 3 to" to Command.Drag(number(3), null),
         "drag Send to" to Command.Drag(label("Send"), null),
+        // "Drag three to two", as the recogniser writes it: the last "to" is the place.
+        "drag 3 to to" to Command.Drag(number(3), number(2)),
+        "drag Send to to" to Command.Drag(label("Send"), number(2)),
         // Scrolling.
         "scroll down" to Command.Scroll(Direction.DOWN, null),
         "scroll up" to Command.Scroll(Direction.UP, null),
@@ -101,6 +104,17 @@ class GrammarScreenTest {
         // Polite words around a command go; without "on", a word after the direction is no target.
         "swipe up please" to Command.Swipe(Direction.UP, null),
         "pinch out please" to Command.Pinch(out = true, target = null),
+        // Polite words alone are no target of a verb that may go without one.
+        "check please" to Command.Check(null, on = true),
+        "uncheck now" to Command.Check(null, on = false),
+        "Expand, please." to Command.Expand(null),
+        "collapse now" to Command.Collapse(null),
+        "increase please" to Command.Slider(increase = true, target = null),
+        "decrement, could you?" to Command.Slider(increase = false, target = null),
+        "switch off please" to Command.Switch(null, on = false),
+        "Switch on, please." to Command.Switch(null, on = true),
+        "check now please" to Command.Check(null, on = true),
+        "check Send now" to Command.Check(label("Send now"), on = true),
         // Sliders.
         "increment 4" to Command.Slider(increase = true, target = number(4)),
         "increase Brightness" to Command.Slider(increase = true, target = label("Brightness")),
@@ -173,6 +187,9 @@ class GrammarScreenTest {
             "what can I do",
             "turn on",
             "Turn off.",
+            "turn on please",
+            "Turn off, now.",
+            "switch please off",
         )) {
             val parsed = CommandParser.parse(said)
             assertTrue("$said gave $parsed", parsed is Bare)

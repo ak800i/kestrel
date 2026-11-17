@@ -41,6 +41,8 @@ class NormalizerTest {
         assertEquals("scuka julja jasa", Normalizer.normalize("щука, Юля, Яша"))
         assertEquals("obekt", Normalizer.normalize("объект"))
         assertEquals("jevropa jizak", Normalizer.normalize("Європа їжак"))
+        // Decomposed (NFD) letters fold as their composed forms: "и" with a breve is "й", "і" with a diaeresis is "ї".
+        assertEquals("jovan jizak cafe", Normalizer.normalize("И\u0306ован і\u0308жак Cafe\u0301"))
     }
 
     @Test
@@ -55,6 +57,15 @@ class NormalizerTest {
         assertEquals("Ђорђе", original.substring(folded.span(1, 2)))
         assertEquals("Ђорђе», please", original.substring(folded.span(1, 3)))
         assertFalse(folded.toString().contains("djordje"))
+        // An empty range is empty in the original text too: where its first folded character or word starts, or after
+        // the last one.
+        assertEquals(5 until 5, folded.source(4, 4))
+        assertEquals(5 until 5, folded.span(1, 1))
+        assertEquals(0 until 0, folded.span(0, 0))
+        assertEquals(19 until 19, folded.span(3, 3))
+        assertEquals(19 until 19, folded.source(18, 18))
+        assertEquals("", original.substring(folded.span(3, 3)))
+        assertEquals(0 until 0, Normalizer.withOffsets(" ?! ").span(0, 0))
     }
 
     @Test
@@ -76,5 +87,11 @@ class NormalizerTest {
         val folded = Normalizer.withOffsets(original)
 
         assertEquals("Hello, World", original.substring(folded.span(1, 3)))
+        // The combining marks after a letter belong to its word.
+        val decomposed = "type Cafe\u0301 au lait"
+        assertEquals("Cafe\u0301", decomposed.substring(Normalizer.withOffsets(decomposed).span(1, 2)))
+        val cyrillic = "Ми\u0306 і\u0308"
+        assertEquals("Ми\u0306", cyrillic.substring(Normalizer.withOffsets(cyrillic).span(0, 1)))
+        assertEquals("і\u0308", cyrillic.substring(Normalizer.withOffsets(cyrillic).span(1, 2)))
     }
 }

@@ -1,5 +1,6 @@
 package dev.kestrel.commands
 
+import dev.kestrel.commands.text.Normalizer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -33,11 +34,19 @@ class CommandParserTest {
         assertEquals(Command.ShowNumbers, CommandParser.parse("Could you show numbers please"))
         assertEquals(Command.ShowGrid, CommandParser.parse("ok can you show grid now"))
         assertEquals(Command.Scroll(Direction.DOWN, null), CommandParser.parse("Scroll down, can you?"))
+        assertEquals(Command.Scroll(Direction.DOWN, null), CommandParser.parse("Please scroll down now"))
+        // The normaliser folds "okay", "OK" and "O.K." to "ok", so the polite words are kept in their folded form.
+        assertEquals(CommandParser.POLITE_WORDS, CommandParser.POLITE_WORDS.flatMap { Normalizer.words(it) }.toSet())
+        assertEquals(Command.Tap(Target.Label("Send")), CommandParser.parse("Okay, tap Send"))
+        assertEquals(Command.Tap(Target.Label("Send")), CommandParser.parse("O.K., tap Send"))
     }
 
     @Test
     fun politeWordsStayInPayloadsAndInBare() {
         assertEquals(Command.Tap(Target.Label("Send now")), CommandParser.parse("tap Send now"))
+        // A polite word at the start does not take one from the end of a payload.
+        assertEquals(Command.Tap(Target.Label("Send now")), CommandParser.parse("Please tap Send now"))
+        assertEquals(Command.Tap(Target.Label("Send please")), CommandParser.parse("Can you tap Send please"))
         assertEquals(Command.Bare("OK.", null), CommandParser.parse("OK."))
         assertEquals(Command.Bare("Please send it now", null), CommandParser.parse("Please send it now"))
     }

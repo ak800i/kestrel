@@ -35,13 +35,21 @@ object SpokenNumbers {
         return words(rest)
     }
 
-    /** The answer to "Which one?": "2", "number 2", "tap 2", or a lone "to", also with polite words around it. */
+    /**
+     * The answer to "Which one?": "2", "number 2", "tap 2", "tap on 2", or a lone "to", also with polite words around it
+     * ("can you tap 2?"). Every answer that [CommandParser] reads as a tap on a number is that number.
+     */
     fun answer(text: String): Int? {
-        var words = Normalizer.words(text)
-        while (words.size > 1 && words.first() in CommandParser.POLITE_WORDS) words = words.drop(1)
-        while (words.size > 1 && words.last() in CommandParser.POLITE_WORDS) words = words.dropLast(1)
-        val rest = if (words.size > 1 && words[0] in TAP_VERBS) words.drop(1) else words
-        return number(rest, lone = true)
+        val all = Normalizer.words(text)
+        if (all.isEmpty()) return null
+        val from = CommandParser.politeStart(all, 0, all.size)
+        var words = all.subList(from, CommandParser.politeEnd(all, from, all.size))
+        if (words.size > 1 && words[0] in TAP_VERBS) {
+            words = words.drop(1)
+            // "Tap on 2", as the grammar reads it.
+            if (words.size > 1 && words[0] == "on") words = words.drop(1)
+        }
+        return number(words, lone = true)
     }
 
     // [ones "hundred" ["and"]] [tens [ones]] or [ones], with every word used.
@@ -71,6 +79,8 @@ object SpokenNumbers {
                     }
                 }
                 ones != null -> {
+                    // "One hundred zero" is no number, as "twenty zero" is not.
+                    if (ones == 0 && value > 0) return null
                     value += ones
                     index++
                 }

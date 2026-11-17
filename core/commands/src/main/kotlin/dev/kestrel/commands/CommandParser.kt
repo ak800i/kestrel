@@ -7,10 +7,12 @@ import dev.kestrel.commands.text.Normalizer
  * name, never reach it. A command matches only the whole utterance. The fixed phrases of every group come first
  * ([GrammarScreen], [GrammarText], [GrammarPhone]), then the rules with a target or a payload ([GrammarPhone],
  * [GrammarText], [GrammarScreen]); each group's targeted rules return null for a target that is not theirs. Anything else
- * is [Command.Bare]. Only a [Command.Bare] is read again without the polite words around it.
+ * is [Command.Bare]. Only a [Command.Bare] is read again without the polite words around it: first without those at the
+ * start, then also without those at the end.
  */
 object CommandParser {
-    internal val POLITE_WORDS = setOf("please", "now", "ok", "okay")
+    // In their folded form: the normaliser folds "okay", "OK" and "O.K." to "ok".
+    internal val POLITE_WORDS = setOf("please", "now", "ok")
     private val POLITE_PAIRS = listOf(listOf("could", "you"), listOf("can", "you"))
 
     /** The command in [text], or null when [text] has no words. */
@@ -19,28 +21,47 @@ object CommandParser {
         if (words.isEmpty()) return null
         val whole = read(words, text)
         if (whole !is Command.Bare) return whole
-        var from = 0
-        var to = words.size
+        // The polite words at the start go first, and those at the end only when that is not enough, so that "Please tap
+        // Send now" keeps "Send now" (design D5: polite words never leave a payload).
+        val from = politeStart(words, 0, words.size)
+        if (from > 0) readAgain(text, from, words.size)?.let { return it }
+        val to = politeEnd(words, from, words.size)
+        if (to == words.size) return whole
+        return readAgain(text, from, to) ?: whole
+    }
+
+    /** The index of the first word of `words.subList(from, to)` after its polite words, with at least [keep] words left. */
+    internal fun politeStart(words: List<String>, from: Int, to: Int, keep: Int = 1): Int {
+        var start = from
         while (true) {
-            val pair = POLITE_PAIRS.firstOrNull { to - from > it.size && words.subList(from, from + it.size) == it }
-            from += when {
+            val pair = POLITE_PAIRS.firstOrNull { to - start - it.size >= keep && words.subList(start, start + it.size) == it }
+            start += when {
                 pair != null -> pair.size
-                to - from > 1 && words[from] in POLITE_WORDS -> 1
-                else -> break
+                to - start - 1 >= keep && words[start] in POLITE_WORDS -> 1
+                else -> return start
             }
         }
+    }
+
+    /** The end of `words.subList(from, to)` without its polite words at the end, with at least [keep] words left. */
+    internal fun politeEnd(words: List<String>, from: Int, to: Int, keep: Int = 1): Int {
+        var end = to
         while (true) {
-            val pair = POLITE_PAIRS.firstOrNull { to - from > it.size && words.subList(to - it.size, to) == it }
-            to -= when {
+            val pair = POLITE_PAIRS.firstOrNull { end - from - it.size >= keep && words.subList(end - it.size, end) == it }
+            end -= when {
                 pair != null -> pair.size
-                to - from > 1 && words[to - 1] in POLITE_WORDS -> 1
-                else -> break
+                end - from - 1 >= keep && words[end - 1] in POLITE_WORDS -> 1
+                else -> return end
             }
         }
-        if (from == 0 && to == words.size) return whole
+    }
+
+    /** Whether the words `from until to` are only polite words, or none. */
+    internal fun politeOnly(words: List<String>, from: Int, to: Int): Boolean = politeEnd(words, from, to, keep = 0) == from
+
+    private fun readAgain(text: String, from: Int, to: Int): Command? {
         val inner = cutWords(text, from, to)
-        val again = read(Normalizer.words(inner), inner)
-        return if (again is Command.Bare) whole else again
+        return read(Normalizer.words(inner), inner).takeIf { it !is Command.Bare }
     }
 
     private fun read(words: List<String>, text: String): Command =
@@ -64,8 +85,7 @@ internal object TargetWords {
     fun read(words: List<String>, text: String, from: Int, to: Int = words.size): Target? {
         if (from >= to) return null
         // "Tap 5 please": a polite word after a number is no part of it. A label keeps its words (design D5).
-        var end = to
-        while (end - from > 1 && words[end - 1] in CommandParser.POLITE_WORDS) end--
+        val end = CommandParser.politeEnd(words, from, to)
         SpokenNumbers.number(words.subList(from, end), lone = true)?.let { return Target.Number(it) }
         return Target.Label(cutWords(text, from, to))
     }
