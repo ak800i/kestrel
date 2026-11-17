@@ -85,6 +85,22 @@ class OrchestratorTest {
     }
 
     @Test
+    fun aCommandThatCannotStartShowsWhyOnTheBar() = runTest {
+        val orchestrator = Orchestrator(
+            backgroundScope,
+            { performed += it; if (it is Effect.RunCommand) error("No runner") },
+            { errors += it },
+            commandFailed = "The command failed.",
+        )
+
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+
+        assertEquals(Effect.Show(Feedback.CommandText("The command failed.")), performed.last())
+    }
+
+    @Test
     fun theWaitAfterYesEndsAfterEightSeconds() = runTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
 

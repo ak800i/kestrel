@@ -23,7 +23,8 @@ import kotlinx.coroutines.launch
  * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
  * does the timer of the pause after [silenceMillis] without speech (section 8.5), and the timer of the answer to an
  * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
- * started it. A [Effect.RunCommand] that throws counts as a command that ended as failed.
+ * started it. A [Effect.RunCommand] that throws counts as a command that ended as failed,
+ * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14).
  */
 class Orchestrator(
     private val scope: CoroutineScope,
@@ -33,6 +34,7 @@ class Orchestrator(
     private val answerMillis: Long = ANSWER_MILLIS,
     private val silenceMillis: Long = SILENCE_MILLIS,
     private val questionMillis: Long = QUESTION_MILLIS,
+    private val commandFailed: String? = null,
 ) {
     // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
     private val events = Channel<Pair<Event, () -> Boolean>>(Channel.UNLIMITED)
@@ -112,7 +114,8 @@ class Orchestrator(
                     when (effect) {
                         is Effect.Say -> notStarted += Event.SpeechEnded
                         is Effect.RunTask -> notStarted += Event.TaskEnded(effect.task, reply = null)
-                        is Effect.RunCommand -> notStarted += Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED))
+                        is Effect.RunCommand ->
+                            notStarted += Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED, show = commandFailed))
                         else -> {}
                     }
                 }

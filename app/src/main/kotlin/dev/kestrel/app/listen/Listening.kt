@@ -328,6 +328,10 @@ class Listening internal constructor(
     private var newestCommand = 0
     private var cancelledCommand = 0
 
+    // The number of the newest command whose job started. Written on [thread] and read by the jobs, so that a stuck job
+    // that completes late never releases a text that a newer command keeps on the bar.
+    @Volatile
+    private var startedCommand = 0
     private val reports = MutableSharedFlow<CommandReport>(extraBufferCapacity = 64)
 
     /** One report for every instant command that started: its number, its kind and its outcome, never words. */
@@ -368,6 +372,7 @@ class Listening internal constructor(
         CoroutineScope(scope.coroutineContext + thread),
         perform = ::perform,
         onError = { report("An effect", it) },
+        commandFailed = ListeningTexts.COMMAND_FAILED,
     )
 
     /** The Orchestrator's state after the last event. */
@@ -947,7 +952,9 @@ class Listening internal constructor(
             Effect.CancelTask -> Unit
             is Effect.RunCommand -> {
                 newestCommand = effect.command
-                afterStopping({ send(Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED))) }) { startCommand(effect) }
+                // Section 14: a command that cannot start says so on the bar.
+                val failed = CommandResult(Outcome.FAILED, show = ListeningTexts.COMMAND_FAILED)
+                afterStopping({ send(Event.CommandEnded(effect.command, failed)) }) { startCommand(effect) }
             }
             Effect.CancelCommand -> cancelCommand()
             is Effect.AnswerCommand -> conversation?.answered(effect.command, effect.text)
@@ -1127,6 +1134,7 @@ class Listening internal constructor(
         }
         val talk = Conversation(effect.command)
         conversation = talk
+        startedCommand = effect.command
         // One report per command: a cancel that comes after the body's last check changes nothing. The body writes it
         // before the job completes, and the handler runs only after that.
         var reported = false
@@ -1139,8 +1147,9 @@ class Listening internal constructor(
                 report("An instant command", e)
                 CommandResult(Outcome.FAILED, show = ListeningTexts.COMMAND_FAILED)
             } finally {
-                // A text that the command kept on the bar fades from now on.
-                bar.release()
+                // A text that the command kept on the bar fades from now on, unless a newer command has started since,
+                // as after a stuck job (section 7.3); that command releases its own text.
+                if (startedCommand == effect.command) bar.release()
             }
             // A command that was cancelled while Android finished its last call ends here, without a result.
             ensureActive()

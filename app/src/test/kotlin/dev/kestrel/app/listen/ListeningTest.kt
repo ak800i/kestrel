@@ -367,6 +367,85 @@ class ListeningTest {
     }
 
     @Test
+    fun aStuckCommandThatEndsLateLeavesTheTextThatANewerCommandKeeps() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        runner.action = { conversation ->
+            conversation.ask("Which one?")
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Stop.", named = false))
+        listening.send(Event.Heard("tap Delete", named = false))
+        runCurrent()
+        advanceTimeBy(3_001)
+        runCurrent()
+        assertTrue(listening.state.value.asking)
+        assertEquals(listOf("Which one?"), kept)
+
+        // The stuck job completes while the newer command still waits for its answer: the question stays kept.
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(0, releases)
+
+        sessions.opened.single().replies.last().complete(Spoke.FINISHED)
+        listening.send(Event.Heard("Two.", named = false))
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(1, releases)
+    }
+
+    @Test
+    fun aTaskWaitsUntilTheCancelledCommandHasCompleted() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        val tasks = mutableListOf<Int>()
+        listening.runTask = { task, _ -> tasks += task }
+
+        // The request cancels the command first; the task runs only once its job has completed.
+        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
+        runCurrent()
+        assertEquals(emptyList<Int>(), tasks)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(1), tasks)
+    }
+
+    @Test
+    fun aDeferredTaskThatThrowsIsReportedAndEndsWithoutAReply() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        listening.runTask = { _, _ -> throw IllegalStateException("No agent") }
+        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
+        runCurrent()
+        assertEquals(Work.RUNNING_TASK, listening.state.value.work)
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals("An effect", reports.single().first)
+        assertEquals(Work.IDLE, listening.state.value.work)
+    }
+
+    @Test
     fun theSettingsWaitUntilTheCancelledCommandHasCompleted() = runTest {
         val listening = listeningWithSession()
         val gate = CompletableDeferred<Unit>()

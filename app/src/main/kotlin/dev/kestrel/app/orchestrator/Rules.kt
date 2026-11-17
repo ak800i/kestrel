@@ -320,7 +320,7 @@ sealed interface Effect {
 
     /** The answer to the question of command number [command], or null when the wait for it ended. */
     data class AnswerCommand(val command: Int, val text: String?) : Effect {
-        override fun toString() = "AnswerCommand($command, ${text?.length} characters)"
+        override fun toString() = "AnswerCommand($command, ${if (text == null) "no answer" else "${text.length} characters"})"
     }
 
     /** Holds the countdown of command number [command] while the owner speaks ([hold]), or lets it go on. */
@@ -587,7 +587,13 @@ object Rules {
         return if (step.state.work == Work.RUNNING_COMMAND && step.state.mode == state.mode) step else leaveFor(state, event)
     }
 
-    private fun leaveFor(state: State, event: Event): Step = leaveCommand(state).then { withoutCommand(it, event) }
+    private fun leaveFor(state: State, event: Event): Step = leaveCommand(state).then { withoutCommand(it, event) }.stopSayingOnce()
+
+    // leaveCommand() does not lower the count of replies, so the step after it may stop the same reply again.
+    private fun Step.stopSayingOnce(): Step {
+        val first = effects.indexOf(Effect.StopSaying)
+        return if (first < 0) this else copy(effects = effects.filterIndexed { i, effect -> i == first || effect != Effect.StopSaying })
+    }
 
     // Cancels the running command's job, and stops a question or an announcement in progress.
     private fun leaveCommand(state: State, vararg first: Effect): Step = Step(
@@ -702,7 +708,7 @@ object Rules {
         state.inCall -> Step(state)
         keyword != Keyword.KESTREL ->
             if (state.counting || state.speaking) cancelCommand(state.copy(spottedStop = true)) else Step(state)
-        state.speaking && !state.counting -> leaveCommand(state).then { spotted(it, keyword) }
+        state.speaking && !state.counting -> leaveCommand(state).then { spotted(it, keyword) }.stopSayingOnce()
         else -> Step(state)
     }
 

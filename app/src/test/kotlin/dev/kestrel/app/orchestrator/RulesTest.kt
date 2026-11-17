@@ -551,6 +551,19 @@ class RulesTest {
         val printed = runningCommand.copy(lastCommand = Command.Bare("secret words", null), lastHeard = "secret words").toString()
 
         assertFalse(printed, printed.contains("secret") || printed.contains("Send"))
+        assertEquals("AnswerCommand(1, no answer)", Effect.AnswerCommand(1, null).toString())
+        assertEquals("AnswerCommand(1, 3 characters)", Effect.AnswerCommand(1, "Two").toString())
+    }
+
+    @Test
+    fun leavingACommandWhileKestrelSpeaksStopsTheReplyOnce() {
+        val speaking = runningCommand.copy(speeches = 1)
+
+        for (event in listOf(Event.TurnOff, Event.Spotted(Keyword.KESTREL))) {
+            val effects = Rules.next(speaking, event).effects
+            assertEquals("$event", 1, effects.count { it == Effect.StopSaying })
+            assertTrue("$event", effects.indexOf(Effect.StopSaying) > effects.indexOf(Effect.CancelCommand))
+        }
     }
 
     @Test
