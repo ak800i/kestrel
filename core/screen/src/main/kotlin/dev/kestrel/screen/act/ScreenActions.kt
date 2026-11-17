@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -231,21 +232,33 @@ class ScreenActions internal constructor(
     }
 
     /**
-     * Clicks the element whose content description or text is [label], in any letter case, in any window on the screen,
-     * such as a call's heads-up notification, the incoming-call screen over the lock screen or the in-call screen (design
-     * spec, section 8.7): the element itself, or its nearest parent that handles touches. Returns whether an element took
-     * the click. With [ifOff], an element that is checked already, or whose parent that handles touches is, counts as
-     * clicked and stays as it is, such as a speaker control that is on. It looks at no more than [MAX_LABEL_NODES]
-     * elements in each window, and it keeps no text that it read.
+     * Clicks the element whose content description or text is [label], in any letter case, in the windows on the screen
+     * of the apps in [packages] only, such as a call's heads-up notification, the incoming-call screen over the lock
+     * screen or the in-call screen (design spec, section 8.7): the element itself, or its nearest parent that handles
+     * touches. An element with the label in another app's window is never clicked and never counts. Returns whether an
+     * element took the click. With [ifOff], an element that is checked already, or whose parent that handles touches is,
+     * counts as clicked and stays as it is, such as a speaker control that is on. It looks at no more than
+     * [MAX_LABEL_NODES] elements in each window, and it keeps no text that it read.
      */
-    fun clickLabelled(label: String, ifOff: Boolean = false): Boolean {
+    fun clickLabelled(label: String, packages: Set<String>, ifOff: Boolean = false): Boolean {
         for (window in service.windows) {
-            val node = window.root?.let { labelled(it, label) } ?: continue
+            val root = window.root ?: continue
+            if (root.packageName?.toString() !in packages) continue
+            val node = labelled(root, label) ?: continue
             val target = node.touchTarget(AccessibilityNodeInfo.ACTION_CLICK) ?: continue
             if (ifOff && (node.isOn() || target.node.isOn())) return true
             if (target.node.isEnabled && target.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
         }
         return false
+    }
+
+    /**
+     * The package of the app window in front of the others, such as the in-call screen once it has come to the front, or
+     * null while the screen shows no app window that Kestrel can read. Android lists the windows from the top down.
+     */
+    fun frontApp(): String? {
+        val front = service.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        return front?.root?.packageName?.toString()
     }
 
     // Android 16 replaced the yes-or-no checked state with one that can also be "partly checked".

@@ -18,23 +18,32 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * The hooks of the A71 session (plan 2D, design D8), which scripts\a71-session.ps1 uses. VOICE_COUNTS answers how many
- * waits for a task and how many tasks Kestrel has started in its process, and how many words the last slow task had, so
- * that the session counts Kestrel's reactions, also false ones, without reading what Kestrel heard. VOICE_TASK makes each
+ * The hooks of the A71 session (plan 2D, design D8), which scripts\a71-session.ps1 uses. VOICE_COUNTS answers the number
+ * of Kestrel's latest wait for a task, which rises with each wait and also when a wait starts again, how many tasks
+ * Kestrel has started in its process, how many words the last slow task had, and how many keyword hits its voice sessions
+ * reported, so that the session counts Kestrel's reactions and the spotter's hits, also false ones, without reading what
+ * Kestrel heard. VOICE_TASK makes each
  * task take some seconds and then say a given reply, in place of the task that ends at once, so that the owner can
  * interrupt a long reply or say "stop" while a task runs; a task that Kestrel cancelled meanwhile ends without its reply.
  * VOICE_ECHO plays a text in one of Kestrel's voices through the speaker while the real microphone feeds the keyword
  * spotter, and counts the keyword hits and those that the echo filter takes for Kestrel's own voice (design spec, section
- * 8.4); it runs in the background, longer than a hook may run, and `result` asks for its answer. Their answers hold only
- * counts and lengths.
+ * 8.4), with the loudest sample that the microphone heard and whether Android silenced it, so that a run that heard
+ * nothing shows; it runs in the background, longer than a hook may run, and `result` asks for its answer. Like
+ * VOICE_RECORD, it checks only at its start that no voice session is open, and it does not look at the screen: a session
+ * that opens during the check shares the microphone, and Android silences a recording from the background, which the
+ * answer shows. Their answers hold only counts, lengths and levels.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "VOICE_COUNTS" -> graph.listening.state.value.let {
-            "waits=${it.wait} tasks=${it.task} lastTaskWords=$lastTaskWords"
+            "waits=${it.wait} tasks=${it.task} lastTaskWords=$lastTaskWords hits=${graph.listening.keywordHits}"
         }
         "VOICE_TASK" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clearTask() else task(intent)
         "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
@@ -113,10 +122,16 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         val voice = try {
             graph.voice.synthesizer(VoiceOptions(voice = choice))
         } catch (e: ModelsNotReadyException) {
-            throw HookError("the voice's model is missing; run scripts\\push-models.ps1 -Kokoro")
+            val push = if (choice == VoiceChoice.KOKORO) "scripts\\push-models.ps1 -Kokoro" else "scripts\\push-models.ps1"
+            throw HookError("the voice's model is missing; run $push")
         }
         val hits = AtomicInteger()
         val own = AtomicInteger()
+        // The loudest sample in percent, whether Android silenced the microphone at any time, and its first error, so that
+        // a run that heard nothing does not look like one in which the filter let no hit through.
+        val loudest = AtomicInteger()
+        val silenced = AtomicBoolean(false)
+        val failure = AtomicReference<Exception?>(null)
         val result = voice.use {
             graph.voice.keywordSpotter().use { spotter ->
                 val player = VoicePlayer(context, voice)
@@ -126,16 +141,22 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
                     // The spotter serves only the microphone's thread until the microphone stops.
                     microphone.start(
                         onFrame = { frame ->
+                            val level = ((frame.maxOfOrNull { abs(it) } ?: 0f) * 100).roundToInt()
+                            loudest.accumulateAndGet(level) { a, b -> maxOf(a, b) }
+                            if (microphone.silenced.value) silenced.set(true)
                             for (hit in spotter.accept(frame)) {
                                 hits.incrementAndGet()
                                 if (filter.isOwnVoice(hit.keyword, SystemClock.elapsedRealtime(), player.recent())) own.incrementAndGet()
                             }
                         },
-                        onError = {},
+                        onError = { error -> failure.compareAndSet(null, error) },
                     )
                     val spoke = player.speak(text).await()
                     // The spotter reports a keyword up to about 0.55 s after the keyword ends (plan 2A).
                     delay(1_500)
+                    if (microphone.silenced.value) silenced.set(true)
+                    // Only the class, never a message (section 13.5).
+                    failure.get()?.let { throw HookError("the microphone failed (${it.javaClass.simpleName})") }
                     spoke.name.lowercase()
                 } catch (e: SecurityException) {
                     throw HookError("Kestrel may not record; allow the microphone")
@@ -145,7 +166,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
                 }
             }
         }
-        return "result=$result hits=${hits.get()} own=${own.get()}"
+        return "result=$result hits=${hits.get()} own=${own.get()} loudest=${loudest.get()} silenced=${silenced.get()}"
     }
 
     private sealed interface Echo {

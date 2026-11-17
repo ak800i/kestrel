@@ -24,41 +24,43 @@ import dev.kestrel.app.R
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.voice.VoiceChoice
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 
 /** The id of the Kokoro voice's model in models/manifest.json. */
-private const val KOKORO_MODEL = "tts-kokoro"
+private const val KOKORO_MODEL_ID = "tts-kokoro"
 
 /**
  * The page "Voice and speech" (design spec, sections 8.2 and 15): the voice, Piper or Kokoro, the speed, and "Try it",
  * which speaks a fixed sentence with the choice on the page. Kokoro can be chosen only while its files are on the phone
- * and intact, as [models] says. A new choice counts from the next time that Kestrel turns on. The sample has no
- * keyword and no command, because Kestrel's own listening hears it, and its echo filter knows only the voice session's
- * sentences.
+ * and intact, as [models] says, and the page says when Kokoro did not load the last time that Kestrel turned on. A new
+ * choice counts from the next time that Kestrel turns on. The sample has no keyword and no command, because Kestrel's
+ * own listening hears it, and its echo filter knows the sample only when the voice session speaks it, with its own
+ * voice.
  */
 @Composable
 internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Unit) {
     val stored by data.voiceOptions.collectAsState(initial = null)
+    val kokoroFailed by data.kokoroFailed.collectAsState(initial = false)
     val scope = rememberCoroutineScope()
-    val writes = remember { Mutex() }
     // The options as this page wrote them last, so that a second change builds on the first before the store reports it.
     var written by remember { mutableStateOf<VoiceOptionsSetting?>(null) }
     var trying by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     // Null while the check runs or after it failed; then the page says nothing about Kokoro's files.
-    val kokoro = (models as? ModelCheck.Done)?.statuses?.firstOrNull { it.model.id == KOKORO_MODEL }
+    val kokoro = (models as? ModelCheck.Done)?.statuses?.firstOrNull { it.model.id == KOKORO_MODEL_ID }
     val kokoroReady = kokoro?.ready == true
     PageHeader(stringResource(R.string.settings_voice), onBack)
     val current = written ?: stored ?: return
     val speed = current.options().speed
 
-    // Stores the options in the order of the changes, as the page "Listening and activation" does.
+    // Stores the options in the order of the changes, also when the owner leaves the page at once, as the page
+    // "Listening and activation" does. A failure of "Try it" belongs to the choice that was tried.
     fun change(options: VoiceOptionsSetting) {
         written = options
-        scope.launch { writes.withLock { data.setVoiceOptions(options) } }
+        failed = false
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { data.setVoiceOptions(options) }
     }
 
     Text(stringResource(R.string.voice_choice), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleMedium)
@@ -72,6 +74,9 @@ internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Uni
         kokoro == null || kokoro.ready -> Unit
         kokoro.absent -> Text(stringResource(R.string.voice_kokoro_missing), style = MaterialTheme.typography.bodySmall)
         else -> Text(stringResource(R.string.voice_kokoro_damaged), style = MaterialTheme.typography.bodySmall)
+    }
+    if (kokoroFailed && current.voice == VoiceChoice.KOKORO) {
+        Text(stringResource(R.string.voice_kokoro_failed), style = MaterialTheme.typography.bodySmall)
     }
     Text(
         stringResource(R.string.voice_speed, speedText(speed)),

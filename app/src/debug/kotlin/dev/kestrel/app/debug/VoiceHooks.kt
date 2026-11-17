@@ -6,8 +6,10 @@ import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.app.settings.speedText
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.SAMPLE_RATE
+import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
 import kotlinx.coroutines.currentCoroutineContext
@@ -15,14 +17,17 @@ import kotlinx.coroutines.ensureActive
 import java.util.Locale
 
 /**
- * The listening hooks (design spec, section 16.1): they send events to Kestrel's Orchestrator, read its state, and say a
- * text into a stand-in microphone. The answers never contain what was said. `scripts/hook.ps1` lists them.
+ * The listening hooks (design spec, section 16.1): they send events to Kestrel's Orchestrator, read its state, say a
+ * text into a stand-in microphone, and read or set the choice "Commands during a call" and the voice. The answers never
+ * contain what was said. `scripts/hook.ps1` lists them.
  */
 internal class VoiceHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "VOICE" -> event(intent)
         "VOICE_STATE" -> state()
         "VOICE_CLIP" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clear() else clip(intent)
+        "VOICE_CALL_COMMANDS" -> callCommands(intent)
+        "VOICE_CHOICE" -> voiceChoice(intent)
         else -> throw HookError("unknown command '$command'")
     }
 
@@ -110,10 +115,40 @@ internal class VoiceHooks(private val graph: AppGraph) {
         }
     }
 
+    // Reads the stored choice "Commands during a call", or stores it first with --ez on, so that listen-check.ps1 can
+    // check the call commands during a call and put the choice back (design spec, section 8.7). Kestrel takes a change
+    // a moment later, as it takes one from the page "Listening and activation".
+    private suspend fun callCommands(intent: Intent): String {
+        if (intent.hasExtra(EXTRA_ON)) {
+            val on = intent.getBooleanExtra(EXTRA_ON, false)
+            val stored = graph.settings.get(SettingKeys.LISTENING_OPTIONS)
+            graph.settings.set(SettingKeys.LISTENING_OPTIONS, stored.copy(callCommands = on))
+        }
+        return "callCommands=${if (graph.settings.get(SettingKeys.LISTENING_OPTIONS).callCommands) "on" else "off"}"
+    }
+
+    // Reads the stored voice, or stores it first with --es voice at the stored speed, so that the A71 session can measure
+    // Kestrel's memory while it listens with Kokoro and put the owner's choice back (design spec, sections 5.3 and 15). A
+    // new voice counts from Kestrel's next start. kokoroFailed: Kokoro was chosen, and Piper spoke instead the last time
+    // that a voice session opened.
+    private suspend fun voiceChoice(intent: Intent): String {
+        intent.getStringExtra(EXTRA_VOICE)?.let { name ->
+            val voice = when (name) {
+                "piper" -> VoiceChoice.PIPER
+                "kokoro" -> VoiceChoice.KOKORO
+                else -> throw HookError("add --es voice with piper or kokoro")
+            }
+            graph.settings.set(SettingKeys.VOICE, graph.settings.get(SettingKeys.VOICE).copy(voice = voice))
+        }
+        val stored = graph.settings.get(SettingKeys.VOICE)
+        return "voice=${stored.voice.name.lowercase()} speed=${speedText(stored.options().speed)} " +
+            "kokoroFailed=${graph.kokoroFailed.value}"
+    }
+
     private fun text(intent: Intent): String = intent.getStringExtra(EXTRA_TEXT) ?: throw HookError("add --es text <text>")
 
     companion object {
-        val COMMANDS = setOf("VOICE", "VOICE_STATE", "VOICE_CLIP")
+        val COMMANDS = setOf("VOICE", "VOICE_STATE", "VOICE_CLIP", "VOICE_CALL_COMMANDS", "VOICE_CHOICE")
 
         /** The microphone that VOICE_CLIP says its texts into, one for the whole process. */
         val microphone: ClipMicrophone by lazy { ClipMicrophone() }
@@ -134,5 +169,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
         private const val EXTRA_TEXT = "text"
         private const val EXTRA_NAMED = "named"
         private const val EXTRA_CLEAR = "clear"
+        private const val EXTRA_ON = "on"
+        private const val EXTRA_VOICE = "voice"
     }
 }

@@ -139,9 +139,15 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
             throw e
         }
         canceller = effect
-        route = earbuds
         echoCancelling = effect?.enabled == true
-        record = recorder
+        synchronized(lock) { record = recorder }
+        // A loss of the earbuds that Android reported before [record] was set found no recording to give the phone's
+        // microphone back to, and the route then holds nothing. From here on a loss finds the recording itself.
+        if (earbuds != null && !earbuds.holding) {
+            recorder.setPreferredDevice(null)
+            earbuds = null
+        }
+        route = earbuds
         audio.registerAudioRecordingCallback(callback, main)
         // The callback reports only changes. Reading the current recordings on the callback's thread keeps this reading
         // in order with the reports, so that it cannot replace a newer one.
@@ -188,8 +194,9 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     }
 
     // The earbuds went away, or a call took the audio over, and the route has withdrawn its request. Runs on the main
-    // thread, before the route's close returns, so [record] is still the recording of that route, or null. Without a
-    // preferred device, Android records from the phone's microphone again.
+    // thread, before the route's close returns, so [record] is still the recording of that route, or null; open() checks
+    // the route once [record] is set, for a loss that came before. Without a preferred device, Android records from the
+    // phone's microphone again.
     private fun usePhoneMicrophone() {
         synchronized(lock) { record?.setPreferredDevice(null) }
     }

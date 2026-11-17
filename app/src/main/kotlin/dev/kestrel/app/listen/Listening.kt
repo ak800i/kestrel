@@ -9,6 +9,7 @@ import dev.kestrel.app.orchestrator.Reply
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.voice.ModelsNotReadyException
+import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.CancellationException
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Starts and stops ListeningService. Any thread may call it. */
 internal interface ServiceControl {
@@ -119,8 +121,8 @@ internal object ListeningTexts {
     const val CRASHED_AFTER_RESTORE = "Kestrel stopped soon after it came back, so it stays off."
     const val NO_WORDS = "Kestrel hears sound but no words. Check the microphone."
     const val CANNOT_OPEN_SETTINGS = "Kestrel could not open its settings."
-    const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on. Tap my " +
-        "listening notification, or open Kestrel from the launcher."
+    const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on or I am your " +
+        "assistant app. Tap my listening notification, or open Kestrel from the launcher."
 }
 
 /**
@@ -297,6 +299,15 @@ class Listening internal constructor(
     /** Whether a voice session is open: from the end of its opening until its close has returned. */
     internal val sessionOpen: StateFlow<Boolean> = sessionState.asStateFlow()
 
+    private val spotted = AtomicInteger()
+
+    /**
+     * How many keyword hits the voice sessions of this process reported, without those that the echo filter took for
+     * Kestrel's own voice, so that the A71 session can count the spotter's false hits (spike S5). Only the debug hooks
+     * read it.
+     */
+    internal val keywordHits: Int get() = spotted.get()
+
     private val chosenOptions = MutableStateFlow(ListeningOptions())
 
     /** The owner's choices for listening, as Kestrel read them last, or the defaults before the first read (section 15). */
@@ -359,6 +370,17 @@ class Listening internal constructor(
      */
     fun watchCalls() {
         scope.launch(thread) { if (session != null) startCalls() }
+    }
+
+    /**
+     * Speaks [text] with the open voice session's voice when that voice speaks with [options], for "Try it" on the page
+     * "Voice and speech" (section 15), so that no second copy of the voice is loaded beside the session's, and the echo
+     * filter knows the text. Returns how the reply ended, or null when no session is open or its voice differs. Any
+     * thread may call it.
+     */
+    internal suspend fun speakWithSessionVoice(options: VoiceOptions, text: String): Spoke? {
+        val spoken = withContext(thread) { session?.takeIf { it.voice == options }?.speak(text) } ?: return null
+        return spoken.await()
     }
 
     /**
@@ -985,7 +1007,10 @@ class Listening internal constructor(
         @Volatile
         var active = true
 
-        override fun send(event: Event) = orchestrator.send(event) { active }
+        override fun send(event: Event) {
+            if (event is Event.Spotted && active) spotted.incrementAndGet()
+            orchestrator.send(event) { active }
+        }
 
         override fun microphoneFailed(error: Exception) {
             // The microphone's own thread cannot stop the microphone, so the controller's thread does.

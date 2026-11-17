@@ -15,15 +15,15 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import dev.kestrel.app.R
-import dev.kestrel.app.listen.VoiceOptionsSetting
-import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.app.listen.ListeningOptions
+import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
 import dev.kestrel.privacy.logs.NetworkOutcome
+import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.Model
 import dev.kestrel.voice.models.ModelFile
@@ -406,6 +406,33 @@ class SettingsAppTest {
     }
 
     @Test
+    fun aFailedTryGoesWhenTheChoiceChanges() {
+        data.tryFailure = IllegalStateException("Android refused the audio")
+        show(NOTHING_SET_UP)
+        openVoicePage()
+
+        val failed = text(R.string.voice_try_failed)
+        compose.onNodeWithText(text(R.string.voice_try)).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(failed).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(text(R.string.voice_faster)).performScrollTo().performClick()
+
+        compose.onAllNodesWithText(failed).assertCountEquals(0)
+    }
+
+    @Test
+    fun theVoicePageSaysWhenKokoroDidNotLoad() {
+        data.voiceOptions.value = VoiceOptionsSetting(VoiceChoice.KOKORO)
+        data.kokoroFailed.value = true
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, READY_KOKORO))))
+        openVoicePage()
+
+        compose.onNodeWithText(text(R.string.voice_kokoro_failed)).assertIsDisplayed()
+        // With Piper chosen, the page has nothing to say about Kokoro.
+        compose.onNodeWithText(text(R.string.voice_piper)).performClick()
+        compose.onAllNodesWithText(text(R.string.voice_kokoro_failed)).assertCountEquals(0)
+    }
+
+    @Test
     fun theAboutPageSaysThatAnOptionalModelIsNotOnThePhone() {
         show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, ABSENT_KOKORO))))
         compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
@@ -446,9 +473,14 @@ class SettingsAppTest {
             voiceOptions.value = options
         }
 
+        var tryFailure: Exception? = null
+
         override suspend fun tryVoice(options: VoiceOptionsSetting) {
             tried += options
+            tryFailure?.let { throw it }
         }
+
+        override val kokoroFailed = MutableStateFlow(false)
 
         override suspend fun setListening(options: ListeningOptions) {
             listening.value = options

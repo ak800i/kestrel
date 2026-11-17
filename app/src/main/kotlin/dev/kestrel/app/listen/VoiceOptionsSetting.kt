@@ -34,6 +34,12 @@ data class VoiceOptionsSetting(val voice: VoiceChoice = VoiceChoice.PIPER, val s
 }
 
 /**
+ * A voice that Kestrel loaded for its voice session: [synthesizer], which speaks with [options]. [fellBack]: the owner
+ * chose Kokoro, and Piper speaks instead, because Kokoro did not load.
+ */
+internal class LoadedVoice(val synthesizer: Synthesizer, val options: VoiceOptions, val fellBack: Boolean = false)
+
+/**
  * Loads the voice that the owner chose, at the chosen speed, with [load] (design spec, sections 8.2 and 15). When the
  * Kokoro voice does not load, because its files are missing or damaged or for any other failure, Piper speaks instead,
  * so that an optional voice never keeps Kestrel from listening, and [report] gets the failure, because Kestrel never
@@ -43,16 +49,37 @@ internal suspend fun loadChosenVoice(
     chosen: VoiceOptionsSetting,
     report: (String, Throwable) -> Unit = { _, _ -> },
     load: suspend (VoiceOptions) -> Synthesizer,
-): Synthesizer {
+): LoadedVoice {
     val options = chosen.options()
-    if (options.voice == VoiceChoice.PIPER) return load(options)
+    if (options.voice == VoiceChoice.PIPER) return LoadedVoice(load(options), options)
     return try {
-        load(options)
+        LoadedVoice(load(options), options)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         // Logged by its class and stack frames only (section 13.5).
         report("Loading the Kokoro voice", e)
-        load(options.copy(voice = VoiceChoice.PIPER))
+        val piper = options.copy(voice = VoiceChoice.PIPER)
+        LoadedVoice(load(piper), piper, fellBack = true)
     }
+}
+
+/**
+ * Loads the voice that the owner stored, which [read] reads, as [loadChosenVoice] does. A setting that cannot be read
+ * counts as the default, Piper, as the listening options do, and [report] gets the failure.
+ */
+internal suspend fun loadStoredVoice(
+    read: suspend () -> VoiceOptionsSetting,
+    report: (String, Throwable) -> Unit,
+    load: suspend (VoiceOptions) -> Synthesizer,
+): LoadedVoice {
+    val chosen = try {
+        read()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        report("Reading the voice setting", e)
+        VoiceOptionsSetting()
+    }
+    return loadChosenVoice(chosen, report, load)
 }

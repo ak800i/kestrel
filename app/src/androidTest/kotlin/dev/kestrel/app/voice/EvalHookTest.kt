@@ -47,8 +47,9 @@ class EvalHookTest {
         val revealed = hook("VOICE_EVAL", *extras, flags = setOf("spotted", "reveal"))
 
         assertEquals(answer.text, Activity.RESULT_OK, answer.code)
+        // Whether the clip was heard and read right depends on the models, the boost words and the processor, and the
+        // corpus measures it; this test checks only the hook's mechanics (review of plan 2D's Task 8, M1).
         assertTrue(answer.text, ANSWER.matches(answer.text))
-        assertTrue(answer.text, answer.text.contains(" request=ok read=WakeUp "))
         // The speech detector cuts off the clip's silence, as in Kestrel's pipeline, so one decoding is enough.
         assertTrue(answer.text, answer.text.endsWith(" parts=1 twice=0"))
         assertFalse(answer.text, answer.text.contains("heard="))

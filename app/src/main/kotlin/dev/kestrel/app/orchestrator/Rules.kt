@@ -83,6 +83,8 @@ data class State(
             speaking -> Recognition.NONE
             // While a call rings, the call commands may come without the name (section 8.7).
             mode == Mode.RINGING -> Recognition.ALL
+            // During a call with the setting, every utterance, as while Kestrel listens, so that a command whose "Kestrel"
+            // the spotter missed still counts; Requests reads only those that start with the name (section 8.7).
             mode == Mode.IN_CALL -> if (callCommands) Recognition.ALL else Recognition.NONE
             // While Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the owner dictates the
             // task and may pause in it.
@@ -156,7 +158,8 @@ sealed interface Event {
 
     /**
      * Kestrel could not open its settings app, because Android lets it start an activity from the background only while
-     * its accessibility service is on. Kestrel says so, because the feedback bar does not exist then (section 14).
+     * its accessibility service is on or it holds the assistant role. Kestrel says so, because the feedback bar does not
+     * exist then (section 14).
      */
     data object SettingsUnavailable : Event
 
@@ -189,7 +192,10 @@ sealed interface Reply {
     /** "Yes?", after "Kestrel" on its own. */
     data object Yes : Reply
 
-    /** Why Kestrel did not open its settings: its accessibility service is off (section 14). */
+    /**
+     * Why Kestrel did not open its settings: its accessibility service is off, and it does not hold the assistant role
+     * (section 14).
+     */
     data object SettingsNeedService : Reply
 
     data class Text(val text: String) : Reply {

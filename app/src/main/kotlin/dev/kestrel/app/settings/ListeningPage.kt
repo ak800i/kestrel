@@ -26,9 +26,8 @@ import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.orchestrator.WakeUpMode
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * The page "Listening and activation" (design spec, sections 8.5 to 8.8 and 15): what Kestrel does after an unlock, the
@@ -39,17 +38,18 @@ import kotlinx.coroutines.sync.withLock
 internal fun ListeningPage(data: SettingsData, status: SetupStatus, onAction: (SetupAction) -> Unit, onBack: () -> Unit) {
     val stored by data.listening.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
-    val writes = remember { Mutex() }
     // The options as this page wrote them last, so that a second change builds on the first before the store reports it.
     var written by remember { mutableStateOf<ListeningOptions?>(null) }
     val options = written ?: stored
-    // Stores the current options with one change, in the order of the changes. Nothing changes until the stored options
-    // have been read. It reads the newest written options itself, so that two changes in one frame both count.
+    // Stores the current options with one change, in the order of the changes, which the store keeps because each write
+    // is queued at once; a write is made also when the owner leaves the page right after it. Nothing changes until the
+    // stored options have been read. It reads the newest written options itself, so that two changes in one frame both
+    // count.
     val change: ((ListeningOptions) -> ListeningOptions) -> Unit = { edit ->
         (written ?: stored)?.let { current ->
             val next = edit(current)
             written = next
-            scope.launch { writes.withLock { data.setListening(next) } }
+            scope.launch(start = CoroutineStart.UNDISPATCHED) { data.setListening(next) }
         }
     }
     PageHeader(stringResource(R.string.settings_listening), onBack)

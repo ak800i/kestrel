@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import dev.kestrel.app.orchestrator.Request
+import dev.kestrel.screen.act.ScreenActions
 import kotlinx.coroutines.delay
 
 /** What Kestrel does with a call command (design spec, section 8.7). */
@@ -32,14 +33,41 @@ internal interface CallApi {
     fun showInCallScreen()
 }
 
-/** Clicks a control on the screen through Kestrel's accessibility service. */
-internal fun interface CallScreen {
+/**
+ * The call's controls on the screen, through Kestrel's accessibility service: only in the windows of the phone app,
+ * which shows the incoming-call and in-call screens, and of SystemUI, which shows the call's heads-up notification, so
+ * that a control with the same label in another app, such as a video player's "Mute", is never clicked.
+ */
+internal interface CallScreen {
+    /** Whether the phone app's in-call screen is the app window in front. */
+    fun inCallShown(): Boolean
+
     /**
-     * Clicks the control whose content description or text is [label]. With [ifOff], a control that is on already, such
-     * as a speaker control on a phone that puts the call on the speaker from the start, stays as it is. Returns whether a
-     * control took the click, or was on already.
+     * Clicks the control whose content description or text is [label], in those windows only. With [ifOff], a control
+     * that is on already, such as a speaker control on a phone that puts the call on the speaker from the start, stays
+     * as it is. Returns whether a control took the click, or was on already.
      */
     fun click(label: String, ifOff: Boolean): Boolean
+}
+
+/**
+ * [CallScreen] through Kestrel's accessibility service [actions]. The phone app is Android's default phone app or a
+ * known in-call screen, because an in-call screen, such as One UI's, may be in a package of its own.
+ */
+internal class AndroidCallScreen(private val context: Context, private val actions: ScreenActions) : CallScreen {
+    override fun inCallShown(): Boolean = actions.frontApp() in phoneApps()
+
+    override fun click(label: String, ifOff: Boolean): Boolean =
+        actions.clickLabelled(label, phoneApps() + SYSTEM_UI, ifOff)
+
+    // Read at each use, because the owner can choose another phone app at any time.
+    private fun phoneApps(): Set<String> =
+        IN_CALL_APPS + listOfNotNull(context.getSystemService(TelecomManager::class.java).defaultDialerPackage)
+
+    private companion object {
+        const val SYSTEM_UI = "com.android.systemui"
+        val IN_CALL_APPS = setOf("com.google.android.dialer", "com.android.dialer", "com.samsung.android.incallui")
+    }
 }
 
 /**
@@ -48,8 +76,9 @@ internal fun interface CallScreen {
  * language. Without it, it clicks the incoming-call controls "Answer" and "Decline" through Kestrel's accessibility
  * service, which [screen] gives while the service runs: in the call's heads-up notification, or over the lock screen
  * (prototype P3). "Mute" and "Speaker" are only on the in-call screen, which it brings to the front first, and which
- * needs a moment to show them. The labels are the English ones of Google's phone app; the phone app's other languages
- * come with the matching of sub-project 3. It makes binder calls, so the caller runs it off the main thread.
+ * needs a moment to come there and to show them; it clicks only once that screen is in front. [screen] clicks only in
+ * the phone app's and SystemUI's windows. The labels are the English ones of Google's phone app; the phone app's other
+ * languages come with the matching of sub-project 3. It makes binder calls, so the caller runs it off the main thread.
  */
 internal class CallActions(private val api: CallApi, private val screen: () -> CallScreen?) : CallControl {
     override suspend fun perform(command: Request.Call): String? = when (command) {
@@ -98,9 +127,19 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
     }
 
     // The in-call screen does not come to the front after an answer through the API (prototype P3), so Kestrel brings
-    // it there first.
+    // it there first, and clicks only once it is in front. Until then the app that the owner uses is, and its control
+    // with the same label must never count.
     private suspend fun clickInCall(controls: CallScreen, label: String, ifOff: Boolean): Boolean {
         api.showInCallScreen()
+        // The phone app sometimes leaves a request unanswered, as on kestrel-api37 a few seconds after the answer of a
+        // call, so Kestrel asks again every second while it waits.
+        var polls = 0
+        val inFront = waitFor(CONTROL_MILLIS) {
+            val shown = controls.inCallShown()
+            if (!shown && ++polls % ASK_AGAIN_POLLS == 0) api.showInCallScreen()
+            shown
+        }
+        if (!inFront) return false
         return waitFor(CONTROL_MILLIS) { controls.click(label, ifOff) }
     }
 
@@ -128,6 +167,9 @@ internal class CallActions(private val api: CallApi, private val screen: () -> C
         const val ACTIVE_MILLIS = 5_000L
         const val CONTROL_MILLIS = 3_000L
         const val POLL_MILLIS = 200L
+
+        // Every second.
+        const val ASK_AGAIN_POLLS = 5
     }
 }
 

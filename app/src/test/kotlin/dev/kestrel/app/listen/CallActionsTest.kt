@@ -15,20 +15,29 @@ class CallActionsTest {
     private var controls = setOf("Answer", "Decline")
     private var checked = emptySet<String>()
     private var serviceOn = true
-    private val actions = CallActions(api) {
-        if (serviceOn) {
-            CallScreen { label, ifOff ->
-                if (ifOff && label in controls && label in checked) {
-                    true
-                } else {
-                    clicks += label
-                    label in controls
-                }
-            }
-        } else {
-            null
+
+    // The in-call screen comes to the front at this check after Kestrel asked for it; until then another app is in front.
+    private var frontAfter = 0
+    private var frontChecks = 0
+    private var asked = false
+
+    // The checks of the app in front and the clicks, in order.
+    private val screenLog = mutableListOf<String>()
+    private val screen = object : CallScreen {
+        override fun inCallShown(): Boolean {
+            val shown = asked && ++frontChecks > frontAfter
+            screenLog += if (shown) "in front" else "not in front"
+            return shown
+        }
+
+        override fun click(label: String, ifOff: Boolean): Boolean {
+            if (ifOff && label in controls && label in checked) return true
+            clicks += label
+            screenLog += label
+            return label in controls
         }
     }
+    private val actions = CallActions(api) { if (serviceOn) screen else null }
 
     @Test
     fun withThePermissionAndroidsCallApiAnswersDeclinesAndHangsUp() = runTest {
@@ -138,6 +147,43 @@ class CallActionsTest {
         assertEquals(listOf("show in-call screen"), api.calls)
     }
 
+    @Test
+    fun theInCallControlsAreClickedOnlyOnceTheInCallScreenIsInFront() = runTest {
+        frontAfter = 2
+
+        assertNull(actions.perform(Request.Mute))
+
+        // Until the in-call screen is in front, the app that the owner uses is, and its "Mute" must not be clicked.
+        assertEquals(listOf("not in front", "not in front", "in front", "Mute"), screenLog)
+    }
+
+    @Test
+    fun kestrelAsksForTheInCallScreenAgainEverySecondWhileItWaits() = runTest {
+        frontAfter = 7
+
+        assertNull(actions.perform(Request.Mute))
+
+        // Asked at once and after five checks, a second; the screen came at the eighth check.
+        assertEquals(listOf("show in-call screen", "show in-call screen"), api.calls)
+        assertEquals(listOf("Mute"), clicks)
+    }
+
+    @Test
+    fun withoutTheInCallScreenInFrontNoControlIsClickedOrCountsAsOn() = runTest {
+        frontAfter = Int.MAX_VALUE
+        // A control that is on already would count as done, if it were not the in-call screen's.
+        api.inCallChecked = setOf("Mute")
+
+        assertEquals(ListeningTexts.CANNOT_MUTE, actions.perform(Request.Mute))
+        assertEquals(ListeningTexts.CANNOT_SPEAKER, actions.perform(Request.Speaker))
+        assertEquals(ListeningTexts.HANG_UP_NEEDS_PERMISSION, actions.perform(Request.HangUp))
+        api.permitted = true
+        assertEquals(ListeningTexts.ANSWERED_WITHOUT_SPEAKER, actions.perform(Request.Answer(speaker = true)))
+
+        assertTrue(clicks.isEmpty())
+        assertTrue(screenLog.none { it == "in front" })
+    }
+
     private inner class FakeCallApi : CallApi {
         val calls = mutableListOf<String>()
         var permitted = false
@@ -169,6 +215,9 @@ class CallActionsTest {
             calls += "show in-call screen"
             controls = inCallControls
             checked = inCallChecked
+            // The screen comes to the front some checks after the first request; a repeated request changes nothing.
+            if (!asked) frontChecks = 0
+            asked = true
         }
     }
 }

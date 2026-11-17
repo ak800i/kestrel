@@ -46,9 +46,10 @@ class SessionHookTest {
             listening.send(Event.Heard("Kestrel, open the window.", named = true))
 
             assertTrue("No task ran", VoiceTests.waitUntil(5_000) { listening.state.value.work == Work.RUNNING_TASK })
-            // The counts name the waits, the tasks and the words of the last task, never the words themselves.
+            // The counts name the waits, the tasks, the words of the last task and the keyword hits, never the words
+            // themselves.
             val counts = hook("VOICE_COUNTS").text
-            assertTrue(counts, Regex("waits=\\d+ tasks=${tasks + 1} lastTaskWords=3").matches(counts))
+            assertTrue(counts, Regex("waits=\\d+ tasks=${tasks + 1} lastTaskWords=3 hits=\\d+").matches(counts))
             // The task is still running a second later, unlike the task that ends at once.
             Thread.sleep(1_000)
             assertEquals(Work.RUNNING_TASK, listening.state.value.work)
@@ -78,8 +79,9 @@ class SessionHookTest {
 
         assertEquals(result.text, Activity.RESULT_OK, result.code)
         // Kestrel is in front, so Android gives it the audio focus, and the reply plays to its end. The emulator's
-        // microphone hears silence, so the numbers of hits may be 0.
-        assertTrue(result.text, Regex("result=finished hits=\\d+ own=\\d+").matches(result.text))
+        // microphone hears silence, so the numbers of hits and the loudest level may be 0.
+        val answer = Regex("result=finished hits=\\d+ own=\\d+ loudest=\\d+ silenced=(true|false)")
+        assertTrue(result.text, answer.matches(result.text))
     }
 
     /** Runs a hook command as TestHookReceiver does, with string extras, int extras and boolean extras that are true. */

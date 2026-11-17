@@ -17,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 
 /** The safety page. In this version it has only test mode (design spec, section 12.7). */
@@ -30,7 +31,8 @@ internal fun SafetyPage(data: SettingsData, onBack: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .toggleable(value = testMode == true, enabled = testMode != null, role = Role.Switch) { on ->
-                scope.launch { data.setTestMode(on) }
+                // At once, so that the write is queued also when the owner leaves the page right after the tap.
+                scope.launch(start = CoroutineStart.UNDISPATCHED) { data.setTestMode(on) }
             }
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,

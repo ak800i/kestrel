@@ -1,6 +1,7 @@
 package dev.kestrel.app.listen
 
 import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.listen.Recognition
 import dev.kestrel.voice.speak.Spoke
@@ -23,6 +24,9 @@ internal interface Session {
 
     /** Stops the microphone, and then drops the audio that the pipeline still holds. After [close] it does nothing. */
     fun stopMicrophone()
+
+    /** The options of the voice that the session speaks with, or null when they are not known. */
+    val voice: VoiceOptions? get() = null
 
     /** Speaks [text] in Kestrel's voice. The result completes as `VoicePlayer.speak`'s does. */
     fun speak(text: String): Deferred<Spoke>

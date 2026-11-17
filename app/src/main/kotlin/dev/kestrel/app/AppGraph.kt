@@ -9,10 +9,10 @@ import android.content.pm.PackageManager
 import android.util.Log
 import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
+import dev.kestrel.app.listen.AndroidCallScreen
 import dev.kestrel.app.listen.AndroidExitRecords
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
-import dev.kestrel.app.listen.CallScreen
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
@@ -28,7 +28,7 @@ import dev.kestrel.app.listen.StoredMode
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
-import dev.kestrel.app.listen.loadChosenVoice
+import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.privacy.PrivacyStore
@@ -43,7 +43,6 @@ import dev.kestrel.voice.listen.MicCapture
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelManifest
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -124,6 +123,14 @@ class AppGraph(context: Context) {
     /** Kestrel's speech engines, which load their models from [models] (design spec, section 8.2). */
     val voice: VoiceEngines by lazy { VoiceEngines(models, File(appContext.noBackupFilesDir, "voice")) }
 
+    private val kokoroFallback = MutableStateFlow(false)
+
+    /**
+     * Whether the owner chose Kokoro and Piper spoke instead the last time that a voice session opened in this process,
+     * because Kokoro did not load (design spec, sections 8.2 and 14).
+     */
+    val kokoroFailed: StateFlow<Boolean> = kokoroFallback.asStateFlow()
+
     /** Kestrel's notifications about problems (design spec, section 14.6). */
     internal val problems: ProblemNotifications by lazy { ProblemNotifications(appContext) }
 
@@ -147,17 +154,10 @@ class AppGraph(context: Context) {
                             listener,
                             boostWords,
                             // The owner's voice and speed, read at each start, so that a change counts from the next one.
-                            // A setting that cannot be read counts as the default, Piper, as the listening options do.
-                            loadSynthesizer = {
-                                val chosen = try {
-                                    settings.get(SettingKeys.VOICE)
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    reportFailure("Reading the voice setting", e)
-                                    VoiceOptionsSetting()
-                                }
-                                loadChosenVoice(chosen, reportFailure) { voice.synthesizer(it) }
+                            // The page "Voice and speech" says when Kokoro did not load.
+                            loadVoice = {
+                                loadStoredVoice({ settings.get(SettingKeys.VOICE) }, reportFailure) { voice.synthesizer(it) }
+                                    .also { kokoroFallback.value = it.fellBack }
                             },
                         )
                     }
@@ -203,7 +203,7 @@ class AppGraph(context: Context) {
             // The call commands: Android's call API with ANSWER_PHONE_CALLS, otherwise the phone app's controls through
             // the accessibility service while it runs. Listening runs them on Dispatchers.IO.
             callActions = CallActions(AndroidCallApi(appContext)) {
-                screen.value?.let { session -> CallScreen { label, ifOff -> session.actions.clickLabelled(label, ifOff) } }
+                screen.value?.let { session -> AndroidCallScreen(appContext, session.actions) }
             },
             // Section 15: encrypted like every setting. Listening passes a change on at once.
             options = settings.observe(SettingKeys.LISTENING_OPTIONS),

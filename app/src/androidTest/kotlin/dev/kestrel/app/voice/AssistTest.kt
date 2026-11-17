@@ -9,7 +9,10 @@ import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
+import org.junit.runners.model.Statement
 
 /**
  * The assistant gesture and the earbuds' assistant button (design spec, section 8.6; prototype P3), with Kestrel in the
@@ -19,6 +22,17 @@ import org.junit.Test
  * scripts\voice-test.ps1 puts it back at the end in case the test's process died before it could.
  */
 class AssistTest {
+    // The tests of the role skip on a phone before setUp changes anything there.
+    @get:Rule
+    val roleOnlyOnAnEmulator = TestRule { base, description ->
+        object : Statement() {
+            override fun evaluate() {
+                if (description.methodName in ROLE_TESTS) VoiceTests.assumeEmulator()
+                base.evaluate()
+            }
+        }
+    }
+
     private val listening = VoiceTests.graph.listening
 
     // Hears nothing, so that the wait for a task lasts.
@@ -43,8 +57,8 @@ class AssistTest {
 
     @Test
     fun theAssistKeyStartsListeningAndWaitsForATask() {
-        // It changes the holder of the assistant role, which only voice-test.ps1 puts back if the test's process dies.
-        VoiceTests.assumeEmulator()
+        // It changes the holder of the assistant role, which only voice-test.ps1 puts back if the test's process dies, so
+        // it is in ROLE_TESTS.
         asTheAssistant {
             VoiceTests.shell("input keyevent KEYCODE_ASSIST")
 
@@ -59,8 +73,7 @@ class AssistTest {
 
     @Test
     fun withTheAssistantRoleOpenSettingsBringsTheSettingsToTheFront() {
-        // It changes the holder of the assistant role, as the test of the assist key does.
-        VoiceTests.assumeEmulator()
+        // It changes the holder of the assistant role, as the test of the assist key does, so it is in ROLE_TESTS.
         asTheAssistant {
             // The role alone lets Kestrel start its microphone service from the background (prototype P3).
             VoiceTests.startListening(clip)
@@ -167,6 +180,12 @@ class AssistTest {
 
     private companion object {
         const val ROLE = "android.app.role.ASSISTANT"
+
+        // The tests that make Kestrel the holder of the role, which run only on an emulator, as voice-test.ps1 knows.
+        val ROLE_TESTS = setOf(
+            "theAssistKeyStartsListeningAndWaitsForATask",
+            "withTheAssistantRoleOpenSettingsBringsTheSettingsToTheFront",
+        )
 
         // The settings that name the assistant's service, which Android changes with the role (design D2).
         val ASSISTANT_SETTINGS = listOf("assistant", "voice_interaction_service")

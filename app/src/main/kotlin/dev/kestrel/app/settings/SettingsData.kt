@@ -11,13 +11,20 @@ import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
 import dev.kestrel.voice.speak.Spoke
 import dev.kestrel.voice.speak.VoicePlayer
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** What the settings pages read and change. [StoredSettingsData] connects them to Kestrel's stores; tests use a fake. */
+/**
+ * What the settings pages read and change. [StoredSettingsData] connects them to Kestrel's stores; tests use a fake. A
+ * change that a page stores is made also when the owner leaves the page at once.
+ */
 interface SettingsData {
     val testMode: Flow<Boolean>
 
@@ -33,6 +40,9 @@ interface SettingsData {
      * refuses Kestrel the audio, for example during a call.
      */
     suspend fun tryVoice(options: VoiceOptionsSetting)
+
+    /** Whether the owner chose Kokoro and Piper spoke instead the last time that Kestrel turned on (section 14). */
+    val kokoroFailed: Flow<Boolean>
 
     /** The owner's choices for listening (design spec, section 15). */
     val listening: Flow<ListeningOptions>
@@ -53,37 +63,55 @@ interface SettingsData {
 }
 
 class StoredSettingsData(private val graph: AppGraph, private val context: Context) : SettingsData {
+    private val writes = Mutex()
+
     override val testMode: Flow<Boolean> = graph.settings.observe(SettingKeys.SAFETY).map { it.testMode }
 
-    override suspend fun setTestMode(on: Boolean) {
+    override suspend fun setTestMode(on: Boolean) = write {
         graph.settings.set(SettingKeys.SAFETY, graph.settings.get(SettingKeys.SAFETY).copy(testMode = on))
     }
 
     override val voiceOptions: Flow<VoiceOptionsSetting> = graph.settings.observe(SettingKeys.VOICE)
 
-    override suspend fun setVoiceOptions(options: VoiceOptionsSetting) {
+    override suspend fun setVoiceOptions(options: VoiceOptionsSetting) = write {
         graph.settings.set(SettingKeys.VOICE, options)
     }
 
-    // A voice and a player of its own, beside a voice session that may be open; both are closed afterwards. The voice on
-    // the page itself, without the session's fallback to Piper, so that a Kokoro that does not load shows as a failure.
-    override suspend fun tryVoice(options: VoiceOptionsSetting) = withContext(Dispatchers.IO) {
-        val spoke = graph.voice.synthesizer(options.options()).use { voice ->
-            val player = VoicePlayer(context, voice)
-            try {
-                player.speak(context.getString(R.string.voice_sample)).await()
-            } finally {
-                // As VoiceSession.close does: a cancelled caller still waits until the player no longer uses the voice.
-                withContext(NonCancellable) { player.close() }
+    // With the voice that the open voice session speaks with, the session speaks the sample, so that no second copy of
+    // the voice, several hundred MB for Kokoro, is loaded beside it. Otherwise a voice and a player of its own, which
+    // are closed afterwards: the voice on the page itself, without the session's fallback to Piper, so that a Kokoro
+    // that does not load shows as a failure.
+    override suspend fun tryVoice(options: VoiceOptionsSetting) {
+        val sample = context.getString(R.string.voice_sample)
+        val spoke = graph.listening.speakWithSessionVoice(options.options(), sample) ?: withContext(Dispatchers.IO) {
+            graph.voice.synthesizer(options.options()).use { voice ->
+                val player = VoicePlayer(context, voice)
+                try {
+                    player.speak(sample).await()
+                } finally {
+                    // As VoiceSession.close does: a cancelled caller still waits until the player no longer uses the
+                    // voice.
+                    withContext(NonCancellable) { player.close() }
+                }
             }
         }
         check(spoke != Spoke.REFUSED) { "Android refused the audio" }
     }
 
+    override val kokoroFailed: Flow<Boolean> = graph.kokoroFailed
+
     override val listening: Flow<ListeningOptions> = graph.settings.observe(SettingKeys.LISTENING_OPTIONS)
 
-    override suspend fun setListening(options: ListeningOptions) {
+    override suspend fun setListening(options: ListeningOptions) = write {
         graph.settings.set(SettingKeys.LISTENING_OPTIONS, options)
+    }
+
+    // Section 15: each change counts, also when the owner leaves the page at once. The write runs in the graph's scope,
+    // which outlives the page, behind one lock for every page, so that the writes keep their order: each one queues at
+    // the lock before its caller's first suspension, and a caller's cancellation does not cancel it. A failure goes to
+    // the graph's handler, which logs its classes only.
+    private suspend fun write(change: suspend () -> Unit) {
+        graph.scope.launch(start = CoroutineStart.UNDISPATCHED) { writes.withLock { change() } }.join()
     }
 
     override suspend fun activityLog() = graph.logs.activity()

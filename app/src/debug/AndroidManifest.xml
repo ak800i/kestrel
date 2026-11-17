@@ -14,6 +14,16 @@
             android:exported="true"
             android:permission="android.permission.DUMP" />
 
+        <!-- A screen with a "Mute" switch for the call check of scripts\listen-check.ps1: another app's control with the
+             label of an in-call control. Only callers that hold DUMP, in practice adb shell, can start it. It keeps a
+             task of its own, so that the check can bring the same screen back to the front and read its switch. -->
+        <activity
+            android:name=".debug.CallFixtureActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:permission="android.permission.DUMP"
+            android:taskAffinity="dev.kestrel.fixture" />
+
         <!-- Compose UI tests show their screens in this empty activity. ui-test-manifest declares it as exported, so
              any app could start it. The tests run in Kestrel's own process and can start it without that. -->
         <activity

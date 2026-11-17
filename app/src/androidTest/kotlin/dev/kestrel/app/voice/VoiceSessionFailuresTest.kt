@@ -1,6 +1,7 @@
 package dev.kestrel.app.voice
 
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.kestrel.app.listen.LoadedVoice
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.orchestrator.Event
@@ -13,6 +14,7 @@ import dev.kestrel.voice.SpeechDetector
 import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.Transcript
 import dev.kestrel.voice.Utterance
+import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.listen.Recognition
 import dev.kestrel.voice.models.Engine
@@ -123,7 +125,7 @@ class VoiceSessionFailuresTest {
             boostWords = { listOf("Kestrel", "Viber") },
             loadSpeechDetector = { detector },
             loadKeywordSpotter = { spotter },
-            loadSynthesizer = { synthesizer },
+            loadVoice = { LoadedVoice(synthesizer, VoiceOptions()) },
             loadRecognizer = { recognizer },
         )
         try {
@@ -148,7 +150,7 @@ class VoiceSessionFailuresTest {
             boostWords = { calls += "words"; listOf("Kestrel") },
             loadSpeechDetector = { calls += "detector"; detector },
             loadKeywordSpotter = { calls += "spotter"; spotter },
-            loadSynthesizer = { calls += "synthesizer"; synthesizer },
+            loadVoice = { calls += "synthesizer"; LoadedVoice(synthesizer, VoiceOptions()) },
             loadRecognizer = { calls += "recognizer"; recognizer },
         )
         session.close()
@@ -169,7 +171,7 @@ class VoiceSessionFailuresTest {
                 context, VoiceTests.graph.voice, microphone, listener,
                 loadSpeechDetector = { detector },
                 loadKeywordSpotter = { spotter },
-                loadSynthesizer = { throw missing },
+                loadVoice = { throw missing },
                 loadRecognizer = { recognizerLoaded = true; recognizer },
             )
         }.exceptionOrNull()

@@ -8,6 +8,8 @@ import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.ModelsNotReadyException
+import dev.kestrel.voice.VoiceChoice
+import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.listen.Recognition
 import dev.kestrel.voice.models.Engine
@@ -19,6 +21,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +33,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -124,6 +128,44 @@ class ListeningTest {
         runCurrent()
 
         assertEquals(listOf("stop speaking"), log)
+    }
+
+    @Test
+    fun aSampleUsesTheSessionsVoiceOnlyWhenItSpeaksWithTheChosenOptions() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        val kokoro = VoiceOptions(speed = 1.2f, voice = VoiceChoice.KOKORO)
+        session.voice = kokoro
+
+        // Another speed or voice needs a voice of its own.
+        assertNull(listening.speakWithSessionVoice(kokoro.copy(speed = 1f), "A sample."))
+        val spoken = async { listening.speakWithSessionVoice(kokoro, "A sample.") }
+        runCurrent()
+        assertEquals(listOf("A sample."), session.said)
+        session.replies.single().complete(Spoke.FINISHED)
+        assertEquals(Spoke.FINISHED, spoken.await())
+        listening.send(Event.TurnOff)
+        runCurrent()
+        assertNull(listening.speakWithSessionVoice(kokoro, "A sample."))
+    }
+
+    @Test
+    fun theKeywordHitsOfTheOpenSessionAreCounted() = runTest {
+        val listening = listeningWithSession()
+        val events = sessions.opened.single().listener
+
+        events.send(Event.Spotted(Keyword.KESTREL))
+        events.send(Event.Spotted(Keyword.STOP))
+        // Events that reach the Orchestrator another way are not the spotter's.
+        listening.send(Event.Spotted(Keyword.STOP))
+        events.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        // A closed session's late hit does not count.
+        events.send(Event.Spotted(Keyword.KESTREL))
+
+        assertEquals(2, listening.keywordHits)
     }
 
     @Test
@@ -2152,6 +2194,7 @@ class ListeningTest {
         var closing: CompletableDeferred<Unit>? = null
         var closeFailure: Throwable? = null
         var speakFailure: Throwable? = null
+        override var voice: VoiceOptions? = null
         private var current: Recognition? = null
 
         // Logged only when it changes, so that the log shows what the pipeline would see.

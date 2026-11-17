@@ -7,9 +7,12 @@ import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.models.Engine
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.io.IOException
 
 class VoiceOptionsSettingTest {
     private class FakeVoice : Synthesizer {
@@ -31,8 +34,10 @@ class VoiceOptionsSettingTest {
             voice
         }
 
-        assertSame(voice, result)
+        assertSame(voice, result.synthesizer)
         assertEquals(listOf(VoiceOptions(speed = 1.2f, voice = VoiceChoice.KOKORO)), loaded)
+        assertEquals(loaded.single(), result.options)
+        assertFalse(result.fellBack)
     }
 
     @Test
@@ -45,9 +50,12 @@ class VoiceOptionsSettingTest {
             piper
         }
 
-        assertSame(piper, result)
+        assertSame(piper, result.synthesizer)
         assertEquals(listOf(VoiceChoice.KOKORO, VoiceChoice.PIPER), loaded.map { it.voice })
         assertEquals(0.9f, loaded.last().speed)
+        // The session speaks with Piper, which "Try it" must know, and the page "Voice and speech" says why.
+        assertEquals(loaded.last(), result.options)
+        assertTrue(result.fellBack)
     }
 
     @Test
@@ -75,9 +83,34 @@ class VoiceOptionsSettingTest {
             piper
         }
 
-        assertSame(piper, result)
+        assertSame(piper, result.synthesizer)
         assertEquals(listOf(VoiceChoice.KOKORO, VoiceChoice.PIPER), loaded.map { it.voice })
         assertEquals(listOf("Loading the Kokoro voice"), reports)
+    }
+
+    @Test
+    fun theStoredVoiceLoadsAtTheStoredSpeed() = runTest {
+        val result = loadStoredVoice({ VoiceOptionsSetting(VoiceChoice.KOKORO, speed = 1.2f) }, { _, _ -> }) { options ->
+            loaded += options
+            FakeVoice()
+        }
+
+        assertEquals(listOf(VoiceOptions(speed = 1.2f, voice = VoiceChoice.KOKORO)), loaded)
+        assertEquals(loaded.single(), result.options)
+    }
+
+    @Test
+    fun aVoiceSettingThatCannotBeReadCountsAsPiperAndIsReported() = runTest {
+        val reports = mutableListOf<String>()
+
+        val result = loadStoredVoice({ throw IOException("The store could not be read") }, { what, _ -> reports += what }) {
+            loaded += it
+            FakeVoice()
+        }
+
+        assertEquals(listOf(VoiceOptions()), loaded)
+        assertEquals(VoiceOptions(), result.options)
+        assertEquals(listOf("Reading the voice setting"), reports)
     }
 
     @Test

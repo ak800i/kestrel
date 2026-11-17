@@ -66,14 +66,18 @@ class HeadsetRoute(private val devices: CommunicationDevices) {
             watching = try {
                 devices.watch { id -> if (id != headset.id) lose(token, onLost) }
             } catch (e: Exception) {
-                // Without a watcher, nothing would ever withdraw the request.
+                // Without a watcher, nothing would ever withdraw the request. A failure of the withdrawal too is kept with
+                // the watcher's.
                 held = null
-                devices.clear()
+                runCatching { devices.clear() }.exceptionOrNull()?.let(e::addSuppressed)
                 throw e
             }
             return headset
         }
     }
+
+    /** Whether a request of [open] holds: until [close], or until the route gave the headset up on its own. */
+    val holding: Boolean get() = synchronized(lock) { held != null }
 
     /** Withdraws the request of [open], if there is one. */
     fun close() {

@@ -8,6 +8,7 @@ import dev.kestrel.voice.Recognizer
 import dev.kestrel.voice.SpeechDetector
 import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceEngines
+import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.ListeningPipeline
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.listen.Recognition
@@ -42,6 +43,7 @@ internal class VoiceSession(
     private val microphone: Microphone,
     private val listener: SessionListener,
     private val words: List<String> = listOf(BoostWordSource.NAME),
+    override val voice: VoiceOptions? = null,
 ) : Session {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val closed = AtomicBoolean(false)
@@ -131,14 +133,14 @@ internal class VoiceSession(
     companion object {
         /**
          * Loads the engines and opens a session (section 8.2): the speech detector, the keyword spotter, the voice that
-         * [loadSynthesizer] loads (AppGraph's loads the owner's choice), and the recogniser last, because it holds about
-         * 700 MB: a missing model of another
-         * engine then fails before it loads. Takes several seconds. Throws `ModelsNotReadyException` when a model is
-         * missing or damaged, after closing the engines that it had loaded; it closes them also when a load fails
-         * otherwise or is cancelled. It asks [boostWords] once, after the recogniser has loaded and inside the same clean-up,
-         * so that the caller can read the words while the engines load, and a cancellation while it waits still closes the
-         * engines. The session keeps the words, so that a change of the installed apps counts from the next time that
-         * Kestrel turns on. The other loaders are parameters only for the tests.
+         * [loadVoice] loads (AppGraph's loads the owner's choice), and the recogniser last, because it holds about
+         * 700 MB: a missing model of another engine then fails before it loads. Takes several seconds. Throws
+         * `ModelsNotReadyException` when a model is missing or damaged, after closing the engines that it had loaded;
+         * it closes them also when a load fails otherwise or is cancelled. It asks [boostWords] once, after the
+         * recogniser has loaded and inside the same clean-up, so that the caller can read the words while the engines
+         * load, and a cancellation while it waits still closes the engines. The session keeps the words, so that a
+         * change of the installed apps counts from the next time that Kestrel turns on. The other loaders are
+         * parameters only for the tests.
          */
         suspend fun open(
             context: Context,
@@ -148,17 +150,19 @@ internal class VoiceSession(
             boostWords: suspend () -> List<String> = { listOf(BoostWordSource.NAME) },
             loadSpeechDetector: suspend () -> SpeechDetector = { engines.speechDetector() },
             loadKeywordSpotter: suspend () -> KeywordSpotter = { engines.keywordSpotter() },
-            loadSynthesizer: suspend () -> Synthesizer = { engines.synthesizer() },
+            loadVoice: suspend () -> LoadedVoice = { VoiceOptions().let { LoadedVoice(engines.synthesizer(it), it) } },
             loadRecognizer: suspend () -> Recognizer = { engines.recognizer() },
         ): VoiceSession {
             val loaded = mutableListOf<AutoCloseable>()
             try {
                 val detector = loadSpeechDetector().also { loaded += it }
                 val spotter = loadKeywordSpotter().also { loaded += it }
-                val synthesizer = loadSynthesizer().also { loaded += it }
+                val chosen = loadVoice().also { loaded += it.synthesizer }
                 val recognizer = loadRecognizer().also { loaded += it }
                 val words = boostWords()
-                return VoiceSession(context, detector, spotter, recognizer, synthesizer, microphone, listener, words)
+                return VoiceSession(
+                    context, detector, spotter, recognizer, chosen.synthesizer, microphone, listener, words, chosen.options,
+                )
             } catch (e: Throwable) {
                 withContext(NonCancellable + Dispatchers.IO) {
                     for (engine in loaded.asReversed()) {
