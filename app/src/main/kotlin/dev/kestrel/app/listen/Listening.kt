@@ -309,8 +309,18 @@ class Listening internal constructor(
             options
                 .catch { error -> if (error is Exception) report("Reading the listening options", error) else throw error }
                 .collect { chosen ->
+                    val earbudChanged = chosen.earbudMicrophone != chosenOptions.value.earbudMicrophone
                     chosenOptions.value = chosen
                     send(Event.Options(chosen.onWakeUp, chosen.pauseAfterSilence, chosen.callCommands))
+                    // Section 8.8: the microphone asks for the earbuds, or gives them up, only when it starts, so a change
+                    // restarts a recording. Only one of the two recordings asks for the earbuds, so no late report of
+                    // Android's about the first one can withdraw the second one's request.
+                    val current = session
+                    if (earbudChanged && current != null && microphoneOn) {
+                        microphoneOn = false
+                        releaseMicrophone(current)
+                        followSafely(state.value)
+                    }
                 }
         }
         // One writer, so that the newest mode is written last. It may skip a mode that a newer one replaced at once.

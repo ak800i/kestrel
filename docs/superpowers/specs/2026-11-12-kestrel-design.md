@@ -285,7 +285,7 @@ The notification's Pause, Resume and Stop reach Kestrel as broadcasts to a recei
 ### 8.8 Earbuds
 
 - Replies play in the earbuds automatically.
-- The phone's own microphone stays the input by default. Using the earbud microphone switches Bluetooth to its low-quality call profile, which makes music sound worse. A setting allows the earbud microphone for owners who prefer it.
+- The phone's own microphone stays the input by default. Using the earbud microphone switches Bluetooth to its low-quality call profile, which makes music sound worse. The setting "Use the earbud microphone" (off by default, on the page "Listening and activation") allows it for owners who prefer it. While it is on and Bluetooth earbuds are connected, each start of the microphone asks Android for the earbuds as the communication device (`AudioManager.setCommunicationDevice`), an LE Audio headset before a classic one, before the recording exists. For an LE Audio headset, the recording also names the headset's microphone as its preferred device, because Android gives that microphone to the source `VOICE_RECOGNITION` only then (research r12). Kestrel withdraws the request when the microphone stops, and also when Android reports another communication device, because the earbuds went away or a call took the audio over; the phone's microphone then records until the microphone starts again. Kestrel never sets Android's audio mode, so a call keeps its own route. A change of the setting counts at once: Kestrel restarts a running recording, and while the microphone is off, the change counts from its next start. When Android lists no microphone for an LE Audio headset, Kestrel withdraws the request and records from the phone. While the request holds, other apps that record from the microphone also hear the earbuds. The emulator has no Bluetooth, so the A71 session checks the earbud microphone with the owner's Galaxy Buds.
 
 ### 8.9 Feedback bar
 
@@ -676,7 +676,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 |---|---|---|
 | Accessibility service | Special access | Setup |
 | `RECORD_AUDIO`, `POST_NOTIFICATIONS` | Runtime | Setup |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `INTERNET`, `ACCESS_NETWORK_STATE`, `SET_ALARM` | Normal | Granted at install |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `MODIFY_AUDIO_SETTINGS` (for the earbud microphone, section 8.8), `INTERNET`, `ACCESS_NETWORK_STATE`, `SET_ALARM` | Normal | Granted at install |
 | `READ_PHONE_STATE`, `ANSWER_PHONE_CALLS` | Runtime | Optional, in the setup checklist (section 8.7) |
 | `READ_CONTACTS`, `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_CALENDAR`, `READ_SMS`, `READ_CALL_LOG`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Runtime | First use |
 | `ACCESS_LOCAL_NETWORK` (the "Nearby devices" group, Android 17 and later) | Runtime | When the owner adds a server on the local network (B34) |

@@ -24,14 +24,24 @@ import kotlinx.coroutines.flow.asStateFlow
  * Kestrel silence: when another app has priority on the microphone, when the microphone's privacy toggle is on, or when
  * Android counts Kestrel as idle, such as in the background without a foreground service.
  *
+ * When [earbud] returns true at a start, the microphone of connected Bluetooth earbuds records instead (section 8.8): a
+ * [HeadsetRoute] asks Android for the earbuds before the recording exists, so that Android routes the recording there
+ * from its first frame, and for an LE Audio headset the recording also names the headset's microphone as its preferred
+ * device, because Android gives that microphone to VOICE_RECOGNITION only then (research r12). When the earbuds go away,
+ * or a call takes the audio over, the phone's microphone records until the next start. [stop] withdraws the request.
+ * Without earbuds, when Android refuses them, or when Android lists no microphone for an LE Audio headset, the phone's
+ * microphone records as before.
+ *
  * Any thread may call [start] and [stop], except the microphone's own thread.
  */
-class MicCapture(private val context: Context) : Microphone {
+class MicCapture(private val context: Context, private val earbud: () -> Boolean = { false }) : Microphone {
     private val audio = context.getSystemService(AudioManager::class.java)
+    private val devices = AndroidCommunicationDevices(audio, context.mainExecutor)
     private val silencedState = MutableStateFlow(false)
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
     private var canceller: AcousticEchoCanceler? = null
+    private var route: HeadsetRoute? = null
 
     @Volatile
     private var reader: Thread? = null
@@ -69,9 +79,9 @@ class MicCapture(private val context: Context) : Microphone {
      * [IllegalStateException] there. The caller hands the error to another thread, which then stops the microphone.
      *
      * Throws [SecurityException] without the microphone permission and [IllegalStateException] when the microphone does
-     * not start; then it has released everything, so that a later call can try again. Only when Android's audio service
-     * fails after the microphone opened, or no thread can be created, does [start] throw with the microphone still open;
-     * then [stop] releases it.
+     * not start; then it has released everything, also the request for the earbuds, so that a later call can try again.
+     * Only when Android's audio service fails after the microphone opened, or no thread can be created, does [start]
+     * throw with the microphone still open; then [stop] releases it.
      */
     override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         checkNotOnTheMicrophonesThread()
@@ -89,6 +99,9 @@ class MicCapture(private val context: Context) : Microphone {
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .build()
         val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        // Before the recording exists, so that Android routes it to the earbuds from its first frame (research r12).
+        var earbuds = if (earbud()) HeadsetRoute(devices) else null
+        val headset = earbuds?.open(onLost = ::usePhoneMicrophone)
         val recorder = try {
             AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
@@ -96,12 +109,24 @@ class MicCapture(private val context: Context) : Microphone {
                 .setBufferSizeInBytes(maxOf(minimum, BUFFER_BYTES))
                 .setPrivacySensitive(false)
                 .build()
-        } catch (e: UnsupportedOperationException) {
-            throw IllegalStateException("The microphone could not be opened", e)
+        } catch (e: Exception) {
+            earbuds?.close()
+            throw if (e is UnsupportedOperationException) IllegalStateException("The microphone could not be opened", e) else e
         }
         var effect: AcousticEchoCanceler? = null
         try {
             check(recorder.state == AudioRecord.STATE_INITIALIZED) { "The microphone could not be opened" }
+            // Android gives an LE Audio headset's microphone to VOICE_RECOGNITION only as a preferred device (r12, item 4).
+            // Without such a microphone, the request would only move other apps' audio, so it is withdrawn.
+            if (headset?.leAudio == true) {
+                val input = devices.input(headset)
+                if (input != null) {
+                    recorder.setPreferredDevice(input)
+                } else {
+                    earbuds?.close()
+                    earbuds = null
+                }
+            }
             if (AcousticEchoCanceler.isAvailable()) {
                 effect = AcousticEchoCanceler.create(recorder.audioSessionId)?.also { it.setEnabled(true) }
             }
@@ -110,9 +135,11 @@ class MicCapture(private val context: Context) : Microphone {
         } catch (e: Exception) {
             effect?.release()
             recorder.release()
+            earbuds?.close()
             throw e
         }
         canceller = effect
+        route = earbuds
         echoCancelling = effect?.enabled == true
         record = recorder
         audio.registerAudioRecordingCallback(callback, main)
@@ -128,8 +155,8 @@ class MicCapture(private val context: Context) : Microphone {
 
     /**
      * Stops recording, and waits until the microphone's thread has finished. It also closes a recording whose thread
-     * ended with an error. Throws [IllegalStateException] when called from [start]'s callbacks, where it would wait
-     * for ever.
+     * ended with an error, and withdraws the request for the earbuds. Throws [IllegalStateException] when called from
+     * [start]'s callbacks, where it would wait for ever.
      */
     override fun stop() {
         checkNotOnTheMicrophonesThread()
@@ -139,18 +166,31 @@ class MicCapture(private val context: Context) : Microphone {
     private fun close() {
         val recorder = record ?: return
         running = false
-        recorder.stop()
-        reader?.let(::joinUninterruptibly)
-        reader = null
-        audio.unregisterAudioRecordingCallback(callback)
-        echoCancelling = false
-        canceller?.release()
-        canceller = null
+        try {
+            recorder.stop()
+            reader?.let(::joinUninterruptibly)
+            reader = null
+            audio.unregisterAudioRecordingCallback(callback)
+            echoCancelling = false
+            canceller?.release()
+            canceller = null
+        } finally {
+            // Before the release, as research r12 advises, and also when the stop failed, so that the request for the
+            // earbuds never outlives the recording.
+            route?.close()
+            route = null
+        }
         synchronized(lock) {
             record = null
             silencedState.value = false
         }
         recorder.release()
+    }
+
+    // The earbuds went away, or a call took the audio over, and the route has withdrawn its request. Runs on the main
+    // thread. Without a preferred device, Android records from the phone's microphone again.
+    private fun usePhoneMicrophone() {
+        synchronized(lock) { record?.setPreferredDevice(null) }
     }
 
     // Checked before taking the monitor: a stop() on another thread holds it while it waits for the microphone's thread.

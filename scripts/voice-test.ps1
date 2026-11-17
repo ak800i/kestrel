@@ -18,6 +18,9 @@
 # turns the lock screen off again at the end, sets TAKE_AUDIO_FOCUS back to foreground, gives the assistant role and the
 # settings assistant and voice_interaction_service back as they were before the run, wakes the screen and dismisses the
 # keyguard, also when the run failed or was interrupted.
+# The test MicCaptureTest#withTheEarbudMicrophoneAllowedAndNoEarbudsThePhoneRecordsAndNoRequestStays asks Android for
+# connected earbuds, which would switch a phone's earbuds to their call profile, so on a phone the script leaves it out
+# as well, and the run fails when it ran there; it changes nothing that the script must put back.
 # Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
 # command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
@@ -75,6 +78,8 @@ try {
         # Kestrel the assistant.
         $emulatorOnly = @(
             'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
+            # This one asks Android for connected earbuds.
+            'dev.kestrel.app.voice.MicCaptureTest#withTheEarbudMicrophoneAllowedAndNoEarbudsThePhoneRecordsAndNoRequestStays'
             'dev.kestrel.app.voice.ListeningServiceTest#theMicrophoneStopsWhileTheScreenIsOffAndStartsAgainAfterTheUnlock'
             'dev.kestrel.app.voice.ActivationTest#theTileTogglesListening'
             'dev.kestrel.app.voice.RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar'

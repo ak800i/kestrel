@@ -2053,6 +2053,29 @@ class ListeningTest {
         assertFalse(listening.state.value.microphone)
     }
 
+    @Test
+    fun aChangeOfTheEarbudMicrophoneRestartsARecordingAndOtherChangesDoNot() = runTest {
+        val listening = listeningWithSession()
+        log.clear()
+
+        storedOptions.value = ListeningOptions(pauseAfterSilence = true)
+        runCurrent()
+        storedOptions.value = ListeningOptions(pauseAfterSilence = true, earbudMicrophone = true)
+        runCurrent()
+        listening.send(Event.Screen(on = false))
+        runCurrent()
+        // While the microphone is off, a change waits for its next start.
+        storedOptions.value = ListeningOptions(pauseAfterSilence = true)
+        runCurrent()
+        listening.send(Event.Screen(on = true))
+        runCurrent()
+
+        assertEquals(
+            listOf("microphone off", "microphone on", "microphone off", "microphone on"),
+            log.filter { it.startsWith("microphone") },
+        )
+    }
+
     /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
     private fun readError() = IllegalStateException("The microphone failed with error -6")
 

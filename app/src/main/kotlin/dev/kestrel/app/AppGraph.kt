@@ -193,7 +193,8 @@ class AppGraph(context: Context) {
                 // the service is not in the foreground.
                 override fun demoted(service: Any) = (service as ListeningService).foregroundServiceType == 0
             },
-            microphones = { MicCapture(appContext) },
+            // The owner's choice as Listening read it last, on the controller's thread, where the microphone starts.
+            microphones = { MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }) },
         )
     }
 

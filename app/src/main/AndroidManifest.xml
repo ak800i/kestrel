@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Granted at install. Kestrel asks for the earbuds as the device of calls' audio when the owner allows the earbud
+         microphone (design spec, section 8.8; research r12). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Optional, in the setup checklist: the call state, for the modes Ringing and In call, and the answer, decline and
          hang-up through Android's call API (design spec, sections 8.7 and 13.6). Kestrel reads no phone number and no
          call log. -->

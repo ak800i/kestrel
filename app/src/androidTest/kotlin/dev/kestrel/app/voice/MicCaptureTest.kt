@@ -92,6 +92,31 @@ class MicCaptureTest {
     }
 
     @Test
+    fun withTheEarbudMicrophoneAllowedAndNoEarbudsThePhoneRecordsAndNoRequestStays() {
+        // On a phone with earbuds connected, the test would switch them to their call profile.
+        VoiceTests.assumeEmulator()
+        val frames = AtomicInteger()
+        val errors = CopyOnWriteArrayList<Exception>()
+        // The emulator has no Bluetooth, so Android offers no headset, and the communication device must stay as it was.
+        val before = audio.communicationDevice?.id
+
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val capture = MicCapture(context, earbud = { true })
+            capture.start(onFrame = { frames.incrementAndGet() }, onError = { errors += it })
+            try {
+                Thread.sleep(1_000)
+                assertEquals(before, audio.communicationDevice?.id)
+            } finally {
+                capture.stop()
+            }
+        }
+
+        assertEquals(emptyList<Exception>(), errors)
+        assertTrue("${frames.get()} frames in 1 s", frames.get() in 30..70)
+        assertEquals(before, audio.communicationDevice?.id)
+    }
+
+    @Test
     fun theMicrophoneStartsAgainAfterAStop() {
         val framed = CountDownLatch(1)
 
