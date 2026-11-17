@@ -23,7 +23,8 @@ import kotlinx.coroutines.launch
  * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
  * does the timer of the pause after [silenceMillis] without speech (section 8.5), and the timer of the answer to an
  * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
- * started it. A [Effect.RunCommand] that throws counts as a command that ended as failed,
+ * started it; after a question without an answer, a number counts as a late answer for [lateMillis] (section 9.4). A
+ * [Effect.RunCommand] that throws counts as a command that ended as failed,
  * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14).
  */
 class Orchestrator(
@@ -34,6 +35,7 @@ class Orchestrator(
     private val answerMillis: Long = ANSWER_MILLIS,
     private val silenceMillis: Long = SILENCE_MILLIS,
     private val questionMillis: Long = QUESTION_MILLIS,
+    private val lateMillis: Long = LATE_MILLIS,
     private val commandFailed: String? = null,
 ) {
     // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
@@ -42,6 +44,7 @@ class Orchestrator(
     private var wait: Job? = null
     private var silence: Job? = null
     private var answer: Job? = null
+    private var late: Job? = null
 
     /** The state after the last event. */
     val state: StateFlow<State> = current.asStateFlow()
@@ -79,6 +82,10 @@ class Orchestrator(
             answer?.cancel()
             answer = null
         }
+        if (!step.state.questionEnded) {
+            late?.cancel()
+            late = null
+        }
         val notStarted = mutableListOf<Event>()
         for (effect in step.effects) {
             if (effect is Effect.WaitForTask) {
@@ -96,6 +103,13 @@ class Orchestrator(
                 answer = scope.launch {
                     delay(millis)
                     send(Event.AnswerWaitEnded(number))
+                }
+            } else if (effect == Effect.TimeLateAnswers) {
+                val number = step.state.command
+                late?.cancel()
+                late = scope.launch {
+                    delay(lateMillis)
+                    send(Event.LateAnswersEnded(number))
                 }
             } else if (effect == Effect.TimeSilence) {
                 val number = step.state.silence
@@ -141,5 +155,9 @@ class Orchestrator(
         // Design D2 of sub-project 3: the owner has 15 s to start answering an instant command's question, counted from
         // the end of the question.
         const val QUESTION_MILLIS = 15_000L
+
+        // Section 9.4: a late answer began before the question's wait ran out, so its transcript comes within a few
+        // seconds of the end of the question.
+        const val LATE_MILLIS = 10_000L
     }
 }

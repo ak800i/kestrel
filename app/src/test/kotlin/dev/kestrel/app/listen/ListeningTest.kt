@@ -593,6 +593,45 @@ class ListeningTest {
     }
 
     @Test
+    fun aNumberSoonAfterAnUnansweredQuestionAsksForTheCommandAgainAndLaterRuns() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        var commands = 0
+        runner.action = { conversation ->
+            commands++
+            conversation.ask("Which one?")
+            CommandResult(Outcome.CANCELLED)
+        }
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        session.replies.single().complete(Spoke.FINISHED)
+        advanceTimeBy(15_001)
+        runCurrent()
+
+        listening.send(Event.Heard("2", named = false))
+        runCurrent()
+        assertEquals("The question ended. Say the command again.", shown.last())
+        assertEquals(1, commands)
+
+        // 10 s after the question, a number is a new command.
+        listening.send(Event.Heard("tap Send", named = false))
+        runCurrent()
+        session.replies.last().complete(Spoke.FINISHED)
+        advanceTimeBy(15_001)
+        runCurrent()
+        advanceTimeBy(10_001)
+        runCurrent()
+        assertEquals(2, commands)
+        runner.action = {
+            commands++
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("2", named = false))
+        runCurrent()
+        assertEquals(3, commands)
+    }
+
+    @Test
     fun sayReturnsWhenTheReplyHasEnded() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()

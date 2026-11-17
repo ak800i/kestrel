@@ -6,6 +6,8 @@ import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NumberingTest {
@@ -46,5 +48,15 @@ class NumberingTest {
         val badges = Numbering.forCandidates(snapshot.elements.filter { it.key in setOf("send", "back") })
 
         assertEquals(listOf(1 to "back", 2 to "send"), badges.map { it.number to it.key })
+    }
+
+    @Test
+    fun aBadgeThatOnlyMovedKeepsItsNumbers() {
+        val badges = Numbering.forScreen(snapshot, NumbersMode.ALL)
+        val moved = badges.map { it.copy(bounds = IntRect(it.bounds.left, it.bounds.top + 40, it.bounds.right, it.bounds.bottom + 40)) }
+
+        assertTrue(Numbering.sameNumbers(badges, moved))
+        assertFalse(Numbering.sameNumbers(badges, moved.map { if (it.number == 2) it.copy(key = "icon") else it }))
+        assertFalse(Numbering.sameNumbers(badges, badges.dropLast(1)))
     }
 }

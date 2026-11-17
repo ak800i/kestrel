@@ -143,7 +143,7 @@ internal object ListeningTexts {
     const val CANCELLED = "Cancelled"
     const val BUSY = "Still busy with the last command."
     const val NOTHING_TO_REPEAT = "There's no command to repeat."
-    const val QUESTION_ENDED = "The question ended. Say it again."
+    const val QUESTION_ENDED = "The question ended. Say the command again."
     const val PRIVATE_INPUT = "Typing in a password field."
     const val COMMAND_FAILED = "The command failed."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on or I am your " +
@@ -972,7 +972,7 @@ class Listening internal constructor(
                 }
             }
             // The Orchestrator runs the timers itself.
-            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer -> Unit
+            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers -> Unit
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
             // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.

@@ -59,7 +59,8 @@ enum class Work {
  * "cancel" cancelled the command, or stopped a reply while no command ran, so the transcript of the same word names no
  * button. It lasts until the next transcript that reaches the commands, so when the pipeline dropped that word, one
  * later "stop…" or "cancel…" is only shown. [questionEnded]: a command's question ended without an answer, so the next
- * transcript that reaches the commands, when it names a number, may be a late answer and is only shown (section 9.4).
+ * transcript that reaches the commands, when it names a number, may be a late answer and is only shown (section 9.4). It
+ * lasts 10 s at most, and a pause, a call, a task or the wait for one, and the screen turning off end it.
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -246,6 +247,9 @@ sealed interface Event {
 
     /** Wait number [wait] for the answer to a command's question has lasted long enough. */
     data class AnswerWaitEnded(val wait: Int) : Event
+
+    /** 10 s have passed since the question of command number [command] ended without an answer (section 9.4). */
+    data class LateAnswersEnded(val command: Int) : Event
 }
 
 /** What Kestrel says. */
@@ -303,8 +307,8 @@ sealed interface Feedback {
     data object NothingToRepeat : Feedback
 
     /**
-     * A number came as the first transcript after a command's question ended without an answer: it may be a late answer,
-     * whose number would name another element now, so it did nothing (section 9.4).
+     * A number came as the first transcript after a command's question ended without an answer, within 10 s: it may be a
+     * late answer, whose number would name another element now, so it did nothing (section 9.4).
      */
     data object QuestionEnded : Feedback
 }
@@ -370,6 +374,12 @@ sealed interface Effect {
      * Orchestrator runs it itself.
      */
     data object TimeSilence : Effect
+
+    /**
+     * Starts the timer after which a number no longer counts as a late answer to the question of the latest command
+     * ([Event.LateAnswersEnded]), in place of the one that runs. The Orchestrator runs it itself.
+     */
+    data object TimeLateAnswers : Effect
 }
 
 /** A transition: the new state, and what to do, in order. */
@@ -377,7 +387,7 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
-    fun next(state: State, event: Event): Step = silenceTimer(state, event, react(state, event))
+    fun next(state: State, event: Event): Step = silenceTimer(state, event, endLateAnswers(react(state, event)))
 
     private val STOP_WORDS = setOf("stop", "cancel")
 
@@ -433,6 +443,8 @@ object Rules {
             state.copy(onWakeUp = event.onWakeUp, pauseAfterSilence = event.pauseAfterSilence, callCommands = event.callCommands),
         )
         is Event.Silent -> silent(state, event.silence)
+        is Event.LateAnswersEnded ->
+            if (event.command == state.command && state.questionEnded) Step(state.copy(questionEnded = false)) else Step(state)
         // A command that has ended or was cancelled may still report; nothing changes then.
         is Event.CommandEnded, is Event.CommandAsks, is Event.CommandSays, is Event.CommandCounts, is Event.AnswerWaitEnded ->
             Step(state)
@@ -566,7 +578,10 @@ object Rules {
         }
         is Event.CommandCounts -> if (event.command == state.command) Step(state.copy(counting = event.counting)) else Step(state)
         is Event.AnswerWaitEnded -> if (state.asking && event.wait == state.wait) {
-            Step(state.copy(asking = false, questionEnded = true), listOf(Effect.AnswerCommand(state.command, null)))
+            Step(
+                state.copy(asking = false, questionEnded = true),
+                listOf(Effect.AnswerCommand(state.command, null), Effect.TimeLateAnswers),
+            )
         } else {
             Step(state)
         }
@@ -874,6 +889,15 @@ object Rules {
                     event == Event.NothingHeard
                 )
         return if (start) Step(after.copy(silence = after.silence + 1), step.effects + Effect.TimeSilence) else step
+    }
+
+    // Section 9.4: a late answer to a question that ended without one comes within moments. A pause, a call, a task or the
+    // wait for one, and the screen turning off end that time, and so does Event.LateAnswersEnded 10 s after the question.
+    private fun endLateAnswers(step: Step): Step {
+        val state = step.state
+        val over = state.mode != Mode.LISTENING || !state.screenOn || state.work == Work.AWAITING_TASK ||
+            state.work == Work.RUNNING_TASK
+        return if (state.questionEnded && over) step.copy(state = state.copy(questionEnded = false)) else step
     }
 
     // Kestrel listens, idle, silent itself and recording, and Android does not block its microphone ("Microphone

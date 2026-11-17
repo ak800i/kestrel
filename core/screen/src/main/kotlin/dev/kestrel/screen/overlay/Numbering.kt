@@ -25,6 +25,12 @@ object Numbering {
     /** Numbers only [candidates], for "Which one?" (design spec, section 9.4). */
     fun forCandidates(candidates: List<ScreenElement>): List<Badge> = number(candidates)
 
+    /**
+     * Whether [a] and [b] give each number to the same element. A badge that only moved, as when a list loads its images,
+     * still names the same element, so a number that the owner is saying keeps its meaning (design spec, section 9.4).
+     */
+    fun sameNumbers(a: List<Badge>, b: List<Badge>): Boolean = a.map { it.number to it.key } == b.map { it.number to it.key }
+
     private fun number(elements: List<ScreenElement>): List<Badge> =
         elements.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
             .mapIndexed { index, element -> Badge(index + 1, element.key, element.bounds) }

@@ -406,7 +406,7 @@ class RulesTest {
         assertEquals(Step(answering.state), Rules.next(answering.state, Event.AnswerWaitEnded(2)))
         val ended = Rules.next(answering.state, Event.AnswerWaitEnded(3))
         assertFalse(ended.state.asking)
-        assertEquals(listOf(Effect.AnswerCommand(1, null)), ended.effects)
+        assertEquals(listOf(Effect.AnswerCommand(1, null), Effect.TimeLateAnswers), ended.effects)
         // An utterance without a transcript gives the owner the whole wait again.
         assertEquals(listOf(Effect.WaitForAnswer()), Rules.next(answering.state, Event.NothingHeard).effects)
     }
@@ -517,6 +517,27 @@ class RulesTest {
         // An answered question leaves nothing behind.
         val answered = Rules.next(Rules.next(asked, Event.Heard("3", named = false)).state, Event.CommandEnded(1, CommandResult(Outcome.DONE)))
         assertEquals(Effect.RunCommand(2, Command.Bare("2", 2), "2"), Rules.next(answered.state, Event.Heard("2", named = false)).effects.last())
+    }
+
+    @Test
+    fun aPauseATaskTheScreenTurningOffOrTenSecondsEndTheTimeForALateAnswer() {
+        val asked = Rules.next(runningCommand, Event.CommandAsks(1, "Which one?")).state
+        val unanswered = Rules.next(asked, Event.AnswerWaitEnded(asked.wait)).state
+        val ended = Rules.next(unanswered, Event.CommandEnded(1, CommandResult(Outcome.CANCELLED))).state
+        fun runs(state: State) = Rules.next(state, Event.Heard("2", named = false)).effects.last() is Effect.RunCommand
+        check(!runs(ended))
+
+        // The timer of the latest question ends it; an older timer changes nothing.
+        assertTrue(runs(Rules.next(ended, Event.LateAnswersEnded(1)).state))
+        assertFalse(runs(Rules.next(ended, Event.LateAnswersEnded(0)).state))
+        assertTrue(runs(Rules.next(Rules.next(ended, Event.Pause).state, Event.Resume).state))
+        assertTrue(runs(Rules.next(Rules.next(ended, Event.Screen(on = false)).state, Event.Screen(on = true)).state))
+        val task = Rules.next(ended, Event.Heard("Kestrel, what time is it?", named = true)).state
+        assertEquals(Work.RUNNING_TASK, task.work)
+        assertTrue(runs(Rules.next(task, Event.TaskEnded(task.task, reply = null)).state))
+        val waiting = Rules.next(ended, Event.Heard("Kestrel.", named = true)).state
+        assertEquals(Work.AWAITING_TASK, waiting.work)
+        assertTrue(runs(Rules.next(waiting, Event.WaitEnded(waiting.wait)).state))
     }
 
     @Test

@@ -130,7 +130,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /**
      * While true, the session builds a snapshot after each settled change of the screen, so that `snapshots.latest()`
      * stays current for the boost words of each utterance (design spec, section 8.3). AppGraph sets it while a voice
-     * session is open and Kestrel listens. Any thread may set it.
+     * session is open and Kestrel listens with the screen on and the phone unlocked. Any thread may set it.
      */
     @Volatile
     var keepFresh: Boolean = false
@@ -313,12 +313,15 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
         }
     }
 
-    /** Runs [change] on the main thread, and notes the time when it changed the numbers or the grid. */
+    /**
+     * Runs [change] on the main thread, and notes the time when it changed which element a number names or the grid. A
+     * badge that only moved does not count.
+     */
     private inline fun changing(change: () -> Unit) {
         val badges = numbers.badges
         val grid = gridOverlay.grid
         change()
-        if (numbers.badges != badges || gridOverlay.grid != grid) numbersChanged = SystemClock.uptimeMillis()
+        if (!Numbering.sameNumbers(numbers.badges, badges) || gridOverlay.grid != grid) numbersChanged = SystemClock.uptimeMillis()
     }
 
     /** What the overlays depend on: the actionable elements and where they are. Kestrel's own overlays are not part of it. */

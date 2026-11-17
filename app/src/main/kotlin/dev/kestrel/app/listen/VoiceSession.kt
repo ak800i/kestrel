@@ -53,7 +53,8 @@ internal class VoiceSession(
     private val player = VoicePlayer(context, synthesizer)
     private val echo = EchoFilter()
 
-    // Only the collector of the pipeline's events uses it, one event at a time.
+    // The collector of the pipeline's events uses it one event at a time; the changes of recognition and the microphone's
+    // start drop a start whose utterance ended without an event.
     private val starts = UtteranceStarts(SystemClock::uptimeMillis)
     private val pipeline = ListeningPipeline(
         detector = detector,
@@ -75,12 +76,14 @@ internal class VoiceSession(
     override var recognition: Recognition
         get() = pipeline.recognition
         set(value) {
+            starts.recognitionChanged(pipeline.recognition, value)
             pipeline.recognition = value
         }
 
     override fun startMicrophone() {
         // A frame would reach a closed engine, and the recording would stay open with nobody to stop it.
         check(!closed.get()) { "The session is closed" }
+        starts.microphoneStarted()
         microphone.start(onFrame = pipeline::accept, onError = listener::microphoneFailed)
     }
 
