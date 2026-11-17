@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The view IDs of the text fixtures (EditActivity), which plan 3B's tests look for. -->
+<resources>
+    <item name="text_search" type="id" />
+    <item name="text_search_state" type="id" />
+    <item name="text_notes" type="id" />
+    <item name="text_notes_state" type="id" />
+    <item name="text_password" type="id" />
+    <item name="text_password_state" type="id" />
+    <item name="text_show_password" type="id" />
+    <item name="text_paste" type="id" />
+    <item name="text_paste_state" type="id" />
+    <item name="text_phone" type="id" />
+    <item name="text_phone_state" type="id" />
+</resources>
