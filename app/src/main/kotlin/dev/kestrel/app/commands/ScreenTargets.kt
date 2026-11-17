@@ -230,6 +230,38 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             }
         }
 
+        /** The class names of switches, which "What is N?" calls "a switch" rather than "a check box". */
+        private val SWITCHES = setOf("Switch", "SwitchCompat", "SwitchMaterial", "MaterialSwitch", "ToggleButton")
+
+        /** What [element] is, for "What is N?": "a button", or "a check box, on" with the state of an element that checks. */
+        fun role(element: ScreenElement): String {
+            val kind = element.className?.substringAfterLast('.').orEmpty()
+            val noun = when {
+                element.slider -> "a slider"
+                element.editable -> "a text field"
+                kind in SWITCHES -> "a switch"
+                kind == "RadioButton" -> "a radio button"
+                element.checkable -> "a check box"
+                element.scrollable -> "a list"
+                element.clickable || element.longClickable -> "a button"
+                else -> "a text"
+            }
+            return if (element.checkable) "$noun, ${if (element.checked) "on" else "off"}" else noun
+        }
+
+        /** What the owner can say for [element], for "Show commands for X", from its actions and its kind. */
+        fun sayable(element: ScreenElement): List<String> = buildList {
+            if (element.clickable || !element.scrollable) add("tap")
+            if (element.longClickable || ElementAction.LONG_CLICK in element.actions) add("long press")
+            if (element.checkable) addAll(listOf("check", "uncheck"))
+            if (element.slider) addAll(listOf("increment", "decrement"))
+            if (ElementAction.EXPAND in element.actions) add("expand")
+            if (ElementAction.COLLAPSE in element.actions) add("collapse")
+            if (ElementAction.DISMISS in element.actions) add("dismiss")
+            if (element.scrollable) add("scroll")
+            if (element.editable) add("start editing")
+        }
+
         private fun ownNames(element: ScreenElement): List<String> = listOfNotNull(
             element.label,
             element.text.takeUnless { element.editable },

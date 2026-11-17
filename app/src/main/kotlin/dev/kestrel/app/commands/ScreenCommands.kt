@@ -18,6 +18,7 @@ import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.overlay.Grid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -74,6 +75,16 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             is Command.Swipe -> swipe(screen, command, conversation)
             is Command.Pinch -> pinch(screen, command, conversation)
             is Command.Drag -> drag(screen, command, conversation)
+            Command.ShowNumbers -> shown { screen.showNumbers(environment.options.value.numbers) }
+            Command.HideNumbers -> shown { screen.hideNumbers() }
+            Command.ShowLabels -> shown { screen.showLabels() }
+            Command.HideLabels -> shown { screen.hideLabels() }
+            Command.ShowGrid -> shown { screen.showGrid() }
+            Command.HideGrid -> shown { screen.hideGrid() }
+            Command.MoreSquares -> squares(screen) { it.more() }
+            Command.FewerSquares -> squares(screen) { it.fewer() }
+            is Command.WhatIs -> whatIs(screen, command.number)
+            is Command.CommandsFor -> commandsFor(screen, command.target, conversation)
             // Tasks 5 to 9 add their commands above this line.
             else -> null
         }
@@ -407,6 +418,53 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
 
         /** What a step that only finds its element gives `act`: nothing has moved yet. */
         val FOUND = ActionResult.Done(ActionMethod.ACTION)
+    }
+
+    /** Shows or hides numbers, labels or the grid (design spec, section 9.4). */
+    private suspend fun shown(change: suspend () -> Unit): CommandResult {
+        change()
+        return CommandResult(Outcome.DONE, repeatable = true)
+    }
+
+    /** "More squares" and "fewer squares" change the grid that shows. */
+    private suspend fun squares(screen: ScreenSession, change: (Grid) -> Grid): CommandResult {
+        // The overlays change only on the main thread.
+        val grid = withContext(Dispatchers.Main) { screen.grid }
+            ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SHOW_GRID_FIRST)
+        screen.showGrid(change(grid))
+        return CommandResult(Outcome.DONE, repeatable = true)
+    }
+
+    /**
+     * "What is 5?" says the name and the kind of the element with that number, or, while the grid shows, which square it
+     * is (design spec, Appendix A).
+     */
+    private suspend fun whatIs(screen: ScreenSession, number: Int): CommandResult {
+        val answer = when (val found = targets.resolve(Target.Number(number), TargetKind.TAP, cells = true)) {
+            is Resolution.Cell -> CommandTexts.square(found.number)
+            is Resolution.One -> {
+                // One snapshot for the check and the name: an element's parent is an index into its own snapshot.
+                val snapshot = screen.snapshots.current().snapshot
+                val element = snapshot.element(found.element.key)?.takeIf { ScreenTargets.same(found.element, it) }
+                    ?: return changed()
+                CommandTexts.whatIs(number, ScreenTargets.names(snapshot, element).firstOrNull(), ScreenTargets.role(element))
+            }
+            is Resolution.NoSuchNumber -> return CommandResult(Outcome.FAILED, say = CommandTexts.noNumber(found.number))
+            Resolution.Changed -> return changed()
+            else -> return CommandResult(Outcome.FAILED, say = CommandTexts.SHOW_NUMBERS_FIRST)
+        }
+        return CommandResult(Outcome.DONE, say = answer, repeatable = true)
+    }
+
+    /** "Show commands for Send" says what the owner can say for that element, from its actions and its kind. */
+    private suspend fun commandsFor(screen: ScreenSession, target: Target, conversation: CommandConversation): CommandResult {
+        var phrases: List<String>? = null
+        val found = act(screen, target, TargetKind.TAP, conversation) { element ->
+            phrases = ScreenTargets.sayable(element)
+            FOUND
+        }
+        val sayable = phrases ?: return found
+        return found.copy(say = CommandTexts.youCanSay(sayable))
     }
 
     private suspend fun tapAt(screen: ScreenSession, bounds: IntRect): ActionResult = screen.actions.tapAt(bounds.centerX, bounds.centerY)

@@ -171,6 +171,28 @@ class ScreenTargetsTest {
     }
 
     @Test
+    fun whatIsNamesTheKindOfAnElementAndTheStateOfOneThatChecks() {
+        val wifi = element("wifi", "Wi-Fi", IntRect(0, 0, 100, 100), className = "android.widget.Switch").copy(checkable = true, checked = true)
+        val slider = element("seek", null, IntRect(0, 0, 100, 100), clickable = false, className = "android.widget.SeekBar").copy(slider = true)
+
+        assertEquals("a button", ScreenTargets.role(snapshot.element("send")!!))
+        assertEquals("a check box, off", ScreenTargets.role(snapshot.element("subscribe")!!))
+        assertEquals("a switch, on", ScreenTargets.role(wifi))
+        assertEquals("a text field", ScreenTargets.role(snapshot.element("message")!!))
+        assertEquals("a text", ScreenTargets.role(snapshot.element("ana")!!))
+        assertEquals("Number 5 is Send, a button.", CommandTexts.whatIs(5, "Send", ScreenTargets.role(snapshot.element("send")!!)))
+        assertEquals("Number 5 has no name. It's a slider.", CommandTexts.whatIs(5, null, ScreenTargets.role(slider)))
+    }
+
+    @Test
+    fun showCommandsForSaysWhatAnElementAllows() {
+        assertEquals("You can say tap, check or uncheck.", CommandTexts.youCanSay(ScreenTargets.sayable(snapshot.element("subscribe")!!)))
+        assertEquals("You can say tap or long press.", CommandTexts.youCanSay(ScreenTargets.sayable(elements[0].copy(longClickable = true))))
+        assertEquals("You can say tap or expand.", CommandTexts.youCanSay(ScreenTargets.sayable(snapshot.element("details")!!)))
+        assertEquals("You can say tap or start editing.", CommandTexts.youCanSay(ScreenTargets.sayable(snapshot.element("message")!!)))
+    }
+
+    @Test
     fun aChosenElementAndAnAnswerPrintOnlyLengths() {
         assertFalse(ScreenTargets.chosen(elements[0]).toString().contains("Send"))
         assertEquals("ChosenElement(key of 3 characters, no label)", ScreenTargets.chosen(elements[2]).toString())

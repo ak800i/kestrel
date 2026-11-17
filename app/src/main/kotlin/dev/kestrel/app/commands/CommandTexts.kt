@@ -13,6 +13,22 @@ internal object CommandTexts {
 
     fun noNumber(number: Int) = "There's no number $number on the screen."
 
+    const val SHOW_GRID_FIRST = "Say 'show grid' first."
+
+    /** The answer to "What is 5?". [name] is a name on the screen, which Kestrel says and never logs. */
+    fun whatIs(number: Int, name: String?, role: String) =
+        if (name != null) "Number $number is $name, $role." else "Number $number has no name. It's $role."
+
+    /** The answer to "What is 5?" while the grid shows. */
+    fun square(number: Int) = "That's square $number of the grid."
+
+    /** The answer to "Show commands for X", such as "You can say tap, check or uncheck." */
+    fun youCanSay(phrases: List<String>) = when (phrases.size) {
+        0 -> "There's nothing to say for it."
+        1 -> "You can say ${phrases.single()}."
+        else -> "You can say ${phrases.dropLast(1).joinToString(", ")} or ${phrases.last()}."
+    }
+
     const val NOTHING_SWIPES_SIDEWAYS = "Nothing on the screen swipes sideways."
     const val DRAG_WHERE = "Drag it where?"
 
