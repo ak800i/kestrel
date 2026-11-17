@@ -11,7 +11,7 @@
 #             Other; or - when the reading is not checked, as for the call commands, which Requests reads only while a
 #             call rings or is active
 #   owner     1 when the A71 session asks the owner to record the line, otherwise 0
-#   text      what is said. No line may hold private words.
+#   text      what is said. No line may hold private words; every name in it is invented.
 # The expected readings follow the rules of Requests as they are (design spec, section 8.3), so that a perfect
 # transcript always reads as expected. For example, "Forget about it." in an answer is a task, because only "never
 # mind", "forget it" and "nothing" end the wait.
@@ -87,11 +87,11 @@ c069 | answer | answer | 0 | Task | 1 | Turn off.
 c070 | answer | answer | 0 | Task | 1 | Send a message to Ana on WhatsApp.
 c071 | answer | answer | 0 | Task | 1 | No.
 c072 | answer | answer | 0 | Task | 1 | Forget about it.
-c073 | task | idle | 1 | Task | 1 | Kestrel, open Viber and message Zoran.
+c073 | task | idle | 1 | Task | 1 | Kestrel, open Viber and message Nikola.
 c074 | task | idle | 1 | Task | 1 | Kestrel, what's the weather tomorrow?
 c075 | task | idle | 1 | Task | 1 | Kestrel, send a message to Ana on WhatsApp saying I'm running late.
 c076 | task | idle | 1 | Task | 1 | Kestrel, set an alarm for 6:45.
-c077 | task | idle | 1 | Task | 1 | Kestrel, call Dragoljub on Viber.
+c077 | task | idle | 1 | Task | 1 | Kestrel, call Vesna on Viber.
 c078 | task | idle | 1 | Task | 1 | Kestrel, find the nearest pharmacy.
 c079 | task | idle | 1 | Task | 1 | Kestrel, read my last email.
 c080 | task | idle | 1 | Task | 1 | Kestrel, turn on do not disturb until 8.
@@ -103,7 +103,7 @@ c085 | task | idle | 1 | Task | 0 | Kestrel, take a note: the meeting moved to T
 c086 | task | idle | 1 | Task | 1 | Stop. Kestrel, open Viber.
 c087 | task | idle | 1 | Task | 1 | Kestrel, delete history.
 c088 | task | idle | 1 | Task | 1 | Kestrel, save that as morning routine.
-c089 | task | idle | 1 | Task | 1 | Kestrel, remember that my sister is Ana.
+c089 | task | idle | 1 | Task | 1 | Kestrel, remember that the gym closes at nine.
 c090 | task | idle | 1 | Task | 1 | Kestrel, continue.
 c091 | task | idle | 1 | Task | 1 | Kestrel, set a timer for 25 minutes.
 c092 | confusable | idle | 0 | Other | 1 | Chest roll and a pastry, please.
