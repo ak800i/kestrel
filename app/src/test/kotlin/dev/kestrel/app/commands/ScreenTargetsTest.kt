@@ -133,6 +133,14 @@ class ScreenTargetsTest {
         val focusedNews = news.copy(focused = true)
         val focused = plain.copy(snapshot = ScreenSnapshot(0, listOf(keyboard, app), elements + focusedNews))
         assertEquals(Resolution.One(ScreenTargets.chosen(focusedNews)), decide(focused, null, TargetKind.CHECK))
+        // Without a name, "collapse" prefers the rows that can collapse, and "expand" the ones that can expand. The new row
+        // lies above the fake keyboard, which covers the screen from y = 1600 down.
+        val more = element("more", "More", IntRect(600, 1450, 1000, 1550), clickable = false).copy(actions = setOf(ElementAction.COLLAPSE))
+        val rows = plain.copy(snapshot = ScreenSnapshot(0, listOf(keyboard, app), elements + more))
+        assertEquals(Resolution.One(ScreenTargets.chosen(more)), decide(rows, null, TargetKind.COLLAPSE))
+        assertEquals(one("details"), decide(rows, null, TargetKind.EXPAND))
+        // The only row already is as asked: it is still the target, so that the bar can say so.
+        assertEquals(one("details"), decide(plain, null, TargetKind.COLLAPSE))
     }
 
     @Test
@@ -146,6 +154,19 @@ class ScreenTargetsTest {
         assertFalse(ScreenTargets.same(chosen, send.copy(label = "Sent")))
         assertFalse(ScreenTargets.same(chosen, send.copy(className = "android.widget.TextView")))
         assertFalse(ScreenTargets.same(chosen, null))
+    }
+
+    @Test
+    fun theSlidersAreTheCandidatesOfIncrementAndDecrementAndTheFocusedOneNeedsNoName() {
+        val bar = "android.widget.SeekBar"
+        val seekBar = element("seek", null, IntRect(0, 100, 1080, 200), clickable = false, className = bar).copy(slider = true)
+        val progress = element("progress", null, IntRect(0, 300, 1080, 400), clickable = false, className = "android.widget.ProgressBar")
+        val speed = element("speed", "Speed slider", IntRect(0, 500, 1080, 600), clickable = false, className = bar)
+            .copy(slider = true, focused = true)
+        val view = ScreenView(ScreenSnapshot(0, listOf(app), listOf(seekBar, progress, speed)), badges = emptyList(), grid = null)
+
+        assertEquals(listOf("seek", "speed"), ScreenTargets.candidates(view.snapshot, TargetKind.SLIDER).map { it.key })
+        assertEquals(Resolution.One(ScreenTargets.chosen(speed)), decide(view, null, TargetKind.SLIDER))
     }
 
     @Test

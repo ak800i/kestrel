@@ -16,4 +16,10 @@ enum class GlobalAction(internal val id: Int) {
 
     /** Plays or pauses media, like the button on a headset. During a call, the same key answers or ends the call. */
     PLAY_PAUSE(AccessibilityService.GLOBAL_ACTION_KEYCODE_HEADSETHOOK),
+
+    /** The launcher's list of all apps, where the launcher offers it (design spec, Appendix A, "Open apps"). */
+    ALL_APPS(AccessibilityService.GLOBAL_ACTION_ACCESSIBILITY_ALL_APPS),
+
+    /** Closes the notification shade and Quick Settings. */
+    DISMISS_SHADE(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE),
 }

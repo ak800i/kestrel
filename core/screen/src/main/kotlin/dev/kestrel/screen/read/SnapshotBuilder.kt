@@ -41,7 +41,8 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         // A text field is named by its description, supplemental description or hint, never by what was typed into it.
         val ownLabel = if (node.editable) name else text ?: name
         val bounds = node.bounds.intersect(window.bounds)
-        val actionable = node.clickable || node.longClickable || node.editable || node.checkable
+        // A slider counts as actionable, so that it gets a number, also without a name of its own.
+        val actionable = node.clickable || node.longClickable || node.editable || node.checkable || node.slider
         val described = ownLabel != null || Labels.clean(node.stateDescription) != null
         val index = if (bounds != null && (actionable || node.scrollable || described)) {
             out += Draft(node, window.id, parent, bounds, text, ownLabel)
@@ -100,6 +101,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
             selected = node.selected,
             password = node.password,
             dataSensitive = node.dataSensitive,
+            slider = node.slider,
         )
     }
 

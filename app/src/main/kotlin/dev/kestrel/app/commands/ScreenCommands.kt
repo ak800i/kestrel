@@ -8,7 +8,9 @@ import dev.kestrel.commands.Target
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Strictness
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
+import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +51,16 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
                 onCell = { screen.actions.longPressAt(it.centerX, it.centerY) },
             ) { screen.actions.longPress(it.key) }
             is Command.Bare -> bare(screen, command)
+            is Command.Check -> check(screen, command.target, command.on, conversation)
+            is Command.Switch -> check(screen, command.target, command.on, conversation)
+            is Command.Expand -> expandOrCollapse(screen, command.target, expand = true, conversation)
+            is Command.Collapse -> expandOrCollapse(screen, command.target, expand = false, conversation)
+            is Command.Dismiss -> act(screen, command.target, TargetKind.DISMISS, conversation) {
+                screen.actions.dismiss(it.key)
+            }
+            is Command.Slider -> act(screen, command.target, TargetKind.SLIDER, conversation) {
+                screen.actions.adjust(it.key, command.increase)
+            }
             // Tasks 5 to 9 add their commands above this line.
             else -> null
         }
@@ -171,6 +183,55 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             }
             else -> CommandResult(Outcome.IGNORED)
         }
+    }
+
+    /**
+     * "Check", "uncheck", "switch on" and "switch off" (design spec, Appendix A): a click only when the element's checked
+     * state differs from the one asked for; otherwise nothing is clicked, and the bar says that it is already on or off.
+     */
+    private suspend fun check(screen: ScreenSession, target: Target?, on: Boolean, conversation: CommandConversation): CommandResult {
+        var already = false
+        val result = act(screen, target, TargetKind.CHECK, conversation) { element ->
+            when {
+                // A number can name an element that does not check, such as a settings row with its switch inside it. A
+                // tap would toggle that switch whatever its state.
+                !element.checkable -> ActionResult.Failed(CommandTexts.NOT_CHECKABLE)
+                element.checked == on -> {
+                    already = true
+                    // Nothing to click: the element is as the owner wants it.
+                    ActionResult.Done(ActionMethod.ACTION)
+                }
+                else -> screen.actions.tap(element.key)
+            }
+        }
+        if (!already || result.outcome != Outcome.DONE) return result
+        return result.copy(show = if (on) CommandTexts.ALREADY_ON else CommandTexts.ALREADY_OFF)
+    }
+
+    /**
+     * "Expand" and "collapse". The target may offer only the other action, whether the owner names it, gives its number or
+     * names none: it already is as the owner asks, so nothing is done, and the bar says so; a tap would toggle it back.
+     */
+    private suspend fun expandOrCollapse(
+        screen: ScreenSession,
+        target: Target?,
+        expand: Boolean,
+        conversation: CommandConversation,
+    ): CommandResult {
+        var already = false
+        val (wanted, other) = if (expand) ElementAction.EXPAND to ElementAction.COLLAPSE else ElementAction.COLLAPSE to ElementAction.EXPAND
+        val result = act(screen, target, if (expand) TargetKind.EXPAND else TargetKind.COLLAPSE, conversation) { element ->
+            when {
+                wanted !in element.actions && other in element.actions -> {
+                    already = true
+                    ActionResult.Done(ActionMethod.ACTION)
+                }
+                expand -> screen.actions.expand(element.key)
+                else -> screen.actions.collapse(element.key)
+            }
+        }
+        if (!already || result.outcome != Outcome.DONE) return result
+        return result.copy(show = if (expand) CommandTexts.ALREADY_EXPANDED else CommandTexts.ALREADY_COLLAPSED)
     }
 
     private suspend fun tapAt(screen: ScreenSession, bounds: IntRect): ActionResult = screen.actions.tapAt(bounds.centerX, bounds.centerY)

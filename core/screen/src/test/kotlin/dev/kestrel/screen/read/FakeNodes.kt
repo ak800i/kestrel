@@ -27,6 +27,7 @@ class FakeNode(
     override val selected: Boolean = false,
     override val password: Boolean = false,
     override val dataSensitive: Boolean = false,
+    override val slider: Boolean = false,
     override val actions: Set<ElementAction> = emptySet(),
     val children: List<FakeNode> = emptyList(),
 ) : NodeData {

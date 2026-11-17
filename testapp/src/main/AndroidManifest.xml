@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- For NotificationActivity's notification: the command tests grant it, and command-test.ps1 takes it back. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Lets the hook probe see Kestrel, so that only Kestrel's permission check can refuse it. -->
     <queries>
         <package android:name="dev.kestrel" />
@@ -51,6 +54,11 @@
         <activity
             android:name=".CommandsActivity"
             android:exported="true" />
+        <!-- Shows nothing: it posts or removes the notification and closes. -->
+        <activity
+            android:name=".NotificationActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay" />
         <!-- Plan 3B: text fixtures -->
         <!-- Plan 3C: phone fixtures -->
     </application>

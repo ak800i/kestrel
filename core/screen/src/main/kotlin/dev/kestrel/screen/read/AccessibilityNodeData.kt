@@ -32,6 +32,8 @@ internal class AccessibilityNodeData(val info: AccessibilityNodeInfo) : NodeData
     override val selected: Boolean get() = info.isSelected
     override val password: Boolean get() = info.isPassword
     override val dataSensitive: Boolean get() = Build.VERSION.SDK_INT >= 34 && info.isAccessibilityDataSensitive
+    override val slider: Boolean
+        get() = info.isEnabled && info.rangeInfo != null && info.actionList.any { it.id in SLIDER_ACTIONS }
     override val actions: Set<ElementAction> get() = info.actionList.mapNotNullTo(mutableSetOf()) { STANDARD_ACTIONS[it.id] }
     override val childCount: Int get() = info.childCount
 
@@ -52,6 +54,12 @@ internal class AccessibilityNodeData(val info: AccessibilityNodeInfo) : NodeData
             AccessibilityAction.ACTION_EXPAND.id to ElementAction.EXPAND,
             AccessibilityAction.ACTION_COLLAPSE.id to ElementAction.COLLAPSE,
             AccessibilityAction.ACTION_DISMISS.id to ElementAction.DISMISS,
+        )
+
+        val SLIDER_ACTIONS = setOf(
+            AccessibilityAction.ACTION_SET_PROGRESS.id,
+            AccessibilityAction.ACTION_SCROLL_FORWARD.id,
+            AccessibilityAction.ACTION_SCROLL_BACKWARD.id,
         )
     }
 }

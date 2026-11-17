@@ -15,6 +15,7 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -154,6 +155,97 @@ class ScreenActions internal constructor(
         }
         return gesture(fingers) { arrayOf(Gestures.pinch(ScreenPoint(centerX, centerY), startSpan, endSpan)) }
     }
+
+    /**
+     * Moves the slider with [key] one step up ([increase]) or down (design spec, Appendix A): with its scroll-forward or
+     * scroll-backward action, which moves it by the app's own step, or else with the set-progress action by a twentieth
+     * of its range.
+     */
+    suspend fun adjust(key: String, increase: Boolean): ActionResult {
+        val node = snapshots.current().node(key) ?: return NOT_ON_SCREEN
+        if (!node.isEnabled) return DISABLED
+        // A number can name an element that is no slider, such as a list, whose scroll action would move it instead.
+        val range = node.rangeInfo ?: return ActionResult.Failed("The element is not a slider")
+        val step = if (increase) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        if (node.offers(step) && node.performAction(step)) return settled(ActionMethod.ACTION)
+        if (node.offers(SET_PROGRESS)) {
+            // A range of whole numbers that has fewer than 20 steps would round a twentieth back to the same value.
+            val change = ((range.max - range.min) / SLIDER_STEPS).let {
+                if (range.type == AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT) maxOf(1f, it) else it
+            }
+            val value = (range.current + if (increase) change else -change).coerceIn(range.min, range.max)
+            if (value != range.current) {
+                val arguments = Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value) }
+                return if (node.performAction(SET_PROGRESS, arguments)) {
+                    settled(ActionMethod.ACTION)
+                } else {
+                    ActionResult.Failed("The slider refused the change")
+                }
+            }
+        }
+        // Apps offer a step's action only while the slider can move that way.
+        return ActionResult.Failed(if (increase) "The slider is at its highest" else "The slider is at its lowest")
+    }
+
+    /**
+     * Expands the element with [key] with its expand action, or else taps it, as most rows that open and close allow. In
+     * SystemUI it never taps, because a tap on a notification opens its app.
+     */
+    suspend fun expand(key: String): ActionResult = expandOrCollapse(key, AccessibilityNodeInfo.ACTION_EXPAND)
+
+    /** Collapses the element with [key], in the same way as [expand]. */
+    suspend fun collapse(key: String): ActionResult = expandOrCollapse(key, AccessibilityNodeInfo.ACTION_COLLAPSE)
+
+    private suspend fun expandOrCollapse(key: String, action: Int): ActionResult {
+        val live = snapshots.current()
+        val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        val node = live.node(key) ?: return NOT_ON_SCREEN
+        if (!node.isEnabled) return DISABLED
+        if (node.offers(action) && node.performAction(action)) return settled(ActionMethod.ACTION)
+        val expanding = action == AccessibilityNodeInfo.ACTION_EXPAND
+        // An element that offers only the other action is already as the owner wants it: a tap would toggle it back.
+        val other = if (expanding) AccessibilityNodeInfo.ACTION_COLLAPSE else AccessibilityNodeInfo.ACTION_EXPAND
+        if (node.offers(other)) return ActionResult.Failed(if (expanding) "It's already expanded" else "It's already collapsed")
+        if (element.packageName == SYSTEM_UI) return ActionResult.Failed(if (expanding) "It can't expand" else "It can't collapse")
+        return tap(key)
+    }
+
+    /**
+     * Dismisses the element with [key] with its dismiss action (design spec, Appendix A). In SystemUI's notification shade
+     * a notification that offers none is swiped away ([swipeAway]). Anywhere else Kestrel never swipes sideways on its
+     * own, because a sideways swipe across a row can archive a message or start a call (section 9.3).
+     */
+    suspend fun dismiss(key: String): ActionResult {
+        val live = snapshots.current()
+        val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        val node = live.node(key) ?: return NOT_ON_SCREEN
+        if (!node.isEnabled) return DISABLED
+        if (node.offers(AccessibilityNodeInfo.ACTION_DISMISS) && node.performAction(AccessibilityNodeInfo.ACTION_DISMISS)) {
+            return settled(ActionMethod.ACTION)
+        }
+        return if (element.notificationRow) swipeAway(key) else NOT_DISMISSIBLE
+    }
+
+    /**
+     * Swipes the notification with [key] in SystemUI's notification shade sideways across 80% of its width, as a finger
+     * dismisses it. It swipes nothing else (design spec, section 9.3).
+     */
+    suspend fun swipeAway(key: String): ActionResult {
+        val element = snapshots.current().snapshot.element(key) ?: return NOT_ON_SCREEN
+        if (!element.notificationRow) return NOT_DISMISSIBLE
+        val bounds = element.bounds
+        val from = ScreenPoint(bounds.left + bounds.width / 10, bounds.centerY)
+        val to = ScreenPoint(bounds.right - 1 - bounds.width / 10, bounds.centerY)
+        return gesture(listOf(from, to)) { arrayOf(Gestures.swipe(from, to)) }
+    }
+
+    /**
+     * Whether the element is a notification row in SystemUI's shade: one that offers expand or collapse. A View reports
+     * a class that Android knows, such as `FrameLayout`, so the class cannot tell a row, and a Quick Settings tile, the
+     * media player or a button of the power menu offers neither action.
+     */
+    private val ScreenElement.notificationRow: Boolean
+        get() = packageName == SYSTEM_UI && (ElementAction.EXPAND in actions || ElementAction.COLLAPSE in actions)
 
     /** How many times Android's magnification enlarges the screen; 1 when it does not. */
     val zoomScale: Float get() = service.magnificationController.magnificationConfig?.scale ?: 1f
@@ -471,6 +563,10 @@ class ScreenActions internal constructor(
         val GONE = ActionResult.Failed("The element is no longer on the screen")
         val OFF_SCREEN = ActionResult.Failed("The point is outside the screen")
         val COVERED = ActionResult.Failed("Other windows cover the element")
+        val NOT_DISMISSIBLE = ActionResult.Failed("I can't dismiss it.")
+        val SET_PROGRESS = AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id
+        const val SLIDER_STEPS = 20f
+        const val SYSTEM_UI = "com.android.systemui"
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
         const val POLL_MILLIS = 50L

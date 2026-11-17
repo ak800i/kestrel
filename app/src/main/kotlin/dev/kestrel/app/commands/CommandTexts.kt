@@ -12,4 +12,10 @@ internal object CommandTexts {
     fun cantFind(spoken: String) = "I can't find $spoken."
 
     fun noNumber(number: Int) = "There's no number $number on the screen."
+
+    const val ALREADY_ON = "It's already on."
+    const val ALREADY_OFF = "It's already off."
+    const val ALREADY_EXPANDED = "It's already expanded."
+    const val ALREADY_COLLAPSED = "It's already collapsed."
+    const val NOT_CHECKABLE = "It isn't a check box or a switch."
 }

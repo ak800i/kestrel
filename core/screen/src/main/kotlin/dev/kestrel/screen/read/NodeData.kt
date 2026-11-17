@@ -32,6 +32,13 @@ interface NodeData {
     val selected: Boolean
     val password: Boolean
     val dataSensitive: Boolean
+
+    /**
+     * Whether the node is a slider: an enabled node with a range that offers the set-progress, scroll-forward or
+     * scroll-backward action (design spec, Appendix A, "Increment" and "Decrement"). A determinate progress bar has a
+     * range but none of these actions, so it is no slider.
+     */
+    val slider: Boolean
     val actions: Set<ElementAction>
     val childCount: Int
 

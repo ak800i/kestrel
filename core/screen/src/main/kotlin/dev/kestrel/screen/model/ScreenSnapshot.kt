@@ -81,9 +81,11 @@ data class ScreenElement(
     val selected: Boolean = false,
     val password: Boolean = false,
     val dataSensitive: Boolean = false,
+    /** A slider, which "increment" and "decrement" move (see `NodeData.slider`). */
+    val slider: Boolean = false,
 ) {
     /** Whether the owner can act on the element directly. Numbers go on these elements (design spec, section 9.4). */
-    val isActionable: Boolean get() = enabled && (clickable || longClickable || editable || checkable)
+    val isActionable: Boolean get() = enabled && (clickable || longClickable || editable || checkable || slider)
 }
 
 /** The interactive windows on the screen and their elements, top window first (design spec, section 9.2). */

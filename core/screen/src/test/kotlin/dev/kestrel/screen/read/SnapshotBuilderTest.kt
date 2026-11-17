@@ -33,6 +33,21 @@ class SnapshotBuilderTest {
     }
 
     @Test
+    fun aSliderIsActionableWithoutANameAndAProgressBarIsNot() {
+        val slider = FakeNode(className = "android.widget.SeekBar", slider = true)
+        // A determinate progress bar has a range too, but no action that moves it.
+        val progress = FakeNode(className = "android.widget.ProgressBar", stateDescription = "40%")
+        val root = FakeNode(className = "android.widget.LinearLayout", children = listOf(slider, progress))
+
+        val elements = build(FakeWindow(root)).snapshot.elements
+
+        assertEquals(listOf("android.widget.SeekBar", "android.widget.ProgressBar"), elements.map { it.className })
+        assertEquals(listOf(true, false), elements.map { it.slider })
+        assertEquals(listOf(true, false), elements.map { it.isActionable })
+        assertFalse(elements.first().copy(enabled = false).isActionable)
+    }
+
+    @Test
     fun passwordTextNeverAppearsAndTheHintNamesTheField() {
         val field = FakeNode(text = "hunter2", hint = "Password", editable = true, password = true)
 

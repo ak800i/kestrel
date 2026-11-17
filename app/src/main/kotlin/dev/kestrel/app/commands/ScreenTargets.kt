@@ -31,6 +31,9 @@ internal enum class TargetKind {
     DISMISS,
     SCROLL,
     EDIT,
+
+    /** "Increment" and "decrement": the sliders. */
+    SLIDER,
 }
 
 /** The element that Kestrel chose, as it was then. [ScreenTargets.still] checks it again right before the action. */
@@ -109,11 +112,14 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
                 }
                 TargetKind.BARE -> shown.filter { it.isActionable }
                 TargetKind.CHECK -> shown.filter { it.enabled && it.checkable }
-                TargetKind.EXPAND -> shown.filter { it.enabled && ElementAction.EXPAND in it.actions }
-                TargetKind.COLLAPSE -> shown.filter { it.enabled && ElementAction.COLLAPSE in it.actions }
+                // Both commands take a row in either state, so that one that is already open or closed gets "It's already
+                // expanded." or "It's already collapsed." rather than "I can't find it".
+                TargetKind.EXPAND, TargetKind.COLLAPSE ->
+                    shown.filter { it.enabled && (ElementAction.EXPAND in it.actions || ElementAction.COLLAPSE in it.actions) }
                 TargetKind.DISMISS -> shown.filter { it.enabled && ElementAction.DISMISS in it.actions }
                 TargetKind.SCROLL -> shown.filter { it.enabled && it.scrollable }
                 TargetKind.EDIT -> shown.filter { it.enabled && it.editable }
+                TargetKind.SLIDER -> shown.filter { it.enabled && it.slider }
             }
         }
 
@@ -133,7 +139,7 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
         fun decide(view: ScreenView, target: Target?, kind: TargetKind, strictness: Strictness, cells: Boolean): Resolution {
             val candidates = candidates(view.snapshot, kind)
             return when (target) {
-                null -> only(candidates)
+                null -> only(preferred(candidates, kind))
                 is Target.Number -> number(view, target.number, candidates, cells)
                 is Target.Label -> label(view.snapshot, target.spoken, candidates, strictness)
             }
@@ -146,6 +152,17 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             if (element == null || element.className != chosen.className || element.label != chosen.label) return false
             val overlap = chosen.bounds.intersect(element.bounds) ?: return chosen.bounds.isEmpty && chosen.bounds == element.bounds
             return 2L * overlap.width * overlap.height >= chosen.bounds.width.toLong() * chosen.bounds.height
+        }
+
+        // Without a name, "expand" takes the rows that can expand and "collapse" the ones that can collapse; a row that
+        // already is as asked is the target only when no row can, so that the bar can say so.
+        private fun preferred(candidates: List<ScreenElement>, kind: TargetKind): List<ScreenElement> {
+            val action = when (kind) {
+                TargetKind.EXPAND -> ElementAction.EXPAND
+                TargetKind.COLLAPSE -> ElementAction.COLLAPSE
+                else -> return candidates
+            }
+            return candidates.filter { action in it.actions }.ifEmpty { candidates }
         }
 
         // Without a target: the only candidate, else the focused one.
