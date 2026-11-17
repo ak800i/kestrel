@@ -65,6 +65,14 @@ class AssistTest {
             // The role alone lets Kestrel start its microphone service from the background (prototype P3).
             VoiceTests.startListening(clip)
             try {
+                // The setup's Home key returns before the launcher is in front, and an earlier test may have left the
+                // settings there, so the test waits until they are not in front.
+                assertTrue(
+                    "Kestrel's settings are in front before the command",
+                    VoiceTests.waitUntil(5_000) {
+                        !SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
+                    },
+                )
                 listening.send(Event.Heard("Kestrel, open settings", named = true))
 
                 // Without the role and the accessibility service, Android would block the start without an exception.

@@ -4,27 +4,44 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class HeadsetRouteTest {
     /** Android's communication devices: the headsets that it offers, and the requests and watchers that it got. */
     private class FakeDevices(var headsets: List<Headset> = emptyList(), var accepts: Boolean = true) : CommunicationDevices {
         val chosen = mutableListOf<Headset>()
         var cleared = 0
-        val watchers = mutableListOf<(Int?) -> Unit>()
+        val watchers = CopyOnWriteArrayList<(Int?) -> Unit>()
+
+        /** The requests and withdrawals in their order, and anything else that a test adds. */
+        val events: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
+        /** Runs at the start of each withdrawal. */
+        var clearing: () -> Unit = {}
+        var watchFails = false
 
         override fun headsets() = headsets
 
         override fun choose(headset: Headset): Boolean {
             chosen += headset
+            events += "choose"
             return accepts
         }
 
         override fun clear() {
+            clearing()
             cleared++
+            events += "clear"
         }
 
         override fun watch(changed: (Int?) -> Unit): AutoCloseable {
+            if (watchFails) throw RuntimeException("The watcher could not be added")
             watchers += changed
             return AutoCloseable { watchers -= changed }
         }
@@ -152,5 +169,52 @@ class HeadsetRouteTest {
         assertEquals(0, lost)
         assertEquals(1, devices.cleared)
         assertEquals(1, devices.watchers.size)
+    }
+
+    @Test
+    fun aLossThatHasBegunEndsBeforeTheCloseReturnsSoTheNextRequestStays() {
+        val devices = FakeDevices(headsets = listOf(classic))
+        val clearing = CountDownLatch(1)
+        val proceed = CountDownLatch(1)
+        devices.clearing = {
+            if (clearing.count > 0) {
+                clearing.countDown()
+                proceed.await(5, TimeUnit.SECONDS)
+            }
+        }
+        val first = HeadsetRoute(devices)
+        first.open { devices.events += "lost" }
+
+        // Android's report of another device comes on the main thread and begins the loss...
+        val main = thread { devices.change(3) }
+        assertTrue(clearing.await(5, TimeUnit.SECONDS))
+        // ...while the controller's thread stops the recording and starts the next one, which has a route of its own.
+        val controller = thread {
+            first.close()
+            HeadsetRoute(devices).open {}
+        }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (controller.isAlive && controller.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.sleep(1)
+        proceed.countDown()
+        main.join(5_000)
+        controller.join(5_000)
+
+        // The earlier route's withdrawal and onLost come before the next request, so neither reaches the next
+        // recording.
+        assertEquals(listOf("choose", "clear", "lost", "choose"), devices.events)
+    }
+
+    @Test
+    fun aWatcherThatAndroidRefusesGivesTheRequestBack() {
+        val devices = FakeDevices(headsets = listOf(classic))
+        devices.watchFails = true
+        val route = HeadsetRoute(devices)
+
+        assertThrows(RuntimeException::class.java) { route.open {} }
+
+        assertEquals(1, devices.cleared)
+        // The route is closed, so it opens again.
+        devices.watchFails = false
+        assertSame(classic, route.open {})
     }
 }

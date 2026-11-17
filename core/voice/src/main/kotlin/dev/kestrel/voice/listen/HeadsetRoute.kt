@@ -47,7 +47,8 @@ class HeadsetRoute(private val devices: CommunicationDevices) {
     /**
      * Asks for a connected headset and returns it, or returns null when no headset is connected or Android refused it;
      * the phone's microphone then records as before. [onLost] runs at most once, on the thread of Android's report, when
-     * the route has given the headset up on its own. Throws [IllegalStateException] while a headset is asked for.
+     * the route has given the headset up on its own; [close] waits for it. Throws [IllegalStateException] while a
+     * headset is asked for, and rethrows a failure to watch Android's reports after it has withdrawn the request.
      */
     fun open(onLost: () -> Unit): Headset? {
         synchronized(lock) {
@@ -62,7 +63,14 @@ class HeadsetRoute(private val devices: CommunicationDevices) {
             // close, could still arrive and withdraw this request; the callers leave time between a stop and the next
             // start, except when the owner's choice changes, and then only one of the two opens a route. Android also
             // reports the headset itself once its link is up, which changes nothing.
-            watching = devices.watch { id -> if (id != headset.id) lose(token, onLost) }
+            watching = try {
+                devices.watch { id -> if (id != headset.id) lose(token, onLost) }
+            } catch (e: Exception) {
+                // Without a watcher, nothing would ever withdraw the request.
+                held = null
+                devices.clear()
+                throw e
+            }
             return headset
         }
     }
@@ -78,15 +86,18 @@ class HeadsetRoute(private val devices: CommunicationDevices) {
         devices.clear()
     }
 
+    // Runs whole under the lock, so that a close that comes meanwhile waits until the withdrawal and onLost are done.
+    // The next open, of this route or of the next recording's, comes after that close, so neither the withdrawal nor
+    // onLost reaches the request or the recording of a later open.
     private fun lose(token: Any, onLost: () -> Unit) {
-        val watch = synchronized(lock) {
+        synchronized(lock) {
             // A close, or the open after it, came first.
             if (held !== token) return
             held = null
-            watching.also { watching = null }
+            watching?.close()
+            watching = null
+            devices.clear()
+            onLost()
         }
-        watch?.close()
-        devices.clear()
-        onLost()
     }
 }

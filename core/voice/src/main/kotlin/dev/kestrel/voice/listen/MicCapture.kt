@@ -188,7 +188,8 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     }
 
     // The earbuds went away, or a call took the audio over, and the route has withdrawn its request. Runs on the main
-    // thread. Without a preferred device, Android records from the phone's microphone again.
+    // thread, before the route's close returns, so [record] is still the recording of that route, or null. Without a
+    // preferred device, Android records from the phone's microphone again.
     private fun usePhoneMicrophone() {
         synchronized(lock) { record?.setPreferredDevice(null) }
     }

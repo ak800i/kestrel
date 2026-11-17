@@ -267,7 +267,8 @@ class Listening internal constructor(
 
     // Only [thread] uses these. [lastMode]: the mode that was last noted for storing, null before the first change of
     // mode in this process. [restoreChecked]: the accessibility service has connected, or the assistant service has
-    // become ready while Kestrel holds the assistant role, in this process, so the stored mode was considered. [wasOn]: Kestrel has been on in this process, so the owner has already chosen a mode.
+    // become ready while Kestrel holds the assistant role, in this process, so the stored mode was considered. [wasOn]:
+    // Kestrel has been on in this process, so the owner has already chosen a mode.
     private var lastMode: Mode? = null
     private var restoreChecked = false
     private var wasOn = false

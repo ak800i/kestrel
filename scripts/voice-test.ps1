@@ -75,8 +75,8 @@ try {
         # The tests log their measurements; clearing the log first keeps only this run's lines.
         & $adb -s $Serial logcat -c
         # Tests that a phone must not run: one switches the microphone's privacy toggle, one turns on a lock screen that it
-        # unlocks with adb, one changes the list of Quick Settings tiles, one refuses Kestrel's audio focus, and two make
-        # Kestrel the assistant.
+        # unlocks with adb, one changes the list of Quick Settings tiles, one refuses Kestrel's audio focus, two make
+        # Kestrel the assistant, and one asks Android for connected earbuds.
         $emulatorOnly = @(
             'dev.kestrel.app.voice.MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle'
             # This one asks Android for connected earbuds.
