@@ -18,4 +18,13 @@ data class Transcript(val text: String, val pieces: Int, val lastWordEnd: Float)
 interface Recognizer : AutoCloseable {
     /** Transcribes one utterance. [boostWords] are words that the speaker is likely to say, such as labels on the screen. */
     fun transcribe(samples: FloatArray, boostWords: List<String> = emptyList()): Transcript
+
+    /**
+     * How many utterances this recogniser has decoded a second time without boost words, because the transcript with
+     * them ended too early (section 8.3). The A71 session counts them.
+     */
+    val secondDecodings: Int get() = 0
+
+    /** How many of [boostWords] the recogniser passes on to its model; the others it drops (section 8.3). */
+    fun keptBoostWords(boostWords: List<String>): Int = boostWords.size
 }

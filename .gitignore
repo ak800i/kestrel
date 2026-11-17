@@ -17,3 +17,8 @@ captures/
 
 # Screen snapshots from scripts\hook.ps1, which hold real screen content
 /screen*.json
+
+# The clips of the voice corpus: the generated ones, which scripts\make-corpus.ps1 makes on demand, and the owner's
+# recordings and the A71 session's results, which are private (design spec, section 16.4)
+/corpus/generated/
+/corpus/owner/

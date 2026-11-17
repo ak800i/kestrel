@@ -35,6 +35,25 @@
 #                                           scripts\install.ps1 ends the process
 #   voice-clip -Clear                       drops the waiting clips, and gives Kestrel back the microphone that the
 #                                           first voice-clip replaced, from Kestrel's next start
+# The voice corpus (scripts\make-corpus.ps1 and scripts\voice-eval.ps1 run these). A clip is a 16 kHz WAV file in
+# Kestrel's folder Android/data/dev.kestrel/files/eval, which -File names without '.wav':
+#   voice-synth -Text 'text' -File name [-Voice piper|kokoro]
+#                                           says the text in Kestrel's voice into a clip
+#   voice-synth -Close                      closes the voice that voice-synth keeps loaded
+#   voice-record -File name -Seconds n      starts recording the microphone for n seconds, at most 15, into a clip, and
+#                                           answers recording once the microphone records; Kestrel must be off and in
+#                                           front
+#   voice-record -Result                    answers recording until the recording has ended, then its length, the
+#                                           loudest sample and whether Android silenced it, never the sound
+#   voice-eval -Load                        loads a recogniser with the boost words of Kestrel's voice session in the
+#                                           background, while Kestrel is off; answers loading, ready with the numbers of
+#                                           boost words, or failed with the error's class
+#   voice-eval -File name -Expected 'text' -Kind kind [-Spotted] [-AfterName] [-Reveal] [-NoBoost]
+#                                           transcribes the clip and compares it with the text: the numbers of words and
+#                                           errors, whether Requests read the kind (skip: not checked), the time and the
+#                                           memory; -Reveal adds what Kestrel heard, only for a generated clip, whose
+#                                           name starts with gen-; -NoBoost transcribes without the boost words
+#   voice-eval -Close                       closes that recogniser
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -55,7 +74,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
-        'voice-state', 'voice-clip', 'location', 'spike-results', 'files', 'watch')][string]$Command,
+        'voice-state', 'voice-clip', 'voice-synth', 'voice-record', 'voice-eval', 'location', 'spike-results', 'files', 'watch')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -71,6 +90,17 @@ param(
     [int]$DelaySeconds = -1,
     [int]$Seconds = -1,
     [switch]$Clear,
+    [string]$File,
+    [ValidateSet('piper', 'kokoro')][string]$Voice,
+    [string]$Expected,
+    [string]$Kind,
+    [switch]$Spotted,
+    [switch]$AfterName,
+    [switch]$Reveal,
+    [switch]$Load,
+    [switch]$Close,
+    [switch]$Result,
+    [switch]$NoBoost,
     [string]$Create,
     [ValidateSet('toggle', 'pause', 'resume', 'off', 'screen-on', 'screen-off', 'heard')][string]$Send,
     [switch]$Named
@@ -113,6 +143,17 @@ if ($Create) { $extras += "--es create $(ConvertTo-ShellText $Create)" }
 # ValidateSet accepts any letter case, and the hook only lower case.
 if ($Send) { $extras += "--es event $(ConvertTo-ShellText $Send.ToLowerInvariant())" }
 if ($Named) { $extras += '--ez named true' }
+if ($File) { $extras += "--es file $(ConvertTo-ShellText $File)" }
+if ($Voice) { $extras += "--es voice $(ConvertTo-ShellText $Voice.ToLowerInvariant())" }
+if ($PSBoundParameters.ContainsKey('Expected')) { $extras += "--es expected $(ConvertTo-ShellText $Expected)" }
+if ($Kind) { $extras += "--es kind $(ConvertTo-ShellText $Kind)" }
+if ($Spotted) { $extras += '--ez spotted true' }
+if ($AfterName) { $extras += '--ez afterName true' }
+if ($Reveal) { $extras += '--ez reveal true' }
+if ($Load) { $extras += '--ez load true' }
+if ($Close) { $extras += '--ez close true' }
+if ($Result) { $extras += '--ez result true' }
+if ($NoBoost) { $extras += '--ez noBoost true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

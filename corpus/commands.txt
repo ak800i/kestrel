@@ -1,0 +1,128 @@
+# Kestrel's voice corpus (design spec, section 16.4). scripts\make-corpus.ps1 says each line in one of Kestrel's voices,
+# the A71 session asks the owner to say the lines marked for the owner, and scripts\voice-eval.ps1 measures them. One
+# utterance per line, in seven columns separated by '|'; lines that start with '#' are comments. The columns:
+#   id        a plain name, which is also the name of the utterance's clips
+#   group     appendix (Appendix A's commands, which later sub-projects handle), own (Kestrel's own phrases), answer
+#             (answers to "Yes?"), task (tasks with Kestrel's name), confusable (phrases near Kestrel's words) or call
+#             (the call commands)
+#   context   idle, or answer for an answer to "Yes?"
+#   spotted   1 when the keyword spotter hears "Kestrel" at the start of the utterance, otherwise 0
+#   expected  what Requests should read: Name, WakeUp, Stop, StopNamed, PauseListening, TurnOff, OpenSettings, Task or
+#             Other; or - when the reading is not checked, as for the call commands, which Requests reads only while a
+#             call rings or is active
+#   owner     1 when the A71 session asks the owner to record the line, otherwise 0
+#   text      what is said. No line may hold private words.
+# The expected readings follow the rules of Requests as they are (design spec, section 8.3), so that a perfect
+# transcript always reads as expected. For example, "Forget about it." in an answer is a task, because only "never
+# mind", "forget it" and "nothing" end the wait.
+c001 | appendix | idle | 0 | Other | 1 | Open Chrome.
+c002 | appendix | idle | 0 | Other | 1 | Open apps.
+c003 | appendix | idle | 0 | Other | 1 | Go back.
+c004 | appendix | idle | 0 | Other | 1 | Go home.
+c005 | appendix | idle | 0 | Other | 1 | Show notifications.
+c006 | appendix | idle | 0 | Other | 1 | Show Quick Settings.
+c007 | appendix | idle | 0 | Other | 1 | Show recent apps.
+c008 | appendix | idle | 0 | Other | 0 | Show previous app.
+c009 | appendix | idle | 0 | Other | 1 | Lock screen.
+c010 | appendix | idle | 0 | Other | 1 | Take a screenshot.
+c011 | appendix | idle | 0 | Other | 1 | Again.
+c012 | appendix | idle | 0 | Other | 1 | Media pause.
+c013 | appendix | idle | 0 | Other | 1 | What can I say?
+c014 | appendix | idle | 0 | Other | 1 | Show numbers.
+c015 | appendix | idle | 0 | Other | 0 | Hide numbers.
+c016 | appendix | idle | 0 | Other | 0 | Show labels.
+c017 | appendix | idle | 0 | Other | 1 | Turn on the flashlight.
+c018 | appendix | idle | 0 | Other | 1 | Turn off Bluetooth.
+c019 | appendix | idle | 0 | Other | 1 | Turn the volume up.
+c020 | appendix | idle | 0 | Other | 1 | Tap Send.
+c021 | appendix | idle | 0 | Other | 1 | Tap 7.
+c022 | appendix | idle | 0 | Other | 1 | Scroll down.
+c023 | appendix | idle | 0 | Other | 0 | Scroll to top.
+c024 | appendix | idle | 0 | Other | 0 | Swipe forwards.
+c025 | appendix | idle | 0 | Other | 0 | Show grid.
+c026 | appendix | idle | 0 | Other | 1 | Start editing.
+c027 | appendix | idle | 0 | Other | 1 | Type hello there.
+c028 | appendix | idle | 0 | Other | 1 | Undo.
+c029 | appendix | idle | 0 | Other | 1 | Delete the last word.
+c030 | appendix | idle | 0 | Other | 1 | Select all text.
+c031 | appendix | idle | 0 | Other | 1 | Copy.
+c032 | appendix | idle | 0 | Other | 1 | Paste.
+c033 | appendix | idle | 0 | Other | 1 | Hide keyboard.
+c034 | appendix | idle | 0 | Other | 1 | Zoom in.
+c035 | appendix | idle | 0 | Other | 1 | Search for coffee near me.
+c036 | appendix | idle | 0 | Other | 1 | Call Mom.
+c037 | appendix | idle | 0 | Other | 0 | Long-press the second photo.
+c038 | appendix | idle | 0 | Other | 1 | Check.
+c039 | appendix | idle | 0 | Other | 1 | Scroll down on the list.
+c040 | appendix | idle | 0 | Other | 1 | Tap number 12.
+c041 | own | idle | 1 | Name | 1 | Kestrel.
+c042 | own | idle | 1 | Name | 1 | Hey Kestrel.
+c043 | own | idle | 1 | WakeUp | 1 | Kestrel, wake up.
+c044 | own | idle | 1 | WakeUp | 1 | Kestrel, wake up, please.
+c045 | own | idle | 0 | Stop | 1 | Stop.
+c046 | own | idle | 0 | Stop | 1 | Cancel.
+c047 | own | idle | 0 | Stop | 1 | Stop it.
+c048 | own | idle | 0 | Stop | 1 | No, cancel the task.
+c049 | own | idle | 1 | StopNamed | 1 | Kestrel, stop.
+c050 | own | idle | 0 | StopNamed | 1 | Stop it, Kestrel.
+c051 | own | idle | 0 | PauseListening | 1 | Stop listening.
+c052 | own | idle | 0 | PauseListening | 1 | Stop listening, Kestrel.
+c053 | own | idle | 0 | TurnOff | 1 | Stop Kestrel.
+c054 | own | idle | 1 | TurnOff | 1 | Kestrel, turn off.
+c055 | own | idle | 1 | TurnOff | 1 | Kestrel, switch off.
+c056 | own | idle | 0 | TurnOff | 1 | Turn off, Kestrel.
+c057 | own | idle | 1 | OpenSettings | 1 | Kestrel, open settings.
+c058 | own | idle | 1 | OpenSettings | 1 | Kestrel settings.
+c059 | own | idle | 1 | OpenSettings | 1 | Kestrel, open your settings.
+c060 | own | idle | 0 | WakeUp | 1 | Wake up, Kestrel.
+c061 | answer | answer | 0 | StopNamed | 1 | Never mind.
+c062 | answer | answer | 0 | StopNamed | 1 | Forget it.
+c063 | answer | answer | 0 | StopNamed | 1 | Nothing, thanks.
+c064 | answer | answer | 0 | StopNamed | 1 | No, never mind.
+c065 | answer | answer | 0 | Task | 1 | Open the settings.
+c066 | answer | answer | 0 | StopNamed | 1 | Stop.
+c067 | answer | answer | 0 | WakeUp | 1 | Wake up.
+c068 | answer | answer | 0 | Task | 1 | Turn off the flashlight.
+c069 | answer | answer | 0 | Task | 1 | Turn off.
+c070 | answer | answer | 0 | Task | 1 | Send a message to Ana on WhatsApp.
+c071 | answer | answer | 0 | Task | 1 | No.
+c072 | answer | answer | 0 | Task | 1 | Forget about it.
+c073 | task | idle | 1 | Task | 1 | Kestrel, open Viber and message Zoran.
+c074 | task | idle | 1 | Task | 1 | Kestrel, what's the weather tomorrow?
+c075 | task | idle | 1 | Task | 1 | Kestrel, send a message to Ana on WhatsApp saying I'm running late.
+c076 | task | idle | 1 | Task | 1 | Kestrel, set an alarm for 6:45.
+c077 | task | idle | 1 | Task | 1 | Kestrel, call Dragoljub on Viber.
+c078 | task | idle | 1 | Task | 1 | Kestrel, find the nearest pharmacy.
+c079 | task | idle | 1 | Task | 1 | Kestrel, read my last email.
+c080 | task | idle | 1 | Task | 1 | Kestrel, turn on do not disturb until 8.
+c081 | task | idle | 1 | Task | 1 | Hey Kestrel, play some jazz on Spotify.
+c082 | task | idle | 1 | Task | 1 | Kestrel, remind me to buy milk when I get home.
+c083 | task | idle | 1 | Task | 1 | Kestrel, open setting.
+c084 | task | idle | 1 | Task | 1 | Kestrel, what time is it in Tokyo?
+c085 | task | idle | 1 | Task | 0 | Kestrel, take a note: the meeting moved to Thursday.
+c086 | task | idle | 1 | Task | 1 | Stop. Kestrel, open Viber.
+c087 | task | idle | 1 | Task | 1 | Kestrel, delete history.
+c088 | task | idle | 1 | Task | 1 | Kestrel, save that as morning routine.
+c089 | task | idle | 1 | Task | 1 | Kestrel, remember that my sister is Ana.
+c090 | task | idle | 1 | Task | 1 | Kestrel, continue.
+c091 | task | idle | 1 | Task | 1 | Kestrel, set a timer for 25 minutes.
+c092 | confusable | idle | 0 | Other | 1 | Chest roll and a pastry, please.
+c093 | confusable | idle | 0 | Other | 1 | The bus stop is around the corner.
+c094 | confusable | idle | 0 | Other | 1 | It's top-rated.
+c095 | confusable | idle | 0 | Other | 1 | That movie was unstoppable.
+c096 | confusable | idle | 0 | Other | 0 | Castle tour starts at ten.
+c097 | confusable | idle | 0 | Other | 0 | Nest roll.
+c098 | confusable | idle | 0 | Other | 0 | Cancel culture is a hot topic.
+c099 | confusable | idle | 0 | Other | 1 | Please stop the music.
+c100 | confusable | idle | 0 | Other | 1 | I need to stop at the store.
+c101 | confusable | idle | 0 | Other | 1 | Settings.
+c102 | confusable | idle | 0 | Other | 1 | Open settings.
+c103 | confusable | idle | 0 | Other | 1 | Turn off.
+c104 | confusable | idle | 0 | Other | 1 | Type my email is ana at example dot com.
+c105 | call | idle | 0 | - | 1 | Answer.
+c106 | call | idle | 0 | - | 1 | Answer on speaker.
+c107 | call | idle | 0 | - | 1 | Decline.
+c108 | call | idle | 1 | - | 1 | Kestrel, answer.
+c109 | call | idle | 0 | - | 1 | Hang up.
+c110 | call | idle | 0 | - | 1 | Mute.
+c111 | call | idle | 0 | - | 1 | Speaker.

@@ -41,6 +41,10 @@ internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, toke
 
     private var closed = false
 
+    @Volatile
+    override var secondDecodings = 0
+        private set
+
     override fun transcribe(samples: FloatArray, boostWords: List<String>): Transcript = synchronized(this) {
         check(!closed) { "The recognizer is closed" }
         val boost = BoostWords.format(boostWords, spelling)
@@ -48,9 +52,16 @@ internal class SherpaRecognizer(encoder: File, decoder: File, joiner: File, toke
         if (boost.isEmpty()) {
             first
         } else {
-            TranscriptChoice.choose(samples.size / SAMPLE_RATE.toFloat(), first) { decode(samples, "") }
+            TranscriptChoice.choose(samples.size / SAMPLE_RATE.toFloat(), first) {
+                secondDecodings++
+                decode(samples, "")
+            }
         }
     }
+
+    // The phrases that BoostWords keeps, which it separates with "/".
+    override fun keptBoostWords(boostWords: List<String>): Int =
+        BoostWords.format(boostWords, spelling).split('/').count { it.isNotEmpty() }
 
     private fun decode(samples: FloatArray, boost: String): Transcript {
         val stream = if (boost.isEmpty()) recognizer.createStream() else recognizer.createStream(boost)
