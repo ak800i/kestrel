@@ -874,6 +874,19 @@ class RulesTest {
     }
 
     @Test
+    fun theSilenceTimerDoesNotCountWhileTheMicrophoneIsBlocked() {
+        val blocked = listening.copy(pauseAfterSilence = true, silence = 1, micBusy = true)
+
+        // Kestrel does not pause after 30 s while Android blocks its microphone.
+        assertEquals(Step(blocked.copy(silence = 2), listOf(Effect.TimeSilence)), Rules.next(blocked, Event.Silent(1)))
+        // The timer starts again when the microphone comes back.
+        assertEquals(
+            Step(blocked.copy(silence = 2, micBusy = false), listOf(Effect.TimeSilence)),
+            Rules.next(blocked, Event.MicBusy(busy = false)),
+        )
+    }
+
+    @Test
     fun neverMindEndsTheWaitForATask() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
 

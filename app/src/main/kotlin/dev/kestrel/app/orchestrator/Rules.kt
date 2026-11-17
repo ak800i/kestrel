@@ -81,7 +81,7 @@ data class State(
     val recognition: Recognition
         get() = when {
             speaking -> Recognition.NONE
-            // The call commands come without the name (section 8.7).
+            // While a call rings, the call commands may come without the name (section 8.7).
             mode == Mode.RINGING -> Recognition.ALL
             mode == Mode.IN_CALL -> if (callCommands) Recognition.ALL else Recognition.NONE
             // While Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the owner dictates the
@@ -496,10 +496,11 @@ object Rules {
     }
 
     // Section 8.5: 30 s without speech pause listening. A timer that ran out while Kestrel spoke, waited for a task, ran
-    // one or did not record starts again, because the owner was not silent then, or could not be heard.
+    // one, did not record or found its microphone blocked starts again, because the owner was not silent then, or could
+    // not be heard.
     private fun silent(state: State, silence: Int): Step = when {
         silence != state.silence || state.mode != Mode.LISTENING || !state.pauseAfterSilence -> Step(state)
-        state.speaking || state.work != Work.IDLE || !state.microphone ->
+        !hears(state) ->
             Step(state.copy(silence = state.silence + 1), listOf(Effect.TimeSilence))
         else -> switch(state, Mode.PAUSED)
     }
@@ -518,9 +519,10 @@ object Rules {
         return if (start) Step(after.copy(silence = after.silence + 1), step.effects + Effect.TimeSilence) else step
     }
 
-    // Kestrel listens, idle, silent itself and recording: only then does the time without speech count.
+    // Kestrel listens, idle, silent itself and recording, and Android does not block its microphone ("Microphone
+    // blocked", section 14.6): only then does the time without speech count.
     private fun hears(state: State): Boolean =
-        state.mode == Mode.LISTENING && !state.speaking && state.work == Work.IDLE && state.microphone
+        state.mode == Mode.LISTENING && !state.speaking && state.work == Work.IDLE && state.microphone && !state.micBusy
 
     // Section 8.6: the assistant gesture or an earbud's button. Kestrel listens, if it was paused, and waits for a task
     // as after "Kestrel" on its own; over its own voice it stops speaking and waits, as after an interruption with
