@@ -18,6 +18,14 @@
          call log. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <!-- "Show previous app" tells the home app, whose overview shows between the two apps, from the app that comes back
+         (design D9 of sub-project 3). Since Android 11 an app sees the home app only when it declares its intent here. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
     <!-- Plan 3C: permissions -->
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android

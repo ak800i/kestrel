@@ -698,7 +698,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 | Unrestricted battery use | Setting | Setup checklist |
 
 - Kestrel never requests `SEND_SMS`, `CALL_PHONE`, `CAMERA`, `ACCESS_BACKGROUND_LOCATION`, `SYSTEM_ALERT_WINDOW`, `REQUEST_INSTALL_PACKAGES`, `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `WRITE_SETTINGS` or `WRITE_SECURE_SETTINGS`.
-- App visibility uses `<queries>` for launcher apps and for the deep-link schemes.
+- App visibility uses `<queries>` for launcher apps, for the home app (so that "show previous app" can tell the home app's overview from the app that comes back) and for the deep-link schemes.
 - Kestrel is installed with `adb install`. This avoids Android's "restricted settings" block for accessibility and notification access, and Play Protect's block on sideloaded apps that request accessibility (B6, B7).
 
 ## 14. Error handling and resilience
@@ -952,7 +952,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | General | Go back; Go home; Show notifications; Show Quick Settings; Show recent apps; Show previous app | Yes |
 | General | Lock screen; Turn off device (power menu); Take screenshot | Yes |
 | General | Again; Cancel | Yes |
-| General | Circle to Search | Best effort: a long press on the navigation handle, where the phone supports it |
+| General | Circle to Search | Yes, through Android's system action where the launcher offers it; otherwise Kestrel says that it isn't available on the phone. Kestrel makes no gesture on the navigation handle. |
 | General | Media play; Media pause | Yes |
 | General | "Hey Google, …" commands through Gemini | Not applicable; tasks start with "Kestrel" |
 | Help | What can I say?; Show all commands; Open tutorial | Yes. Kestrel opens the list of commands on its settings page "Instant commands" and speaks a short summary; "Show commands" does the same. There is no separate tutorial, and "help" alone is a bare label. |
