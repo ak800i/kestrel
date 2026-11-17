@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
+import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidExitRecords
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.FeedbackBar
@@ -161,6 +162,8 @@ class AppGraph(context: Context) {
             exits = AndroidExitRecords(appContext),
             // The wall clock, as in Android's exit records.
             clock = System::currentTimeMillis,
+            // Section 8.7: the call state, while a voice session is open.
+            calls = AndroidCallMonitor(appContext),
             conditions = object : ListeningConditions {
                 override fun microphoneAllowed() =
                     appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

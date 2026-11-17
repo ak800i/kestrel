@@ -17,8 +17,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Kestrel's Quick Settings tile (design spec, sections 7.2, 8.5 and 8.6). A tap toggles between listening and paused, or
- * starts Kestrel when it is off. While the owner sees the tile, it shows the mode: active while Kestrel listens, inactive
- * while it is paused or off. Android calls every callback on the main thread.
+ * starts Kestrel when it is off; during a call it chooses the mode that comes back after the call. While the owner sees
+ * the tile, it shows the mode: active while Kestrel listens, inactive otherwise. Android calls every callback on the main
+ * thread.
  */
 class KestrelTileService : TileService() {
     private val listening: Listening get() = (application as KestrelApplication).graph.listening
@@ -56,6 +57,8 @@ class KestrelTileService : TileService() {
             when (mode) {
                 Mode.LISTENING -> R.string.tile_listening
                 Mode.PAUSED -> R.string.tile_paused
+                Mode.RINGING -> R.string.tile_ringing
+                Mode.IN_CALL -> R.string.tile_in_call
                 Mode.OFF -> R.string.tile_off
             },
         )

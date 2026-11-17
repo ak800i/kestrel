@@ -34,11 +34,12 @@ import kotlinx.coroutines.launch
  * Keeps Kestrel listening (design spec, sections 7.2, 8.5 and 8.6): a foreground service of the types microphone and
  * media playback, because Android lets Kestrel record and play audio in the background only while such a service runs
  * (B5). [Listening] starts and stops it, and holds the voice session while it runs. The service shows the notification
- * with Pause or Resume and Stop, or without actions once Kestrel is turning off, and tells [Listening] whether the
- * screen is on and the phone unlocked. The actions are broadcasts to [NotificationActionReceiver], so they need no new
- * start of the service. Since Android 14 the owner can swipe the notification away while the phone is unlocked; it
- * comes back with the next change of mode. The service stops itself when [Listening] asks, unless Android gave it a start
- * that Listening has not seen yet. Android calls every callback on the main thread.
+ * with Pause or Resume and Stop, with only Stop during a call, or without actions once Kestrel is turning off, and
+ * tells [Listening] whether the screen is on and the phone unlocked. The actions are broadcasts to
+ * [NotificationActionReceiver], so they need no new start of the service. Since Android 14 the owner can swipe the
+ * notification away while the phone is unlocked; it comes back with the next change of mode. The service stops itself
+ * when [Listening] asks, unless Android gave it a start that Listening has not seen yet. Android calls every callback
+ * on the main thread.
  */
 class ListeningService : Service() {
     private val listening: Listening get() = (application as KestrelApplication).graph.listening
@@ -144,11 +145,16 @@ class ListeningService : Service() {
         listening.send(Event.Screen(on = interactive && (unlocked || !locked)))
     }
 
-    /** The notification of [mode]. Off: the service is about to stop, so it offers no actions until then. */
+    /**
+     * The notification of [mode]. Off: the service is about to stop, so it offers no actions until then. During a call it
+     * offers only Stop.
+     */
     private fun notification(mode: Mode): Notification {
         val title = when (mode) {
             Mode.LISTENING -> R.string.listening_title_listening
             Mode.PAUSED -> R.string.listening_title_paused
+            Mode.RINGING -> R.string.listening_title_ringing
+            Mode.IN_CALL -> R.string.listening_title_in_call
             Mode.OFF -> R.string.listening_title_stopping
         }
         val builder = Notification.Builder(this, CHANNEL)
@@ -157,14 +163,13 @@ class ListeningService : Service() {
             .setContentIntent(openKestrel(this))
             .setOngoing(true)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        if (mode != Mode.OFF) {
-            val toggle = if (mode == Mode.LISTENING) {
-                action(R.string.listening_pause, ACTION_PAUSE)
-            } else {
-                action(R.string.listening_resume, ACTION_RESUME)
-            }
-            builder.addAction(toggle).addAction(action(R.string.listening_stop, ACTION_STOP))
+        // During a call the tile and the shortcut choose the mode that comes back after it (section 8.5).
+        when (mode) {
+            Mode.LISTENING -> builder.addAction(action(R.string.listening_pause, ACTION_PAUSE))
+            Mode.PAUSED -> builder.addAction(action(R.string.listening_resume, ACTION_RESUME))
+            Mode.RINGING, Mode.IN_CALL, Mode.OFF -> Unit
         }
+        if (mode != Mode.OFF) builder.addAction(action(R.string.listening_stop, ACTION_STOP))
         return builder.build()
     }
 

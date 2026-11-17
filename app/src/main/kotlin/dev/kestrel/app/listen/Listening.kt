@@ -84,6 +84,8 @@ internal object ListeningTexts {
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
+    const val RINGING = "A call is ringing."
+    const val IN_CALL = "Paused during the call"
 
     // Also for the privacy toggle and for Android's own silencing of an app in the background, not only for another
     // app.
@@ -184,6 +186,8 @@ internal interface StopNotices {
  * thread calls it, and it throws when Android refuses.
  * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
  * and by the restore, which writes Off before anything else can write.
+ * [calls] reports the call state while a voice session is open (section 8.7). The stored mode is never Ringing or In
+ * call, but the mode that the call interrupted.
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -198,6 +202,7 @@ class Listening internal constructor(
     private val notices: StopNotices,
     private val exits: ExitRecords,
     private val clock: () -> Long,
+    private val calls: CallMonitor,
     microphones: () -> Microphone,
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
@@ -454,10 +459,12 @@ class Listening internal constructor(
     // Listening and paused count once a voice session is open, so that a start that ends Kestrel's process, such as a
     // native crash while the models load, does not come back at every start of the process. Off counts at once.
     private fun remember(mode: Mode) {
-        if (mode != Mode.OFF && session == null) return
-        if (mode == lastMode) return
-        lastMode = mode
-        modeToStore.value = mode
+        // Section 8.5: a call's mode is never stored, but the mode that the call interrupted, which comes back after it.
+        val lasting = if (mode == Mode.RINGING || mode == Mode.IN_CALL) state.value.beforeCall ?: return else mode
+        if (lasting != Mode.OFF && session == null) return
+        if (lasting == lastMode) return
+        lastMode = lasting
+        modeToStore.value = lasting
     }
 
     private fun followSafely(state: State) {
@@ -590,6 +597,8 @@ class Listening internal constructor(
                 // After followSafely, which starts the microphone, so that a native crash there comes before Listening is
                 // stored.
                 remember(state.value.mode)
+                // Last, so that a failure here costs only the call state (section 8.7).
+                startCalls()
             }
         }
     }
@@ -626,6 +635,12 @@ class Listening internal constructor(
         // The Orchestrator may turn Kestrel on again in the same run of events. Its state then equals the one that the
         // collector saw last, and StateFlow skips an equal value, so follow() would never see this Off.
         scope.launch(thread) { followSafely(state.value) }
+        // Last, so that a failure here never keeps the session or the service while Kestrel is off (section 8.7).
+        try {
+            calls.stop()
+        } catch (e: Exception) {
+            report("Watching the call state", e)
+        }
     }
 
     private suspend fun closeQuietly(closing: Session) {
@@ -637,6 +652,18 @@ class Listening internal constructor(
             report("Closing the voice session", e)
         } finally {
             sessionState.value = false
+        }
+    }
+
+    // Section 8.7: the call state, from now until the session closes. The reports go through the session's listener, so
+    // that one that comes after the close is dropped. Without READ_PHONE_STATE nothing comes, and Kestrel never enters
+    // Ringing.
+    private fun startCalls() {
+        val events = listener ?: return
+        try {
+            calls.start { call -> events.send(Event.CallState(call)) }
+        } catch (e: Exception) {
+            report("Watching the call state", e)
         }
     }
 
@@ -800,13 +827,19 @@ class Listening internal constructor(
             showInstead()
             error("No voice session")
         }
+        // Section 14.6: a reply that Android refused or interrupted goes to the bar, and so does one that a call stopped,
+        // because during a call nothing else stops a reply. The call's report usually comes before Android's loss of the
+        // focus (prototype P3), so the call's StopSaying ends the reply first.
+        val unspoken = { spoke: Spoke ->
+            spoke == Spoke.REFUSED || spoke == Spoke.INTERRUPTED || (spoke == Spoke.STOPPED && state.value.inCall)
+        }
         val spoken = current.speak(text)
         // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time.
         spoken.invokeOnCompletion { error ->
             if (error != null && error !is CancellationException) {
                 report("A reply", error)
                 showInstead()
-            } else if (error == null && spoken.getCompleted().let { it == Spoke.REFUSED || it == Spoke.INTERRUPTED }) {
+            } else if (error == null && unspoken(spoken.getCompleted())) {
                 showInstead()
             }
             send(Event.SpeechEnded)
@@ -817,6 +850,8 @@ class Listening internal constructor(
         is Feedback.ModeChanged -> when (feedback.mode) {
             Mode.LISTENING -> ListeningTexts.LISTENING
             Mode.PAUSED -> ListeningTexts.PAUSED
+            Mode.RINGING -> ListeningTexts.RINGING
+            Mode.IN_CALL -> ListeningTexts.IN_CALL
             Mode.OFF -> (offReason ?: ListeningTexts.OFF).also { offReason = null }
         }
         is Feedback.Heard -> feedback.text

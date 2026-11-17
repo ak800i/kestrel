@@ -1,5 +1,6 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Work
@@ -45,6 +46,7 @@ class ListeningTest {
     private val notices = FakeNotices()
     private val memory = FakeMemory()
     private val exits = FakeExits()
+    private val calls = FakeCallMonitor()
 
     // The wall clock, in milliseconds.
     private var now = 1_000_000L
@@ -1747,6 +1749,100 @@ class ListeningTest {
         assertTrue(errors.isEmpty())
     }
 
+    @Test
+    fun theCallStateIsWatchedWhileASessionIsOpen() = runTest {
+        val listening = listeningWithSession()
+        assertEquals(1, calls.starts)
+
+        calls.change(CallState.RINGING)
+        runCurrent()
+        assertEquals(Mode.RINGING, listening.state.value.mode)
+
+        listening.send(Event.TurnOff)
+        runCurrent()
+        assertEquals(1, calls.stops)
+        assertEquals(Mode.OFF, listening.state.value.mode)
+    }
+
+    @Test
+    fun aCallIsNeverStoredButTheModeThatItInterrupted() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Pause)
+        runCurrent()
+
+        calls.change(CallState.RINGING)
+        runCurrent()
+        calls.change(CallState.ACTIVE)
+        runCurrent()
+        // The owner chooses listening for after the call, with the tile.
+        listening.send(Event.Toggle)
+        runCurrent()
+        calls.change(CallState.IDLE)
+        runCurrent()
+
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        // Section 8.5: a restart during the call brings back the mode that comes after it.
+        assertEquals(listOf(Mode.LISTENING, Mode.PAUSED, Mode.LISTENING), memory.writes)
+        assertEquals(
+            listOf(
+                ListeningTexts.LISTENING,
+                ListeningTexts.PAUSED,
+                ListeningTexts.RINGING,
+                ListeningTexts.IN_CALL,
+                ListeningTexts.LISTENING,
+                ListeningTexts.LISTENING,
+            ),
+            shown,
+        )
+    }
+
+    @Test
+    fun theMicrophoneRecordsWhileACallRingsOnTheLockScreen() = runTest {
+        val listening = listeningWithSession()
+        listening.send(Event.Screen(on = false))
+        runCurrent()
+        log.clear()
+
+        calls.change(CallState.RINGING)
+        runCurrent()
+        // Section 8.5: a ringing call is the one exception to the rule that Kestrel records only while the phone is
+        // unlocked.
+        assertEquals(listOf("microphone on"), log)
+
+        calls.change(CallState.IDLE)
+        runCurrent()
+        assertEquals(listOf("microphone on", "microphone off"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aCallStateThatCannotBeWatchedIsReportedAndKestrelListensOn() = runTest {
+        calls.failure = SecurityException("No permission to read the phone state")
+        val listening = listeningWithSession()
+
+        assertEquals("Watching the call state", reports.single().first)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertTrue(listening.sessionOpen.value)
+    }
+
+    @Test
+    fun aReplyThatACallStopsIsShownOnTheBar() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+        shown.clear()
+
+        calls.change(CallState.RINGING)
+        runCurrent()
+        // The call's StopSaying ended the reply before Android took the audio focus away (prototype P3).
+        session.replies.single().complete(Spoke.STOPPED)
+        runCurrent()
+
+        // Section 14.6: the reply's text goes to the bar after the call's mode.
+        assertEquals(listOf(ListeningTexts.RINGING, ListeningTexts.NO_TASKS), shown)
+    }
+
     /** What MicCapture reports when AudioRecord.read returns ERROR_DEAD_OBJECT, after Android's audio server restarted. */
     private fun readError() = IllegalStateException("The microphone failed with error -6")
 
@@ -1773,6 +1869,7 @@ class ListeningTest {
         notices = notices,
         exits = exits,
         clock = { now },
+        calls = calls,
         microphones = { microphone },
     )
 
@@ -1959,6 +2056,29 @@ class ListeningTest {
         override fun demoted(service: Any) = demoted
     }
 
+    private class FakeCallMonitor : CallMonitor {
+        var starts = 0
+        var stops = 0
+        var failure: Exception? = null
+        private var report: ((CallState) -> Unit)? = null
+
+        override fun start(report: (CallState) -> Unit) {
+            starts++
+            failure?.let { throw it }
+            this.report = report
+        }
+
+        override fun stop() {
+            stops++
+            report = null
+        }
+
+        /** The phone's call state changes to [state], as Android's listener reports it. */
+        fun change(state: CallState) {
+            checkNotNull(report) { "Nothing watches the call state" }.invoke(state)
+        }
+    }
+
     private class FakeMicrophone : Microphone {
         override val silenced: StateFlow<Boolean> = MutableStateFlow(false)
         override val echoCancelling = false
@@ -1985,6 +2105,7 @@ class ListeningTest {
             notices = notices,
             exits = exits,
             clock = { now },
+            calls = calls,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
                 override suspend fun read(): StoredMode = StoredMode(Mode.OFF)

@@ -578,6 +578,115 @@ class RulesTest {
     }
 
     @Test
+    fun aCallRingsWhileKestrelListensOrIsPausedAndTheModeComesBackAfterIt() {
+        for (before in listOf(listening, paused)) {
+            val ringing = Rules.next(before, Event.CallState(CallState.RINGING))
+            assertEquals(Mode.RINGING, ringing.state.mode)
+            assertEquals(before.mode, ringing.state.beforeCall)
+            assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.RINGING))), ringing.effects)
+
+            val answered = Rules.next(ringing.state, Event.CallState(CallState.ACTIVE))
+            assertEquals(Mode.IN_CALL, answered.state.mode)
+            assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.IN_CALL))), answered.effects)
+
+            val ended = Rules.next(answered.state, Event.CallState(CallState.IDLE))
+            assertEquals(Step(before, listOf(Effect.Show(Feedback.ModeChanged(before.mode)))), ended)
+        }
+    }
+
+    @Test
+    fun aCallThatRingsStopsTheSpeechAndCancelsTheTask() {
+        val busy = listening.copy(work = Work.RUNNING_TASK, task = 2, speeches = 1)
+
+        val ringing = Rules.next(busy, Event.CallState(CallState.RINGING))
+
+        assertEquals(
+            listOf(Effect.StopSaying, Effect.CancelTask, Effect.Show(Feedback.ModeChanged(Mode.RINGING))),
+            ringing.effects,
+        )
+        assertEquals(Work.IDLE, ringing.state.work)
+        assertTrue(ringing.state.cancelled)
+        // A wait for a task ends too, and nothing comes back after the call (section 14.4).
+        val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
+        assertEquals(Work.IDLE, Rules.next(waiting, Event.CallState(CallState.RINGING)).state.work)
+    }
+
+    @Test
+    fun aCallThatIsActiveWithoutRingingIsInCall() {
+        // An outgoing call, or one that was active when Kestrel started.
+        val active = Rules.next(paused, Event.CallState(CallState.ACTIVE))
+
+        assertEquals(Mode.IN_CALL, active.state.mode)
+        assertEquals(Mode.PAUSED, active.state.beforeCall)
+        assertEquals(Mode.PAUSED, Rules.next(active.state, Event.CallState(CallState.IDLE)).state.mode)
+        // A second report of a call changes nothing.
+        assertEquals(Step(active.state), Rules.next(active.state, Event.CallState(CallState.ACTIVE)))
+        assertEquals(Step(active.state), Rules.next(active.state, Event.CallState(CallState.RINGING)))
+    }
+
+    @Test
+    fun callsChangeNothingWhileKestrelIsOffOrWithoutACall() {
+        for (call in CallState.entries) {
+            assertEquals(Step(State()), Rules.next(State(), Event.CallState(call)))
+        }
+        assertEquals(Step(listening), Rules.next(listening, Event.CallState(CallState.IDLE)))
+    }
+
+    @Test
+    fun whileACallRingsKestrelRecordsAlsoOnTheLockScreenButNotDuringTheCall() {
+        val locked = listening.copy(screenOn = false)
+        val ringing = Rules.next(locked, Event.CallState(CallState.RINGING)).state
+
+        assertFalse(locked.microphone)
+        // Section 8.5: the one exception to the rule that Kestrel records only while the phone is unlocked. The call
+        // commands come without the name.
+        assertTrue(ringing.microphone)
+        assertEquals(Recognition.ALL, ringing.recognition)
+        val inCall = Rules.next(ringing.copy(screenOn = true), Event.CallState(CallState.ACTIVE)).state
+        assertFalse(inCall.microphone)
+        assertEquals(Recognition.NONE, inCall.recognition)
+    }
+
+    @Test
+    fun duringACallTheTogglePauseAndResumeChooseTheModeAfterIt() {
+        val ringing = Rules.next(listening, Event.CallState(CallState.RINGING)).state
+
+        val chosen = Rules.next(ringing, Event.Pause)
+        assertEquals(Mode.RINGING, chosen.state.mode)
+        assertEquals(Mode.PAUSED, chosen.state.beforeCall)
+        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.PAUSED))), chosen.effects)
+        assertEquals(Step(chosen.state), Rules.next(chosen.state, Event.Pause))
+        assertEquals(Mode.LISTENING, Rules.next(chosen.state, Event.Toggle).state.beforeCall)
+        assertEquals(Mode.LISTENING, Rules.next(chosen.state, Event.Resume).state.beforeCall)
+        assertEquals(Mode.PAUSED, Rules.next(chosen.state, Event.CallState(CallState.IDLE)).state.mode)
+    }
+
+    @Test
+    fun transcriptsAndKeywordsOtherThanTheCallCommandsAreIgnoredDuringACall() {
+        val ringing = Rules.next(listening, Event.CallState(CallState.RINGING)).state
+
+        assertEquals(Step(ringing), Rules.next(ringing, Event.Heard("Kestrel, open settings.", named = true)))
+        assertEquals(Step(ringing), Rules.next(ringing, Event.Heard("Kestrel", named = true)))
+        val speaking = ringing.copy(speeches = 1)
+        assertEquals(Step(speaking), Rules.next(speaking, Event.Spotted(Keyword.KESTREL)))
+        // Transcripts without words do not count towards the hint during a call (section 14.6).
+        val counting = ringing.copy(emptyTranscripts = 2)
+        assertEquals(Step(counting), Rules.next(counting, Event.Heard("", named = false)))
+        assertEquals(Step(counting), Rules.next(counting, Event.NothingHeard))
+    }
+
+    @Test
+    fun turningOffDuringACallForgetsTheCall() {
+        val inCall = Rules.next(listening, Event.CallState(CallState.ACTIVE)).state
+
+        val off = Rules.next(inCall, Event.TurnOff)
+
+        assertEquals(State(), off.state)
+        // The end of the call changes nothing afterwards.
+        assertEquals(Step(State()), Rules.next(off.state, Event.CallState(CallState.IDLE)))
+    }
+
+    @Test
     fun neverMindEndsTheWaitForATask() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
 

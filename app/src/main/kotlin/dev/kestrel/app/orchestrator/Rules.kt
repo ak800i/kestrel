@@ -3,8 +3,14 @@ package dev.kestrel.app.orchestrator
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.listen.Recognition
 
-/** The listening modes (design spec, section 8.5). Ringing and In call come with calls in plan 2D. */
-enum class Mode { OFF, LISTENING, PAUSED }
+/**
+ * The listening modes (design spec, section 8.5). [RINGING]: a call rings, and Kestrel listens only for the call
+ * commands, also on the lock screen. [IN_CALL]: a call is active, and Kestrel is paused.
+ */
+enum class Mode { OFF, LISTENING, PAUSED, RINGING, IN_CALL }
+
+/** The phone's call state (design spec, section 8.7), as Android's call-state listener reports it. */
+enum class CallState { IDLE, RINGING, ACTIVE }
 
 /** What Kestrel is doing besides listening: the spec's "current activity" (section 7.3). */
 enum class Work {
@@ -22,7 +28,8 @@ enum class Work {
  * finished. [task] is the number of the latest task and [wait] the number of the latest wait for a task, so that the
  * end of an older task or wait changes nothing. [cancelled]: the latest task was cancelled and has not reported yet.
  * [emptyTranscripts] counts the transcripts without words in a row, and [noWordsShown] is true once the hint about them
- * has shown since Kestrel turned on (section 14.6).
+ * has shown since Kestrel turned on (section 14.6). [beforeCall] is the mode that a call interrupted, while the mode is
+ * Ringing or In call; it comes back after the call (section 8.7).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -35,16 +42,31 @@ data class State(
     val micBusy: Boolean = false,
     val emptyTranscripts: Int = 0,
     val noWordsShown: Boolean = false,
+    val beforeCall: Mode? = null,
 ) {
     val speaking: Boolean get() = speeches > 0
 
-    /** Whether Kestrel records: in every mode but off, while the screen is on and the phone unlocked (section 8.5). */
-    val microphone: Boolean get() = mode != Mode.OFF && screenOn
+    /** Whether a call rings or is active (section 8.7). */
+    val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
+
+    /**
+     * Whether Kestrel records: while it listens or is paused, with the screen on and the phone unlocked, and while a call
+     * rings, also on the lock screen (section 8.5). Not during a call.
+     */
+    val microphone: Boolean
+        get() = when (mode) {
+            Mode.OFF, Mode.IN_CALL -> false
+            Mode.RINGING -> true
+            Mode.LISTENING, Mode.PAUSED -> screenOn
+        }
 
     /** Which utterances the pipeline transcribes, and whether it holds them (sections 8.3, 8.4, 8.5 and 11.10). */
     val recognition: Recognition
         get() = when {
             speaking -> Recognition.NONE
+            // The call commands come without the name (section 8.7).
+            mode == Mode.RINGING -> Recognition.ALL
+            mode == Mode.IN_CALL -> Recognition.NONE
             // While Kestrel waits for a task, after "Yes?" or after an interruption with "Kestrel", the owner dictates the
             // task and may pause in it.
             work == Work.AWAITING_TASK -> Recognition.ANSWER
@@ -127,6 +149,9 @@ sealed interface Event {
      * empty transcripts (section 14.6).
      */
     data object NothingHeard : Event
+
+    /** The phone's call state changed (section 8.7). Only Listening's call-state listener sends it. */
+    data class CallState(val state: dev.kestrel.app.orchestrator.CallState) : Event
 }
 
 /** What Kestrel says. */
@@ -201,12 +226,23 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
     fun next(state: State, event: Event): Step = when (event) {
-        Event.Toggle -> switch(state, if (state.mode == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
+        Event.Toggle -> when {
+            state.inCall -> afterCall(state, if (state.beforeCall == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
+            else -> switch(state, if (state.mode == Mode.LISTENING) Mode.PAUSED else Mode.LISTENING)
+        }
         is Event.Start ->
             if (state.mode == Mode.OFF) switch(state, if (event.paused) Mode.PAUSED else Mode.LISTENING) else Step(state)
-        Event.Pause -> if (state.mode == Mode.LISTENING) switch(state, Mode.PAUSED) else Step(state)
+        Event.Pause -> when {
+            state.inCall -> afterCall(state, Mode.PAUSED)
+            state.mode == Mode.LISTENING -> switch(state, Mode.PAUSED)
+            else -> Step(state)
+        }
         // The notification exists only while Kestrel is on, so a Resume while off comes from a stale notification.
-        Event.Resume -> if (state.mode == Mode.PAUSED) switch(state, Mode.LISTENING) else Step(state)
+        Event.Resume -> when {
+            state.inCall -> afterCall(state, Mode.LISTENING)
+            state.mode == Mode.PAUSED -> switch(state, Mode.LISTENING)
+            else -> Step(state)
+        }
         Event.TurnOff -> if (state.mode == Mode.OFF) Step(state) else turnOff(state)
         is Event.Heard -> heard(state, event)
         // The owner has started to answer "Yes?", so the wait lasts until the answer has been transcribed.
@@ -227,10 +263,12 @@ object Rules {
         Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
         Event.NothingHeard ->
             if (state.mode != Mode.OFF && state.work == Work.AWAITING_TASK) waitForTask(state) else Step(state)
+        is Event.CallState -> call(state, event.state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
-        if (state.mode == Mode.OFF) return Step(state)
+        // During a call, only the call commands count (section 8.7).
+        if (state.mode == Mode.OFF || state.inCall) return Step(state)
         val awaiting = state.work == Work.AWAITING_TASK
         // An empty transcript that finishes after the screen turned off does not count: nobody could see its hint.
         // Waiting for a task ends when the screen turns off.
@@ -308,7 +346,7 @@ object Rules {
         if (state.mode == Mode.LISTENING && state.screenOn) Step(state, listOf(shown, Effect.RunCommand(text))) else Step(state)
 
     private fun spotted(state: State, keyword: Keyword): Step {
-        if (!state.speaking || state.mode == Mode.OFF) return Step(state)
+        if (!state.speaking || state.mode == Mode.OFF || state.inCall) return Step(state)
         return when (keyword) {
             Keyword.STOP, Keyword.CANCEL ->
                 if (state.work == Work.RUNNING_TASK) cancelTask(state) else Step(state.copy(work = Work.IDLE), listOf(Effect.StopSaying))
@@ -377,6 +415,7 @@ object Rules {
             micBusy = false,
             emptyTranscripts = 0,
             noWordsShown = false,
+            beforeCall = null,
         ),
         first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },
@@ -385,6 +424,38 @@ object Rules {
             Effect.StopService,
         ),
     )
+
+    // Section 8.7: a call that rings while Kestrel listens or is paused, or that is active, interrupts the mode, and the
+    // mode comes back after the call. While Kestrel is off, calls change nothing.
+    private fun call(state: State, call: CallState): Step = when (call) {
+        CallState.RINGING ->
+            if (state.mode == Mode.LISTENING || state.mode == Mode.PAUSED) enterCall(state, Mode.RINGING) else Step(state)
+        CallState.ACTIVE -> when (state.mode) {
+            Mode.LISTENING, Mode.PAUSED -> enterCall(state, Mode.IN_CALL)
+            Mode.RINGING -> switch(state, Mode.IN_CALL)
+            Mode.OFF, Mode.IN_CALL -> Step(state)
+        }
+        CallState.IDLE -> {
+            val back = state.beforeCall
+            if (!state.inCall || back == null) Step(state) else switch(state.copy(beforeCall = null), back)
+        }
+    }
+
+    // Kestrel stops speaking at once, because Android refuses its audio focus during a call (prototype P3). The call
+    // cancels a running task and ends the wait for one; sub-project 5 asks "Continue the task?" afterwards (section 14.4).
+    private fun enterCall(state: State, mode: Mode): Step = switch(
+        state.copy(beforeCall = state.mode, work = Work.IDLE, cancelled = state.cancelled || state.work == Work.RUNNING_TASK),
+        mode,
+        *listOfNotNull(
+            Effect.StopSaying.takeIf { state.speaking },
+            Effect.CancelTask.takeIf { state.work == Work.RUNNING_TASK },
+        ).toTypedArray(),
+    )
+
+    // During a call, the toggle, the pause and the resume choose the mode that comes back after the call, and the bar
+    // shows it.
+    private fun afterCall(state: State, mode: Mode): Step =
+        if (state.beforeCall == mode) Step(state) else Step(state.copy(beforeCall = mode), listOf(Effect.Show(Feedback.ModeChanged(mode))))
 
     /** This step, then the step that [next] makes from its state. */
     private fun Step.then(next: (State) -> Step): Step = next(state).let { Step(it.state, effects + it.effects) }
