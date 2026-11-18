@@ -9,12 +9,15 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Format-CheckResult', 'Get-Median')
+    $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Format-CheckResult', 'Get-Median',
+        'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
         }, $true)
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
+    # Wait-State reads Kestrel's state through this function, which the tests mock.
+    function Get-VoiceState { }
 }
 
 Describe 'The helpers of the A71 session of the instant commands' {
@@ -74,10 +77,47 @@ Describe 'The helpers of the A71 session of the instant commands' {
     It 'writes a check''s result with the kind and the outcome of the command, and the median of some times' {
         $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Radio'; outcome = 'done'; session = 'open' }
 
-        Format-CheckResult -Name 'turn off Wi-Fi' -Owner 'y' -State $state | Should -BeExactly 'turn off Wi-Fi: owner=y kind=Radio outcome=done'
-        Format-CheckResult -Name 'mute' -Owner 'n' -State $null | Should -BeExactly 'mute: owner=n kind=- outcome=-'
+        Format-CheckResult -Name 'turn off Wi-Fi' -Owner 'y' -State $state -Before 6 | Should -BeExactly 'turn off Wi-Fi: owner=y kind=Radio outcome=done'
+        Format-CheckResult -Name 'mute' -Owner 'n' -State $null -Before 6 | Should -BeExactly 'mute: owner=n kind=- outcome=-'
         Get-Median @(300, 100, 200) | Should -Be 200
         Get-Median @(400, 100, 300, 200) | Should -Be 200
         Get-Median @() | Should -Be 0
+    }
+
+    It 'records no command for a check whose words gave none, never the command before it' {
+        $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Tap'; outcome = 'done'; session = 'open' }
+
+        Format-CheckResult -Name 'Display' -Owner 'y' -State $state -Before 7 | Should -BeExactly 'Display: owner=y kind=- outcome=none'
+    }
+
+    It 'counts a command that still runs when a check starts, such as one that asks "Which one?", as the check''s own' {
+        Get-CommandNumber -State ([ordered]@{ mode = 'listening'; command = '7'; outcome = 'done'; session = 'open' }) | Should -Be 7
+        Get-CommandNumber -State ([ordered]@{ mode = 'listening'; command = '7'; outcome = 'running'; session = 'open' }) | Should -Be 6
+    }
+
+    It 'waits for the end of a command only when one started after the owner''s words, and says so' {
+        Mock Write-Host { }
+        Mock Get-VoiceState { [ordered]@{ mode = 'listening'; command = '5'; kind = 'Tap'; outcome = 'done'; session = 'open' } }
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+
+        Wait-CheckCommand -Number 5 -StartSeconds 0.5 -EndSeconds 15 | Should -BeFalse
+
+        $watch.Elapsed.TotalSeconds | Should -BeLessThan 5
+        Should -Invoke Write-Host -Times 0 -Exactly
+
+        Mock Get-VoiceState { [ordered]@{ mode = 'listening'; command = '6'; kind = 'Tap'; outcome = 'done'; session = 'open' } }
+
+        Wait-CheckCommand -Number 5 -StartSeconds 0.5 -EndSeconds 15 | Should -BeTrue
+
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object" -eq 'Waiting up to 15 s for Kestrel''s command to end.' }
+    }
+
+    It 'asks again until the owner''s answer is y or n' {
+        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'yes', ' N '))
+        Mock Read-Host { $answers.Dequeue() }
+
+        Read-YesNo 'Did the page open? Type y or n.' | Should -BeExactly 'n'
+
+        Should -Invoke Read-Host -Times 3 -Exactly
     }
 }

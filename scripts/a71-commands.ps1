@@ -29,14 +29,14 @@
 #                  earlier session recorded
 # The results go into corpus\owner\commands-session-<time>.txt and the recordings into corpus\owner\clips; git ignores
 # both. scripts\voice-eval.ps1 measures the recordings later on the emulator. The script puts back what it changes on the
-# phone, also when a step fails or Ctrl+C stops it: Kestrel's mode Off, the accessibility settings (which also ends a
-# magnification), the setting "Stay awake", Wi-Fi and Bluetooth, the volumes of the call, ring, music, alarm and
-# notification streams, the sound mode, the keyboard, Kestrel's contacts permission and the screenshots that it took;
-# the clipboard stays as the owner leaves it. It refuses every device but the A71 and kestrel-api37. -DryRun runs the
-# session on kestrel-api37 without the owner: it answers every question itself, sends what the owner would say through
-# the voice hook, skips what needs the owner's hands otherwise, and records two silent clips into a folder of its own
-# that it deletes. -Step runs only the named steps, also as one text separated by commas. It needs PowerShell 7.3 or
-# newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
+# phone, also when a step fails or Ctrl+C stops it: Kestrel's mode Off, the accessibility settings, a magnification (which
+# it ends by turning Kestrel's accessibility service off and on once), the setting "Stay awake", Wi-Fi and Bluetooth, the
+# volumes of the call, ring, music, alarm and notification streams, the sound mode, the keyboard, Kestrel's contacts
+# permission and the screenshot that it took; the clipboard stays as the owner leaves it. It refuses every device but the
+# A71 and kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every question itself,
+# sends what the owner would say through the voice hook, skips what needs the owner's hands otherwise, and records two
+# silent clips into a folder of its own that it deletes. -Step runs only the named steps, also as one text separated by
+# commas. It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-commands.ps1 -Serial R58N12345AB
 #Requires -Version 7.3
 param(
@@ -91,10 +91,25 @@ function Get-NewScreenshotIds([string[]]$Rows) {
 }
 
 # One check's line of the results: what the owner said or did, the owner's answer, and the kind and the outcome of
-# Kestrel's latest instant command from the voice-state hook. Never what Kestrel heard.
-function Format-CheckResult([string]$Name, [string]$Owner, $State) {
-    $command = if ($State) { "kind=$($State['kind']) outcome=$($State['outcome'])" } else { 'kind=- outcome=-' }
+# Kestrel's instant command from the voice-state hook, only when that command is newer than $Before, the number that
+# Get-CommandNumber read before the check; a check whose words gave no command records 'kind=- outcome=none', never the
+# command before it. Never what Kestrel heard.
+function Format-CheckResult([string]$Name, [string]$Owner, $State, [int]$Before) {
+    $command = if (-not $State) {
+        'kind=- outcome=-'
+    } elseif ([int]$State['command'] -le $Before) {
+        'kind=- outcome=none'
+    } else {
+        "kind=$($State['kind']) outcome=$($State['outcome'])"
+    }
     "${Name}: owner=$Owner $command"
+}
+
+# The number of Kestrel's latest instant command before a check. A command that still runs then, such as one that asks
+# "Which one?", counts as the check's own, because the owner's words answer it.
+function Get-CommandNumber($State) {
+    $number = [int]$State['command']
+    if ($State['outcome'] -eq 'running') { $number - 1 } else { $number }
 }
 
 # The median of some numbers, or 0 without any.
@@ -147,6 +162,18 @@ function Read-OwnerAnswer([string]$Prompt, [string]$DryRunAnswer) {
     (Read-Host $Prompt).Trim()
 }
 
+# Asks the owner a question until the answer is y or n, and returns it, so that a stray Enter is never taken as an
+# answer. In a dry run it answers $DryRunAnswer itself.
+function Read-YesNo([string]$Prompt, [string]$DryRunAnswer = 'dry') {
+    if ($DryRun) {
+        Write-Host "[dry run] $Prompt"
+        return $DryRunAnswer
+    }
+    $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
+    while ($answer -notin 'y', 'n') { $answer = "$(Read-Host 'Type y or n')".Trim().ToLowerInvariant() }
+    $answer
+}
+
 if ((Request-Owner "The session first reads the model of the device $Serial, to check that it is the Galaxy A71. Press Enter to go ahead, or q to stop." 'go') -ne 'go') {
     exit 1
 }
@@ -190,6 +217,15 @@ function Wait-State([scriptblock]$Condition, [double]$TimeoutSeconds) {
     -1
 }
 
+# After the owner's words: waits up to $StartSeconds for Kestrel to start a command newer than $Number, and only when one
+# started, up to $EndSeconds for it to end. Returns whether one started.
+function Wait-CheckCommand([int]$Number, [double]$StartSeconds = 3, [double]$EndSeconds = 15) {
+    if ((Wait-State ({ param($State) [int]$State['command'] -gt $Number }.GetNewClosure()) $StartSeconds) -lt 0) { return $false }
+    Write-Host "Waiting up to $EndSeconds s for Kestrel's command to end."
+    Wait-State ({ param($State) [int]$State['command'] -gt $Number -and $State['outcome'] -ne 'running' }.GetNewClosure()) $EndSeconds | Out-Null
+    $true
+}
+
 # Waits until Kestrel is in the mode, with its voice session open, or closed for 'off'.
 function Wait-Mode([string]$Mode, [double]$TimeoutSeconds) {
     $session = if ($Mode -eq 'off') { 'closed' } else { 'open' }
@@ -221,8 +257,8 @@ function Start-Kestrel {
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
 }
 
-# What the script has still to put back. Each restore enters the list before its change, and leaves it when it worked.
-# $ByHand says how to put it back by hand, for the warning at the end.
+# What the script has still to put back. Each restore enters the list before its change, and leaves it when it worked, or
+# when a step undid the change itself (Remove-Restore). $ByHand says how to put it back by hand, for the warning at the end.
 $pending = [System.Collections.Generic.List[object]]::new()
 
 function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$Action) {
@@ -230,6 +266,9 @@ function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$A
     $pending.Add($restore)
     $restore
 }
+
+# Leaves out a restore whose change a step has undone itself.
+function Remove-Restore($Restore) { $pending.Remove($Restore) | Out-Null }
 
 # Runs a restore that is still pending, and keeps it pending, with the reason, when it fails.
 function Complete-Restore($Restore) {
@@ -340,10 +379,12 @@ function Send-Heard([string]$Text) {
 }
 
 # One check: the owner prepares what $Prepare says, if anything, says $Say to Kestrel, and answers whether $Look
-# happened. The result holds $Name (or else $Say), the owner's answer and the kind and the outcome of Kestrel's latest
-# instant command. A dry run sends $Heard (by default $Say) through the voice hook, then $Answer, if any, as the answer to
-# Kestrel's question, and answers itself.
+# happened. The result holds $Name (or else $Say), the owner's answer and the kind and the outcome of the instant command
+# that the owner's words started, if they started one. A dry run sends $Heard (by default $Say) through the voice hook,
+# then $Answer, if any, as the answer to Kestrel's question, and answers itself. The owner's answer, or 'skipped', stays
+# in $script:lastAnswer.
 function Invoke-Check([string]$StepName, [string]$Say, [string]$Look, [string]$Prepare = '', [string]$Heard = '', [string]$Name = '', [string]$Answer = '') {
+    $script:lastAnswer = 'skipped'
     # What the results call the check: $Name when what the owner says is private, such as a phone number.
     $label = if ($Name) { $Name } else { $Say }
     if ($Prepare -and (Request-Owner "$Prepare Press Enter when it is ready, or s to skip this check." 'go') -eq 'skip') {
@@ -351,7 +392,7 @@ function Invoke-Check([string]$StepName, [string]$Say, [string]$Look, [string]$P
         return
     }
     $before = Get-VoiceState
-    $number = if ($before) { [int]$before['command'] } else { 0 }
+    $number = if ($before) { Get-CommandNumber $before } else { 0 }
     if ($DryRun) {
         Send-Heard $(if ($Heard) { $Heard } else { $Say })
         if ($Answer) {
@@ -364,9 +405,11 @@ function Invoke-Check([string]$StepName, [string]$Say, [string]$Look, [string]$P
         Add-Result $StepName "${label}: skipped"
         return
     }
-    Wait-State ({ param($State) [int]$State['command'] -gt $number -and $State['outcome'] -ne 'running' }.GetNewClosure()) 15 | Out-Null
-    $answer = Read-OwnerAnswer "$Look Type y or n." 'dry'
-    Add-Result $StepName (Format-CheckResult -Name $label -Owner $answer -State (Get-VoiceState))
+    # Without Kestrel's state before the check, no command can be told to be the check's own.
+    $state = if ($before -and (Wait-CheckCommand -Number $number)) { Get-VoiceState } else { $before }
+    $answer = Read-YesNo "$Look Type y or n." 'dry'
+    $script:lastAnswer = $answer
+    Add-Result $StepName (Format-CheckResult -Name $label -Owner $answer -State $state -Before $number)
 }
 
 # Whether Kestrel may read the contacts.
@@ -430,6 +473,10 @@ function Invoke-ScreenStep {
         Invoke-Check screen 'Display' 'Did nothing happen, because a name alone no longer taps?'
         Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
         Request-Owner 'Switch "Require verbs" off again, then press Enter.' 'go' | Out-Null
+    } elseif ($DryRun) {
+        # The dry run cannot switch "Require verbs". Instead, a transcript without words, which gives Kestrel no command,
+        # shows that such a check records none.
+        Invoke-Check screen 'nothing, as a transcript without words' 'Did nothing happen?' -Heard '...'
     }
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
 }
@@ -479,11 +526,24 @@ function Invoke-GlobalStep {
     Invoke-Check global 'turn off device' 'Did the power menu open?'
     Invoke-Check global 'go back' 'Did the power menu close?'
     $images = Get-LargestImageId
+    # Registered before the screenshot, so that a failure or Ctrl+C before the delete below still deletes it at the end.
+    $screenshots = Register-Restore 'the deletion of the screenshot that the session took' 'Delete the newest screenshot in Gallery.' ([pscustomobject]@{ Largest = $images; Deleted = 0 }) {
+        param($Data)
+        Assert-TestDevice -Serial $Serial
+        $new = @(Get-NewScreenshotIds -Rows (Invoke-Checked "content query --uri content://media/external/images/media --projection _id:_display_name --where _id\>$($Data.Largest)"))
+        foreach ($id in $new) {
+            Invoke-Checked "content delete --uri content://media/external/images/media --where _id=$id" | Out-Null
+            $Data.Deleted++
+        }
+    }
     Invoke-Check global 'take a screenshot' 'Did the phone take a screenshot, without Kestrel''s bar on it?'
     Start-Sleep -Seconds 3
-    $new = @(Get-NewScreenshotIds -Rows (Invoke-Checked "content query --uri content://media/external/images/media --projection _id:_display_name --where _id\>$images"))
-    foreach ($id in $new) { Invoke-Checked "content delete --uri content://media/external/images/media --where _id=$id" | Out-Null }
-    Add-Result global "deleted $($new.Count) new screenshots"
+    Complete-Restore $screenshots
+    if ($pending.Contains($screenshots)) {
+        Add-Result global "the new screenshots are not deleted yet ($($screenshots.Reason)); the session tries again at its end"
+    } else {
+        Add-Result global "deleted $($screenshots.Data.Deleted) new screenshots"
+    }
     Invoke-Check global 'open apps' 'Did the list of all apps open?'
     Invoke-Check global 'go home' 'Is the home screen in front?'
     foreach ($try in 1..3) {
@@ -544,12 +604,37 @@ function Invoke-SoundStep {
     Invoke-Check sound 'media pause' 'Did the music stop?' -Prepare 'Start music in one of your music apps, then go to the home screen.'
     Invoke-Check sound 'media play' 'Did the music play again?'
     Invoke-Check sound 'media pause' 'Did the music stop?'
-    Invoke-Check sound 'zoom in' 'Is the screen magnified?'
-    Invoke-Check sound 'pan left' 'Did the magnified area move to the left?'
-    Invoke-Check sound 'scroll right' 'Did it move to the right?'
-    Invoke-Check sound 'zoom out' 'Is the screen back to normal?'
-    Invoke-Check sound 'magnify' 'Is the screen magnified again?'
-    Invoke-Check sound 'stop magnification' 'Is the screen back to normal?'
+    # Kestrel's mode Off does not end a magnification, and the accessibility settings' restore leaves Kestrel's service on
+    # when it was on before the session. Android ends the magnification that a service set when the service goes off, so
+    # this restore turns Kestrel's service off and on once.
+    $services = Read-DeviceValue 'settings get secure enabled_accessibility_services'
+    $zoom = Register-Restore 'the end of the magnification' 'If the screen is still magnified, turn Kestrel off and on again in Settings > Accessibility > Installed apps.' $services {
+        param($Data)
+        Assert-TestDevice -Serial $Serial
+        $without = @("$Data" -split ':' | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) -join ':'
+        $off = if ($without) { "settings put secure enabled_accessibility_services '$without'" } else { 'settings delete secure enabled_accessibility_services' }
+        Invoke-Checked $off | Out-Null
+        Start-Sleep -Seconds 1
+        if (-not (Set-SecureSetting -Serial $Serial -Name 'enabled_accessibility_services' -Value $Data)) { throw 'Android did not turn Kestrel''s accessibility service on again' }
+    }
+    try {
+        Invoke-Check sound 'zoom in' 'Is the screen magnified?'
+        Invoke-Check sound 'pan left' 'Did the magnified area move to the left?'
+        Invoke-Check sound 'scroll right' 'Did it move to the right?'
+        Invoke-Check sound 'zoom out' 'Is the screen back to normal?'
+        Invoke-Check sound 'magnify' 'Is the screen magnified again?'
+        Invoke-Check sound 'stop magnification' 'Is the screen back to normal?'
+        if ($script:lastAnswer -eq 'y') { Remove-Restore $zoom }
+    } finally {
+        # Also after a failure, a skip or an answer other than y, so that the later steps run without a magnification.
+        if ($pending.Contains($zoom)) {
+            Complete-Restore $zoom
+            # Android binds the service again a moment after the setting.
+            Start-Sleep -Seconds 2
+            $ended = if ($pending.Contains($zoom)) { "could not end it ($($zoom.Reason)); the session tries again at its end" } else { 'ended it' }
+            Add-Result sound "turning Kestrel's accessibility service off and on, to end any magnification, $ended"
+        }
+    }
     Invoke-Check sound 'circle to search' 'Did Kestrel say that Circle to Search isn''t available on this phone?'
 }
 
@@ -587,6 +672,14 @@ function Invoke-CallStep {
         Add-Result calls 'skipped by the owner'
         return
     }
+    # Once, before the first call: without a SIM card, a phone still calls emergency numbers, and such a call reaches
+    # real emergency services, so the owner never answers Kestrel's emergency question with yes (process rule 10).
+    Write-Host ''
+    Write-Host '!!! IMPORTANT, FOR THE WHOLE STEP !!!' -ForegroundColor Yellow
+    Write-Host 'If Kestrel ever says "That may call an emergency number. Say ''yes, call'' to do it.", say "no".' -ForegroundColor Yellow
+    Write-Host 'Never say "yes, call" in this session.' -ForegroundColor Yellow
+    Write-Host ''
+    Request-Owner 'Press Enter once you have read this.' 'go' | Out-Null
     # Kestrel presses Call only for a number that the owner gives and confirms, never for a made-up one that could be a
     # stranger's; the dry run calls the emulator's made-up number.
     $number = (Read-OwnerAnswer 'Type a phone number that is fine to call, such as another phone of yours, with digits only.' '0641234567') -replace '[\s-]', ''
@@ -597,7 +690,7 @@ function Invoke-CallStep {
     Start-Kestrel
     $callLog = Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id')
     if ($number) {
-        Invoke-Check calls "call $number" 'Did the phone app open with the number, did Kestrel say it, count down 4 s on its bar and press Call (which Android refuses without a SIM card)?' -Name 'call the confirmed number'
+        Invoke-Check calls "call $number" 'Did the phone app open with the number, and did Kestrel say it, count down 4 s on its bar, press Call and then say "The call didn''t start. Say it again."? The phone has no SIM card, so Android refuses the call: that is the expected result.' -Name 'call the confirmed number'
     }
     if ($DryRun) {
         # The emulator places the call; its console ends it, and the call's row goes.
@@ -631,23 +724,29 @@ function Invoke-CallStep {
         }
         Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
     }
-    # Revoking the permission ends Kestrel's process, so the session starts Kestrel again, after Android has brought it
-    # back for its accessibility service and Kestrel has restored its mode.
-    Invoke-Checked 'pm revoke dev.kestrel android.permission.READ_CONTACTS' | Out-Null
-    Start-Sleep -Seconds 3
-    Wait-State ({ param($State) $State['mode'] -ne 'off' }) 10 | Out-Null
-    Start-Kestrel
-    Invoke-Check calls 'call and the name of one of your contacts' 'Did Kestrel say that it needs your contacts and open its settings, which ask for them? Allow it.' -Heard 'call Ana'
-    Add-Result calls "contacts permission granted afterwards: $(Test-ContactsGranted)"
-    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
-    Invoke-Check calls 'call and the same name, and about 3 s into the countdown "cancel"' 'Did the countdown stop, with "Cancelled" on the bar and the phone app showing the number?' -Heard 'call Ana'
-    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
-    Invoke-Check calls 'call and the same name, and "stop" as soon as the countdown starts' 'Did the countdown stop?' -Heard 'call Ana'
-    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
-    Invoke-Check calls 'call and the same name, and touch the screen during the countdown' 'Did your touch stop the countdown? (This shows whether Kestrel sees a real finger.)' -Heard 'call Ana'
-    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
-    Invoke-Check calls 'call and a first name that two of your contacts share' 'Did Kestrel ask "Which one?" with their names? Then touch the screen: did the question end?' -Prepare 'Skip this check (s) if no two of your contacts share a first name.' -Heard 'call Ana'
-    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    $contact = Request-Owner 'The next checks call one of your contacts. Choose one whose number is an ordinary mobile or landline number with at least 6 digits, never an emergency, service or short number. Wherever a check says "the name", say that contact''s name. Press Enter once you have chosen one, or s to skip the checks with a contact.' 'go'
+    if ($contact -eq 'skip') {
+        Add-Result calls 'the checks with a contact: skipped by the owner'
+    } else {
+        # Revoking the permission ends Kestrel's process, so the session starts Kestrel again, after Android has brought it
+        # back for its accessibility service and Kestrel has restored its mode.
+        Invoke-Checked 'pm revoke dev.kestrel android.permission.READ_CONTACTS' | Out-Null
+        Start-Sleep -Seconds 3
+        Wait-State ({ param($State) $State['mode'] -ne 'off' }) 10 | Out-Null
+        Start-Kestrel
+        Invoke-Check calls 'call and the name of the contact that you chose' 'Did Kestrel say that it needs your contacts and open its settings, which ask for them? Allow it.' -Heard 'call Ana'
+        Add-Result calls "contacts permission granted afterwards: $(Test-ContactsGranted)"
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+        Invoke-Check calls 'call and the same name, and about 3 s into the countdown "cancel"' 'Did the countdown stop, with "Cancelled" on the bar and the phone app showing the number?' -Heard 'call Ana'
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+        Invoke-Check calls 'call and the same name, and "stop" as soon as the countdown starts' 'Did the countdown stop?' -Heard 'call Ana'
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+        # The touch watcher counts a touch anywhere, and the phone app's green Call button is its largest control.
+        Invoke-Check calls 'call and the same name, and during the countdown touch the clock at the top of the screen, never a button of the phone app' 'Did your touch stop the countdown? (This shows whether Kestrel sees a real finger.)' -Heard 'call Ana'
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+        Invoke-Check calls 'call and a first name that two of your contacts share, and when Kestrel asks "Which one?", touch the clock at the top of the screen, never a button of the phone app' 'Did Kestrel ask "Which one?" with their names, and did your touch end the question?' -Prepare 'Skip this check (s) if no two of your contacts share a first name, or if one of them has a number that is not an ordinary mobile or landline number with at least 6 digits.' -Heard 'call Ana'
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    }
     Invoke-Check calls 'copy this phone number' 'Paste it into a note or a message field: is it the contact''s number?' -Prepare 'Open a contact in Contacts that shows one phone number.'
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
 }
