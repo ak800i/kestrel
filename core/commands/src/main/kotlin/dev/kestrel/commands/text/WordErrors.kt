@@ -1,14 +1,14 @@
-package dev.kestrel.app.listen
+package dev.kestrel.commands.text
 
 /**
  * How a transcript differs from what was said (design spec, section 16.4): the [words] that were said, and the
  * [substitutions], [deletions] and [insertions] of the alignment with the fewest changes. Letter case and punctuation do
  * not count, and an apostrophe stays in its word, as in Requests. A number counts the same in words and in digits, up to
  * 99, because the recogniser may write either: "six forty-five" is "6:45", and "twenty five" is "25". The word error
- * rate is [errors] divided by [words]. The evaluation hook of debug builds uses it. It holds only counts, so it may be
- * printed.
+ * rate is [errors] divided by [words]. The evaluation hook of debug builds and Commands.sameAction use it. It holds
+ * only counts, so it may be printed.
  */
-internal data class WordErrors(val words: Int, val substitutions: Int, val deletions: Int, val insertions: Int) {
+data class WordErrors(val words: Int, val substitutions: Int, val deletions: Int, val insertions: Int) {
     val errors: Int get() = substitutions + deletions + insertions
 
     companion object {

@@ -58,10 +58,18 @@
 #                                           background, while Kestrel is off; answers loading, ready with the numbers of
 #                                           boost words, or failed with the error's class
 #   voice-eval -File name -Expected 'text' -Kind kind [-Spotted] [-AfterName] [-Reveal] [-NoBoost]
+#              [-Group group [-Labels 'label;label'] [-Contacts 'name;name'] [-NoLabels] [-ScreenLabels]]
 #                                           transcribes the clip and compares it with the text: the numbers of words and
 #                                           errors, whether Requests read the kind (skip: not checked), the time and the
 #                                           memory; -Reveal adds what Kestrel heard, only for a generated clip, whose
-#                                           name starts with gen-; -NoBoost transcribes without the boost words
+#                                           name starts with gen-; -NoBoost transcribes without the boost words. With
+#                                           the corpus's group of the line, the boost words also have the command
+#                                           vocabulary and the labels as the screen's, as in Kestrel's voice session,
+#                                           unless -NoLabels leaves both out, and the answer ends with command=1 when the
+#                                           transcript leads to the same instant command as the text, 0 when not, and -
+#                                           for a group without instant commands; -Contacts gives the contact matcher
+#                                           its contacts, which are never boost words; -ScreenLabels takes the labels
+#                                           from the screen in front, which never leave the device
 #   voice-eval -Close                       closes that recogniser
 # The A71 session (scripts\a71-session.ps1 runs these):
 #   voice-counts                            the number of Kestrel's latest wait for a task, which rises with each wait and
@@ -128,6 +136,11 @@ param(
     [string]$Reply,
     [switch]$Result,
     [switch]$NoBoost,
+    [string]$Group,
+    [string]$Labels,
+    [string]$Contacts,
+    [switch]$NoLabels,
+    [switch]$ScreenLabels,
     [string]$Create,
     [ValidateSet('toggle', 'pause', 'resume', 'off', 'screen-on', 'screen-off', 'heard')][string]$Send,
     [switch]$Named
@@ -182,6 +195,11 @@ if ($Close) { $extras += '--ez close true' }
 if ($Result) { $extras += '--ez result true' }
 if ($Reply) { $extras += "--es reply $(ConvertTo-ShellText $Reply)" }
 if ($NoBoost) { $extras += '--ez noBoost true' }
+if ($Group) { $extras += "--es group $(ConvertTo-ShellText $Group)" }
+if ($PSBoundParameters.ContainsKey('Labels')) { $extras += "--es labels $(ConvertTo-ShellText $Labels)" }
+if ($PSBoundParameters.ContainsKey('Contacts')) { $extras += "--es contacts $(ConvertTo-ShellText $Contacts)" }
+if ($NoLabels) { $extras += '--ez noLabels true' }
+if ($ScreenLabels) { $extras += '--ez screenLabels true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

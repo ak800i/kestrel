@@ -6,11 +6,16 @@ import android.os.Debug
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.debug.TestHooks.HookError
+import dev.kestrel.app.listen.BoostWordBudget
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.LauncherAppLabels
-import dev.kestrel.app.listen.WordErrors
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.Requests
+import dev.kestrel.commands.Command
+import dev.kestrel.commands.CommandParser
+import dev.kestrel.commands.CommandVocabulary
+import dev.kestrel.commands.Commands
+import dev.kestrel.commands.text.WordErrors
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.Recognizer
 import dev.kestrel.voice.SAMPLE_RATE
@@ -41,8 +46,11 @@ import kotlin.math.roundToInt
  * VOICE_RECORD starts recording the microphone into a clip and answers once the microphone records; `result` then asks
  * for the recording's answer. VOICE_EVAL cuts a clip's speech out with Kestrel's speech detector, as Kestrel's pipeline
  * does, transcribes it with the boost words of Kestrel's voice session, and compares the transcript with the text that
- * was to be said. Their answers hold only counts and times, except that VOICE_EVAL with `reveal` adds the transcript,
- * which it does only for a generated clip, whose name starts with [GENERATED]. They log nothing.
+ * was to be said; for a line of the corpus with its group (`group`), it also uses the command vocabulary and the labels
+ * of the line's scene as the screen's boost words, as each utterance of Kestrel's voice session does, and for a line of
+ * the instant commands it answers whether the transcript leads to the same action (sub-project 3). Their answers hold only counts and times, except that
+ * VOICE_EVAL with `reveal` adds the transcript, which it does only for a generated clip, whose name starts with
+ * [GENERATED]. They log nothing.
  */
 internal class EvalHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
@@ -261,10 +269,17 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         } catch (e: IllegalArgumentException) {
             throw HookError("the clip is not a WAV file of 16 kHz mono 16-bit PCM")
         }
+        // The labels of the screen in front, for the A71 session's transcription time on a busy screen; they never leave
+        // the device. Otherwise the labels of the line's scene, which scripts\voice-eval.ps1 passes.
+        val labels = if (intent.getBooleanExtra(EXTRA_SCREEN_LABELS, false)) {
+            graph.screen.value?.let { BoostWordBudget.screenNames(it.snapshots.current().snapshot) }.orEmpty()
+        } else {
+            intent.getStringExtra(EXTRA_LABELS)?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        }
         return evaluationLock.withLock {
             val ready = synchronized(lock) { evaluation as? Evaluation.Ready }
                 ?: throw HookError("load the recogniser first with --ez load true, until it answers ready")
-            withContext(Dispatchers.Default) { compare(ready, samples, expected, kind, intent, reveal) }
+            withContext(Dispatchers.Default) { compare(ready, samples, expected, kind, intent, reveal, labels) }
         }
     }
 
@@ -275,23 +290,31 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         kind: String,
         intent: Intent,
         reveal: Boolean,
+        labels: List<String>,
     ): String {
         // As in Kestrel's pipeline, the recogniser gets only the speech that the detector finds, here from the start of its
-        // first utterance to the end of its last one, so that the clip's silence does not count (section 8.3). The detector
-        // starts each clip anew.
+        // first utterance to the end of its last one, with the audio that the detector adds before and after them, so
+        // that the rest of the clip's silence does not count (section 8.3). The detector starts each clip anew.
         ready.detector.finish()
         val parts = ready.detector.accept(samples) + ready.detector.finish()
         val speech = if (parts.isEmpty()) {
             FloatArray(0)
         } else {
-            val end = minOf(parts.last().startSample + parts.last().samples.size, samples.size.toLong())
-            samples.copyOfRange(parts.first().startSample.toInt(), end.toInt())
+            val end = minOf(parts.last().endSample + parts.last().trail, samples.size.toLong())
+            samples.copyOfRange((parts.first().startSample - parts.first().lead).toInt(), end.toInt())
         }
         val recognizer = ready.recognizer
         val before = recognizer.secondDecodings
         val started = SystemClock.elapsedRealtime()
-        // Without the boost words on request, to show their effect (plan 2C-3's final review, item 3).
-        val words = if (intent.getBooleanExtra(EXTRA_NO_BOOST, false)) emptyList() else ready.words
+        // A line of the corpus also gets the command vocabulary and its scene's labels as the screen's, as each
+        // utterance of Kestrel's voice session does (design spec, section 8.3), unless noLabels leaves them out to show
+        // their effect. Without any boost words on request, to show theirs (plan 2C-3's final review, item 3).
+        val group = intent.getStringExtra(EXTRA_GROUP)
+        val words = when {
+            intent.getBooleanExtra(EXTRA_NO_BOOST, false) -> emptyList()
+            group == null || intent.getBooleanExtra(EXTRA_NO_LABELS, false) -> ready.words
+            else -> BoostWordBudget.combine(ready.words, labels, CommandVocabulary.BOOST)
+        }
         val heard = if (speech.isEmpty()) "" else recognizer.transcribe(speech, words).text
         val millis = SystemClock.elapsedRealtime() - started
         val twice = recognizer.secondDecodings - before
@@ -312,10 +335,33 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
             read == kind -> "ok"
             else -> "wrong"
         }
+        // The contacts that the call lines name go only to the contact matcher, never to the recogniser.
+        val contacts = intent.getStringExtra(EXTRA_CONTACTS)?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: labels
         val answer = "words=${errors.words} substitutions=${errors.substitutions} deletions=${errors.deletions} " +
             "insertions=${errors.insertions} request=$request read=$read millis=$millis seconds=${seconds(speech.size)} " +
-            "pss=${Debug.getPss() / 1024} parts=${parts.size} twice=$twice"
+            "pss=${Debug.getPss() / 1024} parts=${parts.size} twice=$twice" +
+            group?.let { " command=${command(it, expected, heard, labels, contacts)}" }.orEmpty()
         return if (reveal) "$answer heard=$heard" else answer
+    }
+
+    /**
+     * Whether what Kestrel heard leads to the action that the line's text leads to (design spec, section 16.4): 1 or 0,
+     * and - for a group without instant commands. A conversation line must stay bare speech, which acts on nothing; a
+     * dictation line must stay bare and type the same words and punctuation as the text; any other line must be the
+     * same command, with the same labels of its scene and the same of its [contacts].
+     */
+    private fun command(group: String, expected: String, heard: String, labels: List<String>, contacts: List<String>): String {
+        val said = CommandParser.parse(heard)
+        val right = when (group) {
+            CONVERSATION -> said == null || said is Command.Bare
+            DICTATION -> said is Command.Bare && Commands.sameDictation(expected, heard)
+            APPENDIX -> {
+                val wanted = CommandParser.parse(expected)
+                wanted != null && said != null && Commands.sameAction(wanted, said, labels, contacts)
+            }
+            else -> return "-"
+        }
+        return if (right) "1" else "0"
     }
 
     /** The name of a request's kind, as corpus\commands.txt writes it. */
@@ -387,5 +433,15 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         private const val EXTRA_AFTER_NAME = "afterName"
         private const val EXTRA_REVEAL = "reveal"
         private const val EXTRA_NO_BOOST = "noBoost"
+        private const val EXTRA_GROUP = "group"
+        private const val EXTRA_LABELS = "labels"
+        private const val EXTRA_CONTACTS = "contacts"
+        private const val EXTRA_NO_LABELS = "noLabels"
+        private const val EXTRA_SCREEN_LABELS = "screenLabels"
+
+        // The groups of corpus\commands.txt whose lines are instant commands, speech that must stay bare, and dictation.
+        private const val APPENDIX = "appendix"
+        private const val CONVERSATION = "conversation"
+        private const val DICTATION = "dictation"
     }
 }

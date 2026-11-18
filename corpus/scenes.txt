@@ -1,0 +1,42 @@
+# The screens of corpus\commands.txt's instant commands (design spec, section 16.4): the labels that the screen would show
+# while the owner says a line. scripts\voice-eval.ps1 gives the evaluation hook a line's labels, which it uses as the
+# screen's boost words, as Kestrel's voice session does, and as the screen for the matcher, which must find the same
+# label for what Kestrel heard as for the line's text. A scene lists its labels, the ones that the line names and others
+# near them; a line without a scene has no labels. The contacts are the ones that the call lines name; the evaluation
+# hook gives them only to the contact matcher, never to the recogniser, because Kestrel's voice session has no contact
+# names as boost words. Three kinds of lines:
+#   scene <name> | <label>; <label>; ...
+#   line <id> | <scene>
+#   contacts | <name>; <name>; ...
+# Every label and contact is English or a name, as an app or a phone shows it, and none is private.
+scene commands | Save; Safe; Send; Send later; Message from Ana; Delete; Message from Dan; Open dialog; Counter; Ђорђе; Subscribe; Wi‑Fi; Speed slider; Details; Drag me; Drop here
+scene settings | Network and internet; Connected devices; Apps; Notifications; Battery; Storage; Sound and vibration; Display; Dark theme; Accessibility; Security and privacy; Location; System; About phone; Search settings
+scene chats | Messages; Ana Petrović: See you at 5; Marko; Vesna; Đorđe Jovanović; New chat; Search; Camera; Settings
+scene dialog | Cancel; OK; Delete; Don't ask again
+scene apps | Chrome; Gmail; Clock; Settings; Camera; Photos; Maps; YouTube; Play Store; Contacts; Phone; Messages; Calendar; Files; Viber; WhatsApp
+scene gallery | First photo; Second photo; Third photo; Albums; Search
+scene quick | Flashlight; Wi-Fi; Bluetooth; Do not disturb; Airplane mode; Auto-rotate
+scene editor | Message; Subject; To; Send; Attach
+scene shade | Reminder: call the bank; Mark done; Clear all
+contacts | Ana Petrović; Mom
+line c001 | apps
+line c017 | quick
+line c020 | commands
+line c037 | gallery
+line c112 | apps
+line c113 | apps
+line c114 | apps
+line c115 | apps
+line c129 | dialog
+line c139 | commands
+line c157 | commands
+line c158 | commands
+line c159 | commands
+line c172 | commands
+line c176 | commands
+line c178 | settings
+line c180 | commands
+line c182 | commands
+line c184 | shade
+line c187 | chats
+line c200 | editor

@@ -1,4 +1,4 @@
-package dev.kestrel.app.listen
+package dev.kestrel.commands.text
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

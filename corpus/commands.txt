@@ -2,9 +2,10 @@
 # the A71 session asks the owner to say the lines marked for the owner, and scripts\voice-eval.ps1 measures them. One
 # utterance per line, in seven columns separated by '|'; lines that start with '#' are comments. The columns:
 #   id        a plain name, which is also the name of the utterance's clips
-#   group     appendix (Appendix A's commands, which later sub-projects handle), own (Kestrel's own phrases), answer
-#             (answers to "Yes?"), task (tasks with Kestrel's name), confusable (phrases near Kestrel's words) or call
-#             (the call commands)
+#   group     appendix (Appendix A's instant commands, and bare labels and numbers), own (Kestrel's own phrases),
+#             answer (answers to "Yes?"), task (tasks with Kestrel's name), confusable (phrases near Kestrel's words),
+#             call (the call commands), conversation (speech that is no command, which Kestrel must ignore) or
+#             dictation (dictated text with spoken punctuation, typed into a field)
 #   context   idle, or answer for an answer to "Yes?"
 #   spotted   1 when the keyword spotter hears "Kestrel" at the start of the utterance, otherwise 0
 #   expected  what Requests should read: Name, WakeUp, Stop, StopNamed, PauseListening, TurnOff, OpenSettings, Task or
@@ -14,7 +15,10 @@
 #   text      what is said. No line may hold private words; every name in it is invented.
 # The expected readings follow the rules of Requests as they are (design spec, section 8.3), so that a perfect
 # transcript always reads as expected. For example, "Forget about it." in an answer is a task, because only "never
-# mind", "forget it" and "nothing" end the wait.
+# mind", "forget it" and "nothing" end the wait. For the groups appendix, conversation and dictation, the evaluation also
+# checks the instant command (design spec, section 16.4): the transcript must lead to the action that the text leads to,
+# with the labels that corpus\scenes.txt gives the line; a conversation line must stay bare speech, and a dictation line
+# must type the same words and punctuation as its text.
 c001 | appendix | idle | 0 | Other | 1 | Open Chrome.
 c002 | appendix | idle | 0 | Other | 1 | Open apps.
 c003 | appendix | idle | 0 | Other | 1 | Go back.
@@ -126,3 +130,207 @@ c108 | call | idle | 1 | - | 1 | Kestrel, answer.
 c109 | call | idle | 0 | - | 1 | Hang up.
 c110 | call | idle | 0 | - | 1 | Mute.
 c111 | call | idle | 0 | - | 1 | Speaker.
+c112 | appendix | idle | 0 | Other | 1 | Open Gmail.
+c113 | appendix | idle | 0 | Other | 0 | Launch Chrome.
+c114 | appendix | idle | 0 | Other | 1 | Open work Gmail.
+c115 | appendix | idle | 0 | Other | 0 | Open Chrome in the work profile.
+c116 | appendix | idle | 0 | Other | 0 | Show all apps.
+c117 | appendix | idle | 0 | Other | 0 | Open the app drawer.
+c118 | appendix | idle | 0 | Other | 1 | Back.
+c119 | appendix | idle | 0 | Other | 1 | Home.
+c120 | appendix | idle | 0 | Other | 0 | Open notifications.
+c121 | appendix | idle | 0 | Other | 0 | Open Quick Settings.
+c122 | appendix | idle | 0 | Other | 0 | Recent apps.
+c123 | appendix | idle | 0 | Other | 1 | Previous app.
+c124 | appendix | idle | 0 | Other | 0 | Lock the phone.
+c125 | appendix | idle | 0 | Other | 1 | Turn off device.
+c126 | appendix | idle | 0 | Other | 0 | Show the power menu.
+c127 | appendix | idle | 0 | Other | 0 | Screenshot.
+c128 | appendix | idle | 0 | Other | 0 | Repeat that.
+c129 | appendix | idle | 0 | Stop | 0 | Cancel.
+c130 | appendix | idle | 0 | Other | 0 | Circle to search.
+c131 | appendix | idle | 0 | Other | 0 | Start Circle to Search.
+c132 | appendix | idle | 0 | Other | 1 | Media play.
+c133 | appendix | idle | 0 | Other | 0 | Play media.
+c134 | appendix | idle | 0 | Other | 0 | Pause the music.
+c135 | appendix | idle | 0 | Other | 0 | Show all commands.
+c136 | appendix | idle | 0 | Other | 0 | Open tutorial.
+c137 | appendix | idle | 0 | Other | 0 | What is 5?
+c138 | appendix | idle | 0 | Other | 0 | What's number 3?
+c139 | appendix | idle | 0 | Other | 0 | Show commands for Send.
+c140 | appendix | idle | 0 | Other | 0 | Show commands for 4.
+c141 | appendix | idle | 0 | Other | 0 | Hide labels.
+c142 | appendix | idle | 0 | Other | 1 | Turn on Wi-Fi.
+c143 | appendix | idle | 0 | Other | 1 | Turn Wi-Fi off.
+c144 | appendix | idle | 0 | Other | 0 | Turn on Bluetooth.
+c145 | appendix | idle | 0 | Other | 0 | Switch Bluetooth off.
+c146 | appendix | idle | 0 | Other | 0 | Volume down.
+c147 | appendix | idle | 0 | Other | 1 | Turn up the media volume.
+c148 | appendix | idle | 0 | Other | 1 | Turn the alarm volume down.
+c149 | appendix | idle | 0 | Other | 0 | Increase the ringer volume.
+c150 | appendix | idle | 0 | Other | 0 | Phone volume up.
+c151 | appendix | idle | 0 | Other | 1 | Mute.
+c152 | appendix | idle | 0 | Other | 0 | Unmute.
+c153 | appendix | idle | 0 | Other | 0 | Mute the ringer.
+c154 | appendix | idle | 0 | Other | 1 | Silence.
+c155 | appendix | idle | 0 | Other | 0 | Vibrate.
+c156 | appendix | idle | 0 | Other | 0 | Seven.
+c157 | appendix | idle | 0 | Other | 1 | Save.
+c158 | appendix | idle | 0 | Other | 0 | Tap Save.
+c159 | appendix | idle | 0 | Other | 0 | Send later.
+c160 | appendix | idle | 0 | Other | 1 | Show password.
+c161 | appendix | idle | 0 | Other | 0 | Show the password.
+c162 | appendix | idle | 0 | Other | 0 | Search for weather tomorrow.
+c163 | appendix | idle | 0 | Other | 1 | Call 064 123 4567.
+c164 | appendix | idle | 0 | Other | 0 | Dial zero six four one two three four five six seven.
+c165 | appendix | idle | 0 | Other | 1 | Call Ana Petrović.
+c166 | appendix | idle | 0 | Other | 1 | Call Ana mobile.
+c167 | appendix | idle | 0 | Other | 0 | Call Ana's work number.
+c168 | appendix | idle | 0 | Other | 1 | Copy this phone number.
+c169 | appendix | idle | 0 | Other | 0 | Copy the phone number.
+c170 | appendix | idle | 0 | Other | 0 | Increment 4.
+c171 | appendix | idle | 0 | Other | 0 | Decrease 6.
+c172 | appendix | idle | 0 | Other | 0 | Long press Send.
+c173 | appendix | idle | 0 | Other | 0 | Drag 3 to 7.
+c174 | appendix | idle | 0 | Other | 0 | Drag 5.
+c175 | appendix | idle | 0 | Other | 0 | Uncheck.
+c176 | appendix | idle | 0 | Other | 1 | Check Subscribe.
+c177 | appendix | idle | 0 | Other | 0 | Switch on.
+c178 | appendix | idle | 0 | Other | 0 | Switch off Dark theme.
+c179 | appendix | idle | 0 | Other | 0 | Expand 2.
+c180 | appendix | idle | 0 | Other | 0 | Expand Details.
+c181 | appendix | idle | 0 | Other | 0 | Collapse 2.
+c182 | appendix | idle | 0 | Other | 0 | Collapse Details.
+c183 | appendix | idle | 0 | Other | 0 | Dismiss 3.
+c184 | appendix | idle | 0 | Other | 0 | Dismiss the reminder.
+c185 | appendix | idle | 0 | Other | 0 | Scroll up.
+c186 | appendix | idle | 0 | Other | 0 | Scroll right.
+c187 | appendix | idle | 0 | Other | 1 | Scroll down on Messages.
+c188 | appendix | idle | 0 | Other | 0 | Scroll to the bottom.
+c189 | appendix | idle | 0 | Other | 0 | Swipe backwards.
+c190 | appendix | idle | 0 | Other | 1 | Swipe from the left edge.
+c191 | appendix | idle | 0 | Other | 0 | Swipe from the bottom.
+c192 | appendix | idle | 0 | Other | 0 | More squares.
+c193 | appendix | idle | 0 | Other | 0 | Fewer squares.
+c194 | appendix | idle | 0 | Other | 0 | Hide grid.
+c195 | appendix | idle | 0 | Other | 0 | Swipe 5 up.
+c196 | appendix | idle | 0 | Other | 0 | Swipe up on 5.
+c197 | appendix | idle | 0 | Other | 1 | Pinch out.
+c198 | appendix | idle | 0 | Other | 0 | Pinch in 4.
+c199 | appendix | idle | 0 | Other | 0 | Long press 7.
+c200 | appendix | idle | 0 | Other | 1 | Start editing the message.
+c201 | appendix | idle | 0 | Other | 1 | Stop editing.
+c202 | appendix | idle | 0 | Other | 0 | Stop typing.
+c203 | appendix | idle | 0 | Other | 1 | Type see you tomorrow.
+c204 | appendix | idle | 0 | Other | 0 | Undo that.
+c205 | appendix | idle | 0 | Other | 1 | Redo.
+c206 | appendix | idle | 0 | Other | 0 | Redo that.
+c207 | appendix | idle | 0 | Other | 1 | Insert really before nice.
+c208 | appendix | idle | 0 | Other | 0 | Insert very after really.
+c209 | appendix | idle | 0 | Other | 0 | Insert and between salt and pepper.
+c210 | appendix | idle | 0 | Other | 0 | Insert too before late.
+c211 | appendix | idle | 0 | Other | 1 | Format email.
+c212 | appendix | idle | 0 | Other | 0 | Format as email address.
+c213 | appendix | idle | 0 | Other | 1 | Replace Monday with Tuesday.
+c214 | appendix | idle | 0 | Other | 0 | Replace cat with dog.
+c215 | appendix | idle | 0 | Other | 0 | Replace everything between hello and world with hi.
+c216 | appendix | idle | 0 | Other | 0 | Replace everything between first and last with middle.
+c217 | appendix | idle | 0 | Other | 1 | Capitalize paris.
+c218 | appendix | idle | 0 | Other | 0 | Capitalise london.
+c219 | appendix | idle | 0 | Other | 0 | Uppercase nasa.
+c220 | appendix | idle | 0 | Other | 1 | Uppercase hello.
+c221 | appendix | idle | 0 | Other | 0 | Lowercase hello.
+c222 | appendix | idle | 0 | Other | 1 | Lowercase world.
+c223 | appendix | idle | 0 | Other | 1 | Delete.
+c224 | appendix | idle | 0 | Other | 0 | Delete that.
+c225 | appendix | idle | 0 | Other | 1 | Delete all.
+c226 | appendix | idle | 0 | Other | 0 | Delete everything.
+c227 | appendix | idle | 0 | Other | 0 | Delete tomorrow.
+c228 | appendix | idle | 0 | Other | 1 | Delete the meeting.
+c229 | appendix | idle | 0 | Other | 0 | Delete to the beginning.
+c230 | appendix | idle | 0 | Other | 0 | Delete to the start.
+c231 | appendix | idle | 0 | Other | 1 | Delete to the end.
+c232 | appendix | idle | 0 | Other | 0 | Delete to the end of the text.
+c233 | appendix | idle | 0 | Other | 1 | Delete selected text.
+c234 | appendix | idle | 0 | Other | 0 | Delete the selection.
+c235 | appendix | idle | 0 | Other | 0 | Delete from hello to world.
+c236 | appendix | idle | 0 | Other | 0 | Delete from first to last.
+c237 | appendix | idle | 0 | Other | 1 | Delete three words.
+c238 | appendix | idle | 0 | Other | 0 | Delete the next two sentences.
+c239 | appendix | idle | 0 | Other | 0 | Delete the last line.
+c240 | appendix | idle | 0 | Other | 0 | Delete two paragraphs.
+c241 | appendix | idle | 0 | Other | 0 | Delete five characters.
+c242 | appendix | idle | 0 | Other | 1 | Go to the beginning.
+c243 | appendix | idle | 0 | Other | 0 | Move to the start.
+c244 | appendix | idle | 0 | Other | 1 | Go to the end.
+c245 | appendix | idle | 0 | Other | 0 | Move to the end.
+c246 | appendix | idle | 0 | Other | 0 | Move after tomorrow.
+c247 | appendix | idle | 0 | Other | 1 | Move after the meeting.
+c248 | appendix | idle | 0 | Other | 0 | Move before tomorrow.
+c249 | appendix | idle | 0 | Other | 0 | Move before lunch.
+c250 | appendix | idle | 0 | Other | 0 | Move between salt and pepper.
+c251 | appendix | idle | 0 | Other | 0 | Move between hello and world.
+c252 | appendix | idle | 0 | Other | 1 | Right two words.
+c253 | appendix | idle | 0 | Other | 0 | Left three characters.
+c254 | appendix | idle | 0 | Other | 0 | Right one line.
+c255 | appendix | idle | 0 | Other | 0 | Left one sentence.
+c256 | appendix | idle | 0 | Other | 0 | Right two paragraphs.
+c257 | appendix | idle | 0 | Other | 1 | Select all.
+c258 | appendix | idle | 0 | Other | 1 | Unselect all text.
+c259 | appendix | idle | 0 | Other | 0 | Unselect.
+c260 | appendix | idle | 0 | Other | 0 | Select to the beginning.
+c261 | appendix | idle | 0 | Other | 0 | Select to the start.
+c262 | appendix | idle | 0 | Other | 0 | Select to the end.
+c263 | appendix | idle | 0 | Other | 0 | Select to the end of the text.
+c264 | appendix | idle | 0 | Other | 0 | Select tomorrow.
+c265 | appendix | idle | 0 | Other | 1 | Select the meeting.
+c266 | appendix | idle | 0 | Other | 0 | Highlight meeting.
+c267 | appendix | idle | 0 | Other | 0 | Highlight tomorrow.
+c268 | appendix | idle | 0 | Other | 0 | Select from hello to world.
+c269 | appendix | idle | 0 | Other | 0 | Select from first to last.
+c270 | appendix | idle | 0 | Other | 1 | Select three words.
+c271 | appendix | idle | 0 | Other | 0 | Select the next two sentences.
+c272 | appendix | idle | 0 | Other | 0 | Copy that.
+c273 | appendix | idle | 0 | Other | 1 | Cut.
+c274 | appendix | idle | 0 | Other | 0 | Cut that.
+c275 | appendix | idle | 0 | Other | 0 | Paste that.
+c276 | appendix | idle | 0 | Other | 1 | Show keyboard.
+c277 | appendix | idle | 0 | Other | 0 | Show the keyboard.
+c278 | appendix | idle | 0 | Other | 0 | Hide the keyboard.
+c279 | appendix | idle | 0 | Other | 1 | New line.
+c280 | appendix | idle | 0 | Other | 0 | New line please.
+c281 | appendix | idle | 0 | Other | 1 | Start magnification.
+c282 | appendix | idle | 0 | Other | 0 | Magnify.
+c283 | appendix | idle | 0 | Other | 0 | Enhance.
+c284 | appendix | idle | 0 | Other | 1 | Zoom out.
+c285 | appendix | idle | 0 | Other | 1 | Pan left.
+c286 | appendix | idle | 0 | Other | 0 | Move up.
+c287 | appendix | idle | 0 | Other | 1 | Stop magnification.
+c288 | appendix | idle | 0 | Other | 0 | Cancel zooming.
+c289 | appendix | idle | 0 | Other | 0 | Start zooming.
+c290 | appendix | idle | 0 | Other | 0 | Stop zooming.
+c291 | conversation | idle | 0 | Other | 1 | I'll be there in ten minutes.
+c292 | conversation | idle | 0 | Other | 0 | That sounds like a great idea.
+c293 | conversation | idle | 0 | Other | 0 | Can you believe it rained all day?
+c294 | conversation | idle | 0 | Other | 1 | We should go back to that restaurant sometime.
+c295 | conversation | idle | 0 | Other | 0 | My phone was on silent all morning.
+c296 | conversation | idle | 0 | Other | 0 | The music in this place is too loud.
+c297 | conversation | idle | 0 | Other | 0 | Tell her I said hello.
+c298 | conversation | idle | 0 | Other | 0 | Let's meet at the station at six.
+c299 | conversation | idle | 0 | Other | 1 | I can't find my keys anywhere.
+c300 | conversation | idle | 0 | Other | 0 | Did you see the game last night?
+c301 | conversation | idle | 0 | Other | 0 | He always forgets to call his mother.
+c302 | conversation | idle | 0 | Other | 0 | The battery is almost empty.
+c303 | conversation | idle | 0 | Other | 0 | Turn left at the next corner.
+c304 | conversation | idle | 0 | Other | 0 | Please don't forget the milk.
+c305 | conversation | idle | 0 | Other | 0 | Thanks, that was really helpful.
+c306 | conversation | idle | 0 | Other | 0 | How was your trip to Belgrade?
+c307 | conversation | idle | 0 | Other | 1 | The volume of work this week is crazy.
+c308 | conversation | idle | 0 | Other | 0 | She sent me the photos yesterday.
+c309 | conversation | idle | 0 | Other | 0 | Maybe we can watch a movie tonight.
+c310 | conversation | idle | 0 | Other | 0 | Okay, see you tomorrow then.
+c311 | dictation | idle | 0 | Other | 1 | hello comma how are you question mark
+c312 | dictation | idle | 0 | Other | 0 | see you at five period
+c313 | dictation | idle | 0 | Other | 0 | the meeting is on Monday exclamation mark
+c314 | dictation | idle | 0 | Other | 1 | capital p one two three
+c315 | dictation | idle | 0 | Other | 0 | open quote hello close quote she said

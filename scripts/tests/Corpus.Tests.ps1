@@ -19,11 +19,13 @@ Describe 'Read-Corpus' {
     It 'reads the repository''s corpus' {
         $rows = @(Read-Corpus -Path "$PSScriptRoot\..\..\corpus\commands.txt")
 
-        $rows.Count | Should -Be 111
-        @($rows | Where-Object { $_.Owner }).Count | Should -Be 100
-        @($rows | Select-Object -ExpandProperty Id -Unique).Count | Should -Be 111
+        $rows.Count | Should -Be 315
+        @($rows | Where-Object { $_.Owner }).Count | Should -Be 160
+        @($rows | Select-Object -ExpandProperty Id -Unique).Count | Should -Be 315
         $rows[0].Text | Should -BeExactly 'Open Chrome.'
         @($rows | Where-Object { $_.Context -eq 'answer' }).Count | Should -Be 12
+        @($rows | Where-Object { $_.Group -eq 'conversation' }).Count | Should -Be 20
+        @($rows | Where-Object { $_.Group -eq 'dictation' }).Count | Should -Be 5
     }
 
     It 'reads the columns, and skips comments and empty lines' {
@@ -54,6 +56,64 @@ Describe 'Read-Corpus' {
         $line = 'x1 | own | idle | 0 | Stop | 1 | Stop.'
 
         { Read-Corpus -Path (New-CorpusFile @($line, $line)) } | Should -Throw '*listed twice*'
+    }
+}
+
+Describe 'Read-CorpusScenes' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Corpus.ps1"
+
+        # Writes a scenes file with these lines, and returns its path.
+        function New-ScenesFile([string[]]$Lines) {
+            $path = Join-Path $TestDrive 'scenes.txt'
+            [IO.File]::WriteAllText($path, ($Lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+            $path
+        }
+    }
+
+    It 'gives each line the labels of its scene, and skips comments and empty lines' {
+        $lines = Read-CorpusScenes -Path (New-ScenesFile @('# a comment', '', 'scene dialog | Cancel; OK ;; Delete', 'line c129 | dialog', 'line x1 | dialog'))
+
+        $lines.Count | Should -Be 2
+        $lines['c129'] | Should -Be @('Cancel', 'OK', 'Delete')
+        $lines['x1'] | Should -Be @('Cancel', 'OK', 'Delete')
+    }
+
+    It 'refuses a line that it cannot read: <_>' -ForEach @(
+        'scene | Cancel',
+        'scene dialog |  ; ',
+        'line c129 | nowhere',
+        'screen dialog | Cancel'
+    ) {
+        { Read-CorpusScenes -Path (New-ScenesFile @($_)) } | Should -Throw '*scenes.txt:1:*'
+    }
+
+    It 'refuses a scene or a line that is listed twice' {
+        { Read-CorpusScenes -Path (New-ScenesFile @('scene s | a', 'scene s | b')) } | Should -Throw '*listed twice*'
+        { Read-CorpusScenes -Path (New-ScenesFile @('scene s | a', 'line x1 | s', 'line x1 | s')) } | Should -Throw '*listed twice*'
+    }
+
+    It 'reads the contacts, which no line gets as labels' {
+        $path = New-ScenesFile @('# contacts | Not; Read', 'scene dialog | Cancel', "contacts | Ana Petrovi$([char]0x0107) ; Mom;", 'line c129 | dialog')
+
+        @(Read-CorpusContacts -Path $path) | Should -Be @("Ana Petrovi$([char]0x0107)", 'Mom')
+        (Read-CorpusScenes -Path $path)['c129'] | Should -Be @('Cancel')
+        @(Read-CorpusContacts -Path (New-ScenesFile @('scene dialog | Cancel'))) | Should -BeNullOrEmpty
+    }
+
+    It 'refuses contacts that are listed twice or have no names' {
+        { Read-CorpusContacts -Path (New-ScenesFile @('contacts | Mom', 'contacts | Ana')) } | Should -Throw '*scenes.txt:2:*listed twice*'
+        { Read-CorpusContacts -Path (New-ScenesFile @('contacts |  ; ')) } | Should -Throw '*scenes.txt:1:*need names*'
+    }
+
+    It 'reads the repository''s scenes, whose lines are lines of the corpus' {
+        $ids = @(Read-Corpus -Path "$PSScriptRoot\..\..\corpus\commands.txt" | Select-Object -ExpandProperty Id)
+        $lines = Read-CorpusScenes -Path "$PSScriptRoot\..\..\corpus\scenes.txt"
+
+        $lines.Count | Should -Be 21
+        @($lines.Keys | Where-Object { $_ -notin $ids }) | Should -BeNullOrEmpty
+        $lines['c020'] | Should -Contain 'Send'
+        @(Read-CorpusContacts -Path "$PSScriptRoot\..\..\corpus\scenes.txt") | Should -Be @("Ana Petrovi$([char]0x0107)", 'Mom')
     }
 }
 
@@ -100,5 +160,21 @@ Describe 'The evaluation''s answers and totals' {
             'Decoded a second time without boost words: 1 of 3 clips'
             'Kestrel''s memory (PSS): at most 950 MB'
         )
+    }
+
+    It 'counts the commands that lead to the correct action, and leaves out the other lines' {
+        $totals = New-EvalTotals
+        foreach ($command in '1', '0', '1', '-') {
+            Add-EvalResult -Totals $totals -Answer (ConvertFrom-HookAnswer "words=2 substitutions=0 deletions=0 insertions=0 request=ok read=Other millis=200 seconds=1.0 pss=900 parts=1 twice=0 command=$command")
+        }
+
+        (Format-EvalSummary $totals)[2] | Should -BeExactly 'Commands that lead to the correct action: 2 of 3 (66.7 %)'
+    }
+
+    It 'prints the word error rate of a group of lines' {
+        $totals = New-EvalTotals
+        Add-EvalResult -Totals $totals -Answer (ConvertFrom-HookAnswer 'words=8 substitutions=1 deletions=0 insertions=0 request=ok read=Other millis=200 seconds=2.0 pss=900 twice=0')
+
+        Format-GroupErrors -Name 'Dictation lines' -Totals $totals | Should -BeExactly 'Dictation lines: 1 clips, 8 words, word error rate 12.5 %'
     }
 }

@@ -41,6 +41,62 @@ function Read-Corpus([string]$Path) {
     }
 }
 
+# Reads corpus\scenes.txt: the labels that the screen would show while the owner says some lines of corpus\commands.txt,
+# which the evaluation hook gives the recogniser as boost words and the matcher as the screen (design spec, section
+# 16.4). It has three kinds of lines, 'scene <name> | <label>; <label>; ...', 'line <id> | <scene>' and
+# 'contacts | <name>; <name>; ...', which Read-CorpusContacts reads; lines that start with '#' and empty lines are
+# skipped. Returns a table from each line's id to the labels of its scene. Throws, with the file and the line's number,
+# on a line of another kind, a scene without labels or listed twice, a line that names a scene that no earlier line
+# lists, or an id listed twice.
+function Read-CorpusScenes([string]$Path) {
+    $scenes = @{}
+    $lines = @{}
+    $number = 0
+    foreach ($line in [IO.File]::ReadAllLines($Path, [Text.UTF8Encoding]::new($false))) {
+        $number++
+        if (-not $line.Trim() -or $line.TrimStart().StartsWith('#')) { continue }
+        $where = "${Path}:${number}:"
+        $head, $rest = $line -split '\|', 2
+        $match = [regex]::Match($head.Trim(), '^(?:(scene|line) ([a-z0-9-]+)|contacts)$')
+        if ($null -eq $rest -or -not $match.Success) {
+            throw "$where a line must be 'scene <name> | <labels>', 'line <id> | <scene>' or 'contacts | <names>'."
+        }
+        if (-not $match.Groups[1].Success) { continue }
+        $name = $match.Groups[2].Value
+        $value = $rest.Trim()
+        if ($match.Groups[1].Value -eq 'scene') {
+            if ($scenes.ContainsKey($name)) { throw "$where the scene $name is listed twice." }
+            $labels = @($value -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($labels.Count -eq 0) { throw "$where the scene $name needs labels." }
+            $scenes[$name] = $labels
+        } else {
+            if (-not $scenes.ContainsKey($value)) { throw "$where unknown scene '$value'." }
+            if ($lines.ContainsKey($name)) { throw "$where the line $name is listed twice." }
+            $lines[$name] = $scenes[$value]
+        }
+    }
+    $lines
+}
+
+# Reads the line 'contacts | <name>; <name>; ...' of corpus\scenes.txt: the contacts that the call lines of
+# corpus\commands.txt name, which the evaluation hook gives only the contact matcher, never the recogniser, because
+# Kestrel's voice session has no contact names as boost words (design spec, section 16.4). Returns the names, or nothing
+# without such a line. Throws, with the file and the line's number, on a second such line or one without names.
+function Read-CorpusContacts([string]$Path) {
+    $contacts = $null
+    $number = 0
+    foreach ($line in [IO.File]::ReadAllLines($Path, [Text.UTF8Encoding]::new($false))) {
+        $number++
+        $head, $rest = $line -split '\|', 2
+        if ($null -eq $rest -or $head.Trim() -ne 'contacts') { continue }
+        $where = "${Path}:${number}:"
+        if ($null -ne $contacts) { throw "$where the contacts are listed twice." }
+        $contacts = @($rest -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($contacts.Count -eq 0) { throw "$where the contacts need names." }
+    }
+    $contacts
+}
+
 # How long the A71 session records an utterance of the owner, in whole seconds: half a second for each word and 2 s more,
 # at least 4 s, and at most 15 s, the longest recording that the hook makes.
 function Get-ClipSeconds([string]$Text) {
@@ -88,6 +144,8 @@ function New-EvalTotals {
         Intended = 0
         Twice = 0
         Pss = 0
+        Commands = 0
+        RightCommands = 0
         Millis = [System.Collections.Generic.List[double]]::new()
         PerSecond = [System.Collections.Generic.List[double]]::new()
     }
@@ -105,6 +163,11 @@ function Add-EvalResult($Totals, $Answer) {
     if ($Answer.request -ne 'skipped') {
         $Totals.Checked++
         if ($Answer.request -eq 'ok') { $Totals.Intended++ }
+    }
+    # The answer of an instant command's line says whether it leads to the correct action; '-' is any other line.
+    if ($Answer.Contains('command') -and $Answer.command -ne '-') {
+        $Totals.Commands++
+        if ($Answer.command -eq '1') { $Totals.RightCommands++ }
     }
     $millis = [double]::Parse([string]$Answer.millis, $invariant)
     $seconds = [double]::Parse([string]$Answer.seconds, $invariant)
@@ -136,7 +199,16 @@ function Format-EvalSummary($Totals) {
     "Clips: $($Totals.Clips); words: $($Totals.Words); word error rate: $(Format-Percent $errors $Totals.Words) % " +
         "($($Totals.Substitutions) substitutions, $($Totals.Deletions) deletions, $($Totals.Insertions) insertions)"
     "Requests read as intended: $($Totals.Intended) of $($Totals.Checked) ($(Format-Percent $Totals.Intended $Totals.Checked) %)"
+    if ($Totals.Commands -gt 0) {
+        "Commands that lead to the correct action: $($Totals.RightCommands) of $($Totals.Commands) ($(Format-Percent $Totals.RightCommands $Totals.Commands) %)"
+    }
     "Transcription: median $median ms, 90th percentile $ninetieth ms, longest $longest ms; at most $perSecond ms per second of audio"
     "Decoded a second time without boost words: $($Totals.Twice) of $($Totals.Clips) clips"
     "Kestrel's memory (PSS): at most $($Totals.Pss) MB"
+}
+
+# The word error rate of a group of lines, such as the dictation or the task lines, as one line of the summary.
+function Format-GroupErrors([string]$Name, $Totals) {
+    $errors = $Totals.Substitutions + $Totals.Deletions + $Totals.Insertions
+    "${Name}: $($Totals.Clips) clips, $($Totals.Words) words, word error rate $(Format-Percent $errors $Totals.Words) %"
 }
