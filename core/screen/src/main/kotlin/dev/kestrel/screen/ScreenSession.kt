@@ -20,10 +20,13 @@ import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.screen.overlay.NumbersOverlay
 import dev.kestrel.screen.overlay.OverlayHost
 import dev.kestrel.screen.overlay.TouchWatcher
+import dev.kestrel.screen.read.LiveSnapshot
+import dev.kestrel.screen.read.PlaceCheck
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.ScreenEvents
 import dev.kestrel.screen.read.ScreenReader
 import dev.kestrel.screen.read.SnapshotCache
+import dev.kestrel.screen.read.WindowEvents
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +51,7 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 class ScreenSession(service: AccessibilityService, private val errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
+    private val windowEvents = WindowEvents(service.packageName)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
@@ -62,8 +66,18 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     private val builds = AtomicInteger()
     private val buildMillis = AtomicLong()
 
-    /** The current snapshot. A new one is built only after the screen has changed. */
-    val snapshots = SnapshotCache(tracker) {
+    /**
+     * The current snapshot. A new one is built only after the screen has changed, and after an event of another app's
+     * window only once the window has stopped moving (design spec, section 9.2).
+     */
+    val snapshots = SnapshotCache(
+        tracker,
+        object : PlaceCheck<LiveSnapshot> {
+            override suspend fun inPlace(value: LiveSnapshot) = withContext(Dispatchers.IO) { reader.inPlace(value) }
+
+            override fun forget() = reader.forget()
+        },
+    ) {
         val started = SystemClock.elapsedRealtime()
         withContext(Dispatchers.IO) { reader.read() }.also {
             builds.incrementAndGet()
@@ -275,7 +289,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** Kestrel's accessibility service passes every event here. */
     fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged()
+        val window = windowEvents.movesWindow(event.eventType, event.packageName, event.windowId, event.windowChanges)
+        if (window || ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged(window)
     }
 
     /**

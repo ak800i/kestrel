@@ -1,15 +1,35 @@
 package dev.kestrel.screen.read
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
 
 /**
+ * Checks whether the windows of a snapshot are still where it saw them, so that [SnapshotCache] never hands out a
+ * snapshot of a window that was still sliding into place (design spec, section 9.2).
+ */
+interface PlaceCheck<T> {
+    /** Whether [value]'s windows and a few of its elements are still where [value] saw them, read past any cache. */
+    suspend fun inPlace(value: T): Boolean
+
+    /** Drops what earlier reads cached, so that the next snapshot reads the windows anew. */
+    fun forget()
+}
+
+/**
  * Keeps the last snapshot until the screen changes. After a change, it builds a new snapshot once the screen
  * has been quiet for [ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS], or after [ScreenChangeTracker.MAX_WAIT_MILLIS] on a
- * screen that never goes quiet, such as a stopwatch (design spec, section 9.2).
+ * screen that never goes quiet, such as a stopwatch (design spec, section 9.2). After an event of another app's window,
+ * which may still slide into place without a further event, [places] checks each new snapshot
+ * [ScreenChangeTracker.SETTLE_CHECK_MILLIS] later, and the snapshot is built again until the check finds it in place,
+ * or until [ScreenChangeTracker.SETTLE_MAX_MILLIS] after the event, when the newest snapshot counts.
  */
-class SnapshotCache<T : Any>(private val tracker: ScreenChangeTracker, private val build: suspend () -> T) {
+class SnapshotCache<T : Any>(
+    private val tracker: ScreenChangeTracker,
+    private val places: PlaceCheck<T>? = null,
+    private val build: suspend () -> T,
+) {
     /** A snapshot with the tracker's version and the number of [invalidate] calls when its build started. */
     private class Entry<T>(val value: T, val version: Long, val invalidations: Long)
 
@@ -28,9 +48,19 @@ class SnapshotCache<T : Any>(private val tracker: ScreenChangeTracker, private v
         return mutex.withLock {
             // Another caller may have built a snapshot of the current screen meanwhile.
             fresh() ?: run {
-                val version = tracker.version.value
-                val invalidated = invalidations.get()
-                build().also { entry = Entry(it, version, invalidated) }
+                var version = tracker.version.value
+                var invalidated = invalidations.get()
+                var value = build()
+                while (places != null && tracker.windowMayMove()) {
+                    delay(ScreenChangeTracker.SETTLE_CHECK_MILLIS)
+                    if (places.inPlace(value)) break
+                    places.forget()
+                    version = tracker.version.value
+                    invalidated = invalidations.get()
+                    value = build()
+                }
+                entry = Entry(value, version, invalidated)
+                value
             }
         }
     }

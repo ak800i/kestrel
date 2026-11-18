@@ -86,7 +86,7 @@ internal class AccessibilityWindowData(private val info: AccessibilityWindowInfo
     override val root: NodeData? get() = info.root?.let(::AccessibilityNodeData)
 }
 
-private fun Rect.toIntRect() = IntRect(left, top, right, bottom)
+internal fun Rect.toIntRect() = IntRect(left, top, right, bottom)
 
 /** Android 16 replaced the yes-or-no checked state with one that can also be "partly checked". */
 private fun AccessibilityNodeInfo.isCheckedCompat(): Boolean =

@@ -71,6 +71,24 @@ class TouchCommandsTest {
         assertTrue(screen.session.numberBadges.isEmpty())
     }
 
+    /**
+     * The fixture's window still slides into place when ScreenServiceRule.open returns, and its last move fires no
+     * event. A question asked then must number the settled window, or the snapshot after the next event would show every
+     * element moved, and the question would end with "The screen changed" (design spec, section 9.2).
+     */
+    @Test
+    fun whichOneRightAfterAnAppOpensKeepsItsQuestionUntilTheAnswer() {
+        assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
+
+        Thread.sleep(2_000)
+        assertTrue("The question ended before the answer", CommandTests.asked)
+        assertTrue("The question's numbers went before the answer", screen.session.whichOneShown.value)
+        assertFalse(CommandTexts.SCREEN_CHANGED in CommandTests.spoken)
+
+        assertEquals(Outcome.DONE, CommandTests.answer("number two").outcome)
+        awaitStatus("Deleted Dan")
+    }
+
     @Test
     fun anAnswerThatIsNoNumberRunsAsANewCommand() {
         CommandTests.ask("tap Delete")

@@ -56,4 +56,26 @@ class ScreenChangeTrackerTest {
         assertFalse(ScreenEvents.changesScreen(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER))
         assertFalse(ScreenEvents.changesScreen(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED))
     }
+
+    @Test
+    fun eventsOfAnotherAppsWindowMayMoveItAndKestrelsOwnWindowsNever() {
+        val events = WindowEvents(ownPackage = "dev.kestrel")
+        val added = AccessibilityEvent.WINDOWS_CHANGE_ADDED
+        val removed = AccessibilityEvent.WINDOWS_CHANGE_REMOVED
+
+        // An app that opens, a window that moves or goes, and the shade's window.
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.mail", 7, 0))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 7, added))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 7, AccessibilityEvent.WINDOWS_CHANGE_BOUNDS))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 3, removed))
+        // A window that only became active, and a change of content, move nothing.
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 7, AccessibilityEvent.WINDOWS_CHANGE_ACTIVE))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.example.mail", 7, 0))
+
+        // Kestrel's touch watcher: its own state event names Kestrel, and the change of the window list that follows
+        // names only the window.
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "dev.kestrel", 9, 0))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 9, added))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 9, removed))
+    }
 }

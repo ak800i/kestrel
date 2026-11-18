@@ -112,4 +112,89 @@ class SnapshotCacheTest {
         assertEquals(1, builds)
         assertEquals(changedAt, testScheduler.currentTime)
     }
+
+    /**
+     * A window that another app opened at the clock's [start] and that slides into place for [slideMillis]. Its
+     * position is the distance that it still has to go, 0 once it is in place, so that a snapshot shows where the window
+     * was when it was built.
+     */
+    private class SlidingWindow(private val clock: () -> Long, private val slideMillis: Long) {
+        private val start = clock()
+        var reads = 0
+            private set
+
+        fun position(): Long = maxOf(0L, slideMillis - (clock() - start))
+
+        // The fake read of the bounds, past any cache, that compares the window's position now with a snapshot's.
+        val places = object : PlaceCheck<Long> {
+            override suspend fun inPlace(value: Long): Boolean {
+                reads++
+                return value == position()
+            }
+
+            override fun forget() = Unit
+        }
+    }
+
+    @Test
+    fun aSnapshotOfAWindowThatStillMovesIsBuiltAgainOnceTheWindowHasStopped() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val window = SlidingWindow({ testScheduler.currentTime }, slideMillis = 600)
+        val built = mutableListOf<Long>()
+        val cache = SnapshotCache(tracker, window.places) { window.position().also { built += it } }
+        tracker.onScreenChanged(window = true)
+
+        // The first snapshot, after 150 ms of quiet, shows the window in the middle of its slide; it is not returned.
+        assertEquals(0L, cache.current())
+        assertTrue(built.first() > 0L)
+        assertEquals(0L, built.last())
+        // Built again once the window had stopped, and checked by a second read 100 ms later.
+        assertTrue(testScheduler.currentTime in 600L..600L + 2 * ScreenChangeTracker.SETTLE_CHECK_MILLIS)
+
+        // The settled snapshot stays until the screen changes again.
+        val builds = built.size
+        assertEquals(0L, cache.current())
+        assertEquals(builds, built.size)
+    }
+
+    @Test
+    fun aWindowThatNeverStopsCountsAsSettled1500MillisecondsAfterItsEvent() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val window = SlidingWindow({ testScheduler.currentTime }, slideMillis = 60_000)
+        var builds = 0
+        val cache = SnapshotCache(tracker, window.places) {
+            builds++
+            window.position()
+        }
+        tracker.onScreenChanged(window = true)
+
+        val value = cache.current()
+
+        // The newest snapshot counts, built at the limit at most one check later.
+        assertEquals(value, 60_000L - testScheduler.currentTime)
+        assertTrue(testScheduler.currentTime >= ScreenChangeTracker.SETTLE_MAX_MILLIS)
+        assertTrue(testScheduler.currentTime <= ScreenChangeTracker.SETTLE_MAX_MILLIS + ScreenChangeTracker.SETTLE_CHECK_MILLIS)
+        assertTrue(builds > 1)
+    }
+
+    @Test
+    fun withoutARecentWindowEventNothingWaitsForTheWindowsOrReadsThemAgain() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val window = SlidingWindow({ testScheduler.currentTime }, slideMillis = 0)
+        var builds = 0L
+        val cache = SnapshotCache(tracker, window.places) { ++builds }
+
+        // Any other change of the screen, such as an event of Kestrel's own window, waits only for the quiet screen.
+        tracker.onScreenChanged()
+        assertEquals(1L, cache.current())
+        assertEquals(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS, testScheduler.currentTime)
+
+        // A window event that is older than the limit waits for nothing either.
+        tracker.onScreenChanged(window = true)
+        delay(ScreenChangeTracker.SETTLE_MAX_MILLIS)
+        val before = testScheduler.currentTime
+        assertEquals(2L, cache.current())
+        assertEquals(before, testScheduler.currentTime)
+        assertEquals(0, window.reads)
+    }
 }
