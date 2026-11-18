@@ -34,9 +34,10 @@ import org.junit.runner.RunWith
  * Calls by number and by name, with the announcement and the countdown, and "copy this phone number" (design D11), on
  * the emulator's phone app, whose calls to a made-up number become active, and the owner's "yes, call" before anything that
  * may call an emergency number (design spec, section 8.7). Only one test answers "yes, call" in the phone app, and only on
- * the emulator, whose modem is simulated, so that the call reaches no one. A test that fails during a call ends it. The
- * tests grant the phone-state and contacts permissions; command-test.ps1 revokes what was not granted before, and deletes
- * the test contacts and the new call-log rows.
+ * the emulator, whose modem is simulated, so that the call reaches no one, with Wi-Fi and mobile data off, so that no
+ * location goes out. A test that fails during a call ends it. The tests grant the phone-state and contacts permissions;
+ * command-test.ps1 revokes what was not granted before, deletes the test contacts and the new call-log rows, and puts
+ * Wi-Fi and mobile data back.
  */
 @RunWith(AndroidJUnit4::class)
 class CallCommandsTest {
@@ -118,22 +119,55 @@ class CallCommandsTest {
     }
 
     @Test
-    fun anEmergencyNumberThatTheOwnerRefusedOnceIsCalledAfterYesCall() = runBlocking<Unit> {
+    fun anEmergencyNumberThatTheOwnerRefusedOnceIsCalledAfterYesCall() {
         // The only test that says "yes, call" with an emergency number: only on the emulator, whose modem is simulated, so
-        // that the call reaches no one.
+        // that the call reaches no one, and offline, so that no location goes out either.
         assumeTrue("Only on the emulator", Build.HARDWARE == EMULATOR_HARDWARE)
-        CommandTests.ask("call 112", CALL_MILLIS)
-        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
-        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
+        offline {
+            CommandTests.ask("call 112", CALL_MILLIS)
+            CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+            assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
+            runBlocking { screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" } }
 
-        CommandTests.ask("call 112", CALL_MILLIS)
-        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-        assertEquals(Outcome.DONE, CommandTests.answer("yes, call", CALL_MILLIS).outcome)
-        assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
-        // Android's end-call key does not end an emergency call, so the test ends it on the in-call screen.
-        endCall()
+            CommandTests.ask("call 112", CALL_MILLIS)
+            CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+            assertEquals(Outcome.DONE, CommandTests.answer("yes, call", CALL_MILLIS).outcome)
+            assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
+            // Android's end-call key does not end an emergency call, so the test ends it on the in-call screen.
+            endCall()
+        }
     }
+
+    // Runs [block] with Wi-Fi and mobile data off, because Google Play services' Emergency Location Service may send the
+    // device's location over the network during an emergency call. They come back once no call is active any more, and a
+    // moment later; command-test.ps1 also puts them back.
+    private fun offline(block: () -> Unit) {
+        val wifi = globalSetting("wifi_on")
+        val data = globalSetting("mobile_data")
+        screen.shell("cmd wifi set-wifi-enabled disabled")
+        screen.shell("svc data disable")
+        try {
+            assertTrue("The emulator stayed online", VoiceTests.waitUntil(15_000) { defaultNetwork() == "none" })
+            block()
+        } finally {
+            // An emergency call that a failure left active ends first, so that nothing goes out during it.
+            if (callActive()) VoiceTests.waitUntil(5_000) { endCallOnScreen() }
+            if (VoiceTests.waitUntil(15_000) { !callActive() }) {
+                Thread.sleep(AFTER_CALL_MILLIS)
+                if (data != "0") screen.shell("svc data enable")
+                if (wifi != "0") screen.shell("cmd wifi set-wifi-enabled enabled")
+            }
+        }
+    }
+
+    private fun globalSetting(name: String) = screen.shell("settings get global $name").trim()
+
+    // Android's call state for each SIM; 0 is CALL_STATE_IDLE.
+    private fun callActive() = screen.shell("dumpsys telephony.registry").lineSequence().map { it.trim() }
+        .any { it.startsWith("mCallState=") && it != "mCallState=0" }
+
+    private fun defaultNetwork() = screen.shell("dumpsys connectivity").lineSequence()
+        .firstOrNull { it.startsWith("Active default network:") }?.substringAfter(':')?.trim()
 
     @Test
     fun cancelDuringTheCountdownLeavesTheNumberInThePhoneApp() = runBlocking<Unit> {
@@ -293,6 +327,9 @@ class CallCommandsTest {
     private companion object {
         // The 4 s countdown and a little more, after which a call that was not cancelled would have started.
         const val COUNTDOWN_AND_MORE = 6_000L
+
+        // How long the emulator stays offline after an emergency call has ended.
+        const val AFTER_CALL_MILLIS = 5_000L
 
         // Kestrel waits up to 10 s for the phone app, which a cold start on the emulator takes about 4 s to show, and then up
         // to 3 s for its call button; the announcement and the countdown or the question come after that.

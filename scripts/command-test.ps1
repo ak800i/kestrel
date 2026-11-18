@@ -1,6 +1,7 @@
 # Runs the device tests of the instant commands (the package dev.kestrel.app.commands) on the kestrel-api37 emulator
 # (design spec, section 16.3), and refuses every other device, because the tests change the device's state. It reads that
-# state first and puts it back at the end, also when the run failed or Ctrl+C interrupted it: Wi-Fi and Bluetooth, the
+# state first and puts it back at the end, also when the run failed or Ctrl+C interrupted it: Wi-Fi, mobile data and
+# Bluetooth, the
 # ringer mode and the volumes of the call, ring, music, alarm and notification streams, the list of Quick Settings tiles,
 # the lock-screen setting (it also wakes the screen and dismisses the keyguard), users called KestrelTest, raw contacts of
 # the account kestrel-test, the call-log rows and images newer than the largest IDs that it saw first, the test app's
@@ -77,6 +78,7 @@ try {
     # Read whole before it counts, so that a read that fails leaves the restore nothing to put back.
     $before = [ordered]@{
         Wifi = Read-DeviceValue 'settings get global wifi_on'
+        MobileData = Read-DeviceValue 'settings get global mobile_data'
         Bluetooth = Read-DeviceValue 'settings get global bluetooth_on'
         Ringer = Read-DeviceValue 'settings get global mode_ringer'
         # A Hashtable, because an [ordered] dictionary reads an integer key as a position.
@@ -139,6 +141,11 @@ try {
             if (($wifi -eq '0') -ne ($saved.Wifi -eq '0')) {
                 $state = if ($saved.Wifi -eq '0') { 'disabled' } else { 'enabled' }
                 if (-not (Invoke-DeviceRestore 'put Wi-Fi back' "cmd wifi set-wifi-enabled $state")) { $code = 1 }
+            }
+            $mobileData = try { Read-DeviceValue 'settings get global mobile_data' } catch { $null }
+            if (($mobileData -eq '0') -ne ($saved.MobileData -eq '0')) {
+                $state = if ($saved.MobileData -eq '0') { 'disable' } else { 'enable' }
+                if (-not (Invoke-DeviceRestore 'put mobile data back' "svc data $state")) { $code = 1 }
             }
             $bluetooth = try { Read-DeviceValue 'settings get global bluetooth_on' } catch { $null }
             if (($bluetooth -eq '0') -ne ($saved.Bluetooth -eq '0')) {
