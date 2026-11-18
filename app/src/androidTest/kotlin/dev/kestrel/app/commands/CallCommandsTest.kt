@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -62,7 +63,7 @@ class CallCommandsTest {
     fun stop() {
         try {
             // A test that failed during a call leaves it active; without a call, the key would turn the screen off. The
-            // in-call screen's control also ends an emergency call, which Android's end-call key does not end.
+            // in-call screen's control ends the call first, and the end-call key only when that control does not show.
             if (listening.state.value.mode == Mode.IN_CALL && !VoiceTests.waitUntil(5_000) { endCallOnScreen() }) {
                 screen.shell("input keyevent KEYCODE_ENDCALL")
             }
@@ -121,6 +122,30 @@ class CallCommandsTest {
     }
 
     @Test
+    fun theSameNumberLeftInAPhoneAppInTheBackgroundIsCalledOrKestrelSaysThatTheCallDidNotStart() = runBlocking<Unit> {
+        // An ordinary number, never an emergency one. Kestrel cannot read, and so cannot empty, a phone app's field in the
+        // background; the cancel leaves the number there, and the HOME key sends the phone app behind the home screen.
+        CommandTests.send("call 064 123 4567")
+        assertTrue("No countdown", VoiceTests.waitUntil(COUNTDOWN_STARTS) { listening.state.value.counting })
+        assertEquals(Outcome.CANCELLED, CommandTests.answer("cancel").outcome)
+        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "0641234567" }
+        screen.shell("input keyevent KEYCODE_HOME")
+        assertTrue("The home screen did not come back", PhoneTests.awaitActiveApp(screen.session, PhoneTests.homePackage()))
+
+        // The emulator's phone app then keeps its own number empty in most runs (3 of 4 in plan 3C Task 8's runs), and its
+        // call button calls no one: Kestrel must say so, never end in silence. In the other runs the call starts.
+        val result = CommandTests.say("call 064 123 4567", CALL_MILLIS)
+        if (result.outcome == Outcome.FAILED) {
+            CommandTests.awaitSaid(PhoneCommandTexts.CALL_NOT_STARTED)
+            assertFalse("A call started", VoiceTests.waitUntil(COUNTDOWN_AND_MORE) { listening.state.value.mode == Mode.IN_CALL })
+        } else {
+            assertEquals(Outcome.DONE, result.outcome)
+            assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
+            endCall()
+        }
+    }
+
+    @Test
     fun anEmergencyNumberThatTheOwnerRefusedOnceAsksAgainAndIsNeverCalled() = runBlocking<Unit> {
         // Never "yes, call" with an emergency number, on any device: on kestrel-api37, an emergency call made Google Play
         // services turn Wi-Fi back on during the call and send the emulator's location to emergency services' endpoints,
@@ -138,6 +163,7 @@ class CallCommandsTest {
         Thread.sleep(COUNTDOWN_AND_MORE)
         assertTrue("A call started", listening.state.value.mode == Mode.LISTENING)
     }
+
     @Test
     fun cancelDuringTheCountdownLeavesTheNumberInThePhoneApp() = runBlocking<Unit> {
         CommandTests.send("call 064 123 4567")

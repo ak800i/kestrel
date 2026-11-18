@@ -147,13 +147,15 @@ internal class DeviceCommands(environment: CommandEnvironment) {
     private suspend fun bluetoothPage(screen: ScreenSession, on: Boolean): CommandResult {
         val before = screen.snapshots.current().snapshot.windows.map { it.id }.toSet()
         var opening = true
+        var awaited = false
         try {
             if (screen.system.start(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) is ActionResult.Failed) {
                 opening = false
                 return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             }
-            awaitPage({ screen.snapshots.current().snapshot }, before)
-                ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
+            val page = awaitPage({ screen.snapshots.current().snapshot }, before)
+            awaited = true
+            page ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             val main = await(screen) { snapshot, element ->
                 element.windowId !in before && element.packageName == SETTINGS && element.checkable && element.enabled &&
                     snapshot.windows.any { it.id == element.windowId && it.kind == WindowKind.APPLICATION } &&
@@ -163,7 +165,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             if (element != null && element.checked != on) screen.actions.tap(element.key)
             return bluetoothResult(awaitState(on) { bluetoothOn() })
         } finally {
-            withContext(NonCancellable) { leavePage(screen, before, opening) }
+            withContext(NonCancellable) { leavePage(screen, before, opening, awaited) }
         }
     }
 
@@ -171,11 +173,12 @@ internal class DeviceCommands(environment: CommandEnvironment) {
      * Presses Back while the Settings page that the command opened is the app window in front, until the app that was in
      * front before the command is in front again, at most 3 times, so that Back never goes past that app; when Kestrel's
      * start failed, it opened no page and presses nothing. One Back is not always enough: when Settings already had a task
-     * in the background, Android puts the page on top of that task.
+     * in the background, Android puts the page on top of that task. [awaited] tells whether the command's wait for the
+     * page has ended (see [backUntilLeft]).
      */
-    private suspend fun leavePage(screen: ScreenSession, before: Set<Int>, opening: Boolean) {
+    private suspend fun leavePage(screen: ScreenSession, before: Set<Int>, opening: Boolean, awaited: Boolean) {
         if (!opening) return
-        backUntilLeft({ screen.snapshots.current().snapshot.windows }, before) { screen.actions.global(GlobalAction.BACK) }
+        backUntilLeft({ screen.snapshots.current().snapshot.windows }, before, awaited) { screen.actions.global(GlobalAction.BACK) }
     }
 
     private fun bluetoothResult(changed: Boolean) = if (changed) {
@@ -531,13 +534,20 @@ internal class DeviceCommands(environment: CommandEnvironment) {
 
         /**
          * Presses [back] while a Settings page that was not on the screen [before] is the app window in front of [windows],
-         * at most 3 times. Before the first Back it waits up to 8 s for the page to come to the front, because a cold start
-         * of Settings took 4.3 to 5.0 s on kestrel-api37, and presses nothing when none does; after each Back it waits until
-         * another app window is in front, so that it never sees the closing page, and stops at once when that window is no
-         * such page, as when the app that was in front before is in front again.
+         * at most 3 times. Before the first Back it waits for the page to come to the front, and presses nothing when none
+         * does: up to 8 s when the command was cancelled before its own wait for the page ([awaited] false), because a
+         * cold start of Settings took 4.3 to 5.0 s on kestrel-api37, and only up to 1 s once that wait has ended, so that a
+         * page that never showed in 8 s does not keep the command for another 8 s. After each Back it waits until another
+         * app window is in front, so that it never sees the closing page, and stops at once when that window is no such
+         * page, as when the app that was in front before is in front again.
          */
-        suspend fun backUntilLeft(windows: suspend () -> List<WindowSummary>, before: Set<Int>, back: suspend () -> Unit) {
-            var page = withTimeoutOrNull(PAGE_MILLIS) {
+        suspend fun backUntilLeft(
+            windows: suspend () -> List<WindowSummary>,
+            before: Set<Int>,
+            awaited: Boolean,
+            back: suspend () -> Unit,
+        ) {
+            var page = withTimeoutOrNull(if (awaited) APPEAR_MILLIS else PAGE_MILLIS) {
                 var page = settingsPageInFront(windows(), before)
                 while (page == null) {
                     delay(POLL_MILLIS)

@@ -62,7 +62,7 @@ class SystemCommandsTest {
         screen.shell("pm grant $FIXTURES android.permission.POST_NOTIFICATIONS")
         screen.shell("am start -W -n $FIXTURES/.NotificationActivity")
         try {
-            // The shade's elements get 15 s, because they took more than 5 s to show on a loaded emulator.
+            // The shade's elements get 15 s: in plan 3C Task 7's runs they were slow to show while the host ran short of memory.
             assertEquals(Outcome.DONE, CommandTests.say("show notifications").outcome)
             screen.awaitElement(15_000) { it.packageName == PhoneTests.SYSTEM_UI && it.label == "Fixture reminder" }
             screen.session.actions.global(GlobalAction.DISMISS_SHADE)

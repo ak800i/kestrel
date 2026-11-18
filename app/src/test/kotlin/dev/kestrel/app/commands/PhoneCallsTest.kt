@@ -205,12 +205,12 @@ class PhoneCallsTest {
         // Google's phone app took the click and called an empty number, which Android refused without a word.
         phone.started = false
         assertEquals(
-            CommandResult(Outcome.FAILED, say = "The call didn't start."),
+            CommandResult(Outcome.FAILED, say = "The call didn't start. Say it again."),
             calls().call(CallTarget.Number("0641234567"), Owner()),
         )
         // After "yes, call" too.
         assertEquals(
-            CommandResult(Outcome.FAILED, say = "The call didn't start."),
+            CommandResult(Outcome.FAILED, say = "The call didn't start. Say it again."),
             calls().call(CallTarget.Number("0641111111"), Owner("yes, call")),
         )
         // Without READ_PHONE_STATE Kestrel cannot see the call state, so the press counts as before.
@@ -271,6 +271,19 @@ class PhoneCallsTest {
         assertTrue(keys.empty("112"))
         assertEquals("", keys.text)
         assertEquals(listOf("set text", "long press delete", "delete", "delete", "delete"), keys.did)
+    }
+
+    @Test
+    fun theDeleteKeyThatEmptiesTheFieldComesOnlyFromTheFieldsWindow() {
+        val phone = dialer("064 123 4567")
+        // A call-history dialog of the phone app, above the dial pad, with its own "Delete" button listed first.
+        val dialog = WindowSummary(2, WindowKind.APPLICATION, packageName = DIALER, bounds = screen)
+        val history = element("history_delete", 2, IntRect(100, 900, 980, 1000), text = "Delete")
+        val snapshot = ScreenSnapshot(0, phone.windows + dialog, listOf(history) + phone.elements)
+        val fields = AndroidDialer.numberFields(snapshot, setOf(DIALER))
+
+        assertEquals("delete", AndroidDialer.deleteKey(snapshot, DIALER, fields)?.key)
+        assertNull(AndroidDialer.deleteKey(ScreenSnapshot(0, snapshot.windows, listOf(history) + fields), DIALER, fields))
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

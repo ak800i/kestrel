@@ -102,8 +102,12 @@ internal object PhoneCommandTexts {
     const val COULD_NOT_PRESS = "I couldn't press Call. Tap Call yourself."
     const val OTHER_NUMBER = "The phone app shows another number, so I didn't press Call."
 
-    /** Android's call state showed no call within 5 s of the press (the controller's decision on Task 6's review). */
-    const val CALL_NOT_STARTED = "The call didn't start."
+    /**
+     * Android's call state showed no call within 5 s of the end of the press (the controller's decision on Task 6's
+     * review). The phone app's own number is empty then, so a tap on Call does not help, while the command said again
+     * finds the phone app in front and empties its field first.
+     */
+    const val CALL_NOT_STARTED = "The call didn't start. Say it again."
     const val EMERGENCY_QUESTION = "That may call an emergency number. Say 'yes, call' to do it."
     const val EMERGENCY_TOUCH_ONLY = "Tap it yourself for an emergency call."
     const val CHOOSE_SIM = "Choose the SIM."

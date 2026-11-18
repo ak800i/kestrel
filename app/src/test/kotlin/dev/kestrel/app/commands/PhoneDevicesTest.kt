@@ -185,7 +185,7 @@ class PhoneDevicesTest {
         var windows = listOf(app(5, "com.android.settings"))
         var backs = 0
 
-        DeviceCommands.backUntilLeft({ windows }, before) {
+        DeviceCommands.backUntilLeft({ windows }, before, awaited = true) {
             backs++
             windows = listOf(app(1, "dev.kestrel.testapp"))
         }
@@ -197,7 +197,7 @@ class PhoneDevicesTest {
         // A Settings task in the background: its own page comes to the front after the first Back, and a second Back closes it.
         windows = listOf(app(5, "com.android.settings"))
         backs = 0
-        DeviceCommands.backUntilLeft({ windows }, before) {
+        DeviceCommands.backUntilLeft({ windows }, before, awaited = true) {
             backs++
             windows = if (backs == 1) listOf(app(6, "com.android.settings")) else listOf(app(1, "dev.kestrel.testapp"))
         }
@@ -214,8 +214,9 @@ class PhoneDevicesTest {
         // owner's app, which still has the focus.
         val starting = listOf(app(5, "com.android.settings", active = false), app(1, "dev.kestrel.testapp", active = false))
         var backs = 0
+        // A cancel that came before the command's own wait for the page ended.
         val waited = testScheduler.currentTime
-        DeviceCommands.backUntilLeft({ starting }, before) { backs++ }
+        DeviceCommands.backUntilLeft({ starting }, before, awaited = false) { backs++ }
         assertEquals(0, backs)
         assertEquals(8_000L, testScheduler.currentTime - waited)
 
@@ -230,11 +231,27 @@ class PhoneDevicesTest {
                 testScheduler.currentTime - cold >= 5_000 -> shown
                 else -> starting
             }
-        }, before) {
+        }, before, awaited = false) {
             backs++
             closed = true
         }
         assertEquals(1, backs)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun afterAPageThatNeverShowedInTheCommandsOwnWaitBackWaitsOnlyOneSecondMore() = runTest {
+        fun app(id: Int, packageName: String, active: Boolean) =
+            WindowSummary(id, WindowKind.APPLICATION, packageName = packageName, bounds = bounds, active = active)
+        // The command already waited 8 s for the page, and it never came to the front.
+        val starting = listOf(app(5, "com.android.settings", active = false), app(1, "dev.kestrel.testapp", active = false))
+        var backs = 0
+        val waited = testScheduler.currentTime
+
+        DeviceCommands.backUntilLeft({ starting }, setOf(1), awaited = true) { backs++ }
+
+        assertEquals(0, backs)
+        assertEquals(1_000L, testScheduler.currentTime - waited)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

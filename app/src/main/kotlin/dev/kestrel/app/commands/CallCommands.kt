@@ -78,7 +78,8 @@ internal interface Dialer {
 
     /**
      * Waits up to 5 s after a press for the call to start, as Android's call state shows it: true once it shows a call,
-     * false when none started, and null when Kestrel cannot see the call state, without READ_PHONE_STATE.
+     * false when none started, and null when Kestrel cannot see the call state, without READ_PHONE_STATE. The 5 s count
+     * from the end of [press], which includes its wait of up to 1.5 s for a SIM chooser, so up to 6.5 s after the click.
      */
     suspend fun callStarted(): Boolean?
 }
@@ -86,8 +87,8 @@ internal interface Dialer {
 /**
  * "Call [number]" and "call [name]" (design spec, section 13.6; decision 1). Kestrel never requests `CALL_PHONE`: it opens
  * the default phone app with the number, says whom it calls, counts down 4 s from the end of that announcement on the bar
- * and presses the phone app's call button; when Android's call state shows no call within 5 s of the press, the command
- * fails and Kestrel says so. "Cancel", "stop" or "no", or a touch, stops the countdown, and the phone app
+ * and presses the phone app's call button; when Android's call state shows no call within 5 s of the end of the press
+ * (which includes the wait of up to 1.5 s for a SIM chooser), the command fails and Kestrel says so. "Cancel", "stop" or "no", or a touch, stops the countdown, and the phone app
  * stays open with the number. For an emergency number Kestrel follows [policy]: it asks for "yes, call" after the
  * announcement instead of the countdown, or only opens the phone app. For a number with fewer than 5 digits or one with
  * `*` or `#`, Kestrel only opens the phone app. A contact's number keeps its pause, wait or extension, which the phone app sends after the
@@ -125,7 +126,7 @@ internal class CallCommands(
         }
         return when (dialer.press(digits)) {
             // The phone app can take the click and still call no one, as Google's calls an empty number, which Android
-            // refuses without a word, so the call must start within 5 s.
+            // refuses without a word, so the call must start within 5 s of the end of the press.
             Pressed.CALLING -> if (dialer.callStarted() == false) {
                 CommandResult(Outcome.FAILED, say = PhoneCommandTexts.CALL_NOT_STARTED)
             } else {
@@ -232,7 +233,7 @@ internal class AndroidDialer(private val context: Context, private val screen: (
         val live = session.snapshots.current()
         val fields = numberFields(live.snapshot, setOf(phoneApp))
         if (fields.isEmpty()) return
-        val deleteKey = live.snapshot.elements.firstOrNull { it.packageName == phoneApp && it.enabled && EmergencyGuard.isDeleteKey(it) }
+        val deleteKey = deleteKey(live.snapshot, phoneApp, fields)
         emptyFields(
             fields,
             digits,
@@ -426,7 +427,8 @@ internal class AndroidDialer(private val context: Context, private val screen: (
 
         /**
          * Whether [calls] reports an active call within 5 s, as Android's call state shows it for Kestrel's mode In call:
-         * the state at the start counts, and so does a change. Null when [calls] cannot start, as after the owner took
+         * the state at the start counts, and so does a change. The 5 s start when [press] has returned, after its wait of
+         * up to 1.5 s for a SIM chooser. Null when [calls] cannot start, as after the owner took
          * READ_PHONE_STATE back. [calls] stops again in any case.
          */
         suspend fun awaitCall(calls: CallMonitor): Boolean? {
@@ -467,6 +469,17 @@ internal class AndroidDialer(private val context: Context, private val screen: (
         /** The number fields of the [phoneApps] in [snapshot], also those that show nothing yet. */
         fun numberFields(snapshot: ScreenSnapshot, phoneApps: Set<String>): List<ScreenElement> =
             snapshot.elements.filter { it.packageName in phoneApps && isNumberField(it) }
+
+        /**
+         * The enabled delete key of [phoneApp] in the window of one of [fields], its number fields, so that a "Delete" of
+         * another window of the phone app, such as a call-history dialog, never gets the presses.
+         */
+        fun deleteKey(snapshot: ScreenSnapshot, phoneApp: String, fields: List<ScreenElement>): ScreenElement? {
+            val windows = fields.mapTo(HashSet()) { it.windowId }
+            return snapshot.elements.firstOrNull {
+                it.packageName == phoneApp && it.windowId in windows && it.enabled && EmergencyGuard.isDeleteKey(it)
+            }
+        }
 
         /**
          * Whether the number field [element] shows [text] as a number: the field with the view ID `digits` with any text,
