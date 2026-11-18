@@ -106,6 +106,10 @@ Describe 'Read-CorpusScenes' {
         { Read-CorpusContacts -Path (New-ScenesFile @('contacts |  ; ')) } | Should -Throw '*scenes.txt:1:*need names*'
     }
 
+    It 'gives no contact without a contacts line, also inside @(), as voice-eval.ps1 calls it' {
+        @(Read-CorpusContacts -Path (New-ScenesFile @('scene dialog | Cancel', 'line c129 | dialog'))).Count | Should -Be 0
+    }
+
     It 'reads the repository''s scenes, whose lines are lines of the corpus' {
         $ids = @(Read-Corpus -Path "$PSScriptRoot\..\..\corpus\commands.txt" | Select-Object -ExpandProperty Id)
         $lines = Read-CorpusScenes -Path "$PSScriptRoot\..\..\corpus\scenes.txt"

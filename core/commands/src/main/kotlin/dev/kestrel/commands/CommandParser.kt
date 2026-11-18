@@ -24,6 +24,8 @@ object CommandParser {
         // The polite words at the start go first, and those at the end only when that is not enough, so that "Please tap
         // Send now" keeps "Send now" (design D5: polite words never leave a payload).
         val from = politeStart(words, 0, words.size)
+        // A phrase that counts only as the whole utterance keeps no polite words before it: "can you check it" is speech.
+        if (from > 0 && GrammarScreen.alone(words.subList(from, words.size))) return whole
         if (from > 0) readAgain(text, from, words.size)?.let { return it }
         val to = politeEnd(words, from, words.size)
         if (to == words.size) return whole

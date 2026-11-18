@@ -1,6 +1,7 @@
 package dev.kestrel.commands
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -31,6 +32,21 @@ class CorpusTest {
 
         assertEquals(emptyMap<String, Command?>(), speech.filterValues { it !is Command.Bare })
         assertEquals(25, speech.size)
+    }
+
+    @Test
+    fun kokorosTranscriptsOfTheCallLinesCallTheContactThatTheLinesName() {
+        // The recogniser wrote these for Kokoro's clips of the three call lines; the contacts of corpus\scenes.txt find
+        // Ana by a first name that differs only in a doubled letter.
+        val contacts = File("../../corpus/scenes.txt").readLines(Charsets.UTF_8)
+            .single { it.startsWith("contacts |") }.substringAfter('|').split(';').map { it.trim() }
+        val heard = mapOf("c165" to "Call Anna Petrovich.", "c166" to "Call Anna Mobile.", "c167" to "Call Anna's work number.")
+        val expected = lines.associate { it[0] to it[6] }
+
+        for ((id, transcript) in heard) {
+            val line = checkNotNull(CommandParser.parse(expected.getValue(id)))
+            assertTrue(id, Commands.sameAction(line, checkNotNull(CommandParser.parse(transcript)), emptyList(), contacts))
+        }
     }
 
     private companion object {

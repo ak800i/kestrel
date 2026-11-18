@@ -80,8 +80,9 @@ function Read-CorpusScenes([string]$Path) {
 
 # Reads the line 'contacts | <name>; <name>; ...' of corpus\scenes.txt: the contacts that the call lines of
 # corpus\commands.txt name, which the evaluation hook gives only the contact matcher, never the recogniser, because
-# Kestrel's voice session has no contact names as boost words (design spec, section 16.4). Returns the names, or nothing
-# without such a line. Throws, with the file and the line's number, on a second such line or one without names.
+# Kestrel's voice session has no contact names as boost words (design spec, section 16.4). Returns the names, or an empty
+# array without such a line, so that @() around the call holds no element. Throws, with the file and the line's number, on
+# a second such line or one without names.
 function Read-CorpusContacts([string]$Path) {
     $contacts = $null
     $number = 0
@@ -94,6 +95,7 @@ function Read-CorpusContacts([string]$Path) {
         $contacts = @($rest -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         if ($contacts.Count -eq 0) { throw "$where the contacts need names." }
     }
+    if ($null -eq $contacts) { return @() }
     $contacts
 }
 

@@ -118,8 +118,9 @@ class GrammarScreenTest {
         "Switch on, please." to Command.Switch(null, on = true),
         "check now please" to Command.Check(null, on = true),
         "check Send now" to Command.Check(label("Send now"), on = true),
-        // The recogniser may write "check" as "check it".
+        // The recogniser may write "check" as "check it", which counts only alone, with the polite words that "check" takes.
         "Check it." to Command.Check(null, on = true),
+        "check it please" to Command.Check(null, on = true),
         // Sliders.
         "increment 4" to Command.Slider(increase = true, target = number(4)),
         "increase Brightness" to Command.Slider(increase = true, target = label("Brightness")),
@@ -188,6 +189,12 @@ class GrammarScreenTest {
             "Can you tell me what time it is",
             "what is this",
             "let me check",
+            // "Check it" is a command only alone.
+            "Check it out.",
+            "Let me check it.",
+            "Did you check it?",
+            "Can you check it?",
+            "Please check it.",
             // Not in Appendix A, and common in conversation.
             "what can I do",
             "turn on",

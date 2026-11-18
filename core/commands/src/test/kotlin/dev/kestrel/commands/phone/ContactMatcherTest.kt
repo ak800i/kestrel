@@ -62,16 +62,28 @@ class ContactMatcherTest {
     }
 
     @Test
-    fun aFirstNameThatSoundsTheSameFindsItsContactAndSeveralAsk() {
-        // The recogniser writes "Anna" for "Ana": the same phonetic key, and 0.93 similar.
-        assertEquals(ContactMatch.One(ana), ContactMatcher.find("Anna", listOf(ana, anja, marko)))
-        assertEquals(ContactMatch.Several(listOf(anaJ, ana)), ContactMatcher.find("Anna", contacts))
-        // "Anne" is only 0.78 similar to "Ana", and "Anja" has another key.
+    fun aFirstNameThatDiffersOnlyInDoubledLettersFindsItsContactAndSeveralAsk() {
+        val mom = contact(9, "Mom", mobile)
+        val anna = contact(8, "Anna Smith", mobile)
+        // The recogniser writes "Anna" for "Ana", and the other way round.
+        assertEquals(ContactMatch.One(ana), ContactMatcher.find("Anna", listOf(ana, mom)))
+        assertEquals(ContactMatch.One(anna), ContactMatcher.find("Ana", listOf(anna)))
+        assertEquals(ContactMatch.Several(listOf(anaJ, ana)), ContactMatcher.find("Anna", listOf(ana, anaJ)))
+        // "Anne" and "Anja" are other names.
         assertEquals(ContactMatch.None, ContactMatcher.find("Anne", listOf(ana, marko)))
         assertEquals(ContactMatch.One(anja), ContactMatcher.find("Anja", listOf(ana, anja)))
         // A first name that a contact has exactly still wins.
-        val anna = contact(8, "Anna Smith", mobile)
         assertEquals(ContactMatch.One(anna), ContactMatcher.find("Anna", listOf(ana, anna)))
+    }
+
+    @Test
+    fun aFirstNameWithAnotherVowelOrEndingNeverCallsAContactAtOnce() {
+        // Only the strict matcher decides these: it finds no one for "Tim" and "Don", and asks "Which one?" for "Marko".
+        assertEquals(ContactMatch.None, ContactMatcher.find("Tim", listOf(contact(10, "Tom", mobile))))
+        assertEquals(ContactMatch.None, ContactMatcher.find("Don", listOf(contact(13, "Dan", mobile))))
+        val mark = contact(11, "Mark Petrović", mobile)
+        val anaMarko = contact(12, "Ana Marko", mobile)
+        assertEquals(ContactMatch.Several(listOf(anaMarko, mark)), ContactMatcher.find("Marko", listOf(mark, anaMarko)))
     }
 
     @Test

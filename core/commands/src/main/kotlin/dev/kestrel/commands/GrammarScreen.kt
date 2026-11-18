@@ -43,7 +43,7 @@ internal object GrammarScreen {
         for (phrase in listOf("increment", "increase")) put(phrase, Command.Slider(increase = true, target = null))
         for (phrase in listOf("decrement", "decrease")) put(phrase, Command.Slider(increase = false, target = null))
         put("check", Command.Check(null, on = true))
-        // The recogniser may write "check" as "check it" (plan 3C's corpus run).
+        // The recogniser may write "check" as "check it" (plan 3C's corpus run); only alone, as in [targeted].
         put("check it", Command.Check(null, on = true))
         put("uncheck", Command.Check(null, on = false))
         // Not "turn on" or "turn off" alone: "turn off" is also Kestrel's own verb, whose name the recogniser may lose.
@@ -56,6 +56,13 @@ internal object GrammarScreen {
     }
 
     fun fixed(words: List<String>, text: String): Command? = FIXED[words.joinToString(" ")]
+
+    /**
+     * Whether [words] start with a phrase that counts only as the whole utterance, with polite words after it at most:
+     * "check it", which the recogniser may write for "check" (plan 3C's corpus run), while "can you check it", "please
+     * check it" and "check it out" are speech.
+     */
+    fun alone(words: List<String>): Boolean = words.size >= 2 && words[0] == "check" && words[1] == "it"
 
     fun targeted(words: List<String>, text: String): Command? {
         fun target(from: Int, to: Int = words.size) = TargetWords.read(words, text, from, to)
@@ -74,6 +81,9 @@ internal object GrammarScreen {
             if (from < words.size - 1 && words[from] == "on") from++
             return target(from)?.let { Command.Tap(it) }
         }
+        // "Check it" counts only alone, and with polite words after it, which the parser's second try leaves out, as it does
+        // after "check": "check it out" is speech, not a check of an element named "it out" (see [alone]).
+        if (after(words, "check it") > 0) return null
         after(words, "check").takeIf { it > 0 }?.let { from -> return optional(from)?.let { Command.Check(it, on = true) } }
         after(words, "uncheck").takeIf { it > 0 }?.let { from -> return optional(from)?.let { Command.Check(it, on = false) } }
         switch(words, text)?.let { return it }
