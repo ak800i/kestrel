@@ -46,12 +46,24 @@ internal object TextFields {
             ?: ScreenTargets.candidates(snapshot, TargetKind.EDIT).firstOrNull { !it.password && isSearchField(snapshot, it) }
 
     /**
+     * The field that a tap on a search button opened: the focused field, when it is not [before], the field that had the
+     * focus before the tap, and is a search field by its names or view ID, or by its input's search action ([searches],
+     * from `TextEditor.searches`). Never a password field. Null until such a field has the focus, because the snapshot
+     * right after the tap may still show the old screen, whose focused field may hold a draft.
+     */
+    fun openedSearchField(snapshot: ScreenSnapshot, before: ScreenElement?, searches: Boolean = false): ScreenElement? =
+        focused(snapshot)?.takeIf {
+            !it.password && !(before != null && it.key == before.key && it.packageName == before.packageName) &&
+                (searches || isSearchField(snapshot, it))
+        }
+
+    /**
      * A clickable element whose name starts with "search", such as "Search" or "Search in mail" but not "Clear search
-     * history", or with "search" in its view ID, that opens a search field.
+     * history", or with "search" in its view ID but not "clear", "close", "voice" or "history", that opens a search field.
      */
     fun searchButton(snapshot: ScreenSnapshot): ScreenElement? =
         ScreenTargets.candidates(snapshot, TargetKind.BARE).firstOrNull {
-            !it.editable && it.clickable && (opensSearch(snapshot, it) || idSaysSearch(it))
+            !it.editable && it.clickable && (opensSearch(snapshot, it) || idOpensSearch(it))
         }
 
     /** The password field of "show password": the focused one, else the first on the screen. */
@@ -60,8 +72,9 @@ internal object TextFields {
 
     /**
      * What shows the password of [field]: the clickable or checkable element in its window, nearest to it, whose names
-     * say "show", "reveal" or "visibility" with "password"; or else the only unnamed toggle at the field's right end, as
-     * an eye icon is.
+     * say "show", "reveal" or "visibility" with "password"; or else the only unnamed toggle (a checkable element) at the
+     * field's right end, as an eye icon is, and never an unnamed icon that does not toggle, such as one that clears the
+     * field.
      */
     fun passwordToggle(snapshot: ScreenSnapshot, field: ScreenElement): ScreenElement? {
         val near = snapshot.elements.filter {
@@ -78,7 +91,7 @@ internal object TextFields {
         return near.filter { element ->
             val own = listOfNotNull(element.label, element.contentDescription, element.text).filter { it.isNotBlank() }
             val icon = element.bounds
-            own.isEmpty() && icon.top < bounds.bottom && icon.bottom > bounds.top &&
+            own.isEmpty() && element.checkable && icon.top < bounds.bottom && icon.bottom > bounds.top &&
                 icon.left >= bounds.centerX && icon.left <= bounds.right + bounds.height
         }.singleOrNull()
     }
@@ -127,12 +140,20 @@ internal object TextFields {
     private fun idSaysSearch(element: ScreenElement): Boolean =
         element.viewId?.substringAfter(":id/")?.contains("search", ignoreCase = true) == true
 
+    private fun idOpensSearch(element: ScreenElement): Boolean {
+        val id = element.viewId?.substringAfter(":id/")?.lowercase() ?: return false
+        return "search" in id && NOT_OPENING_SEARCH.none { it in id }
+    }
+
     private fun keyboardWindows(snapshot: ScreenSnapshot): Set<Int> =
         snapshot.windows.filter { it.kind == WindowKind.INPUT_METHOD }.mapTo(HashSet()) { it.id }
 
     private fun distance(a: IntRect, b: IntRect): Int = abs(a.centerX - b.centerX) + abs(a.centerY - b.centerY)
 
     private val SHOW_WORDS = setOf("show", "reveal", "visibility", "visible")
+
+    // SearchView's voice and close buttons, and rows that clear or list past searches.
+    private val NOT_OPENING_SEARCH = listOf("clear", "close", "voice", "history")
 
     private const val PHONE_MARKS = "+*#-"
 

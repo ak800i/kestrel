@@ -80,6 +80,26 @@ class EditHistoryTest {
     }
 
     @Test
+    fun aFieldsHistoryGoesWhenItsLastEditIsOld() {
+        var now = 1_000L
+        val history = EditHistory(clock = { now })
+        history.record("app/field", empty, hello)
+        history.record("app/other", empty, hello)
+
+        // Another conversation's empty field may share the key: an old edit must not come back into it.
+        now += EditHistory.MAX_AGE_MILLIS
+        assertEquals(empty, history.peek("app/field", hello, redo = false))
+        history.step("app/field", redo = false)
+        now += 1
+        assertTrue(history.canRedo("app/field"))
+        assertFalse(history.canUndo("app/other"))
+        assertNull(history.undo("app/other", hello))
+        now += EditHistory.MAX_AGE_MILLIS
+        assertFalse(history.canRedo("app/field"))
+        assertNull(history.redo("app/field", empty))
+    }
+
+    @Test
     fun itKeepsFiftyEditsOfTwentyFields() {
         val history = EditHistory()
         val states = (0..51).map { TextState("a".repeat(it), it, it) }

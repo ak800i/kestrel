@@ -69,30 +69,39 @@ class TextEditor(
      * Replaces the text from [start] until [end] of the field with [key] by [replacement], and then selects
      * [selectionStart] to [selectionEnd]. The input method comes first: it replaces only that range, makes the events
      * that web pages expect, and lands in the field's undo history. When the input does not start or the field does not
-     * show the result within 1 s, Kestrel sets the whole new text with the set-text action instead. The new text comes
-     * from a read after the field has connected, so that the fallback never writes over a change that the app made
-     * meanwhile. A password field shows only dots, so there only the length is checked, and set-text only empties it.
+     * show the result within 1 s, Kestrel sets the whole new text with the set-text action instead, but only while the
+     * field still shows the text from before the edit, so that it never writes over a change that the field or the app
+     * made. When the text changed while the field connected, as when an app fills in a draft or a browser shows the whole
+     * address once its address bar has the focus, it changes nothing and gives [CHANGED], because the offsets were
+     * planned on the old text. A password field shows only dots, so there only the length is checked, and set-text only
+     * empties it. A phone number field may format the number as it goes in, so there only the dialable characters count.
      */
     suspend fun replace(key: String, start: Int, end: Int, replacement: String, selectionStart: Int, selectionEnd: Int): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
         if (!field.element.editable) return NOT_A_FIELD
         if (!field.node.isEnabled) return DISABLED
-        if (start < 0 || start > end || end > field.node.shownText().orEmpty().length) return CHANGED
-        val password = password(field)
+        val first = field.node.shownText().orEmpty()
+        if (start < 0 || start > end || end > first.length) return CHANGED
         val connection = connect(field)
         if (!field.node.refresh()) return NOT_ON_SCREEN
+        val password = password(field)
         val before = field.node.shownText().orEmpty()
-        if (end > before.length) return CHANGED
+        if (!same(before, first, password)) return CHANGED
         val expected = before.substring(0, start) + replacement + before.substring(end)
+        val phone = phone(field)
         if (connection != null) {
             withContext(Dispatchers.Main) {
                 connection.setSelection(start, end)
                 connection.commitText(replacement, 1, null)
-                connection.setSelection(selectionStart, selectionEnd)
+                // The commit leaves the cursor there already; a field that formats its text puts it after the formatting.
+                if (selectionStart != selectionEnd || selectionStart != start + replacement.length) {
+                    connection.setSelection(selectionStart, selectionEnd)
+                }
             }
-            if (shows(field.node, expected, password)) return settled(ActionMethod.INPUT_METHOD)
+            if (shows(field.node, expected, password, phone)) return settled(ActionMethod.INPUT_METHOD)
         }
         if (password && expected.isNotEmpty()) return NOT_TAKEN
+        if (!field.node.refresh() || !same(field.node.shownText().orEmpty(), before, password)) return NOT_TAKEN
         return setText(field, expected, selectionStart, selectionEnd)
     }
 
@@ -126,7 +135,7 @@ class TextEditor(
         if (!field.node.isEnabled) return DISABLED
         val done = setSelection(field.node, start, end)
         if (selects(field.node, start, end)) return settled(ActionMethod.ACTION)
-        return if (done) settled(ActionMethod.ACTION) else ActionResult.Failed("The text field refused the selection")
+        return if (done) settled(ActionMethod.ACTION) else ActionResult.Failed("The text field refused the selection.")
     }
 
     /**
@@ -154,11 +163,13 @@ class TextEditor(
             withContext(Dispatchers.Main) { connection.enter() }
             return settled(ActionMethod.INPUT_METHOD)
         }
-        if (field.node.isMultiLine || composed(field.node)) return NO_ACTION
+        if (field.node.isMultiLine) return NO_ACTION
+        // A Compose node says one line also when its field has more, so without the input Kestrel cannot tell.
+        if (composed(field.node)) return NOT_CONNECTED
         return if (field.node.performAction(IME_ENTER)) {
             settled(ActionMethod.ACTION)
         } else {
-            ActionResult.Failed("The text field refused to submit")
+            ActionResult.Failed("The text field refused to submit.")
         }
     }
 
@@ -178,9 +189,19 @@ class TextEditor(
      */
     suspend fun phone(key: String): Boolean {
         val field = field(key) ?: return false
-        if (field.node.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_PHONE) return true
-        val editor = withContext(Dispatchers.Main) { startedEditor(field) } ?: return false
-        return editor.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_PHONE
+        return phone(field)
+    }
+
+    /**
+     * Whether the input that the app started last, for a field of [packageName], is a password's by its type. A password
+     * that "show password" shows loses the node's flag but keeps its input type. It reads only what Kestrel's input
+     * method holds, without a binder call, so the controller's thread may ask it before it shows a transcript.
+     */
+    fun typingPassword(packageName: String?): Boolean {
+        val inputMethod = service.inputMethod ?: return false
+        if (!inputMethod.currentInputStarted) return false
+        val editor = inputMethod.currentInputEditorInfo ?: return false
+        return editor.packageName == packageName && isPassword(editor)
     }
 
     /**
@@ -191,7 +212,7 @@ class TextEditor(
     suspend fun clipboard(key: String, kind: ClipboardKind): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
         if (!field.node.isEnabled) return DISABLED
-        if (!focus(field)) return ActionResult.Failed("The text field did not take the focus")
+        if (!focus(field)) return ActionResult.Failed("The text field did not take the focus.")
         val before = field.node.shownText().orEmpty()
         val (start, end) = selection(field.node, before)
         if (kind != ClipboardKind.PASTE && start == end) return SELECT_FIRST
@@ -200,7 +221,7 @@ class TextEditor(
             ClipboardKind.COPY -> AccessibilityNodeInfo.ACTION_COPY
             ClipboardKind.PASTE -> AccessibilityNodeInfo.ACTION_PASTE
         }
-        if (!field.node.performAction(action)) return ActionResult.Failed("The text field refused the action")
+        if (!field.node.performAction(action)) return ActionResult.Failed("The text field refused the action.")
         // A cut, and a paste at the cursor, must change the text; a paste over a selection may put back the same text.
         val changing = kind == ClipboardKind.CUT || (kind == ClipboardKind.PASTE && start == end)
         if (changing && !changes(field.node, before)) return NOT_TAKEN
@@ -209,14 +230,18 @@ class TextEditor(
 
     /**
      * Types [text] at the cursor of the field with [key] through the input method. Password fields need it, because
-     * Kestrel cannot read their text to set it whole; the read-back checks only the length.
+     * Kestrel cannot read their text to set it whole; the read-back checks only the length. The field and its cursor are
+     * read once it has connected, and a text whose length changed meanwhile gives [CHANGED].
      */
     suspend fun typeAtCursor(key: String, text: String): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
         if (!field.node.isEnabled) return DISABLED
-        val before = field.node.shownText().orEmpty()
-        val (start, end) = selection(field.node, before)
+        val first = field.node.shownText().orEmpty().length
         val connection = connect(field) ?: return NOT_CONNECTED
+        if (!field.node.refresh()) return NOT_ON_SCREEN
+        val before = field.node.shownText().orEmpty()
+        if (before.length != first) return CHANGED
+        val (start, end) = selection(field.node, before)
         withContext(Dispatchers.Main) { connection.commitText(text, 1, null) }
         return if (hasLength(field.node, before.length - (end - start) + text.length)) {
             settled(ActionMethod.INPUT_METHOD)
@@ -225,15 +250,21 @@ class TextEditor(
         }
     }
 
-    /** Deletes the selection, or else [count] characters before the cursor, of the field with [key], through the input method. */
+    /**
+     * Deletes the selection, or else [count] characters before the cursor, of the field with [key], through the input
+     * method. The field and its cursor are read once it has connected, as in [typeAtCursor].
+     */
     suspend fun deleteBeforeCursor(key: String, count: Int): ActionResult {
         val field = field(key) ?: return NOT_ON_SCREEN
         if (!field.node.isEnabled) return DISABLED
+        val first = field.node.shownText().orEmpty().length
+        val connection = connect(field) ?: return NOT_CONNECTED
+        if (!field.node.refresh()) return NOT_ON_SCREEN
         val before = field.node.shownText().orEmpty()
+        if (before.length != first) return CHANGED
         val (start, end) = selection(field.node, before)
         val removed = if (end > start) end - start else minOf(count, start)
-        if (removed == 0) return ActionResult.Failed("There is nothing before the cursor")
-        val connection = connect(field) ?: return NOT_CONNECTED
+        if (removed == 0) return ActionResult.Failed("There is nothing before the cursor.")
         withContext(Dispatchers.Main) {
             if (end > start) connection.commitText("", 1, null) else connection.deleteSurroundingText(removed, 0)
         }
@@ -342,7 +373,17 @@ class TextEditor(
         val arguments = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
         if (!field.node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) return NOT_TAKEN
         setSelection(field.node, selectionStart, selectionEnd)
-        return if (shows(field.node, text, password(field))) settled(ActionMethod.ACTION) else NOT_TAKEN
+        return if (shows(field.node, text, password(field), phone(field))) settled(ActionMethod.ACTION) else NOT_TAKEN
+    }
+
+    /**
+     * Whether the field takes a phone number, as a dialpad's number field does: its node's input type, or the input that
+     * its app started for it, has the phone class.
+     */
+    private suspend fun phone(field: Field): Boolean {
+        if (field.node.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_PHONE) return true
+        val editor = withContext(Dispatchers.Main) { startedEditor(field) } ?: return false
+        return editor.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_PHONE
     }
 
     private fun setSelection(node: AccessibilityNodeInfo, start: Int, end: Int): Boolean {
@@ -361,12 +402,24 @@ class TextEditor(
         return minOf(start, end).coerceAtMost(text.length) to maxOf(start, end).coerceAtMost(text.length)
     }
 
-    /** Whether the field shows [expected] within 1 s; for a password field, whether it has as many characters. */
-    private suspend fun shows(node: AccessibilityNodeInfo, expected: String, password: Boolean): Boolean =
-        if (password) hasLength(node, expected.length) else waitFor { node.refresh() && sameText(node.shownText().orEmpty(), expected) }
+    /**
+     * Whether the field shows [expected] within 1 s; for a password field, whether it has as many characters; for a phone
+     * number field, whether it has the same dialable characters, because it may add spaces and brackets as it formats.
+     */
+    private suspend fun shows(node: AccessibilityNodeInfo, expected: String, password: Boolean, phone: Boolean = false): Boolean = when {
+        password -> hasLength(node, expected.length)
+        phone -> waitFor { node.refresh() && dialable(node.shownText().orEmpty()) == dialable(expected) }
+        else -> waitFor { node.refresh() && sameText(node.shownText().orEmpty(), expected) }
+    }
 
     // Web editors turn a space next to new words into a no-break space, or back, as they balance whitespace.
     private fun sameText(shown: String, expected: String): Boolean = shown.replace('\u00A0', ' ') == expected.replace('\u00A0', ' ')
+
+    /** Whether [shown] is still [text]; a password field shows only dots, so there only the length counts. */
+    private fun same(shown: String, text: String, password: Boolean): Boolean =
+        if (password) shown.length == text.length else sameText(shown, text)
+
+    private fun dialable(text: String): String = text.filter { it.isLetterOrDigit() || it in DIALABLE_MARKS }
 
     private suspend fun hasLength(node: AccessibilityNodeInfo, length: Int): Boolean =
         waitFor { node.refresh() && node.shownText().orEmpty().length == length }
@@ -408,11 +461,14 @@ class TextEditor(
         val SELECT_FIRST = ActionResult.Failed("Select some text first.")
         val NOT_TAKEN = ActionResult.Failed("The text field didn't take the change.")
 
-        private val NOT_ON_SCREEN = ActionResult.Failed("The text field is not on the screen")
-        private val NOT_A_FIELD = ActionResult.Failed("The element is not a text field")
-        private val DISABLED = ActionResult.Failed("The text field is disabled")
-        private val CHANGED = ActionResult.Failed("The text changed before the edit")
-        private val NOT_CONNECTED = ActionResult.Failed("The text field did not connect to Kestrel's input method")
+        /** The text changed between the command's read and the edit, so the edit would land on other characters. */
+        val CHANGED = ActionResult.Failed("The text changed. Say it again.")
+
+        private val NOT_ON_SCREEN = ActionResult.Failed("The text field is not on the screen.")
+        private val NOT_A_FIELD = ActionResult.Failed("The element is not a text field.")
+        private val DISABLED = ActionResult.Failed("The text field is disabled.")
+        private val NOT_CONNECTED = ActionResult.Failed("The text field did not connect to Kestrel's input method.")
+        private const val DIALABLE_MARKS = "+*#,;"
         private val IME_ENTER = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
         private val SENDING_ACTIONS = setOf(EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEARCH, EditorInfo.IME_ACTION_SEND)
         private val PASSWORD_TYPES = setOf(

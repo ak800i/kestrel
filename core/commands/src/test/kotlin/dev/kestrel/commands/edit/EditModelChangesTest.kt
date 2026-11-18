@@ -64,6 +64,12 @@ class EditModelChangesTest {
     }
 
     @Test
+    fun capitalizeKeepsACombiningMarkInsideItsWord() {
+        assertEquals("E\u0301lan|", edit(ChangeCase(TextCase.CAPITALIZE, "elan"), "e\u0301lan|"))
+        assertEquals("Cafe\u0301's|", edit(ChangeCase(TextCase.CAPITALIZE, "cafe's"), "cafe\u0301's|"))
+    }
+
+    @Test
     fun capitalizeTreatsALeftSingleQuoteAsAnApostrophe() {
         assertEquals("O\u2018neil|", edit(ChangeCase(TextCase.CAPITALIZE, "oneil"), "o\u2018neil|"))
     }

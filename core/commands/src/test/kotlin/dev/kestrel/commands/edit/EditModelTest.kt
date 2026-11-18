@@ -115,6 +115,17 @@ class EditModelTest {
     }
 
     @Test
+    fun betweenNeverCutsACharacterInTwo() {
+        // Undoing the deletion of 😀 from 😁😀😂: all three start with the same half.
+        assertEquals(
+            EditStep.Change(2, 2, "\uD83D\uDE00", 4, 4),
+            EditModel.between("\uD83D\uDE01\uD83D\uDE02", TextState("\uD83D\uDE01\uD83D\uDE00\uD83D\uDE02", 4, 4)),
+        )
+        // U+1F600 and U+1FA00 end with the same half.
+        assertEquals(EditStep.Change(1, 3, "\uD83E\uDE00", 3, 3), EditModel.between("a\uD83D\uDE00", TextState("a\uD83E\uDE00", 3, 3)))
+    }
+
+    @Test
     fun fromToPrefersThePairInTheSpokenOrderNearestTheCursor() {
         assertEquals("[hello A world] B hello", edit(Select(TextScope.FromTo("hello", "world")), "hello A world B hello|"))
         assertEquals("|B hello", edit(Delete(TextScope.FromTo("hello", "world")), "hello A world B hello|"))
@@ -137,6 +148,13 @@ class EditModelTest {
     fun anEmptyLineIsALineToDelete() {
         assertEquals("first\n|third", edit(Delete(TextScope.Units(1, TextUnit.LINE, forward = false)), "first\n\n|third"))
         assertEquals("first\n|\nthird", edit(MoveCursor(Place.Units(1, TextUnit.LINE, forward = true)), "first|\n\nthird"))
+        // From an empty line, only the line that the owner names goes, and the empty line stays.
+        assertEquals("x\n|", edit(Delete(TextScope.Units(1, TextUnit.LINE, forward = false)), "x\nhello\n|"))
+        assertEquals("a\n|\nb", edit(Delete(TextScope.Units(1, TextUnit.LINE, forward = false)), "a\nprev\n|\nb"))
+        assertEquals("a\n|", edit(Delete(TextScope.Units(1, TextUnit.LINE, forward = true)), "a\n|\nb"))
+        assertEquals("|\nPara two.", edit(Delete(TextScope.Units(1, TextUnit.LINE, forward = false)), "Para one.\n|\nPara two."))
+        // A paragraph goes with the blank lines that separated it from the next.
+        assertEquals("|B.", edit(Delete(TextScope.Units(1, TextUnit.PARAGRAPH, forward = false)), "A.\n|\nB."))
     }
 
     @Test

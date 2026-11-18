@@ -1,5 +1,6 @@
 package dev.kestrel.app.commands
 
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -42,7 +43,8 @@ class TouchCommandsTest {
     @After
     fun stopListening() = CommandTests.stop()
 
-    private fun awaitStatus(text: String) = runBlocking { screen.awaitElement { it.label == text } }
+    // The waits only bound a failure, so they leave room for an emulator under load.
+    private fun awaitStatus(text: String) = runBlocking { screen.awaitElement(WAIT_MILLIS) { it.label == text } }
 
     @Test
     fun tapByLabelTapsTheButton() {
@@ -128,11 +130,14 @@ class TouchCommandsTest {
         val cover = screen.awaitElement { it.label == "Cover Dan" }
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
 
-        // A click through accessibility, not a touch, so the question goes on. The cover adds nothing to tap, so the
-        // numbers stay, and the answer reaches the check right before the action. The screen did not change otherwise,
-        // and saying it again would give the same answer, so Kestrel does not say "The screen changed".
-        assertTrue(screen.session.actions.tap(cover.key) is ActionResult.Done)
-        screen.awaitElement { it.label == "Covered" }
+        // Only the node's click action, never a tap gesture, which the touch watcher would count as the owner's touch, so
+        // the question goes on. The cover adds nothing to tap, so the numbers stay, and the answer reaches the check right
+        // before the action. The screen did not change otherwise, and saying it again would give the same answer, so
+        // Kestrel does not say "The screen changed".
+        val node = checkNotNull(screen.session.snapshots.current().node(cover.key)) { "Cover Dan is not on the screen" }
+        assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        screen.awaitElement(WAIT_MILLIS) { it.label == "Covered" }
+        assertTrue("The question ended before the answer", CommandTests.asked)
         assertEquals(Outcome.FAILED, CommandTests.answer("number two").outcome)
         awaitBar(ActionResult.COVERED.reason)
         assertFalse(CommandTexts.SCREEN_CHANGED in CommandTests.spoken)
@@ -329,10 +334,10 @@ class TouchCommandsTest {
         }
     }
 
-    private suspend fun awaitBar(text: String) = withTimeout(5_000) { while (screen.session.feedbackText != text) delay(50) }
+    private suspend fun awaitBar(text: String) = withTimeout(WAIT_MILLIS) { while (screen.session.feedbackText != text) delay(50) }
 
     /** The number on the element with [key], once the numbers have followed the screen. */
-    private suspend fun badge(key: String): Int = withTimeout(5_000) {
+    private suspend fun badge(key: String): Int = withTimeout(WAIT_MILLIS) {
         var badge = screen.session.numberBadges.firstOrNull { it.key == key }
         while (badge == null) {
             delay(50)
@@ -383,5 +388,7 @@ class TouchCommandsTest {
 
         /** NotificationActivity.TITLE in the test app. */
         const val NOTIFICATION_TITLE = "Fixture reminder"
+
+        const val WAIT_MILLIS = 15_000L
     }
 }

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The view IDs of the text fixtures (EditActivity), which plan 3B's tests look for. -->
+<!-- The view IDs of the text fixtures (EditActivity and SearchActivity), which plan 3B's tests look for. -->
 <resources>
     <item name="text_search" type="id" />
     <item name="text_search_state" type="id" />
@@ -14,4 +14,11 @@
     <item name="text_phone_state" type="id" />
     <item name="text_draft" type="id" />
     <item name="text_draft_state" type="id" />
+    <item name="text_legacy" type="id" />
+    <item name="text_legacy_state" type="id" />
+    <item name="text_subject" type="id" />
+    <item name="text_subject_state" type="id" />
+    <item name="text_mail_search" type="id" />
+    <item name="text_address" type="id" />
+    <item name="text_address_state" type="id" />
 </resources>

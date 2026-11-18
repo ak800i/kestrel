@@ -26,13 +26,18 @@ object EditModel {
         else -> EditStep.Fail(EditFailure.NOT_AN_EDIT)
     }
 
-    /** The change that turns [from] into [to]: only the range that differs, then [to]'s selection. Undo and redo use it. */
+    /**
+     * The change that turns [from] into [to]: only the range that differs, then [to]'s selection. Undo and redo use it.
+     * The range never starts or ends inside a surrogate pair, so that an emoji next to another one stays whole.
+     */
     fun between(from: String, to: TextState): EditStep.Change {
         val shorter = minOf(from.length, to.text.length)
         var prefix = 0
         while (prefix < shorter && from[prefix] == to.text[prefix]) prefix++
+        if (prefix > 0 && from[prefix - 1].isHighSurrogate()) prefix--
         var suffix = 0
         while (suffix < shorter - prefix && from[from.length - 1 - suffix] == to.text[to.text.length - 1 - suffix]) suffix++
+        if (suffix > 0 && from[from.length - suffix].isLowSurrogate()) suffix--
         val replacement = to.text.substring(prefix, to.text.length - suffix)
         return EditStep.Change(prefix, from.length - suffix, replacement, to.selectionStart, to.selectionEnd)
     }
@@ -57,7 +62,7 @@ object EditModel {
             scope is TextScope.Units && (scope.unit == TextUnit.WORD || scope.unit == TextUnit.SENTENCE) ->
                 tidied(text, range.first, end)
             scope is TextScope.Units && (scope.unit == TextUnit.LINE || scope.unit == TextUnit.PARAGRAPH) ->
-                lineTidied(text, range.first, end, paragraph = scope.unit == TextUnit.PARAGRAPH)
+                lineTidied(text, range.first, end, paragraph = scope.unit == TextUnit.PARAGRAPH, forward = scope.forward)
             else -> removal(range.first, end)
         }
     }
@@ -205,13 +210,28 @@ object EditModel {
 
     /** The first letter of each word in capitals. */
     private fun capitalized(text: String): String = buildString {
-        for ((index, char) in text.withIndex()) {
-            // An apostrophe joins the letters around it, as in "O'neil"; one at the start of a word opens a quotation.
-            val inWord = index > 0 &&
-                (text[index - 1].isLetterOrDigit() || (text[index - 1] in APOSTROPHES && index >= 2 && text[index - 2].isLetterOrDigit()))
-            val startsWord = !inWord
-            append(if (startsWord && char.isLetter()) char.titlecaseChar() else char)
-        }
+        for ((index, char) in text.withIndex()) append(if (char.isLetter() && !inWord(text, index)) char.titlecaseChar() else char)
+    }
+
+    /**
+     * Whether the character at [index] continues a word: after a letter or digit with its combining marks, as in a
+     * decomposed "é", or after an apostrophe that follows one, as in "O'neil"; an apostrophe at the start of a word opens a
+     * quotation.
+     */
+    private fun inWord(text: String, index: Int): Boolean =
+        wordAt(text, index - 1) || (text.getOrNull(index - 1) in APOSTROPHES && wordAt(text, index - 2))
+
+    /** Whether the character at [index] is a letter or a digit, or a combining mark after one. */
+    private fun wordAt(text: String, index: Int): Boolean {
+        var at = index
+        while (at >= 0 && isMark(text[at])) at--
+        return at >= 0 && text[at].isLetterOrDigit()
+    }
+
+    private fun isMark(char: Char): Boolean {
+        val type = Character.getType(char)
+        return type == Character.NON_SPACING_MARK.toInt() || type == Character.ENCLOSING_MARK.toInt() ||
+            type == Character.COMBINING_SPACING_MARK.toInt()
     }
 
     private fun removal(start: Int, end: Int) = EditStep.Change(start, end, "", start, start)
@@ -233,8 +253,14 @@ object EditModel {
         }
     }
 
-    /** Deletes whole lines or paragraphs with the line break, or the blank lines, that separated them from the rest. */
-    private fun lineTidied(text: String, start: Int, end: Int, paragraph: Boolean): EditStep.Change {
+    /**
+     * Deletes whole lines or paragraphs with the line break, or the blank lines, that separated them from the rest. Lines
+     * that the cursor reached from an empty line already hold their line break, the one before the cursor backwards or
+     * the one after it forwards, so the empty line stays.
+     */
+    private fun lineTidied(text: String, start: Int, end: Int, paragraph: Boolean, forward: Boolean): EditStep.Change {
+        val fromEmptyLine = if (forward) text.getOrNull(start) == '\n' else text.getOrNull(end - 1) == '\n'
+        if (!paragraph && fromEmptyLine) return removal(start, end)
         var from = start
         var to = end
         val endsLine = to == text.length || text[to] == '\n'

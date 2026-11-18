@@ -120,6 +120,27 @@ class TextFieldsTest {
         assertEquals(icon, TextFields.searchButton(snapshot(notes, icon)))
         assertEquals(find, TextFields.searchButton(snapshot(find)))
         assertNull(TextFields.searchButton(snapshot(button("clear", "Clear search history", IntRect(0, 0, 100, 100)))))
+        // A view ID that says search also names buttons that open no search field.
+        for (id in listOf("search_voice_btn", "clear_search", "search_close_btn", "search_history_row")) {
+            assertNull(id, TextFields.searchButton(snapshot(button(id, null, IntRect(0, 0, 100, 100), viewId = "dev.app:id/$id"))))
+        }
+    }
+
+    @Test
+    fun aSearchButtonOpensOnlyANewSearchFieldNeverTheFieldThatHadTheFocus() {
+        val subject = field("subject", "Subject", 300, focused = true)
+        val search = field("search", "Search mail", 100, focused = true)
+        val notes = field("notes", "Notes", 500, focused = true)
+
+        // The snapshot right after the tap may still show the old screen.
+        assertNull(TextFields.openedSearchField(snapshot(subject), before = subject))
+        assertNull(TextFields.openedSearchField(snapshot(subject), before = subject, searches = true))
+        assertEquals(search, TextFields.openedSearchField(snapshot(subject.copy(focused = false), search), before = subject))
+        assertEquals(search, TextFields.openedSearchField(snapshot(search), before = null))
+        // A new field that is no search field, or a password field, is never typed into.
+        assertNull(TextFields.openedSearchField(snapshot(notes), before = subject))
+        assertEquals(notes, TextFields.openedSearchField(snapshot(notes), before = subject, searches = true))
+        assertNull(TextFields.openedSearchField(snapshot(search.copy(password = true)), before = subject))
     }
 
     @Test
@@ -138,15 +159,20 @@ class TextFieldsTest {
         val password = field("password", "Password", 500, password = true)
         val named = button("show", "Show password", IntRect(0, 700, 400, 800), checkable = true)
         val far = button("far", "Show password", IntRect(0, 2000, 400, 2100))
-        val eye = button("eye", null, IntRect(810, 500, 850, 600))
+        val eye = button("eye", null, IntRect(810, 500, 850, 600), checkable = true)
         val send = button("send", "Send", IntRect(0, 900, 200, 1000))
 
         assertEquals(password, TextFields.passwordField(snapshot(field("user", "User", 300), password)))
         assertEquals(named, TextFields.passwordToggle(snapshot(password, far, named, send), password))
         assertEquals(eye, TextFields.passwordToggle(snapshot(password, eye, send), password))
         // Two unnamed icons next to the field: Kestrel cannot tell which one shows the password.
-        val other = button("other", null, IntRect(860, 500, 900, 600))
+        val other = button("other", null, IntRect(860, 500, 900, 600), checkable = true)
         assertNull(TextFields.passwordToggle(snapshot(password, eye, other, send), password))
+        // An unnamed icon that does not toggle, such as "clear text", would empty the field.
+        val clear = button("clear", null, IntRect(810, 500, 850, 600))
+        val toggle = button("toggle", null, IntRect(810, 500, 850, 600), checkable = true)
+        assertNull(TextFields.passwordToggle(snapshot(password, clear, send), password))
+        assertEquals(toggle, TextFields.passwordToggle(snapshot(password, toggle, send), password))
     }
 
     @Test

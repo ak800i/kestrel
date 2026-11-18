@@ -22,6 +22,7 @@ import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.TextEditor
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -62,11 +63,13 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
     }
 
     // The controller's thread asks before it shows each transcript, so this reads only the newest snapshot that was
-    // built, never the screen (design D2).
+    // built and what Kestrel's input method holds, never the screen (design D2). A password that already shows has lost
+    // its node's flag, but its input keeps the password's type.
     override fun privateInput(): Boolean {
-        val snapshot = environment.screen()?.snapshots?.latest()?.snapshot ?: return false
+        val screen = environment.screen() ?: return false
+        val snapshot = screen.snapshots.latest()?.snapshot ?: return false
         val field = TextFields.focused(snapshot) ?: return false
-        return editing.password(field, field.password)
+        return editing.password(field, field.password || screen.text.typingPassword(field.packageName))
     }
 
     /** Runs [block] on the focused text field, or returns null without one. */
@@ -91,7 +94,7 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
 
     /** "Type X" and dictation: spoken punctuation, spelling, and each new line through the Enter key. */
     private suspend fun type(screen: ScreenSession, field: ScreenElement, spoken: String, startsUtterance: Boolean): CommandResult {
-        val state = screen.text.read(field.key) ?: return gone()
+        val state = focusedState(screen, field) ?: return gone()
         if (editing.password(field, state.password)) {
             val part = Dictation.insert(state.toTextState(), spoken, password = true).singleOrNull() as? DictationPart.Text
             if (part == null || part.change.replacement.isEmpty()) return CommandResult(Outcome.IGNORED)
@@ -105,6 +108,7 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
         val before = state.toTextState()
         val parts = Dictation.insert(before, spoken, password = false, startsUtterance = startsUtterance)
         if (parts.isEmpty()) return CommandResult(Outcome.IGNORED)
+        var wentIn = false
         try {
             for ((index, part) in parts.withIndex()) {
                 val result = when (part) {
@@ -112,11 +116,18 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
                     DictationPart.NewLine -> screen.text.newLine(field.key)
                 }
                 if (result is ActionResult.Failed) return failed(result)
+                wentIn = true
             }
             return CommandResult(Outcome.DONE, repeatable = true)
         } finally {
             // What went in before a failure, or before "stop" cancelled the command between two parts, can still be undone.
-            withContext(kotlinx.coroutines.NonCancellable) { record(screen, field, before) }
+            // While the first part never went in, as when the text changed while the field connected, the field shows
+            // no edit of Kestrel's, and a record would let "undo" take back the app's change.
+            val first = when (val part = parts.first()) {
+                is DictationPart.Text -> part.change.applyTo(before.text)
+                DictationPart.NewLine -> lineBreak(before)
+            }
+            withContext(NonCancellable) { record(screen, field, before) { wentIn || sameText(it, first) } }
         }
     }
 
@@ -124,9 +135,12 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
     private suspend fun typeNumber(screen: ScreenSession, field: ScreenElement, spoken: String, state: FieldState): CommandResult {
         val number = TextFields.phoneNumber(spoken) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.PHONE_FIELD)
         val end = state.selectionStart + number.length
-        val result = screen.text.replace(field.key, state.selectionStart, state.selectionEnd, number, end, end)
+        val before = state.toTextState()
+        // The field may format the number, so any change after a cancel counts as the edit.
+        val result = recorded(screen, field, before, took = { it != before.text }) {
+            screen.text.replace(field.key, state.selectionStart, state.selectionEnd, number, end, end)
+        }
         if (result is ActionResult.Failed) return failed(result)
-        record(screen, field, state.toTextState())
         return CommandResult(Outcome.DONE, repeatable = true)
     }
 
@@ -143,22 +157,16 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
             }
             val result = screens.act(screen, target, TargetKind.EDIT, conversation) {
                 // Checked again on the element itself, because the screen may have changed since.
-                if (it.editable) screen.actions.tap(it.key) else ActionResult.Failed(TextCommandTexts.NOT_A_TEXT_FIELD)
+                if (it.editable) screen.actions.tap(it.key, ScreenTargets.sameAs(it)) else ActionResult.Failed(TextCommandTexts.NOT_A_TEXT_FIELD)
             }
             if (result.outcome == Outcome.DONE) editing.resume()
             return result
         }
         val field = TextFields.toStart(screen.snapshots.current().snapshot)
             ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_TEXT_FIELD)
-        val element = environment.targets.still(ScreenTargets.chosen(field))
-            ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
-        return when (val result = screen.actions.tap(element.key)) {
-            is ActionResult.Done -> {
-                editing.resume()
-                CommandResult(Outcome.DONE, repeatable = true)
-            }
-            is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
-        }
+        tap(screen, field)?.let { return it }
+        editing.resume()
+        return CommandResult(Outcome.DONE, repeatable = true)
     }
 
     /** "Stop editing" ends dictation into the focused field and hides the keyboard. */
@@ -172,12 +180,11 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
     }
 
     private suspend fun newLine(screen: ScreenSession, field: ScreenElement): CommandResult {
-        val state = screen.text.read(field.key) ?: return gone()
+        val state = focusedState(screen, field) ?: return gone()
         if (editing.password(field, state.password)) return CommandResult(Outcome.FAILED, say = TextCommandTexts.PASSWORD_FIELD)
         val before = state.toTextState()
-        val result = screen.text.newLine(field.key)
+        val result = recorded(screen, field, before, took = { sameText(it, lineBreak(before)) }) { screen.text.newLine(field.key) }
         if (result is ActionResult.Failed) return failed(result)
-        record(screen, field, before)
         return CommandResult(Outcome.DONE, repeatable = true)
     }
 
@@ -186,7 +193,7 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
      * the field still shows what Kestrel left (design spec, section 9.7).
      */
     private suspend fun undo(screen: ScreenSession, field: ScreenElement, redo: Boolean): CommandResult {
-        val state = screen.text.read(field.key) ?: return gone()
+        val state = focusedState(screen, field) ?: return gone()
         if (editing.password(field, state.password)) return CommandResult(Outcome.FAILED, say = TextCommandTexts.PASSWORD_FIELD)
         val id = editing.id(field)
         val history = editing.history
@@ -207,23 +214,23 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
         } finally {
             // The history moves only when the field took the state: a failed or cancelled edit leaves it as it was, and
             // one cancelled after the field took it moves it, so that the history still fits the field.
-            if (!took) took = withContext(kotlinx.coroutines.NonCancellable) { screen.text.read(field.key)?.text == target.text }
+            if (!took) took = withContext(NonCancellable) { screen.text.read(field.key)?.text == target.text }
             if (took) history.step(id, redo)
         }
     }
 
     /** The editing commands, planned by the editing model on the field's text and selection. */
     private suspend fun edit(screen: ScreenSession, field: ScreenElement, command: TextCommand): CommandResult {
-        val state = screen.text.read(field.key) ?: return gone()
+        val state = focusedState(screen, field) ?: return gone()
         if (editing.password(field, state.password)) return passwordEdit(screen, field, command, state)
         val before = state.toTextState()
         return when (val step = EditModel.plan(command, before)) {
-            is EditStep.Change -> when (val result = apply(screen, field, step)) {
-                is ActionResult.Done -> {
-                    record(screen, field, before)
-                    CommandResult(Outcome.DONE, repeatable = true)
+            is EditStep.Change -> {
+                val after = step.applyTo(before.text)
+                when (val result = recorded(screen, field, before, took = { sameText(it, after) }) { apply(screen, field, step) }) {
+                    is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+                    is ActionResult.Failed -> failed(result)
                 }
-                is ActionResult.Failed -> failed(result)
             }
             is EditStep.Select -> when (val result = screen.text.select(field.key, step.start, step.end)) {
                 is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
@@ -265,26 +272,31 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
             ClipboardAction.COPY -> ClipboardKind.COPY
             ClipboardAction.PASTE -> ClipboardKind.PASTE
         }
-        val result = screen.text.clipboard(field.key, kind)
+        val result = if (kind == ClipboardKind.COPY) {
+            screen.text.clipboard(field.key, kind)
+        } else {
+            recorded(screen, field, before, took = { it != before.text }) { screen.text.clipboard(field.key, kind) }
+        }
         if (result == TextEditor.SELECT_FIRST) return CommandResult(Outcome.FAILED, say = TextEditor.SELECT_FIRST.reason)
         if (result is ActionResult.Failed) return failed(result)
-        if (action != ClipboardAction.COPY) record(screen, field, before)
         return CommandResult(Outcome.DONE, repeatable = true)
     }
 
     /** "Show keyboard" taps the focused field; "hide keyboard" goes back, but only while the keyboard shows. */
     private suspend fun keyboard(screen: ScreenSession, show: Boolean): CommandResult {
-        val snapshot = screen.snapshots.current().snapshot
-        val result = if (show) {
-            val field = TextFields.focused(snapshot) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_FIELD)
-            val element = environment.targets.still(ScreenTargets.chosen(field))
-                ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
-            screen.actions.tap(element.key)
-        } else {
-            if (!TextFields.keyboardShows(snapshot)) return CommandResult(Outcome.FAILED, show = TextCommandTexts.KEYBOARD_NOT_SHOWING)
-            screen.actions.global(GlobalAction.BACK)
+        if (show) {
+            val field = TextFields.focused(screen.snapshots.current().snapshot)
+                ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_FIELD)
+            tap(screen, field)?.let { return it }
+            return CommandResult(Outcome.DONE, repeatable = true)
         }
-        return when (result) {
+        // Read on the live screen right before the press, as for "stop editing": Back without the keyboard would leave
+        // the screen.
+        screen.snapshots.invalidate()
+        if (!TextFields.keyboardShows(screen.snapshots.current().snapshot)) {
+            return CommandResult(Outcome.FAILED, show = TextCommandTexts.KEYBOARD_NOT_SHOWING)
+        }
+        return when (val result = screen.actions.global(GlobalAction.BACK)) {
             is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
             is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
         }
@@ -299,56 +311,86 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
         val toggle = TextFields.passwordToggle(snapshot, field)
             ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_PASSWORD_TOGGLE)
         if (toggle.checkable && toggle.checked) return CommandResult(Outcome.DONE, show = TextCommandTexts.PASSWORD_SHOWING)
-        val element = environment.targets.still(ScreenTargets.chosen(toggle))
-            ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
-        return when (val result = screen.actions.tap(element.key)) {
-            is ActionResult.Done -> CommandResult(Outcome.DONE)
-            is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
-        }
+        tap(screen, toggle)?.let { return it }
+        return CommandResult(Outcome.DONE)
     }
 
     /**
      * "Search for X": the focused field when it is a search field (by its input's search action, its names or its view
-     * ID), else the first search field, else a "search" button, which Kestrel taps before it waits up to 2 s for a field
-     * to get the focus. A password field, or a field with more lines and no search action, such as a message, is never
-     * used. Kestrel replaces the field's text with X, records it so that "undo" brings back what was there, and submits
-     * it.
+     * ID), else the first search field, else a "search" button, which Kestrel taps before it waits up to 3 s for a new
+     * search field to get the focus. A password field, a phone number field, or a field with more lines and no search
+     * action, such as a message, is never used, and neither is the field that had the focus before the tap. Kestrel
+     * replaces the field's text with X, records it so that "undo" brings back what was there, and submits it.
      */
     private suspend fun search(screen: ScreenSession, query: String): CommandResult {
+        val text = Dictation.phrase(query)
+        // A line break goes only through the Enter key, and a search field has one line (design D8).
+        if ('\n' in text) return CommandResult(Outcome.FAILED, say = TextCommandTexts.LINE_BREAK)
         val snapshot = screen.snapshots.current().snapshot
-        val focusedSearches = TextFields.focused(snapshot)?.let { screen.text.searches(it.key) } == true
+        val focused = TextFields.focused(snapshot)
+        val focusedSearches = focused?.let { screen.text.searches(it.key) } == true
         val field = TextFields.searchField(snapshot, focusedSearches) ?: run {
             val button = TextFields.searchButton(snapshot) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
-            val element = environment.targets.still(ScreenTargets.chosen(button))
-                ?: return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
-            openSearch(screen, element) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
+            tap(screen, button)?.let { return it }
+            openedSearch(screen, before = focused) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
         }
-        val state = screen.text.read(field.key) ?: return gone()
+        var state = screen.text.read(field.key) ?: return gone()
         // Checked on the live field, also for one that a search button opened.
         val password = editing.password(field, state.password, TextFields.focused(screen.snapshots.current().snapshot))
-        if (password || (state.multiLine && !screen.text.searches(field.key))) {
+        if (password || screen.text.phone(field.key) || (state.multiLine && !screen.text.searches(field.key))) {
             return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
         }
-        val text = Dictation.phrase(query)
-        val replaced = screen.text.replace(field.key, 0, state.text.length, text, text.length, text.length)
+        var replaced = replaceAll(screen, field, state, text)
+        if (replaced == TextEditor.CHANGED) {
+            // The field has the focus now, and may show another text than before, as a browser's address bar shows the
+            // whole address once it has the focus: Kestrel replaces what it shows now.
+            state = screen.text.read(field.key) ?: return gone()
+            replaced = replaceAll(screen, field, state, text)
+        }
         if (replaced is ActionResult.Failed) return failed(replaced)
-        record(screen, field, state.toTextState())
         return when (val submitted = screen.text.submit(field.key)) {
             is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
             is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = submitted.reason)
         }
     }
 
-    /** Taps the search [button], which is still the element chosen, and waits up to 2 s for a field to get the focus. */
-    private suspend fun openSearch(screen: ScreenSession, button: ScreenElement): ScreenElement? {
-        if (screen.actions.tap(button.key) is ActionResult.Failed) return null
-        return withTimeoutOrNull(SEARCH_FIELD_MILLIS) {
+    /** Replaces the whole text of [field], which showed [state], with [text], and records it. */
+    private suspend fun replaceAll(screen: ScreenSession, field: ScreenElement, state: FieldState, text: String): ActionResult =
+        recorded(screen, field, state.toTextState(), took = { sameText(it, text) }) {
+            screen.text.replace(field.key, 0, state.text.length, text, text.length, text.length)
+        }
+
+    /**
+     * Waits up to 3 s, after the tap on a search button, for a new search field to get the focus: never [before], the
+     * field that had the focus before the tap, which the snapshot right after the tap may still show.
+     */
+    private suspend fun openedSearch(screen: ScreenSession, before: ScreenElement?): ScreenElement? =
+        withTimeoutOrNull(SEARCH_FIELD_MILLIS) {
             var field: ScreenElement? = null
             while (field == null) {
-                field = TextFields.focused(screen.snapshots.current().snapshot)
+                val snapshot = screen.snapshots.current().snapshot
+                val searches = TextFields.focused(snapshot)?.let { screen.text.searches(it.key) } == true
+                field = TextFields.openedSearchField(snapshot, before, searches)
                 if (field == null) delay(POLL_MILLIS)
             }
             field
+        }
+
+    /**
+     * Taps [element] once it is checked again on the current screen, as the screen commands tap (design spec, section
+     * 9.6): null once it is tapped, otherwise the failure, with "The screen changed. Say it again." when it changed and
+     * "Other windows cover it." when windows above now cover it.
+     */
+    private suspend fun tap(screen: ScreenSession, element: ScreenElement): CommandResult? {
+        val found = when (val checked = environment.targets.checked(ScreenTargets.chosen(element))) {
+            is Checked.Found -> checked.element
+            Checked.Covered -> return CommandResult(Outcome.FAILED, show = ActionResult.COVERED.reason)
+            Checked.Changed -> return CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+        }
+        return when (val result = screen.actions.tap(found.key, ScreenTargets.sameAs(found))) {
+            is ActionResult.Done -> null
+            ActionResult.CHANGED -> CommandResult(Outcome.FAILED, say = CommandTexts.SCREEN_CHANGED)
+            is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
         }
     }
 
@@ -358,15 +400,46 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
 
     /** Inserts [text] at the field's current selection, as a part of a dictation after a new line. */
     private suspend fun atCursor(screen: ScreenSession, field: ScreenElement, text: String): ActionResult {
-        val state = screen.text.read(field.key) ?: return ActionResult.Failed(TextCommandTexts.FIELD_GONE)
+        val state = focusedState(screen, field) ?: return ActionResult.Failed(TextCommandTexts.FIELD_GONE)
         val end = state.selectionStart + text.length
         return screen.text.replace(field.key, state.selectionStart, state.selectionEnd, text, end, end)
     }
 
-    /** Records Kestrel's edit of [field] from [before] to what the field shows now, once for the whole command. */
-    private suspend fun record(screen: ScreenSession, field: ScreenElement, before: TextState) {
+    /**
+     * The live state of [field], or null when it has gone or no longer has the focus: a key names a position, so after a
+     * change of the screen it may name a look-alike field that Kestrel would otherwise focus and type into.
+     */
+    private suspend fun focusedState(screen: ScreenSession, field: ScreenElement): FieldState? =
+        screen.text.read(field.key)?.takeIf { it.focused }
+
+    /**
+     * Runs [edit] and records Kestrel's edit of [field] from [before] once it is done. When "stop" cancels the command, the
+     * edit is recorded only when [took] says that the field shows its result. A failed edit records nothing, so that
+     * "undo" never takes back a change of the app's, as after `TextEditor.CHANGED`.
+     */
+    private suspend fun recorded(
+        screen: ScreenSession,
+        field: ScreenElement,
+        before: TextState,
+        took: (String) -> Boolean,
+        edit: suspend () -> ActionResult,
+    ): ActionResult {
+        var result: ActionResult? = null
+        try {
+            return edit().also { result = it }
+        } finally {
+            when (result) {
+                is ActionResult.Done -> withContext(NonCancellable) { record(screen, field, before) }
+                null -> withContext(NonCancellable) { record(screen, field, before, took) }
+                is ActionResult.Failed -> Unit
+            }
+        }
+    }
+
+    /** Records Kestrel's edit of [field] from [before] to what the field shows now, when [took] accepts that text. */
+    private suspend fun record(screen: ScreenSession, field: ScreenElement, before: TextState, took: (String) -> Boolean = { true }) {
         val after = screen.text.read(field.key) ?: return
-        if (after.text != before.text) editing.history.record(editing.id(field), before, after.toTextState())
+        if (after.text != before.text && took(after.text)) editing.history.record(editing.id(field), before, after.toTextState())
     }
 
     // The editor's reasons are fixed texts without the field's words. Kestrel says the one that the owner must act on.
@@ -381,8 +454,14 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
 
     private fun FieldState.toTextState() = TextState.of(text, selectionStart, selectionEnd)
 
+    /** [state]'s text with a line break in place of its selection, as the Enter key leaves it. */
+    private fun lineBreak(state: TextState) = state.text.substring(0, state.selectionStart) + "\n" + state.text.substring(state.selectionEnd)
+
+    // Web editors turn a space next to new words into a no-break space, or back, as they balance whitespace.
+    private fun sameText(shown: String, expected: String) = shown.replace('\u00A0', ' ') == expected.replace('\u00A0', ' ')
+
     private companion object {
-        const val SEARCH_FIELD_MILLIS = 2_000L
+        const val SEARCH_FIELD_MILLIS = 3_000L
         const val POLL_MILLIS = 100L
     }
 }

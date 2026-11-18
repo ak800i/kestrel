@@ -68,6 +68,9 @@
         <activity
             android:name=".WebEditActivity"
             android:exported="true" />
+        <activity
+            android:name=".SearchActivity"
+            android:exported="true" />
         <!-- Plan 3B: text fixtures -->
         <!-- Plan 3C: phone fixtures -->
     </application>

@@ -5,10 +5,16 @@ package dev.kestrel.commands.edit
  * and after each edit, one entry per command. It keeps at most [maxEdits] edits for each of the last [maxFields] fields.
  * "Undo" puts back the state before the last edit, and "redo" the state after it, but only while the field still shows
  * the text that Kestrel left; otherwise the field's history is dropped, because the app or the owner changed the text.
+ * A field's history also goes once its last edit is more than [MAX_AGE_MILLIS] old by [clock], because a key names a
+ * position, so the empty message field of another conversation in the same app could otherwise take an old text back.
  * Edits of password fields are never recorded.
  */
-class EditHistory(private val maxEdits: Int = 50, private val maxFields: Int = 20) {
-    private class Field {
+class EditHistory(
+    private val maxEdits: Int = 50,
+    private val maxFields: Int = 20,
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+) {
+    private class Field(var lastEdit: Long) {
         val edits = ArrayList<Edit>()
 
         /** How many of [edits] are applied; the ones after it can be redone. */
@@ -23,7 +29,8 @@ class EditHistory(private val maxEdits: Int = 50, private val maxFields: Int = 2
     /** Records an edit of [field] (its app and key) from [before] to [after]. It drops the edits that "redo" could restore. */
     @Synchronized
     fun record(field: String, before: TextState, after: TextState) {
-        val edits = fields.getOrPut(field) { Field() }
+        val edits = live(field) ?: Field(clock()).also { fields[field] = it }
+        edits.lastEdit = clock()
         while (edits.edits.size > edits.applied) edits.edits.removeAt(edits.edits.lastIndex)
         edits.edits += Edit(before, after)
         edits.applied++
@@ -35,10 +42,10 @@ class EditHistory(private val maxEdits: Int = 50, private val maxFields: Int = 2
     }
 
     @Synchronized
-    fun canUndo(field: String): Boolean = (fields[field]?.applied ?: 0) > 0
+    fun canUndo(field: String): Boolean = (live(field)?.applied ?: 0) > 0
 
     @Synchronized
-    fun canRedo(field: String): Boolean = fields[field]?.let { it.applied < it.edits.size } ?: false
+    fun canRedo(field: String): Boolean = live(field)?.let { it.applied < it.edits.size } ?: false
 
     /**
      * The state before the last edit of [field], or null when there is none or when [current] does not show the text
@@ -60,7 +67,7 @@ class EditHistory(private val maxEdits: Int = 50, private val maxFields: Int = 2
      */
     @Synchronized
     fun peek(field: String, current: TextState, redo: Boolean): TextState? {
-        val edits = fields[field] ?: return null
+        val edits = live(field) ?: return null
         if (if (redo) edits.applied == edits.edits.size else edits.applied == 0) return null
         val edit = edits.edits[if (redo) edits.applied else edits.applied - 1]
         if (current.text != (if (redo) edit.before else edit.after).text) {
@@ -73,10 +80,24 @@ class EditHistory(private val maxEdits: Int = 50, private val maxFields: Int = 2
     /** Moves [field]'s history one edit back, or forward when [redo] is true, after the field took what [peek] gave. */
     @Synchronized
     fun step(field: String, redo: Boolean) {
-        val edits = fields[field] ?: return
+        val edits = live(field) ?: return
+        edits.lastEdit = clock()
         if (redo && edits.applied < edits.edits.size) edits.applied++
         if (!redo && edits.applied > 0) edits.applied--
     }
 
+    /** The history of [field], or null when it has none or its last edit is too old; then it is dropped. */
+    private fun live(field: String): Field? {
+        val edits = fields[field] ?: return null
+        if (clock() - edits.lastEdit <= MAX_AGE_MILLIS) return edits
+        fields.remove(field)
+        return null
+    }
+
     override fun toString() = "EditHistory(${fields.size} fields)"
+
+    companion object {
+        /** How long a field's history lasts after Kestrel's last edit or undo in it. */
+        const val MAX_AGE_MILLIS = 5 * 60_000L
+    }
 }

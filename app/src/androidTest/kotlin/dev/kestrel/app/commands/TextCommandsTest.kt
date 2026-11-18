@@ -5,16 +5,20 @@ import dev.kestrel.app.commands.TextFieldTests.awaitBar
 import dev.kestrel.app.commands.TextFieldTests.awaitFocus
 import dev.kestrel.app.commands.TextFieldTests.awaitKeyboard
 import dev.kestrel.app.commands.TextFieldTests.awaitLine
+import dev.kestrel.app.commands.TextFieldTests.WEB_MILLIS
 import dev.kestrel.app.commands.TextFieldTests.field
+import dev.kestrel.app.commands.TextFieldTests.keepClipboard
 import dev.kestrel.app.listen.ListeningTexts
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
 import dev.kestrel.commands.Outcome
+import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.TextEditor
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -68,8 +72,9 @@ class TextCommandsTest {
         // A phone number field takes only a phone number; other speech goes back to the other parts, and editing works.
         done("start editing Phone")
         screen.awaitFocus("text_phone")
+        // The field formats the number as it goes in, as a dialpad does.
         done("plus four four seven nine")
-        screen.awaitLine("Phone: \"+4479\"")
+        screen.awaitLine("Phone: \"+44 79\"")
         assertEquals(Outcome.IGNORED, CommandTests.say("hello there").outcome)
         done("undo")
         screen.awaitLine("Phone: \"\"")
@@ -160,7 +165,7 @@ class TextCommandsTest {
         screen.awaitLine("Compose notes: \"See you at five.\" 16-16")
 
         screen.open("WebEditActivity", "Web edit fixture")
-        check(VoiceTests.waitUntil(10_000) { webFieldShown("web_notes") }) { "The web page's field did not appear" }
+        check(VoiceTests.waitUntil(WEB_MILLIS) { webFieldShown("web_notes") }) { "The web page's field did not appear" }
         done("start editing Web notes")
         screen.awaitFocus("web_notes")
         done("the meeting is on Monday exclamation mark")
@@ -170,7 +175,7 @@ class TextCommandsTest {
     @Test
     fun aWebPasswordThatShowPasswordShowsIsStillSpelled() {
         screen.open("WebEditActivity", "Web edit fixture")
-        check(VoiceTests.waitUntil(10_000) { webFieldShown("web_password") }) { "The web page's field did not appear" }
+        check(VoiceTests.waitUntil(WEB_MILLIS) { webFieldShown("web_password") }) { "The web page's field did not appear" }
         done("start editing Web password")
         screen.awaitFocus("web_password")
         done("a b")
@@ -229,7 +234,7 @@ class TextCommandsTest {
         screen.awaitLine("Compose notes: \"Hello World\" 0-5")
 
         screen.open("WebEditActivity", "Web edit fixture")
-        check(VoiceTests.waitUntil(10_000) { webFieldShown("web_notes") }) { "The web page's field did not appear" }
+        check(VoiceTests.waitUntil(WEB_MILLIS) { webFieldShown("web_notes") }) { "The web page's field did not appear" }
         done("start editing Web notes")
         screen.awaitFocus("web_notes")
         done("type red green blue")
@@ -294,7 +299,7 @@ class TextCommandsTest {
     }
 
     @Test
-    fun copyCutAndPasteBetweenTwoFields() {
+    fun copyCutAndPasteBetweenTwoFields() = screen.keepClipboard("Other text") {
         screen.open("EditActivity", "Edit fixture")
         done("start editing Search")
         screen.awaitFocus("text_search")
@@ -355,8 +360,61 @@ class TextCommandsTest {
         screen.awaitLine("Searched: \"weather tomorrow\"")
 
         screen.open("WebEditActivity", "Web edit fixture")
+        check(VoiceTests.waitUntil(WEB_MILLIS) { webFieldShown("web_search") }) { "The web page's field did not appear" }
         done("search for coffee near me")
         screen.awaitLine("Submitted: \"coffee near me\"")
+    }
+
+    @Test
+    fun searchForNeverTypesALineBreak() {
+        screen.open("EditActivity", "Edit fixture")
+
+        // A spoken "new line" would go into the one-line search field and be submitted with the query.
+        assertEquals(Outcome.FAILED, CommandTests.say("search for coffee new line tea").outcome)
+        CommandTests.awaitSaid(TextCommandTexts.LINE_BREAK)
+        screen.awaitLine("Search: \"\" 0-0")
+    }
+
+    @Test
+    fun aSearchButtonsFieldTakesTheQueryAndTheDraftThatHadTheFocusKeepsItsText() {
+        screen.open("SearchActivity", "Search button fixture")
+        done("start editing Subject")
+        screen.awaitFocus("text_subject")
+        done("type quarterly report")
+        screen.awaitLine("Subject: \"Quarterly report\"")
+
+        // The search field gets the focus a moment after the tap, while the subject still has it.
+        done("search for coffee")
+        screen.awaitLine("Searched: \"coffee\"")
+        screen.awaitLine("Subject: \"Quarterly report\"")
+    }
+
+    @Test
+    fun searchForReplacesTheWholeAddressThatTheBarShowsOnceItHasTheFocus() {
+        screen.open("SearchActivity", "Address fixture", "--ez address true")
+        screen.awaitLine("Address: \"example.com/foo\"")
+
+        done("search for coffee")
+        screen.awaitLine("Went: \"coffee\"")
+        done("undo")
+        screen.awaitLine("Address: \"https://example.com/foo\"")
+    }
+
+    @Test
+    fun aPasswordThatAlreadyShowsHidesTheTranscriptBeforeKestrelSawItHidden() {
+        screen.open("EditActivity", "Edit fixture")
+        val box = runBlocking { screen.awaitElement { it.checkable && it.label == "Show password" } }
+        // The app shows the password before Kestrel ever sees the field, so its node is no password field any more.
+        assertTrue(runBlocking { screen.session.actions.tap(box.key) } is ActionResult.Done)
+        screen.awaitLine("Password shown")
+        done("start editing Password")
+        screen.awaitFocus("text_password")
+
+        check(VoiceTests.waitUntil(5_000) { CommandTests.graph.commands.privateInput() }) { "Kestrel did not see the password field" }
+        CommandTests.send("a b")
+        screen.awaitBar(ListeningTexts.PRIVATE_INPUT)
+        assertEquals(Outcome.DONE, CommandTests.next().outcome)
+        screen.awaitLine("Password: 2 characters")
     }
 
     @Test

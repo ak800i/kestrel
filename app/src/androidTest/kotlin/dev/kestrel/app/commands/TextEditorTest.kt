@@ -1,8 +1,10 @@
 package dev.kestrel.app.commands
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.app.commands.TextFieldTests.WEB_MILLIS
 import dev.kestrel.app.commands.TextFieldTests.awaitLine
 import dev.kestrel.app.commands.TextFieldTests.field
+import dev.kestrel.app.commands.TextFieldTests.keepClipboard
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
@@ -86,21 +88,23 @@ class TextEditorTest {
     }
 
     @Test
-    fun cutCopyAndPasteActOnTheFocusedField() = runBlocking<Unit> {
-        screen.open("EditActivity", "Edit fixture")
-        val search = screen.field("text_search").key
-        val paste = screen.field("text_paste").key
-        editor.replace(search, 0, 0, "copy me", 7, 7)
+    fun cutCopyAndPasteActOnTheFocusedField() = screen.keepClipboard("other") {
+        runBlocking<Unit> {
+            screen.open("EditActivity", "Edit fixture")
+            val search = screen.field("text_search").key
+            val paste = screen.field("text_paste").key
+            editor.replace(search, 0, 0, "copy me", 7, 7)
 
-        assertEquals(TextEditor.SELECT_FIRST, editor.clipboard(search, ClipboardKind.COPY))
-        editor.select(search, 0, 4)
-        assertTrue(editor.clipboard(search, ClipboardKind.COPY) is ActionResult.Done)
-        assertTrue(editor.clipboard(paste, ClipboardKind.PASTE) is ActionResult.Done)
-        screen.awaitLine("Paste: \"copy\"")
-        // The paste field has the focus now, and cut needs no more.
-        editor.select(paste, 0, 2)
-        assertTrue(editor.clipboard(paste, ClipboardKind.CUT) is ActionResult.Done)
-        screen.awaitLine("Paste: \"py\"")
+            assertEquals(TextEditor.SELECT_FIRST, editor.clipboard(search, ClipboardKind.COPY))
+            editor.select(search, 0, 4)
+            assertTrue(editor.clipboard(search, ClipboardKind.COPY) is ActionResult.Done)
+            assertTrue(editor.clipboard(paste, ClipboardKind.PASTE) is ActionResult.Done)
+            screen.awaitLine("Paste: \"copy\"")
+            // The paste field has the focus now, and cut needs no more.
+            editor.select(paste, 0, 2)
+            assertTrue(editor.clipboard(paste, ClipboardKind.CUT) is ActionResult.Done)
+            screen.awaitLine("Paste: \"py\"")
+        }
     }
 
     @Test
@@ -118,15 +122,27 @@ class TextEditorTest {
     }
 
     @Test
-    fun anEditKeepsWhatTheAppPutInTheFieldWhileItConnected() = runBlocking<Unit> {
+    fun anEditOfATextThatTheAppChangedWhileTheFieldConnectedChangesNothing() = runBlocking<Unit> {
         screen.open("EditActivity", "Edit fixture")
         val draft = screen.field("text_draft").key
         assertEquals("", checkNotNull(editor.read(draft)).text)
 
         // The app fills in its draft when the field gets the focus, after Kestrel read the field and before its input
-        // started, so the edit goes into the draft, and no fallback writes the text that Kestrel read over it.
-        assertEquals(throughInputMethod, editor.replace(draft, 0, 0, "Hi ", 3, 3))
-        screen.awaitLine("Draft: \"Hi Dear team,\" 3-3")
+        // started. The edit was planned on the empty field, so it would land elsewhere in the draft: Kestrel refuses it,
+        // and no fallback writes the text that it read over the draft.
+        assertEquals(TextEditor.CHANGED, editor.replace(draft, 0, 0, "Hi ", 3, 3))
+        screen.awaitLine("Draft: \"Dear team,\" 0-0")
+    }
+
+    @Test
+    fun aFieldThatIgnoresTheInputMethodTakesTheWholeTextThroughSetText() = runBlocking<Unit> {
+        screen.open("EditActivity", "Edit fixture")
+        val legacy = screen.field("text_legacy").key
+
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), editor.replace(legacy, 0, 0, "typed", 5, 5))
+        screen.awaitLine("Legacy: \"typed\" 5-5")
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), editor.replace(legacy, 0, 5, "Typed", 1, 1))
+        screen.awaitLine("Legacy: \"Typed\" 1-1")
     }
 
     @Test
@@ -158,9 +174,9 @@ class TextEditorTest {
     @Test
     fun webFieldsTakeEditsSelectionsLinesAndSubmit() = runBlocking<Unit> {
         screen.open("WebEditActivity", "Web edit fixture")
-        val search = screen.field("web_search").key
-        val notes = screen.field("web_notes").key
-        val rich = screen.field("web_rich").key
+        val search = screen.field("web_search", WEB_MILLIS).key
+        val notes = screen.field("web_notes", WEB_MILLIS).key
+        val rich = screen.field("web_rich", WEB_MILLIS).key
 
         assertEquals(throughInputMethod, editor.replace(notes, 0, 0, "a", 1, 1))
         assertTrue(editor.newLine(notes) is ActionResult.Done)
