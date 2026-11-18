@@ -92,7 +92,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
             } else {
                 null
             }
-            "user=${users?.getSerialNumberForUser(user)} apps=$apps type=${type ?: "unknown"}"
+            "user=${users?.getSerialNumberForUser(user) ?: "unknown"} apps=$apps type=${type ?: "unknown"}"
         }
     }
 

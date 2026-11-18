@@ -2,6 +2,7 @@ package dev.kestrel.app.commands
 
 import android.Manifest
 import android.os.SystemClock
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.commands.TextFieldTests.keepClipboard
 import dev.kestrel.app.orchestrator.Mode
@@ -135,6 +136,8 @@ class CallCommandsTest {
         // The emulator's phone app then keeps its own number empty in most runs (3 of 4 in plan 3C Task 8's runs), and its
         // call button calls no one: Kestrel must say so, never end in silence. In the other runs the call starts.
         val result = CommandTests.say("call 064 123 4567", CALL_MILLIS)
+        // The branch goes to the log, so that a run shows whether the background case reproduced.
+        Log.i(TAG, if (result.outcome == Outcome.FAILED) "the call did not start" else "the call started")
         if (result.outcome == Outcome.FAILED) {
             CommandTests.awaitSaid(PhoneCommandTexts.CALL_NOT_STARTED)
             assertFalse("A call started", VoiceTests.waitUntil(COUNTDOWN_AND_MORE) { listening.state.value.mode == Mode.IN_CALL })
@@ -319,6 +322,8 @@ class CallCommandsTest {
     }
 
     private companion object {
+        const val TAG = "CallCommandsTest"
+
         // The 4 s countdown and a little more, after which a call that was not cancelled would have started.
         const val COUNTDOWN_AND_MORE = 6_000L
 
