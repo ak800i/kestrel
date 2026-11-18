@@ -306,17 +306,17 @@ class ScreenActions internal constructor(
      */
     private suspend fun magnified(): ActionResult {
         tracker.onScreenChanged()
-        val result = settled(ActionMethod.MAGNIFICATION)
-        service.clearCache()
-        tracker.onScreenChanged()
-        return result
+        return thenClean({ settled(ActionMethod.MAGNIFICATION) }) {
+            service.clearCache()
+            tracker.onScreenChanged()
+        }
     }
 
     suspend fun global(action: GlobalAction): ActionResult {
         return if (service.performGlobalAction(action.id)) {
             settled(ActionMethod.GLOBAL_ACTION)
         } else {
-            ActionResult.Failed("Android refused the action ${action.name}.")
+            action.refused
         }
     }
 

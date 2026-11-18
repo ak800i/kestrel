@@ -2,17 +2,20 @@ package dev.kestrel.screen.act
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.MagnificationConfig
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.os.UserHandle
 import android.view.accessibility.AccessibilityWindowInfo
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.ScreenChangeTracker
 import dev.kestrel.screen.read.SnapshotCache
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -57,19 +60,19 @@ class SystemControls(
 
     /**
      * Shows the app that was in front before the current one (research r24, prototype P4): two recent-apps actions 300 ms
-     * apart, and then a wait of up to 3 s for an app window in front whose app is neither the one before nor the home
-     * screen, whose overview shows in between. Kestrel keeps no history of the apps.
+     * apart, and then a wait of up to 3 s for an app window in front whose app is neither the one before, nor the app of
+     * Android's recents component, whose overview shows in between, nor the home screen. Kestrel keeps no history of the
+     * apps.
      */
     suspend fun previousApp(): ActionResult {
         val before = frontApp()
-        val home = homeApp()
+        val overview = setOfNotNull(recentsApp(), homeApp())
         if (!service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)) return RECENTS_REFUSED
         delay(RECENTS_GAP_MILLIS)
         if (!service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)) return RECENTS_REFUSED
         val switched = withTimeoutOrNull(SWITCH_MILLIS) {
             while (true) {
-                val now = activeApp()
-                if (now != null && now != before && now != home) break
+                if (switchedTo(activeApp(), before, overview)) break
                 delay(POLL_MILLIS)
             }
         } != null
@@ -100,11 +103,11 @@ class SystemControls(
         // As in ScreenActions.zoom: Android sends no event for a move of the magnification, and its node cache keeps the
         // old positions, so Kestrel reports the change itself, before and after the wait.
         tracker.onScreenChanged()
-        val result = settled(ActionMethod.MAGNIFICATION)
-        service.clearCache()
-        tracker.onScreenChanged()
-        snapshots.invalidate()
-        return result
+        return thenClean({ settled(ActionMethod.MAGNIFICATION) }) {
+            service.clearCache()
+            tracker.onScreenChanged()
+            snapshots.invalidate()
+        }
     }
 
     /** The centre of the magnified area in screen pixels, or null while the screen is not magnified. */
@@ -125,10 +128,25 @@ class SystemControls(
         return (apps.firstOrNull { it.isActive } ?: apps.firstOrNull())?.root?.packageName?.toString()
     }
 
-    // The manifest's <queries> lets Kestrel see the home app.
+    // The manifest's <queries> lets Kestrel see the home app. A switch that ends on the home screen, as with a single task,
+    // is no switch.
     private fun homeApp(): String? = service.packageManager
         .resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
         ?.activityInfo?.packageName
+
+    // The app that shows the overview: Android's recents component, which stays the system launcher's even when another
+    // launcher is the default home app or none is. Android names it only in a framework resource that has no public ID.
+    @SuppressLint("DiscouragedApi")
+    private fun recentsApp(): String? {
+        val resources = Resources.getSystem()
+        val id = resources.getIdentifier("config_recentsComponentName", "string", "android")
+        if (id == 0) return null
+        return try {
+            recentsPackage(resources.getString(id))
+        } catch (e: Resources.NotFoundException) {
+            null
+        }
+    }
 
     private suspend fun settled(method: ActionMethod): ActionResult {
         tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
@@ -145,4 +163,20 @@ class SystemControls(
         val NOT_SWITCHED = ActionResult.Failed("No other app came to the front")
         val NOT_MAGNIFIED = ActionResult.Failed("The screen is not magnified")
     }
+}
+
+/** Whether the app window in front, [now], is another app than [before] and none of the [overview]'s apps. */
+internal fun switchedTo(now: String?, before: String?, overview: Set<String>): Boolean = now != null && now != before && now !in overview
+
+/** The package of a flattened component name such as "com.android.launcher3/.RecentsActivity", or null. */
+internal fun recentsPackage(component: String?): String? = component?.substringBefore('/')?.trim()?.takeIf { it.isNotEmpty() }
+
+/**
+ * Runs [wait] and then [cleanup], also when the command is cancelled during the wait: Android sends no event for a change
+ * of the magnification, so a skipped cleanup would leave the old positions in Android's node cache.
+ */
+internal suspend fun <T> thenClean(wait: suspend () -> T, cleanup: () -> Unit): T = try {
+    wait()
+} finally {
+    withContext(NonCancellable) { cleanup() }
 }

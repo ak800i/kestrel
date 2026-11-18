@@ -22,4 +22,24 @@ enum class GlobalAction(internal val id: Int) {
 
     /** Closes the notification shade and Quick Settings. */
     DISMISS_SHADE(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE),
+    ;
+
+    /** What the feedback bar shows when Android refuses the action: the action in plain words, never the enum's name. */
+    internal val refused: ActionResult.Failed
+        get() = ActionResult.Failed(
+            "Android refused to " + when (this) {
+                BACK -> "go back"
+                HOME -> "go home"
+                RECENT_APPS -> "show recent apps"
+                NOTIFICATIONS -> "show the notifications"
+                QUICK_SETTINGS -> "show Quick Settings"
+                LOCK_SCREEN -> "lock the screen"
+                SCREENSHOT -> "take a screenshot"
+                POWER_MENU -> "open the power menu"
+                SPLIT_SCREEN -> "split the screen"
+                PLAY_PAUSE -> "play or pause"
+                ALL_APPS -> "show all apps"
+                DISMISS_SHADE -> "close the notifications"
+            } + ".",
+        )
 }

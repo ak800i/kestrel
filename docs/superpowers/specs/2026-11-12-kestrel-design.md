@@ -698,7 +698,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 | Unrestricted battery use | Setting | Setup checklist |
 
 - Kestrel never requests `SEND_SMS`, `CALL_PHONE`, `CAMERA`, `ACCESS_BACKGROUND_LOCATION`, `SYSTEM_ALERT_WINDOW`, `REQUEST_INSTALL_PACKAGES`, `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `WRITE_SETTINGS` or `WRITE_SECURE_SETTINGS`.
-- App visibility uses `<queries>` for launcher apps, for the home app (so that "show previous app" can tell the home app's overview from the app that comes back) and for the deep-link schemes.
+- App visibility uses `<queries>` for launcher apps, for the home app (so that "show previous app" does not count the home screen as the app that comes back; it tells the overview by the recents component that Android reports) and for the deep-link schemes.
 - Kestrel is installed with `adb install`. This avoids Android's "restricted settings" block for accessibility and notification access, and Play Protect's block on sideloaded apps that request accessibility (B6, B7).
 
 ## 14. Error handling and resilience
