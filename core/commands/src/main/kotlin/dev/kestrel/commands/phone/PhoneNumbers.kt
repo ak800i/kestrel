@@ -22,6 +22,14 @@ object PhoneNumbers {
     private val DATE =
         Regex("""(?:$DAY[./-] ?$MONTH[./-] ?$YEAR|$MONTH[./-]$DAY[./-]$YEAR|\d{4}[./-]$MONTH[./-]$DAY)\.?(?:[ \u00A0].*)?""")
 
+    // A group of 1 or 2 digits and the spaces after it, before more digits.
+    private val LEADING_GROUP = Regex("""^\d{1,2}[ \u00A0]+(?=[\d(])""")
+
+    // An amount such as 1.250.000, and a decimal such as a coordinate's 44.812345.
+    private val THOUSANDS = Regex("""[1-9]\d{0,2}(?:\.\d{3})+""")
+    private val DECIMAL = Regex("""\d{1,3}\.\d{4,}""")
+    private val COMMA_AFTER = Regex(""",\d""")
+
     // The parts of a stored number: an extension's word, digits, words, or one other character.
     private val STORED = Regex("""extension|ext\.?|\d+|\p{L}+|[^\p{L}\d]""")
     private val EXTENSION = setOf("extension", "ext", "ext.", "x", "p")
@@ -34,13 +42,15 @@ object PhoneNumbers {
     /**
      * The number that [text] says, as "+", digits, "*" and "#", or null when [text] says anything else. Digits and digit
      * words count, "plus" is "+" at the start, "star" is "*", "hash" and "pound" are "#"; spaces, dashes and other
-     * separators are ignored.
+     * separators are ignored. A digit of another script than ASCII's makes [text] no number.
      */
     fun digits(text: String): String? {
+        // A digit of another script is refused, not skipped, so that no other number comes out of the text.
+        if (text.any { it.isDigit() && it !in '0'..'9' }) return null
         val number = StringBuilder()
         for (token in TOKEN.findAll(text.lowercase()).map { it.value }) {
             when {
-                token[0].isDigit() -> token.forEach { number.append(Character.forDigit(Character.digit(it, 10), 10)) }
+                token[0].isDigit() -> number.append(token)
                 token == "+" || token == "plus" -> if (number.isEmpty()) number.append('+') else return null
                 token == "*" || token == "star" -> number.append('*')
                 token == "#" || token == "hash" || token == "pound" -> number.append('#')
@@ -53,11 +63,27 @@ object PhoneNumbers {
 
     /**
      * Where [text] shows phone numbers: an optional "+", then 6 to 15 digits with spaces, dashes, dots, slashes or brackets
-     * between them. Dates such as "17.11.2026", "17. 11. 2026." and "17/11/26", also with a time after them, are skipped.
+     * between them. Dates such as "17.11.2026", "17. 11. 2026." and "17/11/26", also with a time after them, are skipped,
+     * and so are amounts and coordinates, whose dots and commas separate thousands or decimals ("1.250.000,00",
+     * "44.812345"). A group of 1 or 2 digits right after a word, such as "Room 12" before a number, is no part of it.
      */
-    fun find(text: String): List<IntRange> = CANDIDATE.findAll(text).filter { match ->
-        match.value.count(Char::isDigit) in 6..15 && !DATE.matches(match.value)
-    }.map { it.range }.toList()
+    fun find(text: String): List<IntRange> = CANDIDATE.findAll(text).mapNotNull { match ->
+        var range = match.range
+        if (followsWord(text, range.first)) {
+            LEADING_GROUP.find(match.value)?.let { range = range.first + it.value.length..range.last }
+        }
+        val value = text.substring(range)
+        range.takeIf { value.count(Char::isDigit) in 6..15 && !DATE.matches(value) && !amount(text, range, value) }
+    }.toList()
+
+    // Whether the last character before [start], after any spaces, is a letter.
+    private fun followsWord(text: String, start: Int): Boolean = text.substring(0, start).trimEnd().lastOrNull()?.isLetter() == true
+
+    // Thousands groups after a first group that does not start with 0, a decimal, or digits that a decimal comma follows or
+    // a thousands comma comes before.
+    private fun amount(text: String, range: IntRange, value: String): Boolean =
+        THOUSANDS.matches(value) || DECIMAL.matches(value) || COMMA_AFTER.matchesAt(text, range.last + 1) ||
+            range.first >= 2 && text[range.first - 1] == ',' && text[range.first - 2].isDigit()
 
     /**
      * A contact's stored number as the phone app takes it in a `tel:` link: digits, a leading "+", "*" and "#", and a pause

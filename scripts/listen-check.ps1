@@ -196,7 +196,8 @@ function Wait-Condition([scriptblock]$Condition, [int]$TimeoutSeconds = 5) {
 
 function Get-Tiles { Get-SecureSetting -Serial $Serial -Name sysui_qs_tiles }
 
-# Writes the list of Quick Settings tiles to the setting, or deletes it for 'null'. A SystemUI before Android 15 follows it.
+# Writes the list of Quick Settings tiles to the setting, or deletes it for 'null'. A SystemUI that does not keep the list
+# itself follows it.
 function Set-Tiles([string]$Value) {
     $command = if ($Value -eq 'null') { 'settings delete secure sysui_qs_tiles' } else { "settings put secure sysui_qs_tiles $(Format-ShellText $Value)" }
     Invoke-Checked $command | Out-Null
@@ -411,9 +412,9 @@ function Invoke-TileCheck {
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
     try {
         # First in the list, so that the tile is on the first page of Quick Settings, whose tiles SystemUI follows while the
-        # panel is open; its dump lists only them. Since Android 15, SystemUI keeps the list itself and overwrites other
-        # writes to the setting at once, so the tile goes in through SystemUI. A device without a list of its own gets the
-        # tile at the end, after SystemUI's default tiles; if that is past the first page, the check fails.
+        # panel is open; its dump lists only them. On Android 17 (observed), SystemUI keeps the list itself and overwrites
+        # other writes to the setting at once, so the tile goes in through SystemUI. A device without a list of its own
+        # gets the tile at the end, after SystemUI's default tiles; if that is past the first page, the check fails.
         $others = if ($tilesBefore -in 'null', '') { @() } else { @($tilesBefore -split ',' | Where-Object { $_ -notmatch 'KestrelTileService' }) }
         $tiles = (@($tileSpec) + $others) -join ','
         if ($others.Count -eq 0) {
@@ -421,7 +422,7 @@ function Invoke-TileCheck {
         } else {
             Invoke-Checked "cmd statusbar set-tiles $(Format-ShellText $tiles)" | Out-Null
         }
-        # A SystemUI before Android 15 follows the setting itself.
+        # A SystemUI that does not keep the list itself follows the setting.
         if (-not (Wait-Condition { (Get-Tiles) -match 'KestrelTileService' })) { Set-Tiles $tiles }
         if (-not (Wait-Condition { (Get-Tiles) -match 'KestrelTileService' })) {
             return 'failed: Quick Settings did not list Kestrel''s tile within 5 s'
@@ -848,9 +849,9 @@ $restoresAtEnd = @(
         # puts it back in its place.
         if ($tilesBefore -notmatch 'KestrelTileService') { Invoke-Checked "cmd statusbar remove-tile $tile" | Out-Null }
         # SystemUI writes the list a moment later. A list that does not come back as it was is written back: through
-        # SystemUI, which since Android 15 keeps the list itself and overwrites other writes to the setting, or else to the
-        # setting, which an older SystemUI follows. set-tiles does nothing when the list equals the tiles that SystemUI has
-        # made, which leave out tiles that are not installed.
+        # SystemUI, which on Android 17 (observed) keeps the list itself and overwrites other writes to the setting, or
+        # else to the setting, which a SystemUI that does not keep the list follows. set-tiles does nothing when the list
+        # equals the tiles that SystemUI has made, which leave out tiles that are not installed.
         if (-not (Wait-Condition { (Get-Tiles) -ceq $tilesBefore })) {
             if ($tilesBefore -notin 'null', '') { Invoke-Checked "cmd statusbar set-tiles $(Format-ShellText $tilesBefore)" | Out-Null }
             if (-not (Wait-Condition { (Get-Tiles) -ceq $tilesBefore })) { Set-Tiles $tilesBefore }

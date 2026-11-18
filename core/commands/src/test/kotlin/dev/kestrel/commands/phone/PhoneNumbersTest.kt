@@ -26,6 +26,9 @@ class PhoneNumbersTest {
         assertNull(PhoneNumbers.digits("plus"))
         assertNull(PhoneNumbers.digits("064 plus 1"))
         assertNull(PhoneNumbers.digits(""))
+        // A digit of another script is refused, never skipped, so that no other number comes out of it.
+        assertNull(PhoneNumbers.digits("064 \u0661\u0662\u0663 4567"))
+        assertNull(PhoneNumbers.digits("\u0661\u0661\u0662"))
     }
 
     @Test
@@ -38,6 +41,19 @@ class PhoneNumbersTest {
         for (date in listOf("17/11/26 at 10.30, code 12345", "Sent 17.11.2026 10:30", "17. 11. 2026.", "2026-11-17 10:30")) {
             assertTrue(date, PhoneNumbers.find(date).isEmpty())
         }
+    }
+
+    @Test
+    fun aShortGroupAfterAWordIsNoPartOfTheNumberAndAmountsAndCoordinatesAreNoNumbers() {
+        fun found(text: String) = PhoneNumbers.find(text).map { text.substring(it) }
+
+        assertEquals(listOf("064 123 4567"), found("Room 12 064 123 4567"))
+        assertEquals(listOf("064 123 4567"), found("Floor 3 064 123 4567"))
+        for (text in listOf("Total 1.250.000,00 RSD", "Total 250000,00 RSD", "Paid 1,250,000 today", "At 44.812345, 20.461234")) {
+            assertEquals(text, emptyList<String>(), found(text))
+        }
+        // Phone numbers with dots still count.
+        assertEquals(listOf("064.123.4567", "011.234.5678"), found("Call 064.123.4567 or 011.234.5678"))
     }
 
     @Test

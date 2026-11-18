@@ -141,7 +141,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
     }
 
     // The Bluetooth switch of the settings page, in the window of Settings that the command opened: a switch named
-    // Bluetooth, or the page's one main switch, which on AOSP is named only by its view ID (android:id/switch_widget).
+    // Bluetooth, or the page's one main switch, which on AOSP is named only by its view ID (android:id/switch_widget),
+    // while the page's title or its switch bar names Bluetooth.
     private suspend fun bluetoothPage(screen: ScreenSession, on: Boolean): CommandResult {
         val before = screen.snapshots.current().snapshot.windows.map { it.id }.toSet()
         var opening = true
@@ -153,7 +154,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             val main = await(screen) { snapshot, element ->
                 element.windowId !in before && element.packageName == SETTINGS && element.checkable && element.enabled &&
                     snapshot.windows.any { it.id == element.windowId && it.kind == WindowKind.APPLICATION } &&
-                    (namesRadio(snapshot, element, RadioKind.BLUETOOTH) || mainSwitch(snapshot, element.windowId) == element)
+                    (namesRadio(snapshot, element, RadioKind.BLUETOOTH) || mainSwitch(snapshot, element.windowId, RadioKind.BLUETOOTH) == element)
             } ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             val element = targets.still(ScreenTargets.chosen(main))
             if (element != null && element.checked != on) screen.actions.tap(element.key)
@@ -171,22 +172,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
      */
     private suspend fun leavePage(screen: ScreenSession, before: Set<Int>, opening: Boolean) {
         newWindow(screen, before, setOf(SETTINGS), opening) ?: return
-        repeat(MAX_BACKS) {
-            // The page comes to the front a moment after its window appears.
-            val page = withTimeoutOrNull(APPEAR_MILLIS) {
-                var page = settingsPageInFront(screen.snapshots.current().snapshot.windows, before)
-                while (page == null) {
-                    delay(POLL_MILLIS)
-                    page = settingsPageInFront(screen.snapshots.current().snapshot.windows, before)
-                }
-                page
-            } ?: return
-            screen.actions.global(GlobalAction.BACK)
-            // Waits until another app window is in front, so that the next check never sees the closing page.
-            withTimeoutOrNull(LEAVE_MILLIS) {
-                while (frontApp(screen.snapshots.current().snapshot.windows).let { it == null || it.id == page.id }) delay(POLL_MILLIS)
-            } ?: return
-        }
+        backUntilLeft({ screen.snapshots.current().snapshot.windows }, before) { screen.actions.global(GlobalAction.BACK) }
     }
 
     private fun bluetoothResult(changed: Boolean) = if (changed) {
@@ -410,10 +396,13 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             val inside = snapshot.elements.filter { candidate -> index >= 0 && within(snapshot, candidate, index) }
             val names = ScreenTargets.names(snapshot, element) +
                 inside.flatMap { listOfNotNull(it.label, it.text.takeUnless { _ -> it.editable }, it.contentDescription) }
+            return names.any { isRadioName(it, radio) }
+        }
+
+        // Whether [name] is [radio]'s name, alone or after "use", in folded words, before a comma that may add a detail.
+        private fun isRadioName(name: String, radio: RadioKind): Boolean {
             val radioNames = if (radio == RadioKind.WIFI) setOf(listOf("wi", "fi"), listOf("wifi")) else setOf(listOf("bluetooth"), listOf("blue", "tooth"))
-            return names.any { name ->
-                Normalizer.words(name.substringBefore(',')).let { if (it.firstOrNull() == "use") it.drop(1) else it } in radioNames
-            }
+            return Normalizer.words(name.substringBefore(',')).let { if (it.firstOrNull() == "use") it.drop(1) else it } in radioNames
         }
 
         // Whether [candidate] lies inside the element at [index], at most 20 levels down.
@@ -429,28 +418,60 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         }
 
         /**
-         * The one main switch of the settings page in the window [windowId]: an enabled, checkable element whose own name
-         * comes only from its view ID, such as AOSP's `android:id/switch_widget`, inside the page's switch bar, an element
-         * whose view ID names a switch bar. Null when the window has none, or more than one. Kestrel takes it only on the
-         * radio's settings page that it opened itself, whose switch bar may read "On" or "Off" rather than the radio's name.
+         * The one main switch of the settings page of [radio] in the window [windowId]: an enabled, checkable element whose
+         * own name comes only from its view ID, such as AOSP's `android:id/switch_widget`, inside the page's switch bar, an
+         * element whose view ID names a switch bar. Null when the window has none, or more than one, and when neither the
+         * window's title, a title in the page's toolbar or action bar, nor the switch bar's text names [radio], so that the
+         * page of another setting, such as NFC's on top of an old Settings task that the start brought to the front, never
+         * counts. Kestrel takes it only on the radio's settings page that it opened itself, whose switch bar may read "On"
+         * or "Off" rather than the radio's name.
          */
-        fun mainSwitch(snapshot: ScreenSnapshot, windowId: Int): ScreenElement? = snapshot.elements.filter { element ->
-            element.windowId == windowId && element.enabled && element.checkable && element.viewId != null &&
-                listOfNotNull(element.label, element.text, element.contentDescription, element.hint, element.supplementalDescription)
-                    .all { it.isBlank() } &&
-                inSwitchBar(snapshot, element)
-        }.singleOrNull()
+        fun mainSwitch(snapshot: ScreenSnapshot, windowId: Int, radio: RadioKind): ScreenElement? {
+            val switch = snapshot.elements.filter { element ->
+                element.windowId == windowId && element.enabled && element.checkable && element.viewId != null &&
+                    listOfNotNull(element.label, element.text, element.contentDescription, element.hint, element.supplementalDescription)
+                        .all { it.isBlank() } &&
+                    switchBar(snapshot, element) != null
+            }.singleOrNull() ?: return null
+            return switch.takeIf { pageNamesRadio(snapshot, it, radio) }
+        }
 
-        // Whether an ancestor of [element], at most 20 levels up, has a view ID such as switch_bar or main_switch_bar.
-        private fun inSwitchBar(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
-            var parent = element.parent?.let { snapshot.elements.getOrNull(it) }
+        // Whether the page of [switch] names [radio]: the window's title, a text in the page's toolbar or action bar, or the
+        // text of the switch bar around [switch], such as "Use Bluetooth".
+        private fun pageNamesRadio(snapshot: ScreenSnapshot, switch: ScreenElement, radio: RadioKind): Boolean {
+            val title = snapshot.windows.firstOrNull { it.id == switch.windowId }?.title
+            if (title != null && isRadioName(title, radio)) return true
+            val bar = switchBar(snapshot, switch)
+            return snapshot.elements.withIndex().any { (index, element) ->
+                element.windowId == switch.windowId && element != switch &&
+                    (bar != null && (index == bar || within(snapshot, element, bar)) || inToolbar(snapshot, index)) &&
+                    listOfNotNull(element.label, element.text, element.contentDescription).any { isRadioName(it, radio) }
+            }
+        }
+
+        // The index of [element]'s nearest ancestor, at most 20 levels up, with a view ID such as switch_bar or
+        // main_switch_bar, or null.
+        private fun switchBar(snapshot: ScreenSnapshot, element: ScreenElement): Int? = ancestor(snapshot, element.parent) {
+            it.viewId?.substringAfter(":id/")?.contains("switch_bar") == true
+        }
+
+        // Whether the element at [index], or an ancestor of it at most 20 levels up, has a view ID that names a toolbar or
+        // an action bar.
+        private fun inToolbar(snapshot: ScreenSnapshot, index: Int): Boolean = ancestor(snapshot, index) { element ->
+            element.viewId?.substringAfter(":id/")?.lowercase()?.let { "toolbar" in it || "action_bar" in it } == true
+        } != null
+
+        // The index of the first element from [start] up its parents, at most 20 levels, that [accept] takes.
+        private fun ancestor(snapshot: ScreenSnapshot, start: Int?, accept: (ScreenElement) -> Boolean): Int? {
+            var index = start
             var depth = 0
-            while (parent != null && depth < 20) {
-                if (parent.viewId?.substringAfter(":id/")?.contains("switch_bar") == true) return true
-                parent = parent.parent?.let { snapshot.elements.getOrNull(it) }
+            while (index != null && depth < 20) {
+                val element = snapshot.elements.getOrNull(index) ?: return null
+                if (accept(element)) return index
+                index = element.parent
                 depth++
             }
-            return false
+            return null
         }
 
         /**
@@ -478,6 +499,32 @@ internal class DeviceCommands(environment: CommandEnvironment) {
          */
         fun settingsPageInFront(windows: List<WindowSummary>, before: Set<Int>): WindowSummary? =
             frontApp(windows)?.takeIf { it.packageName == SETTINGS && it.id !in before }
+
+        /**
+         * Presses [back] while a Settings page that was not on the screen [before] is in front of [windows], at most 3
+         * times. Only before the first Back does it wait, up to 1 s, for the page to come to the front; after each Back it
+         * waits until another app window is in front, so that it never sees the closing page, and stops at once when that
+         * window is no such page.
+         */
+        suspend fun backUntilLeft(windows: suspend () -> List<WindowSummary>, before: Set<Int>, back: suspend () -> Unit) {
+            // The page comes to the front a moment after its window appears.
+            var page = withTimeoutOrNull(APPEAR_MILLIS) {
+                var page = settingsPageInFront(windows(), before)
+                while (page == null) {
+                    delay(POLL_MILLIS)
+                    page = settingsPageInFront(windows(), before)
+                }
+                page
+            } ?: return
+            repeat(MAX_BACKS) {
+                back()
+                val closing = page.id
+                withTimeoutOrNull(LEAVE_MILLIS) {
+                    while (frontApp(windows()).let { it == null || it.id == closing }) delay(POLL_MILLIS)
+                } ?: return
+                page = settingsPageInFront(windows(), before) ?: return
+            }
+        }
 
         /** The stream of [kind], or without one the call stream during another app's call and the media stream otherwise. */
         fun streamOf(kind: StreamKind?, mode: Int): Int = when (kind) {

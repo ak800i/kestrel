@@ -66,5 +66,17 @@ class ContactMatcherTest {
         val same = contact(6, "Dan", mobile, PhoneEntry("064-123-4567", "home", superPrimary = false))
 
         assertEquals(NumberChoice.One(mobile), ContactMatcher.number(same, null))
+        // The kind comes first, so a home number that repeats the mobile one is still the home number.
+        assertEquals(NumberChoice.One(same.numbers[1]), ContactMatcher.number(same, "home"))
+        // The copy that is the default stays.
+        val defaultCopy = PhoneEntry("064-123-4567", "home", superPrimary = true)
+        assertEquals(NumberChoice.One(defaultCopy), ContactMatcher.number(same.copy(numbers = listOf(mobile, defaultCopy, work)), null))
+    }
+
+    @Test
+    fun tooManyCountsEveryCloseContactOnTheFuzzyPath() {
+        val many = (1L..25L).map { contact(it, "Ana Number$it", mobile) }
+
+        assertEquals(ContactMatch.TooMany(25), ContactMatcher.find("Ana Numbr", many))
     }
 }

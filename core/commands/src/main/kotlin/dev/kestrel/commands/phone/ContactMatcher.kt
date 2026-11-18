@@ -3,6 +3,7 @@ package dev.kestrel.commands.phone
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.MatchCandidate
 import dev.kestrel.commands.text.MatchDecision
+import dev.kestrel.commands.text.MatchRules
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Strictness
 
@@ -31,26 +32,49 @@ object ContactMatcher {
         val candidates = contacts.mapIndexed { index, contact -> MatchCandidate(index.toString(), contact.names) }
         return when (val decision = LabelMatcher.decide(spoken, candidates, Strictness.STRICT)) {
             is MatchDecision.Found -> ContactMatch.One(contacts[decision.id.toInt()])
-            // A single near miss is offered too, as a confirmation.
-            is MatchDecision.Ambiguous -> offer(decision.ids.map { contacts[it.toInt()] }.sortedByDescending { it.starred })
+            // A single near miss is offered too, as a confirmation. LabelMatcher keeps at most MatchRules.MAX_AMBIGUOUS
+            // close names, so more than Kestrel offers are counted here.
+            is MatchDecision.Ambiguous ->
+                if (decision.ids.size <= MAX_CHOICES) {
+                    offer(decision.ids.map { contacts[it.toInt()] }.sortedByDescending { it.starred })
+                } else {
+                    ContactMatch.TooMany(maxOf(decision.ids.size, closeCount(spoken, contacts)))
+                }
             MatchDecision.NotFound -> ContactMatch.None
+        }
+    }
+
+    // How many of [contacts] LabelMatcher.decide finds as close to [spoken] as its best one, without its limit.
+    private fun closeCount(spoken: String, contacts: List<Contact>): Int {
+        val scores = contacts.mapNotNull { contact -> contact.names.maxOfOrNull { LabelMatcher.score(spoken, it, Strictness.STRICT) } }
+        val best = scores.maxOrNull() ?: return 0
+        val exact = scores.count { it == 1.0 }
+        if (exact > 1) return exact
+        return scores.count {
+            it + MatchRules.TOLERANCE >= MatchRules.CLOSE && best - it <= MatchRules.NEAR + MatchRules.TOLERANCE
         }
     }
 
     /**
      * The number of [contact] to call: the one of the [kind] that the owner said ("mobile", "work", a custom label), else
-     * the default number, else the only number. Numbers that differ only in their formatting count once.
+     * the default number, else the only number. Numbers that differ only in their formatting count once, after the kind
+     * has chosen among them, and the copy that is the default stays.
      */
     fun number(contact: Contact, kind: String?): NumberChoice {
-        val entries = contact.numbers.distinctBy { entry -> entry.number.filter { it.isDigit() || it == '+' } }
         if (kind != null) {
             val wanted = kindOf(kind)
-            return choice(entries.filter { kindOf(it.kind) == wanted })
+            return choice(distinct(contact.numbers.filter { kindOf(it.kind) == wanted }))
         }
+        val entries = distinct(contact.numbers)
         entries.singleOrNull()?.let { return NumberChoice.One(it) }
         entries.firstOrNull { it.superPrimary }?.let { return NumberChoice.One(it) }
         return choice(entries)
     }
+
+    // Each number once, in the order of its first copy; the copy that is the default when one is.
+    private fun distinct(entries: List<PhoneEntry>): List<PhoneEntry> =
+        entries.groupBy { entry -> entry.number.filter { it.isDigit() || it == '+' } }.values
+            .map { copies -> copies.firstOrNull { it.superPrimary } ?: copies.first() }
 
     /** The kind of a number as the matcher compares it: folded, and "cell" as "mobile". */
     fun kindOf(kind: String): String = Normalizer.normalize(kind).let { SAME_KINDS[it] ?: it }

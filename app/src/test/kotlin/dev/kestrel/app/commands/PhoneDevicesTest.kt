@@ -12,6 +12,8 @@ import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
 import dev.kestrel.screen.read.Labels
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -62,23 +64,51 @@ class PhoneDevicesTest {
 
     @Test
     fun theSettingsPagesOneMainSwitchNamedOnlyByItsViewIdIsTheSwitch() {
-        val page = WindowSummary(2, WindowKind.APPLICATION, packageName = "com.android.settings", bounds = IntRect(0, 0, 1080, 2400))
+        val page = WindowSummary(
+            2, WindowKind.APPLICATION, packageName = "com.android.settings", title = "Bluetooth", bounds = IntRect(0, 0, 1080, 2400),
+        )
         // As on AOSP's Bluetooth page: the switch bar's text, and inside the bar a switch without a name of its own.
         val bar = element("bar", windowId = 2, label = "On", viewId = "com.android.settings:id/switch_bar")
         val widget = element("widget", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
         val snapshot = ScreenSnapshot(0, listOf(page), listOf(bar, widget))
+        fun main(snapshot: ScreenSnapshot, windowId: Int) = DeviceCommands.mainSwitch(snapshot, windowId, RadioKind.BLUETOOTH)
 
         assertFalse(DeviceCommands.namesRadio(snapshot, widget, RadioKind.BLUETOOTH))
-        assertEquals(widget, DeviceCommands.mainSwitch(snapshot, 2))
+        assertEquals(widget, main(snapshot, 2))
         // Not in another window, not with a second such switch, not outside a switch bar, and not with a name of its own.
-        assertNull(DeviceCommands.mainSwitch(snapshot, 1))
+        assertNull(main(snapshot, 1))
         val second = element("second", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
-        assertNull(DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(page), listOf(bar, widget, second)), 2))
+        assertNull(main(ScreenSnapshot(0, listOf(page), listOf(bar, widget, second)), 2))
         val row = element("row", windowId = 2, label = "Notifications", viewId = "com.android.settings:id/row")
         val loose = element("loose", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
-        assertNull(DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(page), listOf(row, loose)), 2))
+        assertNull(main(ScreenSnapshot(0, listOf(page), listOf(row, loose)), 2))
         val named = element("named", parent = 0, label = "Airplane mode", checkable = true, windowId = 2, viewId = "android:id/switch_widget")
-        assertNull(DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(page), listOf(bar, named)), 2))
+        assertNull(main(ScreenSnapshot(0, listOf(page), listOf(bar, named)), 2))
+    }
+
+    @Test
+    fun theMainSwitchCountsOnlyOnAPageWhoseTitleOrSwitchBarNamesTheRadio() {
+        fun page(title: String?) =
+            WindowSummary(2, WindowKind.APPLICATION, packageName = "com.android.settings", title = title, bounds = IntRect(0, 0, 1080, 2400))
+        fun main(window: WindowSummary, vararg elements: ScreenElement) =
+            DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(window), elements.toList()), 2, RadioKind.BLUETOOTH)
+        fun bar(text: String) = element("bar", windowId = 2, label = text, viewId = "com.android.settings:id/switch_bar")
+        val widget = element("widget", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
+
+        // An old Settings task that comes to the front with NFC's page on top: its switch is never taken.
+        assertNull(main(page("NFC"), bar("Use NFC"), widget))
+        assertNull(main(page(null), bar("Use NFC"), widget))
+        assertNull(main(page("Wi-Fi"), bar("On"), widget))
+        assertNull(main(page(null), bar("Use Wi-Fi"), widget))
+        // The Bluetooth page, by the window's title or by the switch bar's text.
+        assertEquals(widget, main(page("Bluetooth"), bar("On"), widget))
+        assertEquals(widget, main(page(null), bar("Use Bluetooth"), widget))
+        // By the toolbar's title, a text inside the page's action bar.
+        val toolbar = element("toolbar", windowId = 2, viewId = "com.android.settings:id/action_bar")
+        val title = element("title", parent = 2, label = "Bluetooth", windowId = 2)
+        val inBar = element("widget", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
+        assertEquals(inBar, main(page(null), bar("Off"), inBar, toolbar, title))
+        assertNull(main(page(null), bar("Off"), inBar, toolbar, title.copy(label = "NFC")))
     }
 
     @Test
@@ -145,6 +175,33 @@ class PhoneDevicesTest {
         // Another app was already playing, and a second player started after the key.
         assertTrue(DeviceCommands.playTookKey(wasPlaying = true, playing = true, before = listOf("video"), after = listOf("video", "player")))
         assertFalse(DeviceCommands.playTookKey(wasPlaying = false, playing = false, before = emptyList<String>(), after = emptyList()))
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun leavingThePageEndsAsSoonAsTheAppFromBeforeIsInFront() = runTest {
+        fun app(id: Int, packageName: String) = WindowSummary(id, WindowKind.APPLICATION, packageName = packageName, bounds = bounds, active = true)
+        val before = setOf(1)
+        var windows = listOf(app(5, "com.android.settings"))
+        var backs = 0
+
+        DeviceCommands.backUntilLeft({ windows }, before) {
+            backs++
+            windows = listOf(app(1, "dev.kestrel.testapp"))
+        }
+
+        assertEquals(1, backs)
+        // No second wait for a page after the last Back.
+        assertTrue("Took ${testScheduler.currentTime} ms", testScheduler.currentTime < 500)
+
+        // A Settings task in the background: its own page comes to the front after the first Back, and a second Back closes it.
+        windows = listOf(app(5, "com.android.settings"))
+        backs = 0
+        DeviceCommands.backUntilLeft({ windows }, before) {
+            backs++
+            windows = if (backs == 1) listOf(app(6, "com.android.settings")) else listOf(app(1, "dev.kestrel.testapp"))
+        }
+        assertEquals(2, backs)
     }
 
     @Test
