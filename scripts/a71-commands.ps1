@@ -32,7 +32,8 @@
 # phone, also when a step fails or Ctrl+C stops it: Kestrel's mode Off, the accessibility settings, a magnification (which
 # it ends by turning Kestrel's accessibility service off and on once), the setting "Stay awake", Wi-Fi and Bluetooth, the
 # volumes of the call, ring, music, alarm and notification streams, the sound mode, the brightness, the keyboard, Kestrel's
-# contacts permission and the screenshot that it took. It asks the owner to switch the setting "Require verbs" off again,
+# contacts permission, the screenshot that it took, and a call that it placed, which it ends through Android (in the dry
+# run, it also deletes the call's row in the call log). It asks the owner to switch the setting "Require verbs" off again,
 # which only the owner can do, also at its end when a step failed before that, and names it in a warning at its end when
 # that did not work. The clipboard stays as the owner leaves it. It refuses every device but the
 # A71 and kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every question itself,
@@ -291,13 +292,15 @@ function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$A
 # Leaves out a restore whose change a step has undone itself.
 function Remove-Restore($Restore) { $pending.Remove($Restore) | Out-Null }
 
-# Runs a restore that is still pending, and keeps it pending, with the reason, when it fails.
+# Runs a restore that is still pending, and keeps it pending, with the reason, when it fails. The owner's "q" at a prompt
+# of a restore stops the session, as it does in a step.
 function Complete-Restore($Restore) {
     if (-not $pending.Contains($Restore)) { return }
     try {
         & $Restore.Action $Restore.Data | Out-Null
         $pending.Remove($Restore) | Out-Null
     } catch {
+        if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
         $Restore.Reason = $_.Exception.Message
     }
 }
@@ -488,8 +491,9 @@ function Invoke-ScreenStep {
     Invoke-Check screen 'go home' 'Is the home screen in front?'
     Invoke-Check screen "long press and the name of an app under its icon on the home screen" 'Did the app''s menu open?' -Heard 'long press Phone'
     Invoke-Check screen 'go back' 'Did the menu close?'
-    Invoke-Check screen "tap and a name that two buttons on the screen share" 'Did Kestrel ask "Which one?" and show numbers on just those buttons?' -Prepare 'Open a screen where two buttons have the same name, such as two "Install" or two "Delete" buttons.' -Heard 'tap Delete'
-    Invoke-Check screen 'the number of the button that you want' 'Did Kestrel tap that one, and did the numbers go?' -Heard '1'
+    # One check for the question and its answer: Kestrel's command runs until the answer, so a check that waited for its
+    # end before the owner's number would wait until the question's own 15 s ran out.
+    Invoke-Check screen 'tap and a name that two buttons on the screen share, and when Kestrel asks "Which one?", the number of the button that you want' 'Did Kestrel ask "Which one?" with numbers on just those buttons, tap the one that you chose, and did the numbers go?' -Prepare 'Open a screen where two buttons have the same name, such as two "Install" or two "Delete" buttons.' -Heard 'tap Delete' -Answer '1'
     Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
     # Registered before the change, so that a failure, a skip or a stop before the owner switches it off again asks for it
     # at the end of the session, or warns there.
@@ -684,10 +688,14 @@ function Invoke-SoundStep {
             Complete-Restore $zoom
             # Android binds the service again a moment after the setting.
             Start-Sleep -Seconds 2
-            $ended = if ($pending.Contains($zoom)) { "could not end it ($($zoom.Reason)); the session tries again at its end" } else { 'ended it' }
+            # A fixed text: the restore's reason can hold the list of the owner's other accessibility services, which the
+            # results file never holds; the warning at the end of the session names it.
+            $ended = if ($pending.Contains($zoom)) { 'could not end it; the session tries again at its end' } else { 'ended it' }
             Add-Result sound "turning Kestrel's accessibility service off and on, to end any magnification, $ended"
         }
     }
+    # Turning the service off and on can pause or stop listening.
+    Start-Kestrel
     Invoke-Check sound 'circle to search' 'Did Kestrel say that Circle to Search isn''t available on this phone?'
 }
 

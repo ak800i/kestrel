@@ -843,7 +843,8 @@ internal class EmergencyGuard(
          * Whether [element]'s own text or content description, trimmed, is as a whole a number that a phone app dials
          * ([PhoneNumbers.dialable], as for the number field) and that Android reports as an emergency number, or cannot
          * check ([emergency] not false). A text with other characters is none: a time such as "08:15", which Android
-         * counts as the emergency number 08 without a SIM card, a date such as "17 Nov", or a name with a number in it.
+         * counts as the emergency number 08 without a SIM card, a date with a word, such as "17 Nov", or a name with a number
+         * in it. A date of digits alone whose digits make an emergency number, such as "9/11", counts, which only asks more.
          */
         fun showsEmergencyNumber(element: ScreenElement, emergency: (String) -> Boolean?): Boolean =
             listOfNotNull(element.text, element.contentDescription).any { text ->

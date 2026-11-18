@@ -69,7 +69,10 @@ class CallCommandsTest {
             // A test that failed during a call leaves it active, also a call that Kestrel did not notice, so Android's own
             // call state decides; without a call, the key would turn the screen off. The in-call screen's control ends the
             // call first, and the end-call key only when that control does not show. A call that stays fails the test.
-            if (callActive() && !VoiceTests.waitUntil(5_000) { endCallOnScreen() }) screen.shell("input keyevent KEYCODE_ENDCALL")
+            // A press that a failed test's command made a moment earlier can start its call only now, so a call gets 2 s to
+            // show before the test counts as without one.
+            val call = VoiceTests.waitUntil(2_000) { callActive() }
+            if (call && !VoiceTests.waitUntil(5_000) { endCallOnScreen() }) screen.shell("input keyevent KEYCODE_ENDCALL")
             val ended = VoiceTests.waitUntil(10_000) { !callActive() }
             CommandTests.stop()
             assertTrue("A call is still active", ended)
