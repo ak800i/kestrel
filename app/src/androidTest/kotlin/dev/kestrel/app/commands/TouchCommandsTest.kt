@@ -13,6 +13,7 @@ import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -332,7 +333,15 @@ class TouchCommandsTest {
         }
     }
 
-    private suspend fun awaitBar(text: String) = withTimeout(WAIT_MILLIS) { while (screen.session.feedbackText != text) delay(50) }
+    // A failure names what the bar shows and what Kestrel said last, Kestrel's own texts about the fixture's screen, so that
+    // a failure in a package run tells which way the command ended.
+    private suspend fun awaitBar(text: String) {
+        withTimeoutOrNull(WAIT_MILLIS) { while (screen.session.feedbackText != text) delay(50) }
+            ?: throw AssertionError(
+                "The bar did not show \"$text\": it shows \"${screen.session.feedbackText}\", and Kestrel said last " +
+                    "\"${CommandTests.spoken.lastOrNull()}\"",
+            )
+    }
 
     /** The number on the element with [key], once the numbers have followed the screen. */
     private suspend fun badge(key: String): Int = withTimeout(WAIT_MILLIS) {

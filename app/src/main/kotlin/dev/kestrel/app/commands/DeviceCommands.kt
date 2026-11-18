@@ -126,7 +126,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         }
         try {
             screen.actions.global(GlobalAction.QUICK_SETTINGS)
-            val tile = await(screen) { snapshot, element ->
+            val tile = awaitTile({ screen.snapshots.current().snapshot }) { snapshot, element ->
                 element.packageName == SYSTEM_UI && element.checkable && element.enabled && namesRadio(snapshot, element, RadioKind.BLUETOOTH)
             }
             if (tile != null) {
@@ -372,6 +372,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         private const val SETTINGS = "com.android.settings"
         private const val PANEL_MILLIS = 3_000L
         private const val PAGE_MILLIS = 8_000L
+        private const val TILES_MILLIS = 8_000L
         private const val RADIO_MILLIS = 6_000L
         private const val POLL_MILLIS = 100L
         private const val APPEAR_MILLIS = 1_000L
@@ -522,6 +523,29 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                     page = shownPage(snapshot(), before)
                 }
                 page
+            }
+
+        /**
+         * Waits for the element of Quick Settings that [accept] takes, such as Bluetooth's tile, in the snapshots that
+         * [snapshot] reads: up to 3 s of waiting once Quick Settings shows any tile (a checkable element of SystemUI), and up
+         * to 8 s in all while it shows none, because on a loaded kestrel-api37 Quick Settings took longer than 3 s to show its
+         * tiles, and Kestrel then took the tile for one that the owner had removed. Null when none comes.
+         */
+        suspend fun awaitTile(snapshot: suspend () -> ScreenSnapshot, accept: (ScreenSnapshot, ScreenElement) -> Boolean): ScreenElement? =
+            withTimeoutOrNull(TILES_MILLIS) {
+                // The time waited since the first tile showed, or null while none has.
+                var sinceTiles: Long? = null
+                var found: ScreenElement? = null
+                while (found == null) {
+                    val current = snapshot()
+                    found = current.elements.firstOrNull { accept(current, it) }
+                    if (found != null) break
+                    if (sinceTiles == null && current.elements.any { it.packageName == SYSTEM_UI && it.checkable }) sinceTiles = 0L
+                    if ((sinceTiles ?: 0L) >= PANEL_MILLIS) break
+                    delay(POLL_MILLIS)
+                    sinceTiles = sinceTiles?.plus(POLL_MILLIS)
+                }
+                found
             }
 
         /**

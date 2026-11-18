@@ -64,6 +64,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 /** Every setting that Kestrel stores. */
 object SettingKeys {
@@ -173,10 +174,16 @@ class AppGraph(context: Context) {
                 targets = ScreenTargets { screen.value },
                 scope = scope,
                 // From the accessibility service, which Android lets start activities from the background (prototype P1).
-                // MainActivity is singleTop, so an open settings app switches to the page.
+                // MainActivity is singleTop, so a settings app on top of its task switches to the page. Each intent gets an
+                // identifier of its own, so that it never equals the intent that started Kestrel's task: when something
+                // covers the settings app in that task, such as Android's accessibility settings that its checklist opened
+                // or a permission dialog that outlived Kestrel's process, Android then starts the settings app on top of
+                // it, as it does when the launcher started the task, and closes nothing. With an equal intent, Android only
+                // brought the task to the front, and the page never showed.
                 openSettings = { page, permission ->
                     val intent = Intent(appContext, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        .setIdentifier(UUID.randomUUID().toString())
                     page?.let { intent.putExtra(MainActivity.EXTRA_PAGE, it.name) }
                     permission?.let { intent.putExtra(MainActivity.EXTRA_ASK_PERMISSION, it) }
                     appContext.startActivity(intent)

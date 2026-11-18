@@ -279,6 +279,33 @@ class PhoneDevicesTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
+    fun theBluetoothTileGetsThreeSecondsOnceQuickSettingsShowsTilesAndEightWhileItShowsNone() = runTest {
+        val systemUi = "com.android.systemui"
+        val wifi = element("wifi-tile", checkable = true, description = "Internet").copy(packageName = systemUi)
+        val bluetooth = element("bt-tile", checkable = true, description = "Bluetooth").copy(packageName = systemUi)
+        fun isBluetooth(snapshot: ScreenSnapshot, element: ScreenElement) = snapshot.elements.isNotEmpty() && element.key == "bt-tile"
+
+        // On a loaded kestrel-api37, Quick Settings showed its tiles only after more than 3 s; here after 4 s.
+        var started = testScheduler.currentTime
+        val late = DeviceCommands.awaitTile({
+            val tiles = if (testScheduler.currentTime - started < 4_000) emptyList() else listOf(wifi, bluetooth)
+            ScreenSnapshot(0, listOf(panel), tiles)
+        }, ::isBluetooth)
+        assertEquals(bluetooth, late)
+
+        // Tiles without Bluetooth's end the wait 3 s after they show, so that the settings page comes soon.
+        started = testScheduler.currentTime
+        assertNull(DeviceCommands.awaitTile({ ScreenSnapshot(0, listOf(panel), listOf(wifi)) }, ::isBluetooth))
+        assertEquals(3_000L, testScheduler.currentTime - started)
+
+        // No tile at all ends the wait after 8 s.
+        started = testScheduler.currentTime
+        assertNull(DeviceCommands.awaitTile({ ScreenSnapshot(0, listOf(panel), emptyList()) }, ::isBluetooth))
+        assertEquals(8_000L, testScheduler.currentTime - started)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
     fun aRadioCountsAsChangedWhenAndroidReportsItsStateWithinSixSeconds() = runTest {
         // Bluetooth needed 3.7 s to turn on when its stack restarted on a loaded kestrel-api37; here the radio needs 5 s.
         val started = testScheduler.currentTime

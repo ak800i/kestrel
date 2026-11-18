@@ -1,7 +1,12 @@
 package dev.kestrel.app.commands
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.annotation.StringRes
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 import dev.kestrel.app.listen.ListeningTexts
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -73,10 +78,38 @@ class HelpCommandsTest {
         awaitKestrel(R.string.commands_list)
     }
 
+    @Test
+    fun aHelpPhraseShowsTheListOverAnotherAppsScreenInKestrelsTaskAndClosesNothing() = runBlocking<Unit> {
+        // A task that an intent like Kestrel's own started, as "What can I say?" does when the settings app is closed.
+        screen.shell("am start -W --activity-clear-task -n $KESTREL/.app.MainActivity")
+        awaitKestrel(R.string.settings_checklist)
+        // The setup checklist starts Android's screens into Kestrel's task, so one of them now covers the settings app
+        // there, as a permission dialog does that outlived Kestrel's process.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .single { it is MainActivity }
+                .startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        awaitAndroidSettings()
+
+        assertEquals(Outcome.DONE, CommandTests.say("show commands").outcome)
+        awaitKestrel(R.string.commands_list)
+
+        // Android's screen is still there under the list: Back leads to the settings app's first page, then to it.
+        screen.shell("input keyevent KEYCODE_BACK")
+        awaitKestrel(R.string.settings_checklist)
+        screen.shell("input keyevent KEYCODE_BACK")
+        awaitAndroidSettings()
+        screen.shell("input keyevent KEYCODE_BACK")
+    }
+
+    private suspend fun awaitAndroidSettings() = screen.awaitElement(15_000) { it.packageName == "com.android.settings" }
+
     /**
      * Waits for an element of Kestrel's settings app whose text starts with the text [id]. A page entry's card joins its
-     * title and its summary into one text.
+     * title and its summary into one text. It waits 15 s, because on a loaded kestrel-api37 Android took up to 4 s to show
+     * an activity, close to the usual 5 s.
      */
     private suspend fun awaitKestrel(@StringRes id: Int): ScreenElement =
-        screen.awaitElement { it.packageName == KESTREL && it.label?.startsWith(context.getString(id)) == true }
+        screen.awaitElement(15_000) { it.packageName == KESTREL && it.label?.startsWith(context.getString(id)) == true }
 }
