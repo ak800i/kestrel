@@ -118,6 +118,8 @@ class GrammarScreenTest {
         "Switch on, please." to Command.Switch(null, on = true),
         "check now please" to Command.Check(null, on = true),
         "check Send now" to Command.Check(label("Send now"), on = true),
+        // The recogniser may write "check" as "check it".
+        "Check it." to Command.Check(null, on = true),
         // Sliders.
         "increment 4" to Command.Slider(increase = true, target = number(4)),
         "increase Brightness" to Command.Slider(increase = true, target = label("Brightness")),

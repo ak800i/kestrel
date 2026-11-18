@@ -147,18 +147,19 @@ internal object GrammarPhone {
     private val VOLUME_WORDS = setOf("turn", "the", "my", "volume", "of", "a", "bit", "little")
 
     // "Volume up", "turn the alarm volume down", "increase the ringer volume": "volume", one direction, at most one stream
-    // and no other words, also with "please" or "now" after them.
+    // and no other words, also with "please" or "now" after them. The recogniser may write "up" as "app" right after
+    // "volume" ("phone volume app"), and only there.
     private fun volume(said: List<String>): Command? {
         val words = said.dropLastWhile { it in CommandParser.POLITE_WORDS }
         if ("volume" !in words) return null
         var up: Boolean? = null
         var stream: StreamKind? = null
-        for (word in words) {
-            when (word) {
-                in UP -> if (up == false) return null else up = true
-                in DOWN -> if (up == true) return null else up = false
-                in STREAMS -> stream = oneStream(stream, STREAMS.getValue(word)) ?: return null
-                in VOLUME_WORDS -> Unit
+        for ((index, word) in words.withIndex()) {
+            when {
+                word in UP || (word == "app" && words.getOrNull(index - 1) == "volume") -> if (up == false) return null else up = true
+                word in DOWN -> if (up == true) return null else up = false
+                word in STREAMS -> stream = oneStream(stream, STREAMS.getValue(word)) ?: return null
+                word in VOLUME_WORDS -> Unit
                 else -> return null
             }
         }

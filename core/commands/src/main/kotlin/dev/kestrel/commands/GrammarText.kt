@@ -95,6 +95,12 @@ internal object GrammarText {
             "left", "right" -> units(words, 1)?.takeIf { !it.directed }?.let {
                 TextCommand.MoveCursor(Place.Units(it.count, it.unit, forward = words[0] == "right"))
             }
+            // The recogniser writes "right" as "write" when no word comes before it (plan 3C's corpus run). Only before a
+            // number of units, so that "write a letter" stays speech.
+            "write" -> {
+                val counted = SpokenNumbers.number(words.subList(1, words.size - 1), lone = true) != null
+                units(words, 1)?.takeIf { counted }?.let { TextCommand.MoveCursor(Place.Units(it.count, it.unit, forward = true)) }
+            }
             "search" -> if (words[1] == "for" && words.size > 2) TextCommand.Search(cut(2)) else null
             else -> null
         }

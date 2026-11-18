@@ -43,6 +43,8 @@ internal object GrammarScreen {
         for (phrase in listOf("increment", "increase")) put(phrase, Command.Slider(increase = true, target = null))
         for (phrase in listOf("decrement", "decrease")) put(phrase, Command.Slider(increase = false, target = null))
         put("check", Command.Check(null, on = true))
+        // The recogniser may write "check" as "check it" (plan 3C's corpus run).
+        put("check it", Command.Check(null, on = true))
         put("uncheck", Command.Check(null, on = false))
         // Not "turn on" or "turn off" alone: "turn off" is also Kestrel's own verb, whose name the recogniser may lose.
         // "Switch on" and "switch off" alone stay, because Appendix A lists them, although "Kestrel, switch off" that

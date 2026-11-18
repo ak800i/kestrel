@@ -82,6 +82,10 @@ class GrammarPhoneTest {
         assertParses(PhoneCommand.Volume(StreamKind.ALARM, up = false), "Turn the alarm volume down, please.")
         assertBare("Volume.", "Turn up the volume and the lights.", "The volume is too high.", "volume up down", "media alarm volume up")
         assertParses(Command.Slider(increase = true, target = null), "Increase.")
+        // The recogniser may write "up" as "app", which counts only right after "volume".
+        assertParses(PhoneCommand.Volume(StreamKind.CALL, up = true), "Phone volume app", "Phone volume app.")
+        assertParses(PhoneCommand.Volume(null, up = true), "Turn the volume app please.")
+        assertBare("Turn app the volume.", "App volume.", "Volume app down.", "Volume of the app.")
     }
 
     @Test

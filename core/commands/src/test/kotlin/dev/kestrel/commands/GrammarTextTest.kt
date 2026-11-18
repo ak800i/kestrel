@@ -178,6 +178,18 @@ class GrammarTextTest {
     }
 
     @Test
+    fun writeIsRightOnlyBeforeANumberOfUnits() {
+        // The recogniser writes "right" as "write" when no word comes before it.
+        assertEquals(MoveCursor(Place.Units(2, TextUnit.WORD, true)), CommandParser.parse("Write two words."))
+        assertEquals(MoveCursor(Place.Units(1, TextUnit.LINE, true)), CommandParser.parse("Write one line."))
+        assertEquals(MoveCursor(Place.Units(2, TextUnit.PARAGRAPH, true)), CommandParser.parse("write 2 paragraphs"))
+        for (said in listOf("Write a letter.", "write the next word", "write words", "write two letters to Ana", "write zero words", "write")) {
+            val parsed = CommandParser.parse(said)
+            assertTrue("$said gave $parsed", parsed is Command.Bare)
+        }
+    }
+
+    @Test
     fun theDictationLinesOfTheCorpusAndHalfCommandsStayBare() {
         for (said in listOf(
             "hello comma how are you question mark",
