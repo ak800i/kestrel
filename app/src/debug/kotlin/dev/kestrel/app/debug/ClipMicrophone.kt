@@ -8,6 +8,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.locks.LockSupport
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * A stand-in for the microphone, for the device tests and the debug hooks (design spec, section 16.1). It delivers the
@@ -145,17 +150,51 @@ class ClipMicrophone : Microphone {
         fun speech(voice: Synthesizer, text: String): FloatArray =
             FloatArray(SAMPLE_RATE / 2) + resample(voice.synthesize(text), voice.sampleRate) + FloatArray(SAMPLE_RATE)
 
-        // Linear interpolation is enough for test speech.
-        private fun resample(samples: FloatArray, from: Int): FloatArray {
-            if (samples.isEmpty()) return samples
+        // The filter's cutoff as a share of the lower Nyquist frequency (7.6 kHz for 16 kHz), and its half width in
+        // zero crossings of the sinc.
+        private const val CUTOFF = 0.95
+        private const val ZERO_CROSSINGS = 32
+
+        /**
+         * [samples] of [from] Hz at 16 kHz, through a windowed-sinc low-pass filter (a Blackman window), so that the sound
+         * of the voices' 22.05 or 24 kHz audio above 8 kHz does not fold back into the speech band, as it did with linear
+         * interpolation (plan 3C's corpus run). Each output sample weighs the input samples around its position; the
+         * weights depend only on the position's fraction, of which a rational rate has few, so they are computed once.
+         */
+        internal fun resample(samples: FloatArray, from: Int): FloatArray {
+            if (samples.isEmpty() || from == SAMPLE_RATE) return samples
+            // In cycles per input sample.
+            val cutoff = CUTOFF * minOf(from, SAMPLE_RATE) / from / 2
+            val halfWidth = ZERO_CROSSINGS / (2 * cutoff)
+            val reach = ceil(halfWidth).toInt()
+            val phases = HashMap<Long, DoubleArray>()
             val count = (samples.size.toLong() * SAMPLE_RATE / from).toInt()
             return FloatArray(count) { index ->
-                val position = index.toDouble() * from / SAMPLE_RATE
-                val before = position.toInt()
-                val after = minOf(before + 1, samples.size - 1)
-                val fraction = (position - before).toFloat()
-                samples[before] + (samples[after] - samples[before]) * fraction
+                val scaled = index.toLong() * from
+                val base = (scaled / SAMPLE_RATE).toInt()
+                val weights = phases.getOrPut(scaled % SAMPLE_RATE) {
+                    val fraction = (scaled % SAMPLE_RATE).toDouble() / SAMPLE_RATE
+                    val raw = DoubleArray(2 * reach + 1) { kernel(fraction - (it - reach), cutoff, halfWidth) }
+                    // The weights add up to 1, so that the level stays.
+                    val sum = raw.sum()
+                    DoubleArray(raw.size) { raw[it] / sum }
+                }
+                var sum = 0.0
+                for (offset in -reach..reach) {
+                    val input = base + offset
+                    if (input >= 0 && input < samples.size) sum += samples[input] * weights[offset + reach]
+                }
+                sum.toFloat()
             }
+        }
+
+        // The low-pass filter at [distance] input samples from the output's position.
+        private fun kernel(distance: Double, cutoff: Double, halfWidth: Double): Double {
+            if (abs(distance) >= halfWidth) return 0.0
+            val x = 2 * PI * cutoff * distance
+            val sinc = if (x == 0.0) 1.0 else sin(x) / x
+            val window = 0.42 + 0.5 * cos(PI * distance / halfWidth) + 0.08 * cos(2 * PI * distance / halfWidth)
+            return 2 * cutoff * sinc * window
         }
     }
 }
