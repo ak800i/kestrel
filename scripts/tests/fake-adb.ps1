@@ -6,9 +6,9 @@
 #   avd         the device's ro.boot.qemu.avd_name, empty for a phone
 #   model       the device's ro.product.model
 #   settings    names and values of the secure settings; a missing name is an unset setting
-#   keepsTiles  whether SystemUI keeps the list of Quick Settings tiles itself, as since Android 15: set-tiles writes the
-#               list to sysui_qs_tiles, and SystemUI writes its own list back over a 'settings put' of that setting.
-#               Otherwise SystemUI follows the setting, and set-tiles changes nothing.
+#   keepsTiles  whether SystemUI keeps the list of Quick Settings tiles itself, as on Android 17 (observed): set-tiles
+#               writes the list to sysui_qs_tiles, and SystemUI writes its own list back over a 'settings put' of that
+#               setting. Otherwise SystemUI follows the setting, and set-tiles changes nothing.
 #   failures    how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
 #   calls       every settings command that it received and did not refuse, in order, without the check
 #   refused     every settings command that the check kept from running, in order

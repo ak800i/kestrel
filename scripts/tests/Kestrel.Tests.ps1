@@ -41,7 +41,7 @@ Describe 'The settings helpers' {
 
         # Gives the fake device these secure settings and makes its next commands fail as often as -Failures says. It is
         # kestrel-api37 unless -Avd and -Model say otherwise. With -KeepsTiles, its SystemUI keeps the list of Quick
-        # Settings tiles itself, as since Android 15.
+        # Settings tiles itself, as on Android 17 (observed).
         function Set-FakeDevice([System.Collections.IDictionary]$Settings = @{}, [int]$Failures = 0, [string]$Avd = 'kestrel-api37',
             [string]$Model = 'sdk_gphone64_x86_64', [switch]$KeepsTiles) {
             $state = [ordered]@{

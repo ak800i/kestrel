@@ -1,6 +1,7 @@
 package dev.kestrel.app.commands
 
 import android.media.AudioManager
+import android.view.accessibility.AccessibilityEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -19,6 +20,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The phone's settings (design D10, prototype P4): Wi-Fi and Bluetooth on the emulator's own Internet panel, Quick
@@ -89,10 +91,57 @@ class DeviceCommandsTest {
      * Without a Quick Settings tile, Kestrel opens Android's Bluetooth settings. On the emulator's Android 17, they open
      * as "Connected devices", which has no Bluetooth switch, and the page with the switch needs BLUETOOTH_CONNECT, which
      * Kestrel does not ask for. So the command fails and says so, Bluetooth stays on, and the page closes again. The
-     * fixture is in front before the command, so that a Back too many would show: it would close the fixture.
+     * window of Settings that shows during the command tells that Kestrel opened the page. The fixture is in front before
+     * the command, so that a Back too many would show: it would close the fixture.
      */
     @Test
-    fun bluetoothWithoutItsTileFailsWhenTheSettingsPageHasNoSwitchAndClosesThePage() = runBlocking<Unit> {
+    fun bluetoothWithoutItsTileFailsWhenTheSettingsPageHasNoSwitchAndClosesThePage() = withoutBluetoothTile {
+        assertThePageFailsAndTheFixtureComesBack()
+    }
+
+    /**
+     * When Settings already has a task in the background, Android puts Kestrel's page on top of that task, so one Back
+     * would leave Settings in front. Kestrel presses Back until the fixture is in front again.
+     */
+    @Test
+    fun bluetoothsSettingsPageClosesAlsoOnTopOfASettingsTaskInTheBackground() = withoutBluetoothTile {
+        try {
+            screen.shell("am start -W -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:${ScreenServiceRule.KESTREL}")
+            assertTrue("App info is not in front", PhoneTests.awaitActiveApp(screen.session, PhoneTests.SETTINGS))
+            screen.shell("input keyevent KEYCODE_HOME")
+            assertTrue("Home is not in front", PhoneTests.awaitActiveApp(screen.session, PhoneTests.homePackage()))
+
+            assertThePageFailsAndTheFixtureComesBack()
+        } finally {
+            screen.shell("am force-stop ${PhoneTests.SETTINGS}")
+        }
+    }
+
+    // With the fixture in front, "turn off Bluetooth" opens Bluetooth's settings page, fails there, and closes the page.
+    private suspend fun assertThePageFailsAndTheFixtureComesBack() {
+        screen.open("CommandsActivity", "Commands fixture")
+        assertTrue("The fixture is not in front", PhoneTests.awaitActiveApp(screen.session, FIXTURES))
+        val settingsShown = AtomicBoolean(false)
+        screen.automation.setOnAccessibilityEventListener { event ->
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.packageName?.toString() == PhoneTests.SETTINGS) {
+                settingsShown.set(true)
+            }
+        }
+        try {
+            assertEquals(Outcome.FAILED, CommandTests.say("turn off Bluetooth").outcome)
+        } finally {
+            screen.automation.setOnAccessibilityEventListener(null)
+        }
+
+        assertTrue("Kestrel did not open Bluetooth's settings page", settingsShown.get())
+        awaitBar(PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
+        assertTrue("Bluetooth turned off", radio("bluetooth_on"))
+        awaitGone { it.packageName == PhoneTests.SETTINGS }
+        assertTrue("The fixture is not in front again", PhoneTests.awaitActiveApp(screen.session, FIXTURES))
+    }
+
+    // Turns Bluetooth on, removes its Quick Settings tile, runs [block], and puts the exact list of tiles back.
+    private fun withoutBluetoothTile(block: suspend () -> Unit) = runBlocking<Unit> {
         val tiles = screen.shell("settings get secure sysui_qs_tiles").trim()
         assertTrue("Quick Settings has no Bluetooth tile to remove", "bt" in tiles.split(','))
         try {
@@ -103,15 +152,7 @@ class DeviceCommandsTest {
             screen.shell("cmd statusbar set-tiles ${tiles.split(',').filter { it != "bt" }.joinToString(",")}")
             // SystemUI applies the new list a moment later; until then the command would still find the tile.
             awaitBluetoothTile(shown = false)
-            screen.open("CommandsActivity", "Commands fixture")
-            assertTrue("The fixture is not in front", PhoneTests.awaitActiveApp(screen.session, FIXTURES))
-
-            assertEquals(Outcome.FAILED, CommandTests.say("turn off Bluetooth").outcome)
-
-            awaitBar(PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
-            assertTrue("Bluetooth turned off", radio("bluetooth_on"))
-            awaitGone { it.packageName == PhoneTests.SETTINGS }
-            assertTrue("The fixture is not in front again", PhoneTests.awaitActiveApp(screen.session, FIXTURES))
+            block()
         } finally {
             screen.shell("cmd statusbar set-tiles $tiles")
             screen.shell("cmd bluetooth_manager enable")

@@ -22,7 +22,9 @@ import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
@@ -34,7 +36,8 @@ import kotlin.math.roundToInt
  */
 internal class DeviceCommands(environment: CommandEnvironment) {
     private val audio: AudioManager? = environment.context.getSystemService(AudioManager::class.java)
-    private val bluetooth: BluetoothManager? = environment.context.getSystemService(BluetoothManager::class.java)
+    // Built at the first Bluetooth command, on the command's thread, because building it makes binder calls.
+    private val bluetooth: BluetoothManager? by lazy { environment.context.getSystemService(BluetoothManager::class.java) }
     private val resolver = environment.context.contentResolver
     private val targets = environment.targets
 
@@ -55,8 +58,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
      * disconnects (prototype P4). Kestrel reads Wi-Fi's state from Android and opens the panel only when it differs. It
      * acts only in the panel's own window: a window that was not on the screen before, of SystemUI or Settings, that shows
      * the switch; so never on Quick Settings' tile or on a switch of the app in front. It clicks the switch, waits up to
-     * 3 s for Android's state to change, and closes the panel with its "Done" button, or Back while the panel still shows,
-     * also when the command is cancelled.
+     * 3 s for Android's state to change, and closes the panel with its "Done" button, or Back while the panel's window, the
+     * one where the switch was found, still shows, also when the command is cancelled.
      */
     private suspend fun wifi(screen: ScreenSession, on: Boolean): CommandResult {
         if (wifiOn() == on) {
@@ -66,6 +69,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         // The start is inside the try, so that a cancel during its wait closes the panel too; until the start fails, the
         // panel may still be on its way.
         var opening = true
+        var switchWindow: Int? = null
         try {
             if (screen.system.start(Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)) is ActionResult.Failed) {
                 opening = false
@@ -76,6 +80,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                     element.viewId?.contains(":id/qs_tile") != true &&
                     (element.viewId?.endsWith(":id/wifi_toggle") == true || namesRadio(snapshot, element, RadioKind.WIFI))
             } ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_WIFI_SWITCH)
+            switchWindow = toggle.windowId
             // Checked again right before the click: the panel may have changed since the snapshot.
             val element = targets.still(ScreenTargets.chosen(toggle))
             if (element != null && element.checked != on) screen.actions.tap(element.key)
@@ -86,14 +91,15 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                 CommandResult(Outcome.FAILED, show = PhoneCommandTexts.WIFI_NOT_CHANGED)
             }
         } finally {
-            withContext(NonCancellable) { closePanel(screen, before, opening) }
+            withContext(NonCancellable) { closePanel(screen, before, opening, switchWindow) }
         }
     }
 
     // Closes the panel that the command opened, with its "Done" button, or with Back while its window still shows, so that
-    // Back never acts on the owner's app.
-    private suspend fun closePanel(screen: ScreenSession, before: Set<Int>, opening: Boolean) {
-        val panel = newWindow(screen, before, PANEL_PACKAGES, opening) ?: return
+    // Back never acts on the owner's app. Once the switch was found, the panel is the switch's window, so that another new
+    // window, such as the volume dialog, never counts as the panel after the owner closed it.
+    private suspend fun closePanel(screen: ScreenSession, before: Set<Int>, opening: Boolean, switchWindow: Int?) {
+        val panel = newWindow(screen, before, PANEL_PACKAGES, opening && switchWindow == null, switchWindow) ?: return
         val snapshot = screen.snapshots.current().snapshot
         val done = snapshot.elements.firstOrNull { element ->
             element.windowId == panel.id && element.enabled && element.clickable &&
@@ -105,9 +111,10 @@ internal class DeviceCommands(environment: CommandEnvironment) {
 
     /**
      * Bluetooth through its Quick Settings tile, whose switch turns the radio off and on (prototype P4), or, when Quick
-     * Settings shows no tile, through the main switch of the Bluetooth settings page that Kestrel opens. Kestrel acts only
-     * on SystemUI's tile or on that page's window, never on a switch of the app in front, and the state is Android's, read
-     * for up to 3 s. The shade and the page close also when the command is cancelled.
+     * Settings shows no tile, through the Bluetooth settings page that Kestrel opens: its switch named Bluetooth, or else
+     * the page's one main switch. Kestrel acts only on SystemUI's tile or on that page's window, never on a switch of the
+     * app in front, and the state is Android's, read for up to 3 s. The shade and the page close also when the command is
+     * cancelled.
      */
     private suspend fun bluetooth(screen: ScreenSession, on: Boolean): CommandResult {
         if (bluetoothOn() == on) {
@@ -126,10 +133,13 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         } finally {
             withContext(NonCancellable) { screen.actions.global(GlobalAction.DISMISS_SHADE) }
         }
+        // A cancel that came while the shade closed, which NonCancellable held back, ends the command before Settings opens.
+        currentCoroutineContext().ensureActive()
         return bluetoothPage(screen, on)
     }
 
-    // The main switch of the Bluetooth settings page, in the window of Settings that the command opened.
+    // The Bluetooth switch of the settings page, in the window of Settings that the command opened: a switch named
+    // Bluetooth, or the page's one main switch, which on AOSP is named only by its view ID (android:id/switch_widget).
     private suspend fun bluetoothPage(screen: ScreenSession, on: Boolean): CommandResult {
         val before = screen.snapshots.current().snapshot.windows.map { it.id }.toSet()
         var opening = true
@@ -141,16 +151,39 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             val main = await(screen) { snapshot, element ->
                 element.windowId !in before && element.packageName == SETTINGS && element.checkable && element.enabled &&
                     snapshot.windows.any { it.id == element.windowId && it.kind == WindowKind.APPLICATION } &&
-                    namesRadio(snapshot, element, RadioKind.BLUETOOTH)
+                    (namesRadio(snapshot, element, RadioKind.BLUETOOTH) || mainSwitch(snapshot, element.windowId) == element)
             } ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             val element = targets.still(ScreenTargets.chosen(main))
             if (element != null && element.checked != on) screen.actions.tap(element.key)
             return bluetoothResult(awaitState(on) { bluetoothOn() })
         } finally {
-            withContext(NonCancellable) {
-                // Back only while the page that the command opened shows.
-                if (newWindow(screen, before, setOf(SETTINGS), opening) != null) screen.actions.global(GlobalAction.BACK)
-            }
+            withContext(NonCancellable) { leavePage(screen, before, opening) }
+        }
+    }
+
+    /**
+     * Presses Back until the app that was in front before the command is in front again: only while a window of Settings
+     * that was not on the screen [before] the command is in front, and at most 3 times, so that Back never goes past that
+     * app. One Back is not always enough: when Settings already had a task in the background, Android puts the page on
+     * top of that task.
+     */
+    private suspend fun leavePage(screen: ScreenSession, before: Set<Int>, opening: Boolean) {
+        newWindow(screen, before, setOf(SETTINGS), opening) ?: return
+        repeat(MAX_BACKS) {
+            // The page comes to the front a moment after its window appears.
+            val page = withTimeoutOrNull(APPEAR_MILLIS) {
+                var page = settingsPageInFront(screen.snapshots.current().snapshot.windows, before)
+                while (page == null) {
+                    delay(POLL_MILLIS)
+                    page = settingsPageInFront(screen.snapshots.current().snapshot.windows, before)
+                }
+                page
+            } ?: return
+            screen.actions.global(GlobalAction.BACK)
+            // Waits until another app window is in front, so that the next check never sees the closing page.
+            withTimeoutOrNull(LEAVE_MILLIS) {
+                while (frontApp(screen.snapshots.current().snapshot.windows).let { it == null || it.id == page.id }) delay(POLL_MILLIS)
+            } ?: return
         }
     }
 
@@ -177,10 +210,17 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             true
         } ?: false
 
-    // A window of [packages] that was not on the screen [before]; while it may still be [opening], after a cancel in the
-    // first moments of its start, Kestrel waits up to 1 s for it.
-    private suspend fun newWindow(screen: ScreenSession, before: Set<Int>, packages: Set<String>, opening: Boolean): WindowSummary? {
-        suspend fun find() = screen.snapshots.current().snapshot.windows.firstOrNull { it.id !in before && it.packageName in packages }
+    // A window of [packages] that was not on the screen [before], or the window [switchWindow] where the command found its
+    // switch (see [ownWindow]); while it may still be [opening], after a cancel in the first moments of its start, Kestrel
+    // waits up to 1 s for it.
+    private suspend fun newWindow(
+        screen: ScreenSession,
+        before: Set<Int>,
+        packages: Set<String>,
+        opening: Boolean,
+        switchWindow: Int? = null,
+    ): WindowSummary? {
+        suspend fun find() = ownWindow(screen.snapshots.current().snapshot.windows, before, packages, switchWindow)
         if (!opening) return find()
         return withTimeoutOrNull(APPEAR_MILLIS) {
             var window = find()
@@ -334,6 +374,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         private const val RADIO_MILLIS = 3_000L
         private const val POLL_MILLIS = 100L
         private const val APPEAR_MILLIS = 1_000L
+        private const val LEAVE_MILLIS = 2_000L
+        private const val MAX_BACKS = 3
         private const val READ_BACK_MILLIS = 300L
         private const val MEDIA_MILLIS = 1_000L
         private const val FIRST_SCALE = 2f
@@ -370,6 +412,57 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             }
             return false
         }
+
+        /**
+         * The one main switch of the settings page in the window [windowId]: an enabled, checkable element whose own name
+         * comes only from its view ID, such as AOSP's `android:id/switch_widget`, inside the page's switch bar, an element
+         * whose view ID names a switch bar. Null when the window has none, or more than one. Kestrel takes it only on the
+         * radio's settings page that it opened itself, whose switch bar may read "On" or "Off" rather than the radio's name.
+         */
+        fun mainSwitch(snapshot: ScreenSnapshot, windowId: Int): ScreenElement? = snapshot.elements.filter { element ->
+            element.windowId == windowId && element.enabled && element.checkable && element.viewId != null &&
+                listOfNotNull(element.label, element.text, element.contentDescription, element.hint, element.supplementalDescription)
+                    .all { it.isBlank() } &&
+                inSwitchBar(snapshot, element)
+        }.singleOrNull()
+
+        // Whether an ancestor of [element], at most 20 levels up, has a view ID such as switch_bar or main_switch_bar.
+        private fun inSwitchBar(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
+            var parent = element.parent?.let { snapshot.elements.getOrNull(it) }
+            var depth = 0
+            while (parent != null && depth < 20) {
+                if (parent.viewId?.substringAfter(":id/")?.contains("switch_bar") == true) return true
+                parent = parent.parent?.let { snapshot.elements.getOrNull(it) }
+                depth++
+            }
+            return false
+        }
+
+        /**
+         * The window that the command opened: the window [switchWindow] where it found its switch, while that window still
+         * shows, or, before it found one, a window of [packages] that was not on the screen [before]. So another new window,
+         * such as the volume dialog after the owner closed the panel, never counts as the command's window.
+         */
+        fun ownWindow(windows: List<WindowSummary>, before: Set<Int>, packages: Set<String>, switchWindow: Int?): WindowSummary? =
+            if (switchWindow != null) {
+                windows.firstOrNull { it.id == switchWindow }
+            } else {
+                windows.firstOrNull { it.id !in before && it.packageName in packages }
+            }
+
+        /** The app window in front: the active one, or the top-most one while the shade or a system dialog is active. */
+        fun frontApp(windows: List<WindowSummary>): WindowSummary? {
+            val apps = windows.filter { it.kind == WindowKind.APPLICATION }
+            return apps.firstOrNull { it.active } ?: apps.firstOrNull()
+        }
+
+        /**
+         * The page of Settings in front that Back may close after a settings page's command: the app window in front, when
+         * it is Settings' and was not on the screen [before] the command. Null once the app that was in front before is in
+         * front again, so that Back never goes past it.
+         */
+        fun settingsPageInFront(windows: List<WindowSummary>, before: Set<Int>): WindowSummary? =
+            frontApp(windows)?.takeIf { it.packageName == SETTINGS && it.id !in before }
 
         /** The stream of [kind], or without one the call stream during another app's call and the media stream otherwise. */
         fun streamOf(kind: StreamKind?, mode: Int): Int = when (kind) {

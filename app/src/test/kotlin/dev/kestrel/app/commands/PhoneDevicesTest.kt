@@ -11,6 +11,7 @@ import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
+import dev.kestrel.screen.read.Labels
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -21,11 +22,18 @@ class PhoneDevicesTest {
     private val panel = WindowSummary(1, WindowKind.SYSTEM, packageName = "com.android.systemui", bounds = IntRect(0, 0, 1080, 2400))
     private val bounds = IntRect(0, 0, 100, 100)
 
-    private fun element(key: String, parent: Int? = null, label: String? = null, description: String? = null, checkable: Boolean = false) =
-        ScreenElement(
-            key = key, windowId = 1, parent = parent, label = label, contentDescription = description, bounds = bounds,
-            checkable = checkable, clickable = checkable,
-        )
+    private fun element(
+        key: String,
+        parent: Int? = null,
+        label: String? = null,
+        description: String? = null,
+        checkable: Boolean = false,
+        windowId: Int = 1,
+        viewId: String? = null,
+    ) = ScreenElement(
+        key = key, windowId = windowId, parent = parent, label = label, contentDescription = description, bounds = bounds,
+        checkable = checkable, clickable = checkable, viewId = viewId, suggestedName = if (label == null) Labels.suggestedName(viewId) else null,
+    )
 
     @Test
     fun aRadioSwitchIsNamedByItselfItsRowOrWhatIsInsideIt() {
@@ -50,6 +58,57 @@ class PhoneDevicesTest {
         assertFalse(names("flashlight", RadioKind.WIFI))
         assertTrue(names("bt-tile", RadioKind.BLUETOOTH))
         assertFalse(names("wifi-calling", RadioKind.WIFI))
+    }
+
+    @Test
+    fun theSettingsPagesOneMainSwitchNamedOnlyByItsViewIdIsTheSwitch() {
+        val page = WindowSummary(2, WindowKind.APPLICATION, packageName = "com.android.settings", bounds = IntRect(0, 0, 1080, 2400))
+        // As on AOSP's Bluetooth page: the switch bar's text, and inside the bar a switch without a name of its own.
+        val bar = element("bar", windowId = 2, label = "On", viewId = "com.android.settings:id/switch_bar")
+        val widget = element("widget", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
+        val snapshot = ScreenSnapshot(0, listOf(page), listOf(bar, widget))
+
+        assertFalse(DeviceCommands.namesRadio(snapshot, widget, RadioKind.BLUETOOTH))
+        assertEquals(widget, DeviceCommands.mainSwitch(snapshot, 2))
+        // Not in another window, not with a second such switch, not outside a switch bar, and not with a name of its own.
+        assertNull(DeviceCommands.mainSwitch(snapshot, 1))
+        val second = element("second", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
+        assertNull(DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(page), listOf(bar, widget, second)), 2))
+        val row = element("row", windowId = 2, label = "Notifications", viewId = "com.android.settings:id/row")
+        val loose = element("loose", parent = 0, checkable = true, windowId = 2, viewId = "android:id/switch_widget")
+        assertNull(DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(page), listOf(row, loose)), 2))
+        val named = element("named", parent = 0, label = "Airplane mode", checkable = true, windowId = 2, viewId = "android:id/switch_widget")
+        assertNull(DeviceCommands.mainSwitch(ScreenSnapshot(0, listOf(page), listOf(bar, named)), 2))
+    }
+
+    @Test
+    fun theCommandsWindowIsTheSwitchsOnceItWasFound() {
+        val volume = WindowSummary(3, WindowKind.SYSTEM, packageName = "com.android.systemui", bounds = bounds)
+
+        // The owner closed the panel and the volume dialog showed: no window of the command is left to close.
+        assertNull(DeviceCommands.ownWindow(listOf(volume), setOf(5), setOf("com.android.systemui"), switchWindow = 1))
+        assertEquals(panel, DeviceCommands.ownWindow(listOf(volume, panel), setOf(5), setOf("com.android.systemui"), switchWindow = 1))
+        // Before a switch was found, a new window of the panel's packages.
+        assertEquals(volume, DeviceCommands.ownWindow(listOf(volume), setOf(5), setOf("com.android.systemui"), switchWindow = null))
+        assertNull(DeviceCommands.ownWindow(listOf(volume), setOf(3), setOf("com.android.systemui"), switchWindow = null))
+    }
+
+    @Test
+    fun backClosesOnlyNewSettingsPagesInFront() {
+        fun app(id: Int, packageName: String, active: Boolean = true) =
+            WindowSummary(id, WindowKind.APPLICATION, packageName = packageName, bounds = bounds, active = active)
+        val shade = WindowSummary(9, WindowKind.SYSTEM, packageName = "com.android.systemui", bounds = bounds, active = true)
+        val before = setOf(1, 2)
+
+        assertEquals(app(5, "com.android.settings"), DeviceCommands.settingsPageInFront(listOf(app(5, "com.android.settings")), before))
+        // While a system window such as the shade is active, the top-most app window is the one in front.
+        val behindTheShade = app(6, "com.android.settings", active = false)
+        assertEquals(behindTheShade, DeviceCommands.settingsPageInFront(listOf(shade, behindTheShade), before))
+        // The app that was in front before is in front again, or it was Settings itself.
+        assertNull(DeviceCommands.settingsPageInFront(listOf(app(1, "dev.kestrel.testapp")), before))
+        assertNull(DeviceCommands.settingsPageInFront(listOf(app(2, "com.android.settings")), before))
+        assertNull(DeviceCommands.settingsPageInFront(listOf(app(7, "com.android.launcher3")), before))
+        assertNull(DeviceCommands.settingsPageInFront(listOf(shade), before))
     }
 
     @Test

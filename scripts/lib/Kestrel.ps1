@@ -92,11 +92,11 @@ function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
 }
 
 # Puts back the list of Quick Settings tiles that Get-SecureSetting read from sysui_qs_tiles, and returns whether the
-# device took it. Since Android 15, SystemUI keeps the list itself and writes it back a moment after another write to the
-# setting, so the list goes through SystemUI's 'cmd statusbar set-tiles', after which SystemUI writes the setting. When
-# that command fails, or the setting does not show the list within 5 s, the list goes to the setting, which a SystemUI
-# before Android 15 follows. 'null' and an empty value, which set-tiles cannot take, go to the setting only. When the
-# list does not come back, it warns with a command that puts it back when it is pasted into PowerShell.
+# device took it. On Android 17 (observed), SystemUI keeps the list itself and writes it back a moment after another write
+# to the setting, so the list goes through SystemUI's 'cmd statusbar set-tiles', after which SystemUI writes the setting.
+# When that command fails, or the setting does not show the list within 5 s, the list goes to the setting, which a
+# SystemUI that does not keep the list follows. 'null' and an empty value, which set-tiles cannot take, go to the setting
+# only. When the list does not come back, it warns with a command that puts it back when it is pasted into PowerShell.
 function Set-QuickSettingsTiles([string]$Serial, [string]$Value) {
     $name = 'sysui_qs_tiles'
     if ($Value -in 'null', '') { return (Set-SecureSetting -Serial $Serial -Name $name -Value $Value) }
