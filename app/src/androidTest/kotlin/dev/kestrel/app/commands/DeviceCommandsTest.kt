@@ -215,6 +215,9 @@ class DeviceCommandsTest {
             assertTrue(!audio.isMusicActive)
             assertEquals(Outcome.DONE, CommandTests.say("play media").outcome)
             assertTrue(audio.isMusicActive)
+            // The player already plays, so the key starts no player, and Kestrel cannot tell that a player took it.
+            assertEquals(Outcome.FAILED, CommandTests.say("media play").outcome)
+            assertTrue(audio.isMusicActive)
             assertEquals(Outcome.DONE, CommandTests.say("pause the music").outcome)
             // Nothing plays now, so a pause reaches no player.
             assertEquals(Outcome.FAILED, CommandTests.say("media pause").outcome)

@@ -76,6 +76,10 @@ class GrammarPhoneTest {
         assertParses(PhoneCommand.Volume(StreamKind.RING, up = true), "Ring volume up.", "Increase the ringer volume.")
         assertParses(PhoneCommand.Volume(StreamKind.CALL, up = false), "Call volume down.", "Turn down the phone volume.")
         assertParses(PhoneCommand.Volume(StreamKind.NOTIFICATION, up = true), "Notification volume up.")
+        // A polite word at the end, as the radio and "open" rules take it.
+        assertParses(PhoneCommand.Volume(null, up = true), "Volume up please.", "Turn the volume up now.", "Increase the volume, please.")
+        assertParses(PhoneCommand.Volume(null, up = false), "Lower the volume now.", "Decrease the volume please")
+        assertParses(PhoneCommand.Volume(StreamKind.ALARM, up = false), "Turn the alarm volume down, please.")
         assertBare("Volume.", "Turn up the volume and the lights.", "The volume is too high.", "volume up down", "media alarm volume up")
         assertParses(Command.Slider(increase = true, target = null), "Increase.")
     }
@@ -89,6 +93,8 @@ class GrammarPhoneTest {
         assertParses(PhoneCommand.Mute(StreamKind.RING, on = true), "Mute the phone.")
         assertParses(PhoneCommand.Mute(StreamKind.ALARM, on = true), "Mute the alarm.", "Mute the alarm volume.")
         assertParses(PhoneCommand.Mute(StreamKind.MEDIA, on = true), "Mute the music.")
+        assertParses(PhoneCommand.Mute(null, on = true), "Mute please.", "Mute the sound now.", "Please mute please.")
+        assertParses(PhoneCommand.Mute(StreamKind.RING, on = false), "Unmute the ringer, please.")
         assertParses(PhoneCommand.Silence, "Silence.", "Vibrate.", "Silent mode.", "Silence the phone.", "Turn on vibrate.")
         assertParses(PhoneCommand.Media(play = true), "Media play.", "Play media.", "Play the music.")
         assertParses(PhoneCommand.Media(play = false), "Media pause.", "Pause the music.", "Pause media.")

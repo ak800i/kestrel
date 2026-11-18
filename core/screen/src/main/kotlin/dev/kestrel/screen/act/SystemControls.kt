@@ -104,7 +104,7 @@ class SystemControls(
         // old positions, so Kestrel reports the change itself, before and after the wait.
         return changeMagnification(
             change = { controller.setMagnificationConfig(moved, false) },
-            refused = ActionResult.Failed("Android refused to move the magnification"),
+            refused = ActionResult.Failed("Android refused to move the magnification."),
             report = tracker::onScreenChanged,
             settle = { settled(ActionMethod.MAGNIFICATION) },
         ) {

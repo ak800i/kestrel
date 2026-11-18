@@ -141,8 +141,9 @@ internal object GrammarPhone {
     private val VOLUME_WORDS = setOf("turn", "the", "my", "volume", "of", "a", "bit", "little")
 
     // "Volume up", "turn the alarm volume down", "increase the ringer volume": "volume", one direction, at most one stream
-    // and no other words.
-    private fun volume(words: List<String>): Command? {
+    // and no other words, also with "please" or "now" after them.
+    private fun volume(said: List<String>): Command? {
+        val words = said.dropLastWhile { it in CommandParser.POLITE_WORDS }
         if ("volume" !in words) return null
         var up: Boolean? = null
         var stream: StreamKind? = null
@@ -163,8 +164,9 @@ internal object GrammarPhone {
     // "Mute the phone" means its ringer, not the call volume.
     private val MUTE_STREAMS = STREAMS + ("phone" to StreamKind.RING)
 
-    // "Mute", "unmute the ringer", "mute the alarm volume".
-    private fun mute(words: List<String>): Command? {
+    // "Mute", "unmute the ringer", "mute the alarm volume", also with "please" or "now" after them.
+    private fun mute(said: List<String>): Command? {
+        val words = said.dropLastWhile { it in CommandParser.POLITE_WORDS }
         val (on, from) = when {
             words.firstOrNull() == "mute" -> true to 1
             words.firstOrNull() == "unmute" -> false to 1

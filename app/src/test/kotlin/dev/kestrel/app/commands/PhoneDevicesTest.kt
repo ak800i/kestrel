@@ -137,6 +137,17 @@ class PhoneDevicesTest {
     }
 
     @Test
+    fun mediaPlayReactedOnlyWhenAPlayerStartedAfterTheKey() {
+        // Nothing played, and music plays after the key.
+        assertTrue(DeviceCommands.playTookKey(wasPlaying = false, playing = true, before = emptyList(), after = listOf("player")))
+        // Another app was already playing, and no player started: no player took the key.
+        assertFalse(DeviceCommands.playTookKey(wasPlaying = true, playing = true, before = listOf("video"), after = listOf("video")))
+        // Another app was already playing, and a second player started after the key.
+        assertTrue(DeviceCommands.playTookKey(wasPlaying = true, playing = true, before = listOf("video"), after = listOf("video", "player")))
+        assertFalse(DeviceCommands.playTookKey(wasPlaying = false, playing = false, before = emptyList<String>(), after = emptyList()))
+    }
+
+    @Test
     fun panMovesAThirdOfTheVisibleArea() {
         assertEquals(-180 to 0, DeviceCommands.panBy(Direction.LEFT, 1080, 2400, 2f))
         assertEquals(0 to 400, DeviceCommands.panBy(Direction.DOWN, 1080, 2400, 2f))

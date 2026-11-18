@@ -2,7 +2,9 @@ package dev.kestrel.app.commands
 
 import android.bluetooth.BluetoothManager
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.provider.Settings
 import android.view.KeyEvent
 import dev.kestrel.commands.Command
@@ -312,18 +314,29 @@ internal class DeviceCommands(environment: CommandEnvironment) {
     /**
      * "Media play" and "media pause": the media key itself, not a toggle, through Android's audio API, which reaches the
      * player of the media session that played last, also while Kestrel speaks (prototype P4). After 1 s Kestrel checks
-     * whether music plays; Kestrel's own replies do not count as music.
+     * whether a player took the key: for "play", music plays and either none played before or a music player started after
+     * the key, so that another app that was already playing does not count; for "pause", music stopped. Kestrel's own
+     * replies do not count as music.
      */
     private suspend fun media(play: Boolean): CommandResult {
         val audio = audio ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_MEDIA)
         val playing = audio.isMusicActive
+        val players = musicPlayers(audio)
         val key = if (play) KeyEvent.KEYCODE_MEDIA_PLAY else KeyEvent.KEYCODE_MEDIA_PAUSE
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
         delay(MEDIA_MILLIS)
-        val reacted = if (play) audio.isMusicActive else playing && !audio.isMusicActive
+        val reacted = if (play) {
+            playTookKey(playing, audio.isMusicActive, players, musicPlayers(audio))
+        } else {
+            playing && !audio.isMusicActive
+        }
         return if (reacted) CommandResult(Outcome.DONE, repeatable = true) else CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_MEDIA)
     }
+
+    // The players that play music now: Android lists only the active ones to an app such as Kestrel.
+    private fun musicPlayers(audio: AudioManager): List<AudioPlaybackConfiguration> =
+        audio.activePlaybackConfigurations.filter { it.audioAttributes.usage in MUSIC_USAGES }
 
     /**
      * Magnification (design D10): "zoom in" magnifies 2 times at the screen's centre, and one step more, up to 8 times,
@@ -378,6 +391,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         private const val MAX_BACKS = 3
         private const val READ_BACK_MILLIS = 300L
         private const val MEDIA_MILLIS = 1_000L
+        // The usages of Android's music stream, which isMusicActive counts; Kestrel's replies use USAGE_ASSISTANT.
+        private val MUSIC_USAGES = setOf(AudioAttributes.USAGE_MEDIA, AudioAttributes.USAGE_GAME, AudioAttributes.USAGE_UNKNOWN)
         private const val FIRST_SCALE = 2f
         private const val MAX_SCALE = 8f
 
@@ -493,6 +508,13 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             StreamKind.CALL -> PhoneCommandTexts.MUTE_CALL
             else -> null
         }
+
+        /**
+         * Whether a player took "media play": music plays after the key, and either none played before it ([wasPlaying])
+         * or a player of [after] was not among [before], the music players before the key.
+         */
+        fun <T> playTookKey(wasPlaying: Boolean, playing: Boolean, before: List<T>, after: List<T>): Boolean =
+            playing && (!wasPlaying || after.any { it !in before })
 
         /** How far "pan" moves the magnified area: a third of the visible width or height, in screen pixels. */
         fun panBy(direction: Direction, width: Int, height: Int, scale: Float): Pair<Int, Int> {
