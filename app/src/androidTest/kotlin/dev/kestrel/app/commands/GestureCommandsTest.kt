@@ -124,17 +124,18 @@ class GestureCommandsTest {
     fun edgeSwipesReachTheSystemsGestures() = runBlocking<Unit> {
         screen.open("GesturesActivity", "Gestures fixture")
 
+        // Each wait below allows 15 s, because the shade and the back gesture took more than 5 s on a loaded emulator.
         // With gesture navigation, as on kestrel-api37, a swipe from the top edge opens the notification shade,
         assertEquals(Outcome.DONE, CommandTests.say("swipe from the top edge").outcome)
         try {
-            withTimeout(5_000) { while (!shadeOpen()) delay(100) }
+            withTimeout(15_000) { while (!shadeOpen()) delay(100) }
         } finally {
             screen.session.actions.global(GlobalAction.DISMISS_SHADE)
         }
-        withTimeout(5_000) { while (shadeOpen()) delay(100) }
+        withTimeout(15_000) { while (shadeOpen()) delay(100) }
         // and one from the left edge goes back, which closes the fixture.
         assertEquals(Outcome.DONE, CommandTests.say("swipe from the left edge").outcome)
-        withTimeout(5_000) {
+        withTimeout(15_000) {
             while (screen.session.snapshots.current().snapshot.windows.any { it.kind == WindowKind.APPLICATION && it.packageName == FIXTURES }) {
                 delay(100)
             }

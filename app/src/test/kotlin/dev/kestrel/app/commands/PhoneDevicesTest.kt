@@ -227,6 +227,19 @@ class PhoneDevicesTest {
         assertEquals(8_000L, testScheduler.currentTime - waited)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun aRadioCountsAsChangedWhenAndroidReportsItsStateWithinSixSeconds() = runTest {
+        // Bluetooth needed 3.7 s to turn on when its stack restarted on a loaded kestrel-api37; here the radio needs 5 s.
+        val started = testScheduler.currentTime
+        assertTrue(DeviceCommands.awaitState(on = true) { testScheduler.currentTime - started >= 5_000 })
+
+        // A radio that never changes ends the wait after 6 s.
+        val waited = testScheduler.currentTime
+        assertFalse(DeviceCommands.awaitState(on = true) { false })
+        assertEquals(6_000L, testScheduler.currentTime - waited)
+    }
+
     @Test
     fun panMovesAThirdOfTheVisibleArea() {
         assertEquals(-180 to 0, DeviceCommands.panBy(Direction.LEFT, 1080, 2400, 2f))

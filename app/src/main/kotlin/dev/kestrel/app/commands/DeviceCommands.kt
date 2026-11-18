@@ -60,7 +60,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
      * disconnects (prototype P4). Kestrel reads Wi-Fi's state from Android and opens the panel only when it differs. It
      * acts only in the panel's own window: a window that was not on the screen before, of SystemUI or Settings, that shows
      * the switch; so never on Quick Settings' tile or on a switch of the app in front. It clicks the switch, waits up to
-     * 3 s for Android's state to change, and closes the panel with its "Done" button, or Back while the panel's window, the
+     * 6 s for Android's state to change, and closes the panel with its "Done" button, or Back while the panel's window, the
      * one where the switch was found, still shows, also when the command is cancelled.
      */
     private suspend fun wifi(screen: ScreenSession, on: Boolean): CommandResult {
@@ -115,7 +115,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
      * Bluetooth through its Quick Settings tile, whose switch turns the radio off and on (prototype P4), or, when Quick
      * Settings shows no tile, through the Bluetooth settings page that Kestrel opens: its switch named Bluetooth, or else
      * the page's one main switch. Kestrel acts only on SystemUI's tile or on that page's window, never on a switch of the
-     * app in front, and the state is Android's, read for up to 3 s. The shade and the page close also when the command is
+     * app in front, and the state is Android's, read for up to 6 s. The shade and the page close also when the command is
      * cancelled.
      */
     private suspend fun bluetooth(screen: ScreenSession, on: Boolean): CommandResult {
@@ -193,13 +193,6 @@ internal class DeviceCommands(environment: CommandEnvironment) {
     }
 
     private fun bluetoothOn(): Boolean? = bluetooth?.adapter?.isEnabled
-
-    // Waits up to 3 s for Android's [state] of a radio to become [on].
-    private suspend fun awaitState(on: Boolean, state: () -> Boolean?): Boolean =
-        withTimeoutOrNull(RADIO_MILLIS) {
-            while (state() != on) delay(POLL_MILLIS)
-            true
-        } ?: false
 
     // A window of [packages] that was not on the screen [before], or the window [switchWindow] where the command found its
     // switch (see [ownWindow]); while it may still be [opening], after a cancel in the first moments of its start, Kestrel
@@ -374,7 +367,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         private const val SETTINGS = "com.android.settings"
         private const val PANEL_MILLIS = 3_000L
         private const val PAGE_MILLIS = 8_000L
-        private const val RADIO_MILLIS = 3_000L
+        private const val RADIO_MILLIS = 6_000L
         private const val POLL_MILLIS = 100L
         private const val APPEAR_MILLIS = 1_000L
         private const val LEAVE_MILLIS = 2_000L
@@ -524,6 +517,16 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                 }
                 page
             }
+
+        /**
+         * Waits up to 6 s for Android's [state] of a radio to become [on]: Bluetooth needed 3.7 s to turn on when its stack
+         * restarted on a loaded kestrel-api37.
+         */
+        suspend fun awaitState(on: Boolean, state: () -> Boolean?): Boolean =
+            withTimeoutOrNull(RADIO_MILLIS) {
+                while (state() != on) delay(POLL_MILLIS)
+                true
+            } ?: false
 
         /**
          * Presses [back] while a Settings page that was not on the screen [before] is in front of [windows], at most 3
