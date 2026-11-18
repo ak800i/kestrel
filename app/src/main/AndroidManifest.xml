@@ -26,6 +26,9 @@
             <category android:name="android.intent.category.HOME" />
         </intent>
     </queries>
+    <!-- Optional, asked for at the first "call [name]": the contacts, which Kestrel reads and matches only on the phone
+         (design spec, section 13.6). -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Plan 3C: permissions -->
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android
