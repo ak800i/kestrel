@@ -26,5 +26,14 @@ internal object PhoneCommandTexts {
 
     const val SAY_THE_NUMBER = "Say the number."
 
+    const val WIFI_ALREADY_ON = "Wi-Fi is already on."
+    const val WIFI_ALREADY_OFF = "Wi-Fi is already off."
+    const val NO_WIFI_SWITCH = "I can't find the Wi-Fi switch."
+    const val WIFI_NOT_CHANGED = "Wi-Fi didn't change."
+    const val BLUETOOTH_ALREADY_ON = "Bluetooth is already on."
+    const val BLUETOOTH_ALREADY_OFF = "Bluetooth is already off."
+    const val NO_BLUETOOTH_SWITCH = "I can't find the Bluetooth switch."
+    const val BLUETOOTH_NOT_CHANGED = "Bluetooth didn't change."
+
     // Tasks 2 to 6 of plan 3C add their texts above this line.
 }

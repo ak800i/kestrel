@@ -51,5 +51,20 @@ class GrammarPhoneTest {
         }
     }
 
+    @Test
+    fun wifiAndBluetoothTurnOnAndOffAndOtherSwitchesStayScreenCommands() {
+        assertParses(PhoneCommand.Radio(RadioKind.WIFI, on = true), "Turn on Wi-Fi.", "Turn the WiFi on", "Enable wifi", "Wi-Fi on.")
+        assertParses(PhoneCommand.Radio(RadioKind.WIFI, on = false), "Turn off Wi‑Fi.", "Switch off the Wi-Fi", "Disable Wi Fi")
+        assertParses(PhoneCommand.Radio(RadioKind.BLUETOOTH, on = true), "Turn on Bluetooth.", "Switch Bluetooth on.", "Bluetooth on")
+        assertParses(PhoneCommand.Radio(RadioKind.BLUETOOTH, on = false), "Turn off Bluetooth.", "Turn Bluetooth off", "disable bluetooth")
+        assertParses(PhoneCommand.Radio(RadioKind.WIFI, on = true), "Turn on Wi-Fi please.", "turn on wifi now")
+        assertParses(PhoneCommand.Radio(RadioKind.BLUETOOTH, on = false), "Turn off Bluetooth now.", "Turn off blue tooth.")
+        assertParses(Command.Switch(Target.Label("the flashlight"), on = true), "Turn on the flashlight.")
+        assertParses(Command.Switch(null, on = false), "Switch off.")
+        // "Turn off" alone is Kestrel's own verb, whose name the recogniser may lose; it is no command.
+        assertBare("Turn off.")
+        assertParses(Command.Check(Target.Label("Wi-Fi"), on = true), "check Wi-Fi")
+    }
+
     // Tasks 2 to 6 of plan 3C add their tests above this line.
 }

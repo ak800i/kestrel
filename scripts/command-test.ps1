@@ -146,7 +146,7 @@ try {
                 if (-not (Invoke-DeviceRestore 'put Bluetooth back' "cmd bluetooth_manager $state")) { $code = 1 }
             }
             $tiles = try { Get-SecureSetting -Serial $Serial -Name 'sysui_qs_tiles' } catch { $null }
-            if ($tiles -cne $saved.Tiles -and -not (Set-SecureSetting -Serial $Serial -Name 'sysui_qs_tiles' -Value $saved.Tiles)) { $code = 1 }
+            if ($tiles -cne $saved.Tiles -and -not (Set-QuickSettingsTiles -Serial $Serial -Value $saved.Tiles)) { $code = 1 }
             if ($saved.LockScreenOff -and -not (Invoke-DeviceRestore 'turn off the lock screen again' 'cmd lock_settings set-disabled true')) {
                 $code = 1
             }

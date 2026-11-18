@@ -959,7 +959,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | Help | Show numbers; Hide numbers; Show labels; Hide labels; What is [number]?; Show commands for [label or number] | Yes |
 | Help | Stop Voice Access; Voice Access settings | Yes, as "Stop Kestrel" and "Kestrel settings" |
 | Help | Send feedback | Not applicable, because no data leaves the phone |
-| Settings | Turn Bluetooth on or off; Turn Wi-Fi on or off | Yes, through the Quick Settings tiles |
+| Settings | Turn Bluetooth on or off; Turn Wi-Fi on or off | Yes. Wi-Fi through the switch of Android's Internet panel, because its Quick Settings tile only disconnects; Bluetooth through its Quick Settings tile. Without a Bluetooth tile, Kestrel uses the switch of Android's Bluetooth settings page where that page shows one; otherwise it says that it can't find the switch. |
 | Settings | Turn volume up or down; Turn [media, alarm, phone or ring] volume up or down; Mute; Unmute; Silence | Yes, through Android's audio API |
 | Numbers and labels | "7"; "Save"; "Tap 7"; "Tap Save" | Yes, with the "require verbs" setting |
 | Lock screen | Entering the PIN with phonetic labels (Alpha, Bravo …) | Later (D8) |

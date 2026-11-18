@@ -1,14 +1,17 @@
 # A stand-in for adb in the tests of scripts\lib\Kestrel.ps1; fake-adb.cmd runs it in its own process, as adb runs.
 # It understands 'adb -s <serial> get-state', 'adb -s <serial> shell getprop <property>' for the properties that
-# Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands that the helpers send, also
-# inside the check of Format-TestDeviceCommand. It keeps the device's state in the JSON file whose path is in the
-# environment variable KESTREL_FAKE_ADB:
-#   avd       the device's ro.boot.qemu.avd_name, empty for a phone
-#   model     the device's ro.product.model
-#   settings  names and values of the secure settings; a missing name is an unset setting
-#   failures  how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
-#   calls     every settings command that it received and did not refuse, in order, without the check
-#   refused   every settings command that the check kept from running, in order
+# Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands and the 'cmd statusbar
+# set-tiles' that the helpers send, also inside the check of Format-TestDeviceCommand. It keeps the device's state in the
+# JSON file whose path is in the environment variable KESTREL_FAKE_ADB:
+#   avd         the device's ro.boot.qemu.avd_name, empty for a phone
+#   model       the device's ro.product.model
+#   settings    names and values of the secure settings; a missing name is an unset setting
+#   keepsTiles  whether SystemUI keeps the list of Quick Settings tiles itself, as since Android 15: set-tiles writes the
+#               list to sysui_qs_tiles, and SystemUI writes its own list back over a 'settings put' of that setting.
+#               Otherwise SystemUI follows the setting, and set-tiles changes nothing.
+#   failures    how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
+#   calls       every settings command that it received and did not refuse, in order, without the check
+#   refused     every settings command that the check kept from running, in order
 # The serial 'missing' stands for a device that adb cannot find. Error lines go to standard error, as adb's do.
 $statePath = $env:KESTREL_FAKE_ADB
 if (-not $statePath -or -not (Test-Path -LiteralPath $statePath)) {
@@ -42,13 +45,15 @@ if ($command -match '^getprop (\S+)$') {
 }
 $settings = [ordered]@{}
 foreach ($property in $state.settings.PSObject.Properties) { $settings[$property.Name] = [string]$property.Value }
+$keepsTiles = [bool]$state.keepsTiles
 $failures = [int]$state.failures
 $calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
 $refused = @(@($state.refused) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
 
 function Save-State {
     $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{
-            avd = $avd; model = $model; settings = $settings; failures = $failures; calls = [string[]]$calls; refused = [string[]]$refused
+            avd = $avd; model = $model; settings = $settings; keepsTiles = $keepsTiles; failures = $failures; calls = [string[]]$calls
+            refused = [string[]]$refused
         })
     [IO.File]::WriteAllText($statePath, $json)
 }
@@ -89,7 +94,15 @@ if ($deviceCommand -match '^settings get secure (\S+)$') {
         [Console]::Error.WriteLine('/system/bin/sh: no closing quote')
         exit 1
     }
-    $settings[$Matches[1]] = $Matches[2].Replace("'\''", "'")
+    # A SystemUI that keeps the list of tiles writes its own list back over the setting.
+    if (-not ($keepsTiles -and $Matches[1] -eq 'sysui_qs_tiles')) { $settings[$Matches[1]] = $Matches[2].Replace("'\''", "'") }
+} elseif ($deviceCommand -match "^cmd statusbar set-tiles '") {
+    if ($deviceCommand -notmatch "^cmd statusbar set-tiles '((?:[^']|'\\'')*)'$") {
+        Save-State
+        [Console]::Error.WriteLine('/system/bin/sh: no closing quote')
+        exit 1
+    }
+    if ($keepsTiles) { $settings['sysui_qs_tiles'] = $Matches[1].Replace("'\''", "'") }
 } elseif ($deviceCommand -match '^settings delete secure (\S+)$') {
     $lines = @("Deleted $(if ($settings.Contains($Matches[1])) { 1 } else { 0 }) rows")
     $settings.Remove($Matches[1])

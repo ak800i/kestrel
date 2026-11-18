@@ -91,6 +91,41 @@ function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
     $false
 }
 
+# Puts back the list of Quick Settings tiles that Get-SecureSetting read from sysui_qs_tiles, and returns whether the
+# device took it. Since Android 15, SystemUI keeps the list itself and writes it back a moment after another write to the
+# setting, so the list goes through SystemUI's 'cmd statusbar set-tiles', after which SystemUI writes the setting. When
+# that command fails, or the setting does not show the list within 5 s, the list goes to the setting, which a SystemUI
+# before Android 15 follows. 'null' and an empty value, which set-tiles cannot take, go to the setting only. When the
+# list does not come back, it warns with a command that puts it back when it is pasted into PowerShell.
+function Set-QuickSettingsTiles([string]$Serial, [string]$Value) {
+    $name = 'sysui_qs_tiles'
+    if ($Value -in 'null', '') { return (Set-SecureSetting -Serial $Serial -Name $name -Value $Value) }
+    # A single quote would end the device shell's quoting, so it becomes '\''.
+    $list = "'$($Value -replace "'", "'\''")'"
+    $command = "cmd statusbar set-tiles $list"
+    $reason = 'SystemUI did not write the list within 5 s'
+    try {
+        Invoke-SettingsCommand -Serial $Serial -Command $command | Out-Null
+        foreach ($try in 1..10) {
+            Start-Sleep -Milliseconds 500
+            if ((Get-SecureSetting -Serial $Serial -Name $name) -ceq $Value) { return $true }
+        }
+    } catch {
+        $reason = $_.Exception.Message
+    }
+    try {
+        Invoke-SettingsCommand -Serial $Serial -Command "settings put secure $name $list" | Out-Null
+        # A SystemUI that keeps the list writes it back over the setting a moment later.
+        Start-Sleep -Seconds 1
+        if ((Get-SecureSetting -Serial $Serial -Name $name) -ceq $Value) { return $true }
+    } catch {
+        $reason = "$reason; $($_.Exception.Message)"
+    }
+    $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
+    Write-Warning "Could not put back the Quick Settings tiles of $Serial ($reason). Run: & $(& $literal (Get-Adb)) -s $Serial shell $(& $literal $command)"
+    $false
+}
+
 # Reads the secure settings that belong to accessibility, and returns their names and values. They include the list of
 # enabled services and the accessibility switch. They include the shortcuts that start a service, which Android clears
 # for a service that it turns off. They also include the touch-and-hold delay (long_press_timeout), which GestureTest

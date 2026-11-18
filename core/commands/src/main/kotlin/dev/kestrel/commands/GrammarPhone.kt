@@ -49,6 +49,7 @@ internal object GrammarPhone {
 
     fun targeted(words: List<String>, text: String): Command? {
         openApp(words, text)?.let { return it }
+        radio(words)?.let { return it }
         // Tasks 2 to 6 of plan 3C add their rules above this line.
         return null
     }
@@ -79,6 +80,30 @@ internal object GrammarPhone {
         val ending = IN_WORK_PROFILE.firstOrNull { end - 1 > it.size && words.subList(end - it.size, end) == it }
         if (ending != null) return PhoneCommand.OpenApp(cutWords(text, 1, end - ending.size), work = true)
         return PhoneCommand.OpenApp(cutWords(text, 1, end), work = false)
+    }
+
+    private val SWITCH_VERBS = setOf("turn", "switch")
+    private val ON_OFF = mapOf("on" to true, "off" to false)
+    private val ENABLE = mapOf("enable" to true, "disable" to false)
+
+    // "Turn on Wi-Fi", "turn Bluetooth off", "enable Bluetooth", "Wi-Fi off", also with "please" or "now" after them.
+    // Normalizer writes "Wi-Fi" as "wi fi", and the recogniser may write "Bluetooth" as "blue tooth".
+    private fun radio(said: List<String>): Command? {
+        val words = said.dropLastWhile { it in CommandParser.POLITE_WORDS }
+        val (on, rest) = when {
+            words.size >= 3 && words[0] in SWITCH_VERBS && words[1] in ON_OFF -> ON_OFF.getValue(words[1]) to words.drop(2)
+            words.size >= 3 && words[0] in SWITCH_VERBS && words.last() in ON_OFF ->
+                ON_OFF.getValue(words.last()) to words.subList(1, words.size - 1)
+            words.size >= 2 && words[0] in ENABLE -> ENABLE.getValue(words[0]) to words.drop(1)
+            words.size >= 2 && words.last() in ON_OFF -> ON_OFF.getValue(words.last()) to words.dropLast(1)
+            else -> return null
+        }
+        val radio = when (rest.dropWhile { it == "the" || it == "my" }) {
+            listOf("wi", "fi"), listOf("wifi") -> RadioKind.WIFI
+            listOf("bluetooth"), listOf("blue", "tooth") -> RadioKind.BLUETOOTH
+            else -> return null
+        }
+        return PhoneCommand.Radio(radio, on)
     }
 
     // Tasks 2 to 6 of plan 3C add their functions above this line.

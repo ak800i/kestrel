@@ -40,10 +40,13 @@ Describe 'The settings helpers' {
         Mock Start-Sleep {}
 
         # Gives the fake device these secure settings and makes its next commands fail as often as -Failures says. It is
-        # kestrel-api37 unless -Avd and -Model say otherwise.
+        # kestrel-api37 unless -Avd and -Model say otherwise. With -KeepsTiles, its SystemUI keeps the list of Quick
+        # Settings tiles itself, as since Android 15.
         function Set-FakeDevice([System.Collections.IDictionary]$Settings = @{}, [int]$Failures = 0, [string]$Avd = 'kestrel-api37',
-            [string]$Model = 'sdk_gphone64_x86_64') {
-            $state = [ordered]@{ avd = $Avd; model = $Model; settings = $Settings; failures = $Failures; calls = @(); refused = @() }
+            [string]$Model = 'sdk_gphone64_x86_64', [switch]$KeepsTiles) {
+            $state = [ordered]@{
+                avd = $Avd; model = $Model; settings = $Settings; keepsTiles = [bool]$KeepsTiles; failures = $Failures; calls = @(); refused = @()
+            }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
         }
 
@@ -157,6 +160,48 @@ Describe 'The settings helpers' {
             Invoke-Expression $message.Substring($message.IndexOf('Run: ') + 'Run: '.Length)
             (Get-FakeDevice).settings.x | Should -BeExactly "it's"
             (Get-FakeDevice).calls[-1] | Should -BeExactly "settings put secure x 'it'\''s'"
+        }
+    }
+
+    Context 'Set-QuickSettingsTiles' {
+        It 'puts the list back through SystemUI, which writes its own list back over a settings put, and returns $true' {
+            Set-FakeDevice -Settings @{ sysui_qs_tiles = 'internet,flashlight' } -KeepsTiles
+
+            Set-QuickSettingsTiles -Serial emulator-5554 -Value 'internet,bt,flashlight' | Should -BeExactly $true
+
+            $device = Get-FakeDevice
+            $device.settings.sysui_qs_tiles | Should -BeExactly 'internet,bt,flashlight'
+            $device.calls[0] | Should -BeExactly "cmd statusbar set-tiles 'internet,bt,flashlight' && echo kestrel-end"
+            $device.calls | Where-Object { $_ -like 'settings put *' } | Should -BeNullOrEmpty
+        }
+
+        It 'writes the list to the setting when SystemUI does not write it within 5 s' {
+            Set-FakeDevice -Settings @{ sysui_qs_tiles = 'internet,flashlight' }
+
+            Set-QuickSettingsTiles -Serial emulator-5554 -Value 'internet,bt,flashlight' | Should -BeExactly $true
+
+            $device = Get-FakeDevice
+            $device.settings.sysui_qs_tiles | Should -BeExactly 'internet,bt,flashlight'
+            $device.calls[0] | Should -BeExactly "cmd statusbar set-tiles 'internet,bt,flashlight' && echo kestrel-end"
+            @($device.calls | Where-Object { $_ -like 'settings put *' }) | Should -BeExactly @("settings put secure sysui_qs_tiles 'internet,bt,flashlight' && echo kestrel-end")
+        }
+
+        It 'returns $false and warns with the reason and a command that puts the list back when set-tiles fails' {
+            # The device fails all 3 tries of set-tiles, and SystemUI then writes its own list back over the setting.
+            Set-FakeDevice -Settings @{ sysui_qs_tiles = 'internet,flashlight' } -Failures 3 -KeepsTiles
+
+            $output = Set-QuickSettingsTiles -Serial emulator-5554 -Value 'internet,bt,flashlight' 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            $warnings = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $warnings | Should -HaveCount 1
+            $message = $warnings[0].Message
+            $message | Should -BeLike ("Could not put back the Quick Settings tiles of emulator-5554 (Could not run 'cmd statusbar set-tiles " +
+                "'internet,bt,flashlight'' on emulator-5554: Bad arguments). Run: *")
+            (Get-FakeDevice).settings.sysui_qs_tiles | Should -BeExactly 'internet,flashlight'
+
+            Invoke-Expression $message.Substring($message.IndexOf('Run: ') + 'Run: '.Length)
+            (Get-FakeDevice).settings.sysui_qs_tiles | Should -BeExactly 'internet,bt,flashlight'
         }
     }
 

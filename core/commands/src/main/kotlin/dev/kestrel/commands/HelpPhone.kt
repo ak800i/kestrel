@@ -11,6 +11,7 @@ internal object HelpPhone {
             ),
         ),
         HelpGroup("Open apps", listOf("open Chrome", "open work Gmail", "open Gmail in the work profile")),
+        HelpGroup("Wi-Fi and Bluetooth", listOf("turn on Wi-Fi", "turn off Bluetooth")),
         // Tasks 2 to 6 of plan 3C add their groups above this line.
     )
 }

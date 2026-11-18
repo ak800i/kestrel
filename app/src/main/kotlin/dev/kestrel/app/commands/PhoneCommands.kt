@@ -17,6 +17,7 @@ internal fun phoneCommands(environment: CommandEnvironment): CommandPart = Phone
 
 internal class PhoneCommands(private val environment: CommandEnvironment) : CommandPart {
     private val apps = AppCommands(environment)
+    private val device = DeviceCommands(environment)
     // Tasks 2 to 6 of plan 3C add their parts above this line.
 
     override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult? {
@@ -26,6 +27,7 @@ internal class PhoneCommands(private val environment: CommandEnvironment) : Comm
             PhoneCommand.PreviousApp -> previousAppResult(screen.system.previousApp())
             PhoneCommand.CircleToSearch -> circleToSearch(screen.system.systemActions()) { screen.system.systemAction(it) }
             is PhoneCommand.OpenApp -> apps.open(screen, command, conversation)
+            is PhoneCommand.Radio -> device.radio(screen, command.radio, command.on)
             // Tasks 2 to 6 of plan 3C add their commands above this line.
             else -> null
         }
