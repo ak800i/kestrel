@@ -1,5 +1,6 @@
 package dev.kestrel.testapp
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.os.Bundle
@@ -20,6 +21,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.annotation.MainThread
 
 /**
  * The text fields of the editing tests in Android's own views (design spec, section 9.7):
@@ -76,7 +78,7 @@ class EditActivity : Activity() {
         val phone = page.addField(R.id.text_phone, "Phone", R.id.text_phone_state, InputType.TYPE_CLASS_PHONE) { field ->
             "Phone: \"${field.text}\""
         }
-        phone.addTextChangedListener(PhoneNumberFormattingTextWatcher("US"))
+        formatPhoneNumbers(phone)
         val draft = page.addField(R.id.text_draft, "Draft", R.id.text_draft_state, InputType.TYPE_CLASS_TEXT) { field ->
             "Draft: \"${field.text}\" ${field.selectionStart}-${field.selectionEnd}"
         }
@@ -84,6 +86,13 @@ class EditActivity : Activity() {
         page.addField(R.id.text_legacy, "Legacy", R.id.text_legacy_state, InputType.TYPE_CLASS_TEXT, ignoresCommits = true) { field ->
             "Legacy: \"${field.text}\" ${field.selectionStart}-${field.selectionEnd}"
         }
+    }
+
+    // The test app formats one fixture field, and the watcher's one-time lookup on the main thread is harmless there.
+    @MainThread
+    @SuppressLint("ThreadConstraint")
+    private fun formatPhoneNumbers(field: EditText) {
+        field.addTextChangedListener(PhoneNumberFormattingTextWatcher("US"))
     }
 }
 
@@ -193,6 +202,9 @@ private fun LinearLayout.addField(
 
 /** A text field that reports each change of its text or selection, and may ignore what an input method commits. */
 private class ReportingField(context: Context, private val ignoresCommits: Boolean) : EditText(context) {
+    // The constructor that the layout tools look for.
+    constructor(context: Context) : this(context, ignoresCommits = false)
+
     // EditText reports a selection while it is built, before this is set.
     var onChange: ((EditText) -> Unit)? = null
 
