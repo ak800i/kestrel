@@ -87,6 +87,10 @@
 #                                           keyword hits, those that the echo filter took for Kestrel's own voice, the
 #                                           loudest sample in percent and whether Android silenced the microphone; a
 #                                           failure of the microphone fails the check
+# The A71 session of the instant commands (scripts\a71-commands.ps1 runs these):
+#   profiles                                the profiles that the launcher API lists: each one's serial number, number
+#                                           of apps and, from Android 15, type; never a name
+#   snapshots                               how many snapshots the screen layer has built and how long they took in all
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -108,7 +112,8 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
-        'voice-counts', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files', 'watch')][string]$Command,
+        'voice-counts', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files', 'watch', 'profiles',
+        'snapshots')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,

@@ -3,8 +3,11 @@ package dev.kestrel.app.debug
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.UserManager
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.spike.SpikeHooks
@@ -52,6 +55,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
         if (command in VoiceHooks.COMMANDS) return VoiceHooks(graph).run(command, intent)
         if (command in EvalHooks.COMMANDS) return EvalHooks(graph, context).run(command, intent)
         if (command in SessionHooks.COMMANDS) return SessionHooks(graph, context).run(command, intent)
+        if (command == "PROFILES") return profiles()
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val actions = session.actions
         return when (command) {
@@ -64,7 +68,31 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
                 overlay(session, intent)
                 state()
             }
+            // How many snapshots the screen layer built and how long they took, for the A71 session (design spec, 8.3).
+            "SNAPSHOTS" -> "builds=${session.snapshotBuilds} millis=${session.snapshotMillis}"
             else -> throw HookError("unknown command '$command'")
+        }
+    }
+
+    /**
+     * The profiles that the launcher API lists, for the A71 session of sub-project 3 (research r21): each one's serial
+     * number, its number of launcher apps and, from Android 15, its user type. It never names a user or an app.
+     */
+    private fun profiles(): String {
+        val launcher = context.getSystemService(LauncherApps::class.java) ?: throw HookError("the launcher API is missing")
+        val users = context.getSystemService(UserManager::class.java)
+        return launcher.profiles.joinToString("; ") { user ->
+            val apps = try {
+                launcher.getActivityList(null, user).size.toString()
+            } catch (e: SecurityException) {
+                "refused"
+            }
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                launcher.getLauncherUserInfo(user)?.userType
+            } else {
+                null
+            }
+            "user=${users?.getSerialNumberForUser(user)} apps=$apps type=${type ?: "unknown"}"
         }
     }
 
