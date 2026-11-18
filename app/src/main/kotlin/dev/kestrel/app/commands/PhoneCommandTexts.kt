@@ -10,6 +10,7 @@ internal object PhoneCommandTexts {
     const val NO_APP_DRAWER = "I can't open the app drawer on this phone."
     const val NOT_SWITCHED = "I couldn't switch apps."
     const val NO_CIRCLE_TO_SEARCH = "Circle to Search isn't available on this phone."
+    const val CIRCLE_TO_SEARCH_REFUSED = "Android refused to start Circle to Search."
 
     /** The system action of Circle to Search, where the launcher offers it (research r25). */
     const val CIRCLE_TO_SEARCH_ACTION = 500

@@ -49,6 +49,11 @@ class PhoneCommandsTest {
         assertTrue(performed.isEmpty())
         assertEquals(CommandResult(Outcome.DONE), circleToSearch(setOf(14, 500)) { performed += it; done })
         assertEquals(listOf(PhoneCommandTexts.CIRCLE_TO_SEARCH_ACTION), performed)
+        // Android's refusal names what it refused, in plain words.
+        assertEquals(
+            CommandResult(Outcome.FAILED, show = "Android refused to start Circle to Search."),
+            circleToSearch(setOf(500)) { ActionResult.Failed("Android refused the system action.") },
+        )
     }
 
     @Test

@@ -18,8 +18,9 @@
          call log. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
-    <!-- "Show previous app" tells the home app, whose overview shows between the two apps, from the app that comes back
-         (design D9 of sub-project 3). Since Android 11 an app sees the home app only when it declares its intent here. -->
+    <!-- "Show previous app" leaves out the home app: a switch that ends on the home screen, as with a single task, is no
+         switch (the overview is told by Android's recents component; design D9 of sub-project 3, spec 13.6). Since
+         Android 11 an app sees the home app only when it declares its intent here. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />

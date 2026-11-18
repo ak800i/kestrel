@@ -84,7 +84,11 @@ class SystemControls(
 
     /** Performs the system action [id], such as Circle to Search (500) where the launcher offers it (research r25). */
     suspend fun systemAction(id: Int): ActionResult =
-        if (service.performGlobalAction(id)) settled(ActionMethod.GLOBAL_ACTION) else ActionResult.Failed("Android refused the system action")
+        if (service.performGlobalAction(id)) {
+            settled(ActionMethod.GLOBAL_ACTION)
+        } else {
+            ActionResult.Failed("Android refused the system action.")
+        }
 
     /**
      * Moves the centre of the magnified area by [dx] and [dy] pixels of the screen; Android keeps the magnified area on the
@@ -164,11 +168,11 @@ class SystemControls(
         const val RECENTS_GAP_MILLIS = 300L
         const val SWITCH_MILLIS = 3_000L
         const val POLL_MILLIS = 100L
-        val NO_ACTIVITY = ActionResult.Failed("No app can open it")
-        val REFUSED = ActionResult.Failed("Android does not let Kestrel open it")
-        val RECENTS_REFUSED = ActionResult.Failed("Android refused the recent apps action")
-        val NOT_SWITCHED = ActionResult.Failed("No other app came to the front")
-        val NOT_MAGNIFIED = ActionResult.Failed("The screen is not magnified")
+        val NO_ACTIVITY = ActionResult.Failed("No app can open it.")
+        val REFUSED = ActionResult.Failed("Android does not let Kestrel open it.")
+        val RECENTS_REFUSED = ActionResult.Failed("Android refused the recent apps action.")
+        val NOT_SWITCHED = ActionResult.Failed("No other app came to the front.")
+        val NOT_MAGNIFIED = ActionResult.Failed("The screen is not magnified.")
     }
 }
 

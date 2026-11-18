@@ -24,9 +24,10 @@ object Commands {
      * Whether [heard] is the same command as [expected]: the same variant with the same fields. A label or an app's name
      * counts as the same when the matcher finds the same one of the scene's [labels] for both, and a contact's name when
      * the contact matcher finds the same one of the [contacts]; when it finds none for the expected words, the folded
-     * words must have no word errors. Any other text, such as a typed text or a
-     * search, counts as the same when it has no word errors. A bare text counts as the same when both find the same of
-     * the [labels] with the strict limits of bare labels, or else when its words have no errors.
+     * words must have no word errors. A number to call counts as the same only with the same digits, "+", "*" and "#".
+     * Any other text, such as a typed text or a search, counts as the same when it has no word errors. A bare text counts
+     * as the same when both find the same of the [labels] with the strict limits of bare labels, or else when its words
+     * have no errors.
      */
     fun sameAction(expected: Command, heard: Command, labels: List<String>, contacts: List<String> = labels): Boolean =
         same(expected, heard, labels, contacts)
@@ -49,6 +50,8 @@ object Commands {
         expected is PhoneCommand.OpenApp ->
             expected.work == (heard as PhoneCommand.OpenApp).work && sameName(expected.name, heard.name, labels)
         expected is CallTarget.Name -> sameContact(expected, heard as CallTarget.Name, contacts)
+        // The normaliser drops "+", "*" and "#", which make another number.
+        expected is CallTarget.Number -> expected.digits == (heard as CallTarget.Number).digits
         expected is String -> sameWords(expected, heard as String)
         expected is Number || expected is Boolean || expected is Char || expected is Enum<*> -> expected == heard
         else -> fields(expected.javaClass).all { same(it.get(expected), it.get(heard), labels, contacts) }

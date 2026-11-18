@@ -54,6 +54,22 @@ class SameActionTest {
         assertFalse(same("Open work Gmail.", "Open Gmail."))
     }
 
+    private fun call(digits: String) = PhoneCommand.Call(CallTarget.Number(digits))
+
+    @Test
+    fun aNumberToCallIsTheSameOnlyWithItsPlus() {
+        assertTrue(Commands.sameAction(call("+381641234567"), call("+381641234567"), scene))
+        // Without its "+", Kestrel would dial another number.
+        assertFalse(Commands.sameAction(call("+381641234567"), call("381641234567"), scene))
+    }
+
+    @Test
+    fun aCodeToCallIsTheSameOnlyWithItsStarAndHash() {
+        assertTrue(Commands.sameAction(call("*21#"), call("*21#"), scene))
+        assertFalse(Commands.sameAction(call("*21#"), call("21#"), scene))
+        assertFalse(Commands.sameAction(call("*21#"), call("*21"), scene))
+    }
+
     @Test
     fun aContactsNameCountsAmongTheContactsThatTheLineNames() {
         val contacts = listOf("Ana Petrović", "Mom")

@@ -82,7 +82,7 @@ internal suspend fun circleToSearch(offered: Set<Int>, perform: suspend (Int) ->
     }
     return when (val result = perform(PhoneCommandTexts.CIRCLE_TO_SEARCH_ACTION)) {
         is ActionResult.Done -> CommandResult(Outcome.DONE)
-        is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
+        is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = PhoneCommandTexts.CIRCLE_TO_SEARCH_REFUSED)
     }
 }
 

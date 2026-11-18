@@ -53,14 +53,16 @@ class DeviceCommandsTest {
     @Test
     fun wifiTurnsOffAndOnThroughTheInternetPanel() = runBlocking<Unit> {
         try {
-            if (!radio("wifi_on")) assertEquals(Outcome.DONE, CommandTests.say("turn on Wi-Fi").outcome)
+            // The commands that change a radio get 30 s: their own waits add up to about 18 s (the panel's 3 s, the switch's 3 s,
+            // the tap's 3 s, the radio's 6 s and the closing 3 s), more than the default 15 s allow on a loaded emulator.
+            if (!radio("wifi_on")) assertEquals(Outcome.DONE, CommandTests.say("turn on Wi-Fi", timeoutMillis = 30_000).outcome)
 
-            assertEquals(Outcome.DONE, CommandTests.say("turn off Wi-Fi").outcome)
+            assertEquals(Outcome.DONE, CommandTests.say("turn off Wi-Fi", timeoutMillis = 30_000).outcome)
             assertTrue("Wi-Fi is still on", VoiceTests.waitUntil(5_000) { !radio("wifi_on") })
             awaitGone { it.viewId?.endsWith(":id/wifi_toggle") == true }
             assertEquals(Outcome.DONE, CommandTests.say("turn Wi-Fi off").outcome)
             awaitBar(PhoneCommandTexts.WIFI_ALREADY_OFF)
-            assertEquals(Outcome.DONE, CommandTests.say("turn on Wi-Fi").outcome)
+            assertEquals(Outcome.DONE, CommandTests.say("turn on Wi-Fi", timeoutMillis = 30_000).outcome)
 
             assertTrue("Wi-Fi is still off", VoiceTests.waitUntil(5_000) { radio("wifi_on") })
         } finally {
@@ -76,10 +78,11 @@ class DeviceCommandsTest {
             // So that the test fails, instead of passing through the settings page, when Quick Settings has no tile.
             awaitBluetoothTile(shown = true)
 
-            assertEquals(Outcome.DONE, CommandTests.say("turn off Bluetooth").outcome)
+            // As for Wi-Fi: Quick Settings' 3 s, the tile's 3 s and the radio's 6 s take more than the default 15 s when loaded.
+            assertEquals(Outcome.DONE, CommandTests.say("turn off Bluetooth", timeoutMillis = 30_000).outcome)
             assertTrue("Bluetooth is still on", VoiceTests.waitUntil(5_000) { !radio("bluetooth_on") })
             awaitGone { it.packageName == PhoneTests.SYSTEM_UI && it.viewId?.contains(":id/qs_tile") == true }
-            assertEquals(Outcome.DONE, CommandTests.say("switch Bluetooth on").outcome)
+            assertEquals(Outcome.DONE, CommandTests.say("switch Bluetooth on", timeoutMillis = 30_000).outcome)
 
             assertTrue("Bluetooth is still off", VoiceTests.waitUntil(5_000) { radio("bluetooth_on") })
         } finally {
@@ -254,7 +257,8 @@ class DeviceCommandsTest {
     private suspend fun awaitBluetoothTile(shown: Boolean) {
         screen.session.actions.global(GlobalAction.QUICK_SETTINGS)
         try {
-            screen.awaitElement { it.packageName == PhoneTests.SYSTEM_UI && it.viewId?.contains(":id/qs_tile") == true }
+            // 15 s, as in SystemCommandsTest: Quick Settings' tiles were slow to show while the host ran short of memory.
+            screen.awaitElement(15_000) { it.packageName == PhoneTests.SYSTEM_UI && it.viewId?.contains(":id/qs_tile") == true }
             withTimeout(5_000) {
                 while (true) {
                     val snapshot = screen.session.snapshots.current().snapshot

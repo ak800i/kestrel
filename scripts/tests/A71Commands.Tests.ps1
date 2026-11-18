@@ -10,7 +10,7 @@ BeforeAll {
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Format-CheckResult', 'Get-Median',
-        'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo')
+        'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -41,7 +41,10 @@ Describe 'The helpers of the A71 session of the instant commands' {
     It 'tells from the SIM state whether a SIM card is in the phone' {
         Test-SimAbsent -State 'ABSENT' | Should -BeTrue
         Test-SimAbsent -State 'ABSENT,ABSENT' | Should -BeTrue
-        Test-SimAbsent -State '' | Should -BeTrue
+        Test-SimAbsent -State 'ABSENT,' | Should -BeTrue
+        # A phone that does not set the property, or a read that gave nothing, does not say that none is there.
+        Test-SimAbsent -State '' | Should -BeFalse
+        Test-SimAbsent -State ',' | Should -BeFalse
         Test-SimAbsent -State 'LOADED,ABSENT' | Should -BeFalse
         Test-SimAbsent -State 'PIN_REQUIRED' | Should -BeFalse
         # A phone with a SIM card can say NOT_READY while its radio starts.
@@ -119,5 +122,19 @@ Describe 'The helpers of the A71 session of the instant commands' {
         Read-YesNo 'Did the page open? Type y or n.' | Should -BeExactly 'n'
 
         Should -Invoke Read-Host -Times 3 -Exactly
+    }
+
+    It 'asks which screen a radio command opened until the answer is q, p, i or n' {
+        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'quick', 'y', ' P '))
+        Mock Read-Host { $answers.Dequeue() }
+
+        Read-RadioScreen 'Which screen opened?' | Should -BeExactly 'p'
+
+        Should -Invoke Read-Host -Times 4 -Exactly
+    }
+
+    It 'writes a radio check''s line with Android''s state and the screen that opened, as one letter' {
+        Format-RadioResult -Say 'turn off Bluetooth' -Done $true -Screen 'q' | Should -BeExactly 'turn off Bluetooth: Android says done screen=q'
+        Format-RadioResult -Say 'turn on Wi-Fi' -Done $false -Screen 'n' | Should -BeExactly 'turn on Wi-Fi: Android says not done screen=n'
     }
 }

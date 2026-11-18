@@ -31,8 +31,10 @@
 # both. scripts\voice-eval.ps1 measures the recordings later on the emulator. The script puts back what it changes on the
 # phone, also when a step fails or Ctrl+C stops it: Kestrel's mode Off, the accessibility settings, a magnification (which
 # it ends by turning Kestrel's accessibility service off and on once), the setting "Stay awake", Wi-Fi and Bluetooth, the
-# volumes of the call, ring, music, alarm and notification streams, the sound mode, the keyboard, Kestrel's contacts
-# permission and the screenshot that it took; the clipboard stays as the owner leaves it. It refuses every device but the
+# volumes of the call, ring, music, alarm and notification streams, the sound mode, the brightness, the keyboard, Kestrel's
+# contacts permission and the screenshot that it took. It asks the owner to switch the setting "Require verbs" off again,
+# which only the owner can do, also at its end when a step failed before that, and names it in a warning at its end when
+# that did not work. The clipboard stays as the owner leaves it. It refuses every device but the
 # A71 and kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every question itself,
 # sends what the owner would say through the voice hook, skips what needs the owner's hands otherwise, and records two
 # silent clips into a folder of its own that it deletes. -Step runs only the named steps, also as one text separated by
@@ -55,11 +57,12 @@ function Get-SessionSteps([string[]]$Step, [string[]]$Names) {
     $chosen
 }
 
-# Whether the answer of 'getprop gsm.sim.state' says that no SIM card is in the phone, in each of its slots. A phone
-# with a SIM card can say NOT_READY or UNKNOWN while its radio starts or is off, so only ABSENT and an empty slot count.
+# Whether the answer of 'getprop gsm.sim.state' says that no SIM card is in the phone: at least one slot says ABSENT, and
+# no slot says anything else. A phone with a SIM card can say NOT_READY or UNKNOWN while its radio starts or is off, and
+# an empty answer (a phone that does not set the property, or a read that gave nothing) says nothing, so neither counts.
 function Test-SimAbsent([string]$State) {
     $slots = @("$State".Trim() -split ',' | ForEach-Object { $_.Trim() })
-    @($slots | Where-Object { $_ -notin @('', 'ABSENT') }).Count -eq 0
+    @($slots | Where-Object { $_ -eq 'ABSENT' }).Count -gt 0 -and @($slots | Where-Object { $_ -notin @('', 'ABSENT') }).Count -eq 0
 }
 
 # The users of 'pm list users', with their types from 'dumpsys user', as 'id=10 type=android.os.usertype.profile.MANAGED
@@ -110,6 +113,12 @@ function Format-CheckResult([string]$Name, [string]$Owner, $State, [int]$Before)
 function Get-CommandNumber($State) {
     $number = [int]$State['command']
     if ($State['outcome'] -eq 'running') { $number - 1 } else { $number }
+}
+
+# One radio check's line of the results: Android's state after the command, and which screen the owner saw open, as one
+# letter (q Quick Settings, p the radio's settings page, i the Internet panel, n none), never any text of the screen.
+function Format-RadioResult([string]$Say, [bool]$Done, [string]$Screen) {
+    "${Say}: Android says $(if ($Done) { 'done' } else { 'not done' }) screen=$Screen"
 }
 
 # The median of some numbers, or 0 without any.
@@ -171,6 +180,18 @@ function Read-YesNo([string]$Prompt, [string]$DryRunAnswer = 'dry') {
     }
     $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
     while ($answer -notin 'y', 'n') { $answer = "$(Read-Host 'Type y or n')".Trim().ToLowerInvariant() }
+    $answer
+}
+
+# Asks the owner which screen a radio command opened, until the answer is q (Quick Settings), p (the radio's settings
+# page), i (the Internet panel) or n (none), and returns it. In a dry run it answers $DryRunAnswer itself.
+function Read-RadioScreen([string]$Prompt, [string]$DryRunAnswer = 'dry') {
+    if ($DryRun) {
+        Write-Host "[dry run] $Prompt"
+        return $DryRunAnswer
+    }
+    $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
+    while ($answer -notin 'q', 'p', 'i', 'n') { $answer = "$(Read-Host 'Type q, p, i or n')".Trim().ToLowerInvariant() }
     $answer
 }
 
@@ -369,7 +390,9 @@ function Initialize-Session {
     $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) + $service
     if (-not (Set-SecureSetting -Serial $Serial -Name 'enabled_accessibility_services' -Value ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service.' }
     if (-not (Set-SecureSetting -Serial $Serial -Name 'accessibility_enabled' -Value '1')) { throw 'Could not turn on accessibility.' }
-    Request-Owner 'The phone''s screen now stays on while the phone is plugged in, and Kestrel''s accessibility service is on. Keep the phone unlocked during the session, except when a step asks you to lock it. Press Enter to go on.' 'go' | Out-Null
+    # Kestrel's emergency question can come in any step, such as on a page of Settings that the owner opens by voice, so
+    # the rule comes before the first step, and again before the first call (process rule 10).
+    Request-Owner 'The phone''s screen now stays on while the phone is plugged in, and Kestrel''s accessibility service is on. Keep the phone unlocked during the session, except when a step asks you to lock it. If Kestrel ever says "That may call an emergency number. Say ''yes, call'' to do it.", say "no", and never say "yes, call" in this session. Press Enter to go on.' 'go' | Out-Null
 }
 
 # Sends what the owner would say, as if Kestrel had heard it, with a pause after it.
@@ -468,15 +491,26 @@ function Invoke-ScreenStep {
     Invoke-Check screen "tap and a name that two buttons on the screen share" 'Did Kestrel ask "Which one?" and show numbers on just those buttons?' -Prepare 'Open a screen where two buttons have the same name, such as two "Install" or two "Delete" buttons.' -Heard 'tap Delete'
     Invoke-Check screen 'the number of the button that you want' 'Did Kestrel tap that one, and did the numbers go?' -Heard '1'
     Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
+    # Registered before the change, so that a failure, a skip or a stop before the owner switches it off again asks for it
+    # at the end of the session, or warns there.
+    $verbs = Register-Restore 'the setting "Require verbs"' 'Switch "Require verbs" off on Kestrel''s page "Instant commands".' $null {
+        Assert-TestDevice -Serial $Serial
+        Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
+        if ((Request-Owner 'Kestrel''s page "Instant commands" is open. Switch "Require verbs" off again, then press Enter.' 'go') -ne 'go') {
+            throw 'the owner did not switch it off'
+        }
+    }
     if ((Request-Owner 'Kestrel''s page "Instant commands" is open. Switch "Require verbs" on, then press Enter.' 'skip') -eq 'go') {
         Invoke-Checked 'am start -a android.settings.SETTINGS' | Out-Null
         Invoke-Check screen 'Display' 'Did nothing happen, because a name alone no longer taps?'
-        Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
-        Request-Owner 'Switch "Require verbs" off again, then press Enter.' 'go' | Out-Null
-    } elseif ($DryRun) {
-        # The dry run cannot switch "Require verbs". Instead, a transcript without words, which gives Kestrel no command,
-        # shows that such a check records none.
-        Invoke-Check screen 'nothing, as a transcript without words' 'Did nothing happen?' -Heard '...'
+        Complete-Restore $verbs
+    } else {
+        Remove-Restore $verbs
+        if ($DryRun) {
+            # The dry run cannot switch "Require verbs". Instead, a transcript without words, which gives Kestrel no command,
+            # shows that such a check records none.
+            Invoke-Check screen 'nothing, as a transcript without words' 'Did nothing happen?' -Heard '...'
+        }
     }
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
 }
@@ -491,8 +525,16 @@ function Invoke-SwipeStep {
     Invoke-Check swipes 'swipe backwards' 'Did the home screen show its first page again?'
     Invoke-Checked 'am start -a android.settings.DISPLAY_SETTINGS' | Out-Null
     Invoke-Check swipes 'show numbers' 'Did a number appear on the brightness slider?'
+    # Registered before the change, so that a failure, a skip or a stop between the two checks still puts it back.
+    $light = Register-Restore 'the brightness' 'Set the brightness back with the slider in Quick Settings.' (Read-DeviceValue 'settings get system screen_brightness') {
+        param($Data)
+        Assert-TestDevice -Serial $Serial
+        if ($Data -notmatch '^\d+$') { throw 'Android did not give the brightness before the step' }
+        if ((Read-DeviceValue 'settings get system screen_brightness') -ne $Data) { Invoke-Checked "settings put system screen_brightness $Data" | Out-Null }
+    }
     Invoke-Check swipes 'increment and the brightness slider''s number' 'Did the brightness go up one step?' -Heard 'increment 1'
     Invoke-Check swipes 'decrement and the same number' 'Did the brightness go back down?' -Heard 'decrement 1'
+    Complete-Restore $light
     Invoke-Check swipes 'hide numbers' 'Did the numbers go?'
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
 }
@@ -536,7 +578,7 @@ function Invoke-GlobalStep {
             $Data.Deleted++
         }
     }
-    Invoke-Check global 'take a screenshot' 'Did the phone take a screenshot, without Kestrel''s bar on it?'
+    Invoke-Check global 'take a screenshot' 'Open the screenshot from its preview at the bottom of the screen, or as the newest image in Gallery, look at the top of the image, and then come back here. Did the phone take a screenshot, without Kestrel''s bar on it?'
     Start-Sleep -Seconds 3
     Complete-Restore $screenshots
     if ($pending.Contains($screenshots)) {
@@ -567,20 +609,31 @@ function Invoke-RadioStep {
         return
     }
     Start-Kestrel
+    $wifi = 'Did Android''s Internet panel open, did its Wi-Fi switch change, and did the panel close again?'
+    $bluetooth = 'Did Quick Settings open, did its Bluetooth tile change, and did Quick Settings close again? (Without a usable tile, Kestrel opens Bluetooth''s settings page instead, uses its switch and closes the page: that counts too.)'
     foreach ($check in @(
-            @{ Say = 'turn off Wi-Fi'; Setting = 'wifi_on'; On = $false }
-            @{ Say = 'turn on Wi-Fi'; Setting = 'wifi_on'; On = $true }
-            @{ Say = 'turn off Bluetooth'; Setting = 'bluetooth_on'; On = $false }
-            @{ Say = 'turn on Bluetooth'; Setting = 'bluetooth_on'; On = $true })) {
-        Invoke-Check radios $check.Say 'Did Kestrel open the panel, switch the radio and close the panel again?'
+            @{ Say = 'turn off Wi-Fi'; Setting = 'wifi_on'; On = $false; Look = $wifi }
+            @{ Say = 'turn on Wi-Fi'; Setting = 'wifi_on'; On = $true; Look = $wifi }
+            @{ Say = 'turn off Bluetooth'; Setting = 'bluetooth_on'; On = $false; Look = $bluetooth }
+            @{ Say = 'turn on Bluetooth'; Setting = 'bluetooth_on'; On = $true; Look = $bluetooth })) {
+        Invoke-Check radios $check.Say $check.Look
+        # Which path ran: the results cannot tell Bluetooth's tile from its settings page otherwise. A skipped check opened none.
+        $screen = 'n'
+        if ($script:lastAnswer -ne 'skipped') {
+            $screen = Read-RadioScreen 'Which screen opened? Type q for Quick Settings, p for the radio''s settings page, i for the Internet panel, or n for none.'
+        }
         Start-Sleep -Seconds 2
         $now = (Read-DeviceValue "settings get global $($check.Setting)") -ne '0'
-        Add-Result radios "$($check.Say): Android says $(if ($now -eq $check.On) { 'done' } else { 'not done' })"
+        Add-Result radios (Format-RadioResult -Say $check.Say -Done ($now -eq $check.On) -Screen $screen)
     }
 }
 
 function Invoke-SoundStep {
     Start-Kestrel
+    # On vibrate or mute, the ring checks, "silence" and "unmute the ringer" end with Kestrel's answers for that mode
+    # instead of a change; the session puts the owner's mode back at its end.
+    Request-Owner 'Set the sound mode to Sound in Quick Settings, then press Enter.' 'go' | Out-Null
+    Add-Result sound "before the step, the ringer mode is $(Read-DeviceValue 'settings get global mode_ringer') (2 is sound)"
     foreach ($check in @(
             @{ Say = 'volume up'; Stream = 3 }
             @{ Say = 'volume down'; Stream = 3 }
@@ -688,7 +741,8 @@ function Invoke-CallStep {
         $number = $null
     }
     Start-Kestrel
-    $callLog = Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id')
+    # Only the dry run deletes the call-log row of its call, so only it reads where the call log ends.
+    $callLog = if ($DryRun) { Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id') }
     if ($number) {
         # Registered before the call, so that a failure or Ctrl+C after it still ends a call that went out, as the
         # emulator's call does in the dry run (the A71 has no SIM card, so Android refuses the call there). The emulator's
@@ -712,8 +766,8 @@ function Invoke-CallStep {
     # calls itself, and then with letters in the number field, "tap call" must ask, and the owner answers "no". Never an
     # emergency number on a phone, because emergency calls go out without a SIM card, and never "yes, call"; this runs
     # only after the SIM check above found none.
-    if ((Read-OwnerAnswer 'Next comes the check that Kestrel asks before it presses the phone app''s Call button for a number that it would not call: the phone app opens with 1234, you say "tap call", and you answer "no". Type y to go on, or anything else to skip it.' 'y') -eq 'y') {
-        Invoke-Check calls 'call 1234' 'Did the phone app open with 1234, and did Kestrel say that you must tap Call yourself?'
+    if ((Read-OwnerAnswer 'Next comes the check that Kestrel asks before it presses the phone app''s Call button for a number that it would not call: the phone app opens with 1234, you say "tap call", and you answer "no". Do not tap Call yourself, although Kestrel says so: the check uses the number. Type y to go on, or anything else to skip it.' 'y') -eq 'y') {
+        Invoke-Check calls 'call 1234' 'Did the phone app open with 1234, and did Kestrel say that you must tap Call yourself? Do not tap Call: the next check uses the number.'
         Invoke-Check calls 'tap call, and "no" when Kestrel asks' 'Did Kestrel ask you to say "yes, call", and after your "no", does the phone app still show 1234, without a call?' -Heard 'tap call' -Answer 'no'
         $field = Read-OwnerAnswer 'Say "show numbers", then type the number that Kestrel shows on the phone app''s number field (the one with 1234), or s to skip this.' 'skip'
         try {

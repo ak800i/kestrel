@@ -103,7 +103,8 @@ class SystemCommandsTest {
         try {
             assertEquals(Outcome.DONE, CommandTests.say("turn off device").outcome)
 
-            screen.awaitElement { it.label.equals("Restart", ignoreCase = true) || it.label.equals("Power off", ignoreCase = true) }
+            // 15 s, as for the shade: SystemUI's windows were slow to show while the host ran short of memory.
+            screen.awaitElement(15_000) { it.label.equals("Restart", ignoreCase = true) || it.label.equals("Power off", ignoreCase = true) }
         } finally {
             screen.session.actions.global(GlobalAction.BACK)
         }
@@ -132,8 +133,9 @@ class SystemCommandsTest {
 
         // The home screen shows neither app; the list of all apps shows both.
         val home = PhoneTests.homePackage()
-        screen.awaitElement { it.packageName == home && it.label == "Clock" }
-        screen.awaitElement { it.packageName == home && it.label == "Contacts" }
+        // 15 s, as for the shade: the launcher's list was slow to show while the host ran short of memory.
+        screen.awaitElement(15_000) { it.packageName == home && it.label == "Clock" }
+        screen.awaitElement(15_000) { it.packageName == home && it.label == "Contacts" }
     }
 
     @Test

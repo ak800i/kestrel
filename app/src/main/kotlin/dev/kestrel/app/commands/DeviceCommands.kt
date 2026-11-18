@@ -99,9 +99,11 @@ internal class DeviceCommands(environment: CommandEnvironment) {
 
     // Closes the panel that the command opened, with its "Done" button, or with Back while its window still shows, so that
     // Back never acts on the owner's app. Once the switch was found, the panel is the switch's window, so that another new
-    // window, such as the volume dialog, never counts as the panel after the owner closed it.
+    // window, such as the volume dialog, never counts as the panel after the owner closed it. When Kestrel's start failed
+    // ([opening] false), it opened no panel, and closes nothing, as leavePage does.
     private suspend fun closePanel(screen: ScreenSession, before: Set<Int>, opening: Boolean, switchWindow: Int?) {
-        val panel = newWindow(screen, before, PANEL_PACKAGES, opening && switchWindow == null, switchWindow) ?: return
+        if (!opening) return
+        val panel = newWindow(screen, before, PANEL_PACKAGES, switchWindow == null, switchWindow) ?: return
         val snapshot = screen.snapshots.current().snapshot
         val done = snapshot.elements.firstOrNull { element ->
             element.windowId == panel.id && element.enabled && element.clickable &&
