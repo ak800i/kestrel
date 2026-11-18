@@ -392,3 +392,29 @@ function Get-LargestRowId([string[]]$Rows) {
     }
     $largest
 }
+
+# Whether the output of 'dumpsys telephony.registry' shows a call in one of its SIM slots: a line 'mCallState=N' whose N
+# is not 0, Android's CALL_STATE_IDLE (1 rings, 2 is a call that is dialled or active).
+function Test-CallActive([string[]]$Registry) {
+    @($Registry | Where-Object { "$_".Trim() -match '^mCallState=(\d+)$' -and $Matches[1] -ne '0' }).Count -gt 0
+}
+
+# Ends a call that the device shows, with the end-call key, which hangs up an ordinary call through Android, and returns
+# whether the device shows no call afterwards, within 10 s. The emulator's console ('gsm cancel') cannot end a call that
+# the phone placed: on kestrel-api37 (observed) Android kept such a call active for minutes after the console dropped it.
+# Android does not end an emergency call with this key, and no test or script places one. It sends the key only while a
+# call shows, because without one the key turns the screen off. It warns when a call stays, or when it cannot check.
+function Stop-DeviceCall([string]$Serial) {
+    try {
+        if (-not (Test-CallActive -Registry (Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys telephony.registry'))) { return $true }
+        Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_ENDCALL' | Out-Null
+        foreach ($try in 1..20) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Test-CallActive -Registry (Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys telephony.registry'))) { return $true }
+        }
+        Write-Warning "A call is still active on $Serial. End it on the phone app's screen."
+    } catch {
+        Write-Warning "Could not end the call on ${Serial}: $($_.Exception.Message) End it on the phone app's screen."
+    }
+    $false
+}

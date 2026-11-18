@@ -520,3 +520,59 @@ Describe 'Get-LargestRowId' {
         Get-LargestRowId -Rows @('No result found.') | Should -Be 0
     }
 }
+
+Describe 'Test-CallActive' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'finds a call in any SIM slot, and none when every slot is idle' {
+        Test-CallActive -Registry @('last known state:', '  mCallState=0', '  mCallState=2') | Should -BeTrue
+        Test-CallActive -Registry @('  mCallState=1') | Should -BeTrue
+        Test-CallActive -Registry @('  mCallState=0', 'mCallState=0') | Should -BeFalse
+        # A device without telephony prints no such line.
+        Test-CallActive -Registry @('Phone Id=0') | Should -BeFalse
+        Test-CallActive -Registry @() | Should -BeFalse
+    }
+}
+
+Describe 'Stop-DeviceCall' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        Mock Start-Sleep {}
+    }
+
+    It 'sends no key when no call shows, because the key would turn the screen off' {
+        Mock Invoke-SettingsCommand { @('  mCallState=0') }
+
+        Stop-DeviceCall -Serial emulator-5554 | Should -BeExactly $true
+        Should -Invoke Invoke-SettingsCommand -Times 0 -Exactly -ParameterFilter { $Command -like 'input keyevent*' }
+    }
+
+    It 'ends a call with the end-call key, and waits until the device shows none' {
+        $device = @{ Call = '2' }
+        Mock Invoke-SettingsCommand { @("  mCallState=$($device.Call)") } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
+        Mock Invoke-SettingsCommand { $device.Call = '0' } -ParameterFilter { $Command -eq 'input keyevent KEYCODE_ENDCALL' }
+
+        Stop-DeviceCall -Serial emulator-5554 | Should -BeExactly $true
+        Should -Invoke Invoke-SettingsCommand -Times 1 -Exactly -ParameterFilter { $Command -eq 'input keyevent KEYCODE_ENDCALL' }
+    }
+
+    It 'warns and returns false when the call stays' {
+        Mock Invoke-SettingsCommand { @('  mCallState=2') } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
+        Mock Invoke-SettingsCommand {} -ParameterFilter { $Command -eq 'input keyevent KEYCODE_ENDCALL' }
+
+        $output = Stop-DeviceCall -Serial emulator-5554 3>&1
+        $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+        @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 1
+        Should -Invoke Invoke-SettingsCommand -Times 1 -Exactly -ParameterFilter { $Command -eq 'input keyevent KEYCODE_ENDCALL' }
+    }
+
+    It 'warns and returns false when it cannot read the call state' {
+        Mock Invoke-SettingsCommand { throw 'Could not run the command.' }
+
+        $output = Stop-DeviceCall -Serial emulator-5554 3>&1
+        $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+        @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 1
+    }
+}

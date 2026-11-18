@@ -1,6 +1,7 @@
 # Runs the device tests of the instant commands (the package dev.kestrel.app.commands) on the kestrel-api37 emulator
 # (design spec, section 16.3), and refuses every other device, because the tests change the device's state. It reads that
-# state first and puts it back at the end, also when the run failed or Ctrl+C interrupted it: Wi-Fi and Bluetooth, the
+# state first and puts it back at the end, also when the run failed or Ctrl+C interrupted it: a call that a test left
+# active (it ends it), Wi-Fi and Bluetooth, the
 # ringer mode and the volumes of the call, ring, music, alarm and notification streams, the list of Quick Settings tiles,
 # the lock-screen setting (it also wakes the screen and dismisses the keyguard), users called KestrelTest, raw contacts of
 # the account kestrel-test, the call-log rows and images newer than the largest IDs that it saw first, the test app's
@@ -122,6 +123,9 @@ try {
     # block of its own, and the exit code is set in its finally block.
     try {
         if ($saved) {
+            # A test that failed during a call can leave it active, and Android keeps a call that the emulator's console
+            # dropped, so the call ends through Android. Before the call log, so that its row goes with the others.
+            if (-not (Stop-DeviceCall -Serial $Serial)) { $code = 1 }
             # The ringer mode first, because it changes the ring volume.
             $ringer = try { Read-DeviceValue 'settings get global mode_ringer' } catch { $null }
             if ($ringer -ne $saved.Ringer -and $ringerModes.Contains($saved.Ringer) -and

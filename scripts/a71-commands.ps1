@@ -690,13 +690,21 @@ function Invoke-CallStep {
     Start-Kestrel
     $callLog = Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id')
     if ($number) {
+        # Registered before the call, so that a failure or Ctrl+C after it still ends a call that went out, as the
+        # emulator's call does in the dry run (the A71 has no SIM card, so Android refuses the call there). The emulator's
+        # console cannot end a call that the phone placed: Android kept it active for minutes (observed on kestrel-api37).
+        $call = Register-Restore 'the end of the call that the session placed' 'End the call on the phone app''s screen.' $null {
+            Assert-TestDevice -Serial $Serial
+            if (-not (Stop-DeviceCall -Serial $Serial)) { throw 'a call is still active' }
+        }
         Invoke-Check calls "call $number" 'Did the phone app open with the number, and did Kestrel say it, count down 4 s on its bar, press Call and then say "The call didn''t start. Say it again."? The phone has no SIM card, so Android refuses the call: that is the expected result.' -Name 'call the confirmed number'
+        # Kestrel's press comes after its announcement and countdown, so its command may still run when the check ends.
+        Wait-State ({ param($State) $State['outcome'] -ne 'running' }) 30 | Out-Null
+        Complete-Restore $call
+        if ($pending.Contains($call)) { Add-Result calls "the call did not end ($($call.Reason)); the session tries again at its end" }
     }
     if ($DryRun) {
-        # The emulator places the call; its console ends it, and the call's row goes.
-        Start-Sleep -Seconds 3
-        & $adb -s $Serial emu gsm cancel $number | Out-Null
-        Start-Sleep -Seconds 2
+        # The emulator's call ended above, through Android; its row in the call log goes.
         Invoke-Checked "content delete --uri content://call_log/calls --where _id\>$callLog" | Out-Null
     }
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null

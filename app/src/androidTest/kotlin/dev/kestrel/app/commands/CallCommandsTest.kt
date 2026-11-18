@@ -63,18 +63,23 @@ class CallCommandsTest {
     @After
     fun stop() {
         try {
-            // A test that failed during a call leaves it active; without a call, the key would turn the screen off. The
-            // in-call screen's control ends the call first, and the end-call key only when that control does not show.
-            if (listening.state.value.mode == Mode.IN_CALL && !VoiceTests.waitUntil(5_000) { endCallOnScreen() }) {
-                screen.shell("input keyevent KEYCODE_ENDCALL")
-            }
+            // A test that failed during a call leaves it active, also a call that Kestrel did not notice, so Android's own
+            // call state decides; without a call, the key would turn the screen off. The in-call screen's control ends the
+            // call first, and the end-call key only when that control does not show. A call that stays fails the test.
+            if (callActive() && !VoiceTests.waitUntil(5_000) { endCallOnScreen() }) screen.shell("input keyevent KEYCODE_ENDCALL")
+            val ended = VoiceTests.waitUntil(10_000) { !callActive() }
             CommandTests.stop()
+            assertTrue("A call is still active", ended)
         } finally {
             PhoneTests.deleteRowsAfter(PhoneTests.CALL_LOG, callLog)
             PhoneTests.removeTestContacts()
             screen.shell("input keyevent KEYCODE_HOME")
         }
     }
+
+    // Android's call state for each SIM: a line mCallState=0 is CALL_STATE_IDLE.
+    private fun callActive() = screen.shell("dumpsys telephony.registry").lineSequence().map { it.trim() }
+        .any { it.startsWith("mCallState=") && it != "mCallState=0" }
 
     // The emulator's in-call screen names its end control "End call" (plan 2D).
     private fun endCallOnScreen() = screen.session.actions.clickLabelled("End call", EmergencyGuard.PHONE_PACKAGES)
