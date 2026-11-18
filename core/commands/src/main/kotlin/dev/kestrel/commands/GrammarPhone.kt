@@ -42,6 +42,28 @@ internal object GrammarPhone {
             "switch to the previous app", "switch apps",
         )
         phrases(PhoneCommand.CircleToSearch, "circle to search", "start circle to search", "open circle to search")
+        phrases(
+            PhoneCommand.Silence,
+            "silence", "silence the phone", "silence my phone", "silent mode", "vibrate", "vibrate mode", "vibrate only",
+            "set to vibrate", "turn on vibrate",
+        )
+        // Back from vibrate to sound, as "unmute the ringer" does.
+        phrases(PhoneCommand.Mute(StreamKind.RING, on = false), "turn off vibrate", "turn vibrate off", "vibrate off")
+        phrases(PhoneCommand.Media(play = true), "media play", "play media", "play the music", "play music", "resume media", "resume the music")
+        phrases(PhoneCommand.Media(play = false), "media pause", "pause media", "pause the music", "pause music")
+        phrases(
+            PhoneCommand.Magnify(MagnifyAction.IN),
+            "start magnification", "start zooming", "magnify", "magnify the screen", "zoom in", "enhance", "magnification on",
+        )
+        phrases(PhoneCommand.Magnify(MagnifyAction.OUT), "zoom out")
+        phrases(
+            PhoneCommand.Magnify(MagnifyAction.STOP),
+            "stop magnification", "stop zooming", "cancel zooming", "stop magnifying", "end magnification", "magnification off",
+        )
+        phrases(PhoneCommand.Pan(Direction.UP), "pan up", "move up", "go up")
+        phrases(PhoneCommand.Pan(Direction.DOWN), "pan down", "move down", "go down")
+        phrases(PhoneCommand.Pan(Direction.LEFT), "pan left", "move left", "go left")
+        phrases(PhoneCommand.Pan(Direction.RIGHT), "pan right", "move right", "go right")
         // Tasks 2 to 6 of plan 3C add their phrases above this line.
     }
 
@@ -50,6 +72,8 @@ internal object GrammarPhone {
     fun targeted(words: List<String>, text: String): Command? {
         openApp(words, text)?.let { return it }
         radio(words)?.let { return it }
+        volume(words)?.let { return it }
+        mute(words)?.let { return it }
         // Tasks 2 to 6 of plan 3C add their rules above this line.
         return null
     }
@@ -106,6 +130,60 @@ internal object GrammarPhone {
         }
         return PhoneCommand.Radio(radio, on)
     }
+
+    private val STREAMS = mapOf(
+        "media" to StreamKind.MEDIA, "music" to StreamKind.MEDIA, "alarm" to StreamKind.ALARM, "alarms" to StreamKind.ALARM,
+        "phone" to StreamKind.CALL, "call" to StreamKind.CALL, "ring" to StreamKind.RING, "ringer" to StreamKind.RING,
+        "ringtone" to StreamKind.RING, "notification" to StreamKind.NOTIFICATION, "notifications" to StreamKind.NOTIFICATION,
+    )
+    private val UP = setOf("up", "increase", "raise", "louder")
+    private val DOWN = setOf("down", "decrease", "lower", "reduce", "quieter")
+    private val VOLUME_WORDS = setOf("turn", "the", "my", "volume", "of", "a", "bit", "little")
+
+    // "Volume up", "turn the alarm volume down", "increase the ringer volume": "volume", one direction, at most one stream
+    // and no other words.
+    private fun volume(words: List<String>): Command? {
+        if ("volume" !in words) return null
+        var up: Boolean? = null
+        var stream: StreamKind? = null
+        for (word in words) {
+            when (word) {
+                in UP -> if (up == false) return null else up = true
+                in DOWN -> if (up == true) return null else up = false
+                in STREAMS -> stream = oneStream(stream, STREAMS.getValue(word)) ?: return null
+                in VOLUME_WORDS -> Unit
+                else -> return null
+            }
+        }
+        return up?.let { PhoneCommand.Volume(stream, it) }
+    }
+
+    private val MUTE_WORDS = setOf("the", "my", "volume", "sound", "audio")
+
+    // "Mute the phone" means its ringer, not the call volume.
+    private val MUTE_STREAMS = STREAMS + ("phone" to StreamKind.RING)
+
+    // "Mute", "unmute the ringer", "mute the alarm volume".
+    private fun mute(words: List<String>): Command? {
+        val (on, from) = when {
+            words.firstOrNull() == "mute" -> true to 1
+            words.firstOrNull() == "unmute" -> false to 1
+            words.size >= 2 && words[0] == "un" && words[1] == "mute" -> false to 2
+            else -> return null
+        }
+        var stream: StreamKind? = null
+        for (word in words.drop(from)) {
+            when (word) {
+                in MUTE_STREAMS -> stream = oneStream(stream, MUTE_STREAMS.getValue(word)) ?: return null
+                in MUTE_WORDS -> Unit
+                else -> return null
+            }
+        }
+        return PhoneCommand.Mute(stream, on)
+    }
+
+    // Two different streams in one phrase name none.
+    private fun oneStream(current: StreamKind?, named: StreamKind): StreamKind? = if (current == null || current == named) named else null
 
     // Tasks 2 to 6 of plan 3C add their functions above this line.
 }

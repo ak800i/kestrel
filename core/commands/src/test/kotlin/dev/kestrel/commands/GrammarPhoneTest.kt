@@ -67,5 +67,43 @@ class GrammarPhoneTest {
         assertParses(Command.Check(Target.Label("Wi-Fi"), on = true), "check Wi-Fi")
     }
 
+    @Test
+    fun theVolumeNeedsTheWordVolumeAndAtMostOneStream() {
+        assertParses(PhoneCommand.Volume(null, up = true), "Volume up.", "Turn the volume up.", "Turn up the volume", "Increase the volume.")
+        assertParses(PhoneCommand.Volume(null, up = false), "Volume down", "Lower the volume.", "turn the volume down a bit")
+        assertParses(PhoneCommand.Volume(StreamKind.MEDIA, up = true), "Turn up the media volume.", "Music volume up.")
+        assertParses(PhoneCommand.Volume(StreamKind.ALARM, up = false), "Turn the alarm volume down.", "Decrease the alarm volume")
+        assertParses(PhoneCommand.Volume(StreamKind.RING, up = true), "Ring volume up.", "Increase the ringer volume.")
+        assertParses(PhoneCommand.Volume(StreamKind.CALL, up = false), "Call volume down.", "Turn down the phone volume.")
+        assertParses(PhoneCommand.Volume(StreamKind.NOTIFICATION, up = true), "Notification volume up.")
+        assertBare("Volume.", "Turn up the volume and the lights.", "The volume is too high.", "volume up down", "media alarm volume up")
+        assertParses(Command.Slider(increase = true, target = null), "Increase.")
+    }
+
+    @Test
+    fun muteSilenceAndMediaKeys() {
+        assertParses(PhoneCommand.Mute(null, on = true), "Mute.", "Mute the sound.")
+        assertParses(PhoneCommand.Mute(null, on = false), "Unmute.", "Un-mute.")
+        assertParses(PhoneCommand.Mute(StreamKind.RING, on = true), "Mute the ringer.", "Mute the ringtone")
+        assertParses(PhoneCommand.Mute(StreamKind.RING, on = false), "Unmute the ringer.", "Turn off vibrate.", "Vibrate off.")
+        assertParses(PhoneCommand.Mute(StreamKind.RING, on = true), "Mute the phone.")
+        assertParses(PhoneCommand.Mute(StreamKind.ALARM, on = true), "Mute the alarm.", "Mute the alarm volume.")
+        assertParses(PhoneCommand.Mute(StreamKind.MEDIA, on = true), "Mute the music.")
+        assertParses(PhoneCommand.Silence, "Silence.", "Vibrate.", "Silent mode.", "Silence the phone.", "Turn on vibrate.")
+        assertParses(PhoneCommand.Media(play = true), "Media play.", "Play media.", "Play the music.")
+        assertParses(PhoneCommand.Media(play = false), "Media pause.", "Pause the music.", "Pause media.")
+        assertBare("Play.", "Pause.", "Mute the TV.", "Play the next song for me.")
+    }
+
+    @Test
+    fun magnificationZoomsPansAndStops() {
+        assertParses(PhoneCommand.Magnify(MagnifyAction.IN), "Start magnification.", "Start zooming.", "Magnify.", "Zoom in.", "Enhance.")
+        assertParses(PhoneCommand.Magnify(MagnifyAction.OUT), "Zoom out.")
+        assertParses(PhoneCommand.Magnify(MagnifyAction.STOP), "Stop magnification.", "Stop zooming.", "Cancel zooming.")
+        assertParses(PhoneCommand.Pan(Direction.LEFT), "Pan left.", "Move left.", "Go left.")
+        assertParses(PhoneCommand.Pan(Direction.UP), "Pan up.", "Move up")
+        assertParses(Command.Scroll(Direction.DOWN, null), "Scroll down.")
+    }
+
     // Tasks 2 to 6 of plan 3C add their tests above this line.
 }

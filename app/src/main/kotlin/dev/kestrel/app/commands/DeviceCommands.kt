@@ -2,10 +2,17 @@ package dev.kestrel.app.commands
 
 import android.bluetooth.BluetoothManager
 import android.content.Intent
+import android.media.AudioManager
 import android.provider.Settings
+import android.view.KeyEvent
+import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Direction
+import dev.kestrel.commands.MagnifyAction
 import dev.kestrel.commands.Outcome
+import dev.kestrel.commands.PhoneCommand
 import dev.kestrel.commands.RadioKind
+import dev.kestrel.commands.StreamKind
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
@@ -18,15 +25,27 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 
 /**
- * The phone's settings (design spec, Appendix A; prototype P4): Wi-Fi through the Internet panel's switch, and Bluetooth
- * through its Quick Settings tile or its settings page.
+ * The phone's settings, media and magnification (design spec, Appendix A; prototype P4): Wi-Fi through the Internet
+ * panel's switch, Bluetooth through its Quick Settings tile or its settings page, volumes through Android's audio API, the
+ * media keys, and Android's magnification.
  */
 internal class DeviceCommands(environment: CommandEnvironment) {
+    private val audio: AudioManager? = environment.context.getSystemService(AudioManager::class.java)
     private val bluetooth: BluetoothManager? = environment.context.getSystemService(BluetoothManager::class.java)
     private val resolver = environment.context.contentResolver
     private val targets = environment.targets
+
+    /** The commands that work without Kestrel's accessibility service: volume, mute, silence and the media keys. */
+    suspend fun withoutScreen(command: Command): CommandResult? = when (command) {
+        is PhoneCommand.Volume -> volume(command.stream, command.up)
+        is PhoneCommand.Mute -> mute(command.stream, command.on)
+        PhoneCommand.Silence -> silence()
+        is PhoneCommand.Media -> media(command.play)
+        else -> null
+    }
 
     suspend fun radio(screen: ScreenSession, radio: RadioKind, on: Boolean): CommandResult =
         if (radio == RadioKind.WIFI) wifi(screen, on) else bluetooth(screen, on)
@@ -185,6 +204,129 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             found
         }
 
+    /**
+     * Volume up or down by one step of the stream (design D10): the stream that the owner names, else the call stream
+     * during another app's call and the media stream otherwise. Android's own volume panel shows the change.
+     */
+    private suspend fun volume(kind: StreamKind?, up: Boolean): CommandResult {
+        val audio = audio ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
+        val stream = streamOf(kind, audio.mode)
+        val before = audio.getStreamVolume(stream)
+        try {
+            audio.adjustStreamVolume(stream, if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+        } catch (e: SecurityException) {
+            return CommandResult(Outcome.FAILED, say = PhoneCommandTexts.RINGER_WHILE_SILENT)
+        }
+        delay(READ_BACK_MILLIS)
+        val after = audio.getStreamVolume(stream)
+        return volumeResult(before, after, audio.getStreamMinVolume(stream), audio.getStreamMaxVolume(stream), up)
+    }
+
+    /**
+     * "Mute" and "unmute": the media stream, or the ring stream when the owner names it. Android silently ignores a mute of
+     * the alarm and the call volume (prototype P4), so Kestrel says so and changes nothing (decision 5).
+     */
+    private suspend fun mute(kind: StreamKind?, on: Boolean): CommandResult {
+        if (on) muteRefusal(kind)?.let { return CommandResult(Outcome.FAILED, say = it) }
+        val audio = audio ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
+        val stream = streamOf(kind ?: StreamKind.MEDIA, AudioManager.MODE_NORMAL)
+        if (audio.isStreamMute(stream) == on) {
+            return CommandResult(Outcome.DONE, show = if (on) PhoneCommandTexts.ALREADY_MUTED else PhoneCommandTexts.NOT_MUTED)
+        }
+        try {
+            audio.adjustStreamVolume(stream, if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+        } catch (e: SecurityException) {
+            return CommandResult(Outcome.FAILED, say = PhoneCommandTexts.RINGER_WHILE_SILENT)
+        }
+        delay(READ_BACK_MILLIS)
+        return if (audio.isStreamMute(stream) == on) {
+            CommandResult(Outcome.DONE)
+        } else {
+            CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
+        }
+    }
+
+    /**
+     * "Silence" puts the phone on vibrate. The true silent mode needs notification-policy access, which Kestrel never asks
+     * for, and Android also refuses to leave it without that access.
+     */
+    private suspend fun silence(): CommandResult {
+        val audio = audio ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
+        when (audio.ringerMode) {
+            AudioManager.RINGER_MODE_VIBRATE -> return CommandResult(Outcome.DONE, show = PhoneCommandTexts.ALREADY_VIBRATE)
+            AudioManager.RINGER_MODE_SILENT -> return CommandResult(Outcome.DONE, show = PhoneCommandTexts.ALREADY_SILENT)
+        }
+        try {
+            audio.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+        } catch (e: SecurityException) {
+            return CommandResult(Outcome.FAILED, say = PhoneCommandTexts.RINGER_WHILE_SILENT)
+        }
+        delay(READ_BACK_MILLIS)
+        return if (audio.ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
+            CommandResult(Outcome.DONE)
+        } else {
+            CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
+        }
+    }
+
+    /**
+     * "Media play" and "media pause": the media key itself, not a toggle, through Android's audio API, which reaches the
+     * player of the media session that played last, also while Kestrel speaks (prototype P4). After 1 s Kestrel checks
+     * whether music plays; Kestrel's own replies do not count as music.
+     */
+    private suspend fun media(play: Boolean): CommandResult {
+        val audio = audio ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_MEDIA)
+        val playing = audio.isMusicActive
+        val key = if (play) KeyEvent.KEYCODE_MEDIA_PLAY else KeyEvent.KEYCODE_MEDIA_PAUSE
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
+        delay(MEDIA_MILLIS)
+        val reacted = if (play) audio.isMusicActive else playing && !audio.isMusicActive
+        return if (reacted) CommandResult(Outcome.DONE, repeatable = true) else CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_MEDIA)
+    }
+
+    /**
+     * Magnification (design D10): "zoom in" magnifies 2 times at the screen's centre, and one step more, up to 8 times,
+     * while the screen is magnified; "zoom out" goes one step back and ends at 1; "stop magnification" ends it.
+     */
+    suspend fun magnify(screen: ScreenSession, action: MagnifyAction): CommandResult {
+        val scale = screen.actions.zoomScale
+        val result = when (action) {
+            MagnifyAction.IN -> when {
+                scale <= 1f -> screen.screenBounds.let { screen.actions.zoom(FIRST_SCALE, it.centerX, it.centerY) }
+                scale >= MAX_SCALE -> return CommandResult(Outcome.DONE, show = PhoneCommandTexts.MOST_MAGNIFIED)
+                else -> zoomAround(screen, minOf(MAX_SCALE, scale.toInt() + 1f))
+            }
+            MagnifyAction.OUT -> when {
+                scale <= 1f -> return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NOT_MAGNIFIED)
+                scale - 1f <= 1f -> screen.actions.resetZoom()
+                else -> zoomAround(screen, scale - 1f)
+            }
+            MagnifyAction.STOP -> if (scale <= 1f) return CommandResult(Outcome.DONE) else screen.actions.resetZoom()
+        }
+        return done(result)
+    }
+
+    // A new scale around the centre of the magnified area, so that the place that the owner looks at stays.
+    private suspend fun zoomAround(screen: ScreenSession, scale: Float): ActionResult {
+        val (x, y) = screen.system.magnifiedCentre() ?: screen.screenBounds.let { it.centerX.toFloat() to it.centerY.toFloat() }
+        return screen.actions.zoom(scale, x.roundToInt(), y.roundToInt())
+    }
+
+    /** "Pan left", and "scroll" without a target while magnified: a third of the visible width or height (design D10). */
+    suspend fun pan(screen: ScreenSession, direction: Direction): CommandResult {
+        val scale = screen.actions.zoomScale
+        if (scale <= 1f) return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NOT_MAGNIFIED)
+        val (dx, dy) = panBy(direction, screen.screenBounds.width, screen.screenBounds.height, scale)
+        return done(screen.system.pan(dx, dy))
+    }
+
+    private fun done(result: ActionResult): CommandResult = when (result) {
+        is ActionResult.Done -> CommandResult(Outcome.DONE, repeatable = true)
+        // The reasons of the screen layer are fixed texts without the screen's words.
+        is ActionResult.Failed -> CommandResult(Outcome.FAILED, show = result.reason)
+    }
+
     companion object {
         private const val SYSTEM_UI = "com.android.systemui"
         private const val SETTINGS = "com.android.settings"
@@ -192,6 +334,10 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         private const val RADIO_MILLIS = 3_000L
         private const val POLL_MILLIS = 100L
         private const val APPEAR_MILLIS = 1_000L
+        private const val READ_BACK_MILLIS = 300L
+        private const val MEDIA_MILLIS = 1_000L
+        private const val FIRST_SCALE = 2f
+        private const val MAX_SCALE = 8f
 
         // The Internet panel: SystemUI's dialog on the emulator's Android 17 (prototype P4), a panel of Settings elsewhere.
         private val PANEL_PACKAGES = setOf(SYSTEM_UI, SETTINGS)
@@ -223,6 +369,48 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                 depth++
             }
             return false
+        }
+
+        /** The stream of [kind], or without one the call stream during another app's call and the media stream otherwise. */
+        fun streamOf(kind: StreamKind?, mode: Int): Int = when (kind) {
+            null -> if (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION) {
+                AudioManager.STREAM_VOICE_CALL
+            } else {
+                AudioManager.STREAM_MUSIC
+            }
+            StreamKind.MEDIA -> AudioManager.STREAM_MUSIC
+            StreamKind.RING -> AudioManager.STREAM_RING
+            StreamKind.ALARM -> AudioManager.STREAM_ALARM
+            StreamKind.CALL -> AudioManager.STREAM_VOICE_CALL
+            StreamKind.NOTIFICATION -> AudioManager.STREAM_NOTIFICATION
+        }
+
+        /** What a volume step ended with, read back from Android: one stream's step can jump several indices. */
+        fun volumeResult(before: Int, after: Int, min: Int, max: Int, up: Boolean): CommandResult = when {
+            after != before -> CommandResult(Outcome.DONE, repeatable = true)
+            up && before >= max -> CommandResult(Outcome.DONE, show = PhoneCommandTexts.HIGHEST)
+            !up && before <= min -> CommandResult(Outcome.DONE, show = PhoneCommandTexts.LOWEST)
+            // Do Not Disturb, or Android 17's limits on volume changes from the background (research r16).
+            else -> CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
+        }
+
+        /** Why Kestrel does not mute the stream of [kind], or null when it may. */
+        fun muteRefusal(kind: StreamKind?): String? = when (kind) {
+            StreamKind.ALARM -> PhoneCommandTexts.MUTE_ALARM
+            StreamKind.CALL -> PhoneCommandTexts.MUTE_CALL
+            else -> null
+        }
+
+        /** How far "pan" moves the magnified area: a third of the visible width or height, in screen pixels. */
+        fun panBy(direction: Direction, width: Int, height: Int, scale: Float): Pair<Int, Int> {
+            val dx = (width / scale / 3).roundToInt()
+            val dy = (height / scale / 3).roundToInt()
+            return when (direction) {
+                Direction.UP -> 0 to -dy
+                Direction.DOWN -> 0 to dy
+                Direction.LEFT -> -dx to 0
+                Direction.RIGHT -> dx to 0
+            }
         }
     }
 }

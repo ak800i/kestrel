@@ -21,6 +21,8 @@ internal class PhoneCommands(private val environment: CommandEnvironment) : Comm
     // Tasks 2 to 6 of plan 3C add their parts above this line.
 
     override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult? {
+        // Without Kestrel's accessibility service, InstantCommands passes only these, which need no screen.
+        device.withoutScreen(command)?.let { return it }
         val screen = environment.screen() ?: return null
         return when (command) {
             is PhoneCommand.Global -> globalCommand(command.action, { screen.hideFeedback() }) { screen.actions.global(it) }
@@ -28,6 +30,10 @@ internal class PhoneCommands(private val environment: CommandEnvironment) : Comm
             PhoneCommand.CircleToSearch -> circleToSearch(screen.system.systemActions()) { screen.system.systemAction(it) }
             is PhoneCommand.OpenApp -> apps.open(screen, command, conversation)
             is PhoneCommand.Radio -> device.radio(screen, command.radio, command.on)
+            is PhoneCommand.Magnify -> device.magnify(screen, command.action)
+            is PhoneCommand.Pan -> device.pan(screen, command.direction)
+            // While the screen is magnified, "scroll" without a target moves the magnified area (design D10).
+            is Command.Scroll -> if (command.target == null && screen.actions.zoomScale > 1f) device.pan(screen, command.direction) else null
             // Tasks 2 to 6 of plan 3C add their commands above this line.
             else -> null
         }

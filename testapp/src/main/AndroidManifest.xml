@@ -72,6 +72,9 @@
             android:name=".SearchActivity"
             android:exported="true" />
         <!-- Plan 3B: text fixtures -->
+        <activity
+            android:name=".MediaActivity"
+            android:exported="true" />
         <!-- Plan 3C: phone fixtures -->
     </application>
 </manifest>

@@ -1,6 +1,8 @@
 package dev.kestrel.app.commands
 
+import android.media.AudioManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.voice.VoiceTests
@@ -19,8 +21,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Wi-Fi and Bluetooth (design D10, prototype P4), on the emulator's own Internet panel, Quick Settings and Bluetooth
- * settings. command-test.ps1 puts back the radios, the volumes, the ringer mode and the Quick Settings tiles.
+ * The phone's settings (design D10, prototype P4): Wi-Fi and Bluetooth on the emulator's own Internet panel, Quick
+ * Settings and Bluetooth settings, the volumes, mute, silence, the media keys with the test app's player, and
+ * magnification. command-test.ps1 puts back the radios, the volumes, the ringer mode, the magnification and the Quick
+ * Settings tiles.
  */
 @RunWith(AndroidJUnit4::class)
 class DeviceCommandsTest {
@@ -114,7 +118,92 @@ class DeviceCommandsTest {
         }
     }
 
-    // Task 4 of plan 3C adds its tests above this line.
+    private val audio = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(AudioManager::class.java)
+
+    @Test
+    fun volumeStepsTheMusicStreamOrTheStreamThatTheOwnerNames() {
+        // In the middle of each stream, so that a step can go both ways.
+        for (stream in listOf(AudioManager.STREAM_MUSIC, AudioManager.STREAM_ALARM)) {
+            screen.shell("cmd media_session volume --stream $stream --set ${audio.getStreamMaxVolume(stream) / 2}")
+        }
+        val music = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val alarm = audio.getStreamVolume(AudioManager.STREAM_ALARM)
+
+        assertEquals(Outcome.DONE, CommandTests.say("volume up").outcome)
+        assertTrue(audio.getStreamVolume(AudioManager.STREAM_MUSIC) > music)
+        assertEquals(Outcome.DONE, CommandTests.say("turn the volume down").outcome)
+        assertEquals(music, audio.getStreamVolume(AudioManager.STREAM_MUSIC))
+        assertEquals(Outcome.DONE, CommandTests.say("turn the alarm volume down").outcome)
+        assertTrue(audio.getStreamVolume(AudioManager.STREAM_ALARM) < alarm)
+        assertEquals(music, audio.getStreamVolume(AudioManager.STREAM_MUSIC))
+    }
+
+    @Test
+    fun muteAndUnmuteTheMusicButNeverTheAlarm() {
+        screen.shell("cmd media_session volume --stream 3 --set ${audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 2}")
+
+        assertEquals(Outcome.DONE, CommandTests.say("mute").outcome)
+        assertTrue(audio.isStreamMute(AudioManager.STREAM_MUSIC))
+        assertEquals(Outcome.DONE, CommandTests.say("unmute").outcome)
+        assertTrue(!audio.isStreamMute(AudioManager.STREAM_MUSIC))
+        assertEquals(Outcome.FAILED, CommandTests.say("mute the alarm").outcome)
+        CommandTests.awaitSaid(PhoneCommandTexts.MUTE_ALARM)
+        assertTrue(!audio.isStreamMute(AudioManager.STREAM_ALARM))
+    }
+
+    @Test
+    fun silencePutsThePhoneOnVibrateAndUnmuteTheRingerEndsIt() {
+        assertEquals(AudioManager.RINGER_MODE_NORMAL, audio.ringerMode)
+
+        assertEquals(Outcome.DONE, CommandTests.say("silence").outcome)
+        assertEquals(AudioManager.RINGER_MODE_VIBRATE, audio.ringerMode)
+        assertEquals(Outcome.DONE, CommandTests.say("unmute the ringer").outcome)
+
+        assertTrue(VoiceTests.waitUntil(2_000) { audio.ringerMode == AudioManager.RINGER_MODE_NORMAL })
+    }
+
+    @Test
+    fun mediaPauseAndPlayReachAPlayerInTheBackground() = runBlocking<Unit> {
+        try {
+            screen.open("MediaActivity", "Media fixture")
+            screen.awaitElement { it.label == "Playing" }
+            screen.shell("input keyevent KEYCODE_HOME")
+            assertTrue(VoiceTests.waitUntil(3_000) { audio.isMusicActive })
+
+            assertEquals(Outcome.DONE, CommandTests.say("media pause").outcome)
+            assertTrue(!audio.isMusicActive)
+            assertEquals(Outcome.DONE, CommandTests.say("play media").outcome)
+            assertTrue(audio.isMusicActive)
+            assertEquals(Outcome.DONE, CommandTests.say("pause the music").outcome)
+            // Nothing plays now, so a pause reaches no player.
+            assertEquals(Outcome.FAILED, CommandTests.say("media pause").outcome)
+            awaitBar(PhoneCommandTexts.NO_MEDIA)
+        } finally {
+            screen.shell("am force-stop $FIXTURES")
+        }
+    }
+
+    @Test
+    fun magnificationZoomsPansWithScrollAndStops() = runBlocking<Unit> {
+        screen.open("CommandsActivity", "Commands fixture")
+
+        assertEquals(Outcome.DONE, CommandTests.say("zoom in").outcome)
+        assertEquals(2f, screen.session.actions.zoomScale)
+        val (x, _) = checkNotNull(screen.session.system.magnifiedCentre())
+        assertEquals(Outcome.DONE, CommandTests.say("pan left").outcome)
+        val left = checkNotNull(screen.session.system.magnifiedCentre()).first
+        assertTrue("The magnified area did not move left", left < x - 100)
+        // While the screen is magnified, "scroll" without a target pans.
+        assertEquals(Outcome.DONE, CommandTests.say("scroll right").outcome)
+        assertTrue("The magnified area did not move right", checkNotNull(screen.session.system.magnifiedCentre()).first > left + 100)
+        assertEquals(Outcome.DONE, CommandTests.say("magnify").outcome)
+        assertEquals(3f, screen.session.actions.zoomScale)
+        assertEquals(Outcome.DONE, CommandTests.say("zoom out").outcome)
+        assertEquals(2f, screen.session.actions.zoomScale)
+        assertEquals(Outcome.DONE, CommandTests.say("stop magnification").outcome)
+
+        assertEquals(1f, screen.session.actions.zoomScale)
+    }
 
     // Opens Quick Settings, waits until it shows Bluetooth's tile or until it shows none, and closes it again.
     private suspend fun awaitBluetoothTile(shown: Boolean) {

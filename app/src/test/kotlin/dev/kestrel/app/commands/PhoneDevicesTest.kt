@@ -1,12 +1,19 @@
 package dev.kestrel.app.commands
 
+import android.media.AudioManager
+import dev.kestrel.commands.CommandResult
+import dev.kestrel.commands.Direction
+import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.RadioKind
+import dev.kestrel.commands.StreamKind
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,5 +52,35 @@ class PhoneDevicesTest {
         assertFalse(names("wifi-calling", RadioKind.WIFI))
     }
 
-    // Task 4 of plan 3C adds its tests above this line.
+    @Test
+    fun aVolumeWithoutAStreamIsTheCallsDuringACallAndTheMusicsOtherwise() {
+        assertEquals(AudioManager.STREAM_MUSIC, DeviceCommands.streamOf(null, AudioManager.MODE_NORMAL))
+        assertEquals(AudioManager.STREAM_VOICE_CALL, DeviceCommands.streamOf(null, AudioManager.MODE_IN_CALL))
+        assertEquals(AudioManager.STREAM_VOICE_CALL, DeviceCommands.streamOf(null, AudioManager.MODE_IN_COMMUNICATION))
+        assertEquals(AudioManager.STREAM_RING, DeviceCommands.streamOf(StreamKind.RING, AudioManager.MODE_IN_CALL))
+        assertEquals(AudioManager.STREAM_ALARM, DeviceCommands.streamOf(StreamKind.ALARM, AudioManager.MODE_NORMAL))
+    }
+
+    @Test
+    fun aVolumeStepIsReadBackAndAnUnchangedOneSaysWhy() {
+        assertEquals(CommandResult(Outcome.DONE, repeatable = true), DeviceCommands.volumeResult(3, 7, 1, 7, up = true))
+        assertEquals(CommandResult(Outcome.DONE, show = PhoneCommandTexts.HIGHEST), DeviceCommands.volumeResult(15, 15, 0, 15, up = true))
+        assertEquals(CommandResult(Outcome.DONE, show = PhoneCommandTexts.LOWEST), DeviceCommands.volumeResult(1, 1, 1, 7, up = false))
+        assertEquals(CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED), DeviceCommands.volumeResult(5, 5, 0, 15, up = true))
+    }
+
+    @Test
+    fun theAlarmAndTheCallVolumeAreNeverMuted() {
+        assertEquals(PhoneCommandTexts.MUTE_ALARM, DeviceCommands.muteRefusal(StreamKind.ALARM))
+        assertEquals(PhoneCommandTexts.MUTE_CALL, DeviceCommands.muteRefusal(StreamKind.CALL))
+        assertNull(DeviceCommands.muteRefusal(StreamKind.RING))
+        assertNull(DeviceCommands.muteRefusal(null))
+    }
+
+    @Test
+    fun panMovesAThirdOfTheVisibleArea() {
+        assertEquals(-180 to 0, DeviceCommands.panBy(Direction.LEFT, 1080, 2400, 2f))
+        assertEquals(0 to 400, DeviceCommands.panBy(Direction.DOWN, 1080, 2400, 2f))
+        assertEquals(0 to -267, DeviceCommands.panBy(Direction.UP, 1080, 2400, 3f))
+    }
 }

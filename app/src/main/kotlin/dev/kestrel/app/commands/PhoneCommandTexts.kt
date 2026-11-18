@@ -35,5 +35,19 @@ internal object PhoneCommandTexts {
     const val NO_BLUETOOTH_SWITCH = "I can't find the Bluetooth switch."
     const val BLUETOOTH_NOT_CHANGED = "Bluetooth didn't change."
 
+    const val HIGHEST = "The volume is already at its highest."
+    const val LOWEST = "The volume is already at its lowest."
+    const val VOLUME_NOT_CHANGED = "Android didn't change the volume."
+    const val RINGER_WHILE_SILENT = "Android doesn't let me change the ringer while the phone is silent."
+    const val MUTE_ALARM = "Android doesn't let me mute the alarm volume."
+    const val MUTE_CALL = "Android doesn't let me mute the call volume."
+    const val ALREADY_MUTED = "It's already muted."
+    const val NOT_MUTED = "It isn't muted."
+    const val ALREADY_VIBRATE = "The phone is already on vibrate."
+    const val ALREADY_SILENT = "The phone is already silent."
+    const val NO_MEDIA = "No media app reacted."
+    const val NOT_MAGNIFIED = "The screen is not magnified."
+    const val MOST_MAGNIFIED = "The screen is magnified as much as it can be."
+
     // Tasks 2 to 6 of plan 3C add their texts above this line.
 }

@@ -326,7 +326,8 @@ A thin overlay at the top of the screen shows the listening mode, the last thing
 | Scroll | The element's scroll actions | Swipe gestures |
 | Long-press | The element's long-click action, or the long-click action of its nearest parent that handles touches | A long-press gesture at the element's centre, or at the nearest point of the element that no window above covers |
 | Drag, pinch and zoom | Gestures, and Android's magnification controller for zoom | – |
-| Back, home, recent apps, notifications, Quick Settings, lock, screenshot, power menu, split screen, play and pause | Android's global actions | – |
+| Back, home, recent apps, notifications, Quick Settings, lock, screenshot, power menu, split screen and all apps | Android's global actions | – |
+| Play and pause | The media keys through Android's audio API, which reach the player that played last; Android 13 has no global action for them | – |
 | Open an app, a link or a deep link | Intents | – |
 
 When windows above an element, such as the keyboard or a popup, cover its centre, a fallback tap or long-press goes to the point nearest to the centre that they leave uncovered. Kestrel tries a grid of 8 by 8 points over the element. When the windows cover every point, the action fails and Kestrel does not touch the screen. A swipe, a pinch or a drag that the owner names on an element starts or ends at the same point, and fails in the same way, so that it never lands on the keyboard or a popup.
@@ -960,7 +961,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | Help | Stop Voice Access; Voice Access settings | Yes, as "Stop Kestrel" and "Kestrel settings" |
 | Help | Send feedback | Not applicable, because no data leaves the phone |
 | Settings | Turn Bluetooth on or off; Turn Wi-Fi on or off | Yes. Wi-Fi through the switch of Android's Internet panel, because its Quick Settings tile only disconnects; Bluetooth through its Quick Settings tile. Without a Bluetooth tile, Kestrel uses the switch of Android's Bluetooth settings page where that page shows one; otherwise it says that it can't find the switch. |
-| Settings | Turn volume up or down; Turn [media, alarm, phone or ring] volume up or down; Mute; Unmute; Silence | Yes, through Android's audio API |
+| Settings | Turn volume up or down; Turn [media, alarm, phone or ring] volume up or down; Mute; Unmute; Silence | Yes, through Android's audio API. "Silence" puts the phone on vibrate, because the true silent mode needs access to Do Not Disturb, which Kestrel never asks for. Android does not let an app mute the alarm or the call volume, so Kestrel says so and changes nothing. |
 | Numbers and labels | "7"; "Save"; "Tap 7"; "Tap Save" | Yes, with the "require verbs" setting |
 | Lock screen | Entering the PIN with phonetic labels (Alpha, Bravo …) | Later (D8) |
 | Passwords | Show password; spelling a password character by character | Yes |
