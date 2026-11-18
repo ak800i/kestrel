@@ -10,8 +10,12 @@ import java.util.concurrent.atomic.AtomicLong
  * snapshot of a window that was still sliding into place (design spec, section 9.2).
  */
 interface PlaceCheck<T> {
-    /** Whether [value]'s windows and a few of its elements are still where [value] saw them, read past any cache. */
-    suspend fun inPlace(value: T): Boolean
+    /**
+     * Whether the [windows] that may be moving are still where [value] saw them: each one's bounds in Android's window
+     * list, which Android may serve from its cache, and a few of each one's nodes, read again past the accessibility
+     * cache. A window that [value] does not have counts as in place.
+     */
+    suspend fun inPlace(value: T, windows: Set<Int>): Boolean
 
     /** Drops what earlier reads cached, so that the next snapshot reads the windows anew. */
     fun forget()
@@ -20,10 +24,12 @@ interface PlaceCheck<T> {
 /**
  * Keeps the last snapshot until the screen changes. After a change, it builds a new snapshot once the screen
  * has been quiet for [ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS], or after [ScreenChangeTracker.MAX_WAIT_MILLIS] on a
- * screen that never goes quiet, such as a stopwatch (design spec, section 9.2). After an event of another app's window,
- * which may still slide into place without a further event, [places] checks each new snapshot
- * [ScreenChangeTracker.SETTLE_CHECK_MILLIS] later, and the snapshot is built again until the check finds it in place,
- * or until [ScreenChangeTracker.SETTLE_MAX_MILLIS] after the event, when the newest snapshot counts.
+ * screen that never goes quiet, such as a stopwatch (design spec, section 9.2). While windows of other apps may still
+ * slide into place after their events ([ScreenChangeTracker.movingWindows]), which may end without a further event,
+ * [places] checks each new snapshot [ScreenChangeTracker.SETTLE_CHECK_MILLIS] later, and the snapshot is built again
+ * until the check finds those windows in place. The check of one call ends at the latest
+ * [ScreenChangeTracker.SETTLE_MAX_MILLIS] after its first snapshot, however many events come meanwhile, and the newest
+ * snapshot then counts.
  */
 class SnapshotCache<T : Any>(
     private val tracker: ScreenChangeTracker,
@@ -50,13 +56,25 @@ class SnapshotCache<T : Any>(
             fresh() ?: run {
                 var version = tracker.version.value
                 var invalidated = invalidations.get()
+                var events = tracker.windowEventCount()
                 var value = build()
-                while (places != null && tracker.windowMayMove()) {
+                // Set once, so that no later window event makes this call wait longer.
+                val until = tracker.now() + ScreenChangeTracker.SETTLE_MAX_MILLIS
+                while (places != null && tracker.now() + ScreenChangeTracker.SETTLE_CHECK_MILLIS <= until) {
+                    if (tracker.movingWindows().isEmpty()) break
                     delay(ScreenChangeTracker.SETTLE_CHECK_MILLIS)
-                    if (places.inPlace(value)) break
+                    val moving = tracker.movingWindows()
+                    if (moving.isEmpty()) break
+                    if (places.inPlace(value, moving)) {
+                        tracker.settled(events)
+                        break
+                    }
+                    // At the deadline, the newest snapshot counts.
+                    if (tracker.now() >= until) break
                     places.forget()
                     version = tracker.version.value
                     invalidated = invalidations.get()
+                    events = tracker.windowEventCount()
                     value = build()
                 }
                 entry = Entry(value, version, invalidated)

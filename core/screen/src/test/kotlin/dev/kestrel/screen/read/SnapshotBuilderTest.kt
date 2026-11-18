@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SnapshotBuilderTest {
@@ -171,5 +172,42 @@ class SnapshotBuilderTest {
 
         assertSame(button, result.nodes.getValue(result.snapshot.elements.single().key))
         assertEquals(1_000L, result.snapshot.takenAtMillis)
+    }
+
+    /**
+     * The place check reads the windows that the events named as moving: here a dialog that slides over an app, under
+     * the navigation bar's buttons. The first, the middle and the last actionable element of the whole snapshot would all
+     * lie in windows that stand still.
+     */
+    @Test
+    fun thePlaceCheckReadsTheElementsOfTheWindowsThatMayMove() {
+        fun button(text: String, top: Int) = FakeNode(text = text, clickable = true, bounds = IntRect(0, top, 300, top + 100))
+        val navigation = FakeWindow(FakeNode(children = listOf(button("Back", 2300), button("Home", 2300), button("Recents", 2300))), id = 1, kind = WindowKind.SYSTEM, layer = 3)
+        val dialogButton = button("Delete", 1200)
+        val dialog = FakeWindow(FakeNode(children = listOf(dialogButton)), id = 2, layer = 2)
+        val app = FakeWindow(FakeNode(children = (0 until 5).map { button("Row $it", 300 + 120 * it) }), id = 3, layer = 1)
+        val result = build(navigation, dialog, app)
+        val live = LiveSnapshot(result.snapshot, result.nodes, result.anchors)
+        // The dialog's button has moved 16 px since the snapshot; everything else stands still.
+        val fresh = { node: NodeData -> if (node === dialogButton) node.bounds.copy(top = 1184, bottom = 1284) else node.bounds }
+
+        assertFalse(live.inPlace(setOf(2), fresh))
+        assertTrue(live.inPlace(setOf(1, 3), fresh))
+        // An event of a window that the snapshot does not have counts as in place.
+        assertTrue(live.inPlace(setOf(9), fresh))
+    }
+
+    @Test
+    fun aWindowWithoutActionableElementsIsCheckedByItsRootsFirstVisibleChildren() {
+        val banner = FakeNode(className = "android.widget.ImageView", bounds = IntRect(0, 100, 1080, 400))
+        val hidden = FakeNode(visible = false, bounds = IntRect(0, 0, 10, 10))
+        val toast = FakeWindow(FakeNode(children = listOf(hidden, banner)), id = 5)
+        val result = build(toast)
+        val live = LiveSnapshot(result.snapshot, result.nodes, result.anchors)
+
+        assertEquals(listOf(banner), result.anchors.getValue(5).map { it.node })
+        assertTrue(live.inPlace(setOf(5)) { it.bounds })
+        assertFalse(live.inPlace(setOf(5)) { if (it === banner) IntRect(0, 140, 1080, 440) else it.bounds })
+        assertFalse("A node that is gone has moved", live.inPlace(setOf(5)) { null })
     }
 }

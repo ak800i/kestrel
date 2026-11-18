@@ -72,12 +72,15 @@ class TouchCommandsTest {
     }
 
     /**
-     * The fixture's window still slides into place when ScreenServiceRule.open returns, and its last move fires no
-     * event. A question asked then must number the settled window, or the snapshot after the next event would show every
-     * element moved, and the question would end with "The screen changed" (design spec, section 9.2).
+     * A command that reads the screen while the fixture's window still slides into place waits until the window has
+     * stopped, so that the question numbers the settled window. Otherwise the snapshot after the next event would show
+     * every element moved, and the question would end with "The screen changed" (design spec, section 9.2). The test
+     * starts the fixture itself, as ScreenServiceRule.open does, but without open's wait for the title, which reads the
+     * screen, so that the command's own read is the one that waits.
      */
     @Test
     fun whichOneRightAfterAnAppOpensKeepsItsQuestionUntilTheAnswer() {
+        screen.shell("am start -W -S -n $FIXTURES/.CommandsActivity")
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
 
         Thread.sleep(2_000)

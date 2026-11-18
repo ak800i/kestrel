@@ -51,7 +51,7 @@ import kotlin.coroutines.cancellation.CancellationException
  */
 class ScreenSession(service: AccessibilityService, private val errors: CoroutineExceptionHandler) {
     private val reader = ScreenReader(service)
-    private val windowEvents = WindowEvents(service.packageName)
+    private val windowEvents = WindowEvents(service.packageName, OverlayHost.ROOT_CLASS)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
     private val overlays = OverlayHost(service)
     private val numbers = NumbersOverlay(overlays)
@@ -73,7 +73,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     val snapshots = SnapshotCache(
         tracker,
         object : PlaceCheck<LiveSnapshot> {
-            override suspend fun inPlace(value: LiveSnapshot) = withContext(Dispatchers.IO) { reader.inPlace(value) }
+            override suspend fun inPlace(value: LiveSnapshot, windows: Set<Int>) =
+                withContext(Dispatchers.IO) { reader.inPlace(value, windows) }
 
             override fun forget() = reader.forget()
         },
@@ -289,8 +290,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** Kestrel's accessibility service passes every event here. */
     fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val window = windowEvents.movesWindow(event.eventType, event.packageName, event.windowId, event.windowChanges)
-        if (window || ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged(window)
+        val window = windowEvents.movesWindow(event.eventType, event.packageName, event.className, event.windowId, event.windowChanges)
+        if (window || ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged(if (window) event.windowId else null)
     }
 
     /**

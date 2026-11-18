@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import android.view.WindowManager.LayoutParams
 import dev.kestrel.screen.model.IntRect
 
@@ -36,6 +37,7 @@ class OverlayHost(private val service: AccessibilityService) {
                 false
             }
         }
+        view.accessibilityDelegate = RootDelegate
         return try {
             windowManager.addView(view, params)
             shown += view
@@ -66,6 +68,20 @@ class OverlayHost(private val service: AccessibilityService) {
     }
 
     companion object {
+        /**
+         * The class name that the state events of Kestrel's overlay windows give, so that `WindowEvents` can tell them
+         * from the events of other windows, Kestrel's settings app's among them (design spec, section 9.2).
+         */
+        const val ROOT_CLASS = "dev.kestrel.screen.overlay.Overlay"
+
+        // Android sends a window's state events from its root view, with the root view's class name.
+        private object RootDelegate : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityEvent(host: View, event: AccessibilityEvent) {
+                super.onInitializeAccessibilityEvent(host, event)
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) event.className = ROOT_CLASS
+            }
+        }
+
         /**
          * A window over the whole screen, system bars included, that lets every touch through to the apps below.
          * The [title] names the window in Android's window list.

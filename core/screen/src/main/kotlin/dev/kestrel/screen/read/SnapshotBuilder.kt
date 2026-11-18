@@ -7,12 +7,22 @@ import dev.kestrel.screen.model.WindowSummary
 
 /** Builds a [ScreenSnapshot] from the windows on the screen (design spec, section 9.2). */
 class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis) {
-    /** A snapshot, together with the node behind each element, so that actions can use the live nodes. */
-    class Result(val snapshot: ScreenSnapshot, val nodes: Map<String, NodeData>)
+    /**
+     * A snapshot, together with the node behind each element, so that actions can use the live nodes, and each window's
+     * [anchors].
+     */
+    class Result(val snapshot: ScreenSnapshot, val nodes: Map<String, NodeData>, val anchors: Map<Int, List<Anchor>>)
+
+    /**
+     * One of the first three visible children of a window's root, with its bounds in the window when the snapshot was
+     * built, for the place check of a window without actionable elements (design spec, section 9.2).
+     */
+    class Anchor(val node: NodeData, val bounds: IntRect)
 
     fun build(windows: List<WindowData>): Result {
         val drafts = mutableListOf<Draft>()
         val summaries = mutableListOf<WindowSummary>()
+        val anchors = mutableMapOf<Int, List<Anchor>>()
         for (window in windows.filterNot { it.isOverlay }.sortedByDescending { it.layer }) {
             val root = window.root
             summaries += WindowSummary(
@@ -25,22 +35,37 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
                 active = window.active,
                 focused = window.focused,
             )
-            if (root != null) visit(root, window, depth = 0, parent = null, out = drafts)
+            if (root != null) {
+                val windowAnchors = mutableListOf<Anchor>()
+                visit(root, window, depth = 0, parent = null, out = drafts, anchors = windowAnchors)
+                anchors[window.id] = windowAnchors
+            }
         }
         val keys = Keys()
         val elements = drafts.map { it.toElement(keys.next(it)) }
         val nodes = elements.indices.associate { elements[it].key to drafts[it].node }
-        return Result(ScreenSnapshot(clock(), summaries, elements), nodes)
+        return Result(ScreenSnapshot(clock(), summaries, elements), nodes, anchors)
     }
 
-    /** Adds the elements of [node]'s subtree to [out], and returns up to three texts from the subtree, its own first. */
-    private fun visit(node: NodeData, window: WindowData, depth: Int, parent: Int?, out: MutableList<Draft>): List<String> {
+    /**
+     * Adds the elements of [node]'s subtree to [out], and the first visible children of the window's root to [anchors],
+     * and returns up to three texts from the subtree, its own first.
+     */
+    private fun visit(
+        node: NodeData,
+        window: WindowData,
+        depth: Int,
+        parent: Int?,
+        out: MutableList<Draft>,
+        anchors: MutableList<Anchor>,
+    ): List<String> {
         if (!node.visible || depth > MAX_DEPTH || out.size >= MAX_ELEMENTS) return emptyList()
         val text = if (node.password) null else Labels.clean(node.text)
         val name = Labels.clean(node.contentDescription) ?: Labels.clean(node.supplementalDescription) ?: Labels.clean(node.hint)
         // A text field is named by its description, supplemental description or hint, never by what was typed into it.
         val ownLabel = if (node.editable) name else text ?: name
         val bounds = node.bounds.intersect(window.bounds)
+        if (depth == 1 && bounds != null && anchors.size < MAX_ANCHORS) anchors += Anchor(node, bounds)
         // A slider counts as actionable, so that it gets a number, also without a name of its own.
         val actionable = node.clickable || node.longClickable || node.editable || node.checkable || node.slider
         val described = ownLabel != null || Labels.clean(node.stateDescription) != null
@@ -54,7 +79,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         ownLabel?.let(pieces::add)
         for (i in 0 until node.childCount) {
             val child = node.child(i) ?: continue
-            for (piece in visit(child, window, depth + 1, index ?: parent, out)) {
+            for (piece in visit(child, window, depth + 1, index ?: parent, out, anchors)) {
                 if (pieces.size < MAX_LABEL_PIECES) pieces += piece
             }
         }
@@ -143,5 +168,6 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
         const val MAX_ELEMENTS = 2_000
         const val MAX_LABEL_PIECES = 3
         const val KEY_LABEL_LENGTH = 40
+        const val MAX_ANCHORS = 3
     }
 }

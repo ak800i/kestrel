@@ -58,24 +58,46 @@ class ScreenChangeTrackerTest {
     }
 
     @Test
-    fun eventsOfAnotherAppsWindowMayMoveItAndKestrelsOwnWindowsNever() {
-        val events = WindowEvents(ownPackage = "dev.kestrel")
+    fun eventsOfAnotherAppsWindowMayMoveItAndKestrelsOverlaysNever() {
+        val events = WindowEvents(ownPackage = "dev.kestrel", overlayClass = OVERLAY)
         val added = AccessibilityEvent.WINDOWS_CHANGE_ADDED
         val removed = AccessibilityEvent.WINDOWS_CHANGE_REMOVED
 
         // An app that opens, a window that moves or goes, and the shade's window.
-        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.mail", 7, 0))
-        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 7, added))
-        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 7, AccessibilityEvent.WINDOWS_CHANGE_BOUNDS))
-        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 3, removed))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.mail", "com.example.mail.Inbox", 7, 0))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 7, added))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 7, AccessibilityEvent.WINDOWS_CHANGE_BOUNDS))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 3, removed))
         // A window that only became active, and a change of content, move nothing.
-        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 7, AccessibilityEvent.WINDOWS_CHANGE_ACTIVE))
-        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.example.mail", 7, 0))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 7, AccessibilityEvent.WINDOWS_CHANGE_ACTIVE))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.example.mail", null, 7, 0))
 
-        // Kestrel's touch watcher: its own state event names Kestrel, and the change of the window list that follows
-        // names only the window.
-        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "dev.kestrel", 9, 0))
-        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 9, added))
-        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, 9, removed))
+        // Kestrel's touch watcher: its state event names Kestrel and the overlays' root class, and the change of the
+        // window list that follows names only the window.
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "dev.kestrel", OVERLAY, 9, 0))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 9, added))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 9, removed))
+        // Once removed, the ID is no longer Kestrel's.
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 9, added))
+
+        // Kestrel's settings app is an app like another: its window slides into place too.
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "dev.kestrel", "dev.kestrel.app.MainActivity", 11, 0))
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 11, added))
+    }
+
+    @Test
+    fun kestrelsOverlaysAreRememberedOnlyByTheirNewestSixteenIds() {
+        val events = WindowEvents(ownPackage = "dev.kestrel", overlayClass = OVERLAY)
+        val added = AccessibilityEvent.WINDOWS_CHANGE_ADDED
+        // Each overlay that is shown is a new window; those that take no touches never fire a removal.
+        for (id in 100..116) assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "dev.kestrel", OVERLAY, id, 0))
+
+        assertTrue(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 100, added))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 101, added))
+        assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 116, added))
+    }
+
+    private companion object {
+        const val OVERLAY = "dev.kestrel.screen.overlay.Overlay"
     }
 }

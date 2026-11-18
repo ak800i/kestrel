@@ -5,7 +5,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -127,8 +129,9 @@ class SnapshotCacheTest {
 
         // The fake read of the bounds, past any cache, that compares the window's position now with a snapshot's.
         val places = object : PlaceCheck<Long> {
-            override suspend fun inPlace(value: Long): Boolean {
+            override suspend fun inPlace(value: Long, windows: Set<Int>): Boolean {
                 reads++
+                assertTrue(windows.isNotEmpty())
                 return value == position()
             }
 
@@ -142,7 +145,7 @@ class SnapshotCacheTest {
         val window = SlidingWindow({ testScheduler.currentTime }, slideMillis = 600)
         val built = mutableListOf<Long>()
         val cache = SnapshotCache(tracker, window.places) { window.position().also { built += it } }
-        tracker.onScreenChanged(window = true)
+        tracker.onScreenChanged(window = 4)
 
         // The first snapshot, after 150 ms of quiet, shows the window in the middle of its slide; it is not returned.
         assertEquals(0L, cache.current())
@@ -161,20 +164,47 @@ class SnapshotCacheTest {
     fun aWindowThatNeverStopsCountsAsSettled1500MillisecondsAfterItsEvent() = runTest {
         val tracker = ScreenChangeTracker { testScheduler.currentTime }
         val window = SlidingWindow({ testScheduler.currentTime }, slideMillis = 60_000)
-        var builds = 0
+        val builtAt = mutableListOf<Long>()
         val cache = SnapshotCache(tracker, window.places) {
-            builds++
+            builtAt += testScheduler.currentTime
             window.position()
         }
-        tracker.onScreenChanged(window = true)
+        tracker.onScreenChanged(window = 4)
 
         val value = cache.current()
 
-        // The newest snapshot counts, built at the limit at most one check later.
-        assertEquals(value, 60_000L - testScheduler.currentTime)
+        // The window counts as settled 1.5 s after its event, and the newest snapshot counts.
+        assertEquals(value, 60_000L - builtAt.last())
         assertTrue(testScheduler.currentTime >= ScreenChangeTracker.SETTLE_MAX_MILLIS)
         assertTrue(testScheduler.currentTime <= ScreenChangeTracker.SETTLE_MAX_MILLIS + ScreenChangeTracker.SETTLE_CHECK_MILLIS)
-        assertTrue(builds > 1)
+        assertTrue(builtAt.size > 1)
+    }
+
+    @Test
+    fun noCallWaitsLongerThan1500MillisecondsForTheCheckHoweverManyWindowEventsCome() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val window = SlidingWindow({ testScheduler.currentTime }, slideMillis = 600_000)
+        val builtAt = mutableListOf<Long>()
+        val cache = SnapshotCache(tracker, window.places) {
+            builtAt += testScheduler.currentTime
+            window.position()
+        }
+        // A window that moves and fires an event every 100 ms, such as a popup that grows step by step.
+        val events = launch {
+            while (true) {
+                tracker.onScreenChanged(window = 4)
+                delay(100)
+            }
+        }
+
+        val value = withTimeoutOrNull(60_000) { cache.current() }
+        events.cancel()
+
+        assertNotNull("The check never ended", value)
+        // The screen never goes quiet, so the first build comes after 3 s; the check after it ends 1.5 s later at most.
+        assertEquals(ScreenChangeTracker.MAX_WAIT_MILLIS, builtAt.first())
+        assertTrue(testScheduler.currentTime - builtAt.first() <= ScreenChangeTracker.SETTLE_MAX_MILLIS)
+        assertEquals(value, 600_000L - builtAt.last())
     }
 
     @Test
@@ -190,7 +220,7 @@ class SnapshotCacheTest {
         assertEquals(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS, testScheduler.currentTime)
 
         // A window event that is older than the limit waits for nothing either.
-        tracker.onScreenChanged(window = true)
+        tracker.onScreenChanged(window = 4)
         delay(ScreenChangeTracker.SETTLE_MAX_MILLIS)
         val before = testScheduler.currentTime
         assertEquals(2L, cache.current())
