@@ -17,6 +17,6 @@ internal object HelpPhone {
             listOf("volume up", "turn down the alarm volume", "mute", "unmute the ringer", "silence", "media play", "media pause"),
         ),
         HelpGroup("Magnification", listOf("zoom in", "pan left", "scroll down", "zoom out", "stop magnification")),
-        // Tasks 2 to 6 of plan 3C add their groups above this line.
+        HelpGroup("Calls", listOf("call Ana", "call Ana mobile", "call 064 123 4567", "copy this phone number")),
     )
 }

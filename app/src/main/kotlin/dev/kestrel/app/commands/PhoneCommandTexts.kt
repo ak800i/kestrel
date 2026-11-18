@@ -1,5 +1,7 @@
 package dev.kestrel.app.commands
 
+import dev.kestrel.commands.phone.ContactMatcher
+
 /**
  * What the phone commands say and show (design spec, sections 9.3 and 13.6, and Appendix A). Kestrel speaks only what the
  * owner must act on; the other texts go to the feedback bar. A text with a name or a number in it is never logged.
@@ -49,5 +51,62 @@ internal object PhoneCommandTexts {
     const val NOT_MAGNIFIED = "The screen is not magnified."
     const val MOST_MAGNIFIED = "The screen is magnified as much as it can be."
 
-    // Tasks 2 to 6 of plan 3C add their texts above this line.
+    const val NEED_CONTACTS = "I need access to your contacts to call by name. " +
+        "Allow it on the screen that I opened, then say it again."
+
+    /** [name] is the owner's words or a contact's name, which Kestrel says and never logs. */
+    fun cantFindContact(name: String) = "I can't find $name in your contacts."
+
+    fun tooManyContacts(count: Int, name: String) = "There are $count contacts like $name. Say the full name."
+
+    fun noNumber(name: String) = "$name has no phone number."
+
+    fun noNumberOfKind(name: String, kind: String) = "$name has no $kind number."
+
+    /** "Which number? Mobile or work?", or with numbers when two numbers have the same kind: "Which number? 1, mobile. 2, mobile." */
+    fun whichNumber(kinds: List<String>): String {
+        if (kinds.map(ContactMatcher::kindOf).distinct().size < kinds.size) {
+            return "Which number? " + kinds.withIndex().joinToString(" ") { "${it.index + 1}, ${it.value}." }
+        }
+        val listed = if (kinds.size == 1) kinds[0] else kinds.dropLast(1).joinToString(", ") + " or " + kinds.last()
+        return "Which number? ${listed.replaceFirstChar { it.uppercase() }}?"
+    }
+
+    /** A number as Kestrel says it: digit by digit, with "plus", "star" and "hash". */
+    fun spoken(digits: String) = digits.map {
+        when (it) {
+            '+' -> "plus"
+            '*' -> "star"
+            '#' -> "hash"
+            else -> it.toString()
+        }
+    }.joinToString(" ")
+
+    /** Whom Kestrel calls: "Ana Petrović, mobile", or a spoken number. */
+    fun contactAndKind(name: String, kind: String) = "$name, $kind"
+
+    /** The announcement: "Calling Ana Petrović, mobile." */
+    fun calling(whom: String) = "Calling $whom."
+
+    /** The countdown on the bar: "Calling Ana Petrović, mobile, in 4". */
+    fun callingIn(whom: String, seconds: Int) = "Calling $whom, in $seconds"
+
+    /**
+     * A short or code number, one that is no plain number, or an emergency number under [EmergencyPolicy.TOUCH_ONLY]:
+     * Kestrel never presses Call for it (design D11).
+     */
+    fun tapCallYourself(whom: String) = "I opened the phone app with $whom. Tap Call yourself."
+
+    const val OPENED_TAP_CALL = "I opened the phone app. Tap Call yourself."
+    const val NO_PHONE_APP = "I couldn't open the phone app."
+    const val COULD_NOT_PRESS = "I couldn't press Call. Tap Call yourself."
+    const val OTHER_NUMBER = "The phone app shows another number, so I didn't press Call."
+    const val EMERGENCY_QUESTION = "That may call an emergency number. Say 'yes, call' to do it."
+    const val EMERGENCY_TOUCH_ONLY = "Tap it yourself for an emergency call."
+    const val CHOOSE_SIM = "Choose the SIM."
+    const val NO_PHONE_NUMBER = "I can't find a phone number on the screen."
+    const val COULD_NOT_COPY = "I couldn't copy the number."
+
+    /** "Search for" with a digit in a phone app, where a number could start a call (the controller's decision on Task 6). */
+    const val SEARCH_NAMES_ONLY = "In the phone app, I search only for names, because a number could start a call."
 }

@@ -1,5 +1,8 @@
 package dev.kestrel.commands
 
+import dev.kestrel.commands.phone.PhoneNumbers
+import dev.kestrel.commands.text.Normalizer
+
 /**
  * The phone phrases of plan 3C (design spec, sections 9.3 and 13.6, and Appendix A): the global actions, apps, the phone's
  * settings, media, magnification and calls. Its targeted rules return null for a target that is not theirs: "turn on" and
@@ -64,7 +67,10 @@ internal object GrammarPhone {
         phrases(PhoneCommand.Pan(Direction.DOWN), "pan down", "move down", "go down")
         phrases(PhoneCommand.Pan(Direction.LEFT), "pan left", "move left", "go left")
         phrases(PhoneCommand.Pan(Direction.RIGHT), "pan right", "move right", "go right")
-        // Tasks 2 to 6 of plan 3C add their phrases above this line.
+        phrases(
+            PhoneCommand.CopyPhoneNumber,
+            "copy this phone number", "copy the phone number", "copy phone number", "copy this number", "copy the number",
+        )
     }
 
     fun fixed(words: List<String>, text: String): Command? = FIXED[words.joinToString(" ")]
@@ -74,7 +80,7 @@ internal object GrammarPhone {
         radio(words)?.let { return it }
         volume(words)?.let { return it }
         mute(words)?.let { return it }
-        // Tasks 2 to 6 of plan 3C add their rules above this line.
+        call(words, text)?.let { return it }
         return null
     }
 
@@ -187,5 +193,46 @@ internal object GrammarPhone {
     // Two different streams in one phrase name none.
     private fun oneStream(current: StreamKind?, named: StreamKind): StreamKind? = if (current == null || current == named) named else null
 
-    // Tasks 2 to 6 of plan 3C add their functions above this line.
+    private val CALL_VERBS = setOf("call", "dial")
+    private val KINDS = setOf("mobile", "cell", "work", "home", "main")
+    private val NUMBER_WORDS = setOf("number", "phone")
+    private val PLACE_WORDS = setOf("on", "at")
+    private val POSSESSIVE = Regex("['\u2019]s$", RegexOption.IGNORE_CASE)
+
+    // "Call 064 123 4567", "call Ana", "call Ana mobile", "call Ana on work", "call Ana's work number", "call Ana's gym
+    // number". The kind is a known kind after the name, or the words after a name with "'s". A name or a number never
+    // ends with a polite word, which the parser removes only from a bare text: "call Ana now".
+    private fun call(words: List<String>, text: String): Command? {
+        var said = words.size
+        while (said > 1 && words[said - 1] in CommandParser.POLITE_WORDS) said--
+        if (said < 2 || words[0] !in CALL_VERBS) return null
+        PhoneNumbers.digits(numberText(text, said))?.let { return PhoneCommand.Call(CallTarget.Number(it)) }
+        val end = if (said > 2 && words[said - 1] in NUMBER_WORDS) said - 1 else said
+        val owner = (1 until end).firstOrNull { POSSESSIVE.containsMatchIn(cutWords(text, it, it + 1)) }
+        if (owner != null) {
+            val name = cutWords(text, 1, owner + 1).replace(POSSESSIVE, "")
+            val kind = words.subList(owner + 1, end).joinToString(" ").ifEmpty { null }
+            return PhoneCommand.Call(CallTarget.Name(name, kind))
+        }
+        if (end > 2 && words[end - 1] in KINDS) {
+            var nameEnd = end - 1
+            if (nameEnd > 2 && words[nameEnd - 1] in PLACE_WORDS) nameEnd--
+            return PhoneCommand.Call(CallTarget.Name(cutWords(text, 1, nameEnd), words[end - 1]))
+        }
+        return PhoneCommand.Call(CallTarget.Name(cutWords(text, 1, said), null))
+    }
+
+    private const val NUMBER_SIGNS = "+*# "
+
+    // The words after the verb with the "+", "*" and "#" around them, which Normalizer drops as punctuation.
+    private fun numberText(text: String, end: Int): String {
+        val folded = Normalizer.withOffsets(text)
+        val span = folded.span(1, end)
+        val verbEnd = folded.span(0, 1).last + 1
+        var start = span.first
+        while (start > verbEnd && text[start - 1] in NUMBER_SIGNS) start--
+        var stop = span.last + 1
+        while (stop < text.length && text[stop] in NUMBER_SIGNS) stop++
+        return text.substring(start, stop)
+    }
 }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The view IDs of plan 3C's fixtures, which Android merges with ids.xml. MediaActivity needs none. -->
+<resources>
+    <item name="office_number" type="id" />
+    <item name="mobile_number" type="id" />
+    <item name="meeting_date" type="id" />
+    <item name="paste_button" type="id" />
+    <item name="emergency_button" type="id" />
+    <item name="emergency_button_moved" type="id" />
+    <item name="rearrange_button" type="id" />
+</resources>

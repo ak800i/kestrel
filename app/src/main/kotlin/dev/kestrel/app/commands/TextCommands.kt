@@ -320,20 +320,28 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
      * ID), else the first search field, else a "search" button, which Kestrel taps before it waits up to 3 s for a new
      * search field to get the focus. A password field, a phone number field, or a field with more lines and no search
      * action, such as a message, is never used, and neither is the field that had the focus before the tap. Kestrel
-     * replaces the field's text with X, records it so that "undo" brings back what was there, and submits it.
+     * replaces the field's text with X, records it so that "undo" brings back what was there, and submits it. In a phone
+     * app's window, a query with any digit is refused, because a number there could start a call.
      */
     private suspend fun search(screen: ScreenSession, query: String): CommandResult {
         val text = Dictation.phrase(query)
         // A line break goes only through the Enter key, and a search field has one line (design D8).
         if ('\n' in text) return CommandResult(Outcome.FAILED, say = TextCommandTexts.LINE_BREAK)
         val snapshot = screen.snapshots.current().snapshot
+        // The controller's decision on Task 6: the emergency guard never sees "search for", so a phone app's search never
+        // gets a number, which could start a call there; a name is searched for.
+        val phoneApps = EmergencyGuard.phoneApps(environment.context)
+        val numberInPhoneApp = CommandResult(Outcome.FAILED, say = PhoneCommandTexts.SEARCH_NAMES_ONLY)
+        if (EmergencyGuard.refusesSearch(text, snapshot, null, phoneApps)) return numberInPhoneApp
         val focused = TextFields.focused(snapshot)
         val focusedSearches = focused?.let { screen.text.searches(it.key) } == true
         val field = TextFields.searchField(snapshot, focusedSearches) ?: run {
             val button = TextFields.searchButton(snapshot) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
+            if (EmergencyGuard.refusesSearch(text, snapshot, button, phoneApps)) return numberInPhoneApp
             tap(screen, button)?.let { return it }
             openedSearch(screen, before = focused) ?: return CommandResult(Outcome.FAILED, say = TextCommandTexts.NO_SEARCH_FIELD)
         }
+        if (EmergencyGuard.refusesSearch(text, screen.snapshots.current().snapshot, field, phoneApps)) return numberInPhoneApp
         var state = screen.text.read(field.key) ?: return gone()
         // Checked on the live field, also for one that a search button opened.
         val password = editing.password(field, state.password, TextFields.focused(screen.snapshots.current().snapshot))

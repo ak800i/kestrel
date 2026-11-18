@@ -18,12 +18,16 @@ internal fun phoneCommands(environment: CommandEnvironment): CommandPart = Phone
 internal class PhoneCommands(private val environment: CommandEnvironment) : CommandPart {
     private val apps = AppCommands(environment)
     private val device = DeviceCommands(environment)
-    // Tasks 2 to 6 of plan 3C add their parts above this line.
+    private val calls = CallCommands.create(environment)
+    private val numbers = NumberCopier(environment)
+    private val emergency = EmergencyGuard(environment.context, environment.targets, environment.screen)
 
     override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult? {
         // Without Kestrel's accessibility service, InstantCommands passes only these, which need no screen.
         device.withoutScreen(command)?.let { return it }
         val screen = environment.screen() ?: return null
+        // Whatever may call an emergency number needs the owner's "yes, call" first (design spec, section 8.7).
+        emergency.check(command, heard, conversation)?.let { return it }
         return when (command) {
             is PhoneCommand.Global -> globalCommand(command.action, { screen.hideFeedback() }) { screen.actions.global(it) }
             PhoneCommand.PreviousApp -> previousAppResult(screen.system.previousApp())
@@ -34,7 +38,8 @@ internal class PhoneCommands(private val environment: CommandEnvironment) : Comm
             is PhoneCommand.Pan -> device.pan(screen, command.direction)
             // While the screen is magnified, "scroll" without a target moves the magnified area (design D10).
             is Command.Scroll -> if (command.target == null && screen.actions.zoomScale > 1f) device.pan(screen, command.direction) else null
-            // Tasks 2 to 6 of plan 3C add their commands above this line.
+            is PhoneCommand.Call -> calls.call(command.who, conversation)
+            PhoneCommand.CopyPhoneNumber -> numbers.copy(screen, conversation)
             else -> null
         }
     }

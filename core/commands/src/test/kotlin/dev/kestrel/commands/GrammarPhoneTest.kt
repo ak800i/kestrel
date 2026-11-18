@@ -111,5 +111,33 @@ class GrammarPhoneTest {
         assertParses(Command.Scroll(Direction.DOWN, null), "Scroll down.")
     }
 
-    // Tasks 2 to 6 of plan 3C add their tests above this line.
+    @Test
+    fun callTakesANumberOrANameWithAKind() {
+        assertParses(
+            PhoneCommand.Call(CallTarget.Number("0641234567")),
+            "Call 064 123 4567.", "Dial 064-123-4567", "call zero six four one two three four five six seven",
+        )
+        assertParses(
+            PhoneCommand.Call(CallTarget.Number("+381641234567")),
+            "Call +381 64 123 4567.", "call plus three eight one six four one two three four five six seven",
+        )
+        assertParses(PhoneCommand.Call(CallTarget.Number("*123#")), "Dial star one two three hash.")
+        assertParses(PhoneCommand.Call(CallTarget.Number("*#06#")), "Dial *#06#.")
+        assertParses(PhoneCommand.Call(CallTarget.Number("112")), "Call 112.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("Ana Petrović", null)), "Call Ana Petrović.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("Mom", null)), "Call Mom.", "Call Mom now.", "Call Mom please")
+        assertParses(PhoneCommand.Call(CallTarget.Number("0641234567")), "Call 064 123 4567 now.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("Ana", "mobile")), "Call Ana mobile.", "Call Ana on mobile.", "Call Ana's mobile number.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("Ana", "work")), "call Ana's work number", "Dial Ana at work.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("Ana", "gym")), "Call Ana's gym number.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("Ana", null)), "Call Ana's number.")
+        assertParses(PhoneCommand.Call(CallTarget.Name("home", null)), "Call home.")
+        assertParses(PhoneCommand.Volume(StreamKind.CALL, up = true), "Call volume up.")
+        assertBare("Call.", "I'll call you later, okay?", "Call please.", "Dial now.")
+    }
+
+    @Test
+    fun copyThisPhoneNumber() {
+        assertParses(PhoneCommand.CopyPhoneNumber, "Copy this phone number.", "Copy the phone number.", "Copy the number.")
+    }
 }
