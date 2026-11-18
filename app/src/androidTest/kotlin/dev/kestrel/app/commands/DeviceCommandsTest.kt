@@ -78,7 +78,8 @@ class DeviceCommandsTest {
             // So that the test fails, instead of passing through the settings page, when Quick Settings has no tile.
             awaitBluetoothTile(shown = true)
 
-            // As for Wi-Fi: Quick Settings' 3 s, the tile's 3 s and the radio's 6 s take more than the default 15 s when loaded.
+            // As for Wi-Fi: the wait of up to 8 s for the tile, the radio's 6 s and the closing of the shade, 14 s and more,
+            // take more than the default 15 s when loaded; 30 s covers them.
             assertEquals(Outcome.DONE, CommandTests.say("turn off Bluetooth", timeoutMillis = 30_000).outcome)
             assertTrue("Bluetooth is still on", VoiceTests.waitUntil(5_000) { !radio("bluetooth_on") })
             awaitGone { it.packageName == PhoneTests.SYSTEM_UI && it.viewId?.contains(":id/qs_tile") == true }
@@ -131,7 +132,8 @@ class DeviceCommandsTest {
             }
         }
         try {
-            // The tile's 3 s, the page's cold start of up to 8 s, the switch's 3 s and the Backs that close the page.
+            // The wait of up to 8 s for the tile, the page's cold start of up to 8 s, the switch's 3 s and the Backs that
+            // close the page: 19 s and the Backs, within 30 s.
             assertEquals(Outcome.FAILED, CommandTests.say("turn off Bluetooth", timeoutMillis = 30_000).outcome)
         } finally {
             screen.automation.setOnAccessibilityEventListener(null)

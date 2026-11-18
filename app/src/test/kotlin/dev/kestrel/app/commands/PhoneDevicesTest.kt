@@ -298,6 +298,16 @@ class PhoneDevicesTest {
         assertNull(DeviceCommands.awaitTile({ ScreenSnapshot(0, listOf(panel), listOf(wifi)) }, ::isBluetooth))
         assertEquals(3_000L, testScheduler.currentTime - started)
 
+        // The 3 s count from the first tile, not from the start: tiles without Bluetooth's that show after 4 s end the
+        // wait at 7 s.
+        started = testScheduler.currentTime
+        val lateWithout = DeviceCommands.awaitTile({
+            val tiles = if (testScheduler.currentTime - started < 4_000) emptyList() else listOf(wifi)
+            ScreenSnapshot(0, listOf(panel), tiles)
+        }, ::isBluetooth)
+        assertNull(lateWithout)
+        assertEquals(7_000L, testScheduler.currentTime - started)
+
         // No tile at all ends the wait after 8 s.
         started = testScheduler.currentTime
         assertNull(DeviceCommands.awaitTile({ ScreenSnapshot(0, listOf(panel), emptyList()) }, ::isBluetooth))

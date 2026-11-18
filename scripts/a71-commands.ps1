@@ -293,24 +293,25 @@ function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$A
 function Remove-Restore($Restore) { $pending.Remove($Restore) | Out-Null }
 
 # Runs a restore that is still pending, and keeps it pending, with the reason, when it fails. The owner's "q" at a prompt
-# of a restore stops the session, as it does in a step.
-function Complete-Restore($Restore) {
+# of a restore stops the session, as it does in a step; at the session's end (-Ending) the restore keeps it as its reason
+# instead, so that the other restores still run and the script ends with its warning, not with an error.
+function Complete-Restore($Restore, [switch]$Ending) {
     if (-not $pending.Contains($Restore)) { return }
     try {
         & $Restore.Action $Restore.Data | Out-Null
         $pending.Remove($Restore) | Out-Null
     } catch {
-        if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
         $Restore.Reason = $_.Exception.Message
+        if ($_.Exception.Message -eq 'The owner stopped the session.' -and -not $Ending) { throw }
     }
 }
 
-# Runs the restores in order, each in the finally block of the one before, so that a stop such as Ctrl+C during one of
-# them still runs the others.
+# Runs the restores at the session's end in order, each in the finally block of the one before, so that a stop such as
+# Ctrl+C during one of them still runs the others. The owner's "q" at a prompt of one of them only becomes its reason.
 function Invoke-Restore([object[]]$Restores, [int]$Index = 0) {
     if ($Index -ge $Restores.Count) { return }
     try {
-        Complete-Restore $Restores[$Index]
+        Complete-Restore $Restores[$Index] -Ending
     } finally {
         Invoke-Restore $Restores ($Index + 1)
     }

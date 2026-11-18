@@ -10,7 +10,8 @@ BeforeAll {
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Format-CheckResult', 'Get-Median',
-        'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult')
+        'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult',
+        'Complete-Restore', 'Invoke-Restore')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -136,5 +137,21 @@ Describe 'The helpers of the A71 session of the instant commands' {
     It 'writes a radio check''s line with Android''s state and the screen that opened, as one letter' {
         Format-RadioResult -Say 'turn off Bluetooth' -Done $true -Screen 'q' | Should -BeExactly 'turn off Bluetooth: Android says done screen=q'
         Format-RadioResult -Say 'turn on Wi-Fi' -Done $false -Screen 'n' | Should -BeExactly 'turn on Wi-Fi: Android says not done screen=n'
+    }
+
+    It 'stops a step at the owner''s "q" at a restore''s prompt, and at the session''s end runs the other restores and keeps the reason' {
+        $runs = [ref]0
+        $first = [pscustomobject]@{ Data = $null; Action = { throw 'The owner stopped the session.' }; Reason = 'the session ended before it' }
+        $second = [pscustomobject]@{ Data = $null; Action = { $runs.Value++ }; Reason = 'the session ended before it' }
+        $pending = [System.Collections.Generic.List[object]]::new()
+        $pending.Add($first)
+        $pending.Add($second)
+
+        { Complete-Restore $first } | Should -Throw 'The owner stopped the session.'
+
+        { Invoke-Restore @($first, $second) } | Should -Not -Throw
+        $runs.Value | Should -Be 1
+        @($pending) | Should -Be @($first)
+        $first.Reason | Should -BeExactly 'The owner stopped the session.'
     }
 }
