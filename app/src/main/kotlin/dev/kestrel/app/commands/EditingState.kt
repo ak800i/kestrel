@@ -1,12 +1,14 @@
 package dev.kestrel.app.commands
 
+import android.os.SystemClock
 import dev.kestrel.commands.edit.EditHistory
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 
 /**
  * When dictation is on (design spec, section 9.7): while a text field has the focus, unless the owner said "stop editing"
- * for that field. A change of the focus ends "stop editing", and so does "start editing". It also keeps Kestrel's own
+ * for that field. Another field with the focus ends "stop editing", and so does "start editing"; a moment without a
+ * focused field, as while a menu or the notification shade holds the focus, does not. It also keeps Kestrel's own
  * history of its edits for "undo" and "redo", and which field it last saw as a password field. It holds the keys of
  * fields, never their text.
  */
@@ -16,13 +18,14 @@ internal class EditingState {
     @Volatile
     private var stopped: Field? = null
 
-    val history = EditHistory()
+    // The time since boot, which goes on while the phone sleeps, so that a history's 5 minutes are real minutes.
+    val history = EditHistory(clock = SystemClock::elapsedRealtime)
 
     /** The field that dictation types into, or null while dictation is off. */
     fun dictating(snapshot: ScreenSnapshot): ScreenElement? {
         val field = TextFields.focused(snapshot)
         val stop = stopped
-        if (stop != null && (field == null || field.key != stop.key || field.packageName != stop.packageName)) stopped = null
+        if (stop != null && field != null && (field.key != stop.key || field.packageName != stop.packageName)) stopped = null
         return field?.takeIf { stopped == null }
     }
 
@@ -71,6 +74,14 @@ internal class EditingState {
             passwordFocused = false
         }
     }
+
+    /**
+     * Whether the transcript for the focused [field] must be hidden: the field holds a password by [password], or
+     * [typingPassword] says that the input that its app started last has a password's type. Only [password] is
+     * remembered, because [typingPassword] checks only the app, so it may still describe the field that had the focus
+     * before, of the same app.
+     */
+    fun hides(field: ScreenElement, typingPassword: Boolean): Boolean = password(field, field.password) || typingPassword
 
     /** The name of [field] in the history: its app and its key. */
     fun id(field: ScreenElement): String = "${field.packageName}/${field.key}"

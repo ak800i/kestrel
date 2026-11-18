@@ -2,6 +2,7 @@ package dev.kestrel.app.commands
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.pm.PackageManager
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
@@ -52,13 +53,18 @@ internal object TextFieldTests {
     /**
      * Puts [text] on the clipboard, runs [block], and then puts back what the clipboard held before, also after a
      * failure: the emulator shares its clipboard with the computer, so a test's copy would replace the owner's. A
-     * background app may read the clipboard only with the shell's permission. What the clipboard holds stays in memory
-     * and is never printed.
+     * background app may read the clipboard only with the shell's permission; without it, Android gives no clip and no
+     * error, so the test fails before it changes anything, instead of clearing the owner's clipboard. What the clipboard
+     * holds stays in memory and is never printed.
      */
     fun ScreenServiceRule.keepClipboard(text: String, block: () -> Unit) {
-        val clipboard = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(ClipboardManager::class.java)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
         automation.adoptShellPermissionIdentity(READ_CLIPBOARD)
         val saved = try {
+            check(context.checkSelfPermission(READ_CLIPBOARD) == PackageManager.PERMISSION_GRANTED) {
+                "The test cannot read the clipboard to put it back afterwards"
+            }
             clipboard.primaryClip
         } finally {
             automation.dropShellPermissionIdentity()

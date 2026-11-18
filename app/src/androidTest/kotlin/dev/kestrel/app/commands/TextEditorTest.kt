@@ -146,6 +146,17 @@ class TextEditorTest {
     }
 
     @Test
+    fun theSetTextFallbackNeverWritesOverATextThatTheFieldChanged() = runBlocking<Unit> {
+        screen.open("EditActivity", "Edit fixture")
+        val capitals = screen.field("text_capitals").key
+
+        // The field takes the input method's text in capitals, so it never shows what Kestrel expects. It no longer shows
+        // the text from before the edit either, so the set-text fallback leaves the field's own text.
+        assertEquals(TextEditor.NOT_TAKEN, editor.replace(capitals, 0, 0, "typed", 5, 5))
+        screen.awaitLine("Capitals: \"TYPED\" 5-5")
+    }
+
+    @Test
     fun composeFieldsTakeEditsAndTheInputTellsWhichHasMoreLines() = runBlocking<Unit> {
         screen.open("ComposeEditActivity", "Compose edit fixture")
         val search = screen.field("compose_search").key

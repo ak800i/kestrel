@@ -31,7 +31,8 @@ import androidx.annotation.MainThread
  * - a field to paste into;
  * - a phone number field that formats the number as it is typed, as a dialpad's does;
  * - a draft field that fills in a draft when it gets the focus while it is empty, as some apps do;
- * - a legacy field that ignores what an input method commits, so that only the set-text action changes its text.
+ * - a legacy field that ignores what an input method commits, so that only the set-text action changes its text;
+ * - a capitals field that turns what an input method commits into capitals, as an app's all-caps filter does.
  *
  * The line under each field reports its text and selection, as `Notes: "hello" 5-5`, with each line break as "\n",
  * because Kestrel's labels join lines; the password line reports only the length. The top status line reports the editor
@@ -85,6 +86,9 @@ class EditActivity : Activity() {
         draft.setOnFocusChangeListener { _, focused -> if (focused && draft.text.isEmpty()) draft.setText("Dear team,") }
         page.addField(R.id.text_legacy, "Legacy", R.id.text_legacy_state, InputType.TYPE_CLASS_TEXT, ignoresCommits = true) { field ->
             "Legacy: \"${field.text}\" ${field.selectionStart}-${field.selectionEnd}"
+        }
+        page.addField(R.id.text_capitals, "Capitals", R.id.text_capitals_state, InputType.TYPE_CLASS_TEXT, capitalizesCommits = true) { field ->
+            "Capitals: \"${field.text}\" ${field.selectionStart}-${field.selectionEnd}"
         }
     }
 
@@ -176,7 +180,8 @@ class SearchActivity : Activity() {
 
 /**
  * Adds a field with [hint] and, under it, the line that [report] fills whenever its text or selection changes. With
- * [ignoresCommits], the field ignores the text that an input method commits.
+ * [ignoresCommits], the field ignores the text that an input method commits, and with [capitalizesCommits], it takes
+ * that text in capitals.
  */
 private fun LinearLayout.addField(
     id: Int,
@@ -184,10 +189,11 @@ private fun LinearLayout.addField(
     stateId: Int,
     type: Int,
     ignoresCommits: Boolean = false,
+    capitalizesCommits: Boolean = false,
     report: (EditText) -> String,
 ): EditText {
     val state = TextView(context).apply { this.id = stateId }
-    val field = ReportingField(context, ignoresCommits).apply {
+    val field = ReportingField(context, ignoresCommits, capitalizesCommits).apply {
         this.id = id
         this.hint = hint
         // The input type alone makes the field one line or more, and keeps a password's dots.
@@ -200,8 +206,15 @@ private fun LinearLayout.addField(
     return field
 }
 
-/** A text field that reports each change of its text or selection, and may ignore what an input method commits. */
-private class ReportingField(context: Context, private val ignoresCommits: Boolean) : EditText(context) {
+/**
+ * A text field that reports each change of its text or selection, and may ignore what an input method commits or take it
+ * in capitals.
+ */
+private class ReportingField(
+    context: Context,
+    private val ignoresCommits: Boolean,
+    private val capitalizesCommits: Boolean = false,
+) : EditText(context) {
     // The constructor that the layout tools look for.
     constructor(context: Context) : this(context, ignoresCommits = false)
 
@@ -227,6 +240,15 @@ private class ReportingField(context: Context, private val ignoresCommits: Boole
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         val connection = super.onCreateInputConnection(outAttrs) ?: return null
+        if (capitalizesCommits) {
+            return object : InputConnectionWrapper(connection, true) {
+                override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+                    super.commitText(text?.toString()?.uppercase(), newCursorPosition)
+
+                override fun commitText(text: CharSequence, newCursorPosition: Int, textAttribute: TextAttribute?): Boolean =
+                    super.commitText(text.toString().uppercase(), newCursorPosition, textAttribute)
+            }
+        }
         if (!ignoresCommits) return connection
         return object : InputConnectionWrapper(connection, true) {
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean = true

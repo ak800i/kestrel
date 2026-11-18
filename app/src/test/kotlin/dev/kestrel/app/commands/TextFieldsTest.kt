@@ -214,4 +214,29 @@ class TextFieldsTest {
         assertNull(editing.dictating(snapshot(field("notes", "Notes", 300))))
         assertEquals("dev.app/notes", editing.id(notes))
     }
+
+    @Test
+    fun stopEditingHoldsWhileNoFieldHasTheFocus() {
+        val editing = EditingState()
+        val notes = field("notes", "Notes", 300, focused = true)
+
+        editing.stop(notes)
+        // A menu, a dialog or the shade holds the focus while the owner speaks once: the speech is not typed afterwards.
+        assertNull(editing.dictating(snapshot(field("notes", "Notes", 300))))
+        assertNull(editing.dictating(snapshot(notes)))
+        editing.resume()
+        assertEquals(notes, editing.dictating(snapshot(notes)))
+    }
+
+    @Test
+    fun aPasswordGuessFromTheAppsInputHidesTheTranscriptButIsNotRemembered() {
+        val editing = EditingState()
+        val plain = field("user", "User", 100, focused = true)
+
+        // The input that the app started may still be the one of its password field that had the focus just before.
+        assertTrue(editing.hides(plain, typingPassword = true))
+        assertFalse(editing.hides(plain, typingPassword = false))
+        assertFalse(editing.password(plain, password = false))
+        assertTrue(editing.hides(plain.copy(password = true), typingPassword = false))
+    }
 }

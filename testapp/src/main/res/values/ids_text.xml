@@ -16,6 +16,8 @@
     <item name="text_draft_state" type="id" />
     <item name="text_legacy" type="id" />
     <item name="text_legacy_state" type="id" />
+    <item name="text_capitals" type="id" />
+    <item name="text_capitals_state" type="id" />
     <item name="text_subject" type="id" />
     <item name="text_subject_state" type="id" />
     <item name="text_mail_search" type="id" />

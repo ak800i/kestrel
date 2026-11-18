@@ -83,8 +83,8 @@ class TouchCommandsTest {
     @Test
     fun aLabelThatNothingMatchesSaysSoAndLeavesNumbersForTheNextTap() {
         assertEquals(Outcome.FAILED, CommandTests.say("tap Weather").outcome)
-        CommandTests.awaitSaid("I can't find Weather.")
-        val send = runBlocking { screen.awaitElement { it.label == "Send" } }
+        CommandTests.awaitSaid("I can't find Weather.", WAIT_MILLIS)
+        val send = runBlocking { screen.awaitElement(WAIT_MILLIS) { it.label == "Send" } }
         val number = screen.session.numberBadges.first { it.key == send.key }.number
 
         assertEquals(Outcome.DONE, CommandTests.say("tap $number").outcome)
@@ -127,7 +127,7 @@ class TouchCommandsTest {
 
     @Test
     fun anAnswerWhoseElementAWindowNowCoversEndsWithOtherWindowsCoverIt() = runBlocking<Unit> {
-        val cover = screen.awaitElement { it.label == "Cover Dan" }
+        val cover = screen.awaitElement(WAIT_MILLIS) { it.label == "Cover Dan" }
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
 
         // Only the node's click action, never a tap gesture, which the touch watcher would count as the owner's touch, so
@@ -148,7 +148,7 @@ class TouchCommandsTest {
     @Test
     fun aNumberWithoutNumbersOnTheScreenAsksForThem() {
         assertEquals(Outcome.FAILED, CommandTests.say("tap 7").outcome)
-        CommandTests.awaitSaid(CommandTexts.SHOW_NUMBERS_FIRST)
+        CommandTests.awaitSaid(CommandTexts.SHOW_NUMBERS_FIRST, WAIT_MILLIS)
     }
 
     @Test
@@ -172,7 +172,7 @@ class TouchCommandsTest {
 
         // Well before the question's own 15 s timeout.
         assertEquals(Outcome.FAILED, CommandTests.next(5_000).outcome)
-        CommandTests.awaitSaid(CommandTexts.SCREEN_CHANGED)
+        CommandTests.awaitSaid(CommandTexts.SCREEN_CHANGED, WAIT_MILLIS)
     }
 
     @Test
@@ -187,7 +187,7 @@ class TouchCommandsTest {
     @Test
     fun theOwnersTouchCancelsWhichOne() = runBlocking {
         TestFinger(screen.automation).use { finger ->
-            val title = screen.awaitElement { it.label == "Commands fixture" }.bounds
+            val title = screen.awaitElement(WAIT_MILLIS) { it.label == "Commands fixture" }.bounds
             CommandTests.ask("tap Delete")
             screen.awaitInputWindow("Kestrel touch watcher")
 
@@ -213,13 +213,13 @@ class TouchCommandsTest {
 
         // Without a name, with two checkable elements on the screen, Kestrel asks which one.
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("switch off"))
-        val wifi = screen.awaitElement { it.label == WIFI && it.checkable }
+        val wifi = screen.awaitElement(WAIT_MILLIS) { it.label == WIFI && it.checkable }
         assertEquals(Outcome.DONE, CommandTests.answer("${badge(wifi.key)}").outcome)
         awaitStatus(WIFI_OFF)
 
         // A number can name an element that does not check: Kestrel refuses it and clicks nothing.
         screen.session.showNumbers()
-        val save = screen.awaitElement { it.label == "Save" }
+        val save = screen.awaitElement(WAIT_MILLIS) { it.label == "Save" }
         assertEquals(Outcome.FAILED, CommandTests.say("check ${badge(save.key)}").outcome)
         awaitBar(CommandTexts.NOT_CHECKABLE)
         awaitStatus(WIFI_OFF)
@@ -227,8 +227,8 @@ class TouchCommandsTest {
 
     @Test
     fun incrementAndDecrementMoveASeekBarAndAComposeSliderOneStep() = runBlocking<Unit> {
-        val seekBar = screen.awaitElement { it.viewId == "$FIXTURES:id/seek_bar" }
-        val speed = screen.awaitElement { it.slider && it.packageName == FIXTURES && it.key != seekBar.key }
+        val seekBar = screen.awaitElement(WAIT_MILLIS) { it.viewId == "$FIXTURES:id/seek_bar" }
+        val speed = screen.awaitElement(WAIT_MILLIS) { it.slider && it.packageName == FIXTURES && it.key != seekBar.key }
         screen.session.showNumbers()
 
         assertEquals(Outcome.DONE, CommandTests.say("increment ${badge(seekBar.key)}").outcome)
@@ -243,7 +243,7 @@ class TouchCommandsTest {
 
     @Test
     fun aSliderGetsANumberAndAProgressBarDoesNot() = runBlocking<Unit> {
-        val seekBar = screen.awaitElement { it.viewId == "$FIXTURES:id/seek_bar" }
+        val seekBar = screen.awaitElement(WAIT_MILLIS) { it.viewId == "$FIXTURES:id/seek_bar" }
 
         screen.session.showNumbers()
 
@@ -292,11 +292,11 @@ class TouchCommandsTest {
 
             // Dismiss by its name,
             assertEquals(Outcome.DONE, CommandTests.say("dismiss ${checkNotNull(notificationRow().label)}").outcome)
-            withTimeout(5_000) { while (notificationPosted()) delay(100) }
+            withTimeout(WAIT_MILLIS) { while (notificationPosted()) delay(100) }
             // and, posted again, by its number.
             postNotification()
             assertEquals(Outcome.DONE, CommandTests.say("dismiss ${badge(notificationRow().key)}").outcome)
-            withTimeout(5_000) { while (notificationPosted()) delay(100) }
+            withTimeout(WAIT_MILLIS) { while (notificationPosted()) delay(100) }
         } finally {
             removeNotification()
         }
@@ -312,7 +312,7 @@ class TouchCommandsTest {
             // calls the fallback itself.
             assertTrue(screen.session.actions.swipeAway(notificationRow().key) is ActionResult.Done)
 
-            withTimeout(5_000) { while (notificationPosted()) delay(100) }
+            withTimeout(WAIT_MILLIS) { while (notificationPosted()) delay(100) }
         } finally {
             removeNotification()
         }
@@ -323,14 +323,14 @@ class TouchCommandsTest {
         val settings = CommandTests.graph.settings
         settings.set(SettingKeys.COMMANDS, CommandOptions(requireVerbs = true))
         try {
-            withTimeout(5_000) { while (!CommandTests.graph.commandOptions.value.requireVerbs) delay(50) }
+            withTimeout(WAIT_MILLIS) { while (!CommandTests.graph.commandOptions.value.requireVerbs) delay(50) }
 
             assertEquals(Outcome.IGNORED, CommandTests.say("Send later").outcome)
             assertEquals(Outcome.DONE, CommandTests.say("tap Send later").outcome)
             awaitStatus("Clicked Send later")
         } finally {
             settings.set(SettingKeys.COMMANDS, CommandOptions())
-            withTimeout(5_000) { while (CommandTests.graph.commandOptions.value != CommandOptions()) delay(50) }
+            withTimeout(WAIT_MILLIS) { while (CommandTests.graph.commandOptions.value != CommandOptions()) delay(50) }
         }
     }
 
@@ -350,7 +350,7 @@ class TouchCommandsTest {
     private suspend fun postNotification() {
         screen.shell("pm grant $FIXTURES android.permission.POST_NOTIFICATIONS")
         screen.shell("am start -W -n $FIXTURES/.NotificationActivity")
-        withTimeout(5_000) { while (!notificationPosted()) delay(100) }
+        withTimeout(WAIT_MILLIS) { while (!notificationPosted()) delay(100) }
     }
 
     /** Removes the test app's notification, if it is still there, and closes the shade. */
@@ -366,7 +366,7 @@ class TouchCommandsTest {
      * The test app's notification in the shade: the nearest element above its title that offers to be dismissed, once it
      * matches [accept].
      */
-    private suspend fun notificationRow(accept: (ScreenElement) -> Boolean = { true }): ScreenElement = withTimeout(5_000) {
+    private suspend fun notificationRow(accept: (ScreenElement) -> Boolean = { true }): ScreenElement = withTimeout(WAIT_MILLIS) {
         var row: ScreenElement? = null
         while (row == null) {
             val elements = screen.session.snapshots.current().snapshot.elements

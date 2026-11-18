@@ -69,7 +69,7 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
         val screen = environment.screen() ?: return false
         val snapshot = screen.snapshots.latest()?.snapshot ?: return false
         val field = TextFields.focused(snapshot) ?: return false
-        return editing.password(field, field.password || screen.text.typingPassword(field.packageName))
+        return editing.hides(field, screen.text.typingPassword(field.packageName))
     }
 
     /** Runs [block] on the focused text field, or returns null without one. */
