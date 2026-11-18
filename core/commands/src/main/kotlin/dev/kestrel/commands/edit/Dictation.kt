@@ -195,9 +195,10 @@ object Dictation {
 
     /**
      * The words joined without spaces when they spell something: at least two words, and each one a single letter, a
-     * number, a digit word or "capital" with a letter. In a [password] field every word counts, the names of letters
-     * ("bee", "double u") too, spoken punctuation goes in as its mark ("exclamation mark" as "!"), and the words are in
-     * lower case unless "capital" comes before them.
+     * number, a digit word or "capital" with a letter, or with a letter and the digits after it, as the recogniser writes
+     * "capital p one two three" ("Capital P123"). In a [password] field every word counts, the names of letters ("bee",
+     * "double u") too, spoken punctuation goes in as its mark ("exclamation mark" as "!"), and the words are in lower case
+     * unless "capital" comes before them.
      */
     private fun spell(words: List<String>, password: Boolean): String? {
         if (!password && words.size < 2) return null
@@ -213,7 +214,11 @@ object Dictation {
             }
             val word = words[index].lowercase(Locale.ROOT)
             val next = words.getOrNull(index + 1)?.lowercase(Locale.ROOT)
-            val capital = if (word == "capital" && next != null) letter(next, password) else null
+            val capital = if (word == "capital" && next != null) {
+                letter(next, password) ?: next.takeIf { LETTER_AND_DIGITS.matches(it) }
+            } else {
+                null
+            }
             when {
                 capital != null -> {
                     spelled.append(capital.uppercase(Locale.ROOT))
@@ -336,6 +341,7 @@ object Dictation {
     )
 
     private val WHITESPACE = Regex("\\s+")
+    private val LETTER_AND_DIGITS = Regex("\\p{L}\\p{Nd}+")
     private val I_CONTRACTIONS = Regex("I['\u2019](m|ll|ve|d)")
     private val DROPPED = setOf('.', ',', '?', '!', ';', ':', '"', '\u201C', '\u201D', '\u201E', '\u2026', '\u00AB', '\u00BB')
     private val DIGIT_MARKS = setOf('.', ',', ':')

@@ -110,6 +110,11 @@ class DictationTest {
         assertEquals("Code: abc|", dictate("Code: |", "a b c"))
         assertEquals("Code: X2|", dictate("Code: |", "capital x 2"))
         assertEquals("Pin 123|", dictate("Pin|", "one two three"))
+        // The recogniser may join the letter and the digits after "capital".
+        assertEquals("P123|", dictate("|", "Capital P123."))
+        assertEquals("Code: X2|", dictate("Code: |", "capital X2"))
+        assertEquals("P123|", dictate("|", "capital P123", password = true))
+        assertEquals("Capital Paris|", dictate("|", "capital Paris"))
     }
 
     @Test
