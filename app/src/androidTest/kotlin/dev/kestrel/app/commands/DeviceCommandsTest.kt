@@ -128,7 +128,8 @@ class DeviceCommandsTest {
             }
         }
         try {
-            assertEquals(Outcome.FAILED, CommandTests.say("turn off Bluetooth").outcome)
+            // The tile's 3 s, the page's cold start of up to 8 s, the switch's 3 s and the Backs that close the page.
+            assertEquals(Outcome.FAILED, CommandTests.say("turn off Bluetooth", timeoutMillis = 30_000).outcome)
         } finally {
             screen.automation.setOnAccessibilityEventListener(null)
         }

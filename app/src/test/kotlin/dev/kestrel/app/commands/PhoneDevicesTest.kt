@@ -204,6 +204,29 @@ class PhoneDevicesTest {
         assertEquals(2, backs)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun thePageCountsOnceSettingsShowsItWithinEightSeconds() = runTest {
+        val page = WindowSummary(5, WindowKind.APPLICATION, packageName = "com.android.settings", bounds = bounds, active = true)
+        val title = element("title", windowId = 5, label = "Connected devices")
+        val before = setOf(1)
+        // A window of Settings that is still starting has no element with a name yet.
+        assertNull(DeviceCommands.shownPage(ScreenSnapshot(0, listOf(page), listOf(element("icon", windowId = 5))), before))
+        assertEquals(page, DeviceCommands.shownPage(ScreenSnapshot(0, listOf(page), listOf(title)), before))
+
+        // A cold start of Settings: the page shows after 5 s.
+        val started = testScheduler.currentTime
+        val shown = DeviceCommands.awaitPage({
+            if (testScheduler.currentTime - started < 5_000) ScreenSnapshot(0, listOf(page), emptyList()) else ScreenSnapshot(0, listOf(page), listOf(title))
+        }, before)
+        assertEquals(page, shown)
+
+        // A page that never shows ends the wait after 8 s.
+        val waited = testScheduler.currentTime
+        assertNull(DeviceCommands.awaitPage({ ScreenSnapshot(0, listOf(page), emptyList()) }, before))
+        assertEquals(8_000L, testScheduler.currentTime - waited)
+    }
+
     @Test
     fun panMovesAThirdOfTheVisibleArea() {
         assertEquals(-180 to 0, DeviceCommands.panBy(Direction.LEFT, 1080, 2400, 2f))

@@ -142,7 +142,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
 
     // The Bluetooth switch of the settings page, in the window of Settings that the command opened: a switch named
     // Bluetooth, or the page's one main switch, which on AOSP is named only by its view ID (android:id/switch_widget),
-    // while the page's title or its switch bar names Bluetooth.
+    // while the page's title or its switch bar names Bluetooth. Kestrel looks for the switch only once the page shows,
+    // which it waits up to 8 s for, because a cold start of Settings took 4.3 to 5.0 s on kestrel-api37.
     private suspend fun bluetoothPage(screen: ScreenSession, on: Boolean): CommandResult {
         val before = screen.snapshots.current().snapshot.windows.map { it.id }.toSet()
         var opening = true
@@ -151,6 +152,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                 opening = false
                 return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             }
+            awaitPage({ screen.snapshots.current().snapshot }, before)
+                ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             val main = await(screen) { snapshot, element ->
                 element.windowId !in before && element.packageName == SETTINGS && element.checkable && element.enabled &&
                     snapshot.windows.any { it.id == element.windowId && it.kind == WindowKind.APPLICATION } &&
@@ -370,6 +373,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         private const val SYSTEM_UI = "com.android.systemui"
         private const val SETTINGS = "com.android.settings"
         private const val PANEL_MILLIS = 3_000L
+        private const val PAGE_MILLIS = 8_000L
         private const val RADIO_MILLIS = 3_000L
         private const val POLL_MILLIS = 100L
         private const val APPEAR_MILLIS = 1_000L
@@ -499,6 +503,27 @@ internal class DeviceCommands(environment: CommandEnvironment) {
          */
         fun settingsPageInFront(windows: List<WindowSummary>, before: Set<Int>): WindowSummary? =
             frontApp(windows)?.takeIf { it.packageName == SETTINGS && it.id !in before }
+
+        /**
+         * The page of Settings that a settings page's command opened, once it shows: a Settings page in front that was
+         * not on the screen [before] the command (see [settingsPageInFront]), with at least one element that has a name,
+         * so that a window of Settings that is still starting never counts.
+         */
+        fun shownPage(snapshot: ScreenSnapshot, before: Set<Int>): WindowSummary? =
+            settingsPageInFront(snapshot.windows, before)?.takeIf { page ->
+                snapshot.elements.any { it.windowId == page.id && !it.label.isNullOrBlank() }
+            }
+
+        /** Waits up to 8 s for the [shownPage] of the snapshots that [snapshot] reads; null when none shows. */
+        suspend fun awaitPage(snapshot: suspend () -> ScreenSnapshot, before: Set<Int>): WindowSummary? =
+            withTimeoutOrNull(PAGE_MILLIS) {
+                var page = shownPage(snapshot(), before)
+                while (page == null) {
+                    delay(POLL_MILLIS)
+                    page = shownPage(snapshot(), before)
+                }
+                page
+            }
 
         /**
          * Presses [back] while a Settings page that was not on the screen [before] is in front of [windows], at most 3
