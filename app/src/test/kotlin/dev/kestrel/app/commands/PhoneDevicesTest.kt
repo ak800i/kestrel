@@ -131,9 +131,9 @@ class PhoneDevicesTest {
         val before = setOf(1, 2)
 
         assertEquals(app(5, "com.android.settings"), DeviceCommands.settingsPageInFront(listOf(app(5, "com.android.settings")), before))
-        // While a system window such as the shade is active, the top-most app window is the one in front.
+        // While a system window such as the shade is active, no app window is in front, also not Settings' below it.
         val behindTheShade = app(6, "com.android.settings", active = false)
-        assertEquals(behindTheShade, DeviceCommands.settingsPageInFront(listOf(shade, behindTheShade), before))
+        assertNull(DeviceCommands.settingsPageInFront(listOf(shade, behindTheShade), before))
         // The app that was in front before is in front again, or it was Settings itself.
         assertNull(DeviceCommands.settingsPageInFront(listOf(app(1, "dev.kestrel.testapp")), before))
         assertNull(DeviceCommands.settingsPageInFront(listOf(app(2, "com.android.settings")), before))
@@ -202,6 +202,39 @@ class PhoneDevicesTest {
             windows = if (backs == 1) listOf(app(6, "com.android.settings")) else listOf(app(1, "dev.kestrel.testapp"))
         }
         assertEquals(2, backs)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun backWaitsUpToEightSecondsForThePageAndPressesNothingWhileItIsNotTheActiveWindow() = runTest {
+        fun app(id: Int, packageName: String, active: Boolean) =
+            WindowSummary(id, WindowKind.APPLICATION, packageName = packageName, bounds = bounds, active = active)
+        val before = setOf(1)
+        // Settings is still starting: its window lies on top, and no app window is active yet, so a Back would go to the
+        // owner's app, which still has the focus.
+        val starting = listOf(app(5, "com.android.settings", active = false), app(1, "dev.kestrel.testapp", active = false))
+        var backs = 0
+        val waited = testScheduler.currentTime
+        DeviceCommands.backUntilLeft({ starting }, before) { backs++ }
+        assertEquals(0, backs)
+        assertEquals(8_000L, testScheduler.currentTime - waited)
+
+        // A cold start: the page comes to the front after 5 s, and one Back brings the owner's app back.
+        val shown = listOf(app(5, "com.android.settings", active = true), app(1, "dev.kestrel.testapp", active = false))
+        val left = listOf(app(1, "dev.kestrel.testapp", active = true))
+        var closed = false
+        val cold = testScheduler.currentTime
+        DeviceCommands.backUntilLeft({
+            when {
+                closed -> left
+                testScheduler.currentTime - cold >= 5_000 -> shown
+                else -> starting
+            }
+        }, before) {
+            backs++
+            closed = true
+        }
+        assertEquals(1, backs)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

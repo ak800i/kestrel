@@ -22,8 +22,10 @@ object PhoneNumbers {
     private val DATE =
         Regex("""(?:$DAY[./-] ?$MONTH[./-] ?$YEAR|$MONTH[./-]$DAY[./-]$YEAR|\d{4}[./-]$MONTH[./-]$DAY)\.?(?:[ \u00A0].*)?""")
 
-    // A group of 1 or 2 digits and the spaces after it, before more digits.
-    private val LEADING_GROUP = Regex("""^\d{1,2}[ \u00A0]+(?=[\d(])""")
+    // A group of 1 or 2 digits that does not start with "0", and the spaces after it, before more digits: after a word, such a
+    // group is no part of a phone number ("Room 12 064 123 4567"), while one that starts with "0" begins it
+    // ("Tél 06 12 34 56 78"), and one after "+" never matches.
+    private val LEADING_GROUP = Regex("""^[1-9]\d?[ \u00A0]+(?=[\d(])""")
 
     // An amount such as 1.250.000, and a decimal such as a coordinate's 44.812345.
     private val THOUSANDS = Regex("""[1-9]\d{0,2}(?:\.\d{3})+""")
@@ -65,7 +67,8 @@ object PhoneNumbers {
      * Where [text] shows phone numbers: an optional "+", then 6 to 15 digits with spaces, dashes, dots, slashes or brackets
      * between them. Dates such as "17.11.2026", "17. 11. 2026." and "17/11/26", also with a time after them, are skipped,
      * and so are amounts and coordinates, whose dots and commas separate thousands or decimals ("1.250.000,00",
-     * "44.812345"). A group of 1 or 2 digits right after a word, such as "Room 12" before a number, is no part of it.
+     * "44.812345"). A group of 1 or 2 digits right after a word, such as "Room 12" before a number, is no part of it,
+     * unless it starts with "0" or "+", as the first pair of "Tél 06 12 34 56 78" does.
      */
     fun find(text: String): List<IntRange> = CANDIDATE.findAll(text).mapNotNull { match ->
         var range = match.range

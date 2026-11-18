@@ -1,10 +1,13 @@
 package dev.kestrel.app.commands
 
 import android.Manifest
+import dev.kestrel.app.listen.CallMonitor
+import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.commands.CallTarget
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.Direction
+import dev.kestrel.commands.Edge
 import dev.kestrel.commands.Target
 import dev.kestrel.commands.TextCommand
 import dev.kestrel.commands.CommandResult
@@ -19,7 +22,13 @@ import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
 import dev.kestrel.screen.overlay.Badge
+import dev.kestrel.screen.overlay.Grid
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,8 +47,8 @@ class PhoneCallsTest {
     private val ana = Contact(1, listOf("Ana Petrović"), listOf(mobile, work), starred = false)
     private val anaJ = Contact(2, listOf("Ana Jovanović"), listOf(mobile.copy(number = "065 765 4321")), starred = false)
 
-    /** The phone app: what Kestrel did with it. */
-    private class Phone(var button: Boolean = true, var pressed: Pressed = Pressed.CALLING) : Dialer {
+    /** The phone app: what Kestrel did with it; [started] is what the call state shows after a press. */
+    private class Phone(var button: Boolean = true, var pressed: Pressed = Pressed.CALLING, var started: Boolean? = true) : Dialer {
         val did = mutableListOf<String>()
 
         // 0641111111 stands for an emergency number, which Android would report.
@@ -56,6 +65,8 @@ class PhoneCallsTest {
             did += "press $digits"
             return pressed
         }
+
+        override suspend fun callStarted() = started
     }
 
     /** The owner: answers the questions in order, and lets the countdown run out unless [stops]. */
@@ -187,6 +198,115 @@ class PhoneCallsTest {
         )
         phone.pressed = Pressed.CHOOSE_SIM
         assertEquals(CommandResult(Outcome.DONE, show = PhoneCommandTexts.CHOOSE_SIM), calls().call(CallTarget.Number("0641234567"), Owner()))
+    }
+
+    @Test
+    fun aCallThatDoesNotStartWithinFiveSecondsOfThePressFailsAndKestrelSaysSo() = runTest {
+        // Google's phone app took the click and called an empty number, which Android refused without a word.
+        phone.started = false
+        assertEquals(
+            CommandResult(Outcome.FAILED, say = "The call didn't start."),
+            calls().call(CallTarget.Number("0641234567"), Owner()),
+        )
+        // After "yes, call" too.
+        assertEquals(
+            CommandResult(Outcome.FAILED, say = "The call didn't start."),
+            calls().call(CallTarget.Number("0641111111"), Owner("yes, call")),
+        )
+        // Without READ_PHONE_STATE Kestrel cannot see the call state, so the press counts as before.
+        phone.started = null
+        assertEquals(CommandResult(Outcome.DONE), calls().call(CallTarget.Number("0641234567"), Owner()))
+        // A SIM chooser waits for the owner, so no call has started yet.
+        phone.started = false
+        phone.pressed = Pressed.CHOOSE_SIM
+        assertEquals(CommandResult(Outcome.DONE, show = PhoneCommandTexts.CHOOSE_SIM), calls().call(CallTarget.Number("0641234567"), Owner()))
+    }
+
+    @Test
+    fun aFieldThatShowsTheNumberIsEmptiedBeforeTheDialThroughItsOwnActionsAndNoOtherIs() = runTest {
+        val fields = AndroidDialer.numberFields(dialer("064 123 4567"), setOf(DIALER))
+
+        // The phone app's number field, and what Kestrel did with it.
+        class Field(var text: String?, val takesText: Boolean = true, val longPressEmpties: Boolean = true) {
+            val did = mutableListOf<String>()
+
+            suspend fun empty(digits: String, readable: Boolean = true) = AndroidDialer.emptyFields(
+                fields,
+                digits,
+                read = { if (readable) mapOf("digits" to text) else emptyMap() },
+                clear = {
+                    did += "set text"
+                    takesText.also { if (it) text = "" }
+                },
+                longDelete = {
+                    did += "long press delete"
+                    longPressEmpties.also { if (it) text = "" }
+                },
+                delete = {
+                    did += "delete"
+                    text = text?.dropLast(1)
+                    true
+                },
+            )
+        }
+
+        // The field shows the number of the DIAL, as the phone app formats it: its own set-text action empties it.
+        val same = Field("064 123 4567")
+        assertTrue(same.empty("0641234567"))
+        assertEquals("", same.text)
+        assertEquals(listOf("set text"), same.did)
+        // Another number, an empty field and one that Kestrel cannot read stay as they are.
+        for (field in listOf(Field("064 123 4568"), Field(null), Field("+064 123 4567"))) {
+            assertTrue(field.empty("0641234567"))
+            assertEquals(emptyList<String>(), field.did)
+        }
+        val unread = Field("064 123 4567")
+        unread.empty("0641234567", readable = false)
+        assertEquals(emptyList<String>(), unread.did)
+        // A field without a set-text action: a long press on the delete key, and without that, the key once for each digit.
+        val pressed = Field("112", takesText = false)
+        assertTrue(pressed.empty("112"))
+        assertEquals(listOf("set text", "long press delete"), pressed.did)
+        val keys = Field("112", takesText = false, longPressEmpties = false)
+        assertTrue(keys.empty("112"))
+        assertEquals("", keys.text)
+        assertEquals(listOf("set text", "long press delete", "delete", "delete", "delete"), keys.did)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun theCallCountsAsStartedOnlyWhenTheCallStateShowsAnActiveCallWithinFiveSeconds() = runTest {
+        // The call monitor of Kestrel's modes Ringing and In call: the state at its start, then each change.
+        class Monitor(private val atStart: CallState, private val fails: Boolean = false) : CallMonitor {
+            var report: ((CallState) -> Unit)? = null
+            var stopped = false
+
+            override fun start(report: (CallState) -> Unit) {
+                if (fails) throw SecurityException()
+                this.report = report
+                report(atStart)
+            }
+
+            override fun stop() {
+                stopped = true
+            }
+        }
+
+        val later = Monitor(CallState.IDLE)
+        val started = async { AndroidDialer.awaitCall(later) }
+        advanceTimeBy(2_000)
+        later.report?.invoke(CallState.ACTIVE)
+        assertEquals(true, started.await())
+        assertTrue(later.stopped)
+        assertEquals(true, AndroidDialer.awaitCall(Monitor(CallState.ACTIVE)))
+        // No call within 5 s, also while another call rings.
+        val none = Monitor(CallState.RINGING)
+        val waited = testScheduler.currentTime
+        assertEquals(false, AndroidDialer.awaitCall(none))
+        assertEquals(5_000L, testScheduler.currentTime - waited)
+        assertTrue(none.stopped)
+        // A monitor that cannot start: Kestrel cannot tell.
+        assertNull(AndroidDialer.awaitCall(Monitor(CallState.IDLE, fails = true)))
     }
 
     @Test
@@ -342,6 +462,9 @@ class PhoneCallsTest {
         for (command in keys) {
             assertFalse(command.toString(), needsYes(dialer("112"), command))
         }
+        // Only a tap on a digit key: a long press on 1 calls the voicemail, and one on 0 types "+".
+        assertTrue(needsYes(dialer("112"), Command.LongPress(Target.Number(3))) { it == "112" })
+        assertTrue(needsYes(dialer("112"), Command.LongPress(Target.Label("5"))) { it == "112" })
         // The same window in an app that is no phone app needs nothing.
         assertFalse(needsYes(dialer("112", phoneApp = "com.example.chat"), tapCall))
         // A button whose name is one digit and a word is no key of the dial pad.
@@ -380,9 +503,129 @@ class PhoneCallsTest {
     }
 
     @Test
-    fun searchForNeedsTheYesOnlyWhereTheRulesApply() {
-        // "Search for" taps a search button and types into a search field, which in a phone package's window may be its
-        // number field, so it may act anywhere there.
+    fun aPhoneAppsWindowWithoutANumberFieldToReadNeedsTheYesForEveryActionThatReachesIntoIt() {
+        val app = WindowSummary(1, WindowKind.APPLICATION, packageName = DIALER, bounds = screen)
+        // The phone app's list of calls: rows whose numbers hide behind names, and no number field.
+        val calls = ScreenSnapshot(
+            0,
+            listOf(app),
+            listOf(
+                element("row", 1, IntRect(0, 300, 1080, 500), text = "Mom"),
+                element("back", 1, IntRect(900, 300, 1080, 500), description = "Call back"),
+                element("tab", 1, IntRect(0, 2200, 540, 2400), text = "Keypad"),
+            ),
+        )
+        val grid = Grid(screen, columns = 2)
+        fun yes(snapshot: ScreenSnapshot, command: Command, grid: Grid? = null) = EmergencyGuard.needsYes(
+            EmergencyGuard.reaches(command, screen), ScreenView(snapshot, emptyList(), grid), EmergencyGuard.PHONE_PACKAGES, noEmergency,
+        )
+
+        assertEquals(setOf(1), EmergencyGuard.blindWindows(calls, EmergencyGuard.PHONE_PACKAGES))
+        for (command in listOf(
+            Command.Tap(Target.Label("Mom")), Command.LongPress(Target.Label("Mom")), Command.Tap(Target.Label("call back")),
+            Command.Bare.of("keypad"), Command.Scroll(Direction.DOWN, null), Command.Swipe(Direction.UP, null),
+        )) {
+            assertTrue(command.toString(), yes(calls, command))
+        }
+        assertTrue(yes(calls, Command.Tap(Target.Number(3)), grid))
+        // A window that is still starting shows no element yet: a point, a grid square or a gesture inside it.
+        val starting = ScreenSnapshot(0, listOf(app), emptyList())
+        for (command in listOf(Command.Scroll(Direction.DOWN, null), Command.SwipeFromEdge(Edge.BOTTOM), Command.Pinch(out = true, target = null))) {
+            assertTrue(command.toString(), yes(starting, command))
+        }
+        assertTrue(yes(starting, Command.Tap(Target.Number(5)), grid))
+        // A number that is shown as plain text, neither in a text field nor with the view ID digits, is none that Kestrel reads.
+        val shown = element("number", 1, IntRect(0, 0, 1080, 200), text = "064 123 4567", viewId = "dialer_number", clickable = false)
+        assertTrue(yes(calls.copy(elements = calls.elements + shown), Command.Tap(Target.Label("Mom"))))
+        // A window with a number field that Kestrel reads, and another app's window, keep their rules.
+        assertFalse(yes(dialer("064 123 4567"), Command.Tap(Target.Label("more"))))
+        assertFalse(yes(dialer(null, phoneApp = "com.example.chat").copy(elements = emptyList()), Command.Scroll(Direction.DOWN, null)))
+    }
+
+    @Test
+    fun theGuardReadsTheScreenASecondTimeOnlyWhileAPhoneAppIsOnIt() = runTest {
+        val phoneApps = EmergencyGuard.PHONE_PACKAGES
+        val chat = ScreenSnapshot(
+            0,
+            listOf(WindowSummary(1, WindowKind.APPLICATION, packageName = "com.example.chat", bounds = screen)),
+            listOf(element("row", 1, IntRect(0, 300, 1080, 500), packageName = "com.example.chat", text = "Mom")),
+        )
+        var reads = 0
+        val tapMom = EmergencyGuard.reaches(Command.Tap(Target.Label("Mom")), screen)
+        assertNull(EmergencyGuard.askedOn(tapMom, phoneApps, noEmergency) {
+            reads++
+            EmergencyGuard.fresh(ScreenView(chat, emptyList(), grid = null), phoneApps, emptyMap())
+        })
+        assertEquals(1, reads)
+        // With the phone app on the screen, once more right before the guard lets the command go on.
+        reads = 0
+        val tapRow = EmergencyGuard.reaches(Command.Tap(Target.Number(1)), screen)
+        assertNull(EmergencyGuard.askedOn(tapRow, phoneApps, noEmergency) {
+            reads++
+            EmergencyGuard.fresh(view(dialer("064 123 4567")), phoneApps, mapOf("digits" to "064 123 4567"))
+        })
+        assertEquals(2, reads)
+    }
+
+    @Test
+    fun aSwipeOnAnElementCountsWhereItEndsAndADragWhereItsSecondElementIs() {
+        // Split screen: a chat above, and the phone app with 112 below.
+        val chat = "com.example.chat"
+        val split = ScreenSnapshot(
+            0,
+            listOf(
+                WindowSummary(3, WindowKind.APPLICATION, packageName = chat, bounds = IntRect(0, 0, 1080, 1200)),
+                WindowSummary(1, WindowKind.APPLICATION, packageName = DIALER, bounds = IntRect(0, 1200, 1080, 2400)),
+            ),
+            listOf(
+                element("message", 3, IntRect(0, 900, 1080, 1100), packageName = chat, text = "Hello"),
+                ScreenElement(
+                    key = "digits", windowId = 1, packageName = DIALER, viewId = "$DIALER:id/digits", text = "112", editable = true,
+                    bounds = IntRect(0, 1200, 1080, 1400),
+                ),
+                element("call", 1, IntRect(400, 2000, 680, 2200), description = "dial", viewId = "dialpad_voice_call_button"),
+            ),
+        )
+        fun yes(command: Command) = EmergencyGuard.needsYes(
+            EmergencyGuard.reaches(command, screen), ScreenView(split, emptyList(), grid = null), EmergencyGuard.PHONE_PACKAGES,
+            emergency = { it == "112" },
+        )
+
+        // Down from the message, a third of the screen, the swipe ends in the phone app; up, it stays in the chat.
+        assertTrue(yes(Command.Swipe(Direction.DOWN, Target.Label("hello"))))
+        assertFalse(yes(Command.Swipe(Direction.UP, Target.Label("hello"))))
+        assertTrue(yes(Command.Drag(Target.Label("hello"), Target.Label("dial"))))
+        assertFalse(yes(Command.Tap(Target.Label("hello"))))
+    }
+
+    @Test
+    fun aCancelThatComesDuringTheReadsStopsTheClickOnCall() = runTest {
+        val fields = AndroidDialer.numberFields(dialer("064 123 4567"), setOf(DIALER))
+        var reads = 0
+        var clicked = false
+        val press = launch {
+            AndroidDialer.pressChecked(fields, "0641234567", read = {
+                // A "stop" that comes while the second read blocks in a binder call, which does not notice it.
+                if (++reads == 2) currentCoroutineContext().job.cancel()
+                mapOf("digits" to "064 123 4567")
+            }) {
+                clicked = true
+                true
+            }
+        }
+        press.join()
+
+        assertEquals(2, reads)
+        assertTrue(press.isCancelled)
+        assertFalse(clicked)
+    }
+
+    @Test
+    fun theGuardsRuleForSearchForAsksOnlyWhereTheRulesApplyThoughNoCommandReachesItToday() {
+        // This pins the guard's own rule, not a path that runs today: the text part takes "search for" first, also in a phone
+        // app, and refuses a number there itself (refusesSearch, which searchForANumberIsRefusedInAPhoneAppAndANameIsSearchedFor
+        // checks), so the guard never sees it. The rule stays as a defence: "search for" taps a search button and types into a
+        // search field, which in a phone package's window may be its number field, so it may act anywhere there.
         assertTrue(needsYes(dialer("1985"), TextCommand.Search("112")))
         assertTrue(needsYes(dialer("112"), TextCommand.Search("Ana")) { it == "112" })
         // Where neither rule applies, it needs nothing.
@@ -413,7 +656,9 @@ class PhoneCallsTest {
         fun yes(command: Command) =
             EmergencyGuard.needsYes(EmergencyGuard.reaches(command, screen), view, EmergencyGuard.PHONE_PACKAGES, noEmergency)
         assertTrue(yes(Command.Tap(Target.Label("call"))))
-        assertFalse(yes(Command.Tap(Target.Label("1"))))
+        // Its number field is no text field and has not the view ID digits, so Kestrel cannot read the number that a digit
+        // key would add to, and the keys need the yes too.
+        assertTrue(yes(Command.Tap(Target.Label("1"))))
 
         // Without a title, a text that R1 names guards the package's other elements, and its windows without elements too.
         val popup = WindowSummary(2, WindowKind.APPLICATION, packageName = samsung, bounds = IntRect(0, 1500, 1080, 1900))

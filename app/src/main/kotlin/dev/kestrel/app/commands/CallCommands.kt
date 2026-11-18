@@ -5,10 +5,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Bundle
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.view.accessibility.AccessibilityNodeInfo
+import dev.kestrel.app.listen.AndroidCallMonitor
+import dev.kestrel.app.listen.CallMonitor
+import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.commands.CallTarget
 import dev.kestrel.commands.Command
@@ -37,8 +42,11 @@ import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.read.Labels
 import dev.kestrel.screen.read.LiveSnapshot
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -67,12 +75,19 @@ internal interface Dialer {
      * it right before the press, shows anything but [digits], which Kestrel announced.
      */
     suspend fun press(digits: String): Pressed
+
+    /**
+     * Waits up to 5 s after a press for the call to start, as Android's call state shows it: true once it shows a call,
+     * false when none started, and null when Kestrel cannot see the call state, without READ_PHONE_STATE.
+     */
+    suspend fun callStarted(): Boolean?
 }
 
 /**
  * "Call [number]" and "call [name]" (design spec, section 13.6; decision 1). Kestrel never requests `CALL_PHONE`: it opens
  * the default phone app with the number, says whom it calls, counts down 4 s from the end of that announcement on the bar
- * and presses the phone app's call button. "Cancel", "stop" or "no", or a touch, stops the countdown, and the phone app
+ * and presses the phone app's call button; when Android's call state shows no call within 5 s of the press, the command
+ * fails and Kestrel says so. "Cancel", "stop" or "no", or a touch, stops the countdown, and the phone app
  * stays open with the number. For an emergency number Kestrel follows [policy]: it asks for "yes, call" after the
  * announcement instead of the countdown, or only opens the phone app. For a number with fewer than 5 digits or one with
  * `*` or `#`, Kestrel only opens the phone app. A contact's number keeps its pause, wait or extension, which the phone app sends after the
@@ -109,7 +124,13 @@ internal class CallCommands(
             return CommandResult(Outcome.CANCELLED)
         }
         return when (dialer.press(digits)) {
-            Pressed.CALLING -> CommandResult(Outcome.DONE)
+            // The phone app can take the click and still call no one, as Google's calls an empty number, which Android
+            // refuses without a word, so the call must start within 5 s.
+            Pressed.CALLING -> if (dialer.callStarted() == false) {
+                CommandResult(Outcome.FAILED, say = PhoneCommandTexts.CALL_NOT_STARTED)
+            } else {
+                CommandResult(Outcome.DONE)
+            }
             Pressed.CHOOSE_SIM -> CommandResult(Outcome.DONE, show = PhoneCommandTexts.CHOOSE_SIM)
             Pressed.REFUSED -> CommandResult(Outcome.FAILED, say = PhoneCommandTexts.COULD_NOT_PRESS)
             Pressed.OTHER_NUMBER -> CommandResult(Outcome.FAILED, say = PhoneCommandTexts.OTHER_NUMBER)
@@ -183,9 +204,10 @@ internal class CallCommands(
 /**
  * The default phone app through Kestrel's accessibility service: `ACTION_DIAL` with a `tel:` link, which shows the number
  * (prototype P4), and its call button: on Google's phone app the view ID `dialpad_voice_call_button`, otherwise a button
- * named "Call", "Dial" or "Voice call" (Samsung's, not checked yet).
+ * named "Call", "Dial" or "Voice call" (Samsung's, not checked yet). Whether the call started comes from Android's call
+ * state, through the call monitor that Kestrel's modes Ringing and In call use, which needs READ_PHONE_STATE.
  */
-internal class AndroidDialer(context: Context, private val screen: () -> ScreenSession?) : Dialer {
+internal class AndroidDialer(private val context: Context, private val screen: () -> ScreenSession?) : Dialer {
     private val telecom: TelecomManager? = context.getSystemService(TelecomManager::class.java)
     private val telephony: TelephonyManager? = context.getSystemService(TelephonyManager::class.java)
 
@@ -193,10 +215,46 @@ internal class AndroidDialer(context: Context, private val screen: () -> ScreenS
 
     override suspend fun open(digits: String): Boolean {
         val session = screen() ?: return false
+        val phoneApp = telecom?.defaultDialerPackage
+        // Google's phone app keeps its own number empty after a DIAL with the number that its field already shows, and its
+        // call button then calls no one, so a field on the screen that shows the number is emptied first. One that is not on
+        // the screen cannot be read; callStarted() then tells that the call did not start.
+        if (phoneApp != null) emptyShownNumber(session, phoneApp, digits)
         // Uri.fromParts encodes "#", "*", "," and ";", which a parsed tel: link would cut off or change.
         val intent = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", digits, null))
-        telecom?.defaultDialerPackage?.let { intent.setPackage(it) }
+        phoneApp?.let { intent.setPackage(it) }
         return session.system.start(intent) is ActionResult.Done
+    }
+
+    // Empties the number fields of [phoneApp] that show [digits] now, through the actions of the field itself and of the
+    // phone app's delete key, never through a gesture, which could land elsewhere once the screen has changed.
+    private suspend fun emptyShownNumber(session: ScreenSession, phoneApp: String, digits: String) {
+        val live = session.snapshots.current()
+        val fields = numberFields(live.snapshot, setOf(phoneApp))
+        if (fields.isEmpty()) return
+        val deleteKey = live.snapshot.elements.firstOrNull { it.packageName == phoneApp && it.enabled && EmergencyGuard.isDeleteKey(it) }
+        emptyFields(
+            fields,
+            digits,
+            read = { readFields(live, fields) },
+            clear = { field -> setEmpty(live, field) },
+            longDelete = { deleteKey != null && act(live, deleteKey, AccessibilityNodeInfo.ACTION_LONG_CLICK) },
+            delete = { deleteKey != null && act(live, deleteKey, AccessibilityNodeInfo.ACTION_CLICK) },
+        )
+    }
+
+    // The field's own set-text action with no text.
+    private fun setEmpty(live: LiveSnapshot, field: ScreenElement): Boolean {
+        val node = live.node(field.key) ?: return false
+        if (!node.refresh() || !node.isEnabled || node.actionList.none { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }) return false
+        val arguments = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "") }
+        return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+    }
+
+    // The element's own [action], only while it is visible and enabled.
+    private fun act(live: LiveSnapshot, element: ScreenElement, action: Int): Boolean {
+        val node = live.node(element.key) ?: return false
+        return node.refresh() && node.isVisibleToUser && node.isEnabled && node.performAction(action)
     }
 
     override suspend fun awaitCallButton(): Boolean {
@@ -222,6 +280,11 @@ internal class AndroidDialer(context: Context, private val screen: () -> ScreenS
             true
         }
         return if (chooser == true) Pressed.CHOOSE_SIM else Pressed.CALLING
+    }
+
+    override suspend fun callStarted(): Boolean? {
+        if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return null
+        return awaitCall(AndroidCallMonitor(context))
     }
 
     // The snapshot that shows the phone app's call button again after the countdown, with the live nodes behind it.
@@ -264,6 +327,12 @@ internal class AndroidDialer(context: Context, private val screen: () -> ScreenS
         private const val AGAIN_MILLIS = 1_000L
         private const val SIM_MILLIS = 1_500L
         private const val POLL_MILLIS = 100L
+
+        /** How long a call may take to start after the press (the controller's decision on Task 6's review). */
+        private const val START_MILLIS = 5_000L
+
+        // Presses of the delete key beyond the field's length, for a phone app that removes a separator with its own press.
+        private const val EXTRA_DELETES = 2
         private const val GOOGLE_CALL_BUTTON = ":id/dialpad_voice_call_button"
         private const val DIGITS = ":id/digits"
         private const val TELECOM = "com.android.server.telecom"
@@ -301,8 +370,9 @@ internal class AndroidDialer(context: Context, private val screen: () -> ScreenS
         /**
          * Presses Call with [click] only while [fields], the phone app's number fields, show exactly [digits], the number
          * that Kestrel announced: [read] gives what each field's key shows now, as the phone app itself reports it, and
-         * leaves out a field that it cannot read. It reads right before the decision and again right before the click.
-         * Null once [click] went through; otherwise how the press ended.
+         * leaves out a field that it cannot read. It reads right before the decision and again right before the click,
+         * and a cancel that came during the reads stops it before the click. Null once [click] went through; otherwise how
+         * the press ended.
          */
         suspend fun pressChecked(
             fields: List<ScreenElement>,
@@ -313,7 +383,65 @@ internal class AndroidDialer(context: Context, private val screen: () -> ScreenS
             fieldCheck(fields, read(), digits)?.let { return it }
             // The phone app may change the number until the click, as after another DIAL or the owner's typing.
             fieldCheck(fields, read(), digits)?.let { return it }
+            // The reads are blocking binder calls, which a "stop" does not interrupt.
+            currentCoroutineContext().ensureActive()
             return if (click()) null else Pressed.REFUSED
+        }
+
+        /**
+         * Empties those of [fields], the phone app's number fields, that show [digits] now, before a DIAL with [digits]
+         * (the controller's decision on Task 6's review): Google's phone app keeps its own number empty after a DIAL with
+         * the number that its field already shows, and its call button then calls no one. [read] gives what each field
+         * shows now, as the phone app itself reports it, and leaves out a field that it cannot read, which stays as it is.
+         * Kestrel tries [clear], the field's own set-text action; then [longDelete], a long press on the phone app's delete
+         * key, which empties Google's field; and then [delete], one press of that key for each character left. It reads the
+         * fields again after each step and stops once they are empty. True when no field shows [digits] any more.
+         */
+        suspend fun emptyFields(
+            fields: List<ScreenElement>,
+            digits: String,
+            read: suspend () -> Map<String, String?>,
+            clear: suspend (ScreenElement) -> Boolean,
+            longDelete: suspend () -> Boolean,
+            delete: suspend () -> Boolean,
+        ): Boolean {
+            var fresh = read()
+            val showing = fields.filter { field -> fresh[field.key]?.let(PhoneNumbers::dialable) == digits }
+            if (showing.isEmpty()) return true
+            fun empty() = showing.all { it.key in fresh && fresh[it.key].isNullOrBlank() }
+            showing.forEach { clear(it) }
+            fresh = read()
+            if (empty()) return true
+            if (longDelete()) {
+                fresh = read()
+                if (empty()) return true
+            }
+            var presses = showing.maxOf { fresh[it.key]?.length ?: 0 } + EXTRA_DELETES
+            while (presses-- > 0 && delete()) {
+                fresh = read()
+                if (empty()) return true
+            }
+            return showing.none { fresh[it.key]?.let(PhoneNumbers::dialable) == digits }
+        }
+
+        /**
+         * Whether [calls] reports an active call within 5 s, as Android's call state shows it for Kestrel's mode In call:
+         * the state at the start counts, and so does a change. Null when [calls] cannot start, as after the owner took
+         * READ_PHONE_STATE back. [calls] stops again in any case.
+         */
+        suspend fun awaitCall(calls: CallMonitor): Boolean? {
+            val active = CompletableDeferred<Unit>()
+            try {
+                // The monitor reports on a thread of Android's.
+                calls.start { state -> if (state == CallState.ACTIVE) active.complete(Unit) }
+            } catch (e: RuntimeException) {
+                return null
+            }
+            return try {
+                withTimeoutOrNull(START_MILLIS) { active.await() } != null
+            } finally {
+                calls.stop()
+            }
         }
 
         /**
@@ -425,11 +553,14 @@ internal enum class EmergencyPolicy {
  * such as the emergency buttons of the power menu and the lock screen. R2: every window of a phone package while one of
  * its windows shows an element that R1 names (an emergency dialer), or a number field with a number that Kestrel would not
  * call itself (an emergency number, also when Android cannot tell, a number with fewer than 5 digits or with `*` or `#`,
- * or a text that reads as no number): every action on their elements, except the digit keys, the number field and its
- * delete key, and every gesture that starts or ends inside them. After a "yes, call", the command must still find the
- * same elements in the same windows, or it ends. R2 reads the phone apps' number fields as the apps themselves report them
- * now, past Android's node cache, right before the decision and again right before the command acts, and a field that it
- * cannot read again counts as one whose number Kestrel would not call. The phone
+ * or a text that reads as no number): every action on their elements, except a tap on a digit key and the actions on the
+ * number field and its delete key, and every gesture that starts or ends inside them. A window of a phone package in
+ * which Kestrel finds no number field to read, also one that shows no element yet, needs the yes for every action that
+ * can reach into it, on any of its elements too. After a "yes, call", the command must still find the same elements in
+ * the same windows, or it ends. R2 reads the phone apps' number fields as the apps themselves report them now, past
+ * Android's node cache, right before the decision and, while a window of a phone package is on the screen, again right
+ * before the guard lets the command go on; a field that it cannot read again counts as one whose number Kestrel would not
+ * call. The screen part then acts on its own snapshot. The phone
  * part asks it before the screen part sees a command. Every variant of the sealed command model is listed, without an
  * `else`, so that the compiler names a new one; each target is found with the screen part's own search, so that a number
  * names an element whatever the command.
@@ -481,13 +612,19 @@ internal class EmergencyGuard(
 
     /** Where a command acts: an element that it names, found as the screen part finds it, or a point of a gesture. */
     sealed interface Reach {
-        /** [gesture]: a swipe, a pinch or a drag on the element, which R2's exceptions do not cover. */
+        /**
+         * [gesture]: a swipe, a pinch or a drag on the element, which R2's exceptions do not cover; [longPress]: a long
+         * press, which R2's exception for the digit keys does not cover, because a long press on 1 calls the voicemail and
+         * one on 0 types "+"; [swipe]: a swipe that starts on the element, whose end counts too.
+         */
         data class Element(
             val target: Target?,
             val kind: TargetKind,
             val strictness: Strictness,
             val cells: Boolean,
             val gesture: Boolean = false,
+            val longPress: Boolean = false,
+            val swipe: Swipe? = null,
         ) : Reach
 
         data class Point(val x: Int, val y: Int) : Reach
@@ -495,6 +632,9 @@ internal class EmergencyGuard(
         /** The end of a drag that the owner gives after "Drag it where?", which can lie anywhere. */
         data object Anywhere : Reach
     }
+
+    /** A swipe in the finger's [direction] on a screen of [screen] bounds, which ends a third of the screen away. */
+    data class Swipe(val direction: ScrollDirection, val screen: IntRect)
 
     companion object {
         /** The phone apps and Android's call services; the default phone app counts too. */
@@ -512,7 +652,8 @@ internal class EmergencyGuard(
         private const val KESTREL = "dev.kestrel"
         private const val NAME = "kestrel"
 
-        // Right before the decision, and once more right before the command acts (the controller's decision on Task 6).
+        // Right before the decision, and while a phone app is on the screen once more right before the guard lets the command
+        // go on (the controller's decisions on Task 6 and its review).
         private const val READS = 2
 
         /** Under [EmergencyPolicy.CONFIRM], asks for "yes, call": null when the owner said it; otherwise how the command ends. */
@@ -540,8 +681,8 @@ internal class EmergencyGuard(
         /**
          * The view on which [reaches] need the owner's "yes, call", or null when they need none. [read] gives the screen
          * with the phone apps' number fields as the apps themselves report them now, past Android's node cache; it reads
-         * right before the decision and, when that needs no yes, once more right before the command acts, so that a number
-         * that the phone app shows by then counts too.
+         * right before the decision and, when that needs no yes while a window of [phoneApps] is on the screen, once more
+         * right before the guard lets the command go on, so that a number that the phone app shows by then counts too.
          */
         suspend fun askedOn(
             reaches: List<Reach>,
@@ -552,9 +693,15 @@ internal class EmergencyGuard(
             repeat(READS) {
                 val fresh = read() ?: return null
                 if (needsYes(reaches, fresh.view, phoneApps, emergency, fresh.unreadable)) return fresh.view
+                // Each read waits for a quiet screen, which costs the command time, so without a phone app there is no other.
+                if (!showsPhoneApp(fresh.view.snapshot, phoneApps)) return null
             }
             return null
         }
+
+        // Whether a window or an element of [phoneApps] is on the screen.
+        private fun showsPhoneApp(snapshot: ScreenSnapshot, phoneApps: Set<String>): Boolean =
+            snapshot.windows.any { it.packageName in phoneApps } || snapshot.elements.any { it.packageName in phoneApps }
 
         /**
          * [view] with the texts that a fresh read found in the number fields of [phoneApps] ([texts], by key); a field that
@@ -581,7 +728,8 @@ internal class EmergencyGuard(
         /**
          * Whether one of [reaches] needs the owner's "yes, call" in [view] under R1 or R2; [phoneApps] are R2's packages,
          * [emergency] is Android's check, null when it cannot tell, and [unreadable] are the keys of number fields that
-         * Kestrel could not read again, which ask as a number that it would not call does.
+         * Kestrel could not read again, which ask as a number that it would not call does. In a window of [phoneApps] where
+         * Kestrel finds no number field ([blindWindows]), every reach into it asks.
          */
         fun needsYes(
             reaches: List<Reach>,
@@ -593,29 +741,41 @@ internal class EmergencyGuard(
             val snapshot = view.snapshot
             val named = snapshot.elements.indices.filterTo(HashSet()) { emergencyNamed(snapshot, it) }
             val windows = guardedWindows(snapshot, phoneApps, emergency, unreadable)
-            if (named.isEmpty() && windows.isEmpty()) return false
-            val windowBounds = snapshot.windows.filter { it.id in windows }.map { it.bounds }
+            val blind = blindWindows(snapshot, phoneApps)
+            if (named.isEmpty() && windows.isEmpty() && blind.isEmpty()) return false
+            val windowBounds = snapshot.windows.filter { it.id in windows || it.id in blind }.map { it.bounds }
             // A tap reaches what lies under the point, also a button that holds a caption outside its view tree.
             val namedBounds = named.map { snapshot.elements[it] }.filter { it.isActionable }.map { it.bounds }
             fun point(x: Int, y: Int) = (windowBounds + namedBounds).any { it.holds(x, y) }
-            fun element(key: String, gesture: Boolean): Boolean {
+            // Where a swipe that starts at ([x], [y]) ends.
+            fun swipeEnd(reach: Reach.Element, x: Int, y: Int): Boolean {
+                val swipe = reach.swipe ?: return false
+                val line = GesturePaths.limit(swipe.screen, x, y, swipe.direction) ?: return false
+                return point(line.toX, line.toY)
+            }
+            fun element(key: String, reach: Reach.Element): Boolean {
                 val index = snapshot.elements.indexOfFirst { it.key == key }
                 if (index < 0) return false
                 val found = snapshot.elements[index]
                 val centreX = found.bounds.centerX
                 val centreY = found.bounds.centerY
                 if (index in named || touchParent(snapshot, index) in named || namedBounds.any { it.holds(centreX, centreY) }) return true
-                if (gesture) return found.windowId in windows || windowBounds.any { it.holds(centreX, centreY) }
-                return found.windowId in windows && !typesTheNumber(snapshot, actor(snapshot, index))
+                if (found.windowId in blind) return true
+                // A swipe starts where a fallback tap would go.
+                val start = ScreenTargets.gesturePoint(snapshot, found)
+                if (swipeEnd(reach, start?.x ?: centreX, start?.y ?: centreY)) return true
+                if (reach.gesture) return found.windowId in windows || windowBounds.any { it.holds(centreX, centreY) }
+                val tap = (reach.kind == TargetKind.TAP || reach.kind == TargetKind.BARE) && !reach.longPress
+                return found.windowId in windows && !typesTheNumber(snapshot, actor(snapshot, index), tap)
             }
             return reaches.any { reach ->
                 when (reach) {
                     is Reach.Point -> point(reach.x, reach.y)
                     Reach.Anywhere -> true
                     is Reach.Element -> when (val found = ScreenTargets.decide(view, reach.target, reach.kind, reach.strictness, reach.cells)) {
-                        is Resolution.One -> element(found.element.key, reach.gesture)
-                        is Resolution.Several -> found.elements.any { element(it.key, reach.gesture) }
-                        is Resolution.Cell -> point(found.bounds.centerX, found.bounds.centerY)
+                        is Resolution.One -> element(found.element.key, reach)
+                        is Resolution.Several -> found.elements.any { element(it.key, reach) }
+                        is Resolution.Cell -> found.bounds.let { point(it.centerX, it.centerY) || swipeEnd(reach, it.centerX, it.centerY) }
                         Resolution.NotFound, Resolution.NeedNumbers, is Resolution.NoSuchNumber, Resolution.Changed,
                         Resolution.NoScreen -> false
                     }
@@ -663,6 +823,19 @@ internal class EmergencyGuard(
         }
 
         /**
+         * The IDs of the windows of [phoneApps] in which Kestrel finds no number field to read (the controller's decision on
+         * Task 6's review, failing closed): none at all, as in a phone app's list of calls, a field that is no text field and
+         * has not the view ID `digits`, or no element yet, as while the window starts. Kestrel cannot tell then which number
+         * an action there may call, so every action that can reach into these windows needs the yes, on any of their
+         * elements too.
+         */
+        fun blindWindows(snapshot: ScreenSnapshot, phoneApps: Set<String>): Set<Int> {
+            val phoneWindows = snapshot.windows.filter { it.packageName in phoneApps }.mapTo(HashSet()) { it.id } +
+                snapshot.elements.filter { it.packageName in phoneApps }.map { it.windowId }
+            return phoneWindows - AndroidDialer.numberFields(snapshot, phoneApps).mapTo(HashSet()) { it.windowId }
+        }
+
+        /**
          * What [reaches] find in [view]: the keys and windows of the elements, a grid square, or the point itself, so that
          * the yes counts only while the command still finds the same.
          */
@@ -696,17 +869,26 @@ internal class EmergencyGuard(
             return null
         }
 
-        // R2's exceptions, so that the owner can type and correct the number by voice: the number field, the digit keys
-        // (by their view IDs, or a whole name that is one digit, "*", "#" or "+", as a dial pad's keys have, never
-        // "1 Telenor") and the delete key.
-        private fun typesTheNumber(snapshot: ScreenSnapshot, index: Int): Boolean {
+        // R2's exceptions, so that the owner can type and correct the number by voice: the number field and its delete key,
+        // and for a [tap] only, the digit keys (by their view IDs, or a whole name that is one digit, "*", "#" or "+", as a
+        // dial pad's keys have, never "1 Telenor"); a long press on a digit key can call, as on 1 the voicemail, or type "+".
+        private fun typesTheNumber(snapshot: ScreenSnapshot, index: Int, tap: Boolean): Boolean {
             val element = snapshot.elements[index]
-            if (AndroidDialer.isNumberField(element)) return true
-            val id = element.viewId?.substringAfter(":id/")?.lowercase()
-            if (id in KEY_IDS || id in DELETE_IDS) return true
+            if (AndroidDialer.isNumberField(element) || isDeleteKey(element)) return true
+            if (!tap) return false
+            if (element.viewId?.substringAfter(":id/")?.lowercase() in KEY_IDS) return true
             if (!element.clickable && !element.longClickable) return false
-            val names = listOfNotNull(element.text, element.contentDescription)
-            return names.any { it.trim() in KEY_NAMES || Normalizer.normalize(it) in DELETE_NAMES }
+            return listOfNotNull(element.text, element.contentDescription).any { it.trim() in KEY_NAMES }
+        }
+
+        /**
+         * Whether [element] is a phone app's delete key: by its view ID, or, when it takes a touch, by a whole name such as
+         * "Delete" or "Backspace".
+         */
+        fun isDeleteKey(element: ScreenElement): Boolean {
+            if (element.viewId?.substringAfter(":id/")?.lowercase() in DELETE_IDS) return true
+            if (!element.clickable && !element.longClickable) return false
+            return listOfNotNull(element.text, element.contentDescription).any { Normalizer.normalize(it) in DELETE_NAMES }
         }
 
         private fun IntRect.holds(x: Int, y: Int) = x in left until right && y in top until bottom
@@ -720,7 +902,7 @@ internal class EmergencyGuard(
                 target?.let { listOf(Reach.Element(it, kind, Strictness.NORMAL, cells = false)) }.orEmpty()
             return when (command) {
                 is Command.Tap -> tap(command.target)
-                is Command.LongPress -> tap(command.target)
+                is Command.LongPress -> listOf(Reach.Element(command.target, TargetKind.TAP, Strictness.NORMAL, cells = true, longPress = true))
                 is Command.Bare -> listOf(
                     command.number?.let { Reach.Element(Target.Number(it), TargetKind.BARE, Strictness.NORMAL, cells = true) }
                         ?: Reach.Element(Target.Label(command.text), TargetKind.BARE, Strictness.STRICT, cells = false),
@@ -738,7 +920,11 @@ internal class EmergencyGuard(
                 is Command.SwipeFromEdge -> GesturePaths.fromEdge(screen, screenEdge(command.edge)).let {
                     listOf(Reach.Point(it.fromX, it.fromY), Reach.Point(it.toX, it.toY))
                 }
-                is Command.Swipe -> command.target?.let { gesture(it) }
+                // A swipe on an element counts where it starts and where it ends.
+                is Command.Swipe -> command.target?.let {
+                    val swipe = Swipe(scrollDirection(command.direction), screen)
+                    listOf(Reach.Element(it, TargetKind.TAP, Strictness.NORMAL, cells = true, gesture = true, swipe = swipe))
+                }
                     ?: GesturePaths.limit(screen, screen.centerX, screen.centerY, scrollDirection(command.direction))
                         ?.let { listOf(Reach.Point(it.fromX, it.fromY), Reach.Point(it.toX, it.toY)) }.orEmpty()
                 is Command.Pinch -> command.target?.let { gesture(it) } ?: centre
@@ -753,9 +939,11 @@ internal class EmergencyGuard(
             }
         }
 
-        // The text part runs first and takes these in a focused field (plan 3B); only "start editing" names an element, and
-        // "search for" taps a search button and types into a search field, which in a phone package's window may be its
-        // number field, so it may act anywhere.
+        // The text part runs first and takes these in a focused field (plan 3B); only "start editing" names an element. The
+        // text part also takes "search for" and refuses a number in a phone app's window itself (refusesSearch), so the
+        // branch for it applies only if the text part ever declines it, and stays as a defence: "search for" taps a search
+        // button and types into a search field, which in a phone package's window may be its number field, so it may act
+        // anywhere.
         private fun textReaches(command: TextCommand): List<Reach> = when (command) {
             is TextCommand.StartEditing ->
                 command.target?.let { listOf(Reach.Element(it, TargetKind.EDIT, Strictness.NORMAL, cells = false)) }.orEmpty()

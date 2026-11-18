@@ -49,6 +49,9 @@ class PhoneNumbersTest {
 
         assertEquals(listOf("064 123 4567"), found("Room 12 064 123 4567"))
         assertEquals(listOf("064 123 4567"), found("Floor 3 064 123 4567"))
+        // A group that starts with "0" begins the number, as in French and Dutch numbers.
+        assertEquals(listOf("06 12 34 56 78"), found("Tél 06 12 34 56 78"))
+        assertEquals(listOf("06 12345678"), found("Mobiel 06 12345678"))
         for (text in listOf("Total 1.250.000,00 RSD", "Total 250000,00 RSD", "Paid 1,250,000 today", "At 44.812345, 20.461234")) {
             assertEquals(text, emptyList<String>(), found(text))
         }

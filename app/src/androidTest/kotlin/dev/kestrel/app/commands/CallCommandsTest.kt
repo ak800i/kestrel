@@ -1,9 +1,11 @@
 package dev.kestrel.app.commands
 
 import android.Manifest
+import android.os.Build
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.app.commands.TextFieldTests.keepClipboard
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
@@ -22,6 +24,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -30,9 +33,10 @@ import org.junit.runner.RunWith
 /**
  * Calls by number and by name, with the announcement and the countdown, and "copy this phone number" (design D11), on
  * the emulator's phone app, whose calls to a made-up number become active, and the owner's "yes, call" before anything that
- * may call an emergency number (design spec, section 8.7), which these tests never answer with yes in the phone app. A test
- * that fails during a call ends it. The tests grant the phone-state and contacts permissions; command-test.ps1 revokes what was not granted before, and deletes the test contacts and the new call-log
- * rows.
+ * may call an emergency number (design spec, section 8.7). Only one test answers "yes, call" in the phone app, and only on
+ * the emulator, whose modem is simulated, so that the call reaches no one. A test that fails during a call ends it. The
+ * tests grant the phone-state and contacts permissions; command-test.ps1 revokes what was not granted before, and deletes
+ * the test contacts and the new call-log rows.
  */
 @RunWith(AndroidJUnit4::class)
 class CallCommandsTest {
@@ -60,8 +64,11 @@ class CallCommandsTest {
     @After
     fun stop() {
         try {
-            // A test that failed during a call leaves it active; without a call, the key would turn the screen off.
-            if (listening.state.value.mode == Mode.IN_CALL) screen.shell("input keyevent KEYCODE_ENDCALL")
+            // A test that failed during a call leaves it active; without a call, the key would turn the screen off. The
+            // in-call screen's control also ends an emergency call, which Android's end-call key does not end.
+            if (listening.state.value.mode == Mode.IN_CALL && !VoiceTests.waitUntil(5_000) { endCallOnScreen() }) {
+                screen.shell("input keyevent KEYCODE_ENDCALL")
+            }
             CommandTests.stop()
         } finally {
             PhoneTests.deleteRowsAfter(PhoneTests.CALL_LOG, callLog)
@@ -70,10 +77,21 @@ class CallCommandsTest {
         }
     }
 
+    // The emulator's in-call screen names its end control "End call" (plan 2D).
+    private fun endCallOnScreen() = screen.session.actions.clickLabelled("End call", EmergencyGuard.PHONE_PACKAGES)
+
+    // Ends the active call on the in-call screen, and waits until Kestrel listens again.
+    private fun endCall() {
+        assertTrue("No end-call control", VoiceTests.waitUntil(5_000) { endCallOnScreen() })
+        assertTrue("Listening did not come back", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.LISTENING })
+    }
+
     @Test
     fun aNumberIsAnnouncedCountedDownAndCalled() {
-        // The emulator's phone app takes no new number from a DIAL whose number its field already shows, as an earlier
-        // test's call leaves it, and its call button then calls an empty number; so the field shows another number first.
+        // The emulator's phone app takes no new number from a DIAL whose number its field already shows, and its call button
+        // then calls an empty number. Kestrel empties such a field first, but only while the phone app is on the screen
+        // (theSameNumberIsCalledAgainAfterACancelLeftItInThePhoneApp); here an earlier test's cancel may have left the number
+        // in a phone app that is now in the background, so the field shows another number first.
         // The HOME transition ends a moment after the key, and would send a phone app that came back meanwhile behind it.
         screen.shell("am start -W -a android.intent.action.DIAL -d tel:0640000000")
         screen.shell("input keyevent KEYCODE_HOME")
@@ -82,9 +100,39 @@ class CallCommandsTest {
 
         CommandTests.awaitSaid("Calling 0 6 4 1 2 3 4 5 6 7.")
         assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
-        // The emulator's in-call screen names its end control "End call" (plan 2D).
-        assertTrue("No end-call control", VoiceTests.waitUntil(5_000) { screen.session.actions.clickLabelled("End call", EmergencyGuard.PHONE_PACKAGES) })
-        assertTrue("Listening did not come back", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.LISTENING })
+        endCall()
+    }
+
+    @Test
+    fun theSameNumberIsCalledAgainAfterACancelLeftItInThePhoneApp() = runBlocking<Unit> {
+        CommandTests.send("call 064 123 4567")
+        assertTrue("No countdown", VoiceTests.waitUntil(COUNTDOWN_STARTS) { listening.state.value.counting })
+        assertEquals(Outcome.CANCELLED, CommandTests.answer("cancel").outcome)
+        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "0641234567" }
+
+        // A DIAL with the number that the field shows would leave the phone app's own number empty, and the call would not
+        // start; Kestrel empties the field first, and the command ends only once Android's call state shows the call.
+        assertEquals(Outcome.DONE, CommandTests.say("call 064 123 4567", CALL_MILLIS).outcome)
+        assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
+        endCall()
+    }
+
+    @Test
+    fun anEmergencyNumberThatTheOwnerRefusedOnceIsCalledAfterYesCall() = runBlocking<Unit> {
+        // The only test that says "yes, call" with an emergency number: only on the emulator, whose modem is simulated, so
+        // that the call reaches no one.
+        assumeTrue("Only on the emulator", Build.HARDWARE == EMULATOR_HARDWARE)
+        CommandTests.ask("call 112", CALL_MILLIS)
+        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
+        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
+
+        CommandTests.ask("call 112", CALL_MILLIS)
+        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+        assertEquals(Outcome.DONE, CommandTests.answer("yes, call", CALL_MILLIS).outcome)
+        assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
+        // Android's end-call key does not end an emergency call, so the test ends it on the in-call screen.
+        endCall()
     }
 
     @Test
@@ -224,19 +272,22 @@ class CallCommandsTest {
     }
 
     @Test
-    fun copyThisPhoneNumberCopiesTheOnlyNumberOrTheOneThatTheOwnerChooses() = runBlocking<Unit> {
-        screen.open("PhoneNumberActivity", "Phone numbers fixture", "--ez single true")
-        assertEquals(Outcome.DONE, CommandTests.say("copy this phone number").outcome)
-        screen.session.actions.tap(screen.awaitElement { it.packageName == FIXTURES && it.label == "Paste" }.key)
-        screen.awaitElement { it.label == "Pasted +381 11 234 5678" }
+    fun copyThisPhoneNumberCopiesTheOnlyNumberOrTheOneThatTheOwnerChooses() = screen.keepClipboard("No number") {
+        // The emulator shares its clipboard with the computer, so the owner's text comes back afterwards.
+        runBlocking<Unit> {
+            screen.open("PhoneNumberActivity", "Phone numbers fixture", "--ez single true")
+            assertEquals(Outcome.DONE, CommandTests.say("copy this phone number").outcome)
+            screen.session.actions.tap(screen.awaitElement { it.packageName == FIXTURES && it.label == "Paste" }.key)
+            screen.awaitElement { it.label == "Pasted +381 11 234 5678" }
 
-        screen.open("PhoneNumberActivity", "Phone numbers fixture")
-        assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("copy the phone number"))
-        // The numbers go from the top: the office's is 1 and the mobile's is 2. The date is no phone number.
-        assertEquals(2, screen.session.numberBadges.size)
-        assertEquals(Outcome.DONE, CommandTests.answer("2").outcome)
-        screen.session.actions.tap(screen.awaitElement { it.packageName == FIXTURES && it.label == "Paste" }.key)
-        screen.awaitElement { it.label == "Pasted 064 123 4567" }
+            screen.open("PhoneNumberActivity", "Phone numbers fixture")
+            assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("copy the phone number"))
+            // The numbers go from the top: the office's is 1 and the mobile's is 2. The date is no phone number.
+            assertEquals(2, screen.session.numberBadges.size)
+            assertEquals(Outcome.DONE, CommandTests.answer("2").outcome)
+            screen.session.actions.tap(screen.awaitElement { it.packageName == FIXTURES && it.label == "Paste" }.key)
+            screen.awaitElement { it.label == "Pasted 064 123 4567" }
+        }
     }
 
     private companion object {
@@ -251,5 +302,8 @@ class CallCommandsTest {
         const val BADGE_MILLIS = 10_000L
         const val SETTLED_MILLIS = 1_000L
         const val POLL_MILLIS = 100L
+
+        // The hardware of Android's emulator (ro.hardware).
+        const val EMULATOR_HARDWARE = "ranchu"
     }
 }

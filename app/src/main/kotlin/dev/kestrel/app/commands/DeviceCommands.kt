@@ -168,13 +168,13 @@ internal class DeviceCommands(environment: CommandEnvironment) {
     }
 
     /**
-     * Presses Back until the app that was in front before the command is in front again: only while a window of Settings
-     * that was not on the screen [before] the command is in front, and at most 3 times, so that Back never goes past that
-     * app. One Back is not always enough: when Settings already had a task in the background, Android puts the page on
-     * top of that task.
+     * Presses Back while the Settings page that the command opened is the app window in front, until the app that was in
+     * front before the command is in front again, at most 3 times, so that Back never goes past that app; when Kestrel's
+     * start failed, it opened no page and presses nothing. One Back is not always enough: when Settings already had a task
+     * in the background, Android puts the page on top of that task.
      */
     private suspend fun leavePage(screen: ScreenSession, before: Set<Int>, opening: Boolean) {
-        newWindow(screen, before, setOf(SETTINGS), opening) ?: return
+        if (!opening) return
         backUntilLeft({ screen.snapshots.current().snapshot.windows }, before) { screen.actions.global(GlobalAction.BACK) }
     }
 
@@ -483,11 +483,12 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                 windows.firstOrNull { it.id !in before && it.packageName in packages }
             }
 
-        /** The app window in front: the active one, or the top-most one while the shade or a system dialog is active. */
-        fun frontApp(windows: List<WindowSummary>): WindowSummary? {
-            val apps = windows.filter { it.kind == WindowKind.APPLICATION }
-            return apps.firstOrNull { it.active } ?: apps.firstOrNull()
-        }
+        /**
+         * The app window in front: the active one. While no app window is active, as while the shade, a system dialog or an
+         * app that is still starting has the focus, none is, so that Back never goes to an app that only lies on top.
+         */
+        fun frontApp(windows: List<WindowSummary>): WindowSummary? =
+            windows.firstOrNull { it.kind == WindowKind.APPLICATION && it.active }
 
         /**
          * The page of Settings in front that Back may close after a settings page's command: the app window in front, when
@@ -529,14 +530,14 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             } ?: false
 
         /**
-         * Presses [back] while a Settings page that was not on the screen [before] is in front of [windows], at most 3
-         * times. Only before the first Back does it wait, up to 1 s, for the page to come to the front; after each Back it
-         * waits until another app window is in front, so that it never sees the closing page, and stops at once when that
-         * window is no such page.
+         * Presses [back] while a Settings page that was not on the screen [before] is the app window in front of [windows],
+         * at most 3 times. Before the first Back it waits up to 8 s for the page to come to the front, because a cold start
+         * of Settings took 4.3 to 5.0 s on kestrel-api37, and presses nothing when none does; after each Back it waits until
+         * another app window is in front, so that it never sees the closing page, and stops at once when that window is no
+         * such page, as when the app that was in front before is in front again.
          */
         suspend fun backUntilLeft(windows: suspend () -> List<WindowSummary>, before: Set<Int>, back: suspend () -> Unit) {
-            // The page comes to the front a moment after its window appears.
-            var page = withTimeoutOrNull(APPEAR_MILLIS) {
+            var page = withTimeoutOrNull(PAGE_MILLIS) {
                 var page = settingsPageInFront(windows(), before)
                 while (page == null) {
                     delay(POLL_MILLIS)
