@@ -20,7 +20,10 @@ data class Contact(val id: Long, val names: List<String>, val numbers: List<Phon
 sealed interface ContactMatch {
     data class One(val contact: Contact) : ContactMatch
 
-    /** Up to [ContactMatcher.MAX_CHOICES] contacts for "Which one?"; a single near miss is offered as a confirmation. */
+    /**
+     * Up to [ContactMatcher.MAX_CHOICES] contacts for "Which one?"; a single near miss is offered as "Which one? 1, X.",
+     * whose "yes" ends the command and is read again as a new utterance.
+     */
     data class Several(val contacts: List<Contact>) : ContactMatch
 
     /** More contacts than "Which one?" can offer. */

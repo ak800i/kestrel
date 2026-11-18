@@ -556,6 +556,37 @@ class PhoneCallsTest {
     }
 
     @Test
+    fun anElementOfAPhoneAppThatShowsAnEmergencyNumberAsAWholeNeedsTheYesForItsWindow() {
+        val tapCall = Command.Tap(Target.Number(2))
+        // A call-history row "112" next to a dial field that shows an ordinary number: the row and the call button ask.
+        val row = element("row", 1, IntRect(0, 500, 1080, 600), text = "112")
+        val withRow = dialer("064 123 4567").let { it.copy(elements = it.elements + row) }
+        assertTrue(needsYes(withRow, Command.Tap(Target.Label("112"))) { it == "112" })
+        assertTrue(needsYes(withRow, tapCall) { it == "112" })
+        // Also by its content description, and when Android cannot check the number.
+        val described = dialer("064 123 4567").let { it.copy(elements = it.elements + row.copy(text = null, contentDescription = " 112 ")) }
+        assertTrue(needsYes(described, tapCall) { it == "112" })
+        assertTrue(needsYes(withRow, tapCall) { if (it == "112") null else false })
+        // A window whose only text field is a search box, with a result "192" that Android counts as an emergency number.
+        val app = WindowSummary(1, WindowKind.APPLICATION, packageName = DIALER, bounds = screen)
+        val search = ScreenElement(
+            key = "search", windowId = 1, packageName = DIALER, viewId = "$DIALER:id/search_box", text = null, editable = true,
+            bounds = IntRect(0, 0, 1080, 200),
+        )
+        val results = ScreenSnapshot(0, listOf(app), listOf(search, element("result", 1, IntRect(0, 300, 1080, 400), text = "192")))
+        assertTrue(
+            EmergencyGuard.needsYes(
+                EmergencyGuard.reaches(Command.Tap(Target.Label("192")), screen), ScreenView(results, emptyList(), grid = null),
+                EmergencyGuard.PHONE_PACKAGES, emergency = { it == "192" },
+            ),
+        )
+        // A time such as "08:15" is no number, also where Android counts 08 as an emergency number without a SIM card.
+        val time = element("time", 1, IntRect(0, 500, 1080, 600), text = "08:15", clickable = false)
+        val withTime = dialer("064 123 4567").let { it.copy(elements = it.elements + time) }
+        assertFalse(needsYes(withTime, tapCall) { it.startsWith("08") })
+    }
+
+    @Test
     fun theGuardReadsTheScreenASecondTimeOnlyWhileAPhoneAppIsOnIt() = runTest {
         val phoneApps = EmergencyGuard.PHONE_PACKAGES
         val chat = ScreenSnapshot(

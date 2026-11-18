@@ -2,8 +2,10 @@ package dev.kestrel.app.commands
 
 import android.Manifest
 import android.os.SystemClock
+import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.commands.TextFieldTests.keepClipboard
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -32,9 +34,10 @@ import org.junit.runner.RunWith
 /**
  * Calls by number and by name, with the announcement and the countdown, and "copy this phone number" (design D11), on
  * the emulator's phone app, whose calls to a made-up number become active, and the owner's "yes, call" before anything that
- * may call an emergency number (design spec, section 8.7), which these tests never answer with yes in the phone app: an
- * emergency call, even on the emulator's simulated modem, makes Google Play services send the device's location to
- * emergency services. A test that fails during a call ends it. The tests grant the phone-state and contacts permissions;
+ * may call an emergency number (design spec, section 8.7), which these tests never answer with yes in the phone app, where
+ * only one test puts an emergency number, and leaves an ordinary one there afterwards: an emergency call, even on the
+ * emulator's simulated modem, makes Google Play services send the device's location to emergency services. A test that
+ * fails during a call ends it. The tests grant the phone-state and contacts permissions;
  * command-test.ps1 revokes what was not granted before, and deletes the test contacts and the new call-log rows.
  */
 @RunWith(AndroidJUnit4::class)
@@ -155,21 +158,36 @@ class CallCommandsTest {
 
     @Test
     fun anEmergencyNumberThatTheOwnerRefusedOnceAsksAgainAndIsNeverCalled() = runBlocking<Unit> {
+        // The only test with an emergency number in the phone app (process rule 10): here only the call's own question
+        // stands between it and a press, and Android's check, the 5-digit rule and the question would all have to fail.
         // Never "yes, call" with an emergency number, on any device: on kestrel-api37, an emergency call made Google Play
         // services turn Wi-Fi back on during the call and send the emulator's location to emergency services' endpoints,
         // although the test had turned Wi-Fi and mobile data off. The second "call 112" goes through Kestrel's emptying of
         // the phone app's field, which shows the number after the first "no", and asks again.
-        CommandTests.ask("call 112", CALL_MILLIS)
-        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
-        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
+        var replaced = false
+        try {
+            CommandTests.ask("call 112", CALL_MILLIS)
+            CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+            // The announcement comes first, and the command waits for the answer a moment before the question is said.
+            assertTrue(CommandTests.spoken.contains("Calling 1 1 2."))
+            assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
+            screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
 
-        CommandTests.ask("call 112", CALL_MILLIS)
-        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
-        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
-        Thread.sleep(COUNTDOWN_AND_MORE)
-        assertTrue("A call started", listening.state.value.mode == Mode.LISTENING)
+            CommandTests.ask("call 112", CALL_MILLIS)
+            CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+            assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
+            screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
+            Thread.sleep(COUNTDOWN_AND_MORE)
+            assertTrue("A call started", listening.state.value.mode == Mode.LISTENING)
+        } finally {
+            // No run, also one of this test alone, leaves 112 in the phone app's field, one tap from an emergency call.
+            screen.shell("am start -W -a android.intent.action.DIAL -d tel:$ORDINARY")
+            replaced = runCatching {
+                screen.awaitElement(REPLACE_MILLIS) { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == ORDINARY }
+            }.isSuccess
+            screen.shell("input keyevent KEYCODE_HOME")
+        }
+        assertTrue("The phone app still shows the emergency number", replaced)
     }
 
     @Test
@@ -201,20 +219,25 @@ class CallCommandsTest {
     }
 
     @Test
-    fun anEmergencyNumberOrAnUnreadableOneInThePhoneAppNeedsTheOwnersYesForAllButItsKeys() = runBlocking<Unit> {
-        // Only "no" answers the question here: never "yes, call" with an emergency number, on any device. The announcement
-        // comes first, and the command waits for the answer a moment before the question is said.
-        CommandTests.ask("call 112", CALL_MILLIS)
-        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-        assertTrue(CommandTests.spoken.contains("Calling 1 1 2."))
-        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
-        val digits = screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
+    fun aShortNumberOrAnUnreadableOneInThePhoneAppNeedsTheOwnersYesForAllButItsKeys() = runBlocking<Unit> {
+        // R2 asks for a short number as for an emergency one, so this test needs none (process rule 10): a guard that failed
+        // here would press Call for 123, never for an emergency number. On another emulator image, which may count 123 or
+        // 1235 as emergency numbers, the test fails here instead of calling.
+        val telephony = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(TelephonyManager::class.java)
+        for (number in listOf(SHORT, "${SHORT}5")) {
+            assertEquals("Android counts $number as an emergency number", false, AndroidDialer.emergency(telephony, number))
+        }
+        assertEquals(DialRule.TAP_YOURSELF, AndroidDialer.ruleFor(SHORT) { AndroidDialer.emergency(telephony, it) })
+        // Kestrel only opens the phone app for a short number, and asks nothing.
+        assertEquals(Outcome.DONE, CommandTests.say("call $SHORT", CALL_MILLIS).outcome)
+        CommandTests.awaitSaid(PhoneCommandTexts.tapCallYourself(PhoneCommandTexts.spoken(SHORT)))
+        val digits = screen.awaitElement(REPLACE_MILLIS) { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == SHORT }
         // A number that "search for" typed into the phone app's search could start a call, so there it takes only names.
-        assertEquals(Outcome.FAILED, CommandTests.say("search for 112").outcome)
+        assertEquals(Outcome.FAILED, CommandTests.say("search for $SHORT").outcome)
         CommandTests.awaitSaid(PhoneCommandTexts.SEARCH_NAMES_ONLY)
         // The number field has the focus, but its input type is a phone number's, so plan 3B's dictation leaves a bare
         // "call" to the phone part. A number names any element, so "expand", "collapse" and "drag" with the call button's
-        // number need the yes too, and so does a scroll, whose gesture starts in the phone app's window.
+        // number need the yes too, and so does a scroll, whose gesture starts in the phone app's window. Only "no" answers.
         assertEquals(Outcome.DONE, CommandTests.say("show numbers").outcome)
         val number = badge { it.viewId?.endsWith(":id/dialpad_voice_call_button") == true }
         for (said in listOf("call", "tap dial", "expand $number", "collapse $number", "drag $number to $number", "scroll down")) {
@@ -223,9 +246,9 @@ class CallCommandsTest {
         }
         // The digit keys and the delete key need no yes, so that the owner can correct the number by voice.
         assertEquals(Outcome.DONE, CommandTests.say("tap ${badge { it.viewId?.endsWith(":id/five") == true }}").outcome)
-        screen.awaitElement { it.key == digits.key && it.text?.filter(Char::isDigit) == "1125" }
+        screen.awaitElement { it.key == digits.key && it.text?.filter(Char::isDigit) == "${SHORT}5" }
         assertEquals(Outcome.DONE, CommandTests.say("tap ${badge { it.viewId?.endsWith(":id/deleteButton") == true }}").outcome)
-        screen.awaitElement { it.key == digits.key && it.text?.filter(Char::isDigit) == "112" }
+        screen.awaitElement { it.key == digits.key && it.text?.filter(Char::isDigit) == SHORT }
         assertEquals(Outcome.DONE, CommandTests.say("hide numbers").outcome)
         assertTrue("A call started", listening.state.value.mode == Mode.LISTENING)
 
@@ -336,6 +359,13 @@ class CallCommandsTest {
         // to 3 s for its call button; the announcement and the countdown or the question come after that.
         const val COUNTDOWN_STARTS = 20_000L
         const val CALL_MILLIS = 30_000L
+
+        // A short number that is no emergency number, and an ordinary one that takes the place of the emergency number.
+        const val SHORT = "123"
+        const val ORDINARY = "0640000000"
+
+        // The phone app's cold start on the emulator takes about 4 s.
+        const val REPLACE_MILLIS = 10_000L
 
         const val BADGE_MILLIS = 10_000L
         const val SETTLED_MILLIS = 1_000L

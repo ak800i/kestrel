@@ -564,13 +564,15 @@ internal enum class EmergencyPolicy {
  * with two rules that need no list of buttons. R1: an element whose name (text, content description or view ID, and the
  * label of an element that takes a touch) holds the word "emergency" or "sos", or whose nearest clickable parent's does,
  * such as the emergency buttons of the power menu and the lock screen. R2: every window of a phone package while one of
- * its windows shows an element that R1 names (an emergency dialer), or a number field with a number that Kestrel would not
- * call itself (an emergency number, also when Android cannot tell, a number with fewer than 5 digits or with `*` or `#`,
- * or a text that reads as no number): every action on their elements, except a tap on a digit key and the actions on the
- * number field and its delete key, and every gesture that starts or ends inside them. A window of a phone package in
- * which Kestrel finds no number field to read, also one that shows no element yet, needs the yes for every action that
- * can reach into it, on any of its elements too. After a "yes, call", the command must still find the same elements in
- * the same windows, or it ends. R2 reads the phone apps' number fields as the apps themselves report them now, past
+ * its windows shows an element that R1 names (an emergency dialer), an element whose own text or content description is
+ * as a whole an emergency number (a call-history row or a search result "112"), or a number field with a number that
+ * Kestrel would not call itself (an emergency number, also when Android cannot tell, a number with fewer than 5 digits or
+ * with `*` or `#`, or a text that reads as no number): every action on their elements, except a tap on a digit key and the
+ * actions on the number field and its delete key, and every gesture that starts or ends inside them. A window of a phone
+ * package in which Kestrel finds no number field to read, also one that shows no element yet, needs the yes for every
+ * action that can reach into it, on any of its elements too. After a "yes, call", the command must still find the same
+ * elements in the same windows, or it ends. R2 reads the phone apps' number fields as the apps themselves report them
+ * now, past
  * Android's node cache, right before the decision and, while a window of a phone package is on the screen, again right
  * before the guard lets the command go on; a field that it cannot read again counts as one whose number Kestrel would not
  * call. The screen part then acts on its own snapshot. The phone
@@ -808,9 +810,10 @@ internal class EmergencyGuard(
 
         /**
          * R2: the IDs of the windows of the phone packages, among [phoneApps], that show an element or a title that R1
-         * names (an emergency dialer, also one whose number field Kestrel cannot read) or a number field with a number that Kestrel
-         * would not call itself, or a number field whose key is among [unreadable], because Kestrel could not read it again;
-         * every window of such a package counts, so that its menus and dialogs count too.
+         * names (an emergency dialer, also one whose number field Kestrel cannot read), a number field with a number that
+         * Kestrel would not call itself, a number field whose key is among [unreadable], because Kestrel could not read it
+         * again, or an element that shows an emergency number as a whole ([showsEmergencyNumber]), such as a call-history
+         * row or a search result "112"; every window of such a package counts, so that its menus and dialogs count too.
          */
         fun guardedWindows(
             snapshot: ScreenSnapshot,
@@ -826,7 +829,8 @@ internal class EmergencyGuard(
             }
             val named = snapshot.elements.indices.filter { snapshot.elements[it].packageName in phoneApps && emergencyNamed(snapshot, it) }
                 .map { snapshot.elements[it] }
-            val packages = (fields + named).mapNotNullTo(HashSet()) { it.packageName }
+            val shown = snapshot.elements.filter { it.packageName in phoneApps && showsEmergencyNumber(it, emergency) }
+            val packages = (fields + named + shown).mapNotNullTo(HashSet()) { it.packageName }
             // A window's title, such as an emergency dialer's "Emergency call", names it too.
             snapshot.windows
                 .filter { window -> window.packageName in phoneApps && Normalizer.words(window.title.orEmpty()).any { it in EMERGENCY_WORDS } }
@@ -834,6 +838,18 @@ internal class EmergencyGuard(
             return snapshot.elements.filter { it.packageName in packages }.mapTo(HashSet()) { it.windowId } +
                 snapshot.windows.filter { it.packageName in packages }.map { it.id }
         }
+
+        /**
+         * Whether [element]'s own text or content description, trimmed, is as a whole a number that a phone app dials
+         * ([PhoneNumbers.dialable], as for the number field) and that Android reports as an emergency number, or cannot
+         * check ([emergency] not false). A text with other characters is none: a time such as "08:15", which Android
+         * counts as the emergency number 08 without a SIM card, a date such as "17 Nov", or a name with a number in it.
+         */
+        fun showsEmergencyNumber(element: ScreenElement, emergency: (String) -> Boolean?): Boolean =
+            listOfNotNull(element.text, element.contentDescription).any { text ->
+                val digits = PhoneNumbers.dialable(text.trim()) ?: return@any false
+                emergency(PhoneNumbers.mainNumber(digits)) != false
+            }
 
         /**
          * The IDs of the windows of [phoneApps] in which Kestrel finds no number field to read (the controller's decision on

@@ -13,7 +13,8 @@ import dev.kestrel.commands.text.Strictness
  * other: a name that the owner says exactly, then a first name alone as the first word of a contact's name, then a first
  * name alone that differs from that word only in doubled letters (the recogniser writes "Anna" for "Ana"), but not in a
  * vowel or an ending, so that "Tim" never calls "Tom" at once, nor "Marko" "Mark", then the matcher, whose single near
- * miss is offered in "Which one?" as a confirmation. Equal matches are ranked with the starred contacts first.
+ * miss is offered in "Which one? 1, X." too: only its number or its name chooses it, and any other answer, "yes" among
+ * them, ends the command and is read again as a new utterance. Equal matches are ranked with the starred contacts first.
  */
 object ContactMatcher {
     /** "Which one?" offers at most this many contacts; with more, Kestrel asks for the full name. */
@@ -41,8 +42,9 @@ object ContactMatcher {
         val candidates = contacts.mapIndexed { index, contact -> MatchCandidate(index.toString(), contact.names) }
         return when (val decision = LabelMatcher.decide(spoken, candidates, Strictness.STRICT)) {
             is MatchDecision.Found -> ContactMatch.One(contacts[decision.id.toInt()])
-            // A single near miss is offered too, as a confirmation. LabelMatcher keeps at most MatchRules.MAX_AMBIGUOUS
-            // close names, so more than Kestrel offers are counted here.
+            // A single near miss is offered too, as "Which one? 1, X.", whose "yes" ends the command and is read again as a
+            // new utterance. LabelMatcher keeps at most MatchRules.MAX_AMBIGUOUS close names, so more than Kestrel offers
+            // are counted here.
             is MatchDecision.Ambiguous ->
                 if (decision.ids.size <= MAX_CHOICES) {
                     offer(decision.ids.map { contacts[it.toInt()] }.sortedByDescending { it.starred })
