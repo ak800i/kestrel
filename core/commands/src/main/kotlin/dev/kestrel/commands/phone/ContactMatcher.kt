@@ -1,18 +1,21 @@
 package dev.kestrel.commands.phone
 
+import dev.kestrel.commands.text.JaroWinkler
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.MatchCandidate
 import dev.kestrel.commands.text.MatchDecision
 import dev.kestrel.commands.text.MatchRules
 import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.commands.text.PhoneticKey
 import dev.kestrel.commands.text.Strictness
 
 /**
  * Finds the contact and the number that "call X" names (design spec, section 13.6; research r20). It matches in Kestrel,
  * with the strict limits of section 9.6, so that Cyrillic and Latin spellings and names without diacritics find each
- * other: a name that the owner says exactly, then a first name alone as the first word of a contact's name, then the
- * matcher, whose single near miss is offered in "Which one?" as a confirmation. Equal matches are ranked with the starred
- * contacts first.
+ * other: a name that the owner says exactly, then a first name alone as the first word of a contact's name, then a first
+ * name alone that sounds the same as that word by the matcher's phonetic word rule, without its least number of letters
+ * (the recogniser writes "Anna" for "Ana"), then the matcher, whose single near miss is offered in "Which one?" as a
+ * confirmation. Equal matches are ranked with the starred contacts first.
  */
 object ContactMatcher {
     /** "Which one?" offers at most this many contacts; with more, Kestrel asks for the full name. */
@@ -28,6 +31,10 @@ object ContactMatcher {
         if (' ' !in said) {
             val first = contacts.filter { contact -> contact.names.any { Normalizer.words(it).firstOrNull() == said } }
             if (first.isNotEmpty()) return decide(ranked(first))
+            val alike = contacts.filter { contact ->
+                contact.names.any { name -> Normalizer.words(name).firstOrNull()?.let { soundAlike(said, it) } == true }
+            }
+            if (alike.isNotEmpty()) return decide(ranked(alike))
         }
         val candidates = contacts.mapIndexed { index, contact -> MatchCandidate(index.toString(), contact.names) }
         return when (val decision = LabelMatcher.decide(spoken, candidates, Strictness.STRICT)) {
@@ -54,6 +61,16 @@ object ContactMatcher {
             it + MatchRules.TOLERANCE >= MatchRules.CLOSE && best - it <= MatchRules.NEAR + MatchRules.TOLERANCE
         }
     }
+
+    /**
+     * The matcher's phonetic word rule without its least number of letters: two folded words with the same phonetic key
+     * whose respelled forms are at least [MatchRules.PHONETIC_WORD_SIMILARITY] similar, as "anna" and "ana" are (0.93)
+     * and "anne" and "ana" are not (0.78).
+     */
+    private fun soundAlike(a: String, b: String): Boolean =
+        PhoneticKey.of(a) == PhoneticKey.of(b) &&
+            JaroWinkler.similarity(PhoneticKey.spelled(a), PhoneticKey.spelled(b)) + MatchRules.TOLERANCE >=
+            MatchRules.PHONETIC_WORD_SIMILARITY
 
     /**
      * The number of [contact] to call: the one of the [kind] that the owner said ("mobile", "work", a custom label), else

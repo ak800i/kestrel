@@ -62,6 +62,19 @@ class ContactMatcherTest {
     }
 
     @Test
+    fun aFirstNameThatSoundsTheSameFindsItsContactAndSeveralAsk() {
+        // The recogniser writes "Anna" for "Ana": the same phonetic key, and 0.93 similar.
+        assertEquals(ContactMatch.One(ana), ContactMatcher.find("Anna", listOf(ana, anja, marko)))
+        assertEquals(ContactMatch.Several(listOf(anaJ, ana)), ContactMatcher.find("Anna", contacts))
+        // "Anne" is only 0.78 similar to "Ana", and "Anja" has another key.
+        assertEquals(ContactMatch.None, ContactMatcher.find("Anne", listOf(ana, marko)))
+        assertEquals(ContactMatch.One(anja), ContactMatcher.find("Anja", listOf(ana, anja)))
+        // A first name that a contact has exactly still wins.
+        val anna = contact(8, "Anna Smith", mobile)
+        assertEquals(ContactMatch.One(anna), ContactMatcher.find("Anna", listOf(ana, anna)))
+    }
+
+    @Test
     fun numbersThatDifferOnlyInFormattingCountOnce() {
         val same = contact(6, "Dan", mobile, PhoneEntry("064-123-4567", "home", superPrimary = false))
 
