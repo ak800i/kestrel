@@ -1,15 +1,18 @@
 package dev.kestrel.screen.act
 
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.coroutines.EmptyCoroutineContext
 
 class SystemControlsTest {
     @Test
@@ -29,12 +32,41 @@ class SystemControlsTest {
 
     @Test
     fun theCacheIsClearedAlsoWhenTheCommandIsCancelledDuringTheWait() = runTest {
+        var reported = false
         var cleaned = false
-        val pan = launch(start = CoroutineStart.UNDISPATCHED) { thenClean({ awaitCancellation() }) { cleaned = true } }
+        val pan = launch(start = CoroutineStart.UNDISPATCHED) {
+            changeMagnification({ true }, REFUSED, { reported = true }, { awaitCancellation() }, EmptyCoroutineContext) { cleaned = true }
+        }
 
         pan.cancelAndJoin()
 
+        assertTrue(reported)
         assertTrue(cleaned)
+    }
+
+    @Test
+    fun theCacheIsClearedAlsoWhenTheCommandIsCancelledWhileTheChangeRunsOnTheMainThread() = runTest {
+        var cleaned = false
+        lateinit var zoom: Job
+        // The cancel arrives while Android changes the magnification on the main thread, which then returns the change.
+        zoom = launch {
+            changeMagnification({ zoom.cancel(); true }, REFUSED, {}, { DONE }, StandardTestDispatcher(testScheduler)) { cleaned = true }
+        }
+
+        zoom.join()
+
+        assertTrue(zoom.isCancelled)
+        assertTrue(cleaned)
+    }
+
+    @Test
+    fun aRefusedChangeNeedsNoCleanup() = runTest {
+        var cleaned = false
+
+        val result = changeMagnification({ false }, REFUSED, {}, { DONE }, StandardTestDispatcher(testScheduler)) { cleaned = true }
+
+        assertEquals(REFUSED, result)
+        assertFalse(cleaned)
     }
 
     @Test
@@ -45,5 +77,10 @@ class SystemControlsTest {
             val reason = action.refused.reason
             assertFalse(reason, action.name in reason || '_' in reason)
         }
+    }
+
+    private companion object {
+        val REFUSED = ActionResult.Failed("Android refused")
+        val DONE = ActionResult.Done(ActionMethod.MAGNIFICATION)
     }
 }

@@ -1,7 +1,7 @@
 package dev.kestrel.app.commands
 
 import android.content.pm.LauncherApps
-import android.os.Process
+import android.os.UserHandle
 import android.os.UserManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -69,7 +69,7 @@ class AppCommandsTest {
 
     @Test
     fun openWorkStartsTheWorkProfilesAppAndOpenTheOwnersOne() {
-        val user = createWorkProfile()
+        val (user, _) = createWorkProfile()
 
         assertEquals(Outcome.DONE, CommandTests.say("open work Clock").outcome)
         assertTrue("The work profile's Clock is not in front", VoiceTests.waitUntil(10_000) { resumed().contains("u$user ${PhoneTests.CLOCK}/") })
@@ -80,8 +80,7 @@ class AppCommandsTest {
 
     @Test
     fun aPausedWorkProfilesAppOpensAndKestrelSaysThatWorkAppsArePaused() {
-        createWorkProfile()
-        val work = launcher.profiles.first { it != Process.myUserHandle() }
+        val (_, work) = createWorkProfile()
         val users = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(UserManager::class.java)
         // Pausing a profile needs MANAGE_USERS or MODIFY_QUIET_MODE, which only the shell holds here. The rule's UiAutomation
         // keeps the accessibility services on; Instrumentation.getUiAutomation() would connect it again without that flag
@@ -99,13 +98,20 @@ class AppCommandsTest {
         CommandTests.awaitSaid(PhoneCommandTexts.WORK_APPS_PAUSED)
     }
 
-    // Makes a work profile, starts it, waits until the launcher API lists it, and returns its user ID.
-    private fun createWorkProfile(): String {
+    // Makes a work profile, starts it, waits until the launcher API lists it next to the profiles that were there before,
+    // however many there are, and returns its user ID and its handle.
+    private fun createWorkProfile(): Pair<String, UserHandle> {
+        val before = launcher.profiles.toSet()
         val created = screen.shell("pm create-user --profileOf 0 --managed $PROFILE")
         val user = Regex("created user id (\\d+)").find(created)?.groupValues?.get(1) ?: throw AssertionError("No profile: $created")
         screen.shell("am start-user -w $user")
-        assertTrue("Android does not list the profile", VoiceTests.waitUntil(15_000) { launcher.profiles.size == 2 })
-        return user
+        var work: UserHandle? = null
+        val listed = VoiceTests.waitUntil(15_000) {
+            work = launcher.profiles.firstOrNull { it !in before }
+            work != null
+        }
+        assertTrue("Android does not list the profile", listed)
+        return user to checkNotNull(work)
     }
 
     // The resumed activity, with its user, as "u10 com.google.android.deskclock/...". It names no window content.

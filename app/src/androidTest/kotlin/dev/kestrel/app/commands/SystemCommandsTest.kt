@@ -147,6 +147,14 @@ class SystemCommandsTest {
     }
 
     @Test
+    fun theOverviewsAppIsTheRecentsComponentThatAndroidReports() {
+        // "mRecentsComponent=ComponentInfo{package/class}" names a package, no window content.
+        val reported = Regex("mRecentsComponent=ComponentInfo\\{([^/}]+)/").find(screen.shell("dumpsys activity recents"))?.groupValues?.get(1)
+
+        assertEquals(checkNotNull(reported) { "dumpsys names no recents component" }, screen.session.system.recentsApp())
+    }
+
+    @Test
     fun circleToSearchIsNotAvailableOnTheEmulator() {
         assertEquals(Outcome.FAILED, CommandTests.say("circle to search").outcome)
 

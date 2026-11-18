@@ -71,14 +71,15 @@ internal object GrammarPhone {
         listOf("from", "the", "work", "profile"),
     )
 
-    // "Open Chrome", "open work Gmail", "open Gmail in the work profile". The name keeps the recogniser's case.
+    // "Open Chrome", "open work Gmail", "open Gmail in the work profile", also both at once. The name keeps the recogniser's
+    // case.
     private fun openApp(words: List<String>, text: String): Command? {
         val end = withoutPlease(words)
         if (end < 2 || words[0] !in OPEN_VERBS) return null
         if (words[0] == "open" && words[1] in PUNCTUATION) return null
-        if (words[1] == "work" && end > 2) return PhoneCommand.OpenApp(cutWords(text, 2, end), work = true)
-        val ending = IN_WORK_PROFILE.firstOrNull { end - 1 > it.size && words.subList(end - it.size, end) == it }
-        if (ending != null) return PhoneCommand.OpenApp(cutWords(text, 1, end - ending.size), work = true)
+        val start = if (words[1] == "work" && end > 2) 2 else 1
+        val ending = IN_WORK_PROFILE.firstOrNull { end - start > it.size && words.subList(end - it.size, end) == it }
+        if (start == 2 || ending != null) return PhoneCommand.OpenApp(cutWords(text, start, end - (ending?.size ?: 0)), work = true)
         return PhoneCommand.OpenApp(cutWords(text, 1, end), work = false)
     }
 

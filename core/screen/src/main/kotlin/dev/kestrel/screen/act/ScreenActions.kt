@@ -284,14 +284,15 @@ class ScreenActions internal constructor(
             .setCenterX(centerX.toFloat())
             .setCenterY(centerY.toFloat())
             .build()
-        val done = withContext(Dispatchers.Main) { service.magnificationController.setMagnificationConfig(config, false) }
-        return if (done) magnified() else ActionResult.Failed("Android refused to magnify the screen.")
+        return magnified(ActionResult.Failed("Android refused to magnify the screen.")) {
+            service.magnificationController.setMagnificationConfig(config, false)
+        }
     }
 
-    suspend fun resetZoom(): ActionResult {
-        val done = withContext(Dispatchers.Main) { service.magnificationController.resetCurrentMagnification(false) }
-        return if (done) magnified() else ActionResult.Failed("Android refused to reset the magnification.")
-    }
+    suspend fun resetZoom(): ActionResult =
+        magnified(ActionResult.Failed("Android refused to reset the magnification.")) {
+            service.magnificationController.resetCurrentMagnification(false)
+        }
 
     /**
      * Magnification moves every element on the screen, and Android sends no accessibility event for it, so Kestrel
@@ -304,13 +305,11 @@ class ScreenActions internal constructor(
      * moment puts the old positions back. A change of scale while the screen is already magnified adds no window, so
      * no later event clears the cache, and every snapshot would keep the old positions.
      */
-    private suspend fun magnified(): ActionResult {
-        tracker.onScreenChanged()
-        return thenClean({ settled(ActionMethod.MAGNIFICATION) }) {
+    private suspend fun magnified(refused: ActionResult, change: () -> Boolean): ActionResult =
+        changeMagnification(change, refused, tracker::onScreenChanged, { settled(ActionMethod.MAGNIFICATION) }) {
             service.clearCache()
             tracker.onScreenChanged()
         }
-    }
 
     suspend fun global(action: GlobalAction): ActionResult {
         return if (service.performGlobalAction(action.id)) {

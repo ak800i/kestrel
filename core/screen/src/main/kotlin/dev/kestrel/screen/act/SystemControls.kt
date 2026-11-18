@@ -19,6 +19,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Starts activities and system actions, switches to the previous app and pans the magnification (design spec, section
@@ -98,12 +100,14 @@ class SystemControls(
             .setCenterX(config.centerX + dx)
             .setCenterY(config.centerY + dy)
             .build()
-        val done = withContext(Dispatchers.Main) { controller.setMagnificationConfig(moved, false) }
-        if (!done) return ActionResult.Failed("Android refused to move the magnification")
         // As in ScreenActions.zoom: Android sends no event for a move of the magnification, and its node cache keeps the
         // old positions, so Kestrel reports the change itself, before and after the wait.
-        tracker.onScreenChanged()
-        return thenClean({ settled(ActionMethod.MAGNIFICATION) }) {
+        return changeMagnification(
+            change = { controller.setMagnificationConfig(moved, false) },
+            refused = ActionResult.Failed("Android refused to move the magnification"),
+            report = tracker::onScreenChanged,
+            settle = { settled(ActionMethod.MAGNIFICATION) },
+        ) {
             service.clearCache()
             tracker.onScreenChanged()
             snapshots.invalidate()
@@ -134,10 +138,13 @@ class SystemControls(
         .resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
         ?.activityInfo?.packageName
 
-    // The app that shows the overview: Android's recents component, which stays the system launcher's even when another
-    // launcher is the default home app or none is. Android names it only in a framework resource that has no public ID.
+    /**
+     * The package of the app that shows the overview: Android's recents component, which stays the system launcher's even
+     * when another launcher is the default home app or none is. Android names it only in a framework resource that has no
+     * public ID, so a device test compares this with what the activity manager reports.
+     */
     @SuppressLint("DiscouragedApi")
-    private fun recentsApp(): String? {
+    fun recentsApp(): String? {
         val resources = Resources.getSystem()
         val id = resources.getIdentifier("config_recentsComponentName", "string", "android")
         if (id == 0) return null
@@ -172,11 +179,27 @@ internal fun switchedTo(now: String?, before: String?, overview: Set<String>): B
 internal fun recentsPackage(component: String?): String? = component?.substringBefore('/')?.trim()?.takeIf { it.isNotEmpty() }
 
 /**
- * Runs [wait] and then [cleanup], also when the command is cancelled during the wait: Android sends no event for a change
- * of the magnification, so a skipped cleanup would leave the old positions in Android's node cache.
+ * Changes Android's magnification with [change] on the [main] thread and, when Android takes the change, reports it with
+ * [report] and waits with [settle]. Android sends no event for a change of the magnification, so [cleanup] then removes the
+ * old positions from Android's node cache. It runs also when the command is cancelled during the wait, or while the change
+ * still runs on the main thread: `withContext` then drops the change's result, but Android has made the change. A cancel
+ * before the change starts leaves the magnification as it was, so nothing needs cleaning then.
  */
-internal suspend fun <T> thenClean(wait: suspend () -> T, cleanup: () -> Unit): T = try {
-    wait()
-} finally {
-    withContext(NonCancellable) { cleanup() }
+internal suspend fun changeMagnification(
+    change: () -> Boolean,
+    refused: ActionResult,
+    report: () -> Unit,
+    settle: suspend () -> ActionResult,
+    main: CoroutineContext = Dispatchers.Main,
+    cleanup: () -> Unit,
+): ActionResult {
+    val changed = AtomicBoolean(false)
+    try {
+        withContext(main) { changed.set(change()) }
+        if (!changed.get()) return refused
+        report()
+        return settle()
+    } finally {
+        if (changed.get()) withContext(NonCancellable) { cleanup() }
+    }
 }

@@ -40,6 +40,7 @@ class GrammarPhoneTest {
         assertParses(PhoneCommand.OpenApp("Chrome", work = false), "Open Chrome.", "Launch Chrome", "open Chrome please")
         assertParses(PhoneCommand.OpenApp("the Play Store", work = false), "Open the Play Store.")
         assertParses(PhoneCommand.OpenApp("Gmail", work = true), "Open work Gmail.", "Open Gmail in the work profile.")
+        assertParses(PhoneCommand.OpenApp("Gmail", work = true), "Open work Gmail in the work profile.", "Launch work Gmail from the work profile")
         assertParses(PhoneCommand.Global(GlobalCommand.ALL_APPS), "Open apps.")
         assertParses(Command.Help(HelpKind.TUTORIAL), "Open tutorial.")
     }

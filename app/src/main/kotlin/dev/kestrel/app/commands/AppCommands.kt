@@ -109,8 +109,9 @@ internal const val MAX_SPOKEN_CHOICES = 4
 /**
  * The item whose [name] the owner said in [spoken], with the matcher's normal limits (design spec, section 9.6). Among
  * items with the same name, the [preferred] ones stand for the others, as an app of the owner's profile does for the same
- * app in the work profile; two preferred items with the same name both stay, for "Which one?". A single near miss is
- * offered as a confirmation.
+ * app in the work profile; two preferred items with the same name both stay, for "Which one?". A single near miss gets
+ * "Which one?" too, with its one name, and only its number or its name chooses it; any other answer, "yes" among them,
+ * ends the command and is passed on as a new utterance.
  */
 internal fun <T> pick(spoken: String, items: List<T>, name: (T) -> String, preferred: (T) -> Boolean): Pick<T> {
     val distinct = items.filter { Normalizer.normalize(name(it)).isNotEmpty() }
