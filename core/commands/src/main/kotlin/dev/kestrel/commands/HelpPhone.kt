@@ -10,6 +10,7 @@ internal object HelpPhone {
                 "lock screen", "turn off device", "take a screenshot", "open apps", "circle to search",
             ),
         ),
+        HelpGroup("Open apps", listOf("open Chrome", "open work Gmail", "open Gmail in the work profile")),
         // Tasks 2 to 6 of plan 3C add their groups above this line.
     )
 }

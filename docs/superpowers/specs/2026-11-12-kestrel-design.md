@@ -948,7 +948,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 
 | Group | Voice Access commands | Kestrel |
 |---|---|---|
-| General | Open [app]; Open apps; Open work [app] | Yes. Work apps open through Android's launcher API when a work profile exists. |
+| General | Open [app]; Open apps; Open work [app] | Yes. Apps open through Android's launcher API. Work apps open only from a profile that Android names a work profile, which Kestrel can tell from Android 15 on; on Android 13 and 14 it cannot tell a work profile from Secure Folder or a clone profile, so it opens only the owner's apps there. |
 | General | Go back; Go home; Show notifications; Show Quick Settings; Show recent apps; Show previous app | Yes |
 | General | Lock screen; Turn off device (power menu); Take screenshot | Yes |
 | General | Again; Cancel | Yes |

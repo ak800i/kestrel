@@ -1,6 +1,7 @@
 package dev.kestrel.commands
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,6 +33,22 @@ class GrammarPhoneTest {
     fun tapHomeTapsALabelAndLongerSentencesStayBare() {
         assertEquals(Command.Tap(Target.Label("home")), CommandParser.parse("tap home"))
         assertBare("I think we should go back later.", "Back to the drawing board.", "Home sweet home.")
+    }
+
+    @Test
+    fun openTakesTheAppsNameWithItsCaseAndTheWorkProfile() {
+        assertParses(PhoneCommand.OpenApp("Chrome", work = false), "Open Chrome.", "Launch Chrome", "open Chrome please")
+        assertParses(PhoneCommand.OpenApp("the Play Store", work = false), "Open the Play Store.")
+        assertParses(PhoneCommand.OpenApp("Gmail", work = true), "Open work Gmail.", "Open Gmail in the work profile.")
+        assertParses(PhoneCommand.Global(GlobalCommand.ALL_APPS), "Open apps.")
+        assertParses(Command.Help(HelpKind.TUTORIAL), "Open tutorial.")
+    }
+
+    @Test
+    fun openNeverOpensTheSpokenPunctuationOfDictation() {
+        for (phrase in listOf("open quote", "Open quote hello close quote", "open parenthesis", "open bracket one", "open double quote")) {
+            assertFalse(phrase, CommandParser.parse(phrase) is PhoneCommand.OpenApp)
+        }
     }
 
     // Tasks 2 to 6 of plan 3C add their tests above this line.

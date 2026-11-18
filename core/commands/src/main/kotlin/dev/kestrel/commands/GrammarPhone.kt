@@ -48,12 +48,37 @@ internal object GrammarPhone {
     fun fixed(words: List<String>, text: String): Command? = FIXED[words.joinToString(" ")]
 
     fun targeted(words: List<String>, text: String): Command? {
+        openApp(words, text)?.let { return it }
         // Tasks 2 to 6 of plan 3C add their rules above this line.
         return null
     }
 
     private fun MutableMap<String, Command>.phrases(command: Command, vararg phrases: String) {
         for (phrase in phrases) put(phrase, command)
+    }
+
+    private val OPEN_VERBS = setOf("open", "launch")
+
+    // A name never ends with "please", which the parser removes only from a bare text.
+    private fun withoutPlease(words: List<String>): Int = if (words.size > 2 && words.last() == "please") words.size - 1 else words.size
+
+    // Plan 3B's spoken punctuation, which "open" never opens as an app: "open quote", "open parenthesis" and the others.
+    private val PUNCTUATION = setOf("quote", "quotes", "double", "single", "parenthesis", "parentheses", "paren", "bracket", "brackets")
+    private val IN_WORK_PROFILE = listOf(
+        listOf("in", "the", "work", "profile"),
+        listOf("in", "work", "profile"),
+        listOf("from", "the", "work", "profile"),
+    )
+
+    // "Open Chrome", "open work Gmail", "open Gmail in the work profile". The name keeps the recogniser's case.
+    private fun openApp(words: List<String>, text: String): Command? {
+        val end = withoutPlease(words)
+        if (end < 2 || words[0] !in OPEN_VERBS) return null
+        if (words[0] == "open" && words[1] in PUNCTUATION) return null
+        if (words[1] == "work" && end > 2) return PhoneCommand.OpenApp(cutWords(text, 2, end), work = true)
+        val ending = IN_WORK_PROFILE.firstOrNull { end - 1 > it.size && words.subList(end - it.size, end) == it }
+        if (ending != null) return PhoneCommand.OpenApp(cutWords(text, 1, end - ending.size), work = true)
+        return PhoneCommand.OpenApp(cutWords(text, 1, end), work = false)
     }
 
     // Tasks 2 to 6 of plan 3C add their functions above this line.

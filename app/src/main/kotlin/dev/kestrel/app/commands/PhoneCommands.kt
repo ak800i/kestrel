@@ -16,6 +16,7 @@ import dev.kestrel.screen.act.GlobalAction
 internal fun phoneCommands(environment: CommandEnvironment): CommandPart = PhoneCommands(environment)
 
 internal class PhoneCommands(private val environment: CommandEnvironment) : CommandPart {
+    private val apps = AppCommands(environment)
     // Tasks 2 to 6 of plan 3C add their parts above this line.
 
     override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult? {
@@ -24,6 +25,7 @@ internal class PhoneCommands(private val environment: CommandEnvironment) : Comm
             is PhoneCommand.Global -> globalCommand(command.action, { screen.hideFeedback() }) { screen.actions.global(it) }
             PhoneCommand.PreviousApp -> previousAppResult(screen.system.previousApp())
             PhoneCommand.CircleToSearch -> circleToSearch(screen.system.systemActions()) { screen.system.systemAction(it) }
+            is PhoneCommand.OpenApp -> apps.open(screen, command, conversation)
             // Tasks 2 to 6 of plan 3C add their commands above this line.
             else -> null
         }
