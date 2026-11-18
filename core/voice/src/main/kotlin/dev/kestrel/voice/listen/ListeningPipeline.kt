@@ -130,7 +130,7 @@ class ListeningPipeline(
         val before = lastRecognition
         if (before == Recognition.NONE && wanted != Recognition.NONE) resume()
         lastRecognition = wanted
-        val utterances = detector.accept(frame).map { Utterance(detectorStart + it.startSample, it.samples) }
+        val utterances = detector.accept(frame).map { Utterance(detectorStart + it.startSample, it.samples, it.lead, it.trail) }
         val hits = spotter.accept(frame).filterNot { isOwnVoice(it.keyword) }
         position += frame.size
         val names = mutableListOf<Long>()
@@ -211,15 +211,25 @@ class ListeningPipeline(
      */
     private fun holdFrom(): Long = if (interrupted) resumeFrom else Long.MIN_VALUE
 
-    /** [speech] without its part before [resumeFrom], or null when too little is left or the owner broke into it. */
-    private fun afterResume(speech: Speech): Speech? = when {
-        speech.startSample >= resumeFrom -> speech
-        interrupted || speech.endSample - resumeFrom < SHORTEST -> null
-        else -> Speech(
-            resumeFrom,
-            speech.samples.copyOfRange((resumeFrom - speech.startSample).toInt(), speech.samples.size),
-            named = false,
-        )
+    /**
+     * [speech] without its audio before [resumeFrom], which is Kestrel's own voice, or null when too little of its speech
+     * is left or the owner broke into it. A speech that starts after [resumeFrom] keeps all of it, and loses only the part
+     * of its lead before [resumeFrom].
+     */
+    private fun afterResume(speech: Speech): Speech? {
+        val cut = resumeFrom - (speech.startSample - speech.lead)
+        return when {
+            cut <= 0 -> speech
+            speech.startSample >= resumeFrom -> Speech(
+                speech.startSample,
+                speech.samples.copyOfRange(cut.toInt(), speech.samples.size),
+                speech.named,
+                lead = speech.lead - cut.toInt(),
+                trail = speech.trail,
+            )
+            interrupted || speech.endSample - resumeFrom < SHORTEST -> null
+            else -> Speech(resumeFrom, speech.samples.copyOfRange(cut.toInt(), speech.samples.size), named = false, trail = speech.trail)
+        }
     }
 
     /** Whether recognition [wanted] transcribes an utterance that is [named], or not. */

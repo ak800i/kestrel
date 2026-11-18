@@ -221,10 +221,49 @@ class EndpointerTest {
         assertEquals(at(0.5f).toInt(), later.samples.size)
     }
 
+    @Test
+    fun theAudioAroundTheSpeechGoesToTheRecogniserAndThePausesCountFromTheSpeech() {
+        // The speech lasts from 0.5 s to 1.5 s, and the detector adds 0.3 s of the audio before it and after it.
+        endpointer.accept(emptyList(), listOf(at(1f)), hearsSpeech = true, position = at(1f))
+        endpointer.accept(listOf(padded(0.5f, 1f, value = 0.5f)), emptyList(), hearsSpeech = false, position = at(2.2f))
+        // The held utterance's pause counts from the end of its speech at 1.5 s, not from the end of its audio at 1.8 s.
+        assertEquals(none, endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(3.3f)))
+        val alone = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(3.35f)).single()
+
+        assertEquals(at(0.5f), alone.startSample)
+        assertEquals(at(1.5f), alone.endSample)
+        assertEquals(at(1.6f).toInt(), alone.samples.size)
+    }
+
+    @Test
+    fun aJoinedUtteranceKeepsTheAudioBeforeItsFirstPartAndAfterItsLastAndSilenceBetweenThem() {
+        endpointer.accept(emptyList(), listOf(at(1f)), hearsSpeech = true, position = at(1f))
+        endpointer.accept(listOf(padded(0.5f, 1f, value = 0.5f)), emptyList(), hearsSpeech = false, position = at(2.2f))
+        assertEquals(none, endpointer.accept(emptyList(), emptyList(), hearsSpeech = true, position = at(3.4f)))
+        // The second part's speech starts at 2.9 s, 1.4 s after the first one's, and its audio at 2.6 s.
+        endpointer.accept(listOf(padded(2.9f, 1f, value = 0.25f)), emptyList(), hearsSpeech = false, position = at(4.6f))
+
+        val speech = endpointer.accept(emptyList(), emptyList(), hearsSpeech = false, position = at(5.75f)).single()
+
+        assertEquals(at(0.5f), speech.startSample)
+        assertEquals(at(3.9f), speech.endSample)
+        assertEquals(at(0.3f).toInt(), speech.lead)
+        assertEquals(at(0.3f).toInt(), speech.trail)
+        // From 0.2 s to 4.2 s: the first part's audio until 1.8 s, silence until 2.6 s, then the second part's audio.
+        assertEquals(at(4f).toInt(), speech.samples.size)
+        assertEquals(0.5f, speech.samples[at(1.5f).toInt()])
+        assertEquals(0f, speech.samples[at(2f).toInt()])
+        assertEquals(0.25f, speech.samples[at(2.5f).toInt()])
+    }
+
     private val none = emptyList<Speech>()
 
     private fun at(seconds: Float): Long = (seconds * SAMPLE_RATE).roundToLong()
 
     private fun utterance(start: Float, seconds: Float, value: Float = 0.5f) =
         Utterance(at(start), FloatArray(at(seconds).toInt()) { value })
+
+    // Speech of [seconds] from [start] with 0.3 s of the audio before it and after it, all of [value].
+    private fun padded(start: Float, seconds: Float, value: Float) =
+        Utterance(at(start), FloatArray(at(seconds + 0.6f).toInt()) { value }, lead = at(0.3f).toInt(), trail = at(0.3f).toInt())
 }

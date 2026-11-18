@@ -27,11 +27,20 @@ class SpeechDetectorTest {
     @Before
     fun needsTheModels() = VoiceTests.assumeModels(Engine.VAD, Engine.TTS)
 
-    /** The detector hands out the audio unchanged, so each utterance must equal the audio at its position. */
+    /**
+     * The detector hands out the audio unchanged, so each utterance must equal the audio at its position, from the audio
+     * before its speech to the audio after it.
+     */
     private fun assertTheAudioAt(audio: FloatArray, utterance: Utterance) {
-        val start = utterance.startSample.toInt()
+        val start = (utterance.startSample - utterance.lead).toInt()
         assertArrayEquals(audio.copyOfRange(start, start + utterance.samples.size), utterance.samples, 0f)
     }
+
+    /** [this] as if the audio had started [offset] samples later. */
+    private fun Utterance.movedBack(offset: Long) = Utterance(startSample - offset, samples, lead, trail)
+
+    /** The length of the utterance's speech, without the audio around it. */
+    private val Utterance.speechSeconds: Float get() = (endSample - startSample) / SAMPLE_RATE.toFloat()
 
     /** Feeds [audio] in chunks of [size] samples, then finishes. */
     private fun chunks(detector: SpeechDetector, audio: FloatArray, size: Int): List<Utterance> =
@@ -58,7 +67,10 @@ class SpeechDetectorTest {
 
             // The speech starts after 0.5 s of silence, and the voice adds a little silence of its own.
             assertEquals(0.5f, utterance.startSample / SAMPLE_RATE.toFloat(), 0.3f)
-            assertEquals(audio.size / SAMPLE_RATE.toFloat() - 1.5f, utterance.seconds, 0.5f)
+            assertEquals(audio.size / SAMPLE_RATE.toFloat() - 1.5f, utterance.speechSeconds, 0.5f)
+            // The recogniser also hears 0.3 s of the audio before the speech and after it.
+            assertEquals(SAMPLE_RATE * 3 / 10, utterance.lead)
+            assertEquals(SAMPLE_RATE * 3 / 10, utterance.trail)
             assertTheAudioAt(audio, utterance)
             // It hears the speech while the voice speaks, and the utterance has ended within the 1 s of silence after it.
             assertFalse(heard.first())
@@ -134,8 +146,10 @@ class SpeechDetectorTest {
                 assertTheAudioAt(audio, utterance)
             }
             assertTrue("${utterances[0].seconds} s", utterances[0].seconds > 29f)
-            // The next utterance starts exactly where the cut was.
-            assertEquals(utterances[0].startSample + utterances[0].samples.size, utterances[1].startSample)
+            // The next utterance starts exactly where the cut was, and neither has audio beyond the cut.
+            assertEquals(utterances[0].endSample, utterances[1].startSample)
+            assertEquals(0, utterances[0].trail)
+            assertEquals(0, utterances[1].lead)
         }
     }
 
@@ -144,7 +158,7 @@ class SpeechDetectorTest {
         val speech = silence(0.5f) + continuousSpeech()
         val cut = graph.voice.speechDetector().use { detector ->
             val first = (frames(speech + silence(1f), detector::accept) + detector.finish()).first()
-            (first.startSample + first.samples.size).toInt()
+            first.endSample.toInt()
         }
         val started = SystemClock.elapsedRealtime()
         val counts = mutableMapOf<Int, Int>()
@@ -156,8 +170,9 @@ class SpeechDetectorTest {
                 val utterances = frames(audio, detector::accept) + detector.finish()
                 counts.merge(utterances.size, 1, Int::plus)
                 for (utterance in utterances) {
-                    shortest = minOf(shortest, utterance.samples.size)
-                    assertTrue("${end - cut} samples after the cut: ${utterance.seconds} s", utterance.samples.size >= SAMPLE_RATE / 4)
+                    val speechSamples = (utterance.endSample - utterance.startSample).toInt()
+                    shortest = minOf(shortest, speechSamples)
+                    assertTrue("${end - cut} samples after the cut: ${utterance.speechSeconds} s", speechSamples >= SAMPLE_RATE / 4)
                     assertTheAudioAt(audio, utterance)
                 }
             }
@@ -185,12 +200,12 @@ class SpeechDetectorTest {
             assertEquals(0, silent.size)
             val kept = atReset.single()
             assertEquals(3_599.6f, kept.startSample / SAMPLE_RATE.toFloat(), 0.3f)
-            assertTheAudioAt(tail, Utterance(kept.startSample - before, kept.samples))
+            assertTheAudioAt(tail, kept.movedBack(before))
             // The count goes on after this reset too.
             val next = after.single()
             val offset = before + tail.size
             assertEquals(0.5f, (next.startSample - offset) / SAMPLE_RATE.toFloat(), 0.3f)
-            assertTheAudioAt(audio, Utterance(next.startSample - offset, next.samples))
+            assertTheAudioAt(audio, next.movedBack(offset))
         }
     }
 
@@ -206,7 +221,7 @@ class SpeechDetectorTest {
 
             assertEquals(0, before.size)
             assertEquals(0.5f, (utterance.startSample - silent) / SAMPLE_RATE.toFloat(), 0.3f)
-            assertTheAudioAt(audio, Utterance(utterance.startSample - silent, utterance.samples))
+            assertTheAudioAt(audio, utterance.movedBack(silent))
         }
     }
 

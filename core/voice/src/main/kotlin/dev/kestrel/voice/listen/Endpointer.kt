@@ -6,10 +6,11 @@ import kotlin.math.roundToLong
 
 /**
  * An utterance that is ready to transcribe. [startSample] counts samples since the audio started, and [named] is true
- * when the keyword spotter heard "Kestrel" at its start.
+ * when the keyword spotter heard "Kestrel" at its start. Its speech starts at [startSample] and ends at [endSample]; its
+ * [samples] also hold [lead] samples of the audio before the speech and [trail] after it, which only the recogniser hears.
  */
-class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean) {
-    val endSample: Long get() = startSample + samples.size
+class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean, val lead: Int = 0, val trail: Int = 0) {
+    val endSample: Long get() = startSample + samples.size - lead - trail
     val seconds: Float get() = samples.size / SAMPLE_RATE.toFloat()
 }
 
@@ -51,7 +52,7 @@ class Endpointer {
             held = null
         }
         for (utterance in utterances) {
-            val speech = Speech(utterance.startSample, utterance.samples, startsWithName(utterance))
+            val speech = Speech(utterance.startSample, utterance.samples, startsWithName(utterance), utterance.lead, utterance.trail)
             val joined = held?.takeIf { speech.startSample >= holdFrom }?.let { join(it, speech) }
             if (joined != null) {
                 held = joined
@@ -91,16 +92,18 @@ class Endpointer {
 
     /**
      * [earlier], silence for the pause and [later] in one utterance, named when [earlier] is, or null when the pause or
-     * the result is too long.
+     * the result is too long. The result keeps the audio before [earlier]'s speech and after [later]'s; the audio between
+     * [earlier]'s trail and [later]'s lead stays silence.
      */
     private fun join(earlier: Speech, later: Speech): Speech? {
         val pause = maxOf(0L, later.startSample - earlier.endSample)
-        val size = earlier.samples.size + pause + later.samples.size
+        val gap = maxOf(0L, later.startSample - later.lead - earlier.endSample - earlier.trail)
+        val size = earlier.samples.size + gap + later.samples.size
         if (pause >= NAMED_PAUSE || size > LONGEST) return null
         val samples = FloatArray(size.toInt())
         earlier.samples.copyInto(samples)
-        later.samples.copyInto(samples, (earlier.samples.size + pause).toInt())
-        return Speech(earlier.startSample, samples, named = earlier.named)
+        later.samples.copyInto(samples, (earlier.samples.size + gap).toInt())
+        return Speech(earlier.startSample, samples, named = earlier.named, lead = earlier.lead, trail = later.trail)
     }
 
     private companion object {

@@ -254,6 +254,48 @@ class ListeningPipelineTest {
     }
 
     @Test
+    fun theRecogniserHearsTheAudioAroundTheSpeechAndAHeldPauseCountsFromTheSpeech() = runTest {
+        val pipeline = pipeline()
+        pipeline.feedUntil(1f)
+        spotter.next.addLast(listOf(KeywordHit(Keyword.KESTREL, 1f)))
+        pipeline.feed()
+
+        // The speech lasts from 0.5 s to 1.5 s, with 0.3 s of the audio before it and after it.
+        pipeline.feedUntil(2.2f)
+        detector.next.addLast(listOf(padded(0.5f, 1f)))
+        pipeline.feed()
+        // The held utterance goes out 1.85 s after the end of its speech, not of its audio.
+        pipeline.feedUntil(3.3f)
+        assertEquals(emptyList<VoiceEvent.Heard>(), events.filterIsInstance<VoiceEvent.Heard>())
+        pipeline.feedUntil(3.4f)
+
+        val heard = events.filterIsInstance<VoiceEvent.Heard>().single()
+        assertTrue(heard.named)
+        assertEquals("heard 25600", heard.text)
+        assertEquals(1.6f, heard.seconds)
+    }
+
+    @Test
+    fun theAudioBeforeTheResumeIsCutAlsoFromTheAudioBeforeTheSpeech() = runTest {
+        val pipeline = pipeline()
+        pipeline.recognition = Recognition.NONE
+        pipeline.feedUntil(1f)
+        pipeline.recognition = Recognition.ALL
+
+        // Speech from 1.1 s, 0.1 s after Kestrel stopped speaking: only 0.1 s of the audio before it is the owner's.
+        pipeline.feedUntil(2.8f)
+        detector.next.addLast(listOf(padded(1.1f, 1f)))
+        pipeline.feed()
+        // Speech that began at 0.5 s, while Kestrel spoke, keeps its speech from 1 s on and the audio after it.
+        detector.next.addLast(listOf(padded(0.5f, 1f)))
+        pipeline.feed()
+
+        val heard = events.filterIsInstance<VoiceEvent.Heard>()
+        assertEquals(listOf("heard 22400", "heard 12800"), heard.map { it.text })
+        assertEquals(listOf(false, false), heard.map { it.named })
+    }
+
+    @Test
     fun anAnswerToYesIsHeldAndJoinedToTheNextUtterance() = runTest {
         val pipeline = pipeline()
         pipeline.recognition = Recognition.ANSWER
@@ -582,6 +624,10 @@ class ListeningPipelineTest {
     private fun at(seconds: Float): Long = (seconds * SAMPLE_RATE).roundToLong()
 
     private fun utterance(start: Float, seconds: Float) = Utterance(at(start), FloatArray(at(seconds).toInt()))
+
+    // Speech of [seconds] from [start], with 0.3 s of the audio before it and after it.
+    private fun padded(start: Float, seconds: Float) =
+        Utterance(at(start), FloatArray(at(seconds + 0.6f).toInt()), lead = at(0.3f).toInt(), trail = at(0.3f).toInt())
 
     private class FakeDetector : SpeechDetector {
         val next = ArrayDeque<List<Utterance>>()
