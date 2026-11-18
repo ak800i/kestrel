@@ -1,6 +1,5 @@
 package dev.kestrel.app.commands
 
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -127,15 +126,14 @@ class TouchCommandsTest {
 
     @Test
     fun anAnswerWhoseElementAWindowNowCoversEndsWithOtherWindowsCoverIt() = runBlocking<Unit> {
-        val cover = screen.awaitElement(WAIT_MILLIS) { it.label == "Cover Dan" }
+        screen.awaitElement(WAIT_MILLIS) { it.label == "Cover Dan" }
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
 
-        // Only the node's click action, never a tap gesture, which the touch watcher would count as the owner's touch, so
-        // the question goes on. The cover adds nothing to tap, so the numbers stay, and the answer reaches the check right
-        // before the action. The screen did not change otherwise, and saying it again would give the same answer, so
-        // Kestrel does not say "The screen changed".
-        val node = checkNotNull(screen.session.snapshots.current().node(cover.key)) { "Cover Dan is not on the screen" }
-        assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        // A new intent to the fixture, never a click or a tap gesture: the touch watcher counts a gesture as the owner's
+        // touch, and on Android 17 an accessibility click too, so the question would end. The cover adds nothing to tap,
+        // so the numbers stay, and the answer reaches the check right before the action. The screen did not change
+        // otherwise, and saying it again would give the same answer, so Kestrel does not say "The screen changed".
+        screen.shell("am start -W --activity-single-top -n $FIXTURES/.CommandsActivity --ez cover true")
         screen.awaitElement(WAIT_MILLIS) { it.label == "Covered" }
         assertTrue("The question ended before the answer", CommandTests.asked)
         assertEquals(Outcome.FAILED, CommandTests.answer("number two").outcome)

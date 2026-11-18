@@ -1,9 +1,7 @@
 package dev.kestrel.app.commands
 
 import android.Manifest
-import android.os.Build
 import android.os.SystemClock
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.commands.TextFieldTests.keepClipboard
 import dev.kestrel.app.orchestrator.Mode
@@ -24,7 +22,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -33,11 +30,10 @@ import org.junit.runner.RunWith
 /**
  * Calls by number and by name, with the announcement and the countdown, and "copy this phone number" (design D11), on
  * the emulator's phone app, whose calls to a made-up number become active, and the owner's "yes, call" before anything that
- * may call an emergency number (design spec, section 8.7). Only one test answers "yes, call" in the phone app, and only on
- * the emulator, whose modem is simulated, so that the call reaches no one, with Wi-Fi and mobile data off, so that no
- * location goes out. A test that fails during a call ends it. The tests grant the phone-state and contacts permissions;
- * command-test.ps1 revokes what was not granted before, deletes the test contacts and the new call-log rows, and puts
- * Wi-Fi and mobile data back.
+ * may call an emergency number (design spec, section 8.7), which these tests never answer with yes in the phone app: an
+ * emergency call, even on the emulator's simulated modem, makes Google Play services send the device's location to
+ * emergency services. A test that fails during a call ends it. The tests grant the phone-state and contacts permissions;
+ * command-test.ps1 revokes what was not granted before, and deletes the test contacts and the new call-log rows.
  */
 @RunWith(AndroidJUnit4::class)
 class CallCommandsTest {
@@ -94,7 +90,13 @@ class CallCommandsTest {
         // (theSameNumberIsCalledAgainAfterACancelLeftItInThePhoneApp); here an earlier test's cancel may have left the number
         // in a phone app that is now in the background, so the field shows another number first.
         // The HOME transition ends a moment after the key, and would send a phone app that came back meanwhile behind it.
+        // Kestrel's snapshot must show the phone app before the key, or the wait for the home screen can pass on a snapshot
+        // from before the DIAL, and the key then arrives after Kestrel's own DIAL.
         screen.shell("am start -W -a android.intent.action.DIAL -d tel:0640000000")
+        assertTrue(
+            "The phone app did not come to the front",
+            VoiceTests.waitUntil(10_000) { PhoneTests.activeApp(screen.session) in EmergencyGuard.PHONE_PACKAGES },
+        )
         screen.shell("input keyevent KEYCODE_HOME")
         assertTrue("The home screen did not come back", PhoneTests.awaitActiveApp(screen.session, PhoneTests.homePackage()))
         assertEquals(Outcome.DONE, CommandTests.say("call 064 123 4567", CALL_MILLIS).outcome)
@@ -119,56 +121,23 @@ class CallCommandsTest {
     }
 
     @Test
-    fun anEmergencyNumberThatTheOwnerRefusedOnceIsCalledAfterYesCall() {
-        // The only test that says "yes, call" with an emergency number: only on the emulator, whose modem is simulated, so
-        // that the call reaches no one, and offline, so that no location goes out either.
-        assumeTrue("Only on the emulator", Build.HARDWARE == EMULATOR_HARDWARE)
-        offline {
-            CommandTests.ask("call 112", CALL_MILLIS)
-            CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-            assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
-            runBlocking { screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" } }
+    fun anEmergencyNumberThatTheOwnerRefusedOnceAsksAgainAndIsNeverCalled() = runBlocking<Unit> {
+        // Never "yes, call" with an emergency number, on any device: on kestrel-api37, an emergency call made Google Play
+        // services turn Wi-Fi back on during the call and send the emulator's location to emergency services' endpoints,
+        // although the test had turned Wi-Fi and mobile data off. The second "call 112" goes through Kestrel's emptying of
+        // the phone app's field, which shows the number after the first "no", and asks again.
+        CommandTests.ask("call 112", CALL_MILLIS)
+        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
+        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
 
-            CommandTests.ask("call 112", CALL_MILLIS)
-            CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
-            assertEquals(Outcome.DONE, CommandTests.answer("yes, call", CALL_MILLIS).outcome)
-            assertTrue("No call is active", VoiceTests.waitUntil(15_000) { listening.state.value.mode == Mode.IN_CALL })
-            // Android's end-call key does not end an emergency call, so the test ends it on the in-call screen.
-            endCall()
-        }
+        CommandTests.ask("call 112", CALL_MILLIS)
+        CommandTests.awaitSaid(PhoneCommandTexts.EMERGENCY_QUESTION)
+        assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
+        screen.awaitElement { it.viewId?.endsWith(":id/digits") == true && it.text?.filter(Char::isDigit) == "112" }
+        Thread.sleep(COUNTDOWN_AND_MORE)
+        assertTrue("A call started", listening.state.value.mode == Mode.LISTENING)
     }
-
-    // Runs [block] with Wi-Fi and mobile data off, because Google Play services' Emergency Location Service may send the
-    // device's location over the network during an emergency call. They come back once no call is active any more, and a
-    // moment later; command-test.ps1 also puts them back.
-    private fun offline(block: () -> Unit) {
-        val wifi = globalSetting("wifi_on")
-        val data = globalSetting("mobile_data")
-        screen.shell("cmd wifi set-wifi-enabled disabled")
-        screen.shell("svc data disable")
-        try {
-            assertTrue("The emulator stayed online", VoiceTests.waitUntil(15_000) { defaultNetwork() == "none" })
-            block()
-        } finally {
-            // An emergency call that a failure left active ends first, so that nothing goes out during it.
-            if (callActive()) VoiceTests.waitUntil(5_000) { endCallOnScreen() }
-            if (VoiceTests.waitUntil(15_000) { !callActive() }) {
-                Thread.sleep(AFTER_CALL_MILLIS)
-                if (data != "0") screen.shell("svc data enable")
-                if (wifi != "0") screen.shell("cmd wifi set-wifi-enabled enabled")
-            }
-        }
-    }
-
-    private fun globalSetting(name: String) = screen.shell("settings get global $name").trim()
-
-    // Android's call state for each SIM; 0 is CALL_STATE_IDLE.
-    private fun callActive() = screen.shell("dumpsys telephony.registry").lineSequence().map { it.trim() }
-        .any { it.startsWith("mCallState=") && it != "mCallState=0" }
-
-    private fun defaultNetwork() = screen.shell("dumpsys connectivity").lineSequence()
-        .firstOrNull { it.startsWith("Active default network:") }?.substringAfter(':')?.trim()
-
     @Test
     fun cancelDuringTheCountdownLeavesTheNumberInThePhoneApp() = runBlocking<Unit> {
         CommandTests.send("call 064 123 4567")
@@ -256,13 +225,12 @@ class CallCommandsTest {
         screen.open("PhoneNumberActivity", "Phone numbers fixture")
         assertEquals(PhoneCommandTexts.EMERGENCY_QUESTION, CommandTests.ask("tap emergency call"))
 
-        // An accessibility click, which is no touch, so the question stays: the button's own click action, never the gesture
-        // that ScreenActions.tap falls back to when an action fails, which the touch watcher would take for the owner's
-        // touch. Another "Emergency call" button takes the place of the one that the question was about.
-        val rearrange = screen.awaitElement { it.viewId?.endsWith(":id/rearrange_button") == true }
-        val node = screen.session.snapshots.current().node(rearrange.key)
-        assertTrue("Rearrange took no click", node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+        // A new intent to the fixture, so the question stays: on Android 17 an accessibility click reaches the input system
+        // as a touch, which the touch watcher counts as the owner's, and so does a gesture. Another "Emergency call" button
+        // takes the place of the one that the question was about.
+        screen.shell("am start -W --activity-single-top -n $FIXTURES/.PhoneNumberActivity --ez rearrange true")
         screen.awaitElement { it.viewId?.endsWith(":id/emergency_button_moved") == true }
+        assertTrue("The question ended before the answer", CommandTests.asked)
 
         assertEquals(Outcome.FAILED, CommandTests.answer("yes, call").outcome)
         CommandTests.awaitSaid(CommandTexts.SCREEN_CHANGED)
@@ -328,9 +296,6 @@ class CallCommandsTest {
         // The 4 s countdown and a little more, after which a call that was not cancelled would have started.
         const val COUNTDOWN_AND_MORE = 6_000L
 
-        // How long the emulator stays offline after an emergency call has ended.
-        const val AFTER_CALL_MILLIS = 5_000L
-
         // Kestrel waits up to 10 s for the phone app, which a cold start on the emulator takes about 4 s to show, and then up
         // to 3 s for its call button; the announcement and the countdown or the question come after that.
         const val COUNTDOWN_STARTS = 20_000L
@@ -339,8 +304,5 @@ class CallCommandsTest {
         const val BADGE_MILLIS = 10_000L
         const val SETTLED_MILLIS = 1_000L
         const val POLL_MILLIS = 100L
-
-        // The hardware of Android's emulator (ro.hardware).
-        const val EMULATOR_HARDWARE = "ranchu"
     }
 }

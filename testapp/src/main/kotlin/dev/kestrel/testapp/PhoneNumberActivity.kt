@@ -2,6 +2,7 @@ package dev.kestrel.testapp
 
 import android.app.Activity
 import android.content.ClipboardManager
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -11,10 +12,14 @@ import android.widget.TextView
  * Phone numbers for "copy this phone number" (design spec, Appendix A): an office number, a mobile number (left out with
  * the extra `single`) and a date that is no phone number. Kestrel cannot read the clipboard, so the "Paste" button reads
  * it here, while the fixture is in front, and the status line shows "Pasted" and the number. The "Emergency call" button
- * calls no one: it only shows "Emergency call pressed", for the owner's "yes, call" (design spec, section 8.7). "Rearrange"
- * puts another "Emergency call" button, with another view ID, in its place, so that the screen changes under the question.
+ * calls no one: it only shows "Emergency call pressed", for the owner's "yes, call" (design spec, section 8.7). "Rearrange",
+ * or a new intent with the extra `rearrange`, puts another "Emergency call" button, with another view ID, in its place, so
+ * that the screen changes under the question. A test uses the intent: on Android 17, an accessibility service's click on
+ * "Rearrange" reaches the input system as a touch, which Kestrel's touch watcher counts as the owner's.
  */
 class PhoneNumberActivity : Activity() {
+    private var rearrange: () -> Unit = {}
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val page = fixturePage("Phone numbers fixture")
@@ -57,18 +62,25 @@ class PhoneNumberActivity : Activity() {
         }
         page.addView(emergency)
         page.addView(moved)
+        rearrange = {
+            emergency.visibility = View.GONE
+            moved.visibility = View.VISIBLE
+        }
         page.addView(Button(this).apply {
             id = R.id.rearrange_button
             text = "Rearrange"
             isAllCaps = false
-            setOnClickListener {
-                emergency.visibility = View.GONE
-                moved.visibility = View.VISIBLE
-            }
+            setOnClickListener { rearrange() }
         })
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_REARRANGE, false)) rearrange()
     }
 
     private companion object {
         const val EXTRA_SINGLE = "single"
+        const val EXTRA_REARRANGE = "rearrange"
     }
 }

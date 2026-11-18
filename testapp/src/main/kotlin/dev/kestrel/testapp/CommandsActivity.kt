@@ -3,6 +3,7 @@ package dev.kestrel.testapp
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
@@ -40,6 +41,7 @@ import java.util.Locale
  */
 class CommandsActivity : ComponentActivity() {
     private lateinit var status: TextView
+    private lateinit var dan: View
     private var longPresses = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +57,7 @@ class CommandsActivity : ComponentActivity() {
             ),
         )
         page.addView(row(text("Message from Ana"), button("Delete") { report("Deleted Ana") }))
-        val dan = row(text("Message from Dan"), button("Delete") { report("Deleted Dan") })
+        dan = row(text("Message from Dan"), button("Delete") { report("Deleted Dan") })
         page.addView(dan)
         page.addView(row(button("Open dialog") { openDialog() }, counter(), button("Ђорђе") { report("Clicked Ђорђе") }))
         page.addView(
@@ -131,6 +133,11 @@ class CommandsActivity : ComponentActivity() {
         page.addView(pager(), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_COVER, false)) cover(dan)
+    }
+
     private fun report(text: String) {
         status.text = text
     }
@@ -160,7 +167,9 @@ class CommandsActivity : ComponentActivity() {
     }
 
     // Covers [row] with a window of its own that has nothing to tap, as a progress window does. The "Which one?" numbers
-    // stay, because no actionable element changes, but a finger can no longer reach the row's "Delete".
+    // stay, because no actionable element changes, but a finger can no longer reach the row's "Delete". "Cover Dan", or a
+    // new intent with the extra `cover`, covers Dan's row; a test uses the intent, because on Android 17 an accessibility
+    // service's click on the button reaches the input system as a touch, which Kestrel's touch watcher counts as the owner's.
     private fun cover(row: View) {
         val cover = text("Covered").apply { setBackgroundColor(0xFFFFFFFF.toInt()) }
         val left = IntArray(2).also(row::getLocationOnScreen)[0]
@@ -241,6 +250,10 @@ class CommandsActivity : ComponentActivity() {
             },
         )
         setOnScrollChangeListener { _, x, _, _, _ -> report("Showing page ${(x + width / 2) / width + 1}") }
+    }
+
+    private companion object {
+        const val EXTRA_COVER = "cover"
     }
 }
 
