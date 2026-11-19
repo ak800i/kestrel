@@ -96,7 +96,9 @@ class LoopbackServerTest {
         assertEquals("HTTP/1.1 404 Not Found", get(ipv4, session.port, "/favicon.ico"))
         assertEquals("HTTP/1.1 400 Bad Request", get(ipv4, session.port, "/auth/callback?code=test-code&state=wrong"))
         assertEquals("HTTP/1.1 400 Bad Request", get(ipv4, session.port, "/auth/callback?code=test-code"))
-        assertEquals("HTTP/1.1 200 OK", get(ipv4, session.port, "/auth/callback?code=test%2Bcode&state=test-state"))
+        // A repeated state is no state, and a repeated field is left out of the callback.
+        assertEquals("HTTP/1.1 400 Bad Request", get(ipv4, session.port, "/auth/callback?code=test-code&state=test-state&state=test-state"))
+        assertEquals("HTTP/1.1 200 OK", get(ipv4, session.port, "/auth/callback?code=test%2Bcode&state=test-state&client_id=a&client_id=b"))
 
         assertEquals(mapOf("code" to "test+code", "state" to "test-state"), result.get(5, TimeUnit.SECONDS))
         // The server closed after the callback.

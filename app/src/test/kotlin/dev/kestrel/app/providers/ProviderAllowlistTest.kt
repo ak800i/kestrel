@@ -11,6 +11,8 @@ import dev.kestrel.providers.profiles.ProvidersSetting
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import java.io.IOException
 
@@ -82,5 +84,32 @@ class ProviderAllowlistTest {
 
         assertEquals(PolicyDecision.Blocked("api.acme.test is not on the allowlist"), policy.check("https://api.acme.test/v1".toHttpUrl()))
         assertEquals(PolicyDecision.Allowed, policy.check("http://192.168.1.21:11434/".toHttpUrl()))
+    }
+
+    @Test
+    fun theJobReportsEveryFailureByItsClassAndKeepsRunning() = runTest {
+        val policy = NetworkPolicy()
+        val published = mutableListOf<ProvidersSetting>()
+        val reported = mutableListOf<Pair<String, Throwable>>()
+        val first = ProvidersSetting(profiles = listOf(key))
+        val second = ProvidersSetting(profiles = listOf(lan))
+        var reads = 0
+        // The first read fails; then a setting whose update fails, as a catalog that cannot be read; then one that applies.
+        val settings = flow {
+            if (reads++ == 0) throw IllegalStateException("test: the database failed")
+            emit(first)
+            emit(second)
+        }
+        var catalogs = 0
+        val failingOnce = { if (catalogs++ == 0) throw java.security.KeyStoreException("test") else catalog }
+
+        ProviderAllowlist.keep(settings, failingOnce, policy, { published += it }, { what, e -> reported += what to e }, retryMillis = 1_000)
+
+        assertEquals(listOf(second), published)
+        assertEquals(
+            listOf("Reading the provider setting" to IllegalStateException::class, "Updating the allowlist" to java.security.KeyStoreException::class),
+            reported.map { it.first to it.second::class },
+        )
+        assertEquals(PolicyDecision.Allowed, policy.check("http://192.168.1.20:11434/".toHttpUrl()))
     }
 }

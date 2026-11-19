@@ -122,6 +122,13 @@ internal fun ProvidersPage(data: ProviderData, onBack: () -> Unit) {
         view = LIST
     }
     if (noBrowser) Text(stringResource(R.string.providers_no_browser))
+    // The catalog's files are read off the main thread before any sub-page reads the catalog.
+    var catalogLoaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        data.loadCatalog()
+        catalogLoaded = true
+    }
+    if (!catalogLoaded) return
     when (view) {
         ADD -> AddProfile(data, addProvider, addChoice, onSaved = {
             // The profile holds the credential now, so Kestrel forgets the sign-in's result (design D10).

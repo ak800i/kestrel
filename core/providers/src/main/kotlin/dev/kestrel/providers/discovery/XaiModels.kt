@@ -8,6 +8,7 @@ import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.http.RequestAuth
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -16,9 +17,11 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /**
  * The model list of xAI's sign-in (design D13; research r31): `GET https://cli-chat-proxy.grok.com/v1/models` with the
- * sign-in's bearer and the choice's identity [headers]. Each row's `api_backend` gives its style: `responses` Responses,
- * `chat` Chat Completions, and `language` rows are dropped; `reasoning_efforts` gives its efforts. The rows are read from
- * `data`, or from `models` when there is no `data`.
+ * sign-in's bearer and the choice's identity [headers]. Every row goes through Responses, whatever its `api_backend`
+ * (`responses`, `chat` or `language`), as OpenClaw's `buildXaiOauthModelFromLiveRow` and research r31 do: the Grok CLI's
+ * proxy is configured with `api: "openai-responses"`, and `api_backend` only tells which rows exist; a row with another
+ * backend, such as an image model, is dropped. `reasoning_efforts` gives its efforts, as strings or as objects with a
+ * `value`. The rows are read from `data`, or from `models` when there is no `data`.
  */
 class XaiModels(private val http: ProviderHttp, private val auth: RequestAuth, private val headers: Map<String, String> = emptyMap()) : ModelDiscovery {
     private val json = Json { isLenient = true }
@@ -34,12 +37,8 @@ class XaiModels(private val http: ProviderHttp, private val auth: RequestAuth, p
         return rows.mapNotNull { row ->
             val model = row as? JsonObject ?: return@mapNotNull null
             val id = (model.text("id") ?: model.text("model"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val style = when (model.text("api_backend")) {
-                null, "responses" -> RequestStyle.RESPONSES
-                "chat" -> RequestStyle.CHAT_COMPLETIONS
-                else -> return@mapNotNull null
-            }
-            val efforts = (model["reasoning_efforts"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+            if (model.text("api_backend").let { it != null && it !in BACKENDS }) return@mapNotNull null
+            val efforts = (model["reasoning_efforts"] as? JsonArray)?.mapNotNull(::effort)
             DiscoveredModel(
                 id = id,
                 name = id,
@@ -47,10 +46,13 @@ class XaiModels(private val http: ProviderHttp, private val auth: RequestAuth, p
                 reasoningEfforts = efforts?.takeIf { it.isNotEmpty() },
                 contextWindow = model.number("context_window"),
                 maxTokens = model.number("max_completion_tokens"),
-                style = style,
+                style = RequestStyle.RESPONSES,
             )
         }
     }
+
+    private fun effort(entry: JsonElement): String? =
+        ((entry as? JsonObject)?.get("value") ?: entry).let { it as? JsonPrimitive }?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
 
     private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
@@ -60,5 +62,6 @@ class XaiModels(private val http: ProviderHttp, private val auth: RequestAuth, p
 
     private companion object {
         const val URL = "https://cli-chat-proxy.grok.com/v1/models"
+        val BACKENDS = setOf("responses", "chat", "language")
     }
 }

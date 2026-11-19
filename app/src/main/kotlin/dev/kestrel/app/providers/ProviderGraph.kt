@@ -133,7 +133,7 @@ internal class ProviderGraph(
     private val scope: CoroutineScope,
     private val settings: SettingsStore,
     loadCatalog: () -> Catalog,
-    val http: ProviderHttp,
+    provideHttp: () -> ProviderHttp,
     vault: CredentialVault,
     val applied: StateFlow<ProvidersSetting?>,
     private val policy: NetworkPolicy,
@@ -143,6 +143,12 @@ internal class ProviderGraph(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     val catalog: Catalog by lazy(loadCatalog)
+
+    /**
+     * The providers' requests, built on first use: building the gateway's HTTP client on the main thread delays the start
+     * of the settings. The Providers page calls the graph on Dispatchers.IO (StoredProviderData), so the first use is off it.
+     */
+    val http: ProviderHttp by lazy(provideHttp)
     val credentials: CredentialManager by lazy { CredentialManager(vault, http, catalog, scope, clock) }
     private val writes = Mutex()
 
@@ -170,7 +176,7 @@ internal class ProviderGraph(
     fun adapter(style: RequestStyle): ChatAdapter = Adapters.forStyle(style, http)
 
     private fun client(profile: Profile, limits: PlanLimits) =
-        ProfileClient(profile, catalog, applied, resolver::resolve, ::adapter, localNetwork, ::addSpending, limits, clock)
+        ProfileClient(profile, catalog, applied, resolver::resolve, ::adapter, localNetwork, ::addSpending, limits, clock, report = report)
 
     /** Adds a call's credits and tokens to the month's spending (design D14). */
     suspend fun addSpending(profileId: String, month: String, credits: Double, tokens: Long) = writes.withLock {
@@ -199,10 +205,6 @@ internal class ProviderGraph(
     @Volatile
     var tabOpened = false
         private set
-
-    /** Whether the settings activity is in front, which MainActivity sets in onResume and onPause. */
-    @Volatile
-    var settingsResumed = false
 
     @Volatile
     private var job: Job? = null

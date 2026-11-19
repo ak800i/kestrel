@@ -51,7 +51,9 @@ class ChatGptPlanFlow(
         callback["error"]?.let { throw SignInFailed(if (it == "access_denied") SignInFailure.CANCELLED else SignInFailure.REGISTRATION_REFUSED) }
         val returned = callback["client_id"]
         val clientId = if (registration == null) {
-            returned?.takeIf { it.isNotEmpty() && it != ChatGptPlanAuth.DYNAMIC_CLIENT } ?: throw SignInFailed(SignInFailure.REGISTRATION_INCOMPLETE)
+            // An issued client ID has OpenAI's form, as OpenClaw checks; the dynamic client's placeholder never has it, and a
+            // client ID that the callback repeats is missing, because the loopback server leaves repeated fields out.
+            returned?.takeIf { ISSUED_CLIENT_ID.matches(it) } ?: throw SignInFailed(SignInFailure.REGISTRATION_INCOMPLETE)
         } else {
             if (returned != null && returned != registration.clientId) throw SignInFailed(SignInFailure.OTHER_ACCOUNT)
             registration.clientId
@@ -79,6 +81,8 @@ class ChatGptPlanFlow(
                     else -> SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
                 }
             }
+            // OpenAI's token answer is a bearer token; any other type is not one that Kestrel can send.
+            if (!body?.string("token_type").equals("bearer", ignoreCase = true)) throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
             val access = body?.string("access_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
             val refresh = body.string("refresh_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
             // An empty token is an answer that Kestrel cannot read; the catch below keeps the issued client ID for it.
@@ -149,6 +153,7 @@ class ChatGptPlanFlow(
     companion object {
         private const val CALLBACK_WAIT_MILLIS = 5 * 60_000L
         private val REVOKE_PAUSES = listOf(1_000L, 3_000L)
+        private val ISSUED_CLIENT_ID = Regex("^oaiapp_[A-Za-z0-9_-]+$")
 
         /**
          * Reads `https://auth.openai.com/.well-known/openid-configuration` and trusts it only when its `issuer` is

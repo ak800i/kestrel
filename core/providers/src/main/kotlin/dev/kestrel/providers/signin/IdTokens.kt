@@ -30,7 +30,8 @@ object IdTokens {
 
     /**
      * The claims, or null when any check fails: the signature, `iss` equal to [issuer], `aud` (a string or an array) that
-     * holds [audience], `exp` in the future with 60 s allowed for clock difference, `nonce` equal to [nonce], and a `sub`.
+     * holds [audience], an `azp` equal to [audience] when the token has one (OpenID Connect Core 3.1.3.7), `exp` in the
+     * future with 60 s allowed for clock difference, `nonce` equal to [nonce], and a `sub`.
      */
     fun verify(idToken: String, keys: JsonObject, issuer: String, audience: String, nonce: String, nowMillis: Long): IdTokenClaims? {
         val parts = idToken.split('.')
@@ -49,6 +50,7 @@ object IdTokens {
         val audienceOk = (aud as? JsonPrimitive)?.takeIf { it.isString }?.content == audience ||
             (aud as? JsonArray)?.any { (it as? JsonPrimitive)?.content == audience } == true
         if (!audienceOk) return null
+        if (claims["azp"] != null && claims.string("azp") != audience) return null
         val expiry = (claims["exp"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull ?: return null
         if ((expiry * 1000).toLong() + CLOCK_SKEW_MILLIS <= nowMillis) return null
         if (claims.string("nonce") != nonce) return null

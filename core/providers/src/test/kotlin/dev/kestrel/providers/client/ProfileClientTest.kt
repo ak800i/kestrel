@@ -114,6 +114,21 @@ class ProfileClientTest {
     }
 
     @Test
+    fun aSpendingThatCannotBeWrittenIsReportedByItsClassAndTheAnswerIsReturned() = runTest {
+        val reported = mutableListOf<Throwable>()
+        val client = ProfileClient(
+            profile(), catalog, MutableStateFlow(ProvidersSetting(listOf(profile()))), { _, _ -> target() }, { adapter({ answer }) }, { true },
+            spend = { _, _, _, _ -> throw java.security.KeyStoreException("test: the Keystore failed") }, limits = NoLimits,
+            report = { _, e -> reported += e },
+        )
+
+        val priced = client.complete(ModelRole.LIGHTWEIGHT, request)
+
+        assertEquals(answer, priced.response)
+        assertEquals(listOf(java.security.KeyStoreException::class), reported.map { it::class })
+    }
+
+    @Test
     fun anAttemptThatRunsOutOfTimeIsATimeoutAndIsTriedAgainAfterOneSecond() = runTest {
         val priced = client(profile(), adapter({ delay(31_000); answer }, { answer })).complete(ModelRole.LIGHTWEIGHT, request)
 

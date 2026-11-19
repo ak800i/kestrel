@@ -172,6 +172,21 @@ class XaiDeviceFlowTest {
     }
 
     @Test
+    fun anEmptyRefreshTokenIsMalformed() {
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        server.enqueue(json(200, """{"access_token":"test-xai-access-1","refresh_token":"","expires_in":3600}"""))
+
+        try {
+            runBlocking { flow().let { it.await(it.start()) } }
+            fail("expected a ProviderException")
+        } catch (e: ProviderException) {
+            assertEquals(ProviderError.Malformed, e.error)
+        }
+        assertEquals(0, open)
+    }
+
+    @Test
     fun cancellingTheWaitClosesTheLease() = runBlocking {
         server.enqueue(fixture(200, "xai/openid-configuration.json"))
         server.enqueue(fixture(200, "xai/device-authorization.json"))

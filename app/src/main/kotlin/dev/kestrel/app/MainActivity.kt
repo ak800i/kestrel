@@ -99,14 +99,10 @@ class MainActivity : ComponentActivity() {
         // The A71 session reads the time of the settings in front (plan 2E).
         graph.timeline.settingsResumed()
         graph.problems.settingsOpened()
-        // SignInService brings the settings back after a sign-in in the browser only while they are not in front (design
-        // D10 of sub-project 4).
-        graph.providers.settingsResumed = true
         refresh()
     }
 
     override fun onPause() {
-        graph.providers.settingsResumed = false
         graph.timeline.settingsPaused()
         super.onPause()
     }

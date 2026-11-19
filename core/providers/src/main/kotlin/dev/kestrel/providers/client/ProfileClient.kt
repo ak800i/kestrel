@@ -17,6 +17,7 @@ import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.providers.profiles.Profile
 import dev.kestrel.providers.profiles.ProvidersSetting
 import dev.kestrel.providers.styles.JsonActions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
@@ -49,7 +50,8 @@ interface PlanLimits {
  * unreachable provider twice, after 1 s and 3 s or after a `Retry-After` of at most 10 s. A longer `Retry-After` fails at
  * once, so that sub-project 5 can switch models; a QuotaOrPolicy is never retried, and on a ChatGPT plan profile its 429
  * marks the plan's usage limit until a later call works. Each answer is priced, and its credits and tokens are added to
- * the month's spending, also when the caller stops meanwhile. A stop reaches the caller as a CancellationException,
+ * the month's spending, also when the caller stops meanwhile; when that addition fails, the failure goes to [report] by
+ * its classes and the call still returns its answer, which the provider has already charged for. A stop reaches the caller as a CancellationException,
  * unchanged. Each call reads the profile with [profile]'s ID from the applied setting, for its hosts, its target and its
  * price, so that a client that sub-project 5 keeps follows the owner's edits, a new Copilot base and a new sign-in;
  * resolving the target has the limit of one attempt.
@@ -65,6 +67,7 @@ class ProfileClient(
     private val limits: PlanLimits,
     private val clock: () -> Long = System::currentTimeMillis,
     private val pause: suspend (Long) -> Unit = { delay(it) },
+    private val report: (String, Throwable) -> Unit = { _, _ -> },
 ) {
     private val prices = PriceTable(catalog)
 
@@ -112,7 +115,13 @@ class ProfileClient(
         val cost = CostMeter.cost(response.usage, choice)
         // The provider has answered and charges for it, so a stop of the caller at this moment still counts it.
         withContext(NonCancellable) {
-            spend(current.id, Spending.monthOf(now), cost.credits, response.usage.totalInput + response.usage.output)
+            try {
+                spend(current.id, Spending.monthOf(now), cost.credits, response.usage.totalInput + response.usage.output)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("Adding a call's spending", e)
+            }
         }
         return PricedResponse(response, cost, target.style)
     }

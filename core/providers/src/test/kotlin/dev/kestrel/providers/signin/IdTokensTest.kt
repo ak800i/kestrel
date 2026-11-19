@@ -32,6 +32,9 @@ class IdTokensTest {
         assertNull(verify(keys.token(keys.claims(audience = "\"oaiapp_other\""))))
         assertNull(verify(keys.token(keys.claims(expiresInSeconds = -120))))
         assertNull(verify(keys.token(keys.claims(nonce = "another-nonce"))))
+        // An authorized party that is another client, as OpenID Connect Core 3.1.3.7 asks; the client's own one passes.
+        assertNull(verify(keys.token(keys.claims().replace("\"iat\"", "\"azp\":\"oaiapp_other\",\"iat\""))))
+        assertEquals(IdTokenClaims("test-subject"), verify(keys.token(keys.claims().replace("\"iat\"", "\"azp\":\"oaiapp_test\",\"iat\""))))
     }
 
     @Test

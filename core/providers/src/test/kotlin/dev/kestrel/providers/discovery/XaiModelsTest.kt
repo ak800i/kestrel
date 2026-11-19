@@ -30,14 +30,19 @@ class XaiModelsTest {
     }
 
     @Test
-    fun eachRowsBackendGivesItsStyleAndLanguageRowsAreDropped() = runBlocking {
+    fun everyChatRowGoesThroughResponsesAndOtherBackendsAreDropped() = runBlocking {
         server.enqueue(fixture(200, "xai/models.json"))
         val identity = mapOf("X-XAI-Token-Auth" to "xai-grok-cli", "x-grok-client-version" to "1.0.13")
 
         val models = XaiModels(ProviderHttp(calls), ApiKeyAuth("test-xai-access-1", KeyHeader.BEARER), identity).list()
 
-        assertEquals(listOf("grok-4.7" to RequestStyle.RESPONSES, "grok-code-2" to RequestStyle.CHAT_COMPLETIONS), models.map { it.id to it.style })
+        // As OpenClaw's buildXaiOauthModelFromLiveRow: the proxy serves every row through Responses, and an image model is dropped.
+        assertEquals(
+            listOf("grok-4.7" to RequestStyle.RESPONSES, "grok-code-2" to RequestStyle.RESPONSES, "grok-4.7-mini" to RequestStyle.RESPONSES),
+            models.map { it.id to it.style },
+        )
         assertEquals(listOf("low", "high"), models[0].reasoningEfforts)
+        assertEquals(listOf("low", "medium"), models[2].reasoningEfforts)
         assertEquals(2_000_000, models[0].contextWindow)
         assertEquals(64_000, models[0].maxTokens)
         assertEquals(false, models[1].reasoning)

@@ -104,6 +104,18 @@ class MiniMaxDeviceFlowTest {
     }
 
     @Test
+    fun aTokenExpiryInThePastGetsTheShortestLife() = runBlocking {
+        // A phone clock that runs ahead of MiniMax's: the token's expiry, an epoch time in seconds, has already passed.
+        now = 1_800_000_000_000L
+        polls += json(200, read("minimax/token.json").replace("\"expired_in\": 7200", "\"expired_in\": ${now / 1000 - 10}"))
+        val flow = flow()
+
+        val token = flow.await(flow.start()).credential as Credential.OAuthToken
+
+        assertEquals(now + TokenTimes.SHORTEST_LIFE_MILLIS, token.expiresAtMillis)
+    }
+
+    @Test
     fun aChangedStateIsRefusedAndAForeignResourceUrlFallsBackToTheRegionsRoute() = runBlocking {
         stateBack = "another-state"
         assertEquals(SignInFailure.EXCHANGE_FAILED, failureOf { flow().start() })

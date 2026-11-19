@@ -75,8 +75,8 @@ class XaiDeviceFlow(
                 val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
                 if (reply.status in 200..299) {
                     val access = body.string("access_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
-                    if (access.isEmpty()) throw ProviderException(ProviderError.Malformed)
                     val refresh = body.string("refresh_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
+                    if (access.isEmpty() || refresh.isEmpty()) throw ProviderException(ProviderError.Malformed)
                     val now = clock()
                     val expiresAt = body.number("expires_in")?.let { now + it * 1000 } ?: TokenTimes.jwtExpiry(access)
                         ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)

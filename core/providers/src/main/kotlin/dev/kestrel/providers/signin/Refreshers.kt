@@ -71,12 +71,12 @@ class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: ()
                 else -> Refresh.ForNow(SignInHttp.failure(reply, http).error)
             }
         }
-        val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
+        val access = body?.string("access_token")?.takeIf { it.isNotEmpty() } ?: return Refresh.ForNow(ProviderError.Malformed)
         val now = clock()
         return Refresh.Done(
             token.copy(
                 access = access,
-                refresh = body.string("refresh_token") ?: refreshToken,
+                refresh = body.string("refresh_token")?.takeIf { it.isNotEmpty() } ?: refreshToken,
                 expiresAtMillis = body.number("expires_in")?.let { now + it * 1000 },
                 earliestRefreshAtMillis = TokenTimes.earliestRefreshAt(body["earliest_refresh_at"]),
             ),
@@ -126,10 +126,10 @@ class XaiRefresher(
             if (reply.status !in 200..299) {
                 return if (SignInHttp.errorCode(body) in FINAL_ERRORS) Refresh.Refused() else Refresh.ForNow(SignInHttp.failure(reply, http).error)
             }
-            val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
+            val access = body?.string("access_token")?.takeIf { it.isNotEmpty() } ?: return Refresh.ForNow(ProviderError.Malformed)
             val now = clock()
             val expiresAt = (body.number("expires_in")?.let { now + it * 1000 } ?: TokenTimes.jwtExpiry(access))?.let { TokenTimes.notPast(it, now) }
-            return Refresh.Done(token.copy(access = access, refresh = body.string("refresh_token") ?: refreshToken, expiresAtMillis = expiresAt))
+            return Refresh.Done(token.copy(access = access, refresh = body.string("refresh_token")?.takeIf { it.isNotEmpty() } ?: refreshToken, expiresAtMillis = expiresAt))
         }
     }
 
@@ -144,8 +144,9 @@ class XaiRefresher(
  * MiniMax's refresh (design D9, research r31): a form POST to the token endpoint of the account host that signed in, which
  * must be one of MiniMax's two and, when [region] is given, the profile's region's: a token of the other region is
  * refused, so that the owner signs in again. A body with `status: "error"` or a `base_resp.status_code` other than 0 is
- * final, whatever the HTTP status; any other refused or unreadable answer keeps the sign-in. Without a new refresh token
- * the old one stays.
+ * final, whatever the HTTP status; any other refused or unreadable answer keeps the sign-in. Without a new refresh token,
+ * or with an empty one, the old one stays; an empty access token is Malformed for now, and an expiry that has already
+ * passed gets [TokenTimes.SHORTEST_LIFE_MILLIS], as at the sign-in.
  */
 class MiniMaxRefresher(
     private val http: ProviderHttp,
@@ -170,13 +171,13 @@ class MiniMaxRefresher(
         val body = SignInHttp.parse(reply)
         if (body != null && MiniMaxAuth.failed(body)) return Refresh.Refused()
         if (reply.status !in 200..299) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
-        val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
+        val access = body?.string("access_token")?.takeIf { it.isNotEmpty() } ?: return Refresh.ForNow(ProviderError.Malformed)
         val now = clock()
         return Refresh.Done(
             token.copy(
                 access = access,
-                refresh = body.string("refresh_token") ?: refreshToken,
-                expiresAtMillis = body.number("expired_in")?.let { TokenTimes.miniMaxTime(it, now) },
+                refresh = body.string("refresh_token")?.takeIf { it.isNotEmpty() } ?: refreshToken,
+                expiresAtMillis = body.number("expired_in")?.let { TokenTimes.notPast(TokenTimes.miniMaxTime(it, now), now) },
             ),
         )
     }

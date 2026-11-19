@@ -18,18 +18,25 @@ import dev.kestrel.providers.profiles.ProfileModel
 import dev.kestrel.providers.profiles.ProvidersSetting
 import dev.kestrel.providers.signin.Entries
 import dev.kestrel.providers.signin.SignInResult
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneOffset
 
 /**
  * What the Providers page reads and changes (design D18). [StoredProviderData] connects it to the provider graph; the
- * page's device test uses a fake, so that it never adds a profile for a remote provider.
+ * page's device test uses a fake, so that it never adds a profile for a remote provider. The page reads [catalog] only
+ * after [loadCatalog].
  */
 interface ProviderData {
     val catalog: Catalog
+
+    /** Reads the catalog's files off the main thread, before the page reads [catalog]. */
+    suspend fun loadCatalog() = Unit
     val setting: Flow<ProvidersSetting>
     val spending: Flow<Spending>
     val signIn: StateFlow<SignInState>
@@ -97,8 +104,19 @@ interface ProviderData {
     fun priceKnown(profile: Profile, modelId: String): Boolean
 }
 
-internal class StoredProviderData(private val graph: ProviderGraph) : ProviderData {
+/**
+ * The page's calls of the provider graph. Each suspend call runs on [io], so that no credential read, Keystore call or
+ * provider request of the page runs on the main thread, also when it builds the graph's HTTP client on first use.
+ */
+internal class StoredProviderData(private val graph: ProviderGraph, private val io: CoroutineDispatcher = Dispatchers.IO) : ProviderData {
     override val catalog: Catalog get() = graph.catalog
+
+    /** One price table for the page, which reads it at each composition of a model's section. */
+    private val prices by lazy { PriceTable(graph.catalog) }
+
+    override suspend fun loadCatalog() {
+        withContext(io) { graph.catalog }
+    }
     override val setting: Flow<ProvidersSetting> = graph.stored.filterNotNull()
     override val spending: Flow<Spending> = graph.spending
     override val signIn: StateFlow<SignInState> = graph.signIn
@@ -109,7 +127,7 @@ internal class StoredProviderData(private val graph: ProviderGraph) : ProviderDa
 
     override fun reopenPage() = graph.reopenPage()
 
-    override suspend fun signInAgain(profileId: String) = graph.signInAgain(profileId)
+    override suspend fun signInAgain(profileId: String) = withContext(io) { graph.signInAgain(profileId) }
 
     override fun startSignIn(providerId: String, choiceId: String, tenant: String?, consent: Boolean, newRegistration: Boolean, profileId: String?) =
         graph.startSignIn(providerId, choiceId, tenant, consent, newRegistration, profileId)
@@ -120,39 +138,39 @@ internal class StoredProviderData(private val graph: ProviderGraph) : ProviderDa
 
     override fun localNetworkAllowed(host: String): Boolean = !LocalNetwork.needsPermission(host) || graph.localNetwork.allowed(host)
 
-    override suspend fun check(draft: Profile, credential: Credential?): CheckResult = graph.check(draft, credential)
+    override suspend fun check(draft: Profile, credential: Credential?): CheckResult = withContext(io) { graph.check(draft, credential) }
 
     override suspend fun save(draft: Profile, credential: Credential?, discovered: List<DiscoveredModel>, makeDefault: Boolean): Profile =
-        graph.save(draft, credential, discovered, makeDefault)
+        withContext(io) { graph.save(draft, credential, discovered, makeDefault) }
 
-    override suspend fun delete(profileId: String): Boolean = graph.delete(profileId)
+    override suspend fun delete(profileId: String): Boolean = withContext(io) { graph.delete(profileId) }
 
-    override suspend fun setDefault(profileId: String) = graph.setDefault(profileId)
+    override suspend fun setDefault(profileId: String) = withContext(io) { graph.setDefault(profileId) }
 
-    override suspend fun rename(profileId: String, name: String) = graph.rename(profileId, name)
+    override suspend fun rename(profileId: String, name: String) = withContext(io) { graph.rename(profileId, name) }
 
-    override suspend fun setModel(profileId: String, role: ModelRole, model: ProfileModel) = graph.setModel(profileId, role, model)
+    override suspend fun setModel(profileId: String, role: ModelRole, model: ProfileModel) = withContext(io) { graph.setModel(profileId, role, model) }
 
-    override suspend fun setSwitch(identity: String, on: Boolean) = graph.setSwitch(identity, on)
+    override suspend fun setSwitch(identity: String, on: Boolean) = withContext(io) { graph.setSwitch(identity, on) }
 
-    override suspend fun replaceCredential(profileId: String, result: SignInResult) = graph.replaceCredential(profileId, result)
+    override suspend fun replaceCredential(profileId: String, result: SignInResult) = withContext(io) { graph.replaceCredential(profileId, result) }
 
-    override suspend fun maskedKey(profileId: String): String? {
-        val profile = graph.stored.value?.profiles?.firstOrNull { it.id == profileId } ?: return null
-        return (profile.credentialId?.let { graph.credentials.read(it) } as? Credential.ApiKey)?.let { Entries.masked(it.key) }
+    override suspend fun maskedKey(profileId: String): String? = withContext(io) {
+        val profile = graph.stored.value?.profiles?.firstOrNull { it.id == profileId } ?: return@withContext null
+        (profile.credentialId?.let { graph.credentials.read(it) } as? Credential.ApiKey)?.let { Entries.masked(it.key) }
     }
 
-    override suspend fun models(profileId: String): List<ModelEntry> {
-        val profile = graph.stored.value?.profiles?.firstOrNull { it.id == profileId } ?: return emptyList()
-        return OfferedModels.rows(graph.catalog, profile.providerId, profile.choiceId, graph.models(profileId).models)
+    override suspend fun models(profileId: String): List<ModelEntry> = withContext(io) {
+        val profile = graph.stored.value?.profiles?.firstOrNull { it.id == profileId } ?: return@withContext emptyList()
+        OfferedModels.rows(graph.catalog, profile.providerId, profile.choiceId, graph.models(profileId).models)
     }
 
-    override suspend fun refreshModels(profileId: String): List<ModelEntry> = graph.refreshModels(profileId)
+    override suspend fun refreshModels(profileId: String): List<ModelEntry> = withContext(io) { graph.refreshModels(profileId) }
 
-    override suspend fun allowance(profileId: String): List<CopilotQuota> = graph.allowance(profileId)
+    override suspend fun allowance(profileId: String): List<CopilotQuota> = withContext(io) { graph.allowance(profileId) }
 
     override fun priceKnown(profile: Profile, modelId: String): Boolean {
         val name = graph.catalog.provider(profile.providerId)?.models?.firstOrNull { it.id == modelId }?.name
-        return PriceTable(graph.catalog).priceFor(profile, modelId, name, LocalDate.now(ZoneOffset.UTC)).known
+        return prices.priceFor(profile, modelId, name, LocalDate.now(ZoneOffset.UTC)).known
     }
 }

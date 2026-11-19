@@ -157,6 +157,11 @@ class ChatGptPlanFlowTest {
         assertEquals(SignInFailure.REGISTRATION_INCOMPLETE, failureOf(flow()).kind)
         loopback.answer = issuedCallback("dynamic_agent_client")
         assertEquals(SignInFailure.REGISTRATION_INCOMPLETE, failureOf(flow()).kind)
+        // Only an ID of OpenAI's form (`oaiapp_` and letters, digits, `_` or `-`) is an issued client ID.
+        loopback.answer = issuedCallback("oaiapp_test/other")
+        assertEquals(SignInFailure.REGISTRATION_INCOMPLETE, failureOf(flow()).kind)
+        loopback.answer = issuedCallback("client_test")
+        assertEquals(SignInFailure.REGISTRATION_INCOMPLETE, failureOf(flow()).kind)
         assertTrue(forms.isEmpty())
     }
 
@@ -224,6 +229,17 @@ class ChatGptPlanFlowTest {
 
         assertEquals(listOf(SignInFailure.EXCHANGE_FAILED, SignInFailure.EXCHANGE_FAILED), listOf(noAccess.kind, noRefresh.kind))
         assertEquals(listOf(kept, kept), listOf(noAccess.registration, noRefresh.registration))
+    }
+
+    @Test
+    fun aTokenAnswerThatIsNotABearerTokenFailsTheExchangeAndKeepsTheIssuedClientId() {
+        loopback.answer = issuedCallback("oaiapp_test")
+        tokenReply = { json(200, tokenBody().replace(Regex("\"token_type\"\\s*:\\s*\"[^\"]*\""), "\"token_type\": \"mac\"")) }
+
+        val failed = failureOf(flow())
+
+        assertEquals(SignInFailure.EXCHANGE_FAILED, failed.kind)
+        assertEquals(ChatGptRegistration("oaiapp_test", null), failed.registration)
     }
 
     @Test

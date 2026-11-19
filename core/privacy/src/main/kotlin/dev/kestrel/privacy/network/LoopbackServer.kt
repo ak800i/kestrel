@@ -34,8 +34,9 @@ class LoopbackServer(private val ipv6Loopback: () -> Boolean = ::hasIpv6Loopback
      * One listening server. [await] blocks, so callers run it on Dispatchers.IO. It accepts only a `GET` of the exact path
      * and reads at most 8 KB of a request; other paths, such as Chrome's `/favicon.ico`, get 404; a request on the path with
      * a wrong or missing `state` gets a short error page, and the server keeps waiting; the callback with the right state
-     * gets a short page without outside resources, and its query is returned. The server closes after that callback,
-     * after [await]'s time, or on [close].
+     * gets a short page without outside resources, and its query is returned. A field that the query names more than once
+     * is left out of it, so that a sign-in never takes one of two values (a repeated `state` is therefore a missing one).
+     * The server closes after that callback, after [await]'s time, or on [close].
      */
     class Session internal constructor(private val sockets: List<ServerSocket>, private val path: String) : AutoCloseable {
         val port: Int = sockets.first().localPort
@@ -142,13 +143,14 @@ class LoopbackServer(private val ipv6Loopback: () -> Boolean = ::hasIpv6Loopback
 
         private fun parseQuery(query: String): Map<String, String> {
             val fields = linkedMapOf<String, String>()
+            val repeated = mutableSetOf<String>()
             for (field in query.split('&')) {
                 if (field.isEmpty()) continue
                 val name = decode(field.substringBefore('=')) ?: continue
                 val value = decode(field.substringAfter('=', "")) ?: continue
-                fields.putIfAbsent(name, value)
+                if (fields.putIfAbsent(name, value) != null) repeated += name
             }
-            return fields
+            return fields - repeated
         }
 
         private fun decode(text: String): String? =

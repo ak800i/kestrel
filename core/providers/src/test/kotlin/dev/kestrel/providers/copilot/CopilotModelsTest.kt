@@ -6,6 +6,7 @@ import dev.kestrel.providers.discovery.DiscoveredModel
 import dev.kestrel.providers.http.ApiKeyAuth
 import dev.kestrel.providers.http.KeyHeader
 import dev.kestrel.providers.http.ProviderHttp
+import dev.kestrel.providers.signin.SignInFixtures
 import dev.kestrel.providers.signin.SignInFixtures.catalog
 import dev.kestrel.providers.signin.SignInFixtures.fixture
 import dev.kestrel.providers.testing.RedirectingCalls
@@ -58,6 +59,19 @@ class CopilotModelsTest {
         val sent = server.takeRequest()
         for ((name, value) in runtime) assertEquals(name, value, sent.headers[name])
         assertEquals("Bearer test-github-token", sent.headers["Authorization"])
+    }
+
+    @Test
+    fun aModelListedTwiceIsShownOnceWithItsFirstRowAndAPolicyStateIsReadInAnyCase() = runBlocking {
+        fun row(id: String, name: String, state: String) =
+            """{"id": "$id", "name": "$name", "object": "model", "model_picker_enabled": true, "policy": {"state": "$state"},
+                "capabilities": {"type": "chat", "supports": {"streaming": true, "tool_calls": true}}}"""
+        val body = """{"data": [${row("gpt-6-luna", "First", "enabled")}, ${row("gpt-6-luna", "Second", "enabled")}, ${row("gpt-6-sol", "Off", "Disabled")}]}"""
+        server.enqueue(SignInFixtures.json(200, body))
+
+        val models = CopilotModels(http, "https://api.individual.githubcopilot.com/".toHttpUrl(), ApiKeyAuth("test-github-token", KeyHeader.BEARER), emptyMap()).list()
+
+        assertEquals(listOf("gpt-6-luna" to "First"), models.map { it.id to it.name })
     }
 
     @Test

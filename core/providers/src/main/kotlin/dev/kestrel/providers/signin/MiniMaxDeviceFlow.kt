@@ -86,7 +86,9 @@ class MiniMaxDeviceFlow(
             val access = body.string("access_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
             val refresh = body.string("refresh_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
             if (access.isEmpty() || refresh.isEmpty()) throw ProviderException(ProviderError.Malformed)
-            val expiresAt = body.number("expired_in")?.let { TokenTimes.miniMaxTime(it, clock()) }
+            val now = clock()
+            // A time that has passed, as after a clock that runs ahead or a deadline in another unit, still gives a short life.
+            val expiresAt = body.number("expired_in")?.let { TokenTimes.notPast(TokenTimes.miniMaxTime(it, now), now) }
             val base = body.string("resource_url")?.toHttpUrlOrNull()?.takeIf(::ownRoute)?.toString() ?: region.apiBase
             val credential = Credential.OAuthToken(access, refresh, expiresAt, tokenEndpoint = region.tokenUrl, region = region.name.lowercase())
             return SignInResult(credential, baseUrl = base, hosts = setOf(region.accountHost, base.toHttpUrl().host))

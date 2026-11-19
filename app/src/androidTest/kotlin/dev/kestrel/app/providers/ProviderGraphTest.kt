@@ -3,10 +3,12 @@ package dev.kestrel.app.providers
 import android.content.ComponentName
 import android.content.ContextWrapper
 import android.content.Intent
+import android.os.Looper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.settings.StoredProviderData
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.SettingRow
 import dev.kestrel.privacy.db.SettingsDao
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -51,6 +54,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import javax.crypto.KeyGenerator
@@ -81,6 +85,9 @@ class ProviderGraphTest {
 
     private lateinit var graph: ProviderGraph
 
+    /** For each use of the HTTP client and each call: whether it ran on the main thread. */
+    private val onMain = ConcurrentLinkedQueue<Boolean>()
+
     @Before
     fun start() {
         server.start()
@@ -88,10 +95,18 @@ class ProviderGraphTest {
         val gateway = NetworkGateway(policy) {}
         // Every request goes to the MockWebServer, with its path, as plan 4A's RedirectingCalls does in the JVM tests.
         val calls = object : Call.Factory {
-            override fun newCall(request: Request): Call = gateway.callFactory.newCall(request.newBuilder().url(server.url(request.url.encodedPath)).build())
+            override fun newCall(request: Request): Call {
+                onMain += Looper.myLooper() == Looper.getMainLooper()
+                return gateway.callFactory.newCall(request.newBuilder().url(server.url(request.url.encodedPath)).build())
+            }
         }
         graph = ProviderGraph(
-            context, scope, settings, { catalog }, ProviderHttp(calls), vault, MutableStateFlow(null), NetworkPolicy(), { _, _ -> }, loopback, { true },
+            context, scope, settings, { catalog },
+            {
+                onMain += Looper.myLooper() == Looper.getMainLooper()
+                ProviderHttp(calls)
+            },
+            vault, MutableStateFlow(null), NetworkPolicy(), { _, _ -> }, loopback, { true },
         )
     }
 
@@ -192,6 +207,24 @@ class ProviderGraphTest {
 
         assertEquals(SignInState.Failed("openrouter", "openrouter-oauth", SignInFailure.NOT_STORED, null, profile.id), done)
         assertEquals(Credential.ApiKey("sk-test-old"), vault.read("test-credential"))
+    }
+
+    @Test
+    fun thePagesCallsBuildAndUseTheHttpClientOffTheMainThread() = runBlocking {
+        val copilot = Profile(
+            "test-copilot", "Copilot", "github-copilot", "github-copilot", AuthMethod.DEVICE_CODE, "test-credential",
+            baseUrl = "https://api.individual.githubcopilot.com", lightweight = ProfileModel("test-model"), versatile = ProfileModel("test-model"),
+        )
+        vault.write("test-credential", Credential.GitHubToken("test-github-token", "github.com"))
+        settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(copilot), defaultProfileId = copilot.id))
+        server.enqueue(MockResponse.Builder().code(200).body("""{"data": []}""").build())
+        withTimeout(10_000) { graph.stored.first { it?.profiles?.isNotEmpty() == true } }
+
+        // As the page calls it, from the main thread.
+        withContext(Dispatchers.Main) { StoredProviderData(graph).refreshModels(copilot.id) }
+
+        assertEquals("the client was built and one request sent", 2, onMain.size)
+        assertEquals(listOf(false, false), onMain.toList())
     }
 
     @Test

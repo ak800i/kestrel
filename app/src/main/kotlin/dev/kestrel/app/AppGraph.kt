@@ -83,7 +83,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.IOException
 
 /** Every setting that Kestrel stores. */
 object SettingKeys {
@@ -203,24 +202,13 @@ class AppGraph(context: Context) {
     /**
      * Keeps the allowlist in step with the stored profiles (design spec, section 13.1): at start and after each change, the
      * hosts of every profile whose borrowed sign-in is on go to the allowlist and the local servers to its list of local
-     * servers, and then the applied setting is published. A failed update is logged by its classes only, and the next
-     * change tries again. If reading the setting fails, the flow ends: the allowlist keeps the hosts of the last update
-     * until the process restarts.
+     * servers, and then the applied setting is published. Every failure but a cancellation is logged by its classes only,
+     * and the job keeps running: the next change tries a failed update again, and a failed read of the setting is read
+     * again after a pause (ProviderAllowlist.keep).
      */
     private fun keepProviderHosts() {
         scope.launch {
-            settings.observe(SettingKeys.PROVIDERS)
-                .catch { reportFailure("Reading the provider setting", it) }
-                .collect { setting ->
-                    try {
-                        ProviderAllowlist.apply(setting, { catalog }, networkPolicy)
-                        appliedSetting.value = setting
-                    } catch (e: IllegalArgumentException) {
-                        reportFailure("Updating the allowlist", e)
-                    } catch (e: IOException) {
-                        reportFailure("Updating the allowlist", e)
-                    }
-                }
+            ProviderAllowlist.keep(settings.observe(SettingKeys.PROVIDERS), { catalog }, networkPolicy, { appliedSetting.value = it }, reportFailure)
         }
     }
 
@@ -230,7 +218,7 @@ class AppGraph(context: Context) {
      */
     // Named in full, because the design gives this plan only the marker's place in AppGraph.kt.
     internal val providers: dev.kestrel.app.providers.ProviderGraph by lazy {
-        dev.kestrel.app.providers.ProviderGraph(appContext, scope, settings, { catalog }, providerHttp, credentialVault, appliedProviders, networkPolicy, reportFailure)
+        dev.kestrel.app.providers.ProviderGraph(appContext, scope, settings, { catalog }, { providerHttp }, credentialVault, appliedProviders, networkPolicy, reportFailure)
     }
 
     // Plan 4C: provider graph

@@ -20,7 +20,8 @@ import okhttp3.HttpUrl
 
 /**
  * Copilot's model list (design D12; research r27): `GET <base>/models` with the runtime headers and the bearer. A model is
- * shown when `model_picker_enabled` is true, its `policy.state` is neither `disabled` nor `unconfigured`, its `object` is
+ * shown once, with its first row, when `model_picker_enabled` is true, its `policy.state` is neither `disabled` nor
+ * `unconfigured` in any case, its `object` is
  * `model` and its `capabilities.type` `chat` (or absent), it streams (Kestrel streams every Copilot request) and its ID
  * does not start with `accounts/`. Its tool support, image input, reasoning efforts and limits come from its
  * capabilities, and its style from its `supported_endpoints`.
@@ -42,7 +43,8 @@ class CopilotModels(
             null
         }
         val data = body?.get("data") as? JsonArray ?: throw ProviderException(ProviderError.Malformed)
-        return data.mapNotNull { (it as? JsonObject)?.let(::model) }
+        // A model that the list names twice is shown once, with its first row, as OpenClaw keeps it.
+        return data.mapNotNull { (it as? JsonObject)?.let(::model) }.distinctBy { it.id }
     }
 
     companion object {
@@ -60,7 +62,7 @@ class CopilotModels(
             val capabilities = entry["capabilities"] as? JsonObject
             if (capabilities?.text("type")?.let { it != "chat" } == true) return null
             if (entry.flag("model_picker_enabled") != true) return null
-            if ((entry["policy"] as? JsonObject)?.text("state") in setOf("disabled", "unconfigured")) return null
+            if ((entry["policy"] as? JsonObject)?.text("state")?.lowercase() in setOf("disabled", "unconfigured")) return null
             val supports = capabilities?.get("supports") as? JsonObject
             if (supports?.flag("streaming") == false) return null
             val limits = capabilities?.get("limits") as? JsonObject

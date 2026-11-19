@@ -170,6 +170,34 @@ class RefreshersTest {
     }
 
     @Test
+    fun anEmptyAccessTokenFailsForNowAndAnEmptyRefreshTokenKeepsTheOldOne() = runBlocking {
+        server.enqueue(json(200, """{"access_token":"","refresh_token":"test-refresh-2","expires_in":3600}"""))
+        server.enqueue(json(200, """{"access_token":"","expires_in":3600}"""))
+        server.enqueue(json(200, """{"access_token":"","status":"success","expired_in":3600}"""))
+        server.enqueue(json(200, """{"access_token":"test-access-2","refresh_token":"","expires_in":3600}"""))
+        server.enqueue(json(200, """{"access_token":"test-xai-access-2","refresh_token":"","expires_in":3600}"""))
+        server.enqueue(json(200, """{"access_token":"test-minimax-access-2","refresh_token":"","status":"success","expired_in":3600}"""))
+
+        assertEquals(Refresh.ForNow(ProviderError.Malformed), ChatGptPlanRefresher(http) { now }.refresh(plan))
+        assertEquals(Refresh.ForNow(ProviderError.Malformed), XaiRefresher(http, { now }) {}.refresh(xai))
+        assertEquals(Refresh.ForNow(ProviderError.Malformed), MiniMaxRefresher(http, { now }).refresh(miniMax))
+        assertEquals("test-refresh-1", (ChatGptPlanRefresher(http) { now }.refresh(plan) as Refresh.Done).token.refresh)
+        assertEquals("test-xai-refresh-1", (XaiRefresher(http, { now }) {}.refresh(xai) as Refresh.Done).token.refresh)
+        assertEquals("test-minimax-refresh-1", (MiniMaxRefresher(http, { now }).refresh(miniMax) as Refresh.Done).token.refresh)
+    }
+
+    @Test
+    fun aMiniMaxExpiryInThePastGetsTheShortestLife() = runBlocking {
+        // A phone clock that runs ahead of MiniMax's: the expiry, an epoch time in seconds, has already passed.
+        val ahead = 1_800_000_000_000L
+        server.enqueue(json(200, """{"access_token":"test-minimax-access-2","status":"success","expired_in":${ahead / 1000 - 10}}"""))
+
+        val token = (MiniMaxRefresher(http, { ahead }).refresh(miniMax) as Refresh.Done).token
+
+        assertEquals(ahead + TokenTimes.SHORTEST_LIFE_MILLIS, token.expiresAtMillis)
+    }
+
+    @Test
     fun anAnswerThatIsNotOneOfD9sFinalRefusalsFailsForNow() = runBlocking {
         server.enqueue(json(403, "<html>blocked</html>"))
         server.enqueue(json(400, """{"error":"temporarily_unavailable"}"""))
