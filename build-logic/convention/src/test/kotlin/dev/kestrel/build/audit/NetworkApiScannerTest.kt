@@ -120,6 +120,14 @@ class NetworkApiScannerTest {
     }
 
     @Test
+    fun classifiesTheUrlMethodsThatResolveItsHost() {
+        assertTrue(NetworkApiRules.isNetworkCall("java/net/URL", "equals", "(Ljava/lang/Object;)Z"))
+        assertTrue(NetworkApiRules.isNetworkCall("java/net/URL", "hashCode", "()I"))
+        assertTrue(NetworkApiRules.isNetworkCall("java/net/URL", "sameFile", "(Ljava/net/URL;)Z"))
+        assertFalse(NetworkApiRules.isNetworkCall("java/net/URL", "getHost", "()Ljava/lang/String;"))
+    }
+
+    @Test
     fun classifiesOkHttpsNameLookups() {
         assertTrue(NetworkApiRules.isNetworkType("okhttp3/Dns"))
         assertTrue(NetworkApiRules.isNetworkType("okhttp3/Dns\$Companion"))

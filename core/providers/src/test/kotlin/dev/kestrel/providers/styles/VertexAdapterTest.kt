@@ -7,6 +7,7 @@ import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.chat.StopReason
 import dev.kestrel.providers.chat.StyleOptions
 import dev.kestrel.providers.http.HttpRequest
+import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.http.RequestAuth
 import dev.kestrel.providers.styles.AdapterHarness.Companion.json
@@ -110,5 +111,13 @@ class VertexAdapterTest {
             bench.calls.requests.single(),
         )
         assertEquals(listOf<String?>("/v1/projects/{project}/locations/europe-west4/publishers/google/models/gemini-3.8-flash:generateContent"), logPaths)
+    }
+
+    @Test
+    fun aWireThatVertexDoesNotServeFailsWithoutARequest() {
+        val target = vertex(ModelEntry("gemini-3.8-flash", "Gemini 3.8 Flash")).copy(options = StyleOptions(wire = RequestStyle.RESPONSES))
+
+        assertEquals(ProviderError.NotAllowed, AdapterHarness.errorOf(adapter, request(user("Hi")), target))
+        assertEquals(0, bench.server.requestCount)
     }
 }

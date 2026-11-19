@@ -35,7 +35,8 @@ object NetworkApiRules {
 
     // A call through a receiver or class typed Inet4Address or Inet6Address names that class as its owner.
     private val networkMethods = mapOf(
-        "java/net/URL" to setOf("openConnection", "openStream", "getContent"),
+        // equals, hashCode and sameFile resolve the URL's host to compare addresses (URL's Javadoc).
+        "java/net/URL" to setOf("openConnection", "openStream", "getContent", "equals", "hashCode", "sameFile"),
         "java/net/InetAddress" to inetAddressLookups,
         "java/net/Inet4Address" to inetAddressLookups,
         "java/net/Inet6Address" to inetAddressLookups,

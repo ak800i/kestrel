@@ -29,7 +29,10 @@ class NetworkPolicy {
         profileHosts = hosts.map(::normalize).toSet()
     }
 
-    /** Local-network or localhost servers that the owner added. Only these may use plain HTTP. */
+    /**
+     * Local-network or localhost servers that the owner added. Only these may use plain HTTP. Throws
+     * IllegalArgumentException, and keeps the servers that it had, when a host is not local or a text is not a host name.
+     */
     fun setLocalServers(hosts: Collection<String>) {
         localServers = localOnly(hosts)
     }
