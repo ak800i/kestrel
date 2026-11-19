@@ -20,28 +20,42 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          # The open-source cache, instead of the default commercial caching service.
-          cache-provider: basic
+          # Gradle User Home is saved and restored by the next step, not by this action.
+          cache-provider: external
+      - name: Restore Gradle's downloads
+        # Maven Central answers GitHub's runners HTTP 429 (Too Many Requests) when a job downloads every dependency at
+        # once, as a cold cache does. The exact key changes with the build files, and the prefix key restores the newest
+        # earlier entry, so that a changed build downloads only what is new. actions/cache saves only after a successful
+        # job, so a failed download never reaches the cache.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/verification-metadata.xml', 'gradle/wrapper/gradle-wrapper.properties', 'gradle/gradle-daemon-jvm.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
       - name: Install Android SDK packages
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
       - name: Resolve the build's plugins
-        # The Gradle Plugin Portal sometimes answers "not found" for artifacts that it serves: runs 44402545586,
-        # 44479089258, 44481188438 and 44484185188 failed while configuring build-logic. A failed job still saves its
-        # Gradle home, so a rerun can start from a cache that records the artifact as missing.
-        # Configure the build up to five times, 30 s apart, and print what the repositories answered when an attempt
-        # fails. A retry adds --refresh-dependencies, so that Gradle asks the repositories again.
+        # Maven Central sometimes answers GitHub's runners HTTP 429 (Too Many Requests), which the Plugin Portal's
+        # redirect showed as "not found": runs 44402545586, 44479089258, 44481188438, 44484185188 and 44546106461 failed
+        # while configuring build-logic. Configure the build up to five times, 30, 60, 120 and 240 s apart, and print
+        # the repositories' answers when an attempt fails. A retry adds --refresh-dependencies, so that Gradle asks the
+        # repositories again instead of trusting a recorded failure.
         run: |
           refresh=""
+          wait=30
           for attempt in 1 2 3 4 5; do
             if ./gradlew help --info --console=plain $refresh > "$RUNNER_TEMP/resolve.log" 2>&1; then
               exit 0
             fi
             echo "Attempt $attempt to configure the build failed:"
-            grep -iE "could not|status code|not found|timed out|refused|reset" "$RUNNER_TEMP/resolve.log" | head -n 40 || true
+            grep -iE "HTTP [0-9]{3}|could not|status code|not found|timed out|refused|reset" "$RUNNER_TEMP/resolve.log" | head -n 40 || true
             refresh="--refresh-dependencies"
-            if [ "$attempt" -lt 5 ]; then sleep 30; fi
+            if [ "$attempt" -lt 5 ]; then sleep "$wait"; wait=$((wait * 2)); fi
           done
           tail -n 80 "$RUNNER_TEMP/resolve.log"
           exit 1
