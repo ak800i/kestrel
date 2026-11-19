@@ -42,6 +42,8 @@ class KestrelTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
+        // The A71 session times a start from here (plan 2E).
+        (application as KestrelApplication).graph.timeline.start("tile")
         listening.send(Event.Toggle)
     }
 

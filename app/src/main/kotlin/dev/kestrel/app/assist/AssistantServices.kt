@@ -39,7 +39,9 @@ class KestrelSessionService : VoiceInteractionSessionService() {
 private class AssistSession(context: Context) : VoiceInteractionSession(context) {
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        (context.applicationContext as KestrelApplication).graph.listening.assist()
+        val graph = (context.applicationContext as KestrelApplication).graph
+        graph.timeline.start("assistant")
+        graph.listening.assist()
         hide()
     }
 }

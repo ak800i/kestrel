@@ -35,6 +35,8 @@ class KestrelAccessibilityService : AccessibilityService() {
         // switches between listening and paused, or starts Kestrel when it is off (section 8.6).
         val clicks = object : AccessibilityButtonController.AccessibilityButtonCallback() {
             override fun onClicked(controller: AccessibilityButtonController) {
+                // The A71 session times a start from here; the button and the shortcut both arrive here (plan 2E).
+                graph.timeline.start("accessibility")
                 graph.listening.send(Event.Toggle)
             }
         }

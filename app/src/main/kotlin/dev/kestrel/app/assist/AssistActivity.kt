@@ -13,7 +13,9 @@ import dev.kestrel.app.KestrelApplication
 class AssistActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        (application as KestrelApplication).graph.listening.assist()
+        val graph = (application as KestrelApplication).graph
+        graph.timeline.start("headset")
+        graph.listening.assist()
         finish()
     }
 }

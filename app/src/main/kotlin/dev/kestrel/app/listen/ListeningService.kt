@@ -87,6 +87,8 @@ class ListeningService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // The A71 session times a start through the problems notification's "Start listening" from here (plan 2E).
+        if (intent?.action == ACTION_START) (application as KestrelApplication).graph.timeline.start("notification")
         // Android requires this after a startForegroundService() unless the service is already in the foreground. It can
         // also ignore the call without an exception, so the service calls it after every start.
         try {

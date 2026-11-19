@@ -43,6 +43,9 @@ class ListeningPipelineTest {
     private val events = mutableListOf<VoiceEvent>()
     private var fed = 0L
 
+    // The phone's clock in milliseconds, which the tests move by hand.
+    private var clock = 0L
+
     @Test
     fun transcribesEachUtteranceWithTheBoostWords() = runTest {
         val pipeline = pipeline(boostWords = { listOf("Viber") })
@@ -55,6 +58,19 @@ class ListeningPipelineTest {
         assertFalse(heard.named)
         assertEquals(1f, heard.seconds)
         assertEquals(listOf(listOf("Viber")), recognizer.boostWords)
+    }
+
+    @Test
+    fun aTranscriptCarriesThePhonesTimeOfTheEndOfItsSpeech() = runTest {
+        val pipeline = pipeline()
+        pipeline.feedUntil(1.98f)
+        clock = 50_000L
+
+        // The frame that ends at 2 s of audio arrives while the phone's clock reads 50 s, and the utterance ended at 1.5 s.
+        detector.next.addLast(listOf(utterance(0.5f, 1f)))
+        pipeline.feed()
+
+        assertEquals(49_500L, (events.single() as VoiceEvent.Heard).endedAt)
     }
 
     @Test
@@ -607,6 +623,7 @@ class ListeningPipelineTest {
         val unconfined = UnconfinedTestDispatcher(testScheduler)
         val pipeline = ListeningPipeline(
             detector, spotter, recognizer, boostWords, { it in ownVoice }, backgroundScope, context ?: unconfined,
+            now = { clock },
         )
         backgroundScope.launch(unconfined) { pipeline.events.collect { events += it } }
         return pipeline

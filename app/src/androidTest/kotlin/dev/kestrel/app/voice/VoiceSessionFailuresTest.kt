@@ -118,7 +118,9 @@ class VoiceSessionFailuresTest {
             session.close()
         }
         // The listener was still taking the transcript when close() began.
-        assertEquals(listOf<Event>(Event.Heard(TEXT, named = false)), listener.events.filterIsInstance<Event.Heard>())
+        // The transcript also carries its length and the end of its speech, which the A71 session's counts read.
+        val heard = listener.events.filterIsInstance<Event.Heard>().map { it.text to it.named }
+        assertEquals(listOf(TEXT to false), heard)
     }
 
     @Test

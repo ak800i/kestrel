@@ -65,6 +65,7 @@ internal class VoiceSession(
         isOwnVoice = { keyword -> echo.isOwnVoice(keyword, SystemClock.elapsedRealtime(), player.recent()) },
         scope = scope,
         recognitionContext = Dispatchers.Default.limitedParallelism(1),
+        now = SystemClock::elapsedRealtime,
     )
 
     init {
@@ -129,7 +130,8 @@ internal class VoiceSession(
 
     private fun forward(event: VoiceEvent) {
         when (event) {
-            is VoiceEvent.Heard -> listener.send(Event.Heard(event.text, event.named, starts.ended()))
+            is VoiceEvent.Heard ->
+                listener.send(Event.Heard(event.text, event.named, starts.ended(), event.seconds, event.endedAt))
             is VoiceEvent.Spotted -> listener.send(Event.Spotted(event.keyword))
             VoiceEvent.SpeechStarted -> {
                 starts.speechStarted()

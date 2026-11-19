@@ -3,6 +3,7 @@ package dev.kestrel.app
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
@@ -28,6 +29,7 @@ import dev.kestrel.app.listen.ScreenBoostWords
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.StoredMode
+import dev.kestrel.app.listen.Timeline
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
@@ -146,6 +148,9 @@ class AppGraph(context: Context) {
 
     /** Kestrel's notifications about problems (design spec, section 14.6). */
     internal val problems: ProblemNotifications by lazy { ProblemNotifications(appContext) }
+
+    /** The phone's own times of Kestrel's starts, sessions, reactions, turn-offs and settings (plan 2E). */
+    internal val timeline = Timeline(SystemClock::elapsedRealtime)
 
     /**
      * The owner's options for the instant commands (design spec, sections 9.5 and 9.8), stored encrypted, which the
@@ -277,6 +282,7 @@ class AppGraph(context: Context) {
             conditions = AndroidListeningConditions(appContext),
             // The owner's choice as Listening read it last, on the controller's thread, where the microphone starts.
             microphones = { MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }) },
+            timeline = timeline,
         ).also(::keepScreenFresh)
     }
 

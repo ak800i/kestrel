@@ -231,3 +231,21 @@ Describe 'Android''s record of the listening service' {
         $record.Types | Should -BeExactly 'not printed'
     }
 }
+
+Describe 'The answers of the hooks voice-times and voice-counts' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Session.ps1"
+    }
+
+    It 'reads names and values, and the marks of the times' {
+        $times = ConvertFrom-HookPairs -Text 'now=81234 started=tile@80012 opened=86010 reacted=wait@86500+640 stopped=none'
+
+        $times['now'] | Should -BeExactly '81234'
+        (ConvertFrom-TimeMark -Text $times['started']).Kind | Should -BeExactly 'tile'
+        (ConvertFrom-TimeMark -Text $times['started']).At | Should -Be 80012
+        (ConvertFrom-TimeMark -Text $times['started']).SinceSpeech | Should -BeNullOrEmpty
+        (ConvertFrom-TimeMark -Text $times['reacted']).SinceSpeech | Should -Be 640
+        ConvertFrom-TimeMark -Text $times['stopped'] | Should -BeNullOrEmpty
+        { ConvertFrom-HookPairs -Text 'waits=1 broken' } | Should -Throw
+    }
+}

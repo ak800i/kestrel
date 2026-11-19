@@ -238,6 +238,8 @@ internal interface StopNotices {
  * [commands] runs the instant commands (sections 7.3 and 9.5): one job at a time in [scope]. A cancelled job stays the
  * stopping job, and a new command, a task or the settings wait until it has completed, for at most 3 s, so that two parts
  * of Kestrel never drive the screen at once. Every command that started gets one report in [commandReports].
+ * [timeline] records on the phone's clock when a session opened, when Kestrel reacted to speech and why it turned itself
+ * off, and [voiceCounts] counts what the sessions heard, as times and counts only, for the A71 session (plan 2E).
  */
 class Listening internal constructor(
     private val scope: CoroutineScope,
@@ -257,6 +259,7 @@ class Listening internal constructor(
     private val commands: CommandRunner,
     options: Flow<ListeningOptions>,
     microphones: () -> Microphone,
+    private val timeline: Timeline = Timeline { 0L },
 ) {
     private enum class ServiceState { STOPPED, STARTING, FOREGROUND }
 
@@ -364,6 +367,9 @@ class Listening internal constructor(
      * read it.
      */
     internal val keywordHits: Int get() = spotted.get()
+
+    /** What the voice sessions of this process heard, as counts only, for the debug hooks (plan 2E). */
+    internal val voiceCounts = VoiceCounts()
 
     private val chosenOptions = MutableStateFlow(ListeningOptions())
 
@@ -763,6 +769,7 @@ class Listening internal constructor(
                 session = opened
                 listener = events
                 sessionState.value = true
+                timeline.opened()
                 // Kestrel listens again, so the notification that said why it stopped goes (section 14.6). Before the
                 // microphone starts: a microphone that cannot start posts its own reason, which must stay.
                 try {
@@ -911,6 +918,8 @@ class Listening internal constructor(
             offReason != null -> return
             else -> {
                 offReason = reason.text
+                // Only the reason that Kestrel acts on: not one while Kestrel is off, nor a later one during a turn-off.
+                timeline.stopped(reason.name)
                 send(Event.TurnOff)
             }
         }
@@ -948,12 +957,15 @@ class Listening internal constructor(
         when (effect) {
             is Effect.Say -> say(effect.reply)
             Effect.StopSaying -> session?.stopSpeaking()
-            is Effect.RunTask ->
+            is Effect.RunTask -> {
+                timeline.reacted("task")
                 afterStopping({ send(Event.TaskEnded(effect.task, reply = null)) }) { runTask(effect.task, effect.text) }
+            }
             // Nothing runs that could be cancelled yet; the tasks come with sub-project 5.
             Effect.CancelTask -> Unit
             is Effect.RunCommand -> {
                 newestCommand = effect.command
+                timeline.reacted("command")
                 // Section 14: a command that cannot start says so on the bar.
                 val failed = CommandResult(Outcome.FAILED, show = ListeningTexts.COMMAND_FAILED)
                 afterStopping({ send(Event.CommandEnded(effect.command, failed)) }) { startCommand(effect) }
@@ -962,7 +974,11 @@ class Listening internal constructor(
             is Effect.AnswerCommand -> conversation?.answered(effect.command, effect.text)
             is Effect.HoldCommand -> conversation?.held(effect.command, effect.hold)
             is Effect.Show -> {
-                (effect.feedback as? Feedback.ModeChanged)?.let { noteMode(it.mode) }
+                (effect.feedback as? Feedback.ModeChanged)?.let {
+                    noteMode(it.mode)
+                    timeline.reacted("mode-${it.mode.name.lowercase()}")
+                }
+                if (effect.feedback == Feedback.AwaitingTask) timeline.reacted("wait")
                 if (effect.feedback == Feedback.MicBusy && demotedByBattery()) {
                     // Section 14.6: the microphone stays silenced, and Android stops the service a minute later. Only
                     // the first MicBusy asks: when something else already blocked the microphone, the bar says
@@ -1273,7 +1289,16 @@ class Listening internal constructor(
         var active = true
 
         override fun send(event: Event) {
-            if (event is Event.Spotted && active) spotted.incrementAndGet()
+            if (active) {
+                if (event is Event.Spotted) {
+                    spotted.incrementAndGet()
+                    voiceCounts.spotted(event.keyword)
+                }
+                if (event is Event.Heard) {
+                    voiceCounts.heard(event)
+                    timeline.speechEnded(event.endedAt)
+                }
+            }
             orchestrator.send(event) { active }
         }
 

@@ -205,3 +205,23 @@ function Get-ForegroundRecord([string[]]$Dump) {
     }
     [pscustomobject]@{ Listed = $listed; Foreground = $foreground; Types = $types }
 }
+
+# Reads an answer of the hooks voice-times, voice-counts or voice-route, such as 'now=81234 started=tile@80012', into an
+# ordered table of names and values. The answers hold no words. Throws when a part is not 'name=value'.
+function ConvertFrom-HookPairs([string]$Text) {
+    $pairs = [ordered]@{}
+    foreach ($pair in @("$Text".Trim() -split '\s+' | Where-Object { $_ })) {
+        $name, $value = $pair -split '=', 2
+        if (-not $name -or $null -eq $value) { throw "Not an answer of the hooks: '$Text'" }
+        $pairs[$name] = $value
+    }
+    $pairs
+}
+
+# A mark of voice-times, such as 'wait@86500+640': Kind, At (milliseconds on the phone's clock) and SinceSpeech
+# (milliseconds after the end of the latest transcribed speech, or $null), or $null for 'none'.
+function ConvertFrom-TimeMark([string]$Text) {
+    if ($Text -notmatch '^([\w-]+)@(\d+)(?:\+(\d+))?$') { return $null }
+    $since = if ($Matches[3]) { [long]$Matches[3] } else { $null }
+    [pscustomobject]@{ Kind = $Matches[1]; At = [long]$Matches[2]; SinceSpeech = $since }
+}

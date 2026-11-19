@@ -173,7 +173,7 @@ function Format-Wait([double]$Seconds) { if ($Seconds -lt 0) { 'failed' } else {
 # that the echo filter took for Kestrel's own voice.
 function Get-Counts {
     $text = Invoke-Hook voice-counts
-    if ($text -notmatch '^waits=(\d+) tasks=(\d+) lastTaskWords=(\d+) hits=(\d+)$') { throw 'Unexpected answer of voice-counts.' }
+    if ($text -notmatch '^waits=(\d+) tasks=(\d+) lastTaskWords=(\d+) hits=(\d+)\b') { throw 'Unexpected answer of voice-counts.' }
     [pscustomobject]@{ Waits = [int]$Matches[1]; Tasks = [int]$Matches[2]; LastTaskWords = [int]$Matches[3]; Hits = [int]$Matches[4] }
 }
 

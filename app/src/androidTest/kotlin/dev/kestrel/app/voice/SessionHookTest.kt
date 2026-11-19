@@ -49,7 +49,9 @@ class SessionHookTest {
             // The counts name the waits, the tasks, the words of the last task and the keyword hits, never the words
             // themselves.
             val counts = hook("VOICE_COUNTS").text
-            assertTrue(counts, Regex("waits=\\d+ tasks=${tasks + 1} lastTaskWords=3 hits=\\d+").matches(counts))
+            // From plan 2E on, the counts that are above 0 follow, by name.
+            val expected = Regex("waits=\\d+ tasks=${tasks + 1} lastTaskWords=3 hits=\\d+( [A-Za-z-]+=\\d+)*")
+            assertTrue(counts, expected.matches(counts))
             // The task is still running a second later, unlike the task that ends at once.
             Thread.sleep(1_000)
             assertEquals(Work.RUNNING_TASK, listening.state.value.work)
@@ -82,6 +84,20 @@ class SessionHookTest {
         // microphone hears silence, so the numbers of hits and the loudest level may be 0.
         val answer = Regex("result=finished hits=\\d+ own=\\d+ loudest=\\d+ silenced=(true|false)")
         assertTrue(result.text, answer.matches(result.text))
+    }
+
+    @Test
+    fun theTimesHookAnswersOnlyTimesAndKinds() {
+        VoiceTests.graph.timeline.start("tile")
+
+        val reply = hook("VOICE_TIMES")
+
+        assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+        val answer = Regex(
+            "now=\\d+ started=tile@\\d+ opened=\\d+ speechEnded=\\d+ reacted=\\S+ stopped=\\S+ settingsAsked=\\d+ " +
+                "settingsResumed=\\d+ settingsInFront=(true|false) foreground=(true|false|none) demoted=(true|false|none)",
+        )
+        assertTrue(reply.text, answer.matches(reply.text))
     }
 
     /** Runs a hook command as TestHookReceiver does, with string extras, int extras and boolean extras that are true. */

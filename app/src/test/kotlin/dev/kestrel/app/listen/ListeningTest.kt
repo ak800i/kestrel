@@ -91,6 +91,10 @@ class ListeningTest {
     // The wall clock, in milliseconds.
     private var now = 1_000_000L
 
+    // The phone's clock of the timeline, in milliseconds, which the tests move by hand.
+    private var elapsed = 50_000L
+    private val timeline = Timeline { elapsed }
+
     @Test
     fun theServiceStartsWhenTheModeLeavesOffAndTheSessionOpensOnlyInTheForeground() = runTest {
         val listening = listening()
@@ -1642,6 +1646,47 @@ class ListeningTest {
     }
 
     @Test
+    fun theTimelineMarksTheSessionTheReactionToSpeechAndAStop() = runTest {
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+        elapsed += 6_000
+        listening.onForeground(service)
+        runCurrent()
+        assertEquals(56_000L, timeline.opened)
+
+        // The owner's "Kestrel" ended 700 ms before Kestrel began to wait for the task.
+        elapsed += 700
+        sessions.opened.single().listener.send(Event.Heard("Kestrel", named = true, seconds = 0.6f, endedAt = 56_000L))
+        runCurrent()
+        assertEquals(Timeline.Mark("wait", 56_700L, sinceSpeech = 700L), timeline.reacted)
+
+        conditions.restricted = true
+        conditions.demoted = true
+        elapsed += 1_000
+        listening.send(Event.MicBusy(true))
+        runCurrent()
+        assertEquals(Timeline.Mark("BATTERY_RESTRICTED", 57_700L), timeline.stopped)
+    }
+
+    @Test
+    fun theCountsCountHitsUtterancesAndReadsButKeepNoWords() = runTest {
+        val listening = listeningWithSession()
+        val events = sessions.opened.single().listener
+
+        events.send(Event.Spotted(Keyword.KESTREL))
+        events.send(Event.Spotted(Keyword.STOP))
+        events.send(Event.Heard("Kestrel, wake up.", named = true, seconds = 1.25f))
+        events.send(Event.Heard("", named = false, seconds = 0.5f))
+        runCurrent()
+
+        assertEquals(
+            "audioMillis=1750 hit-kestrel=1 hit-stop=1 named=1 read-empty=1 read-wakeup=1 utterances=2",
+            listening.voiceCounts.describe(),
+        )
+    }
+
+    @Test
     fun aStopByAndroidUnderTheBatteryRestrictionSaysSo() = runTest {
         conditions.restricted = true
         val listening = listeningWithSession()
@@ -2712,6 +2757,7 @@ class ListeningTest {
         commands = runner,
         options = options,
         microphones = { microphone },
+        timeline = timeline,
     )
 
     // Android gives every start of the service the next start ID, and onStartCommand reports it with the instance.

@@ -75,7 +75,17 @@
 #   voice-counts                            the number of Kestrel's latest wait for a task, which rises with each wait and
 #                                           also when a wait starts again, how many tasks Kestrel started in its process,
 #                                           how many words the last slow task had, and how many keyword hits its voice
-#                                           sessions reported, without those of its own voice
+#                                           sessions reported, without those of its own voice; then, where they are above
+#                                           0, the hits by keyword (hit-kestrel, hit-stop, hit-cancel), the transcribed
+#                                           utterances, those that began with the name, their audio in milliseconds and
+#                                           how Requests read each one (read-name, read-wakeup, read-other, read-empty
+#                                           and so on); never words
+#   voice-times                             the phone's own times (SystemClock.elapsedRealtime, in milliseconds) of
+#                                           Kestrel's latest start and its source, the latest voice session's opening, the
+#                                           end of the latest transcribed speech, Kestrel's latest reaction and how long
+#                                           after that speech it came, its latest turn-off and why, the settings asked
+#                                           for and in front, and whether Android runs the listening service in the
+#                                           foreground (foreground= from Android's list, demoted= Kestrel's decision)
 #   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
 #                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
 #   voice-task -Clear                       each task ends at once again, as in sub-project 2
@@ -112,7 +122,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
-        'voice-counts', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files', 'watch', 'profiles',
+        'voice-counts', 'voice-times', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files', 'watch', 'profiles',
         'snapshots')][string]$Command,
     [string]$Key,
     [int]$Number,

@@ -92,7 +92,14 @@ class MainActivity : ComponentActivity() {
     // The owner may have changed a setting in another app, such as Android's accessibility settings.
     override fun onResume() {
         super.onResume()
+        // The A71 session reads the time of the settings in front (plan 2E).
+        graph.timeline.settingsResumed()
         refresh()
+    }
+
+    override fun onPause() {
+        graph.timeline.settingsPaused()
+        super.onPause()
     }
 
     // Whether READ_PHONE_STATE was granted at the last refresh. A grant in Android's settings does not restart Kestrel,

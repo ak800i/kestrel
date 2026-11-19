@@ -157,9 +157,17 @@ sealed interface Event {
     /**
      * A transcript. [named] is true when the keyword spotter heard "Kestrel" at its start. [spokeAt] is when the owner
      * began to say it, in `SystemClock.uptimeMillis()`, or null when it is not known; a command that names a number
-     * ends when the numbers changed after it (section 9.4).
+     * ends when the numbers changed after it (section 9.4). [seconds] is the length of its audio, and [endedAt] the end
+     * of its speech on the phone's clock (SystemClock.elapsedRealtime), or 0 when it is not known; only the A71 session's
+     * counts and times read them (plan 2E).
      */
-    data class Heard(val text: String, val named: Boolean, val spokeAt: Long? = null) : Event {
+    data class Heard(
+        val text: String,
+        val named: Boolean,
+        val spokeAt: Long? = null,
+        val seconds: Float = 0f,
+        val endedAt: Long = 0L,
+    ) : Event {
         override fun toString() = "Heard(${text.length} characters, named=$named)"
     }
 

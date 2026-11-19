@@ -5,6 +5,8 @@ import android.content.Intent
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.debug.TestHooks.HookError
+import dev.kestrel.app.listen.AndroidListeningConditions
+import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.ModelsNotReadyException
@@ -14,6 +16,7 @@ import dev.kestrel.voice.listen.MicCapture
 import dev.kestrel.voice.speak.EchoFilter
 import dev.kestrel.voice.speak.VoicePlayer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -38,16 +41,32 @@ import kotlin.math.roundToInt
  * nothing shows; it runs in the background, longer than a hook may run, and `result` asks for its answer. Like
  * VOICE_RECORD, it checks only at its start that no voice session is open, and it does not look at the screen: a session
  * that opens during the check shares the microphone, and Android silences a recording from the background, which the
- * answer shows. Their answers hold only counts, lengths and levels.
+ * answer shows. VOICE_COUNTS also counts the keyword hits by keyword, the transcribed utterances, those that began with
+ * the name, their audio in milliseconds and how Requests read each one, and VOICE_TIMES answers the phone's own times of
+ * Kestrel's starts, sessions, ends of speech, reactions, turn-offs and settings, and whether Android runs the listening
+ * service in the foreground (plan 2E). Their answers hold only counts, lengths, levels, times and the names of kinds.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "VOICE_COUNTS" -> graph.listening.state.value.let {
-            "waits=${it.wait} tasks=${it.task} lastTaskWords=$lastTaskWords hits=${graph.listening.keywordHits}"
+            val counts = graph.listening.voiceCounts.describe()
+            "waits=${it.wait} tasks=${it.task} lastTaskWords=$lastTaskWords hits=${graph.listening.keywordHits}" +
+                if (counts.isEmpty()) "" else " $counts"
         }
+        "VOICE_TIMES" -> times()
         "VOICE_TASK" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clearTask() else task(intent)
         "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
         else -> throw HookError("unknown command '$command'")
+    }
+
+    // The phone's own times (plan 2E), and whether Android runs ListeningService in the foreground: foreground= from
+    // Android's list of Kestrel's running services, demoted= Kestrel's decision from it, and none while no service runs.
+    private suspend fun times(): String {
+        val conditions = AndroidListeningConditions(context)
+        val service = withContext(Dispatchers.Main) { ListeningService.running() }
+        val foreground = conditions.listedForeground()?.toString() ?: "none"
+        val demoted = service?.let { conditions.demoted(it).toString() } ?: "none"
+        return "${graph.timeline.describe()} foreground=$foreground demoted=$demoted"
     }
 
     private fun task(intent: Intent): String {
@@ -176,7 +195,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     companion object {
-        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TASK", "VOICE_ECHO")
+        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_TASK", "VOICE_ECHO")
 
         private val lock = Any()
 
