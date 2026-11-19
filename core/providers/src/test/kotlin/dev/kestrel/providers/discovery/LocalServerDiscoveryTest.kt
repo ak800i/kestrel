@@ -103,6 +103,34 @@ class LocalServerDiscoveryTest {
     }
 
     @Test
+    fun theCheckAndTheRequestsShareOneBasePerServer() {
+        // An LM Studio address without /v1, a vLLM address with it, a LiteLLM address with a prefix, an Ollama one with a prefix.
+        assertEquals("http://127.0.0.1:1234/v1".toHttpUrl(), Discoveries.localServerBase(LocalServerKind.LM_STUDIO, "http://127.0.0.1:1234".toHttpUrl()))
+        assertEquals("http://127.0.0.1:1234/v1".toHttpUrl(), Discoveries.localServerBase(LocalServerKind.LM_STUDIO, "http://127.0.0.1:1234/v1/".toHttpUrl()))
+        assertEquals("http://127.0.0.1:8000/v1".toHttpUrl(), Discoveries.localServerBase(LocalServerKind.VLLM, "http://127.0.0.1:8000/v1".toHttpUrl()))
+        assertEquals("https://proxy.example/litellm/v1".toHttpUrl(), Discoveries.localServerBase(LocalServerKind.LITELLM, "https://proxy.example/litellm".toHttpUrl()))
+        assertEquals("https://proxy.example/ollama".toHttpUrl(), Discoveries.localServerBase(LocalServerKind.OLLAMA, "https://proxy.example/ollama/v1".toHttpUrl()))
+        bench.reply("local-servers/lmstudio-models.json")
+        bench.reply("local-servers/vllm-models.json")
+        bench.reply("local-servers/llamacpp-models.json")
+        bench.reply("local-servers/llamacpp-props.json")
+
+        list(LocalServerKind.LM_STUDIO, "http://127.0.0.1:1234")
+        list(LocalServerKind.VLLM, "http://127.0.0.1:8000")
+        list(LocalServerKind.LLAMA_CPP, "https://proxy.example/llama")
+
+        assertEquals(
+            listOf(
+                "http://127.0.0.1:1234/api/v1/models",
+                "http://127.0.0.1:8000/v1/models",
+                "https://proxy.example/llama/v1/models",
+                "https://proxy.example/llama/props",
+            ).map { it.toHttpUrl() },
+            bench.calls.requests,
+        )
+    }
+
+    @Test
     fun aServerThatAnswersWithoutJsonIsMalformed() {
         bench.status(200, "<html>Not an API</html>")
 

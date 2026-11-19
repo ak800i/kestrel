@@ -35,7 +35,9 @@ import okhttp3.HttpUrl
  * <base>/api/chat`, where the base is the owner's address without a trailing `/v1` ([origin]), with `"stream": false`,
  * because Ollama's stream is newline-delimited JSON, not server-sent events (design D4). Images go as base64 strings
  * beside the user's text, tool calls carry their arguments as JSON objects, and JSON actions pass the action schema as
- * `format`. A reasoning level becomes `think` (see [think]). Ollama keeps no reasoning state (design D5). Ollama has no
+ * `format`. A reasoning level becomes `think` (see [think]); a model that reasons gets `think: false` when the request
+ * asks for no level, as OpenClaw sends for its level "off", because Ollama would otherwise use the model's default and
+ * think; a model that does not reason gets no `think`. Ollama keeps no reasoning state (design D5). Ollama has no
  * tool choice, so [ToolChoice.NONE] leaves out the tools and replays earlier calls and results as text, and
  * [ToolChoice.REQUIRED] acts as AUTO. A local server (not Ollama Cloud) gets the model's window up to [MAX_CONTEXT] as
  * its context, or [MAX_CONTEXT] when the window is unknown, and is asked to refuse a longer prompt instead of cutting
@@ -67,7 +69,9 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
             }
         }
         request.jsonSchema?.let { put("format", it) }
-        Wire.level(request, target.model, compat)?.let { put("think", think(it, target)) }
+        val level = Wire.level(request, target.model, compat)
+        // A model that reasons would think at its default; OpenClaw sends `think: false` for its level "off".
+        if (level != null) put("think", think(level, target)) else if (target.model.reasoning) put("think", false)
         if (local(target)) {
             put("truncate", false)
             put("shift", false)

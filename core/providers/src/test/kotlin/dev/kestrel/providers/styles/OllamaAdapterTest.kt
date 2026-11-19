@@ -169,6 +169,18 @@ class OllamaAdapterTest {
     }
 
     @Test
+    fun aModelThatReasonsGetsThinkFalseWithoutALevelAndOtherModelsNoThink() = runBlocking {
+        repeat(2) { bench.reply("ollama/text.json") }
+        val plain = ollama.copy(model = ModelEntry("llama3.2", "Llama 3.2"), sentModelId = "llama3.2")
+
+        adapter.complete(request(user("Hi")), ollama)
+        adapter.complete(request(user("Hi")), plain)
+
+        assertEquals(json("false"), bench.body(bench.take())["think"])
+        assertNull(bench.body(bench.take())["think"])
+    }
+
+    @Test
     fun anErrorInASuccessfulReplyIsABadRequestAndTheCachedCountStaysWithinThePrompt() {
         bench.status(200, """{"error":"model 'qwen3.6' not found"}""")
         bench.status(200, """{"model":"qwen3.6","done":true,"done_reason":"stop","message":{"role":"assistant","content":"Hi."},"prompt_eval_count":10,"prompt_eval_cached_count":50,"eval_count":2}""")

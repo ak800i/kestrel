@@ -21,11 +21,12 @@ import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 
 /**
- * The model lists of the local servers (design D11, research r40), read from the address without a trailing `/v1`
- * ([OllamaAdapter.origin]), so that a path prefix stays: Ollama's `/api/tags` and `/api/show` (its `capabilities` and
- * `model_info`), LM Studio's `/api/v1/models`
- * (`capabilities.vision` and `trained_for_tool_use`), llama.cpp's `/v1/models` and `/props`, and `/v1/models` for vLLM,
- * SGLang, oMLX and LiteLLM. Where a server reports nothing, [DiscoveredModel.tools] stays null and the profile page asks
+ * The model lists of the local servers (design D11, research r40), read from [Discoveries.localServerBase], the base that
+ * the server's requests use too, so that an address that passes the check also works for requests and a path prefix
+ * stays: Ollama's `/api/tags` and `/api/show` (its `capabilities` and `model_info`) from the base, `/models` from the base
+ * for llama.cpp, vLLM, SGLang, oMLX and LiteLLM, and LM Studio's `/api/v1/models` (`capabilities.vision` and
+ * `trained_for_tool_use`) and llama.cpp's `/props` from the base without its `/v1`. Where a server reports nothing,
+ * [DiscoveredModel.tools] stays null and the profile page asks
  * the owner. A model that reports no tool support gets `tools = false`, so that it uses JSON actions (design D7). An
  * Ollama model whose capabilities lack `completion` (an embedding model) is left out, as OpenClaw does.
  */
@@ -35,7 +36,8 @@ internal class LocalServerDiscovery(
     private val auth: RequestAuth,
     private val http: ProviderHttp,
 ) : ModelDiscovery {
-    private val base = OllamaAdapter.origin(baseUrl)
+    private val base = Discoveries.localServerBase(kind, baseUrl)
+    private val root = OllamaAdapter.origin(base)
 
     override suspend fun list(): List<DiscoveredModel> = when (kind) {
         LocalServerKind.OLLAMA -> ollama()
@@ -67,7 +69,7 @@ internal class LocalServerDiscovery(
         }
 
     private suspend fun lmStudio(): List<DiscoveredModel> =
-        get("api/v1/models")["models"].objects().filter { it.str("type") == "llm" }.mapNotNull { row ->
+        get("api/v1/models", root)["models"].objects().filter { it.str("type") == "llm" }.mapNotNull { row ->
             val id = row.str("key") ?: return@mapNotNull null
             val capabilities = row["capabilities"] as? JsonObject
             DiscoveredModel(
@@ -81,9 +83,9 @@ internal class LocalServerDiscovery(
         }
 
     private suspend fun llamaCpp(): List<DiscoveredModel> {
-        val rows = get("v1/models")["data"].objects()
+        val rows = get("models")["data"].objects()
         val props = try {
-            get("props")
+            get("props", root)
         } catch (e: ProviderException) {
             null
         }
@@ -104,7 +106,7 @@ internal class LocalServerDiscovery(
     }
 
     private suspend fun openAiList(): List<DiscoveredModel> =
-        get("v1/models")["data"].objects().mapNotNull { row ->
+        get("models")["data"].objects().mapNotNull { row ->
             val id = row.str("id") ?: return@mapNotNull null
             DiscoveredModel(
                 id = id,
@@ -113,12 +115,12 @@ internal class LocalServerDiscovery(
             )
         }
 
-    private suspend fun get(path: String): JsonObject = Wire.parse(http.send(request("GET", path, null), auth).text())
+    private suspend fun get(path: String, from: HttpUrl = base): JsonObject = Wire.parse(http.send(request("GET", path, null, from), auth).text())
 
-    private fun request(method: String, path: String, body: JsonObject?): HttpRequest =
+    private fun request(method: String, path: String, body: JsonObject?, from: HttpUrl = base): HttpRequest =
         HttpRequest(
             method = method,
-            url = base.newBuilder().addPathSegments(path).build(),
+            url = from.newBuilder().addPathSegments(path).build(),
             headers = mapOf("accept" to "application/json"),
             body = body?.toString()?.encodeToByteArray(),
             contentType = body?.let { "application/json" },
