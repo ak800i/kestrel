@@ -111,7 +111,7 @@ The session's measurements, with the targets of the design spec (section 5.3):
 | Measure | Target | Galaxy A71 |
 |---|---|---|
 | Transcription time of a command | at most 4 s | met on 2026-11-17: a median of 272 ms with Piper's generated clips (90th percentile 463 ms, longest 817 ms) and 257 ms with Kokoro's (longest 732 ms) |
-| Kestrel's memory while it listens (PSS) | at most 2 GB | met with Piper on 2026-11-17: about 1150 MB while Kestrel listened, at most 1704 MB while the eval hook transcribed the corpus, with Kestrel off; Kokoro's fp32 model reached 2049 MB at its first start, because memory of the earlier sessions stayed in the process |
+| Kestrel's memory while it listens (PSS) | at most 2 GB | met with Piper on 2026-11-17: 976 to 1150 MB while Kestrel listened, at most 1704 MB while the eval hook transcribed the corpus, with Kestrel off; Kokoro's fp32 model reached 2049 MB at its first start, because memory of the earlier sessions stayed in the process |
 | Battery use while listening | at most 2 % per hour | not measured for a typical case yet: 3.69 % per hour on 2026-11-17 is a worst case, with the screen on and 30 minutes of room talk that Kestrel transcribed |
 | Word error rate and requests read as intended, with the owner's recordings | none yet | not measured yet: the owner's recordings of 2026-11-17 failed; with the generated clips on the A71, Piper's word error rate was 6.5 % and Kokoro's 4.0 %, and 101 of 104 clips of each were read as intended |
 | The keyword spotter's hits and Kestrel's reactions in an hour of ordinary room audio | none yet | on 2026-11-17: 127 hits of the three keywords, and 0 tasks, 0 waits, 0 replies and 0 changes of mode |

@@ -1018,7 +1018,7 @@ class Listening internal constructor(
      */
     private fun demotedByBattery(): Boolean {
         val service = running ?: return false
-        return conditions.demoted(service) && conditions.backgroundRestricted()
+        return conditions.backgroundRestricted() && conditions.demoted(service)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
