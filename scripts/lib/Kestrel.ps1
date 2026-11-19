@@ -42,12 +42,15 @@ function Format-TestDeviceCommand([string]$Serial, [string]$Command) {
 }
 
 # Runs a settings command on a device and returns the lines that it printed. The device prints a marker only after a
-# command that worked, which tells an empty answer from a failed command. A busy device, or one whose system is still
-# starting, sometimes fails the command, so it is repeated before it fails for good with the device's last complaint.
-# The command runs only on the device that Assert-TestDevice accepted for the serial, and throws at once on another one.
+# command that worked, which tells an empty answer from a failed command. It prints a line break before the marker, so
+# that the marker has a line of its own also after an answer that ends without one, as One UI's 'dumpsys accessibility'
+# does (A71 session of sub-project 2, item 3); after an answer that ends with a line break, that line break leaves an
+# empty line, which is dropped. A busy device, or one whose system is still starting, sometimes fails the command, so it
+# is repeated before it fails for good with the device's last complaint. The command runs only on the device that
+# Assert-TestDevice accepted for the serial, and throws at once on another one.
 function Invoke-SettingsCommand([string]$Serial, [string]$Command) {
     $adb = Get-Adb
-    $guarded = Format-TestDeviceCommand -Serial $Serial -Command "$Command && echo kestrel-end"
+    $guarded = Format-TestDeviceCommand -Serial $Serial -Command "$Command && echo && echo kestrel-end"
     # Keeps adb's error lines as part of the answer, so that they neither stop the script nor fill the console.
     $ErrorActionPreference = 'Continue'
     $complaint = ''
@@ -56,7 +59,11 @@ function Invoke-SettingsCommand([string]$Serial, [string]$Command) {
         $answer = @(& $adb -s $Serial shell $guarded 2>&1)
         $errors = @($answer | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
         $lines = @($answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".TrimEnd("`r") })
-        if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-end') { return $lines | Select-Object -First ($lines.Count - 1) }
+        if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-end') {
+            $count = $lines.Count - 1
+            if ($count -gt 0 -and $lines[$count - 1] -eq '') { $count-- }
+            return $lines | Select-Object -First $count
+        }
         if ($lines.Count -gt 0 -and $lines[-1].Trim() -eq 'kestrel-refused') {
             throw "Refusing to run '$Command' on ${Serial}: it is no longer the test device that Assert-TestDevice accepted."
         }

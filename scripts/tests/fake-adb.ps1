@@ -81,11 +81,15 @@ if (-not $accepted) {
 }
 $calls += $command
 # The helpers end every command with this marker; the commands in their warnings, which the owner pastes, have none.
-$marker = ' && echo kestrel-end'
+$marker = ' && echo && echo kestrel-end'
 $withMarker = $command.EndsWith($marker)
 $deviceCommand = if ($withMarker) { $command.Substring(0, $command.Length - $marker.Length) } else { $command }
 $lines = @()
-if ($deviceCommand -match '^settings get secure (\S+)$') {
+# 'printf %s <text>' prints the text without a final line break, as One UI's 'dumpsys accessibility' ends its answer.
+$partial = $null
+if ($deviceCommand -match '^printf %s (\S+)$') {
+    $partial = $Matches[1]
+} elseif ($deviceCommand -match '^settings get secure (\S+)$') {
     $lines = @(if ($settings.Contains($Matches[1])) { $settings[$Matches[1]] } else { 'null' })
 } elseif ($deviceCommand -match "^settings put secure (\S+) '") {
     # As in the device's shell, a single quote ends the quoted value, so a quote inside the value must be written '\''.
@@ -115,5 +119,10 @@ if ($deviceCommand -match '^settings get secure (\S+)$') {
 }
 Save-State
 foreach ($line in $lines) { [Console]::Out.WriteLine($line) }
-if ($withMarker) { [Console]::Out.WriteLine('kestrel-end') }
+if ($null -ne $partial) { [Console]::Out.Write($partial) }
+# As on the device, the first echo ends a last line that has no line break, or else prints an empty line.
+if ($withMarker) {
+    [Console]::Out.WriteLine('')
+    [Console]::Out.WriteLine('kestrel-end')
+}
 exit 0

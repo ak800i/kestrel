@@ -83,13 +83,18 @@ Describe 'The settings helpers' {
             Set-FakeDevice -Settings @{ x = 'value' } -Failures 10
             $thrown = { Get-SecureSetting -Serial emulator-5554 -Name x } | Should -Throw -PassThru
             $thrown.Exception.Message | Should -BeExactly "Could not run 'settings get secure x' on emulator-5554: Bad arguments"
-            (Get-FakeDevice).calls | Should -BeExactly (@('settings get secure x && echo kestrel-end') * 3)
+            (Get-FakeDevice).calls | Should -BeExactly (@('settings get secure x && echo && echo kestrel-end') * 3)
         }
 
         It 'returns the value when only the first 2 tries fail' {
             Set-FakeDevice -Settings @{ x = 'value' } -Failures 2
             Get-SecureSetting -Serial emulator-5554 -Name x | Should -BeExactly 'value'
             (Get-FakeDevice).calls | Should -HaveCount 3
+        }
+
+        It 'keeps the last line of an answer that ends without a line break, as One UI''s dumpsys accessibility does' {
+            Invoke-SettingsCommand -Serial emulator-5554 -Command 'printf %s last-line' | Should -BeExactly @('last-line')
+            (Get-FakeDevice).calls | Should -BeExactly @('printf %s last-line && echo && echo kestrel-end')
         }
 
         It 'names adb''s complaint when the device is missing' {
@@ -120,7 +125,7 @@ Describe 'The settings helpers' {
             $device.settings.x | Should -BeExactly 'old'
             $device.calls | Should -BeNullOrEmpty
             # Once: a refusal is not tried again.
-            $device.refused | Should -BeExactly @('settings delete secure x || true && echo kestrel-end')
+            $device.refused | Should -BeExactly @('settings delete secure x || true && echo && echo kestrel-end')
         }
 
         It 'throws and sends nothing when Assert-TestDevice has not accepted the serial' {
@@ -171,7 +176,7 @@ Describe 'The settings helpers' {
 
             $device = Get-FakeDevice
             $device.settings.sysui_qs_tiles | Should -BeExactly 'internet,bt,flashlight'
-            $device.calls[0] | Should -BeExactly "cmd statusbar set-tiles 'internet,bt,flashlight' && echo kestrel-end"
+            $device.calls[0] | Should -BeExactly "cmd statusbar set-tiles 'internet,bt,flashlight' && echo && echo kestrel-end"
             $device.calls | Where-Object { $_ -like 'settings put *' } | Should -BeNullOrEmpty
         }
 
@@ -182,8 +187,8 @@ Describe 'The settings helpers' {
 
             $device = Get-FakeDevice
             $device.settings.sysui_qs_tiles | Should -BeExactly 'internet,bt,flashlight'
-            $device.calls[0] | Should -BeExactly "cmd statusbar set-tiles 'internet,bt,flashlight' && echo kestrel-end"
-            @($device.calls | Where-Object { $_ -like 'settings put *' }) | Should -BeExactly @("settings put secure sysui_qs_tiles 'internet,bt,flashlight' && echo kestrel-end")
+            $device.calls[0] | Should -BeExactly "cmd statusbar set-tiles 'internet,bt,flashlight' && echo && echo kestrel-end"
+            @($device.calls | Where-Object { $_ -like 'settings put *' }) | Should -BeExactly @("settings put secure sysui_qs_tiles 'internet,bt,flashlight' && echo && echo kestrel-end")
         }
 
         It 'returns $false and warns with the reason and a command that puts the list back when set-tiles fails' {
@@ -263,7 +268,7 @@ Describe 'The settings helpers' {
             $lines[0] | Should -BeLike 'Could not read the accessibility settings of emulator-5554 (*: Bad arguments), so they were not put back.*'
             $lines | Should -Contain 'enabled_accessibility_services=com.example.reader/com.example.reader.ReaderService'
             $lines | Should -Contain 'accessibility_enabled=1'
-            (Get-FakeDevice).calls | Should -BeExactly (@('settings list secure && echo kestrel-end') * 3)
+            (Get-FakeDevice).calls | Should -BeExactly (@('settings list secure && echo && echo kestrel-end') * 3)
         }
     }
 }

@@ -1,7 +1,7 @@
 # A stand-in for adb in the tests of scripts\lib\Models.ps1; fake-adb-files.cmd runs it in its own process, as adb runs.
 # It keeps the files of a fake device in a folder on this computer and understands the commands that Push-ModelFiles
 # sends: 'adb -s <serial> push <file> <device path>', and 'adb -s <serial> shell "<command>"' for these commands, each
-# followed by ' && echo kestrel-end' and inside the check of Format-TestDeviceCommand, for which it is kestrel-api37:
+# followed by ' && echo && echo kestrel-end' and inside the check of Format-TestDeviceCommand, for which it is kestrel-api37:
 #   pm path dev.kestrel || true
 #   am start -n dev.kestrel/dev.kestrel.app.MainActivity    (creates Kestrel's models folder, as Kestrel does when it starts)
 #   test -d '<folder>' && echo yes || echo no
@@ -71,7 +71,7 @@ if ($command -match '^case \$\(getprop (\S+)\) in (\S+)\) (.*);; \*\) echo kestr
     }
 }
 $calls += $command
-$marker = ' && echo kestrel-end'
+$marker = ' && echo && echo kestrel-end'
 $withMarker = $command.EndsWith($marker)
 $deviceCommand = if ($withMarker) { $command.Substring(0, $command.Length - $marker.Length) } else { $command }
 $models = '/sdcard/Android/data/dev.kestrel/files/models'
@@ -105,5 +105,9 @@ if ($deviceCommand -eq 'pm path dev.kestrel || true') {
 }
 Save-State
 foreach ($line in $lines) { $line }
-if ($withMarker) { 'kestrel-end' }
+# As on the device, the first echo prints an empty line after an answer that ends with a line break.
+if ($withMarker) {
+    ''
+    'kestrel-end'
+}
 exit 0

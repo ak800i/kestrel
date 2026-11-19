@@ -159,6 +159,22 @@ Describe 'The helpers of the A71 session' {
         $failures[1].What | Should -BeExactly 'The microphone'
         $failures[1].Count | Should -Be 2
     }
+
+    It 'keeps the class of each logged failure, as listen-check''s refused start shows it' {
+        $log = @(
+            '11-17 13:40:31.112  4321  4321 W Kestrel : Starting the listening service failed: android.app.ForegroundServiceStartNotAllowedException'
+            '11-17 13:40:31.113  4321  4321 W Kestrel :     at android.app.Service.startForeground(Service.java:775)'
+            '11-17 13:41:02.000  4321  4400 W Kestrel : Starting the listening service failed: java.lang.SecurityException'
+        )
+
+        $failures = @(Get-FailureDescriptions -Log $log)
+
+        $failures.Count | Should -Be 2
+        $failures[0].What | Should -BeExactly 'Starting the listening service'
+        $failures[0].Class | Should -BeExactly 'ForegroundServiceStartNotAllowedException'
+        $failures[1].Class | Should -BeExactly 'SecurityException'
+        $failures[1].Count | Should -Be 1
+    }
 }
 
 Describe 'The app ops that the scripts set' {

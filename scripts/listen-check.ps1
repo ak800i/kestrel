@@ -12,7 +12,8 @@
 #   shortcut  the accessibility shortcut ('cmd accessibility call-system-action 13') starts listening, and a second press
 #             pauses it
 #   settings  with the accessibility service on, 'Kestrel, open settings' (a transcript that the hook sends) brings
-#             Kestrel's settings app to the front
+#             Kestrel's settings app to the front, which the check reads from Kestrel's own times on the device (the
+#             hook voice-times), because Android 13 may not print the activity in front as later versions do
 #   call      on an emulator only, because only its console can place a call ('gsm call', 'gsm cancel'): with the
 #             accessibility service on and Kestrel in the background, a call rings, Kestrel shows Ringing and Android
 #             does not silence its recording; "decline" (a transcript that the hook sends) declines it, and "answer"
@@ -52,7 +53,7 @@
 # Kestrel is in the background for each check, and it listens with its own microphone. Every check except the settings
 # check also checks in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
 # with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that
-# ran, also when a later check fails with an error.
+# ran: an error of a check becomes that check's line, 'failed: <message>', and the later checks still run.
 # While it runs, it grants Kestrel the microphone and notification permissions, replaces the list of enabled
 # accessibility services, sets the target of the accessibility shortcut, opens the notification shade for the
 # notification check, puts Kestrel's tile first in Quick Settings and opens the panel for the tile check, and makes
@@ -78,6 +79,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\Session.ps1"
 Use-KestrelToolchain
 # No command reaches the device before this check.
 Assert-TestDevice -Serial $Serial
@@ -117,7 +119,8 @@ function Invoke-Once([string]$Command) {
     # adb's error lines become part of the error message. 'Continue' keeps them from stopping the script also where
     # PowerShell applies the preference to a native command's error output (PSNativeCommandUseErrorActionPreference).
     $ErrorActionPreference = 'Continue'
-    $output = @(& $adb -s $Serial shell (Format-TestDeviceCommand -Serial $Serial -Command "$Command && echo kestrel-end") 2>&1)
+    # The first echo gives the marker a line of its own, also after output without a final line break (Invoke-SettingsCommand).
+    $output = @(& $adb -s $Serial shell (Format-TestDeviceCommand -Serial $Serial -Command "$Command && echo && echo kestrel-end") 2>&1)
     $last = "$($output | Select-Object -Last 1)".Trim()
     if ($last -eq 'kestrel-refused') {
         throw "Refusing to run '$Command' on ${Serial}: it is no longer the test device that Assert-TestDevice accepted."
@@ -126,6 +129,17 @@ function Invoke-Once([string]$Command) {
 }
 
 function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join "`n" }
+
+# Runs one check and returns its line. An error of the check becomes its line, 'failed: <message>', so that one failure
+# does not hide the checks after it (A71 session of sub-project 2, item 3); the messages name only commands, files and
+# serials. A stop such as Ctrl+C still ends the run.
+function Invoke-Check([scriptblock]$Check) {
+    try {
+        & $Check
+    } catch {
+        "failed: $($_.Exception.Message)"
+    }
+}
 
 # Sends a command to the emulator's console, such as 'gsm call', after checking that the serial still names
 # kestrel-api37: only an emulator has a console. The console answers 'OK'.
@@ -259,22 +273,43 @@ function Get-ShellAnswer([string]$Command) {
 }
 
 # Waits until the phone has started again after a reboot, which a new boot ID shows, and until Android has unlocked the
-# user's storage, without which Kestrel cannot run. On a phone with a PIN, the owner has to unlock it first. It waits for
-# at most 5 minutes, and returns whether the phone came back.
+# user's storage, without which Kestrel cannot run. On a phone with a PIN, the owner has to unlock it first; the script
+# does not wait for an Enter, but checks every second. At the first check that sees the storage unlocked, it keeps the
+# phone's uptime in milliseconds in $script:unlockedAt, or $null when the phone gives none, so that the reboot check can
+# time Kestrel's restore on the phone's clock (A71 session of sub-project 2: no time counts from the owner's Enter). It
+# waits for at most 5 minutes, and returns whether the phone came back.
 function Wait-Reboot([string]$BootId) {
     $deadline = (Get-Date).AddMinutes(5)
     $lockedChecks = 0
+    $script:unlockedAt = $null
     do {
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 1
         $id = Get-ShellAnswer 'cat /proc/sys/kernel/random/boot_id'
         $booted = $id -and $id -ne $BootId -and (Get-ShellAnswer 'getprop sys.boot_completed') -eq '1'
         $unlocked = $booted -and (Get-ShellAnswer 'am get-started-user-state 0') -match 'RUNNING_UNLOCKED'
-        # Without a PIN, Android unlocks the storage a few seconds after the start.
-        if ($booted -and -not $unlocked -and ++$lockedChecks -eq 2) {
-            Read-Host 'Unlock the phone, then press Enter' | Out-Null
+        if ($unlocked) {
+            # Such as '123.45 678.90': the seconds since the boot, on the clock of SystemClock.elapsedRealtime.
+            $uptime = "$(Get-ShellAnswer 'cat /proc/uptime')".Trim() -split '\s+' | Select-Object -First 1
+            if ($uptime -match '^\d+(\.\d+)?$') {
+                $script:unlockedAt = [long]([double]::Parse($uptime, [Globalization.CultureInfo]::InvariantCulture) * 1000)
+            }
+        } elseif ($booted -and ++$lockedChecks -eq 5) {
+            # Without a PIN, Android unlocks the storage a few seconds after the start, so the script asks only later.
+            Write-Host 'Unlock the phone now. The script goes on by itself; do not press Enter. Kestrel shows only its notification when it listens again.'
         }
     } until ($unlocked -or (Get-Date) -gt $deadline)
     $unlocked
+}
+
+# The reboot check's time on a phone: from the unlock that Wait-Reboot saw to Kestrel's open voice session, both on the
+# phone's clock, as the end of the check's line; without a time when the phone gave none or Kestrel listened before the
+# script saw the unlock.
+function Get-RestoreTime {
+    $opened = [long](ConvertFrom-HookPairs (Invoke-Hook voice-times))['opened']
+    if ($null -eq $script:unlockedAt) { return 'after the reboot, without a time, because the phone gave no time of the unlock' }
+    if ($opened -le 0) { return 'after the reboot, without a time, because Kestrel gave no time of its open session' }
+    if ($opened -lt $script:unlockedAt) { return 'after the reboot, without a time, because Kestrel listened before the script saw the unlock' }
+    "$([math]::Round(($opened - $script:unlockedAt) / 1000, 1)) s after the phone was unlocked, timed on the phone"
 }
 
 # Closes the emulator kestrel-api37 and starts it again from a cold boot, in place of a reboot inside the emulator,
@@ -477,23 +512,32 @@ function Invoke-ShortcutCheck {
 function Invoke-SettingsCheck {
     Stop-Kestrel
     # The accessibility service is on since the shortcut check. Without it, Android does not let Kestrel open an activity
-    # from the background, and nothing tells Kestrel so.
+    # from the background, and Kestrel says why instead.
     Invoke-Hook voice -Send toggle | Out-Null
     if ((Wait-Mode listening 60) -lt 0) { return "failed: Kestrel did not start listening before the request$modelsHint" }
     # Kestrel acts on a request only while the screen is on.
     Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    $before = [long](ConvertFrom-HookPairs (Invoke-Hook voice-times))['settingsAsked']
     Invoke-Hook voice -Send heard -Text 'Kestrel, open settings.' -Named | Out-Null
+    # Kestrel's own times on the device: when it asked Android for its settings, and when MainActivity resumed.
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while ($watch.Elapsed.TotalSeconds -lt 10) {
-        $activities = (Invoke-Checked 'dumpsys activity activities') -join "`n"
-        if ($activities -match 'topResumedActivity=ActivityRecord\{[^}]* dev\.kestrel/\.app\.MainActivity ') {
-            $opened = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+        $times = ConvertFrom-HookPairs (Invoke-Hook voice-times)
+        $asked = [long]$times['settingsAsked']
+        $resumed = [long]$times['settingsResumed']
+        # Kestrel gives up after 2 s, says that Android blocked its settings, and records that as its reaction; settings
+        # that came later must not count as a pass (plan 2E, Task 4).
+        $reaction = ConvertFrom-TimeMark -Text $times['reacted']
+        $blocked = $asked -gt $before -and $reaction -and $reaction.Kind -eq 'settings-blocked' -and $reaction.At -ge $asked
+        if ($asked -gt $before -and $resumed -ge $asked) {
             Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
-            return "ok: Kestrel's settings came to the front $opened s after 'Kestrel, open settings'"
+            if ($blocked) { return "failed: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, although Kestrel said that Android blocked them" }
+            return "ok: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, timed on the device"
         }
         Start-Sleep -Milliseconds 500
     }
+    if ($blocked) { return "failed: Kestrel's settings did not come to the front within 10 s of 'Kestrel, open settings', and Kestrel said that Android blocked them" }
     "failed: Kestrel's settings did not come to the front within 10 s of 'Kestrel, open settings'"
 }
 
@@ -743,7 +787,7 @@ function Invoke-RebootCheck {
     # Android forgets the crash of the restart check with the reboot.
     $script:rebooted = $true
     if ((Wait-Mode listening 240) -lt 0) { return 'failed: Kestrel did not listen again within 240 s of the device''s start' }
-    $again = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    $again = if ($isEmulator) { "$([math]::Round($watch.Elapsed.TotalSeconds, 1)) s after the reboot" } else { Get-RestoreTime }
     # On a phone, the screen is off or locked after the reboot, and Kestrel records only while it is on and unlocked.
     if (-not $isEmulator) {
         Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
@@ -751,8 +795,8 @@ function Invoke-RebootCheck {
     }
     # 'dumpsys audio' starts its history afresh at each boot, so every recording of Kestrel's that it lists is new.
     $problem = Get-RecordingProblem @()
-    if ($problem) { return "failed: listening again $again s after the reboot, but $problem" }
-    "ok: listening again $again s after the reboot"
+    if ($problem) { return "failed: listening again $again, but $problem" }
+    "ok: listening again $again"
 }
 
 # What the script has still to put back. Each restore enters this list before the change that it undoes is made, and it
@@ -961,14 +1005,14 @@ try {
     # Kestrel records with its own microphone, also if a hook gave it the clip microphone earlier in its process.
     Invoke-Hook voice-clip -Clear | Out-Null
     # First: a failed notification check leaves the problems notification, which the later checks' starts remove.
-    $results['notification'] = Invoke-NotificationCheck
-    $results['tile'] = Invoke-TileCheck
-    $results['shortcut'] = Invoke-ShortcutCheck
-    $results['settings'] = Invoke-SettingsCheck
-    $results['call'] = Invoke-CallCheck
-    $results['restart'] = Invoke-RestartCheck
-    if ($Reboot) { $results['reboot'] = Invoke-RebootCheck }
-    if (-not $deviceLost) { $results['role'] = Invoke-RoleRestartCheck }
+    $results['notification'] = Invoke-Check { Invoke-NotificationCheck }
+    $results['tile'] = Invoke-Check { Invoke-TileCheck }
+    $results['shortcut'] = Invoke-Check { Invoke-ShortcutCheck }
+    $results['settings'] = Invoke-Check { Invoke-SettingsCheck }
+    $results['call'] = Invoke-Check { Invoke-CallCheck }
+    $results['restart'] = Invoke-Check { Invoke-RestartCheck }
+    if ($Reboot) { $results['reboot'] = Invoke-Check { Invoke-RebootCheck } }
+    if (-not $deviceLost) { $results['role'] = Invoke-Check { Invoke-RoleRestartCheck } }
     $completed = $true
 } catch {
     $failed = $true

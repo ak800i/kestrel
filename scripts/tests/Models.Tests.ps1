@@ -266,7 +266,7 @@ Describe 'Push-ModelFiles' {
         foreach ($path in $contents.Keys) {
             Get-Content -LiteralPath (Get-DeviceCopy $root $path) -Raw | Should -BeExactly $contents[$path]
         }
-        (Get-FakeDevice).calls | Should -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo kestrel-end'
+        (Get-FakeDevice).calls | Should -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo && echo kestrel-end'
     }
 
     It 'gives every folder below the models folder the mode 2775, each after the folder that holds it' {
@@ -277,7 +277,7 @@ Describe 'Push-ModelFiles' {
         $device = Get-FakeDevice
         @($device.modes.PSObject.Properties | ForEach-Object { $_.Name }) | Should -Be @("$models/m", "$models/n", "$models/m/data")
         @($device.modes.PSObject.Properties | ForEach-Object { $_.Value } | Select-Object -Unique) | Should -Be @('2775')
-        $device.calls | Should -Not -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo kestrel-end'
+        $device.calls | Should -Not -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo && echo kestrel-end'
     }
 
     It 'gives a folder that exists already the mode 2775 too' {

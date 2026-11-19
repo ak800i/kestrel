@@ -167,15 +167,20 @@ function Get-RoleHolders([string]$Text) {
     @("$Text" -split '[;\s]+' | Where-Object { $_ })
 }
 
-# Kestrel's logged failures from 'logcat -s Kestrel:W': each fixed description of what failed, with how often it
-# appeared, in the order of the descriptions. Kestrel logs '<what> failed: <classes and frames>' and never a message
-# (design spec, section 13.5); the lines of the frames and causes after it do not count.
+# Kestrel's logged failures from 'logcat -s Kestrel:W': each fixed description of what failed with the short name of its
+# error's class, and how often the two appeared together, in the order of the descriptions and classes. Kestrel logs
+# '<what> failed: <class>' with the frames on the next lines, and never a message (design spec, section 13.5); the class
+# is on the same line, and the lines of the frames and causes after it do not count.
 function Get-FailureDescriptions([string[]]$Log) {
     $Log |
-        ForEach-Object { if ($_ -match '\bKestrel\s*:\s*(.+?) failed\b') { $Matches[1] } } |
-        Group-Object |
+        ForEach-Object {
+            if ($_ -match '\bKestrel\s*:\s*(.+?) failed:\s*([\w.$]+)') {
+                [pscustomobject]@{ What = $Matches[1]; Class = ($Matches[2] -split '\.')[-1] }
+            }
+        } |
+        Group-Object What, Class |
         Sort-Object Name |
-        ForEach-Object { [pscustomobject]@{ What = $_.Name; Count = $_.Count } }
+        ForEach-Object { [pscustomobject]@{ What = $_.Group[0].What; Class = $_.Group[0].Class; Count = $_.Count } }
 }
 
 # Android's record of Kestrel's ListeningService in 'dumpsys activity services dev.kestrel' (analysis of the A71 session
