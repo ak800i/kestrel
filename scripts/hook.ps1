@@ -94,8 +94,9 @@
 #                                           communication device and of the recording's input, and the loudest sample
 #                                           since the last voice-route, in percent; never audio
 #   voice-spotter [-Boost b] [-Threshold t] answers the keyword spotter's boost and threshold, after storing -Boost (0.5
-#                                           to 10) and -Threshold (0.01 to 0.5); a change counts from Kestrel's next
-#                                           start until the end of its process
+#                                           to 10) and -Threshold (0.01 to 0.5); a change counts for every keyword
+#                                           spotter that loads afterwards, also the spotter of the hook voice-echo,
+#                                           until the hook sets it again or Kestrel's process ends
 #   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
 #                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
 #   voice-task -Clear                       each task ends at once again, as in sub-project 2
@@ -173,6 +174,11 @@ param(
     [double]$Threshold = -1
 )
 $ErrorActionPreference = 'Stop'
+# -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
+if ($PSBoundParameters.ContainsKey('Boost') -and $Boost -lt 0) { throw "-Boost $Boost is negative; give a boost from 0.5 to 10." }
+if ($PSBoundParameters.ContainsKey('Threshold') -and $Threshold -lt 0) {
+    throw "-Threshold $Threshold is negative; give a threshold from 0.01 to 0.5."
+}
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial

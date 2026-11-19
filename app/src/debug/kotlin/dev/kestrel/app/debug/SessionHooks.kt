@@ -48,8 +48,8 @@ import kotlin.math.roundToInt
  * service in the foreground (plan 2E). VOICE_ROUTE answers the earbud option and the route of the newest recording
  * (MicCapture.routeReport), so that the A71 session sees where the earbuds' recording goes. Their answers hold only
  * counts, lengths, levels, times, device types and the names of kinds. VOICE_SPOTTER sets the keyword spotter's boost and
- * threshold for the spotters that load from Kestrel's next start, until the end of its process, so that the session can
- * try other values without a new build.
+ * threshold for every keyword spotter that loads afterwards, also the spotter of VOICE_ECHO, until the hook sets them
+ * again or Kestrel's process ends, so that the session can try other values without a new build.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
