@@ -1,11 +1,8 @@
 package dev.kestrel.app
 
-import android.Manifest
-import android.app.ActivityManager
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.util.Log
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
@@ -16,12 +13,12 @@ import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidCallScreen
 import dev.kestrel.app.listen.AndroidExitRecords
+import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
-import dev.kestrel.app.listen.ListeningConditions
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
@@ -277,17 +274,7 @@ class AppGraph(context: Context) {
             commands = commands,
             // Section 15: encrypted like every setting. Listening passes a change on at once.
             options = settings.observe(SettingKeys.LISTENING_OPTIONS),
-            conditions = object : ListeningConditions {
-                override fun microphoneAllowed() =
-                    appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-                override fun backgroundRestricted() =
-                    appContext.getSystemService(ActivityManager::class.java).isBackgroundRestricted
-
-                // A binder call with the service's token, which any thread may make (prototype P2). The type is 0 while
-                // the service is not in the foreground.
-                override fun demoted(service: Any) = (service as ListeningService).foregroundServiceType == 0
-            },
+            conditions = AndroidListeningConditions(appContext),
             // The owner's choice as Listening read it last, on the controller's thread, where the microphone starts.
             microphones = { MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }) },
         ).also(::keepScreenFresh)

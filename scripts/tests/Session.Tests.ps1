@@ -177,3 +177,57 @@ Describe 'The app ops that the scripts set' {
         }
     }
 }
+
+Describe 'Android''s record of the listening service' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Session.ps1"
+    }
+
+    It 'reads the foreground from Android 13''s record, which prints no types' {
+        $dump = @(
+            'ACTIVITY MANAGER SERVICES (dumpsys activity services)'
+            '  User 0 active services:'
+            '  * ServiceRecord{b2c1d3e u0 dev.kestrel/.app.listen.ListeningService}'
+            '    intent={cmp=dev.kestrel/.app.listen.ListeningService}'
+            '    isForeground=true foregroundId=7101 foregroundNoti=Notification(channel=listening flags=0x6a actions=2 vis=PRIVATE)'
+            '    createTime=-3m2s1ms startingBgTimeout=--'
+        )
+
+        $record = Get-ForegroundRecord -Dump $dump
+
+        $record.Listed | Should -BeTrue
+        $record.Foreground | Should -BeExactly 'true'
+        $record.Types | Should -BeExactly 'not printed'
+    }
+
+    It 'reads the record as Android 14 and Android 15 to 17 print it' {
+        $fourteen = Get-ForegroundRecord -Dump @(
+            '  * ServiceRecord{1 u0 dev.kestrel/.app.listen.ListeningService}'
+            '    isForeground=false foregroundId=7101 types=00000082 foregroundNoti=null'
+        )
+        # From Android 15 on, the first line names the package that last started the service before its '}'.
+        $later = Get-ForegroundRecord -Dump @(
+            '  * ServiceRecord{2 u0 dev.kestrel/.app.listen.ListeningService c:dev.kestrel}'
+            '    intent={cmp=dev.kestrel/.app.listen.ListeningService}'
+            '    isForeground=true foregroundId=7101 types=0x00000082 foregroundNoti=Notification(channel=listening flags=0x6a actions=2 vis=PRIVATE)'
+        )
+
+        $fourteen.Foreground | Should -BeExactly 'false'
+        $fourteen.Types | Should -BeExactly '0x82'
+        $later.Listed | Should -BeTrue
+        $later.Foreground | Should -BeExactly 'true'
+        $later.Types | Should -BeExactly '0x82'
+    }
+
+    It 'says when the record is missing, and reads no other service''s record' {
+        $record = Get-ForegroundRecord -Dump @(
+            '  * ServiceRecord{3 u0 dev.kestrel/.app.KestrelAccessibilityService}'
+            '    isForeground=true foregroundId=1 foregroundNoti=null types=0x00000001'
+            '  Connection bindings to services:'
+        )
+
+        $record.Listed | Should -BeFalse
+        $record.Foreground | Should -BeExactly 'not printed'
+        $record.Types | Should -BeExactly 'not printed'
+    }
+}

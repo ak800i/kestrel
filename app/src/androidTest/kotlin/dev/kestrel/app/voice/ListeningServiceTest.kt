@@ -3,6 +3,7 @@ package dev.kestrel.app.voice
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import androidx.test.core.app.ActivityScenario
@@ -10,6 +11,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 import dev.kestrel.app.debug.ClipMicrophone
+import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningTexts
 import dev.kestrel.app.listen.ProblemNotifications
@@ -57,12 +59,17 @@ class ListeningServiceTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             VoiceTests.startListening(clip)
 
+            // Android 13 prints the foreground but no types (analysis of the A71 session of sub-project 2, item 1), so the
+            // types come from the running service, which has them while it is in the foreground.
+            assertTrue("Android's record of the service shows no foreground", dumpedForeground())
             val types = foregroundTypes()
             assertTrue(
                 "Foreground service types 0x${types.toString(16)}",
                 (types and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0 &&
                     (types and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK) != 0,
             )
+            // Where Android prints the types, as Android 14 ("types=%08X") and later ("types=0x%08X") do, they agree.
+            dumpedTypes()?.let { assertEquals(types, it) }
             assertEquals(texts(R.string.listening_pause, R.string.listening_stop), actions(R.string.listening_title_listening))
 
             press(R.string.listening_pause)
@@ -166,6 +173,31 @@ class ListeningServiceTest {
         assertTrue("The microphone does not record", VoiceTests.waitUntil(5_000) { clip.recording })
     }
 
+    @Test
+    fun aServiceThatLostItsForegroundCountsAsDemoted() {
+        val conditions = AndroidListeningConditions(context)
+        ActivityScenario.launch(MainActivity::class.java).use { VoiceTests.startListening(clip) }
+        val service = runningService()
+        assertFalse("A service in the foreground counts as demoted", conditions.demoted(service))
+        try {
+            // As Android does to a service whose app's battery use is Restricted (prototype P2): without flags, so that
+            // the record keeps its notification's ID; Android 13 keeps the service's type then (analysis of the A71
+            // session of sub-project 2, item 1).
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                service.stopForeground(Service.STOP_FOREGROUND_LEGACY)
+            }
+            assertTrue(
+                "A service without the foreground does not count as demoted",
+                VoiceTests.waitUntil(5_000) { conditions.demoted(service) },
+            )
+            assertEquals(false, conditions.listedForeground())
+        } finally {
+            VoiceTests.stopListening()
+            // The service's notification of the turn-off no longer belongs to a foreground, so nothing else removes it.
+            notifications.cancel(ListeningService.NOTIFICATION_ID)
+        }
+    }
+
     private fun texts(vararg ids: Int): List<String> = ids.map { context.getString(it) }
 
     /** The titles of the actions of the service's notification, once its title is [title]. */
@@ -206,9 +238,32 @@ class ListeningServiceTest {
         assertTrue("The state is ${listening.state.value}", VoiceTests.waitUntil(10_000) { condition(listening.state.value) })
     }
 
-    /** ListeningService's foreground service types as Android reports them, or 0 when it is not in the foreground. */
+    /** The running ListeningService. */
+    private fun runningService(): ListeningService {
+        var found: ListeningService? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { found = ListeningService.running() }
+        return checkNotNull(found) { "ListeningService does not run" }
+    }
+
+    /** ListeningService's foreground service types, from the running service itself. */
     private fun foregroundTypes(): Int {
-        val pattern = Regex("""isForeground=true foregroundId=${ListeningService.NOTIFICATION_ID} types=0x([0-9a-fA-F]+)""")
-        return pattern.find(VoiceTests.shell("dumpsys activity services dev.kestrel"))?.groupValues?.get(1)?.toInt(16) ?: 0
+        val service = runningService()
+        var types = 0
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { types = service.foregroundServiceType }
+        return types
+    }
+
+    /** Whether Android's record of ListeningService says that it runs in the foreground, which every version prints. */
+    private fun dumpedForeground(): Boolean = FOREGROUND.containsMatchIn(services())
+
+    /** The types that Android's record prints after the foreground, or null where it prints none, as Android 13 does. */
+    private fun dumpedTypes(): Int? = TYPES.find(services())?.groupValues?.get(1)?.toInt(16)
+
+    private fun services(): String = VoiceTests.shell("dumpsys activity services dev.kestrel")
+
+    private companion object {
+        val RECORD = """isForeground=true foregroundId=${ListeningService.NOTIFICATION_ID}\b"""
+        val FOREGROUND = Regex(RECORD)
+        val TYPES = Regex(RECORD + """.*?\btypes=(?:0x)?([0-9a-fA-F]+)""")
     }
 }

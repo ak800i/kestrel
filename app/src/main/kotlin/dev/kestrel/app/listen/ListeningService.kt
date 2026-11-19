@@ -195,6 +195,12 @@ class ListeningService : Service() {
         private var current: ListeningService? = null
 
         /**
+         * The running service, for the device tests and the debug hook voice-times, or null while none runs. Only the main
+         * thread may call it.
+         */
+        internal fun running(): ListeningService? = current
+
+        /**
          * The intent of the problems notification's "Start listening": it starts the service with [ACTION_START]. A
          * service's PendingIntent lets the service record after the tap (spike S1); a broadcast would leave it only
          * about 9 s to call startForeground() with the microphone (prototype P2).

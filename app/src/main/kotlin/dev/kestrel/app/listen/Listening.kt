@@ -93,8 +93,9 @@ internal interface ListeningConditions {
     fun backgroundRestricted(): Boolean
 
     /**
-     * Whether Android took the foreground from ListeningService's instance [service]: its foreground service type is 0.
-     * Android does this without an exception or a callback (prototype P2).
+     * Whether Android took the foreground from ListeningService's instance [service], which Android does without an
+     * exception or a callback (prototype P2). Android 13 keeps the service's type when it does so, so the type alone does
+     * not tell (AndroidListeningConditions).
      */
     fun demoted(service: Any): Boolean
 }

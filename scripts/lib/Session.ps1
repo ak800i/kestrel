@@ -177,3 +177,31 @@ function Get-FailureDescriptions([string[]]$Log) {
         Sort-Object Name |
         ForEach-Object { [pscustomobject]@{ What = $_.Name; Count = $_.Count } }
 }
+
+# Android's record of Kestrel's ListeningService in 'dumpsys activity services dev.kestrel' (analysis of the A71 session
+# of sub-project 2, items 1 and 2): Listed, whether the dump has the record; Foreground, 'true' or 'false' from its line
+# 'isForeground=... foregroundId=...', which Android prints only while the service is in the foreground or keeps its
+# notification's ID, and 'not printed' otherwise; and Types, the foreground service types where Android prints them,
+# Android 14 as 'types=00000082' and later versions as 'types=0x00000082', always as '0x82', or 'not printed', as on
+# Android 13. A record's lines are indented more than its first line, which starts with '* ServiceRecord{'; from
+# Android 15 on, that line ends with ' c:' and the package that last started the service, before its '}'.
+function Get-ForegroundRecord([string[]]$Dump) {
+    $listed = $false
+    $inRecord = $false
+    $foreground = 'not printed'
+    $types = 'not printed'
+    foreach ($line in $Dump) {
+        if ($line -match '^\s*\* ServiceRecord\{') {
+            $inRecord = $line -match '\sdev\.kestrel/\.app\.listen\.ListeningService[\s}]'
+            if ($inRecord) { $listed = $true }
+            continue
+        }
+        if ($line -match '^\s{0,2}\S') { $inRecord = $false }
+        if (-not $inRecord) { continue }
+        if ($foreground -eq 'not printed' -and $line -match '\bisForeground=(true|false)\b') { $foreground = $Matches[1] }
+        if ($types -eq 'not printed' -and $line -match '\btypes=(?:0x)?([0-9a-fA-F]+)\b') {
+            $types = '0x{0:X}' -f [Convert]::ToInt64($Matches[1], 16)
+        }
+    }
+    [pscustomobject]@{ Listed = $listed; Foreground = $foreground; Types = $types }
+}
