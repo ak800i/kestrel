@@ -1,0 +1,50 @@
+{
+  "model": "gpt-5.5",
+  "input": [
+    {
+      "role": "system",
+      "content": "You are Kestrel."
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Hi"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "open_app",
+      "description": "Opens an app by its name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The app's name."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "low"
+  },
+  "max_output_tokens": 256,
+  "prompt_cache_key": "kestrel-agent-v1",
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "stream": true
+}

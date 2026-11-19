@@ -1,0 +1,2 @@
+event: response.completed
+data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_1","object":"response","model":"grok-4.3","status":"completed","output":[{"id":"fc_call_a","type":"function_call","status":"completed","call_id":"call_a","name":"open_app","arguments":"{\"name\":\"Camera\"}"},{"id":"fc_call_b","type":"function_call","status":"completed","call_id":"call_b","name":"open_app","arguments":"{\"name\":\"Clock\"}"}],"usage":{"input_tokens":300,"output_tokens":30}}}

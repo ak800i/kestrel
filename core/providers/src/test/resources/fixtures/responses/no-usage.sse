@@ -1,0 +1,8 @@
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":null}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":1,"output_index":0,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello, owner.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_1","object":"response","model":"gpt-5.5-2026-08-01","status":"completed","output":[]}}

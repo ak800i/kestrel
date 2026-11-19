@@ -1,0 +1,5 @@
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":1,"output_index":0,"item":{"id":"fc_call_p","type":"function_call","status":"completed","call_id":"call_p","name":"open_app","arguments":"{\"name\":\"Camera\"}","namespace":"kestrel"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_1","object":"response","model":"gpt-6-luna","status":"completed","output":[{"id":"fc_call_p","type":"function_call","status":"completed","call_id":"call_p","name":"open_app","arguments":"{\"name\":\"Camera\"}","namespace":"kestrel"}],"usage":{"input_tokens":500,"output_tokens":20}}}

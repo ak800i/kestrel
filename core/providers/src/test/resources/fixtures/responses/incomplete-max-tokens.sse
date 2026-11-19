@@ -1,0 +1,2 @@
+event: response.incomplete
+data: {"type":"response.incomplete","sequence_number":1,"response":{"id":"resp_1","object":"response","model":"gpt-5.5-2026-08-01","status":"incomplete","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"The list is long, so I","annotations":[]}]}],"usage":{"input_tokens":100,"output_tokens":256},"incomplete_details":{"reason":"max_output_tokens"}}}

@@ -1,0 +1,52 @@
+{
+  "model": "gpt-6-luna",
+  "instructions": "You are Kestrel.",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Open the camera."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "namespace",
+      "name": "kestrel",
+      "description": "Kestrel's phone actions.",
+      "tools": [
+        {
+          "type": "function",
+          "name": "open_app",
+          "description": "Opens an app by its name.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The app's name."
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "strict": false
+        }
+      ]
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "low"
+  },
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "stream": true
+}
