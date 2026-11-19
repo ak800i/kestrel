@@ -87,6 +87,22 @@ class LocalServerDiscoveryTest {
     }
 
     @Test
+    fun anAddressBehindAPathPrefixKeepsItAndLosesOnlyATrailingV1() {
+        bench.reply("local-servers/vllm-models.json")
+        bench.reply("local-servers/ollama-tags.json")
+        repeat(4) { bench.status(500) }
+
+        list(LocalServerKind.LITELLM, "https://proxy.example/litellm/v1/")
+        list(LocalServerKind.OLLAMA, "https://proxy.example/ollama")
+
+        assertEquals(
+            listOf("https://proxy.example/litellm/v1/models", "https://proxy.example/ollama/api/tags").map { it.toHttpUrl() } +
+                List(4) { "https://proxy.example/ollama/api/show".toHttpUrl() },
+            bench.calls.requests,
+        )
+    }
+
+    @Test
     fun aServerThatAnswersWithoutJsonIsMalformed() {
         bench.status(200, "<html>Not an API</html>")
 

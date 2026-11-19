@@ -101,7 +101,82 @@ class OllamaAdapterTest {
         assertEquals(5, messages.size)
         assertEquals(json("""{"role":"tool","tool_name":"open_app","content":"Opened."}"""), messages[3])
         assertEquals(json("""{"role":"tool","tool_name":"open_app","content":"Not run: Kestrel runs one action per step"}"""), messages[4])
-        assertNull(bench.body(bench.take())["tools"])
+        // Without tools, the earlier calls and results go back as text (design D5).
+        val none = bench.body(bench.take())
+        assertNull(none["tools"])
+        val replayed = none["messages"]!!.jsonArray
+        assertEquals(
+            json("""{"role":"assistant","content":"[tool call id=ollama-call-0 name=open_app] {\"name\":\"Camera\"}\n[tool call id=ollama-call-1 name=open_app] {\"name\":\"Clock\"}"}"""),
+            replayed[2],
+        )
+        assertEquals(json("""{"role":"user","content":"[tool result id=ollama-call-0 name=open_app] Opened."}"""), replayed[3])
+        assertEquals(json("""{"role":"user","content":"[tool result id=ollama-call-1 name=open_app] Not run: Kestrel runs one action per step"}"""), replayed[4])
+    }
+
+    @Test
+    fun aLocalModelWithoutAKnownWindowGetsTheLargestContextAndCloudModelsGetNone() = runBlocking {
+        repeat(4) { bench.reply("ollama/text.json") }
+        val unknown = ollama.copy(model = ollama.model.copy(contextWindow = null))
+
+        adapter.complete(request(user("Hi")), unknown)
+        // A cloud model that a local server passes on, and Ollama Cloud's other hosts, keep their own context.
+        adapter.complete(request(user("Hi")), ollama.copy(sentModelId = "glm-4.6:cloud"))
+        adapter.complete(request(user("Hi")), ollama.copy(sentModelId = "deepseek-v3.1:671b-cloud"))
+        adapter.complete(request(user("Hi")), ollama.copy(baseUrl = "https://eu.ollama.com".toHttpUrl()))
+
+        val local = bench.body(bench.take())
+        assertEquals(json("false"), local["truncate"])
+        assertEquals(json("32768"), local["options"]!!.jsonObject["num_ctx"])
+        repeat(3) {
+            val cloud = bench.body(bench.take())
+            assertNull(cloud["truncate"])
+            assertNull(cloud["shift"])
+            assertNull(cloud["options"]!!.jsonObject["num_ctx"])
+        }
+    }
+
+    @Test
+    fun anAddressBehindAPathPrefixKeepsItAndLosesOnlyATrailingV1() = runBlocking {
+        bench.reply("ollama/text.json")
+        bench.reply("ollama/text.json")
+        bench.reply("ollama/text.json")
+
+        adapter.complete(request(user("Hi")), ollama.copy(baseUrl = "https://proxy.example/ollama/v1/".toHttpUrl()))
+        adapter.complete(request(user("Hi")), ollama.copy(baseUrl = "https://proxy.example/ollama".toHttpUrl()))
+        adapter.complete(request(user("Hi")), ollama.copy(baseUrl = "http://127.0.0.1:11434/V1?x=1".toHttpUrl()))
+
+        assertEquals(
+            listOf("https://proxy.example/ollama/api/chat", "https://proxy.example/ollama/api/chat", "http://127.0.0.1:11434/api/chat").map { it.toHttpUrl() },
+            bench.calls.requests,
+        )
+    }
+
+    @Test
+    fun theReasoningLevelBecomesThinkAsTheModelNamesIt() = runBlocking {
+        repeat(6) { bench.reply("ollama/text.json") }
+        val gptOss = ollama.copy(model = ModelEntry("gpt-oss:20b", "gpt-oss 20B", reasoning = true), sentModelId = "gpt-oss:20b")
+        val mapped = ollama.copy(model = ollama.model.copy(thinkingLevelMap = mapOf("high" to "max", "low" to "false")))
+
+        for (level in listOf(ReasoningLevel.MINIMAL, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH)) {
+            adapter.complete(request(user("Hi")) { copy(reasoning = level) }, gptOss)
+        }
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.MEDIUM) }, ollama)
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, mapped)
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.LOW) }, mapped)
+
+        val sent = List(6) { bench.body(bench.take())["think"] }
+        assertEquals(listOf(""""low"""", """"medium"""", """"high"""", "true", """"max"""", "false").map(::json), sent)
+    }
+
+    @Test
+    fun anErrorInASuccessfulReplyIsABadRequestAndTheCachedCountStaysWithinThePrompt() {
+        bench.status(200, """{"error":"model 'qwen3.6' not found"}""")
+        bench.status(200, """{"model":"qwen3.6","done":true,"done_reason":"stop","message":{"role":"assistant","content":"Hi."},"prompt_eval_count":10,"prompt_eval_cached_count":50,"eval_count":2}""")
+
+        assertEquals(ProviderError.BadRequest(400, null), errorOf(adapter, request(user("Hi")), ollama))
+        val response = runBlocking { adapter.complete(request(user("Hi")), ollama) }
+
+        assertEquals(Usage(input = 0, output = 2, cacheRead = 10), response.usage)
     }
 
     @Test

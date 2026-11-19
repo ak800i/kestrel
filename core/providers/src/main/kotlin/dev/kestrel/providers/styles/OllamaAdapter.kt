@@ -32,12 +32,14 @@ import okhttp3.HttpUrl
 
 /**
  * Ollama's native style (spec 10.3, design D4, D6, D7 and D11), for an Ollama server and Ollama Cloud: `POST
- * <origin>/api/chat` with `"stream": false`, because Ollama's stream is newline-delimited JSON, not server-sent events
- * (design D4). Images go as base64 strings beside the user's text, tool calls carry their arguments as JSON objects, and
- * JSON actions pass the action schema as `format`. Ollama keeps no reasoning state (design D5). Ollama has no tool
- * choice, so [ToolChoice.NONE] leaves out the tools and [ToolChoice.REQUIRED] acts as AUTO. A local server (not Ollama
- * Cloud) gets the model's window up to [MAX_CONTEXT] as its context and is asked to refuse a longer prompt instead of
- * cutting it, as OpenClaw does (`extensions/ollama/src/stream.runtime.ts`); Ollama Cloud keeps its own context.
+ * <base>/api/chat`, where the base is the owner's address without a trailing `/v1` ([origin]), with `"stream": false`,
+ * because Ollama's stream is newline-delimited JSON, not server-sent events (design D4). Images go as base64 strings
+ * beside the user's text, tool calls carry their arguments as JSON objects, and JSON actions pass the action schema as
+ * `format`. A reasoning level becomes `think` (see [think]). Ollama keeps no reasoning state (design D5). Ollama has no
+ * tool choice, so [ToolChoice.NONE] leaves out the tools and replays earlier calls and results as text, and
+ * [ToolChoice.REQUIRED] acts as AUTO. A local server (not Ollama Cloud) gets the model's window up to [MAX_CONTEXT] as
+ * its context, or [MAX_CONTEXT] when the window is unknown, and is asked to refuse a longer prompt instead of cutting
+ * it, as OpenClaw does (`extensions/ollama/src/stream.runtime.ts`); Ollama Cloud keeps its own context.
  */
 internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
     override suspend fun complete(request: ChatRequest, target: ModelTarget): ChatResponse {
@@ -49,11 +51,12 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     private fun body(request: ChatRequest, target: ModelTarget): JsonObject = buildJsonObject {
         val compat = target.model.compat
-        val tools = request.tools.isNotEmpty() && compat.supportsTools != false
+        // Without tools (NONE), earlier calls and results go back as text (design D5).
+        val tools = request.tools.isNotEmpty() && compat.supportsTools != false && request.toolChoice != ToolChoice.NONE
         put("model", target.sentModelId)
         put("messages", messages(request, tools))
         put("stream", false)
-        if (tools && request.toolChoice != ToolChoice.NONE) putJsonArray("tools") {
+        if (tools) putJsonArray("tools") {
             for (tool in request.tools) addJsonObject {
                 put("type", "function")
                 putJsonObject("function") {
@@ -64,7 +67,7 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
             }
         }
         request.jsonSchema?.let { put("format", it) }
-        if (Wire.level(request, target.model, compat) != null) put("think", true)
+        Wire.level(request, target.model, compat)?.let { put("think", think(it, target)) }
         if (local(target)) {
             put("truncate", false)
             put("shift", false)
@@ -72,9 +75,32 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
         putJsonObject("options") {
             put("num_predict", request.maxOutputTokens)
             // OpenClaw caps only a local server's context, whose memory the window allocates; Ollama Cloud keeps its own.
-            if (local(target)) target.model.contextWindow?.takeIf { it > 0 }?.let { put("num_ctx", minOf(it, MAX_CONTEXT)) }
+            // An unknown window gets the cap too, because Ollama's own default is small and truncate is off.
+            if (local(target)) put("num_ctx", minOf(target.model.contextWindow?.takeIf { it > 0 } ?: MAX_CONTEXT, MAX_CONTEXT))
             if (request.temperature != null && compat.supportsTemperature != false) put("temperature", request.temperature)
         }
+    }
+
+    /**
+     * Ollama's `think` for [level] (design D5): the model's `thinkingLevelMap` when it names the level (`"true"` and
+     * `"false"` as booleans, other values as names); gpt-oss, which takes only the names `low`, `medium` and `high`, gets
+     * the nearest of them; every other model gets `true`.
+     */
+    private fun think(level: String, target: ModelTarget): JsonPrimitive {
+        when (val mapped = target.model.thinkingLevelMap[level]) {
+            null -> Unit
+            "true" -> return JsonPrimitive(true)
+            "false" -> return JsonPrimitive(false)
+            else -> return JsonPrimitive(mapped)
+        }
+        if ("gpt-oss" !in target.sentModelId.lowercase()) return JsonPrimitive(true)
+        return JsonPrimitive(
+            when (level) {
+                "minimal", "low" -> "low"
+                "medium" -> "medium"
+                else -> "high"
+            },
+        )
     }
 
     /** OpenClaw's `localModel`: neither Ollama Cloud nor a cloud model that a local server passes on. */
@@ -145,7 +171,7 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
         val usage = if (prompt == null && output == null) {
             Wire.estimate(request, reply.replyChars, message.str("thinking")?.length ?: 0, target.model.reasoning)
         } else {
-            val cached = body.long("prompt_eval_cached_count") ?: 0
+            val cached = (body.long("prompt_eval_cached_count") ?: 0).coerceIn(0, prompt ?: 0)
             Usage(input = Wire.minus(prompt ?: 0, cached), output = output ?: 0, cacheRead = cached)
         }
         return reply.response(stop, usage, body.str("model") ?: target.sentModelId)
@@ -161,7 +187,17 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
          */
         const val MAX_CONTEXT = 32_768
 
-        /** The server's origin: Ollama's paths start there, whatever path the owner typed (design D11). */
-        fun origin(baseUrl: HttpUrl): HttpUrl = baseUrl.newBuilder().encodedPath("/").query(null).fragment(null).build()
+        /**
+         * The server's API base: the address that the owner typed without a trailing `/v1` (and without a trailing slash,
+         * a query or a fragment), as OpenClaw's `resolveOllamaApiBase` does, so that a server behind a path prefix (a
+         * LiteLLM proxy, an Ollama behind a reverse proxy) keeps it. Ollama's paths and the local servers' lists start
+         * there (design D11).
+         */
+        fun origin(baseUrl: HttpUrl): HttpUrl {
+            val segments = baseUrl.encodedPathSegments.toMutableList()
+            while (segments.lastOrNull() == "") segments.removeAt(segments.lastIndex)
+            if (segments.lastOrNull().equals("v1", ignoreCase = true)) segments.removeAt(segments.lastIndex)
+            return baseUrl.newBuilder().encodedPath("/" + segments.joinToString("/")).query(null).fragment(null).build()
+        }
     }
 }
