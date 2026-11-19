@@ -1,5 +1,6 @@
 package dev.kestrel.app.commands
 
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -75,15 +76,20 @@ class TouchCommandsTest {
      * A command that reads the screen while the fixture's window still slides into place waits until the window has
      * stopped, so that the question numbers the settled window. Otherwise the snapshot after the next event would show
      * every element moved, and the question would end with "The screen changed" (design spec, section 9.2). The test
-     * starts the fixture itself, as ScreenServiceRule.open does, but without open's wait for the title, which reads the
-     * screen, so that the command's own read is the one that waits.
+     * starts the fixture itself, as ScreenServiceRule.open does, but it waits for the fixture's window through
+     * UiAutomation, not through open's wait for the title, which reads Kestrel's snapshots. So "tap Delete" comes while
+     * the window still slides, and the command's own read is the one that waits.
      */
     @Test
-    fun whichOneRightAfterAnAppOpensKeepsItsQuestionUntilTheAnswer() {
-        screen.shell("am start -W -S -n $FIXTURES/.CommandsActivity")
+    fun whichOneRightAfterAnAppOpensKeepsItsQuestionUntilTheAnswer() = runBlocking<Unit> {
+        screen.shell("am start -S -n $FIXTURES/.CommandsActivity")
+        val shown = withTimeoutOrNull(WAIT_MILLIS) {
+            while (screen.automation.windows.none { it.root?.let(::showsDelete) == true }) delay(20)
+        }
+        assertTrue("The fixture's window did not show", shown != null)
         assertEquals(CommandTexts.WHICH_ONE, CommandTests.ask("tap Delete"))
 
-        Thread.sleep(2_000)
+        delay(2_000)
         assertTrue("The question ended before the answer", CommandTests.asked)
         assertTrue("The question's numbers went before the answer", screen.session.whichOneShown.value)
         assertFalse(CommandTexts.SCREEN_CHANGED in CommandTests.spoken)
@@ -353,6 +359,10 @@ class TouchCommandsTest {
             withTimeout(WAIT_MILLIS) { while (CommandTests.graph.commandOptions.value != CommandOptions()) delay(50) }
         }
     }
+
+    // Whether [root] is the fixture's window with its "Delete" buttons, read through UiAutomation, not Kestrel's snapshots.
+    private fun showsDelete(root: AccessibilityNodeInfo): Boolean =
+        root.packageName?.toString() == FIXTURES && root.findAccessibilityNodeInfosByText("Delete").isNotEmpty()
 
     // A failure names what the bar shows and what Kestrel said last, Kestrel's own texts about the fixture's screen, so that
     // a failure in a package run tells which way the command ended.
