@@ -87,6 +87,7 @@ class AssistTest {
                     },
                 )
                 val resumes = VoiceTests.graph.timeline.settingsResumes.value
+                val askedBefore = VoiceTests.graph.timeline.settingsAsked
                 listening.send(Event.Heard("Kestrel, open settings", named = true))
 
                 // Without the role and the accessibility service, Android would block the start without an exception.
@@ -99,10 +100,15 @@ class AssistTest {
                             SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
                     },
                 )
-                // Kestrel gives up after 2 s and says so; settings that came later must not hide that verdict.
+                // Kestrel gives up 2 s after it asked for its settings (SettingsOpener) and says so; settings that came
+                // later must not hide that verdict. Timeline's own times of this run, which the hook voice-times reads,
+                // show it, while the latest reaction can be an older one or be replaced by a newer one.
+                val asked = VoiceTests.graph.timeline.settingsAsked
+                val resumed = VoiceTests.graph.timeline.settingsResumes.value
+                assertTrue("Kestrel did not ask for its settings in this run", asked > askedBefore)
                 assertTrue(
-                    "Kestrel said that Android kept its settings back",
-                    VoiceTests.graph.timeline.reacted?.kind != "settings-blocked",
+                    "Kestrel's settings came ${resumed - asked} ms after Kestrel asked for them, after its 2 s wait",
+                    resumed - asked < 2_000,
                 )
             } finally {
                 VoiceTests.shell("input keyevent KEYCODE_HOME")

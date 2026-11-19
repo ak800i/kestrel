@@ -904,7 +904,7 @@ class ListeningTest {
     }
 
     @Test
-    fun settingsThatAndroidKeptBackAreSaidAndOffered() = runTest {
+    fun settingsThatAndroidKeptBackAreSaidAndMarked() = runTest {
         // With only the assistant role, Android 13 may keep the settings back without an exception (A71 session of
         // sub-project 2, item 5); AppGraph then has posted the notification that opens them.
         settingsOpening = SettingsOpening.BLOCKED

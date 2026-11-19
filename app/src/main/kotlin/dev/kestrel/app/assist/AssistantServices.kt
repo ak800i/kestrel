@@ -59,8 +59,8 @@ class KestrelAssistantService : VoiceInteractionService() {
          * "Kestrel, open settings" with only the assistant role (design spec, section 8.6): asks Android for a session of
          * Kestrel's assistant, which starts the settings, and returns whether a service was there to ask. Android lets
          * the assistant's shown session start an activity also over another app, while Android 13 most likely blocks a
-         * plain start from the background then (A71 session of sub-project 2, item 5). Any thread may call it; it throws when Android
-         * refuses the session.
+         * plain start from the background then (A71 session of sub-project 2, item 5). Any thread may call it; it
+         * throws when Android refuses the session.
          */
         internal fun openSettings(): Boolean {
             val service = ready ?: return false
