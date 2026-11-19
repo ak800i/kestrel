@@ -23,7 +23,9 @@ class OverlayHost(private val service: AccessibilityService) {
 
     /**
      * Shows [view], or updates its layout when it is on the screen already, and returns whether it is on the screen.
-     * After [close], or once Android has disconnected the service, it shows nothing.
+     * After [close], or once Android has disconnected the service, it shows nothing. It gives [view] the accessibility
+     * delegate that names it [ROOT_CLASS] in its window events, in place of any delegate that [view] had, so an overlay's
+     * root view must not set one of its own.
      */
     fun show(view: View, params: LayoutParams): Boolean {
         if (closed) return false

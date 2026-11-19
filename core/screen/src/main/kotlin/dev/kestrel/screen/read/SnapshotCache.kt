@@ -27,9 +27,9 @@ interface PlaceCheck<T> {
  * screen that never goes quiet, such as a stopwatch (design spec, section 9.2). While windows of other apps may still
  * slide into place after their events ([ScreenChangeTracker.movingWindows]), which may end without a further event,
  * [places] checks each new snapshot [ScreenChangeTracker.SETTLE_CHECK_MILLIS] later, and the snapshot is built again
- * until the check finds those windows in place. The check of one call ends at the latest
- * [ScreenChangeTracker.SETTLE_MAX_MILLIS] after its first snapshot, however many events come meanwhile, and the newest
- * snapshot then counts.
+ * until the check finds those windows in place. The checks of one call end [ScreenChangeTracker.SETTLE_MAX_MILLIS]
+ * after its first snapshot, however many events come meanwhile, and the newest snapshot then counts; a build or a check
+ * that is under way at that time ends first, so one call can take that long plus one build.
  */
 class SnapshotCache<T : Any>(
     private val tracker: ScreenChangeTracker,

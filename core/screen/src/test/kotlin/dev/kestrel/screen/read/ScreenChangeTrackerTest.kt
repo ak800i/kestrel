@@ -97,6 +97,22 @@ class ScreenChangeTrackerTest {
         assertFalse(events.movesWindow(AccessibilityEvent.TYPE_WINDOWS_CHANGED, null, null, 116, added))
     }
 
+    @Test
+    fun aPassedCheckSettlesOnlyTheWindowsThatEventsNamedBeforeItsSnapshotWasBuilt() {
+        var now = 0L
+        val tracker = ScreenChangeTracker { now }
+        tracker.onScreenChanged(window = 1)
+        val beforeTheBuild = tracker.windowEventCount()
+        // An event during the build names another window, which the passed check never saw in place.
+        tracker.onScreenChanged(window = 2)
+
+        tracker.settled(beforeTheBuild)
+
+        assertEquals(setOf(2), tracker.movingWindows())
+        now += ScreenChangeTracker.SETTLE_MAX_MILLIS
+        assertEquals(emptySet<Int>(), tracker.movingWindows())
+    }
+
     private companion object {
         const val OVERLAY = "dev.kestrel.screen.overlay.Overlay"
     }
