@@ -265,3 +265,97 @@ Describe 'The answers of the hooks voice-times and voice-counts' {
         { ConvertFrom-HookPairs -Text 'waits=1 broken' } | Should -Throw
     }
 }
+
+Describe 'The helpers of the re-checks of plan 2E' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Session.ps1"
+    }
+
+    It 'keeps the breakdown of Kestrel''s line of batterystats, without its times' {
+        $dump = @(
+            '  Estimated power use (mAh):'
+            '    Capacity: 4500, Computed drain: 120, actual drain: 100-110'
+            '    UID u0a334: 81.4 ( cpu=54.2 (13m 1s 405ms) cpu:fg=50.1 (12m 3s) wakelock=0.04 (2s 3ms) audio=12.3 (30m 0s 0ms) CUSTOM_0=0.5 ) Including smearing: 85.1'
+        )
+
+        $use = Get-BatteryUse -Dump $dump -Uid 'u0a334' -Hours 0.5
+
+        $use.MilliampHours | Should -Be 81.4
+        $use.Breakdown | Should -BeExactly 'cpu=54.2 cpu:fg=50.1 wakelock=0.04 audio=12.3 CUSTOM_0=0.5'
+    }
+
+    It 'reads the time on battery that batterystats counted, in hours' {
+        Get-BatteryHours -Dump @('  Time on battery: 30m 0s 0ms (100.0%) realtime, 29m 59s 1ms (99.9%) uptime') | Should -Be 0.5
+        Get-BatteryHours -Dump @('  Time on battery: 1h 0m 36s 0ms (100.0%) realtime') | Should -Be 1.01
+        Get-BatteryHours -Dump @('no such line') | Should -BeNullOrEmpty
+    }
+
+    It 'gives the cost of each transcribed minute in an hour above the quiet baseline' {
+        Get-BatteryCost -Baseline 0.8 -PercentPerHour 3.7 -MinutesPerHour 29 | Should -Be 0.1
+        Get-BatteryCost -Baseline 0.8 -PercentPerHour 0.9 -MinutesPerHour 0 | Should -BeNullOrEmpty
+    }
+
+    It 'reads the memory categories of a process in MB' {
+        $dump = @(
+            '                   Pss  Private  Private  SwapPss      Rss     Heap     Heap     Heap'
+            '                 Total    Dirty    Clean    Dirty    Total     Size    Alloc     Free'
+            '  Native Heap   421888   421800        0        0   425000   500000   450000    50000'
+            '  Dalvik Heap    10240    10000        0        0    12000    20000    10000    10000'
+            '        .so mmap    37888     1000    30000        0    80000'
+            '       Other mmap   215040      100   210000        0   220000'
+            '          Unknown    97280    97000        0        0    98000'
+            '            TOTAL  1003520   600000   300000        0  1100000   520000   460000    60000'
+            ' App Summary'
+            '           TOTAL PSS:  1003520            TOTAL RSS:  1100000'
+        )
+
+        $memory = Get-MemoryCategories -Dump $dump
+
+        Format-MemoryCategories $memory | Should -BeExactly 'Native Heap 412, .so mmap 37, Other mmap 210, Unknown 95, TOTAL 980 (MB)'
+        Format-MemoryCategories (Get-MemoryCategories -Dump @('No process found for: dev.kestrel')) | Should -BeExactly 'not listed'
+    }
+
+    It 'tells whether a command''s output ended with a line break from its last byte' {
+        Test-EndsWithLineBreak -Answer @(' 0a') | Should -BeTrue
+        Test-EndsWithLineBreak -Answer @(' 7d') | Should -BeFalse
+        Test-EndsWithLineBreak -Answer @('') | Should -BeNullOrEmpty
+    }
+
+    It 'reads the time since boot in milliseconds' {
+        ConvertFrom-Uptime -Text '12345.67 23456.78' | Should -Be 12345670
+        { ConvertFrom-Uptime -Text 'none' } | Should -Throw
+    }
+
+    It 'lists what rose between two answers of voice-counts, without the waits and tasks' {
+        $before = ConvertFrom-HookPairs -Text 'waits=1 tasks=0 lastTaskWords=0 hits=3 hit-kestrel=3 utterances=4'
+        $after = ConvertFrom-HookPairs -Text 'waits=2 tasks=0 lastTaskWords=0 hits=4 hit-kestrel=4 named=1 read-name=1 utterances=5'
+
+        Get-CountRise $before $after | Should -BeExactly 'hit-kestrel+1 named+1 read-name+1 utterances+1'
+        Get-CountRise $after $after | Should -BeExactly 'none'
+    }
+
+    It 'reads the process state and the oom adj of a process' {
+        $dump = @(
+            '  *APP* UID 10334 ProcessRecord{1a2b3c 4321:dev.kestrel/u0a334}'
+            '    oom adj: max=1001 curRaw=0 setRaw=0 cur=0 set=0'
+            '    curSchedGroup=2 setSchedGroup=2 systemNoUi=false'
+            '    curProcState=2 mRepProcState=2 pssProcState=2 setProcState=2'
+        )
+
+        Get-ProcessState -Dump $dump | Should -BeExactly 'procState=2 adj=0'
+        Get-ProcessState -Dump @('  (nothing)') | Should -BeExactly 'not listed'
+    }
+
+    It 'keeps the spotter''s setting with the most hits among those with few false hits' {
+        $rounds = @(
+            [pscustomobject]@{ Setting = 'boost=2.0 threshold=0.15'; Default = $true; Hits = 1; FalseHits = 2 }
+            [pscustomobject]@{ Setting = 'boost=3.0 threshold=0.1'; Default = $false; Hits = 4; FalseHits = 5 }
+            [pscustomobject]@{ Setting = 'boost=4.0 threshold=0.05'; Default = $false; Hits = 5; FalseHits = 9 }
+        )
+        $tie = @($rounds[0], [pscustomobject]@{ Setting = 'boost=3.0 threshold=0.1'; Default = $false; Hits = 1; FalseHits = 2 })
+
+        (Select-SpotterWinner $rounds).Setting | Should -BeExactly 'boost=3.0 threshold=0.1'
+        (Select-SpotterWinner $tie).Setting | Should -BeExactly 'boost=2.0 threshold=0.15'
+        Select-SpotterWinner @($rounds[1]) | Should -BeNullOrEmpty
+    }
+}

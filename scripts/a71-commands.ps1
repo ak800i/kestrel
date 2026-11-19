@@ -3,7 +3,7 @@
 # order. It asks before it reads the device's model and before each step. In each check the owner says a command to
 # Kestrel, or does what the script asks, and then answers whether Kestrel did what the script describes; the script also
 # records the kind and the outcome of Kestrel's latest instant command, never what Kestrel heard. The steps' estimates
-# add up to 95 minutes; the session takes about 80 to 105 minutes, of which about 70 to 95 need the owner, because
+# add up to 116 minutes; the session takes about 100 to 125 minutes, of which about 90 to 115 need the owner, because
 # almost every step needs the owner's voice or hands, and only about 8 to 13 minutes (the install at the start, the
 # transcriptions of the step timing and the restores at the end) run without the owner. The steps:
 #   install        installs Kestrel's debug build and copies the speech models, turns Kestrel's accessibility service
@@ -882,8 +882,15 @@ function Invoke-OwnerRecording([string]$File, [int]$Seconds) {
     Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
     Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
     $started = Invoke-Hook voice-record @{ File = 'owner'; Seconds = $Seconds }
-    if ($started -ne 'recording') { throw "voice-record did not start: $started" }
-    Write-Host "Speak now ($Seconds s)"
+    if ($started -ne 'recording') {
+        # The hook refuses to record while Kestrel is on, as on 2026-11-17, when the owner had turned it on.
+        Stop-Kestrel
+        Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+        Write-Host 'Kestrel was on, so the script turned it off. Say the line when this window says "Speak now".'
+        $started = Invoke-Hook voice-record @{ File = 'owner'; Seconds = $Seconds }
+        if ($started -ne 'recording') { throw "voice-record did not start: $started" }
+    }
+    Write-Host "Speak now: say the line once ($Seconds s). The phone does not change and does not answer while it records."
     Start-Sleep -Seconds $Seconds
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
@@ -898,19 +905,20 @@ function Invoke-OwnerRecording([string]$File, [int]$Seconds) {
 
 function Invoke-RecordingStep {
     New-Item -ItemType Directory -Force -Path $clipsFolder | Out-Null
-    # Only the lines that no earlier session recorded: plan 2D's session recorded the first 100.
+    # Only the lines that have no clip yet, so that a session that stopped can go on. Plan 2D's session recorded none,
+    # because the owner turned Kestrel on during the step (plan 2E).
     $rows = @(Read-Corpus -Path $corpusFile | Where-Object { $_.Owner -and -not (Test-Path -LiteralPath (Join-Path $clipsFolder "$($_.Id).wav")) })
     if ($DryRun) { $rows = @($rows | Select-Object -First 2) }
     Stop-Kestrel
     $minutes = [math]::Max(1, [math]::Ceiling($rows.Count * 12 / 60))
-    if ((Request-Owner "Next come $($rows.Count) lines to say, about $minutes minutes. Sit in a quiet room and hold the phone as you would to talk to it; the script keeps Kestrel's settings in front. For each line, press Enter, wait for ""Speak now"", and say the line once, as you would say it to Kestrel. Press Enter to begin, or s to skip the recordings." 'go') -eq 'skip') {
+    if ((Request-Owner "Next come $($rows.Count) lines to say, about $minutes minutes. Kestrel stays off during this step: do not turn it on, and do not wait for it to answer. Sit in a quiet room and hold the phone as you would to talk to it. The phone shows Kestrel's settings; it does not change and does not answer while it records. For each line: press Enter, wait until this window says ""Speak now"", say the line once, as you would say it to Kestrel, and then press Enter for the next line, or r to say it again. Press Enter to begin, or s to skip the recordings." 'go') -eq 'skip') {
         Add-Result recordings 'skipped'
         return
     }
     $recorded = 0
     for ($i = 0; $i -lt $rows.Count; $i++) {
         $row = $rows[$i]
-        $answer = Read-OwnerAnswer "[$($i + 1)/$($rows.Count)] Say: $($row.Text)    (Enter to record, s to skip the line, q to stop)" ''
+        $answer = Read-OwnerAnswer "[$($i + 1)/$($rows.Count)] Next line: ""$($row.Text)"" Press Enter, wait for ""Speak now"", then say it. (s skips the line, q stops)" ''
         if ($answer -eq 'q') { break }
         if ($answer -eq 's') { continue }
         $seconds = if ($DryRun) { 1 } else { Get-ClipSeconds -Text $row.Text }
@@ -943,7 +951,7 @@ $plan = @(
     @{ Name = 'text'; Minutes = 11; Title = 'dictation and editing with Samsung Keyboard, show password and search'; Run = 'Invoke-TextStep' }
     @{ Name = 'calls'; Minutes = 12; Title = 'calls by number and name, the guard of the Call button, the contacts permission and copying a number'; Run = 'Invoke-CallStep' }
     @{ Name = 'timing'; Minutes = 6; Title = 'the snapshots while Kestrel listens, and the transcription time with labels'; Run = 'Invoke-TimingStep' }
-    @{ Name = 'recordings'; Minutes = 14; Title = 'your recordings of the new command lines'; Run = 'Invoke-RecordingStep' }
+    @{ Name = 'recordings'; Minutes = 35; Title = 'your recordings of the 160 lines that are marked for you'; Run = 'Invoke-RecordingStep' }
 )
 
 $completed = $false

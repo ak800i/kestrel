@@ -47,15 +47,21 @@ function ConvertTo-UidLabel([int]$UserId) {
 }
 
 # An app's battery use from 'dumpsys batterystats --charged' (research r10): the estimated mAh of the UID, the
-# battery's capacity, and the share of the battery per hour over $Hours, in percent with two decimals. Returns $null
-# when the dump has no estimate for the UID or no capacity.
+# battery's capacity, the share of the battery per hour over $Hours, in percent with two decimals, and the breakdown that
+# the UID's line gives in brackets, such as 'cpu=54.2 wakelock=0.04 audio=12.3', the parts' mAh without their times
+# (analysis of the A71 session of sub-project 2, item 10). Returns $null when the dump has no estimate for the UID or no
+# capacity.
 function Get-BatteryUse([string[]]$Dump, [string]$Uid, [double]$Hours) {
     $capacity = $null
     $used = $null
+    $breakdown = ''
     foreach ($line in $Dump) {
         if ($null -eq $capacity -and $line -match '^\s*Capacity:\s*(\d+)') { $capacity = [double]$Matches[1] }
-        if ($null -eq $used -and $line -match "^\s*Uid\s+$([regex]::Escape($Uid)):\s*([\d.]+)") {
+        if ($null -eq $used -and $line -match "^\s*Uid\s+$([regex]::Escape($Uid)):\s*([\d.]+)(.*)$") {
             $used = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+            # The times in brackets inside the breakdown, such as '(13m 1s 405ms)', go first.
+            $parts = [regex]::Matches(($Matches[2] -replace '\([^()]*\)', ''), '(?<![\w:])([\w:]+)=([\d.]+)')
+            $breakdown = @($parts | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" }) -join ' '
         }
     }
     if ($null -eq $used -or -not $capacity -or $Hours -le 0) { return $null }
@@ -63,6 +69,7 @@ function Get-BatteryUse([string[]]$Dump, [string]$Uid, [double]$Hours) {
         MilliampHours = $used
         Capacity = $capacity
         PercentPerHour = [math]::Round($used / $Hours / $capacity * 100, 2)
+        Breakdown = $breakdown
     }
 }
 
@@ -229,4 +236,117 @@ function ConvertFrom-TimeMark([string]$Text) {
     if ($Text -notmatch '^([\w-]+)@(\d+)(?:\+(\d+))?$') { return $null }
     $since = if ($Matches[3]) { [long]$Matches[3] } else { $null }
     [pscustomobject]@{ Kind = $Matches[1]; At = [long]$Matches[2]; SinceSpeech = $since }
+}
+
+# The memory categories of 'dumpsys meminfo <package>' that show where a process's memory stays (analysis of the A71
+# session of sub-project 2, item 9): the PSS of Native Heap, .so mmap, Other mmap, Unknown and TOTAL, in MB, from the
+# first number of each row of the table. Returns an ordered table, which is empty when the process does not run.
+function Get-MemoryCategories([string[]]$Dump) {
+    $categories = [ordered]@{}
+    foreach ($line in $Dump) {
+        if ($line -match '^\s*(Native Heap|\.so mmap|Other mmap|Unknown|TOTAL)\s+(\d+)\s' -and -not $categories.Contains($Matches[1])) {
+            $categories[$Matches[1]] = [int][math]::Round([double]$Matches[2] / 1024)
+        }
+    }
+    $categories
+}
+
+# The categories of Get-MemoryCategories as one text, such as 'Native Heap 412, .so mmap 37, TOTAL 980 (MB)', or
+# 'not listed'.
+function Format-MemoryCategories($Categories) {
+    if (-not $Categories -or $Categories.Count -eq 0) { return 'not listed' }
+    "$(@($Categories.Keys | ForEach-Object { "$_ $($Categories[$_])" }) -join ', ') (MB)"
+}
+
+# A duration as dumpsys prints it, such as '1h 2m 3s 456ms', in seconds.
+function ConvertFrom-DumpDuration([string]$Text) {
+    $seconds = 0.0
+    foreach ($part in [regex]::Matches($Text, '(\d+)(ms|d|h|m|s)\b')) {
+        $value = [double]$part.Groups[1].Value
+        $seconds += switch ($part.Groups[2].Value) {
+            'd' { $value * 86400 }
+            'h' { $value * 3600 }
+            'm' { $value * 60 }
+            's' { $value }
+            'ms' { $value / 1000 }
+        }
+    }
+    $seconds
+}
+
+# The time that 'dumpsys batterystats --charged' counted on battery since its reset, in hours, from its line such as
+# 'Time on battery: 30m 1s 234ms (100.0%) realtime, ...', so that a battery measure is timed by batterystats, or $null
+# when the dump has no such line.
+function Get-BatteryHours([string[]]$Dump) {
+    foreach ($line in $Dump) {
+        if ($line -match 'Time on battery:\s*([^(]+)\(') { return (ConvertFrom-DumpDuration $Matches[1]) / 3600 }
+    }
+    $null
+}
+
+# Kestrel's battery model from two measures (plan 2E): '% per hour = baseline + cost per transcribed minute x minutes',
+# where the minutes are the minutes of audio that Kestrel transcribed in an hour. $Baseline is the % per hour of a
+# measure in which nobody spoke; a measure with transcribed audio, $PercentPerHour with $MinutesPerHour, gives the cost.
+# Returns the cost in % per hour for each transcribed minute in an hour, with three decimals, or $null when that measure
+# transcribed nothing.
+function Get-BatteryCost([double]$Baseline, [double]$PercentPerHour, [double]$MinutesPerHour) {
+    if ($MinutesPerHour -le 0) { return $null }
+    [math]::Round(($PercentPerHour - $Baseline) / $MinutesPerHour, 3)
+}
+
+# Whether the answer of '<command> | tail -c 1 | od -An -tx1' says that the command's output ended with a line break
+# (0a), as the session checks One UI's 'dumpsys accessibility' (analysis, item 3): $true, $false for another last byte,
+# or $null when the answer has no byte. Only that byte is read, never the output.
+function Test-EndsWithLineBreak([string[]]$Answer) {
+    $byte = @("$($Answer -join ' ')" -split '\s+' | Where-Object { $_ -match '^[0-9a-fA-F]{2}$' }) | Select-Object -Last 1
+    if (-not $byte) { return $null }
+    $byte -eq '0a'
+}
+
+# The time since boot in milliseconds from the answer of 'cat /proc/uptime', such as '12345.67 23456.78', which counts the
+# time in deep sleep too, as Kestrel's SystemClock.elapsedRealtime does, so the two can be compared.
+function ConvertFrom-Uptime([string]$Text) {
+    if ("$Text".Trim() -notmatch '^(\d+(?:\.\d+)?)\s') { throw "Not an answer of /proc/uptime: '$Text'" }
+    [long][math]::Round([double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) * 1000)
+}
+
+# What rose between two answers of voice-counts, read with ConvertFrom-HookPairs, such as 'hit-kestrel+1 named+1
+# read-name+1 utterances+1', in the order of the later answer; or 'none'. The waits and the tasks, which the steps check
+# themselves, are left out.
+function Get-CountRise($Before, $After) {
+    $rises = foreach ($name in $After.Keys) {
+        if ($name -in 'waits', 'tasks', 'lastTaskWords', 'hits') { continue }
+        $was = if ($Before.Contains($name)) { [long]$Before[$name] } else { 0 }
+        $rise = [long]$After[$name] - $was
+        if ($rise -gt 0) { "$name+$rise" }
+    }
+    if ($rises) { @($rises) -join ' ' } else { 'none' }
+}
+
+# The state of a process from 'dumpsys activity processes <package>': its procState and its oom adj, such as
+# 'procState=2 adj=0', or 'not listed' (analysis, item 7). Only these numbers are kept.
+function Get-ProcessState([string[]]$Dump) {
+    $procState = $null
+    $adj = $null
+    foreach ($line in $Dump) {
+        if ($null -eq $procState -and $line -match '\bcurProcState=(-?\d+)') { $procState = $Matches[1] }
+        if ($null -eq $adj -and $line -match '\boom adj:.*?\bcur=(-?\d+)') { $adj = $Matches[1] }
+    }
+    if ($null -eq $procState -and $null -eq $adj) { return 'not listed' }
+    "procState=$(if ($null -ne $procState) { $procState } else { 'unknown' }) adj=$(if ($null -ne $adj) { $adj } else { 'unknown' })"
+}
+
+# The keyword spotter's setting that the A71 session keeps (plan 2E), from the rounds of its step spotter: each has
+# Setting (such as 'boost=2.0 threshold=0.15'), Default ($true for Kestrel's own), Hits (how many of the owner's tries
+# of "Hey Kestrel" Kestrel reacted to) and FalseHits (the hits of all three keywords in the played speech without a
+# keyword, the same speech for every setting). The rule: among the settings whose false hits are at most twice the
+# default's plus 2, the one with the most hits; a tie goes to fewer false hits, and then to the default. Returns $null
+# when the default was not measured.
+function Select-SpotterWinner([object[]]$Rounds) {
+    $default = @($Rounds | Where-Object { $_.Default }) | Select-Object -First 1
+    if (-not $default) { return $null }
+    $limit = 2 * $default.FalseHits + 2
+    @($Rounds | Where-Object { $_.FalseHits -le $limit }) |
+        Sort-Object @{ Expression = { $_.Hits }; Descending = $true }, @{ Expression = { $_.FalseHits }; Descending = $false }, @{ Expression = { -not $_.Default }; Descending = $false } |
+        Select-Object -First 1
 }
