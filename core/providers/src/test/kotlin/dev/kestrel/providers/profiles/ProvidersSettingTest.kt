@@ -49,6 +49,20 @@ class ProvidersSettingTest {
     }
 
     @Test
+    fun aProfileWhoseChoiceOrProviderTheCatalogNoLongerHasIsNotUsableAndNeedsNoHosts() {
+        val noChoice = profile("p1", "acme-removed")
+        val noProvider = profile("p2", "acme-key").copy(providerId = "gone", discoveredHosts = listOf("api.gone.test"))
+        val setting = ProvidersSetting(profiles = listOf(noChoice, noProvider))
+
+        assertFalse(setting.known(noChoice, catalog))
+        assertFalse(setting.usable(noChoice, catalog))
+        assertFalse(setting.usable(noProvider, catalog))
+        assertEquals(emptySet<String>(), ProfileHosts.hosts(noChoice, catalog))
+        assertEquals(emptySet<String>(), ProfileHosts.hosts(noProvider, catalog))
+        assertEquals(setOf("api.acme.test"), ProfileHosts.hosts(profile("p3", "acme-key"), catalog))
+    }
+
+    @Test
     fun theSettingSurvivesJsonAndPrintsNoNamesClientIdsOrAccounts() {
         val setting = ProvidersSetting(
             profiles = listOf(profile("p1", "acme-key").copy(lightweight = ProfileModel("secret-model", price = Price(1.0, 2.0)))),

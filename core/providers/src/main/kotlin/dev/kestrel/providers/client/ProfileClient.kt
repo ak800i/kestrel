@@ -75,6 +75,8 @@ class ProfileClient(
             applied.first { applied -> applied?.profiles?.any { it.id == profile.id } == true }
         } ?: throw ProviderException(ProviderError.NotAllowed)
         val current = setting.profiles.first { it.id == profile.id }
+        // A sign-in choice that an update of the catalog removed cannot sign in again as it is: the owner signs in anew.
+        if (!setting.known(current, catalog)) throw ProviderException(ProviderError.SignInExpired(profile.providerId))
         if (!setting.usable(current, catalog)) throw ProviderException(ProviderError.SignInSwitchedOff(profile.providerId))
         // Copilot's discovery is a network call, so the target has the limit of one attempt too (design D4).
         val target = withTimeoutOrNull(ATTEMPT_MILLIS) { targets(current, role) } ?: throw ProviderException(ProviderError.Timeout)

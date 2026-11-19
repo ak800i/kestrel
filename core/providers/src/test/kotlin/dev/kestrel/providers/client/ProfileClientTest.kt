@@ -190,6 +190,16 @@ class ProfileClientTest {
     }
 
     @Test
+    fun aProfileWhoseSignInChoiceTheCatalogNoLongerHasAsksForANewSignIn() = runTest {
+        val gone = profile("github-copilot", "github-copilot-removed", AuthMethod.DEVICE_CODE)
+
+        val error = errorOf { client(gone, adapter({ answer })).complete(ModelRole.LIGHTWEIGHT, request) }
+
+        assertEquals(ProviderError.SignInExpired("github-copilot"), error)
+        assertEquals(0, calls.size)
+    }
+
+    @Test
     fun aServerOnTheOwnersNetworkNeedsThePermissionAndOneOnThePhoneDoesNot() = runTest {
         val lan = profile("ollama", "ollama-server", AuthMethod.SERVER_ADDRESS, base = "http://192.168.1.20:11434")
         val phone = profile("ollama", "ollama-server", AuthMethod.SERVER_ADDRESS, base = "http://127.0.0.1:11434")

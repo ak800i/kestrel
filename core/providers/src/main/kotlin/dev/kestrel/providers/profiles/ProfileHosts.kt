@@ -31,14 +31,15 @@ object ProfileHosts {
     /**
      * The public hosts that [profile] needs: its base URL's host; when neither the profile nor the choice sets a base URL,
      * the provider's hosts and its models' base URL hosts, with the region filled in; the choice's refresh hosts; and the
-     * hosts that the sign-in and discovery accepted. Local hosts are left out, because they go to [localServers].
+     * hosts that the sign-in and discovery accepted. Local hosts are left out, because they go to [localServers]. A profile
+     * whose provider or sign-in choice the catalog no longer has needs none, because it cannot be used.
      */
     fun hosts(profile: Profile, catalog: Catalog): Set<String> {
-        val provider = catalog.provider(profile.providerId)
-        val choice = catalog.choice(profile.providerId, profile.choiceId)?.settings
+        val provider = catalog.provider(profile.providerId) ?: return emptySet()
+        val choice = (catalog.choice(profile.providerId, profile.choiceId) ?: return emptySet()).settings
         val hosts = sortedSetOf<String>()
         baseUrl(profile, catalog)?.let { hosts += it.host }
-        if (provider != null && profile.baseUrl == null && choice?.baseUrl == null) {
+        if (profile.baseUrl == null && choice?.baseUrl == null) {
             for (host in provider.hosts + provider.models.mapNotNull { CatalogLoader.hostOf(it.baseUrl) }) {
                 fill(host, profile.region)?.let { hosts += it }
             }

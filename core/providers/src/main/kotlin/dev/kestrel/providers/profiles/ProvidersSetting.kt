@@ -25,11 +25,19 @@ data class ProvidersSetting(
                 .firstOrNull { it.borrowedIdentity == identity }?.defaultOn
             ?: true
 
-    /** Whether [profile] may be used now: its borrowed identity, if it has one, is switched on. */
+    /**
+     * Whether [profile] may be used now: the catalog still has its provider and its sign-in choice ([known]), and its
+     * borrowed identity, if it has one, is switched on. A profile whose choice the catalog no longer has counts as switched
+     * off here, and ProfileClient asks the owner to sign in again for it.
+     */
     fun usable(profile: Profile, catalog: Catalog): Boolean {
+        if (!known(profile, catalog)) return false
         val identity = catalog.choice(profile.providerId, profile.choiceId)?.settings?.borrowedIdentity ?: return true
         return switchedOn(identity, catalog)
     }
+
+    /** Whether the catalog still has [profile]'s provider and sign-in choice; an update of Kestrel can remove them. */
+    fun known(profile: Profile, catalog: Catalog): Boolean = catalog.choice(profile.providerId, profile.choiceId) != null
 
     override fun toString(): String =
         "ProvidersSetting(profiles=$profiles, defaultProfileId=$defaultProfileId, signInSwitches=$signInSwitches, " +

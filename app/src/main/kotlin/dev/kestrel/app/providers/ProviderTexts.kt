@@ -26,6 +26,7 @@ internal object ProviderTexts {
         ProviderError.Unauthorized -> "$provider refused the key. Open Kestrel to change it."
         is ProviderError.SignInExpired -> "Your sign-in to $provider expired. Open Kestrel to sign in again."
         is ProviderError.SignInSwitchedOff -> "The sign-in to $provider is switched off in Kestrel's settings."
+        ProviderError.CredentialUnavailable -> "Kestrel could not read or store the sign-in or key for $provider just now. Try again."
         is ProviderError.RateLimited -> "$provider is busy. Try again in a moment."
         is ProviderError.ServerError -> "$provider has a problem. Try again later."
         ProviderError.Timeout -> "$provider did not answer in time."

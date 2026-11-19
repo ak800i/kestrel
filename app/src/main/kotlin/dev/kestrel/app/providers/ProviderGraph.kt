@@ -183,7 +183,7 @@ internal class ProviderGraph(
      * Whether the setup checklist's step is done (design D18): a default profile exists, its credential exists (or it is a
      * local server without a key), and its borrowed sign-in is not switched off.
      */
-    val providerReady: Flow<Boolean> = readiness(stored, { catalog }, { credentials.read(it) })
+    val providerReady: Flow<Boolean> = readiness(stored, { catalog }, { credentials.read(it) }, report = report)
 
     // The sign-ins.
 
@@ -637,7 +637,8 @@ internal class ProviderGraph(
         /**
          * [providerReady] over the stored setting. It reads the catalog and the credential on [dispatcher], not in its
          * collector's context, because the settings collect it on the main thread and the first reads load the catalog's
-         * assets and decrypt the credential with the Keystore.
+         * assets and decrypt the credential with the Keystore. A failure of the credential's read, such as the Keystore's,
+         * gives false and goes to [report] by its classes, so that the settings stay open.
          */
         @OptIn(ExperimentalCoroutinesApi::class)
         internal fun readiness(
@@ -645,9 +646,17 @@ internal class ProviderGraph(
             catalog: () -> Catalog,
             read: suspend (String) -> Credential?,
             dispatcher: CoroutineDispatcher = Dispatchers.IO,
+            report: (String, Throwable) -> Unit = { _, _ -> },
         ): Flow<Boolean> = stored.filterNotNull().mapLatest { setting ->
             val profile = setting.defaultProfile ?: return@mapLatest false
-            val credential = profile.credentialId?.let { read(it) }
+            val credential = try {
+                profile.credentialId?.let { read(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("Reading the default profile's credential", e)
+                return@mapLatest false
+            }
             setting.usable(profile, catalog()) && (credential != null || profile.credentialId == null)
         }.flowOn(dispatcher)
     }

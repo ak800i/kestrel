@@ -31,6 +31,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
@@ -60,7 +61,15 @@ class CredentialManagerTest {
         @Volatile
         var readGate: CompletableDeferred<Unit>? = null
 
+        /** Whether a read or a write throws as Android's Keystore does, with a message that names the credential. */
+        @Volatile
+        var failingReads = false
+
+        @Volatile
+        var failingWrites = false
+
         override suspend fun read(id: String): Credential? {
+            if (failingReads) throw java.security.KeyStoreException("test: the Keystore failed for $id")
             val value = stored[id]
             reads.incrementAndGet()
             readGate?.await()
@@ -68,6 +77,7 @@ class CredentialManagerTest {
         }
 
         override suspend fun write(id: String, credential: Credential) {
+            if (failingWrites) throw javax.crypto.IllegalBlockSizeException("test: the Keystore failed for $id")
             stored[id] = credential
         }
 
@@ -256,6 +266,57 @@ class CredentialManagerTest {
         assertEquals(RefreshResult.Expired, auth.refresh())
         assertEquals(ProviderError.SignInExpired("openai"), auth.rejected)
         assertNull((vault.stored["test-credential"] as Credential.OAuthToken).clientId)
+    }
+
+    @Test
+    fun aKeystoreFailureOfTheVaultsReadIsCredentialUnavailableWithoutItsMessageAndKeepsTheCredential() = runBlocking {
+        vault.stored["test-credential"] = Credential.ApiKey("test-key")
+        vault.failingReads = true
+        val manager = manager(null)
+
+        val failure = try {
+            manager.read("test-credential")
+            fail("expected a ProviderException")
+            throw AssertionError()
+        } catch (e: ProviderException) {
+            e
+        }
+
+        assertEquals(ProviderError.CredentialUnavailable, failure.error)
+        assertNull(failure.cause)
+        assertFalse(failure.message.orEmpty(), failure.message.orEmpty().contains("test-credential"))
+        assertEquals(ProviderError.CredentialUnavailable, errorOf { manager.auth(profile("anthropic", "apiKey"), KeyHeader.X_API_KEY) })
+        vault.failingReads = false
+        assertEquals(Credential.ApiKey("test-key"), manager.read("test-credential"))
+    }
+
+    @Test
+    fun aStoreWhoseVaultWriteFailsLeavesTheOldCredentialInMemory() = runBlocking {
+        val manager = manager(null)
+        manager.store(Credential.ApiKey("test-key-old"), "test-credential")
+        vault.failingWrites = true
+
+        assertEquals(ProviderError.CredentialUnavailable, errorOf { manager.store(Credential.ApiKey("test-key-new"), "test-credential") })
+
+        vault.failingWrites = false
+        assertEquals(Credential.ApiKey("test-key-old"), manager.read("test-credential"))
+        assertEquals(Credential.ApiKey("test-key-old"), vault.stored["test-credential"])
+    }
+
+    @Test
+    fun aRefreshWhoseVaultWriteFailsKeepsTheRotatedTokenAndStoresItBeforeTheNextRequest() = runBlocking {
+        vault.stored["test-credential"] = token(expiresIn = 30_000)
+        val refresher = TestRefresher(::rotated)
+        val auth = manager(refresher).auth(profile(), KeyHeader.BEARER)
+        vault.failingWrites = true
+
+        assertEquals(ProviderError.CredentialUnavailable, errorOf { auth.headers(request) })
+        assertEquals("test-refresh-1", (vault.stored["test-credential"] as Credential.OAuthToken).refresh)
+
+        vault.failingWrites = false
+        assertEquals(mapOf("Authorization" to "Bearer test-access-2"), auth.headers(request))
+        assertEquals("test-refresh-2", (vault.stored["test-credential"] as Credential.OAuthToken).refresh)
+        assertEquals(1, refresher.calls.get())
     }
 
     @Test

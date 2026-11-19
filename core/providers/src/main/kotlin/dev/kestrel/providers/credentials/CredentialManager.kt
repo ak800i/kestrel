@@ -16,6 +16,7 @@ import dev.kestrel.providers.signin.SignInRegistry
 import dev.kestrel.providers.signin.TokenRefresher
 import dev.kestrel.providers.styles.ServiceAccountAuth
 import dev.kestrel.providers.styles.SigV4Auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
@@ -31,11 +32,17 @@ import java.util.concurrent.ConcurrentHashMap
  * An OAuth token is refreshed before a request when it expires within 60 s (for the ChatGPT plan not before its
  * `earliest_refresh_at`), at once when it has expired, and when a request fails with 401. Refreshes of one credential run
  * one at a time, and a request that waited for one uses the newer token instead of refreshing again. Each refresh runs in
- * [scope] (a scope with a SupervisorJob that `:app` gives), from the token request to the vault write, with its own limit
- * of 20 s, and every caller awaits it: so a caller's stop or ProfileClient's limit of 30 s ends the caller's wait but not
- * the refresh, and a rotated refresh token is stored before the lock is released, also when the request that caused the
- * refresh is gone. A refresh that fails for now keeps a token that is still valid; once the token has expired, the request
- * fails with the refresh's error, or with SignInExpired when the provider refused the refresh with a 4xx other than 429.
+ * [scope] (a scope with a SupervisorJob that `:app` gives), from the token request to the vault write, and every caller
+ * awaits it: so a caller's stop or ProfileClient's limit of 30 s ends the caller's wait but not the refresh, and a rotated
+ * refresh token is stored before the lock is released, also when the request that caused the refresh is gone. The token
+ * request has a limit of 20 s of its own; the vault write has none, because cancelling it could lose a rotated refresh
+ * token. A refresh that fails for now keeps a token that is still valid; once the token has expired, the request fails
+ * with the refresh's error, or with SignInExpired when the provider refused the refresh with a 4xx other than 429.
+ *
+ * A failure of the vault's read or write that is not a ProviderException, such as one of Android's Keystore, becomes
+ * [ProviderError.CredentialUnavailable], without the exception's message, and the credential is kept: a store writes the
+ * vault first and memory only after the write succeeded; a refresh keeps its rotated token in memory, fails its request
+ * with CredentialUnavailable, and writes the token to the vault again before the next request of that credential.
  */
 class CredentialManager(
     private val vault: CredentialVault,
@@ -54,6 +61,9 @@ class CredentialManager(
      */
     private val earlyAgainAt = ConcurrentHashMap<String, Long>()
 
+    /** The credentials whose rotated token is in memory but not in the vault, because the vault's write failed. */
+    private val unsaved: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     /**
      * The credential with [id], from memory or from the vault; null when it is missing or could not be read. A read from
      * the vault takes the credential's lock, so that a store, delete or refresh cannot run between the vault's read and
@@ -62,16 +72,19 @@ class CredentialManager(
     suspend fun read(id: String): Credential? = cache[id] ?: lock(id).withLock { readLocked(id) }
 
     /** Called with the credential's lock held. */
-    private suspend fun readLocked(id: String): Credential? = cache[id] ?: vault.read(id)?.also { cache[id] = it }
+    private suspend fun readLocked(id: String): Credential? = cache[id] ?: vaultCall { vault.read(id) }?.also { cache[id] = it }
 
     /**
      * Stores [credential] under [id], or under a new ID, and returns the ID; an existing ID is replaced. It waits for a
-     * running refresh of [id], so that the refresh cannot overwrite the new credential with the old one.
+     * running refresh of [id], so that the refresh cannot overwrite the new credential with the old one. The vault is
+     * written first, so that a failed write (CredentialUnavailable) leaves no credential in memory that the vault lacks.
      */
     suspend fun store(credential: Credential, id: String? = null): String {
         val key = id ?: "credential-${UUID.randomUUID()}"
         lock(key).withLock {
-            write(key, credential)
+            vaultCall { vault.write(key, credential) }
+            cache[key] = credential
+            unsaved.remove(key)
             earlyAgainAt.remove(key)
         }
         return key
@@ -82,6 +95,7 @@ class CredentialManager(
         lock(id).withLock {
             vault.delete(id)
             cache.remove(id)
+            unsaved.remove(id)
             earlyAgainAt.remove(id)
         }
     }
@@ -135,13 +149,13 @@ class CredentialManager(
             } ?: Refresh.ForNow(ProviderError.Timeout)
             when (outcome) {
                 is Refresh.Done -> {
-                    write(id, outcome.token)
                     earlyAgainAt.remove(id)
+                    if (!keep(id, outcome.token)) throw ProviderException(ProviderError.CredentialUnavailable)
                     RefreshResult.Refreshed
                 }
                 is Refresh.ForNow -> RefreshResult.FailedForNow(outcome.error)
                 is Refresh.Refused -> {
-                    outcome.writeBack?.let { write(id, it) }
+                    outcome.writeBack?.let { keep(id, it) }
                     RefreshResult.Expired
                 }
             }
@@ -149,11 +163,45 @@ class CredentialManager(
 
     private fun lock(id: String): Mutex = locks.getOrPut(id) { Mutex() }
 
-    /** Called with the credential's lock held: memory first, so that a failed vault write keeps a rotated token for now. */
-    private suspend fun write(id: String, credential: Credential) {
+    /**
+     * Called with the credential's lock held, for a refresh's token: memory first, so that a failed vault write keeps a
+     * rotated token for now, and the next request writes it again ([saveAgain]). False when the write failed.
+     */
+    private suspend fun keep(id: String, credential: Credential): Boolean {
         cache[id] = credential
-        vault.write(id, credential)
+        return try {
+            vaultCall { vault.write(id, credential) }
+            unsaved.remove(id)
+            true
+        } catch (e: ProviderException) {
+            unsaved += id
+            false
+        }
     }
+
+    /** Writes a rotated token that the vault does not hold yet; a failure leaves it for the next request. */
+    private suspend fun saveAgain(id: String) {
+        if (id !in unsaved) return
+        lock(id).withLock {
+            val credential = cache[id] ?: return@withLock
+            if (id in unsaved) keep(id, credential)
+        }
+    }
+
+    /**
+     * Runs a call of the vault: a failure that is not a ProviderException or a cancellation, such as one of Android's
+     * Keystore, becomes CredentialUnavailable, without its message, which could name the credential.
+     */
+    private suspend fun <T> vaultCall(block: suspend () -> T): T =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ProviderException) {
+            throw e
+        } catch (e: Exception) {
+            throw ProviderException(ProviderError.CredentialUnavailable)
+        }
 
     /** An OAuth token, refreshed by [refresher] (design D9). */
     private inner class TokenAuth(private val id: String, private val refresher: TokenRefresher?, override val rejected: ProviderError) : RequestAuth {
@@ -161,6 +209,7 @@ class CredentialManager(
         private var lastAccess: String? = null
 
         override suspend fun headers(request: HttpRequest): Map<String, String> {
+            saveAgain(id)
             var token = read(id) as? Credential.OAuthToken ?: throw ProviderException(rejected)
             if (refresher != null && due(token)) {
                 when (val result = refresh(id, token.access, refresher)) {

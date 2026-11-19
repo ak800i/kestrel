@@ -71,7 +71,7 @@ class HostsAgreementTest {
         val junk = listOf("", "exa mple.com", "api.openai.com/v1", "user@api.openai.com", "a..b", "host:443", "[::1].")
 
         for (host in hosts) {
-            val public = ProfileHosts.hosts(profile(discovered = listOf(host)), emptyCatalog)
+            val public = ProfileHosts.hosts(profile(discovered = listOf(host)), catalog)
             val bracketed = if (':' in host && !host.trim().startsWith("[")) "[${host.trim()}]" else host.trim()
             val local = ProfileHosts.localServers(profile(baseUrl = "http://$bracketed/"))
             assertEquals(host, 1, public.size + local.size)
@@ -83,7 +83,7 @@ class HostsAgreementTest {
             assertEquals(host, PolicyDecision.Blocked("${(public + local).single()} is not on the allowlist"), NetworkPolicy().check(url))
         }
         for (host in junk) {
-            assertEquals(host, emptySet<String>(), ProfileHosts.hosts(profile(discovered = listOf(host)), emptyCatalog))
+            assertEquals(host, emptySet<String>(), ProfileHosts.hosts(profile(discovered = listOf(host)), catalog))
             assertThrows(host, IllegalArgumentException::class.java) { NetworkPolicy().setProfileHosts(listOf(host)) }
         }
     }
@@ -93,8 +93,10 @@ class HostsAgreementTest {
         baseUrl = baseUrl, lightweight = ProfileModel("a"), versatile = ProfileModel("b"), discoveredHosts = discovered,
     )
 
-    private val emptyCatalog = CatalogLoader.load(
-        """{"schema": 1, "openclawCommit": "e6113549fe8800b4c736c5e8a131b47f2e015143", "providers": []}""",
+    private val catalog = CatalogLoader.load(
+        """{"schema": 1, "openclawCommit": "e6113549fe8800b4c736c5e8a131b47f2e015143", "providers": [
+             {"id": "none", "plugin": "none", "label": "None", "style": "CHAT_COMPLETIONS", "baseUrl": null, "hosts": [],
+              "authChoices": [{"choiceId": "none", "method": "api-key", "label": "None"}], "models": []}]}""",
         """{"schema": 1, "excludeProviders": [], "excludeAuthChoices": [], "choices": [],
             "providers": [], "localServers": [], "models": [], "freeModels": [],
             "unknownPrice": {"input": 5.0, "output": 25.0},

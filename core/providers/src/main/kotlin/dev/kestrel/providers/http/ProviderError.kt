@@ -15,6 +15,12 @@ sealed interface ProviderError {
 
     data class SignInSwitchedOff(val providerId: String) : ProviderError
 
+    /**
+     * The phone could not read or store a credential just now, as when Android's Keystore fails; the credential is kept,
+     * and the owner can try again.
+     */
+    data object CredentialUnavailable : ProviderError
+
     data class RateLimited(val retryAfterMillis: Long?, val code: String? = null) : ProviderError
 
     data class ServerError(val status: Int) : ProviderError

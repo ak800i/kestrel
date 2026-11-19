@@ -84,4 +84,26 @@ class ProviderReadinessTest {
             assertEquals(listOf(false, true), seen)
         }
     }
+
+    @Test
+    fun aCredentialThatCannotBeReadMakesTheStepNotDoneAndIsReportedByItsClass() {
+        val reported = mutableListOf<Throwable>()
+        val value = runBlocking {
+            val failing: suspend (String) -> Credential? = { throw java.security.KeyStoreException("test: the Keystore failed") }
+            ProviderGraph.readiness(flowOf(ready), { catalog }, failing, kotlinx.coroutines.Dispatchers.Unconfined) { _, e -> reported += e }.first()
+        }
+
+        assertEquals(false, value)
+        assertEquals(listOf(java.security.KeyStoreException::class), reported.map { it::class })
+    }
+
+    @Test
+    fun aDefaultProfileWhoseChoiceTheCatalogNoLongerHasIsNotReady() {
+        val gone = profile.copy(choiceId = "acme-removed")
+        val value = runBlocking {
+            ProviderGraph.readiness(flowOf(ProvidersSetting(listOf(gone), gone.id)), { catalog }, { Credential.ApiKey("test-key") }).first()
+        }
+
+        assertEquals(false, value)
+    }
 }
