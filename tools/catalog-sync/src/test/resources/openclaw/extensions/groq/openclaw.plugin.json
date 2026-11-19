@@ -1,0 +1,77 @@
+{
+  "id": "groq",
+  "categories": ["models"],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providerCatalogEntry": "./provider-discovery.ts",
+  "providers": ["groq"],
+  "providerEndpoints": [
+    {
+      "endpointClass": "groq-native",
+      "hosts": ["api.groq.com"]
+    }
+  ],
+  "setup": {
+    "providers": [
+      {
+        "id": "groq",
+        "authMethods": ["api-key"],
+        "envVars": ["GROQ_API_KEY"]
+      }
+    ]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "groq",
+      "method": "api-key",
+      "choiceId": "groq-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "Groq API key",
+      "choiceHint": "Fast OpenAI-compatible inference",
+      "groupId": "groq",
+      "groupLabel": "Groq",
+      "optionKey": "groqApiKey"
+    }
+  ],
+  "modelCatalog": {
+    "modelsDev": {
+      "groq": "groq"
+    },
+    "providers": {
+      "groq": {
+        "baseUrl": "https://api.groq.com/openai/v1",
+        "api": "openai-completions",
+        "defaultModel": "openai/gpt-oss-120b",
+        "models": [
+          {
+            "id": "openai/gpt-oss-120b",
+            "name": "GPT OSS 120B",
+            "reasoning": true,
+            "input": ["text"],
+            "contextWindow": 131072,
+            "maxTokens": 65536,
+            "cost": {
+              "input": 0.15,
+              "output": 0.6,
+              "cacheRead": 0.075,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "supportedReasoningEfforts": ["low", "medium", "high"]
+            }
+          }
+        ]
+      }
+    },
+    "discovery": {
+      "groq": "refreshable"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

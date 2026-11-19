@@ -1,0 +1,18 @@
+{
+  "id": "pi-gateway",
+  "categories": ["models"],
+  "providers": ["pi-gateway"],
+  "modelCatalog": {
+    "providers": {
+      "pi-gateway": {
+        "baseUrl": "https://gateway.pi.test",
+        "api": "pi-messages",
+        "models": [{ "id": "pi-1", "name": "Pi 1" }]
+      }
+    }
+  },
+  "providerAuthChoices": [
+    { "provider": "pi-gateway", "method": "oauth", "choiceId": "pi-gateway", "choiceLabel": "Pi gateway" }
+  ],
+  "configSchema": { "type": "object" }
+}

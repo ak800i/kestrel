@@ -1,0 +1,9 @@
+{
+  "id": "tools-only",
+  "categories": ["developer-tools"],
+  "providers": ["tools-only"],
+  "providerAuthChoices": [
+    { "provider": "tools-only", "method": "api-key", "choiceId": "tools-only-key", "choiceLabel": "Tools key" }
+  ],
+  "configSchema": { "type": "object" }
+}

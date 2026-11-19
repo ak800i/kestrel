@@ -1,0 +1,21 @@
+// OpenClaw reads its manifests as JSON5, so the sync accepts comments and trailing commas.
+{
+  "id": "json5-forms",
+  "categories": ["models",],
+  "providers": ["json5-forms"],
+  "modelCatalog": {
+    "providers": {
+      "json5-forms": {
+        "baseUrl": "https://ollama.json5.test",
+        "api": "ollama", // Ollama's native API
+        "models": [
+          { "id": "llama-9", "name": "Llama 9", "cost": { "input": 0, "output": 0 }, },
+        ],
+      },
+    },
+  },
+  "providerAuthChoices": [
+    { "provider": "json5-forms", "method": "api-key", "choiceId": "json5-key", "choiceLabel": "JSON5 key", },
+  ],
+  "configSchema": { "type": "object" },
+}

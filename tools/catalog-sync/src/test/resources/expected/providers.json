@@ -1,0 +1,287 @@
+{
+    "schema": 1,
+    "openclawCommit": "e6113549fe8800b4c736c5e8a131b47f2e015143",
+    "providers": [
+        {
+            "id": "anthropic",
+            "plugin": "anthropic",
+            "label": "Anthropic",
+            "style": "ANTHROPIC",
+            "baseUrl": "https://api.anthropic.com",
+            "hosts": [
+                "api.anthropic.com"
+            ],
+            "utilityModel": "claude-haiku-5-5",
+            "discovery": "REFRESHABLE",
+            "authChoices": [
+                {
+                    "choiceId": "anthropic-cli",
+                    "method": "cli",
+                    "label": "Anthropic Claude CLI",
+                    "hint": "Keep using an existing Claude Code CLI login on this host"
+                },
+                {
+                    "choiceId": "setup-token",
+                    "method": "setup-token",
+                    "label": "Anthropic setup-token",
+                    "hint": "Token created by running 'claude setup-token' in your terminal"
+                },
+                {
+                    "choiceId": "apiKey",
+                    "method": "api-key",
+                    "label": "Anthropic API key"
+                }
+            ],
+            "models": [
+                {
+                    "id": "claude-haiku-5-5",
+                    "name": "Claude Haiku 5.5",
+                    "input": [
+                        "TEXT",
+                        "IMAGE"
+                    ],
+                    "reasoning": true,
+                    "contextWindow": 1000000,
+                    "maxTokens": 128000,
+                    "prices": [
+                        {
+                            "input": 0.1,
+                            "output": 0.5,
+                            "cacheRead": 0.01,
+                            "cacheWrite": 0.125,
+                            "tiers": [
+                                {
+                                    "aboveInputTokens": 100000,
+                                    "input": 0.5,
+                                    "output": 2.5,
+                                    "cacheRead": 0.05,
+                                    "cacheWrite": 0.625
+                                }
+                            ]
+                        }
+                    ],
+                    "thinkingLevelMap": {
+                        "minimal": "low",
+                        "xhigh": "xhigh",
+                        "max": "max"
+                    }
+                },
+                {
+                    "id": "claude-opus-4-8",
+                    "name": "Claude Opus 4.8",
+                    "input": [
+                        "TEXT",
+                        "IMAGE"
+                    ],
+                    "status": "DEPRECATED"
+                }
+            ]
+        },
+        {
+            "id": "google",
+            "plugin": "google",
+            "label": "Google",
+            "style": "GEMINI",
+            "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+            "hosts": [
+                "generativelanguage.googleapis.com"
+            ],
+            "discovery": "RUNTIME",
+            "authChoices": [
+                {
+                    "choiceId": "gemini-api-key",
+                    "method": "api-key",
+                    "label": "Google AI Studio API key",
+                    "hint": "Supported API-key access from aistudio.google.com/apikey"
+                }
+            ],
+            "models": [
+                {
+                    "id": "gemini-4-argon",
+                    "name": "Gemini 4 Argon",
+                    "input": [
+                        "TEXT",
+                        "IMAGE"
+                    ],
+                    "reasoning": true,
+                    "contextWindow": 1048576,
+                    "maxTokens": 65536,
+                    "thinkingLevelMap": {
+                        "minimal": null
+                    }
+                }
+            ]
+        },
+        {
+            "id": "groq",
+            "plugin": "groq",
+            "label": "Groq",
+            "style": "CHAT_COMPLETIONS",
+            "baseUrl": "https://api.groq.com/openai/v1",
+            "hosts": [
+                "api.groq.com"
+            ],
+            "defaultModel": "openai/gpt-oss-120b",
+            "discovery": "REFRESHABLE",
+            "authChoices": [
+                {
+                    "choiceId": "groq-api-key",
+                    "method": "api-key",
+                    "label": "Groq API key",
+                    "hint": "Fast OpenAI-compatible inference"
+                }
+            ],
+            "models": [
+                {
+                    "id": "openai/gpt-oss-120b",
+                    "name": "GPT OSS 120B",
+                    "reasoning": true,
+                    "contextWindow": 131072,
+                    "maxTokens": 65536,
+                    "prices": [
+                        {
+                            "input": 0.15,
+                            "output": 0.6,
+                            "cacheRead": 0.075,
+                            "cacheWrite": 0.0
+                        }
+                    ],
+                    "compat": {
+                        "supportedReasoningEfforts": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "id": "json5-forms",
+            "plugin": "json5-forms",
+            "label": "json5-forms",
+            "style": "OLLAMA",
+            "baseUrl": "https://ollama.json5.test",
+            "hosts": [
+                "ollama.json5.test"
+            ],
+            "discovery": "STATIC",
+            "authChoices": [
+                {
+                    "choiceId": "json5-key",
+                    "method": "api-key",
+                    "label": "JSON5 key"
+                }
+            ],
+            "models": [
+                {
+                    "id": "llama-9",
+                    "name": "Llama 9"
+                }
+            ]
+        },
+        {
+            "id": "mixed",
+            "plugin": "mixed",
+            "label": "Mixed Cloud",
+            "style": "CHAT_COMPLETIONS",
+            "baseUrl": "https://api.mixed.test/v1",
+            "hosts": [
+                "api.mixed.test",
+                "anthropic.mixed.test"
+            ],
+            "headers": {
+                "X-Client": "openclaw"
+            },
+            "defaultModel": "mixed-large",
+            "utilityModel": "mixed-small",
+            "discovery": "STATIC",
+            "authChoices": [
+                {
+                    "choiceId": "mixed-key",
+                    "method": "api-key",
+                    "label": "Mixed API key"
+                }
+            ],
+            "models": [
+                {
+                    "id": "mixed-large",
+                    "name": "Mixed Large",
+                    "style": "ANTHROPIC",
+                    "baseUrl": "https://anthropic.mixed.test",
+                    "input": [
+                        "TEXT",
+                        "IMAGE"
+                    ],
+                    "reasoning": true,
+                    "thinkingLevelMap": {
+                        "off": null,
+                        "high": "max"
+                    }
+                },
+                {
+                    "id": "mixed-small",
+                    "name": "Mixed Small",
+                    "prices": [
+                        {
+                            "input": 0.2,
+                            "output": 0.8
+                        }
+                    ],
+                    "compat": {
+                        "maxTokensField": "max_tokens",
+                        "supportsTools": false,
+                        "thinkingLevels": [
+                            "off",
+                            "low"
+                        ],
+                        "defaultThinkingLevel": "low"
+                    },
+                    "status": "PREVIEW"
+                }
+            ]
+        },
+        {
+            "id": "mixed-code",
+            "plugin": "mixed",
+            "label": "Mixed Code",
+            "style": null,
+            "baseUrl": null,
+            "hosts": [],
+            "discovery": "RUNTIME",
+            "authChoices": [
+                {
+                    "choiceId": "mixed-code-device",
+                    "method": "device-code",
+                    "label": "Mixed Code sign-in"
+                }
+            ],
+            "models": []
+        }
+    ],
+    "skipped": [
+        {
+            "plugin": "google",
+            "provider": "google",
+            "model": "gemini-decision-1",
+            "reason": "not a chat model"
+        },
+        {
+            "plugin": "mixed",
+            "provider": "mixed",
+            "model": "mixed-live",
+            "reason": "unsupported style google-interactions"
+        },
+        {
+            "plugin": "mixed",
+            "provider": "mixed",
+            "model": "mixed-old",
+            "reason": "disabled"
+        },
+        {
+            "plugin": "pi-gateway",
+            "provider": "pi-gateway",
+            "reason": "unsupported style pi-messages"
+        }
+    ]
+}

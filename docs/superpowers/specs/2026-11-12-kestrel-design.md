@@ -174,7 +174,7 @@ Each Gradle module has one job. Most of them are plain Kotlin, so their tests ru
 | `:core:perception` | On-device OCR through ONNX Runtime | No |
 | `:core:datatools` | Contacts, photos and videos, calendar, SMS, call history, notifications, location and intents | No |
 | `:testapp` | Fixture screens for instrumented tests | No |
-| `:tools:catalog-sync` | Runs on the PC and generates the provider catalog | Yes |
+| `:tools:catalog-sync` | Runs on the PC and generates the provider catalog from a checkout of OpenClaw that `scripts/sync-catalog.ps1` makes | Yes |
 | `:tools:eval` | Runs on the PC and drives the task suite over adb | Yes |
 
 ### 7.5 Data flow
@@ -404,9 +404,10 @@ Microsoft Foundry's Entra ID sign-in and Meta's "Muse Code" sign-in are included
 
 ### 10.2 Generated catalog
 
-- `:tools:catalog-sync` runs on the PC. It makes a shallow, sparse checkout of OpenClaw at a pinned commit and reads every `openclaw.plugin.json` in the "models" category. It writes `catalog/providers.json`, which the app bundles, and stores the commit in `catalog/openclaw.lock`. On 12 November 2026, OpenClaw's main branch was at commit `e6113549fe8800b4c736c5e8a131b47f2e015143`. The counts in section 10.1 come from the manifests as they were on 11 November.
-- Each catalog entry records the provider's ID and label, its sign-in choices (`providerAuthChoices`), its base URL and regional variants, its request style, its hosts, its default model, and its models with context size, image support and price where the manifest has them.
-- `catalog/overrides.json` is kept by hand. It holds the exclusions from section 10.1, the local servers that Kestrel discovers instead of listing (LM Studio, Ollama, vLLM, SGLang, llama.cpp, oMLX and LiteLLM), and GitHub Copilot's per-token prices together with the date they were copied from GitHub's pricing page.
+- `scripts\sync-catalog.ps1` makes a shallow, sparse checkout of OpenClaw at the commit in `catalog/openclaw.lock`, or at the one that `-Commit` names, in `build/openclaw/<commit>`. Then `:tools:catalog-sync`, which runs on the PC, reads every `openclaw.plugin.json` of the checkout as JSON5, keeps the plugins whose `categories` hold "models", and writes one entry for each of their providers that has catalog rows or sign-in choices to `catalog/providers.json`, which the app bundles; last, the script stores the commit in `catalog/openclaw.lock`. On 12 November 2026, OpenClaw's main branch was at commit `e6113549fe8800b4c736c5e8a131b47f2e015143`, where 68 plugins are in the "models" category. The counts in section 10.1 come from the manifests as they were on 11 November.
+- `providers.json` is Kestrel's own format, sorted by provider and model so that a new sync gives a readable diff. Each entry records the provider's ID, plugin and label, its request style where the manifest names one, its base URL and hosts, its headers, its default and utility models, how its model list is found (static, refreshable or at runtime), its sign-in choices (`providerAuthChoices`), and its models with their style and base URL where they differ, input kinds, reasoning, context size, output limit, prices in US dollars per million tokens (with cache reads, cache writes and long-context tiers), compatibility flags, thinking levels and status. A cost whose input and output are both 0, which OpenClaw writes where it has no price, becomes no price. The sync reads no `providerEndpoints`, because they belong to a plugin rather than a provider, and no overrides. Its `skipped` list names each provider or model that it left out and why: a request style that Kestrel does not support (`pi-messages`, `google-interactions`), a decision model (`inference.chat` false) or a disabled model.
+- `catalog/overrides.json` is kept by hand. It holds the exclusions from section 10.1, providers and sign-in choices each with a reason; the settings of every sign-in choice that Kestrel offers (its method, base URL, plan usage, key header, identity headers, refresh hosts, the borrowed identity with the default of its switch, and the links to the provider's terms), including Kestrel's own choices that no manifest has; the providers that OpenClaw defines in code, completed with their style, base URL, regions and rows (Bedrock, Bedrock Mantle with five Claude rows, Vertex with Gemini and Claude rows, Microsoft Foundry, MiniMax, OpenRouter and others); the regional base URLs of the manifests, as sign-in choices or regions; the local servers that Kestrel connects to by their address (LM Studio, Ollama, vLLM, SGLang, llama.cpp, oMLX and LiteLLM); per-model corrections and prices, such as Google's Gemini prices with the day they were copied; free models; the price that Kestrel counts when it knows none; and GitHub Copilot's per-token prices together with the date they were copied from GitHub's pricing page (with long-context tiers, cache reads, cache writes and promotions), its default models and its two header sets.
+- The app merges the two files from its assets into one catalog when it first needs it, so a change of the overrides needs no new sync. A unit test checks that `providers.json` names the commit in `openclaw.lock`, and another that every name in `overrides.json` exists, that every offered sign-in choice has a method, and that every request style has a provider.
 - At runtime, Kestrel refreshes a provider's model list only from that provider's own models endpoint. It never contacts catalog services such as models.dev.
 
 ### 10.3 Request styles
@@ -804,7 +805,7 @@ These run on the JVM on every build and in CI:
 - the observation format and the shortening of older steps;
 - every request style, against recorded responses served by a local mock server;
 - every sign-in method, against a mock server;
-- the catalog generator, as a snapshot test at the pinned commit;
+- the catalog generator, as a snapshot test of fixture manifests copied from the pinned commit, and a test that `providers.json` names the commit in `openclaw.lock`;
 - routine template matching and slot extraction.
 
 ### 16.3 Instrumented tests
@@ -856,7 +857,7 @@ kestrel/
 - **Build:** Gradle with the Kotlin DSL and a version catalog, using the latest stable Android Gradle Plugin and Kotlin 2.x at the start of sub-project 1.
 - **Libraries:** Jetpack Compose, Kotlin coroutines, kotlinx.serialization, OkHttp, Room, the sherpa-onnx AAR with static ONNX Runtime (downloaded from sherpa-onnx's GitHub release and checked by its SHA-256 hash), and onnxruntime-android at the pinned version. There is no dependency-injection framework; one `AppGraph` class wires the parts together by hand.
 - **Scripts** are PowerShell, to match the Windows development machine. `create-avd.ps1` installs the API 37 platform and system image and creates `kestrel-api37`.
-- **CI:** GitHub Actions runs the unit tests, Android lint, the build-time audit and a check that `providers.json` matches `openclaw.lock`. It does not run emulator tests at first.
+- **CI:** GitHub Actions runs the unit tests, Android lint and the build-time audit; the check that `providers.json` matches `openclaw.lock` is a unit test that runs with them. It does not run emulator tests at first.
 - **Documentation:** the README explains what Kestrel is, its privacy rules, how to build and install it, and the setup checklist. `THIRD_PARTY_NOTICES.md` lists every dependency and model with its licence, including the CC-BY attribution for Parakeet, the MIT notice for code and data derived from OpenClaw, the Apache-2.0 notice for prompts derived from android_world, and espeak-ng's GPL-3.0.
 - **Licence:** GPL-3.0-or-later for all of Kestrel (D28). Every dependency that ships in the app must have a licence that is compatible with GPL-3.0, such as Apache-2.0, MIT or BSD. Tools that are used only to build or test Kestrel, such as JUnit, are not distributed with it and are exempt.
 

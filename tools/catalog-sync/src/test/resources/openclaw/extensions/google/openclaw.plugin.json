@@ -1,0 +1,38 @@
+{
+  "id": "google",
+  "categories": ["models"],
+  "enabledByDefault": true,
+  "providers": ["google", "google-gemini-cli", "google-vertex"],
+  "modelCatalog": {
+    "modelsDev": { "google": "google" },
+    "discovery": { "google": "runtime" },
+    "providers": {
+      "google": {
+        "api": "google-generative-ai",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+        "family": "google",
+        "models": [
+          { "id": "gemini-4-argon", "name": "Gemini 4 Argon", "reasoning": true,
+            "input": ["text", "image"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 1048576, "maxTokens": 65536,
+            "thinkingLevelMap": { "minimal": null },
+            "compat": { "codeMode": "preferred" } },
+          { "id": "gemini-decision-1", "name": "Gemini Decision 1",
+            "inference": { "chat": false, "decision": { "protocol": "gemini-decisions" } } }
+        ]
+      }
+    }
+  },
+  "providerEndpoints": [
+    { "endpointClass": "google-generative-ai", "hosts": ["generativelanguage.googleapis.com"] },
+    { "endpointClass": "google-vertex", "hosts": ["aiplatform.googleapis.com"], "googleVertexRegion": "global" },
+    { "endpointClass": "google-vertex", "hosts": ["aiplatform.eu.rep.googleapis.com"], "googleVertexRegion": "eu" }
+  ],
+  "providerAuthChoices": [
+    { "provider": "google", "method": "api-key", "choiceId": "gemini-api-key",
+      "choiceLabel": "Google AI Studio API key", "choiceHint": "Supported API-key access from aistudio.google.com/apikey",
+      "groupId": "google", "groupLabel": "Google" }
+  ],
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+}

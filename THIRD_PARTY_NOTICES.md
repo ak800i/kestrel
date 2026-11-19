@@ -17,6 +17,14 @@ Kestrel's release build includes the libraries below. Their licences are the Apa
 
 The texts of the Apache License 2.0, the Mozilla Public License 2.0, the MIT License and hclust-cpp's BSD 2-clause licence are in the `licences` folder; the first two are copied from https://www.apache.org/licenses/LICENSE-2.0.txt and https://www.mozilla.org/media/MPL/2.0/index.txt. The same folder has ONNX Runtime's third-party notices, `licences/onnxruntime-ThirdPartyNotices.txt`, copied unchanged from https://raw.githubusercontent.com/microsoft/onnxruntime/v1.28.2/ThirdPartyNotices.txt. `LICENSE` holds the text of the GNU General Public License, version 3. Kestrel is licensed under version 3 or later, and espeak-ng's licence also requires this text. Kestrel's About page shows all of these texts, together with this file.
 
+## OpenClaw
+
+Kestrel's provider catalog, `catalog/providers.json`, which the app contains, is generated from the provider manifests of OpenClaw at the commit in `catalog/openclaw.lock`. The tests of `:tools:catalog-sync` contain excerpts of those manifests, and parts of Kestrel's provider code port OpenClaw's code, as the comments in that code say. `catalog/overrides.json`, which the app also contains, holds model rows, prices, regions and addresses that were copied from OpenClaw's provider code at that commit. OpenClaw is under the MIT License, whose text and OpenClaw's copyright line are in `licences/MIT.txt`.
+
+| Component | Licence | Project |
+|---|---|---|
+| OpenClaw, Copyright (c) 2026 OpenClaw Foundation: the provider data in `catalog/providers.json`, the data in `catalog/overrides.json` that is copied from OpenClaw's code, the manifest excerpts in `tools/catalog-sync`'s tests, and the provider code that Kestrel ports | MIT | https://github.com/openclaw/openclaw |
+
 ## The parts of sherpa-onnx's library
 
 sherpa-onnx's build links these projects into its library `libsherpa-onnx-jni.so`, so Kestrel contains them too. Because the library contains espeak-ng, the library as a whole is under the GNU General Public License, version 3 or later, like Kestrel. The versions are those that sherpa-onnx 1.13.8's build files name; kaldifst's version is the one that kaldi-decoder 0.3.0's build files name.

@@ -1,0 +1,34 @@
+{
+  "id": "mixed",
+  "categories": ["models"],
+  "name": "Mixed Cloud",
+  "providers": ["mixed", "mixed-code", "mixed-alias"],
+  "modelCatalog": {
+    "providers": {
+      "mixed": {
+        "baseUrl": "https://api.mixed.test/v1",
+        "api": "openai-completions",
+        "headers": { "X-Client": "openclaw" },
+        "defaultModel": "mixed-large",
+        "defaultUtilityModel": "mixed-small",
+        "models": [
+          { "id": "mixed-small", "name": "Mixed Small", "input": ["text", "video"], "status": "preview",
+            "cost": { "input": 0.2, "output": 0.8 },
+            "compat": { "maxTokensField": "max_tokens", "supportsTools": false, "thinkingLevels": ["off", "low"], "defaultThinkingLevel": "low",
+                        "zaiToolStream": true } },
+          { "id": "mixed-large", "name": "Mixed Large", "api": "anthropic-messages", "baseUrl": "https://anthropic.mixed.test",
+            "reasoning": true, "input": ["text", "image"], "thinkingLevelMap": { "off": null, "high": "max" } },
+          { "id": "mixed-live", "name": "Mixed Live", "api": "google-interactions" },
+          { "id": "mixed-old", "name": "Mixed Old", "status": "disabled" }
+        ]
+      }
+    },
+    "discovery": { "mixed": "static", "mixed-code": "runtime" }
+  },
+  "providerAuthChoices": [
+    { "provider": "mixed", "method": "api-key", "choiceId": "mixed-key", "choiceLabel": "Mixed API key" },
+    { "provider": "mixed-code", "method": "device-code", "choiceId": "mixed-code-device", "choiceLabel": "Mixed Code sign-in",
+      "groupLabel": "Mixed Code" }
+  ],
+  "configSchema": { "type": "object" }
+}
