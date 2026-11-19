@@ -170,7 +170,7 @@ Each Gradle module has one job. Most of them are plain Kotlin, so their tests ru
 | `:core:providers` | The generated catalog, the internal request format, the request adapters, the sign-in methods, model discovery, profiles, credentials as data and cost estimation; it uses OkHttp only through the network gateway's `Call.Factory` | Yes |
 | `:core:agent` | The agent loop, its tools, memory and routines | Yes |
 | `:core:safety` | The safety check, agent-free apps, redaction and test mode | Yes |
-| `:core:privacy` | The network gateway and its allowlist, the network log, the activity log and encrypted storage | No |
+| `:core:privacy` | The network gateway and its allowlist, the network log, the activity log and encrypted storage, including the credential store and the loopback server for browser sign-in | No |
 | `:core:perception` | On-device OCR through ONNX Runtime | No |
 | `:core:datatools` | Contacts, photos and videos, calendar, SMS, call history, notifications, location and intents | No |
 | `:testapp` | Fixture screens for instrumented tests | No |
@@ -438,16 +438,16 @@ Kestrel uses one internal request format (messages, tools, images, reasoning set
 
 | Method | Providers |
 |---|---|
-| API key, with regional presets where a provider has several endpoints | Most providers |
-| Device code: Kestrel shows and speaks a code, and the owner approves it in a browser | GitHub Copilot (github.com and GHE.com tenants), OpenAI Codex, xAI, MiniMax (global and China), Radius |
-| Browser sign-in with PKCE: a Custom Tab opens the provider's page, and the redirect comes back to a temporary server on 127.0.0.1 | OpenAI Codex, OpenRouter, Chutes, xAI |
-| Pasted token | Anthropic setup-token (`sk-ant-oat01-…`) |
-| Imported credentials | AWS keys for Bedrock and Bedrock Mantle; a Google service-account JSON file for Vertex |
-| Server address, without an account | LM Studio, Ollama, vLLM, SGLang, llama.cpp, oMLX and LiteLLM |
+| API key, with regional presets where a provider has several endpoints; a custom base URL must use HTTPS | Most providers |
+| Device code: Kestrel shows a code, and the owner approves it in a browser | GitHub Copilot (github.com and GHE.com tenants), xAI, MiniMax (global and China) |
+| Browser sign-in with PKCE: a Custom Tab opens the provider's page, and the redirect comes back to a temporary server on the loopback addresses that the redirect names (spike S6, section 19.1) | The ChatGPT plan, through OpenAI's Sign in with ChatGPT for open-source apps, with a redirect to `127.0.0.1`; OpenRouter, with a redirect to `localhost` |
+| Imported credentials | A Bedrock API key, or IAM access keys that Kestrel signs with SigV4, for Bedrock; a Bedrock API key for Bedrock Mantle; a Google service-account JSON file for Vertex |
+| Server address, without an account | LM Studio, Ollama, vLLM, SGLang, llama.cpp, oMLX and LiteLLM, over HTTPS, or over plain HTTP on the phone or the owner's local network (section 13.1) |
 
-- Kestrel reuses the public client registrations and redirect addresses that OpenClaw uses, because these providers have no registration for Kestrel. This works today, but a provider can change its policy at any time, so each sign-in method can be switched off on its own. Two examples: Google ended consumer sign-in for the Gemini CLI on 18 June 2026 (B30), and Anthropic accepts setup-token requests because they identify as the Claude Code client (B31).
-- Sign-in pages open in the owner's browser, outside Kestrel's process.
-- Tokens refresh automatically. When a request fails because a token expired, Kestrel refreshes it once and retries once.
+- Three sign-ins borrow another program's client registration or identity, because these providers have no registration for Kestrel: GitHub Copilot's (GitHub's own client, with VS Code's editor headers), xAI's (the Grok CLI's client and proxy) and MiniMax's (probably OpenClaw's client). The owner chose to build all three, with Copilot's switched on and the other two switched off until he turns them on (option B; section 20, item 2). The Providers page has one switch for each: a switched-off sign-in is not offered, its profiles' requests fail with "the sign-in is switched off", and its hosts leave the network allowlist. Each borrowed sign-in, and the ChatGPT plan's, shows one sentence on what it borrows and the links to its provider's terms. Anthropic's setup-token, which works only when Kestrel poses as Claude Code, is never offered, and neither are the Codex CLI's sign-ins.
+- The ChatGPT plan's sign-in is OpenAI's official route for open-source apps, so it borrows nothing: Kestrel registers itself at the first sign-in, keeps the issued client ID, checks the ID token, and revokes the refresh token when the owner deletes the profile. Its requests count against the owner's ChatGPT plan, not against Kestrel's cost cap.
+- Sign-in pages open in a Custom Tab in Kestrel's task, in Chrome when Chrome offers Custom Tabs and otherwise in the default browser, so that the owner's own browser handles the password. Every sign-in runs inside the foreground service `SignInService` (type `dataSync`), whose notification has a Cancel action, because Android freezes the process of an app in the background about 70 s after the tab opens (prototype P5). After a browser sign-in, Kestrel brings its settings back to the front.
+- Tokens refresh automatically: before they expire, and once after a 401, after which the request is sent once more. A refresh that fails for a moment (no network, a timeout, a rate limit or a server error) keeps the sign-in; only the provider's refusal ends it, and then Kestrel asks the owner to sign in again.
 
 ### 10.5 GitHub Copilot
 
@@ -700,16 +700,16 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 |---|---|---|
 | Accessibility service | Special access | Setup |
 | `RECORD_AUDIO`, `POST_NOTIFICATIONS` | Runtime | Setup |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `MODIFY_AUDIO_SETTINGS` (for the earbud microphone, section 8.8), `INTERNET`, `ACCESS_NETWORK_STATE`, `SET_ALARM` | Normal | Granted at install |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `FOREGROUND_SERVICE_DATA_SYNC` (for the sign-in service, section 10.4), `MODIFY_AUDIO_SETTINGS` (for the earbud microphone, section 8.8), `INTERNET`, `ACCESS_NETWORK_STATE`, `SET_ALARM` | Normal | Granted at install |
 | `READ_PHONE_STATE`, `ANSWER_PHONE_CALLS` | Runtime | Optional, in the setup checklist (section 8.7) |
 | `READ_CONTACTS`, `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_CALENDAR`, `READ_SMS`, `READ_CALL_LOG`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Runtime | First use |
-| `ACCESS_LOCAL_NETWORK` (the "Nearby devices" group, Android 17 and later) | Runtime | When the owner adds a server on the local network (B34) |
+| `ACCESS_LOCAL_NETWORK` (the "Nearby devices" group, Android 17 and later) | Runtime | When the owner checks a server on the local network, and when a task needs one after the permission was revoked (B34); loopback needs none (section 19.1) |
 | Notification access | Special access | First use |
 | Default digital assistant | Role | Optional, during setup |
 | Unrestricted battery use | Setting | Setup checklist |
 
 - Kestrel never requests `SEND_SMS`, `CALL_PHONE`, `CAMERA`, `ACCESS_BACKGROUND_LOCATION`, `SYSTEM_ALERT_WINDOW`, `REQUEST_INSTALL_PACKAGES`, `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `WRITE_SETTINGS` or `WRITE_SECURE_SETTINGS`. So "call [number]" and "call [name]" open the default phone app with the number: Kestrel says whom it calls, counts down 4 s from the end of that announcement on the feedback bar, and then presses the phone app's call button through its accessibility service, only while the phone app's number field, read again right before the press, shows exactly the number that it announced. Before it opens the phone app, Kestrel empties the phone app's number field through the field's own action or the delete key when the field already shows that number, because Google's phone app otherwise keeps its own number empty and calls no one; it cannot read a phone app in the background. After the press, Kestrel checks that a call started within 5 s, through Android's call state, which needs `READ_PHONE_STATE` (section 8.7); the 5 s count from the end of the press, which includes Kestrel's wait of up to 1.5 s for a SIM chooser. Otherwise the command fails and it says "The call didn't start. Say it again.": the phone app's own number is empty then, so a tap on Call does not help, while the command said again finds the phone app in front and empties its field first. Without that permission it cannot check. "Cancel", "stop", "no" or a touch stops the countdown and leaves the number in the phone app. For a number with fewer than 5 digits, one with `*` or `#`, or a contact's number with letters, Kestrel never presses Call: it opens the phone app with the number and asks the owner to tap Call. For an emergency number it asks for "yes, call" after the announcement instead of counting down, or, under the other policy, only opens the phone app (section 8.7). A contact's number keeps its pause, wait or extension for the phone app. Kestrel matches contacts on the phone, itself; it asks for `READ_CONTACTS` at the first "call [name]", through its settings app.
-- App visibility uses `<queries>` for launcher apps, for the home app (so that "show previous app" does not count the home screen as the app that comes back; it tells the overview by the recents component that Android reports) and for the deep-link schemes.
+- App visibility uses `<queries>` for launcher apps, for the home app (so that "show previous app" does not count the home screen as the app that comes back; it tells the overview by the recents component that Android reports), for the deep-link schemes, and for the Custom Tabs service, so that sign-in pages open in Chrome when Chrome offers it (section 10.4).
 - Kestrel is installed with `adb install`. This avoids Android's "restricted settings" block for accessibility and notification access, and Play Protect's block on sideloaded apps that request accessibility (B6, B7).
 
 ## 14. Error handling and resilience
@@ -819,6 +819,8 @@ These run on the JVM on every build and in CI:
 ### 16.3 Instrumented tests
 
 These run on `kestrel-api37`, and on the A71 before each release. They use the fixture screens in `:testapp`: classic Views, Compose, a WebView page, unlabeled icon buttons, long lists, dialogs, text fields, a secure window and an injection screen. They cover snapshots, every action and its fallback, the overlays, text editing, the touch watcher, and OCR on fixture screenshots.
+
+The providers' device tests check the credential store with the device's Keystore, the loopback server of browser sign-in, the Custom Tab with the device's own Chrome (a redirect from a public page to the loopback server runs only with the instrumentation argument `kestrelRedirectCheck=true`), and a profile against a mock server on the device through the real network gateway. They use test-only names and never touch the owner's profiles, credentials or spending.
 
 The device tests of the instant commands (the package `dev.kestrel.app.commands`) drive each command through the same path as speech: the test sends the text to the Orchestrator as a transcript, with a voice session that needs no speech models, and waits for the command's report. They use the fixture `CommandsActivity` and Android's own apps. They skip themselves unless the instrumentation argument `kestrelCommands=true` is present, which only `scripts\command-test.ps1` passes. That script runs only on the emulator, and puts back what the tests change: the radios, volumes and ringer mode, Quick Settings' tiles, the lock-screen setting, users, contacts, call-log rows, screenshots, and the permissions that the tests grant, except Kestrel's microphone and notification permissions, which stay granted as after `scripts\voice-test.ps1`.
 

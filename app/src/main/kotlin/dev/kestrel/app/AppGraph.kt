@@ -224,6 +224,15 @@ class AppGraph(context: Context) {
         }
     }
 
+    /**
+     * The providers' sign-ins, credentials and clients, which the Providers page and sub-project 5 use (design D9 to D13
+     * of sub-project 4). Built on first use, because it reads the catalog.
+     */
+    // Named in full, because the design gives this plan only the marker's place in AppGraph.kt.
+    internal val providers: dev.kestrel.app.providers.ProviderGraph by lazy {
+        dev.kestrel.app.providers.ProviderGraph(appContext, scope, settings, { catalog }, providerHttp, credentialVault, appliedProviders, networkPolicy, reportFailure)
+    }
+
     // Plan 4C: provider graph
 
     /**

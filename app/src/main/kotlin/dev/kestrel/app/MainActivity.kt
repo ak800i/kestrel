@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -18,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import dev.kestrel.app.providers.AndroidLocalNetworkAccess
 import dev.kestrel.app.settings.ModelCheck
 import dev.kestrel.app.settings.PageRequest
 import dev.kestrel.app.settings.SettingsApp
@@ -97,10 +99,14 @@ class MainActivity : ComponentActivity() {
         // The A71 session reads the time of the settings in front (plan 2E).
         graph.timeline.settingsResumed()
         graph.problems.settingsOpened()
+        // SignInService brings the settings back after a sign-in in the browser only while they are not in front (design
+        // D10 of sub-project 4).
+        graph.providers.settingsResumed = true
         refresh()
     }
 
     override fun onPause() {
+        graph.providers.settingsResumed = false
         graph.timeline.settingsPaused()
         super.onPause()
     }
@@ -173,8 +179,21 @@ class MainActivity : ComponentActivity() {
         /** A permission of [ASKABLE] to ask for, as when Kestrel needs the contacts to call by name (design spec, 13.6). */
         const val EXTRA_ASK_PERMISSION = "dev.kestrel.app.extra.ASK_PERMISSION"
 
-        /** The permissions that an intent may ask for. Plan 3C declares READ_CONTACTS in the manifest. */
-        val ASKABLE: Set<String> = setOf(Manifest.permission.READ_CONTACTS)
+        /**
+         * Set by SignInService when it brings the settings back after a sign-in in the browser, so that the Providers page
+         * keeps its add flow (design D10 of sub-project 4).
+         */
+        const val EXTRA_RESUME_ADD = "dev.kestrel.app.extra.RESUME_ADD"
+
+        /**
+         * The permissions that an intent may ask for. Plan 3C declares READ_CONTACTS in the manifest. ACCESS_LOCAL_NETWORK
+         * is asked for when a task needs a server on the local network after the owner revoked it (design D11 of
+         * sub-project 4); Android 13 to 16 do not have it, so it is askable only from Android 17 on.
+         */
+        val ASKABLE: Set<String> = setOfNotNull(
+            Manifest.permission.READ_CONTACTS,
+            AndroidLocalNetworkAccess.PERMISSION.takeIf { Build.VERSION.SDK_INT >= AndroidLocalNetworkAccess.LOCAL_NETWORK_API },
+        )
 
         /**
          * An intent that starts Kestrel's settings app from outside it, such as from the accessibility service or a

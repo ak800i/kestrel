@@ -30,6 +30,19 @@
     <!-- Optional, asked for at the first "call [name]": the contacts, which Kestrel reads and matches only on the phone
          (design spec, section 13.6). -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Granted at install, for SignInService, which keeps a sign-in running while the browser is in front (design D10 of
+         sub-project 4; prototype P5). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 17 and later, asked for when the owner checks a server on the local network; loopback needs none (design
+         D11 of sub-project 4). -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- Sign-in pages open in a Custom Tab, in Chrome when Chrome offers the Custom Tabs service (design D10 of
+         sub-project 4). -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
     <!-- Plan 3C: permissions -->
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android
@@ -74,6 +87,13 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Keeps a sign-in running while the owner signs in in the browser, with a notification and Cancel (design D10 of
+             sub-project 4). -->
+        <service
+            android:name=".providers.SignInService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Keeps Kestrel listening, with the microphone and voice output (design spec, sections 7.2 and 8.5). -->
         <service

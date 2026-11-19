@@ -197,6 +197,9 @@
     <string name="commands_numbers_unlabeled">Only on elements without a name</string>
     <string name="commands_list">What you can say</string>
     <string name="commands_list_detail">Say \"What can I say?\" to come back to this list.</string>
+    <string name="signin_channel">Sign-in</string>
+    <string name="signin_notification">Signing in to %1$s</string>
+    <string name="signin_cancel">Cancel</string>
     <!-- Plan 3B strings -->
     <!-- Plan 3C strings -->
 </resources>
