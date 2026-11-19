@@ -1,5 +1,8 @@
 # Tests of scripts\lib\Session.ps1, which scripts\a71-session.ps1 uses. scripts\test-scripts.ps1 runs these tests in
 # Windows PowerShell 5.1 and in PowerShell 7.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '',
+    Justification = 'Pester shares the variables of BeforeEach with the It blocks.')]
+param()
 
 Describe 'The helpers of the A71 session' {
     BeforeAll {
@@ -383,5 +386,45 @@ Describe 'The helpers of the re-checks of plan 2E' {
         (Select-SpotterWinner $rounds).Setting | Should -BeExactly 'boost=3.0 threshold=0.1'
         (Select-SpotterWinner $tie).Setting | Should -BeExactly 'boost=2.0 threshold=0.15'
         Select-SpotterWinner @($rounds[1]) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'The host audio input of kestrel-api37 in the dry runs' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Session.ps1"
+        # Set-EmulatorHostMicrophone runs adb through Get-Adb of scripts\lib\Kestrel.ps1; the tests give it this stand-in,
+        # which answers the console's commands as the emulator does.
+        function Get-Adb { 'Invoke-FakeConsole' }
+        function Invoke-FakeConsole {
+            $console.Calls.Add(($args -join ' '))
+            if ($args[4] -eq 'name') { return @($console.Name, 'OK') }
+            if ($args[4] -in 'hostmicon', 'hostmicoff') { return $console.Answer }
+            @('KO:  bad sub-command')
+        }
+    }
+
+    BeforeEach {
+        $console = @{ Name = 'kestrel-api37'; Answer = @('OK'); Calls = [System.Collections.Generic.List[string]]::new() }
+    }
+
+    It 'turns it off and on through the emulator''s console' {
+        Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false
+        Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $true
+
+        @($console.Calls) | Should -Be @('-s emulator-5554 emu avd name', '-s emulator-5554 emu avd hostmicoff', '-s emulator-5554 emu avd name', '-s emulator-5554 emu avd hostmicon')
+    }
+
+    It 'refuses every device but kestrel-api37, before any change' {
+        $console.Name = 'zoran'
+
+        { Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false } | Should -Throw 'emulator-5554 is not the emulator kestrel-api37.'
+        { Set-EmulatorHostMicrophone -Serial 'R58N66RVD7Z' -On $false } | Should -Throw 'R58N66RVD7Z is not the emulator kestrel-api37.'
+        @($console.Calls | Where-Object { $_ -like '*hostmic*' }).Count | Should -Be 0
+    }
+
+    It 'fails when the console does not take the command' {
+        $console.Answer = @('KO:  bad sub-command')
+
+        { Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false } | Should -Throw 'The emulator''s console did not take ''avd hostmicoff''.'
     }
 }

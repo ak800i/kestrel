@@ -71,8 +71,9 @@
 # kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every question itself, sends
 # what the owner would say through the voice hook, taps Kestrel's tile with 'cmd statusbar click-tile' in place of the
 # owner, also for the cold start, plays no sound, skips what needs the owner's hands otherwise, runs listen-check.ps1
-# without -Reboot, skips voice-test.ps1, and shortens the waits and the battery measures to a minute. -Step runs only the
-# named steps, also as one text separated by commas.
+# without -Reboot, skips voice-test.ps1, shortens the waits and the battery measures to a minute, and turns the
+# emulator's host audio input off, so that this computer's microphone reaches no step, and on again at its end. -Step
+# runs only the named steps, also as one text separated by commas.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-session.ps1 -Serial R58N12345AB
 #Requires -Version 7.3
@@ -340,6 +341,15 @@ function Initialize-Session {
         Invoke-Checked $command | Out-Null
     } | Out-Null
     Invoke-Checked 'svc power stayon true' | Out-Null
+    if ($DryRun) {
+        # The emulator's microphone carries this computer's sound, which would count in the steps' measures and could
+        # start commands, so a dry run turns the host audio input off. The console cannot read the setting, so the restore
+        # turns it back on, as kestrel-api37 had it when the dry runs of 2026-11-19 heard this computer's microphone.
+        Register-Restore 'the host audio input of kestrel-api37' "Run: & '$adb' -s $Serial emu avd hostmicon" $null {
+            Set-EmulatorHostMicrophone -Serial $Serial -On $true
+        } | Out-Null
+        Set-EmulatorHostMicrophone -Serial $Serial -On $false
+    }
     $script:sessionStart = Get-DeviceTime
     Request-Owner 'The phone''s screen now stays on while the phone is plugged in. Keep the phone unlocked during the whole session, unless a step asks otherwise. Press Enter to go on.' 'go' | Out-Null
 }

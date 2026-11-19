@@ -44,8 +44,9 @@
 # device but the A71 and kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every
 # question itself, sends what the owner would say through the voice hook, switches "Require verbs" through the hook where
 # the owner uses the page, skips what needs the owner's hands otherwise, and records two silent clips into a folder of
-# its own that it deletes. -Step runs only the named steps, also as one text separated by commas. It needs PowerShell
-# 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
+# its own that it deletes; it turns the emulator's host audio input off, so that this computer's microphone starts no
+# command, and on again at its end. -Step runs only the named steps, also as one text separated by commas. It needs
+# PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-commands.ps1 -Serial R58N12345AB
 #Requires -Version 7.3
 param(
@@ -427,6 +428,15 @@ function Initialize-Session {
         Invoke-Checked $command | Out-Null
     } | Out-Null
     Invoke-Checked 'svc power stayon true' | Out-Null
+    if ($DryRun) {
+        # The emulator's microphone carries this computer's sound, which can start a command of its own during a check, so
+        # a dry run turns the host audio input off. The console cannot read the setting, so the restore turns it back on,
+        # as kestrel-api37 had it when the dry runs of 2026-11-19 heard this computer's microphone.
+        Register-Restore 'the host audio input of kestrel-api37' "Run: & '$adb' -s $Serial emu avd hostmicon" $null {
+            Set-EmulatorHostMicrophone -Serial $Serial -On $true
+        } | Out-Null
+        Set-EmulatorHostMicrophone -Serial $Serial -On $false
+    }
     # Kestrel's accessibility service, next to the owner's other services.
     $enabled = if ($accessibility.Contains('enabled_accessibility_services')) { "$($accessibility['enabled_accessibility_services'])" } else { 'null' }
     $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) + $service

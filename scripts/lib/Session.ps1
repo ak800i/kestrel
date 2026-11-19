@@ -394,3 +394,21 @@ function Select-SpotterWinner([object[]]$Rounds) {
         Sort-Object @{ Expression = { $_.Hits }; Descending = $true }, @{ Expression = { $_.FalseHits }; Descending = $false }, @{ Expression = { -not $_.Default }; Descending = $false } |
         Select-Object -First 1
 }
+
+# Turns the host audio input of the emulator kestrel-api37 on or off through its console ('avd hostmicon' and 'avd
+# hostmicoff'), so that a dry run of the A71 sessions hears only the texts that it sends, and not the sound of this
+# computer's microphone, which can start a command of its own during a check. The console has no command that reads
+# the setting. Throws for every device but kestrel-api37, and when the console does not answer OK. Get-Adb comes from
+# scripts\lib\Kestrel.ps1.
+function Set-EmulatorHostMicrophone([string]$Serial, [bool]$On) {
+    $adb = Get-Adb
+    # Windows PowerShell 5.1 would stop at adb's first error line.
+    $ErrorActionPreference = 'Continue'
+    $name = "$(& $adb -s $Serial emu avd name 2>$null | Select-Object -First 1)".Trim()
+    if ($Serial -notlike 'emulator-*' -or $name -ne 'kestrel-api37') { throw "$Serial is not the emulator kestrel-api37." }
+    $command = if ($On) { 'hostmicon' } else { 'hostmicoff' }
+    $answer = @(& $adb -s $Serial emu avd $command 2>&1 | ForEach-Object { "$_".Trim() })
+    if ($answer -notcontains 'OK' -or @($answer | Where-Object { $_ -like 'KO*' }).Count -gt 0) {
+        throw "The emulator's console did not take 'avd $command'."
+    }
+}
