@@ -3,21 +3,30 @@ package dev.kestrel.providers.http
 import dev.kestrel.providers.testing.RedirectingCalls
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -245,7 +254,7 @@ class ProviderHttpTest {
                 throw e
             }
         }
-        server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
         val started = System.nanoTime()
 
         job.cancel()
@@ -266,6 +275,120 @@ class ProviderHttpTest {
         closed.close()
         val toClosedPort = OkHttpClient.Builder().addInterceptor { chain -> chain.proceed(chain.request().newBuilder().url(closedUrl).build()) }.build()
         assertEquals(ProviderError.Unreachable, errorOf { ProviderHttp(toClosedPort).send(post(), NoAuth) })
+    }
+
+    /** A call that never completes and ignores its cancel while it "looks up" its host, as OkHttp's DNS lookup does. */
+    private class HangingCall(private val real: Call) : Call by real {
+        val started = CompletableDeferred<Unit>()
+        val lookup = CountDownLatch(1)
+
+        @Volatile
+        var cancelled = false
+
+        override fun execute(): Response {
+            started.complete(Unit)
+            lookup.await(10, TimeUnit.SECONDS)
+            throw IOException("lookup ended")
+        }
+
+        override fun enqueue(responseCallback: Callback) {
+            started.complete(Unit)
+        }
+
+        override fun cancel() {
+            cancelled = true
+        }
+
+        override fun isCanceled(): Boolean = cancelled
+    }
+
+    @Test
+    fun aCancelReturnsAtOnceAlsoWhileTheHostIsStillLookedUp() = runBlocking {
+        val client = OkHttpClient()
+        var hanging: HangingCall? = null
+        val http = ProviderHttp(Call.Factory { request: Request -> HangingCall(client.newCall(request)).also { hanging = it } })
+        val ended = CompletableDeferred<Throwable?>()
+        val job = launch(Dispatchers.Default) {
+            try {
+                http.send(post(), NoAuth)
+                ended.complete(null)
+            } catch (e: Throwable) {
+                ended.complete(e)
+                throw e
+            }
+        }
+        withTimeout(5_000) { while (hanging == null) delay(10) }
+        val call = hanging!!
+        try {
+            withTimeout(5_000) { call.started.await() }
+
+            job.cancel()
+            val thrown = withTimeout(2_000) { ended.await() }
+
+            assertTrue(thrown.toString(), thrown is CancellationException)
+            assertTrue(call.cancelled)
+        } finally {
+            call.lookup.countDown()
+        }
+    }
+
+    @Test
+    fun aBodyLargerThanTheLimitIsMalformed() = runBlocking {
+        server.enqueue(MockResponse.Builder().body(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt()))).build())
+        server.enqueue(MockResponse.Builder().body(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1))).build())
+        val http = ProviderHttp(calls)
+
+        assertEquals(MAX_BODY_BYTES.toInt(), http.send(post(), NoAuth).body.size)
+        assertEquals(ProviderError.Malformed, errorOf { http.send(post(), NoAuth) })
+    }
+
+    @Test
+    fun aStreamsErrorStatusIsClassifiedAsSendDoes() {
+        server.enqueue(reply(429, """{"error": {"type": "rate_limit_error"}}""", "Retry-After" to "3"))
+        val auth = TestAuth()
+
+        assertEquals(ProviderError.RateLimited(3_000, "rate_limit_error"), errorOf { ProviderHttp(calls).stream(post(), auth) { } })
+        assertEquals(0, auth.refreshes)
+    }
+
+    @Test
+    fun aStreamGivesTheRefreshsErrorOrTheRejectedError() {
+        server.enqueue(reply(401))
+        assertEquals(
+            ProviderError.Timeout,
+            errorOf { ProviderHttp(calls).stream(post(), TestAuth(refreshResult = RefreshResult.FailedForNow(ProviderError.Timeout))) { } },
+        )
+        server.enqueue(reply(401))
+        assertEquals(
+            ProviderError.SignInExpired("test-provider"),
+            errorOf { ProviderHttp(calls).stream(post(), TestAuth(refreshResult = RefreshResult.Expired)) { } },
+        )
+        server.enqueue(reply(401))
+        server.enqueue(reply(401))
+        val auth = TestAuth()
+        assertEquals(ProviderError.SignInExpired("test-provider"), errorOf { ProviderHttp(calls).stream(post(), auth) { } })
+        assertEquals(1, auth.refreshes)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun exchangeNeverRefreshesA401() = runBlocking {
+        server.enqueue(reply(401))
+        val auth = TestAuth()
+
+        assertEquals(401, ProviderHttp(calls).exchange(post(), auth).status)
+        assertEquals(0, auth.refreshes)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun aFixedHeaderThatOkHttpRefusesIsABugNotABadCredential() {
+        val request = HttpRequest("GET", url, mapOf("X-Client" to "s3cr3t\nheader"))
+
+        val error = assertThrows(IllegalStateException::class.java) { runBlocking { ProviderHttp(calls).send(request, ApiKeyAuth("test-key", KeyHeader.BEARER)) } }
+
+        assertFalse(error.toString(), error.toString().contains("s3cr3t"))
+        assertEquals(0, server.requestCount)
     }
 
     @Test

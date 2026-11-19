@@ -7,8 +7,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -19,16 +21,24 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.coroutines.resumeWithException
+
+/** The longest body that ProviderHttp reads into memory; a longer one is Malformed. */
+internal const val MAX_BODY_BYTES = 8L * 1024 * 1024
 
 /**
  * Sends the providers' requests through OkHttp's [Call.Factory], which `:app` takes from the network gateway (design D1),
  * so that every request passes the allowlist and reaches the network log. Every function cancels its OkHttp call when its
- * coroutine is cancelled, so that "stop" ends a running request at once.
+ * coroutine is cancelled and returns at once, so that "stop" ends a running request at once, also while OkHttp still looks
+ * up the host.
  *
  * Failures are classified in this order: (1) a coroutine that is no longer active gets its CancellationException
  * unchanged; (2) a ProviderException passes through; (3) [classify], which `:app` uses for the gateway's
- * BlockedRequestException; (4) an InterruptedIOException is a Timeout; (5) any other IOException is Unreachable. A header
- * value that OkHttp refuses becomes BadCredential without its message, because the message can hold a key.
+ * BlockedRequestException; (4) an InterruptedIOException is a Timeout; (5) any other IOException is Unreachable. A value
+ * of the credential's headers that OkHttp refuses becomes BadCredential without its message, because the message can hold
+ * a key; a refused header that the request itself sets is a bug and throws IllegalStateException, also without the
+ * message. A body longer than [MAX_BODY_BYTES] (8 MiB) or an event line longer than [SseReader.MAX_LINE_BYTES] (1 MiB) is
+ * Malformed, and the rest of it is not read, so that a broken or hostile server cannot exhaust the app's memory.
  */
 class ProviderHttp(
     private val calls: Call.Factory,
@@ -75,7 +85,7 @@ class ProviderHttp(
     }
 
     private suspend fun fetch(request: HttpRequest, headers: Map<String, String>): HttpReply =
-        call(request, headers) { response -> HttpReply(response.code, response.headers, response.body.bytes()) }
+        call(request, headers) { response -> HttpReply(response.code, response.headers, bodyBytes(response)) }
 
     /** Reads the events of a 2xx reply and returns null, or returns the error reply. */
     private suspend fun open(request: HttpRequest, headers: Map<String, String>, onEvent: suspend (SseEvent) -> Unit): HttpReply? =
@@ -84,34 +94,69 @@ class ProviderHttp(
                 SseReader.read(response.body.source(), onEvent)
                 null
             } else {
-                HttpReply(response.code, response.headers, response.body.bytes())
+                HttpReply(response.code, response.headers, bodyBytes(response))
             }
         }
 
     private suspend fun <T> call(request: HttpRequest, headers: Map<String, String>, read: suspend (Response) -> T): T {
-        val call = calls.newCall(build(request, headers))
-        return coroutineScope {
-            // Cancels the call when the caller's coroutine is cancelled, also while a blocking read waits. A DNS lookup
-            // that has already started is not interrupted, so a stop during a slow lookup ends when the lookup ends.
-            val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+        val built = build(request, headers)
+        currentCoroutineContext().ensureActive()
+        val call = calls.newCall(built)
+        // Waits for the reply's headers without blocking a thread, so that a cancel returns at once, also while OkHttp still
+        // looks up the host, which its cancel cannot interrupt; OkHttp's thread then ends the lookup alone and sends nothing.
+        val response = suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(
+                object : Callback {
+                    override fun onResponse(call: Call, response: Response) {
+                        continuation.resume(response) { _, value, _ -> value.close() }
+                    }
+
+                    override fun onFailure(call: Call, e: IOException) {
+                        continuation.resumeWithException(e)
+                    }
+                },
+            )
+        }
+        return response.use {
+            coroutineScope {
+                // Cancels the call when the caller's coroutine is cancelled while a blocking read of the body waits.
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        call.cancel()
+                    }
+                }
                 try {
-                    awaitCancellation()
+                    withContext(Dispatchers.IO) { read(response) }
                 } finally {
-                    call.cancel()
+                    watcher.cancel()
                 }
             }
-            try {
-                withContext(Dispatchers.IO) { call.execute().use { read(it) } }
-            } finally {
-                watcher.cancel()
-            }
         }
+    }
+
+    /** Reads a whole body of at most [MAX_BODY_BYTES]; a longer one is Malformed, and its rest is not read. */
+    private fun bodyBytes(response: Response): ByteArray {
+        val body = response.body
+        if (body.contentLength() > MAX_BODY_BYTES) throw ProviderException(ProviderError.Malformed)
+        val source = body.source()
+        if (source.request(MAX_BODY_BYTES + 1)) throw ProviderException(ProviderError.Malformed)
+        return source.readByteArray()
     }
 
     private fun build(request: HttpRequest, headers: Map<String, String>): Request {
         val builder = Request.Builder().url(request.url)
         try {
-            for ((name, value) in request.headers + headers) builder.header(name, value)
+            for ((name, value) in request.headers - headers.keys) builder.header(name, value)
+        } catch (e: IllegalArgumentException) {
+            // A header that an adapter sets is a bug, not a bad key. OkHttp's message contains the value, which can name the
+            // owner's account, so it is not kept.
+            throw IllegalStateException("A header that the request sets is not valid")
+        }
+        try {
+            for ((name, value) in headers) builder.header(name, value)
         } catch (e: IllegalArgumentException) {
             // OkHttp's message contains the value, which can be a key.
             throw ProviderException(ProviderError.BadCredential)

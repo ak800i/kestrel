@@ -3,6 +3,7 @@ package dev.kestrel.providers.http
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class SseReaderTest {
@@ -36,5 +37,19 @@ class SseReaderTest {
     @Test
     fun keepsAllButOneLeadingSpaceOfAValue() {
         assertEquals(listOf(SseEvent(null, "  two spaces")), read("data:   two spaces\n\n"))
+    }
+
+    @Test
+    fun dropsOneLeadingByteOrderMark() {
+        assertEquals(listOf(SseEvent("a", "1"), SseEvent(null, "\uFEFF2")), read("\uFEFFevent: a\ndata: 1\n\ndata: \uFEFF2\n\n"))
+    }
+
+    @Test
+    fun aLineLongerThanTheLimitIsMalformed() {
+        val longest = "data: " + "x".repeat(SseReader.MAX_LINE_BYTES.toInt() - 6)
+
+        assertEquals(SseReader.MAX_LINE_BYTES.toInt() - 6, read("$longest\n\n").single().data.length)
+        val error = assertThrows(ProviderException::class.java) { read("${longest}x\n\n") }
+        assertEquals(ProviderError.Malformed, error.error)
     }
 }
