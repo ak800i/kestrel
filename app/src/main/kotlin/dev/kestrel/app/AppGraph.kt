@@ -213,8 +213,7 @@ class AppGraph(context: Context) {
                 .catch { reportFailure("Reading the provider setting", it) }
                 .collect { setting ->
                     try {
-                        networkPolicy.setProfileHosts(ProviderAllowlist.profileHosts(setting, catalog))
-                        networkPolicy.setLocalServers(ProviderAllowlist.localServers(setting))
+                        ProviderAllowlist.apply(setting, { catalog }, networkPolicy)
                         appliedSetting.value = setting
                     } catch (e: IllegalArgumentException) {
                         reportFailure("Updating the allowlist", e)

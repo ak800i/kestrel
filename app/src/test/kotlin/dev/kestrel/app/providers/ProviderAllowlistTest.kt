@@ -1,13 +1,18 @@
 package dev.kestrel.app.providers
 
+import dev.kestrel.privacy.network.NetworkPolicy
+import dev.kestrel.privacy.network.PolicyDecision
 import dev.kestrel.providers.catalog.AuthMethod
 import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.LocalServerKind
 import dev.kestrel.providers.profiles.Profile
 import dev.kestrel.providers.profiles.ProfileModel
 import dev.kestrel.providers.profiles.ProvidersSetting
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.io.IOException
 
 class ProviderAllowlistTest {
     private val catalog = CatalogLoader.load(
@@ -58,5 +63,24 @@ class ProviderAllowlistTest {
         assertEquals(setOf("192.168.1.20"), ProviderAllowlist.localServers(ProvidersSetting(profiles = listOf(key, lan))))
         assertEquals(emptySet<String>(), ProviderAllowlist.profileHosts(ProvidersSetting(), catalog))
         assertEquals(emptySet<String>(), ProviderAllowlist.localServers(ProvidersSetting()))
+    }
+
+    @Test
+    fun anUpdateThatFailsLeavesBothListsAsTheyWereAndTheNextOneApplies() {
+        val policy = NetworkPolicy()
+        val before = ProvidersSetting(profiles = listOf(key, lan))
+        val after = ProvidersSetting(profiles = listOf(lan.copy(baseUrl = "http://192.168.1.21:11434")))
+        ProviderAllowlist.apply(before, { catalog }, policy)
+
+        assertThrows(IOException::class.java) { ProviderAllowlist.apply(after, { throw IOException("test") }, policy) }
+
+        assertEquals(PolicyDecision.Allowed, policy.check("https://api.acme.test/v1".toHttpUrl()))
+        assertEquals(PolicyDecision.Allowed, policy.check("http://192.168.1.20:11434/".toHttpUrl()))
+        assertEquals(PolicyDecision.Blocked("192.168.1.21 is not on the allowlist"), policy.check("http://192.168.1.21:11434/".toHttpUrl()))
+
+        ProviderAllowlist.apply(after, { catalog }, policy)
+
+        assertEquals(PolicyDecision.Blocked("api.acme.test is not on the allowlist"), policy.check("https://api.acme.test/v1".toHttpUrl()))
+        assertEquals(PolicyDecision.Allowed, policy.check("http://192.168.1.21:11434/".toHttpUrl()))
     }
 }
