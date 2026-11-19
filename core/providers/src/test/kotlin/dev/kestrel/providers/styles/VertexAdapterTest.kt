@@ -5,6 +5,7 @@ import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.chat.StopReason
+import dev.kestrel.providers.chat.StyleOptions
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.http.RequestAuth
@@ -81,4 +82,33 @@ class VertexAdapterTest {
         assertTrue(bench.calls.requests[1].encodedPath.endsWith("/publishers/google/models/gemini-4-argon:streamGenerateContent"))
     }
 
+    @Test
+    fun theWireOfTheStyleOptionsComesBeforeTheCatalogsStyle() = runBlocking {
+        bench.reply("vertex/claude-message.json")
+
+        val target = vertex(ModelEntry("partner-model", "Partner Model", style = RequestStyle.GEMINI)).copy(options = StyleOptions(wire = RequestStyle.ANTHROPIC))
+        adapter.complete(request(user("Open the camera.")), target)
+
+        assertEquals(listOf<String?>("/v1/projects/{project}/locations/europe-west4/publishers/anthropic/models/partner-model:rawPredict"), logPaths)
+    }
+
+    @Test
+    fun aGeminiModelWithoutStreamingUsesGenerateContent() = runBlocking {
+        bench.status(
+            200,
+            """{"candidates":[{"content":{"parts":[{"text":"Hello, owner."}],"role":"model"},"finishReason":"STOP","index":0}],""" +
+                """"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":5},"modelVersion":"gemini-3.8-flash"}""",
+            "Content-Type" to "application/json",
+        )
+
+        val target = vertex(ModelEntry("gemini-3.8-flash", "Gemini 3.8 Flash", style = RequestStyle.GEMINI)).copy(options = StyleOptions(stream = false))
+        val response = adapter.complete(request(user("Hi")), target)
+
+        assertEquals(listOf(AssistantPart.Text("Hello, owner.")), response.message.parts)
+        assertEquals(
+            "https://europe-west4-aiplatform.googleapis.com/v1/projects/kestrel-test-project/locations/europe-west4/publishers/google/models/gemini-3.8-flash:generateContent".toHttpUrl(),
+            bench.calls.requests.single(),
+        )
+        assertEquals(listOf<String?>("/v1/projects/{project}/locations/europe-west4/publishers/google/models/gemini-3.8-flash:generateContent"), logPaths)
+    }
 }

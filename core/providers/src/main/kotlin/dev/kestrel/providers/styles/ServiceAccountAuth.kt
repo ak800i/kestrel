@@ -1,6 +1,7 @@
 package dev.kestrel.providers.styles
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ErrorCodes
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
@@ -23,6 +24,7 @@ import java.security.MessageDigest
 import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
+import kotlin.math.abs
 
 /**
  * Vertex's credential (design D9, research r35): a JWT signed with RS256 by the service account's key, exchanged at
@@ -31,7 +33,10 @@ import java.util.Base64
  * plan 4C builds them) still reuses it. The JWT's `iat` lies 60 s in the past, so that a phone whose clock runs fast is
  * not refused, and its header names the key's `kid` when the file has one. Google's `invalid_grant` (a deleted or
  * disabled key) and any other refusal mean that the owner imports a new file; a network failure, a 429 or a 5xx keeps the
- * key (design D9's FailedForNow).
+ * key (design D9's FailedForNow). Google also answers `invalid_grant` when the phone's clock is far off: when the reply's
+ * `Date` differs from the phone's clock by more than [SKEW_LIMIT_MILLIS], the JWT is signed once more with the clock moved
+ * by that difference, as BedrockErrors does for AWS, and only a second refusal maps as above. Neither the `Date` nor
+ * Google's text is logged or kept. The token is never kept in the instance, only in [tokens].
  */
 class ServiceAccountAuth(
     private val key: Credential.ServiceAccountKey,
@@ -40,16 +45,14 @@ class ServiceAccountAuth(
     private val tokens: ServiceAccountTokens = ServiceAccountTokens.SHARED,
 ) : RequestAuth {
     private val identity = "${key.clientEmail}\n${key.privateKeyId ?: sha256(key.privateKeyPem)}\n$SCOPE\n$TOKEN_URL"
-    private var issued: String? = null
 
     override val rejected: ProviderError get() = ProviderError.SignInExpired(PROVIDER)
 
     override suspend fun headers(request: HttpRequest): Map<String, String> {
         val current = tokens.mutex.withLock {
             tokens.get(identity, clock() + EARLY_MILLIS) ?: when (val result = exchange()) {
-                RefreshResult.Refreshed -> issued ?: throw ProviderException(ProviderError.Malformed)
-                is RefreshResult.FailedForNow -> throw ProviderException(result.error)
-                RefreshResult.Expired, RefreshResult.NotPossible -> throw ProviderException(rejected)
+                is Exchanged.Token -> result.value
+                is Exchanged.Failed -> throw ProviderException((result.result as? RefreshResult.FailedForNow)?.error ?: rejected)
             }
         }
         return mapOf("Authorization" to "Bearer $current")
@@ -58,24 +61,38 @@ class ServiceAccountAuth(
     /** Always exchanges again, because the provider refused the token that [headers] gave. */
     override suspend fun refresh(): RefreshResult = tokens.mutex.withLock {
         tokens.remove(identity)
-        exchange()
+        when (val result = exchange()) {
+            is Exchanged.Token -> RefreshResult.Refreshed
+            is Exchanged.Failed -> result.result
+        }
     }
 
-    /** Called with the cache's mutex held. */
-    private suspend fun exchange(): RefreshResult {
-        issued = null
+    /** What one exchange gave: the new token, which is also in [tokens], or the failure. */
+    private sealed interface Exchanged {
+        class Token(val value: String) : Exchanged {
+            override fun toString(): String = "Token(length=${value.length})"
+        }
+
+        class Failed(val result: RefreshResult) : Exchanged
+    }
+
+    /**
+     * Called with the cache's mutex held. [offsetMillis] is the correction of the phone's clock for the second attempt
+     * after Google refused a JWT that the phone signed with a clock far off; null on the first attempt.
+     */
+    private suspend fun exchange(offsetMillis: Long? = null): Exchanged {
         val assertion = try {
-            jwt()
+            jwt(clock() + (offsetMillis ?: 0))
         } catch (e: GeneralSecurityException) {
-            return RefreshResult.Expired
+            return Exchanged.Failed(RefreshResult.Expired)
         } catch (e: IllegalArgumentException) {
-            return RefreshResult.Expired
+            return Exchanged.Failed(RefreshResult.Expired)
         }
         val form = "grant_type=${SigV4Auth.encode(GRANT_TYPE)}&assertion=${SigV4Auth.encode(assertion)}"
         val reply = try {
             http.exchange(HttpRequest("POST", TOKEN_URL.toHttpUrl(), mapOf("accept" to "application/json"), form.encodeToByteArray(), "application/x-www-form-urlencoded"))
         } catch (e: ProviderException) {
-            return RefreshResult.FailedForNow(e.error)
+            return Exchanged.Failed(RefreshResult.FailedForNow(e.error))
         }
         return when (reply.status) {
             in 200..299 -> {
@@ -85,20 +102,26 @@ class ServiceAccountAuth(
                     null
                 }
                 val access = (body?.get("access_token") as? JsonPrimitive)?.takeIf { it.isString }?.content
-                    ?: return RefreshResult.FailedForNow(ProviderError.Malformed)
+                    ?: return Exchanged.Failed(RefreshResult.FailedForNow(ProviderError.Malformed))
                 val seconds = (body["expires_in"] as? JsonPrimitive)?.longOrNull ?: 3600
-                issued = access
                 tokens.put(identity, access, clock() + seconds * 1000)
-                RefreshResult.Refreshed
+                Exchanged.Token(access)
             }
-            429 -> RefreshResult.FailedForNow(ProviderError.RateLimited(reply.headers["Retry-After"]?.toLongOrNull()?.times(1000)))
-            in 500..599 -> RefreshResult.FailedForNow(ProviderError.ServerError(reply.status))
-            else -> RefreshResult.Expired
+            429 -> Exchanged.Failed(RefreshResult.FailedForNow(ProviderError.RateLimited(http.retryAfterMillis(reply.headers["Retry-After"]), ErrorCodes.from(reply))))
+            in 500..599 -> Exchanged.Failed(RefreshResult.FailedForNow(ProviderError.ServerError(reply.status)))
+            else -> {
+                val skew = reply.headers.getDate("Date")?.let { it.time - clock() }
+                if (offsetMillis == null && skew != null && abs(skew) > SKEW_LIMIT_MILLIS && ErrorCodes.from(reply) == INVALID_GRANT) {
+                    exchange(skew)
+                } else {
+                    Exchanged.Failed(RefreshResult.Expired)
+                }
+            }
         }
     }
 
-    private fun jwt(): String {
-        val issuedAt = clock() / 1000 - 60
+    private fun jwt(nowMillis: Long): String {
+        val issuedAt = nowMillis / 1000 - 60
         val header = buildJsonObject {
             put("alg", "RS256")
             put("typ", "JWT")
@@ -133,6 +156,8 @@ class ServiceAccountAuth(
         private const val PROVIDER = "google-vertex"
         private const val GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer"
         private const val EARLY_MILLIS = 60_000L
+        private const val SKEW_LIMIT_MILLIS = 5 * 60 * 1000L
+        private const val INVALID_GRANT = "invalid_grant"
         private val JSON = Json { ignoreUnknownKeys = true }
     }
 }
@@ -141,7 +166,9 @@ class ServiceAccountAuth(
  * The access tokens of service accounts (design D9), kept only in memory, keyed by the account's e-mail, the key (its
  * `private_key_id`, or a SHA-256 of the key when the file has no ID), the scope and the token URI, and dropped when they
  * expire. At most [capacity] tokens are kept; the least recently used goes first.
- * One [mutex] lets one exchange run at a time, so that callers who wait use its token. Nothing of a token is printed.
+ * One [mutex] lets one exchange run at a time, so that callers who wait use its token. The map has its own lock, because
+ * a read of an access-ordered map changes it, so that [size] and toString can be read at any time. Nothing of a token is
+ * printed.
  */
 class ServiceAccountTokens(private val capacity: Int = 4) {
     private class Entry(val token: String, val expiresAtMillis: Long)
@@ -153,25 +180,25 @@ class ServiceAccountTokens(private val capacity: Int = 4) {
     internal val mutex = Mutex()
 
     /** The token for [identity] that is still valid at [atMillis], or null. Called with [mutex] held. */
-    internal fun get(identity: String, atMillis: Long): String? {
+    internal fun get(identity: String, atMillis: Long): String? = synchronized(entries) {
         val entry = entries[identity] ?: return null
         if (atMillis < entry.expiresAtMillis) return entry.token
         entries.remove(identity)
-        return null
+        null
     }
 
     internal fun put(identity: String, token: String, expiresAtMillis: Long) {
-        entries[identity] = Entry(token, expiresAtMillis)
+        synchronized(entries) { entries[identity] = Entry(token, expiresAtMillis) }
     }
 
     internal fun remove(identity: String) {
-        entries.remove(identity)
+        synchronized(entries) { entries.remove(identity) }
     }
 
     /** The number of tokens kept. */
-    val size: Int get() = entries.size
+    val size: Int get() = synchronized(entries) { entries.size }
 
-    override fun toString(): String = "ServiceAccountTokens(${entries.size} kept)"
+    override fun toString(): String = "ServiceAccountTokens($size kept)"
 
     companion object {
         /** The cache of the process, which every [ServiceAccountAuth] uses unless it is given another. */

@@ -212,8 +212,11 @@ class ProviderHttp(
         }
     }
 
-    /** `Retry-After` in seconds or as an HTTP date (RFC 9110 §10.2.3). */
-    private fun retryAfterMillis(value: String?): Long? {
+    /**
+     * `Retry-After` in seconds or as an HTTP date (RFC 9110 §10.2.3), measured with this instance's clock; a negative or
+     * unreadable value is none. Also used for the replies that [exchange] returns, such as Google's token endpoint's 429.
+     */
+    internal fun retryAfterMillis(value: String?): Long? {
         val text = value?.trim() ?: return null
         text.toLongOrNull()?.let { return if (it >= 0) it.coerceAtMost(Long.MAX_VALUE / 1000) * 1000 else null }
         return try {
