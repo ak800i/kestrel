@@ -15,7 +15,10 @@ data class MonthUse(val credits: Double = 0.0, val tokens: Long = 0)
  */
 @Serializable
 data class Spending(val months: Map<String, Map<String, MonthUse>> = emptyMap()) {
-    /** Adds one call and keeps only [month] and the month before it. */
+    /**
+     * Adds one call and keeps [month], the month before it and any later month, so that a call that is counted late never
+     * drops a newer month.
+     */
     fun add(profileId: String, month: String, credits: Double, tokens: Long): Spending {
         val before = YearMonth.parse(month).minusMonths(1).toString()
         val current = months[month].orEmpty()

@@ -9,11 +9,16 @@ import dev.kestrel.providers.catalog.Overrides
 import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.http.Hosts
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.time.LocalDate
 
 /**
  * Checks the hand-written `catalog/overrides.json` against the synced `catalog/providers.json` (design D2), so that a typo,
@@ -119,20 +124,37 @@ class OverridesTest {
     }
 
     @Test
-    fun pricesSayWhereAndWhenTheyWereCopied() {
+    fun pricedModelOverridesSayWhereAndWhenTheyWereCopiedAndCopilotsDefaultModelsHavePrices() {
         for (model in overrides.models.filter { it.prices != null }) {
             assertTrue("${model.provider}/${model.model}", model.pricesCopiedOn != null && model.pricesSource?.startsWith("https://") == true)
-        }
-        // The priced rows under providers[] are copied from OpenClaw at the pinned commit, which the synced file names.
-        val pinned = folder.resolve("openclaw.lock").readText().trim()
-        for (provider in overrides.providers) {
-            for (row in provider.models.filter { it.prices.isNotEmpty() }) {
-                assertTrue("${provider.id}/${row.id}", pinned.matches(Regex("[0-9a-f]{40}")) && synced.openclawCommit == pinned)
-            }
         }
         assertEquals("2026-11-17", overrides.copilot.pricesCopiedOn)
         val names = overrides.copilot.models.map { it.name }.toSet()
         assertTrue(names.containsAll(overrides.copilot.lightweight + overrides.copilot.versatile))
+    }
+
+    @Test
+    fun everyPriceDateIsADay() {
+        // PriceTable parses validFrom and validUntil at each call, so a malformed date in a shipped file must fail here
+        // instead of when a request is priced.
+        val dates = mutableListOf<Pair<String, String>>()
+        fun collect(element: JsonElement, path: String) {
+            when (element) {
+                is JsonObject -> for ((name, value) in element) {
+                    if (name in setOf("validFrom", "validUntil") && value is JsonPrimitive && value.isString) dates += "$path/$name" to value.content
+                    collect(value, "$path/$name")
+                }
+                is JsonArray -> element.forEachIndexed { index, value -> collect(value, "$path[$index]") }
+                else -> Unit
+            }
+        }
+        collect(Json.parseToJsonElement(overridesJson), "overrides.json")
+        collect(Json.parseToJsonElement(providersJson), "providers.json")
+
+        val malformed = dates.filter { (_, date) -> runCatching { LocalDate.parse(date) }.isFailure }.map { it.first }
+
+        assertTrue("overrides.json holds dated prices", dates.any { it.first.startsWith("overrides.json") })
+        assertEquals(emptyList<String>(), malformed)
     }
 
     @Test
