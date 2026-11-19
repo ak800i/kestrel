@@ -62,7 +62,9 @@ import dev.kestrel.providers.signin.SignInResult
 import dev.kestrel.providers.signin.XaiDeviceFlow
 import dev.kestrel.providers.styles.Adapters
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -73,6 +75,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -155,12 +158,7 @@ internal class ProviderGraph(
      * Whether the setup checklist's step is done (design D18): a default profile exists, its credential exists (or it is a
      * local server without a key), and its borrowed sign-in is not switched off.
      */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val providerReady: Flow<Boolean> = stored.filterNotNull().mapLatest { setting ->
-        val profile = setting.defaultProfile ?: return@mapLatest false
-        val credential = profile.credentialId?.let { credentials.read(it) }
-        setting.usable(profile, catalog) && (credential != null || profile.credentialId == null)
-    }
+    val providerReady: Flow<Boolean> = readiness(stored, { catalog }, { credentials.read(it) })
 
     // The sign-ins.
 
@@ -525,5 +523,22 @@ internal class ProviderGraph(
         /** The name of SettingsPage.PROVIDERS, which SignInService puts into MainActivity's EXTRA_PAGE. */
         const val PROVIDERS_PAGE = "PROVIDERS"
         private const val ALLOWLIST_WAIT_MILLIS = 5_000L
+
+        /**
+         * [providerReady] over the stored setting. It reads the catalog and the credential on [dispatcher], not in its
+         * collector's context, because the settings collect it on the main thread and the first reads load the catalog's
+         * assets and decrypt the credential with the Keystore.
+         */
+        @OptIn(ExperimentalCoroutinesApi::class)
+        internal fun readiness(
+            stored: Flow<ProvidersSetting?>,
+            catalog: () -> Catalog,
+            read: suspend (String) -> Credential?,
+            dispatcher: CoroutineDispatcher = Dispatchers.IO,
+        ): Flow<Boolean> = stored.filterNotNull().mapLatest { setting ->
+            val profile = setting.defaultProfile ?: return@mapLatest false
+            val credential = profile.credentialId?.let { read(it) }
+            setting.usable(profile, catalog()) && (credential != null || profile.credentialId == null)
+        }.flowOn(dispatcher)
     }
 }
