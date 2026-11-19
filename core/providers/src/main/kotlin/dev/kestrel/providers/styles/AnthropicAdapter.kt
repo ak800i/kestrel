@@ -21,13 +21,10 @@ import dev.kestrel.providers.styles.Wire.long
 import dev.kestrel.providers.styles.Wire.obj
 import dev.kestrel.providers.styles.Wire.objects
 import dev.kestrel.providers.styles.Wire.str
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonArrayBuilder
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -44,7 +41,8 @@ import okhttp3.HttpUrl
  * and always for a model that thinks by default ([AnthropicModels.thinksByDefault]), a forced tool choice becomes `auto`
  * (except for Claude Haiku 5.5, [AnthropicModels.keepsForcedToolChoice]), as OpenClaw sends it, and no temperature is
  * sent. A route that strips thinking (Copilot's) keeps no thinking blocks, also for a model that thinks by default, as
- * OpenClaw's Copilot replay policy does. The end of the system prompt and
+ * OpenClaw's Copilot replay policy does. Every request rewrites the tool-use IDs of its history to Anthropic's pattern
+ * ([ToolIds]), and a thinking block without a signature goes back as text. The end of the system prompt and
  * the last tool carry Anthropic's default cache marker (design D4). [complete] with `vertex` is the form of Claude on
  * Vertex (design D4, research r35): no streaming, `anthropic_version` in the body and the model in the URL.
  */
@@ -122,7 +120,7 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     /** Consecutive tool results and the user message after them become one user turn, results first. */
     private fun messages(request: ChatRequest, target: ModelTarget, tools: Boolean): JsonArray = buildJsonArray {
-        val ids = ToolIds(target.options.sanitizeToolCallIds)
+        val ids = ToolIds()
         val pending = mutableListOf<JsonObject>()
         fun flush() {
             if (pending.isEmpty()) return
@@ -171,7 +169,7 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                     is AssistantPart.Reasoning -> {
                         val state = part.state
                         if (keep && state.style == RequestStyle.ANTHROPIC && state.providerId == target.providerId && state.modelId == target.sentModelId) {
-                            (state.payload as? JsonObject)?.let { add(it) }
+                            (state.payload as? JsonObject)?.let(::replayed)?.let { add(it) }
                         }
                     }
                     is AssistantPart.Text -> if (part.text.isNotBlank()) add(text(part.text))
@@ -199,15 +197,25 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
     }
 
     /**
-     * Copilot's Claude models take only IDs of `^[a-zA-Z0-9_-]{1,64}$` (design D12), as OpenClaw rewrites them. Two IDs
-     * that become the same get `_2`, `_3` and so on, as in OpenClaw's `normalizeCopilotAnthropicToolIds`.
+     * A kept block as it goes back. A thinking block without a signature goes back as text, or not at all when its
+     * thinking is blank, as in OpenClaw's `convertMessages`, because a server that checks signatures refuses an empty one.
      */
-    private class ToolIds(private val sanitize: Boolean) {
+    private fun replayed(block: JsonObject): JsonObject? {
+        if (block.str("type") != "thinking" || !block.str("signature").isNullOrBlank()) return block
+        return block.str("thinking")?.takeIf { it.isNotBlank() }?.let(::text)
+    }
+
+    /**
+     * Anthropic takes only tool-use IDs of `^[a-zA-Z0-9_-]+$` (Copilot's Claude models also at most 64 characters, design
+     * D12), so every request rewrites the IDs of its calls and results alike, as OpenClaw's `normalizeAnthropicToolCallId`
+     * does; an ID that already fits stays as it is. Two IDs that become the same get `_2`, `_3` and so on, as in OpenClaw's
+     * `normalizeCopilotAnthropicToolIds`.
+     */
+    private class ToolIds {
         private val mapped = mutableMapOf<String, String>()
 
-        fun of(value: String): String {
-            if (!sanitize) return value
-            return mapped.getOrPut(value) {
+        fun of(value: String): String =
+            mapped.getOrPut(value) {
                 val base = value.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64).ifEmpty { "_" }
                 var candidate = base
                 var n = 2
@@ -218,7 +226,6 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                 }
                 candidate
             }
-        }
     }
 
     /** One reply, from the stream's events or from one complete message. */
@@ -230,6 +237,7 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
         }
 
         private val blocks = sortedMapOf<Int, Block>()
+        private val limit = GatherLimit()
         private var usage: JsonObject? = null
         private var stopReason: String? = null
         private var modelId: String? = null
@@ -245,17 +253,29 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                 }
                 "content_block_start" -> {
                     val block = event.obj("content_block") ?: return
-                    blocks[event.long("index")?.toInt() ?: blocks.size] = Block(block.str("type").orEmpty(), block)
+                    val type = block.str("type").orEmpty()
+                    // Anthropic starts a block empty, but a compatible provider may put its first text into the start.
+                    val first = when (type) {
+                        "text" -> block.str("text")
+                        "thinking" -> block.str("thinking")
+                        else -> null
+                    }.orEmpty()
+                    limit.add(first.length)
+                    blocks[event.long("index")?.toInt() ?: blocks.size] = Block(type, block).apply { text.append(first) }
                 }
                 "content_block_delta" -> {
                     val block = blocks[event.long("index")?.toInt() ?: return] ?: return
                     val delta = event.obj("delta") ?: return
-                    when (delta.str("type")) {
-                        "text_delta" -> block.text.append(delta.str("text").orEmpty())
-                        "thinking_delta" -> block.text.append(delta.str("thinking").orEmpty())
-                        "signature_delta" -> block.signature.append(delta.str("signature").orEmpty())
-                        "input_json_delta" -> block.input.append(delta.str("partial_json").orEmpty())
+                    val (into, piece) = when (delta.str("type")) {
+                        "text_delta" -> block.text to delta.str("text")
+                        "thinking_delta" -> block.text to delta.str("thinking")
+                        "signature_delta" -> block.signature to delta.str("signature")
+                        "input_json_delta" -> block.input to delta.str("partial_json")
+                        else -> return
                     }
+                    val value = piece.orEmpty()
+                    limit.add(value.length)
+                    into.append(value)
                 }
                 "message_delta" -> {
                     event.obj("delta")?.str("stop_reason")?.let { stopReason = it }
@@ -282,8 +302,14 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
             val reply = ReplyBuilder(request)
             val keep = keepsThinking(target)
             var reasoningChars = 0
-            val contents = if (whole != null) whole.arr("content").objects() else blocks.values.map(::complete)
-            for (block in contents) {
+            // A streamed tool call's input goes to ReplyBuilder as the model's text, so that input that does not parse
+            // reaches InvalidToolCall as it came.
+            val contents: List<Pair<JsonObject, String?>> = if (whole != null) {
+                whole.arr("content").objects().map { it to null }
+            } else {
+                blocks.values.map { block -> complete(block) to block.input.toString().takeIf { block.type == "tool_use" && it.isNotBlank() } }
+            }
+            for ((block, rawInput) in contents) {
                 when (block.str("type")) {
                     "text" -> block.str("text")?.takeIf { it.isNotBlank() }?.let(reply::text)
                     "thinking", "redacted_thinking" -> {
@@ -292,7 +318,11 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                             reply.reasoning(ReasoningState(RequestStyle.ANTHROPIC, target.providerId, target.sentModelId, block))
                         }
                     }
-                    "tool_use" -> reply.call(block.str("id").orEmpty(), block.str("name").orEmpty(), block["input"])
+                    "tool_use" -> if (rawInput != null) {
+                        reply.call(block.str("id").orEmpty(), block.str("name").orEmpty(), rawInput)
+                    } else {
+                        reply.call(block.str("id").orEmpty(), block.str("name").orEmpty(), block["input"])
+                    }
                 }
             }
             val counted = (whole?.obj("usage") ?: usage)?.takeIf { it.long("input_tokens") != null }?.let(::usageOf)
@@ -307,7 +337,10 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
             return reply.response(stop, counted, whole?.str("model") ?: modelId ?: target.sentModelId)
         }
 
-        /** A streamed block as Anthropic's complete block: text, thinking with its signature, or tool use with its input. */
+        /**
+         * A streamed block as Anthropic's complete block: text, thinking with its signature (none when it came without
+         * one), or tool use with the input of its start (finish reads a streamed input as text).
+         */
         private fun complete(block: Block): JsonObject = when (block.type) {
             "text" -> buildJsonObject {
                 put("type", "text")
@@ -316,23 +349,16 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
             "thinking" -> buildJsonObject {
                 put("type", "thinking")
                 put("thinking", block.text.toString())
-                put("signature", block.signature.toString().ifEmpty { block.start.str("signature").orEmpty() })
+                block.signature.toString().ifEmpty { block.start.str("signature").orEmpty() }.takeIf { it.isNotEmpty() }?.let { put("signature", it) }
             }
             "tool_use" -> buildJsonObject {
                 put("type", "tool_use")
                 put("id", block.start.str("id").orEmpty())
                 put("name", block.start.str("name").orEmpty())
-                put("input", if (block.input.isBlank()) block.start["input"] ?: JsonObject(emptyMap()) else parseInput(block.input.toString()))
+                put("input", block.start["input"] ?: JsonObject(emptyMap()))
             }
             else -> block.start
         }
-
-        private fun parseInput(text: String): JsonElement =
-            try {
-                Wire.json.parseToJsonElement(text)
-            } catch (e: SerializationException) {
-                JsonPrimitive(text)
-            }
 
         /** Design D6: Anthropic's input already excludes the cache. */
         private fun usageOf(usage: JsonObject): Usage = Usage(

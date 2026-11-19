@@ -26,6 +26,7 @@ import dev.kestrel.providers.styles.AdapterHarness.Companion.user
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -302,5 +303,148 @@ class AnthropicAdapterTest {
         }
         assertTrue(AnthropicModels.defaultSamplingOnly("claude-opus-4-8"))
         assertFalse(AnthropicModels.defaultSamplingOnly("claude-sonnet-4-6"))
+    }
+
+    private fun sse(vararg events: String) = events.joinToString("") { "data: $it\n\n" }
+
+    private fun stream(vararg blocks: String, stop: String = "end_turn") = sse(
+        """{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}""",
+        *blocks,
+        """{"type":"message_delta","delta":{"stop_reason":"$stop"},"usage":{"output_tokens":5}}""",
+        """{"type":"message_stop"}""",
+    )
+
+    private val toolUse = arrayOf(
+        """{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"open_app","input":{}}}""",
+        """{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"name\":\"Camera\"}"}}""",
+    )
+
+    @Test
+    fun everyRequestRewritesForeignToolIdsToAnthropicsPatternAndKeepsThemPaired() = runBlocking {
+        bench.reply("anthropic/text.sse")
+        val history = request(
+            user("Open the camera and the clock."),
+            ChatMessage.Assistant(
+                listOf(
+                    AssistantPart.ToolCall("functions.open_app:0", "open_app", obj("""{"name":"Camera"}""")),
+                    AssistantPart.ToolCall("call_1", "open_app", obj("""{"name":"Clock"}""")),
+                ),
+            ),
+            ChatMessage.ToolResult("functions.open_app:0", "open_app", "Opened."),
+            ChatMessage.ToolResult("call_1", "open_app", "Not run: Kestrel runs one action per step", failed = true),
+        )
+
+        adapter.complete(history, anthropic)
+
+        val messages = bench.body(bench.take())["messages"]!!.jsonArray
+        val calls = messages[1].jsonObject["content"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
+        val results = messages[2].jsonObject["content"]!!.jsonArray.map { it.jsonObject["tool_use_id"]!!.jsonPrimitive.content }
+        assertEquals(listOf("functions_open_app_0", "call_1"), calls)
+        assertEquals(calls, results)
+        assertTrue(calls.all { Regex("^[a-zA-Z0-9_-]+$").matches(it) })
+    }
+
+    @Test
+    fun aThinkingBlockWithoutASignatureGoesBackAsTextOrNotAtAll() = runBlocking {
+        bench.status(
+            200,
+            stream(
+                """{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}""",
+                """{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The owner wants the camera."}}""",
+                """{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":" "}}""",
+                *toolUse,
+                stop = "tool_use",
+            ),
+            "Content-Type" to "text/event-stream",
+        )
+        bench.reply("anthropic/text.sse")
+
+        val first = adapter.complete(request(user("Open the camera.")), anthropic)
+        adapter.complete(request(user("Open the camera."), first.message, ChatMessage.ToolResult("toolu_1", "open_app", "Opened.")), anthropic)
+
+        bench.take()
+        val replayed = bench.body(bench.take())["messages"]!!.jsonArray[1].jsonObject["content"]
+        assertEquals(
+            json("""[{"type":"text","text":"The owner wants the camera."},{"type":"tool_use","id":"toolu_1","name":"open_app","input":{"name":"Camera"}}]"""),
+            replayed,
+        )
+    }
+
+    @Test
+    fun thinkingGoesBackOnlyToTheSameStyleProviderAndModelAndNeverOnCopilotsRoute() = runBlocking {
+        bench.reply("anthropic/text.sse")
+        bench.reply("anthropic/text.sse")
+        val thinking = obj("""{"type":"thinking","thinking":"Open it.","signature":"c2ln"}""")
+        val call = AssistantPart.ToolCall("toolu_1", "open_app", obj("""{"name":"Camera"}"""))
+        fun history(vararg states: ReasoningState) = request(
+            user("Open the camera."),
+            ChatMessage.Assistant(states.map { AssistantPart.Reasoning(it) } + call),
+            ChatMessage.ToolResult("toolu_1", "open_app", "Opened."),
+        )
+        val copilot = target(
+            "github-copilot", RequestStyle.ANTHROPIC, "https://api.individual.githubcopilot.com",
+            ModelEntry("claude-haiku-4.5", "Claude Haiku 4.5", reasoning = true),
+            options = StyleOptions(stripThinking = true, sanitizeToolCallIds = true, messagesPath = "/messages"),
+        )
+
+        adapter.complete(
+            history(
+                ReasoningState(RequestStyle.ANTHROPIC, "anthropic", "claude-opus-5", thinking),
+                ReasoningState(RequestStyle.ANTHROPIC, "minimax", "claude-sonnet-5", thinking),
+                ReasoningState(RequestStyle.RESPONSES, "anthropic", "claude-sonnet-5", thinking),
+            ),
+            anthropic,
+        )
+        adapter.complete(history(ReasoningState(RequestStyle.ANTHROPIC, "github-copilot", "claude-haiku-4.5", thinking)), copilot)
+
+        val toolUseOnly = json("""[{"type":"tool_use","id":"toolu_1","name":"open_app","input":{"name":"Camera"}}]""")
+        assertEquals(toolUseOnly, bench.body(bench.take())["messages"]!!.jsonArray[1].jsonObject["content"])
+        assertEquals(toolUseOnly, bench.body(bench.take())["messages"]!!.jsonArray[1].jsonObject["content"])
+    }
+
+    @Test
+    fun toolInputThatDoesNotParseIsReportedAsTheModelsText() = runBlocking {
+        bench.status(
+            200,
+            stream(
+                """{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"open_app","input":{}}}""",
+                """{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"name\":"}}""",
+                stop = "tool_use",
+            ),
+            "Content-Type" to "text/event-stream",
+        )
+
+        val response = adapter.complete(request(user("Open the camera.")), anthropic)
+
+        assertEquals("""{"name":""", response.invalidToolCall?.text)
+    }
+
+    @Test
+    fun textThatACompatibleProviderPutsIntoTheBlockStartIsKept() = runBlocking {
+        bench.status(
+            200,
+            stream(
+                """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hello, "}}""",
+                """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"owner."}}""",
+            ),
+            "Content-Type" to "text/event-stream",
+        )
+
+        val response = adapter.complete(request(user("Hi")), anthropic)
+
+        assertEquals(listOf(AssistantPart.Text("Hello, owner.")), response.message.parts)
+    }
+
+    @Test
+    fun aStreamThatGathersMoreThan8MiBIsMalformed() {
+        val piece = "a".repeat(512 * 1024)
+        val deltas = List(17) { """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"$piece"}}""" }
+        bench.status(
+            200,
+            stream("""{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""", *deltas.toTypedArray()),
+            "Content-Type" to "text/event-stream",
+        )
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), anthropic))
     }
 }
