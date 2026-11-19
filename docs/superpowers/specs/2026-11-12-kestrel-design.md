@@ -167,7 +167,7 @@ Each Gradle module has one job. Most of them are plain Kotlin, so their tests ru
 | `:core:screen` | Screen snapshots, actions and the overlays (numbers, labels, grid, feedback bar, touch watcher) | No |
 | `:core:voice` | Audio capture, voice activity detection, keyword spotting, speech recognition and voice output, through sherpa-onnx | No |
 | `:core:commands` | The instant-command grammar, the parser, the matching of spoken words to screen elements, apps and contacts, the editing model and dictation, and the phone-number rules. The contacts themselves are read in `:app` until `:core:datatools` exists (sub-project 5) | Yes |
-| `:core:providers` | The generated catalog, the request adapters and the sign-in methods (uses OkHttp) | Yes |
+| `:core:providers` | The generated catalog, the internal request format, the request adapters, the sign-in methods, model discovery, profiles, credentials as data and cost estimation; it uses OkHttp only through the network gateway's `Call.Factory` | Yes |
 | `:core:agent` | The agent loop, its tools, memory and routines | Yes |
 | `:core:safety` | The safety check, agent-free apps, redaction and test mode | Yes |
 | `:core:privacy` | The network gateway and its allowlist, the network log, the activity log and encrypted storage | No |

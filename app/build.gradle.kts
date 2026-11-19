@@ -21,6 +21,7 @@ android {
 dependencies {
     implementation(project(":core:commands"))
     implementation(project(":core:privacy"))
+    implementation(project(":core:providers"))
     implementation(project(":core:safety"))
     implementation(project(":core:screen"))
     implementation(project(":core:voice"))
