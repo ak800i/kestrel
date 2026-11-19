@@ -31,7 +31,8 @@ class OverridesTest {
 
     // The manifest headers that offered providers send, by provider, as decided (design D4, decision 6 of the design's
     // decisions). None at the pinned commit: a header that a later sync brings, such as a borrowed User-Agent, fails the
-    // build until it is decided and written here, or its provider or choice is excluded.
+    // build until it is decided and written here, or its provider or choice is excluded. The choices' `identityHeaders` are
+    // deliberately left out: they belong to a borrowed sign-in and are sent only behind its switch (design D21).
     private val allowedHeaders: Map<String, Map<String, String>> = emptyMap()
 
     private val syncedIds = synced.providers.map { it.id }.toSet()
@@ -50,6 +51,10 @@ class OverridesTest {
         for (change in overrides.providers) {
             if (change.id !in syncedIds && change.plugin == null) problems += "added provider ${change.id} without a plugin"
             change.modelsFrom?.let { if (it !in syncedIds) problems += "modelsFrom $it" }
+            val rows = catalog.provider(change.id)?.models.orEmpty().map { it.id }
+            for (default in listOfNotNull(change.defaultModel, change.utilityModel)) {
+                if (default !in rows) problems += "default model ${change.id}/$default"
+            }
         }
         for (choice in overrides.choices) {
             if (choice.provider !in syncedIds && choice.provider !in addedIds) problems += "choice of provider ${choice.provider}"
@@ -116,7 +121,14 @@ class OverridesTest {
     @Test
     fun pricesSayWhereAndWhenTheyWereCopied() {
         for (model in overrides.models.filter { it.prices != null }) {
-            assertTrue(model.model, model.pricesCopiedOn != null && model.pricesSource!!.startsWith("https://"))
+            assertTrue("${model.provider}/${model.model}", model.pricesCopiedOn != null && model.pricesSource?.startsWith("https://") == true)
+        }
+        // The priced rows under providers[] are copied from OpenClaw at the pinned commit, which the synced file names.
+        val pinned = folder.resolve("openclaw.lock").readText().trim()
+        for (provider in overrides.providers) {
+            for (row in provider.models.filter { it.prices.isNotEmpty() }) {
+                assertTrue("${provider.id}/${row.id}", pinned.matches(Regex("[0-9a-f]{40}")) && synced.openclawCommit == pinned)
+            }
         }
         assertEquals("2026-11-17", overrides.copilot.pricesCopiedOn)
         val names = overrides.copilot.models.map { it.name }.toSet()
