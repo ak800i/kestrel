@@ -81,7 +81,7 @@ class TargetResolver(
     private suspend fun localServer(profile: Profile, entry: ModelEntry): ModelTarget {
         val style = catalog.localServers.firstOrNull { it.kind == profile.localServer }?.style ?: RequestStyle.CHAT_COMPLETIONS
         val address = profile.baseUrl?.toHttpUrlOrNull() ?: throw ProviderException(ProviderError.NotAllowed)
-        val base = Discoveries.localServerBase(profile.localServer!!, address)
+        val base = Discoveries.localServerBase(profile.localServer ?: throw ProviderException(ProviderError.NotAllowed), address)
         return ModelTarget(profile.providerId, style, base, entry, auth = credentials.auth(profile, KeyHeader.BEARER))
     }
 

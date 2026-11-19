@@ -213,6 +213,25 @@ class CredentialManagerTest {
     }
 
     @Test
+    fun anEarlyRefreshThatTheProviderRefusesWithAnUnlistedErrorKeepsTheValidToken() = runBlocking {
+        vault.stored["test-credential"] = token(expiresIn = 30_000)
+        val refresher = TestRefresher({ Refresh.ForNow(ProviderError.BadRequest(400, null)) })
+        val auth = manager(refresher).auth(profile(), KeyHeader.BEARER)
+
+        assertEquals(mapOf("Authorization" to "Bearer test-access-1"), auth.headers(request))
+        assertEquals(1, refresher.calls.get())
+    }
+
+    @Test
+    fun anExpiredTokenWhoseRefreshTheProviderRefusesWithA4xxFailsAsAnExpiredSignIn() {
+        vault.stored["test-credential"] = token(expiresIn = -1_000)
+        val auth = runBlocking { manager(TestRefresher({ Refresh.ForNow(ProviderError.BadRequest(403, null)) })).auth(profile(), KeyHeader.BEARER) }
+
+        assertEquals(ProviderError.SignInExpired("openai"), errorOf { auth.headers(request) })
+        assertEquals("test-access-1", (vault.stored["test-credential"] as Credential.OAuthToken).access)
+    }
+
+    @Test
     fun aRefusedRefreshExpiresTheSignInAndInvalidClientClearsTheClientId() = runBlocking {
         val original = token()
         vault.stored["test-credential"] = original

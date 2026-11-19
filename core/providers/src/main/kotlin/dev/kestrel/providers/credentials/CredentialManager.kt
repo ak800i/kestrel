@@ -34,7 +34,8 @@ import java.util.concurrent.ConcurrentHashMap
  * [scope] (a scope with a SupervisorJob that `:app` gives), from the token request to the vault write, with its own limit
  * of 20 s, and every caller awaits it: so a caller's stop or ProfileClient's limit of 30 s ends the caller's wait but not
  * the refresh, and a rotated refresh token is stored before the lock is released, also when the request that caused the
- * refresh is gone.
+ * refresh is gone. A refresh that fails for now keeps a token that is still valid; once the token has expired, the request
+ * fails with the refresh's error, or with SignInExpired when the provider refused the refresh with a 4xx other than 429.
  */
 class CredentialManager(
     private val vault: CredentialVault,
@@ -165,7 +166,9 @@ class CredentialManager(
                 when (val result = refresh(id, token.access, refresher)) {
                     RefreshResult.Refreshed -> token = read(id) as? Credential.OAuthToken ?: throw ProviderException(rejected)
                     is RefreshResult.FailedForNow -> {
-                        if (expired(token)) throw ProviderException(result.error)
+                        // An expired token whose refresh the provider refused with a 4xx works for no request until the
+                        // owner signs in again, also when design D9 does not list the refusal.
+                        if (expired(token)) throw ProviderException(if (refused(result.error)) rejected else result.error)
                         val wait = (result.error as? ProviderError.RateLimited)?.retryAfterMillis ?: 0L
                         earlyAgainAt[id] = clock() + maxOf(EARLY_RETRY_MILLIS, wait)
                     }
@@ -183,6 +186,9 @@ class CredentialManager(
         }
 
         private fun expired(token: Credential.OAuthToken): Boolean = token.expiresAtMillis?.let { clock() >= it } == true
+
+        /** A refusal of the refresh other than a rate limit, which the refreshers report as a BadRequest for now. */
+        private fun refused(error: ProviderError): Boolean = error is ProviderError.BadRequest && error.status in 400..499 && error.status != 429
 
         private fun due(token: Credential.OAuthToken): Boolean {
             val expiresAt = token.expiresAtMillis ?: return false
