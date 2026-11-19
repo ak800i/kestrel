@@ -29,4 +29,5 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver3)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.room.testing)
 }

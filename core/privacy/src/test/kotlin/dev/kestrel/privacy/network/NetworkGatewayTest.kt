@@ -13,6 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -100,5 +101,32 @@ class NetworkGatewayTest {
 
         assertEquals(302, code)
         assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun logsTheTaggedPathWithoutItsQueryInsteadOfTheRealOne() {
+        policy.setLocalServers(listOf("127.0.0.1"))
+        server.enqueue(MockResponse.Builder().body("ok").build())
+        val request = Request.Builder()
+            .url(serverUrl("/v1/projects/test-project/locations/global/publishers/google/models/m:streamGenerateContent?alt=sse"))
+            .tag(LogPathTag::class.java, LogPathTag("/v1/projects/{project}/locations/global/publishers/google/models/m:streamGenerateContent?alt=sse"))
+            .build()
+
+        execute(request)
+
+        assertEquals("/v1/projects/{project}/locations/global/publishers/google/models/m:streamGenerateContent", events.single().path)
+    }
+
+    @Test
+    fun aFailedRequestIsLoggedByTheClassOfItsExceptionNotByItsMessage() {
+        policy.setLocalServers(listOf("127.0.0.1"))
+        val url = serverUrl("/v1/models?key=secret")
+        server.close()
+
+        assertThrows(IOException::class.java) { execute(Request.Builder().url(url).build()) }
+
+        val event = events.single()
+        assertEquals(NetworkOutcome.FAILED, event.outcome)
+        assertEquals("ConnectException", event.detail)
     }
 }

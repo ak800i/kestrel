@@ -62,4 +62,27 @@ class NetworkPolicyTest {
         second.close()
         assertEquals(PolicyDecision.Blocked("login.example.com is not on the allowlist"), policy.check(url))
     }
+
+    @Test
+    fun temporaryLocalServersAllowPlainHttpUntilEveryLeaseCloses() {
+        val url = "http://192.168.1.30:8000/v1/models".toHttpUrl()
+        val first = policy.openTemporaryLocalServers(listOf("192.168.1.30"))
+        val second = policy.openTemporaryLocalServers(listOf("192.168.1.30"))
+
+        assertEquals(PolicyDecision.Allowed, policy.check(url))
+        first.close()
+        first.close()
+        assertEquals(PolicyDecision.Allowed, policy.check(url))
+
+        second.close()
+        assertEquals(PolicyDecision.Blocked("HTTPS is required for 192.168.1.30"), policy.check(url))
+    }
+
+    @Test
+    fun temporaryLocalServersRefusePublicHosts() {
+        val error = assertThrows(IllegalArgumentException::class.java) { policy.openTemporaryLocalServers(listOf("example.com")) }
+
+        assertEquals("example.com is not a local-network or localhost address", error.message)
+        assertEquals(PolicyDecision.Blocked("example.com is not on the allowlist"), policy.check("https://example.com/".toHttpUrl()))
+    }
 }

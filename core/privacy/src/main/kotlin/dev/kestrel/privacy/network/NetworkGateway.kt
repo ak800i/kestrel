@@ -15,6 +15,13 @@ import java.util.concurrent.TimeUnit
 /** Tags a request with the task that caused it, so that the network log can show it. */
 data class TaskTag(val taskId: String)
 
+/**
+ * Tags a request with the path that the network log records instead of the real one, because a path can name the owner's
+ * project or account, such as Vertex's `/v1/projects/<project>/…` or a Bedrock inference-profile ARN (design spec, section
+ * 13.5).
+ */
+data class LogPathTag(val path: String)
+
 class BlockedRequestException(val url: HttpUrl, reason: String) : IOException(reason)
 
 /**
@@ -69,8 +76,11 @@ private class NetworkLogListener(private val record: (NetworkEvent) -> Unit) : E
     override fun callEnd(call: Call) = write(call, NetworkOutcome.COMPLETED, detail = null)
 
     override fun callFailed(call: Call, ioe: IOException) {
-        val outcome = if (ioe is BlockedRequestException) NetworkOutcome.BLOCKED else NetworkOutcome.FAILED
-        write(call, outcome, ioe.message ?: ioe.javaClass.simpleName)
+        val blocked = ioe is BlockedRequestException
+        val outcome = if (blocked) NetworkOutcome.BLOCKED else NetworkOutcome.FAILED
+        // OkHttp's messages can hold a URL, so a failure is logged by its class; the allowlist's own message names only the
+        // host and tells "not on the allowlist" from "HTTPS is required".
+        write(call, outcome, if (blocked) ioe.message else ioe.javaClass.simpleName)
     }
 
     private fun write(call: Call, outcome: NetworkOutcome, detail: String?) {
@@ -79,7 +89,7 @@ private class NetworkLogListener(private val record: (NetworkEvent) -> Unit) : E
             NetworkEvent(
                 method = request.method,
                 host = request.url.host,
-                path = request.url.encodedPath,
+                path = request.tag(LogPathTag::class.java)?.path?.substringBefore('?') ?: request.url.encodedPath,
                 requestBytes = requestBytes,
                 responseBytes = responseBytes,
                 status = status,

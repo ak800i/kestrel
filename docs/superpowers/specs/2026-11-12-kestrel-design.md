@@ -461,8 +461,8 @@ Kestrel ports OpenClaw's `extensions/github-copilot` at the pinned commit (B27):
 
 ### 10.7 Credentials
 
-- Credentials are encrypted with AES-GCM using a non-exportable Android Keystore key, kept in StrongBox when the device has it.
-- They are never logged, never shown in full after entry, and never included in an export.
+- Credentials are encrypted with AES-GCM using a non-exportable Android Keystore key of their own (`kestrel.credentials`), made in StrongBox when the device has it and without StrongBox otherwise. They are kept in their own table, each row bound to its ID, so that a row moved to another ID cannot be read. A credential that fails this check is deleted, and one in a format that this version cannot read is kept for a later version; in both cases its profile asks the owner to sign in again.
+- They are never logged, never shown in full after entry (a key shows only its last four characters, a sign-in only its date), and never included in an export or a backup. Kestrel keeps the credentials that it has read in memory while its process runs, because StrongBox is slow.
 
 ## 11. Agent
 
@@ -669,7 +669,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 
 ### 13.4 Storage and backups
 
-- Kestrel stores its data in a Room database. Sensitive fields are encrypted with AES-GCM using Android Keystore keys, and credentials use a separate key.
+- Kestrel stores its data in a Room database. Sensitive fields are encrypted with AES-GCM using Android Keystore keys, and credentials use a separate key (`kestrel.credentials`) and their own table.
 - `android:allowBackup="false"` and data-extraction rules exclude everything, so no data goes into Google Drive backups or device-to-device transfers.
 - The model files live in the app's external files folder (section 8.10). They contain no personal data.
 
@@ -678,7 +678,7 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 | Log | Content | Kept for |
 |---|---|---|
 | Activity log | The spoken command, each redacted observation and prompt that was sent, each LLM reply, each action and safety decision, confirmations, timings, tokens and estimated cost | 7 days |
-| Network log | Time, host, path, request and response size, status, and the task it belongs to | 7 days |
+| Network log | Time, host, path, request and response size, status, and the task it belongs to. The path is the request's path with the parts that name the owner's project or account replaced, such as Vertex's project or a Bedrock model; a failed request's detail is the error's class, except for a request that the allowlist refused, whose detail names the host and the rule | 7 days |
 
 - Both logs are encrypted and can be viewed in settings. A button in settings wipes both after a confirmation; "Kestrel, delete history" by voice, after a spoken confirmation, comes with the agent (sub-project 5).
 - The logs leave the phone only when the owner exports them to a file of their choice. The export is one JSON file with both logs and all their entries, oldest first, with times in UTC.
