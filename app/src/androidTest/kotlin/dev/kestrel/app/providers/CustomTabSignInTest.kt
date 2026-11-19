@@ -1,5 +1,6 @@
 package dev.kestrel.app.providers
 
+import android.app.UiAutomation
 import android.content.Intent
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -84,8 +85,10 @@ class CustomTabSignInTest {
         if (tabOpened) shell("am force-stop com.android.chrome")
     }
 
+    // Without this flag, UiAutomation turns off every accessibility service, Kestrel's included, and the screen tests
+    // that run later in the same process, whose UiAutomation is already made, never see Kestrel's service connect again.
     private fun shell(command: String): String =
-        instrumentation.uiAutomation.executeShellCommand(command).let { descriptor ->
+        instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).executeShellCommand(command).let { descriptor ->
             java.io.FileInputStream(descriptor.fileDescriptor).use { it.readBytes().decodeToString() }.also { descriptor.close() }
         }
 
