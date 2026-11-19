@@ -62,8 +62,7 @@ class XaiDeviceFlow(
             val code = checkNotNull(deviceCode)
             var interval = prompt.intervalMillis
             while (true) {
-                sleep(interval)
-                if (clock() >= prompt.expiresAtMillis) throw SignInFailed(SignInFailure.EXPIRED)
+                DevicePolls.pause(prompt, interval, clock, sleep)
                 val reply = DevicePolls.send(
                     http,
                     SignInHttp.form(

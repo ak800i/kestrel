@@ -49,8 +49,7 @@ class GitHubDeviceFlow(
         val code = checkNotNull(deviceCode) { "start() comes first" }
         var interval = prompt.intervalMillis
         while (true) {
-            sleep(interval)
-            if (clock() >= prompt.expiresAtMillis) throw SignInFailed(SignInFailure.EXPIRED)
+            DevicePolls.pause(prompt, interval, clock, sleep)
             val reply = DevicePolls.send(
                 http,
                 SignInHttp.form(

@@ -94,7 +94,8 @@ class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: ()
 /**
  * xAI's refresh (design D9, research r31): a form POST to the token endpoint that the sign-in discovered, which must be
  * HTTPS on `x.ai`. `invalid_request`, `access_denied` and `invalid_grant` are final; any other refused answer keeps the
- * sign-in, and a 403 with `cf-mitigated: challenge` is tried again up to 3 times, 250 ms apart.
+ * sign-in, and a 403 with `cf-mitigated: challenge` is tried again up to 3 times, 250 ms apart. An expiry that has already
+ * passed gets [TokenTimes.SHORTEST_LIFE_MILLIS], as at the sign-in.
  */
 class XaiRefresher(
     private val http: ProviderHttp,
@@ -126,7 +127,8 @@ class XaiRefresher(
                 return if (SignInHttp.errorCode(body) in FINAL_ERRORS) Refresh.Refused() else Refresh.ForNow(SignInHttp.failure(reply, http).error)
             }
             val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
-            val expiresAt = body.number("expires_in")?.let { clock() + it * 1000 } ?: TokenTimes.jwtExpiry(access)
+            val now = clock()
+            val expiresAt = (body.number("expires_in")?.let { now + it * 1000 } ?: TokenTimes.jwtExpiry(access))?.let { TokenTimes.notPast(it, now) }
             return Refresh.Done(token.copy(access = access, refresh = body.string("refresh_token") ?: refreshToken, expiresAtMillis = expiresAt))
         }
     }

@@ -16,6 +16,8 @@ import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.providers.profiles.Profile
 import dev.kestrel.providers.signin.SignInFailed
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.ConcurrentHashMap
@@ -28,7 +30,8 @@ import java.util.concurrent.ConcurrentHashMap
  * tool-call IDs; Chat Completions uses Copilot's compat flags; every Copilot request streams. When the base differs from
  * the profile's stored one, [updateBase] stores it and waits until the allowlist holds its host; when discovery fails
  * for lack of network, the stored base is used for this process. The base is kept per profile for the process, so that a
- * client that sub-project 5 keeps uses the new base too.
+ * client that sub-project 5 keeps uses the new base too. Requests of one profile that start together run discovery once:
+ * the later ones wait for the first one's base.
  */
 class CopilotTargets(
     private val catalog: Catalog,
@@ -37,6 +40,7 @@ class CopilotTargets(
     private val updateBase: suspend (Profile, HttpUrl) -> Unit,
 ) : ProviderTargets {
     private val bases = ConcurrentHashMap<String, HttpUrl>()
+    private val discovering = ConcurrentHashMap<String, Mutex>()
 
     /** Forgets [profileId]'s base, as after "Sign in again", which may be another GitHub account. */
     fun forget(profileId: String) {
@@ -59,6 +63,10 @@ class CopilotTargets(
 
     private suspend fun base(profile: Profile): HttpUrl {
         bases[profile.id]?.let { return it }
+        return discovering.computeIfAbsent(profile.id) { Mutex() }.withLock { bases[profile.id] ?: discover(profile) }
+    }
+
+    private suspend fun discover(profile: Profile): HttpUrl {
         val stored = profile.baseUrl?.toHttpUrlOrNull()
         val token = profile.credentialId?.let { credentials.read(it) } as? Credential.GitHubToken
             ?: throw ProviderException(ProviderError.SignInExpired(CatalogLoader.COPILOT))

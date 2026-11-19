@@ -53,4 +53,15 @@ internal object DevicePolls {
 
     /** The interval after `slow_down` or a failed poll: 5 s longer, or a longer wait that the server asked for. */
     fun slower(intervalMillis: Long, askedMillis: Long? = null): Long = maxOf(intervalMillis + SLOW_DOWN_MILLIS, askedMillis ?: 0L)
+
+    /**
+     * The pause before a poll: [intervalMillis], but never past the code's expiry, so that a long `Retry-After` or interval
+     * does not keep the sign-in waiting with a dead code. The sign-in ends as expired when the code has no time left.
+     */
+    suspend fun pause(prompt: DeviceCodePrompt, intervalMillis: Long, clock: () -> Long, sleep: suspend (Long) -> Unit) {
+        val left = prompt.expiresAtMillis - clock()
+        if (left <= 0) throw SignInFailed(SignInFailure.EXPIRED)
+        sleep(minOf(intervalMillis, left))
+        if (clock() >= prompt.expiresAtMillis) throw SignInFailed(SignInFailure.EXPIRED)
+    }
 }

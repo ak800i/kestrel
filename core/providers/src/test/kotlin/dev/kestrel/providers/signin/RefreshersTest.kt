@@ -16,6 +16,7 @@ import org.junit.Test
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.Base64
 
 /** The refreshers of the ChatGPT plan, xAI and MiniMax against MockWebServer (design D9 and D19). */
 class RefreshersTest {
@@ -131,6 +132,19 @@ class RefreshersTest {
         repeat(3) { assertEquals(Refresh.Refused(), XaiRefresher(http, { now }) {}.refresh(xai)) }
         assertEquals(Refresh.Refused(), XaiRefresher(http, { now }) {}.refresh(xai.copy(tokenEndpoint = "https://auth.example.com/token")))
         assertEquals(3, calls.requests.size)
+    }
+
+    @Test
+    fun anXaiExpiryInThePastGetsTheShortestLife() = runBlocking {
+        val pastExp = Base64.getUrlEncoder().withoutPadding().encodeToString("""{"exp":${now / 1000 - 60}}""".toByteArray())
+        server.enqueue(json(200, """{"access_token":"test-xai-access-2","expires_in":0}"""))
+        server.enqueue(json(200, """{"access_token":"e30.$pastExp.sig"}"""))
+
+        val zero = (XaiRefresher(http, { now }) {}.refresh(xai) as Refresh.Done).token
+        val past = (XaiRefresher(http, { now }) {}.refresh(xai) as Refresh.Done).token
+
+        assertEquals(now + TokenTimes.SHORTEST_LIFE_MILLIS, zero.expiresAtMillis)
+        assertEquals(now + TokenTimes.SHORTEST_LIFE_MILLIS, past.expiresAtMillis)
     }
 
     @Test

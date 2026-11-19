@@ -125,6 +125,25 @@ class GitHubDeviceFlowTest {
     }
 
     @Test
+    fun aPollNeverSleepsPastTheCodesExpiry() {
+        server.enqueue(fixture(200, "github/device-code.json"))
+        server.enqueue(json(429, "{}", "Retry-After" to "3600"))
+        server.enqueue(fixture(200, "github/device-code.json"))
+
+        // The code lives 900 s: after the first 5 s pause, the hour that the rate limit asks for is cut to the 895 s left.
+        assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
+        assertEquals(listOf(5_000L, 895_000L), pauses)
+        // A code that has no time left when the wait starts ends the sign-in at once, without a pause or a poll.
+        pauses.clear()
+        val flow = flow()
+        val prompt = runBlocking { flow.start() }
+        now = prompt.expiresAtMillis
+        assertEquals(SignInFailure.EXPIRED, failureOf { flow.await(prompt) })
+        assertEquals(emptyList<Long>(), pauses)
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
     fun anEmptyTokenIsAnAnswerThatKestrelCannotRead() {
         server.enqueue(fixture(200, "github/device-code.json"))
         server.enqueue(json(200, """{"access_token":"","token_type":"bearer"}"""))

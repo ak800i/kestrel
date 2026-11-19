@@ -21,9 +21,12 @@ import dev.kestrel.providers.signin.SignInFixtures.fixture
 import dev.kestrel.providers.signin.SignInFixtures.json
 import dev.kestrel.providers.signin.SignInFixtures.read
 import dev.kestrel.providers.testing.RedirectingCalls
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import mockwebserver3.MockWebServer
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -115,6 +118,32 @@ class CopilotTargetsTest {
         assertEquals(listOf("https://api.individual.githubcopilot.com/".toHttpUrl()), updates)
         assertEquals(first.baseUrl, later.baseUrl)
         assertEquals(RequestStyle.RESPONSES, later.style)
+        assertEquals(1, calls.requests.size)
+    }
+
+    @Test
+    fun twoRequestsThatStartTogetherRunDiscoveryOnce() = runBlocking {
+        server.enqueue(fixture(200, "copilot/user.json"))
+        server.enqueue(fixture(200, "copilot/user.json"))
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val targets = CopilotTargets(catalog, credentials, CopilotDiscovery(http)) { _, base ->
+            updates += base
+            entered.complete(Unit)
+            gate.await()
+        }
+        val profile = profile("https://api.business.githubcopilot.com/")
+        val entry = ModelEntry("gpt-6-luna", "GPT-6 Luna")
+
+        val first = async { targets.target(profile, ModelRole.LIGHTWEIGHT, entry) }
+        entered.await()
+        // The second request starts while the first one waits for the allowlist.
+        val second = async { targets.target(profile, ModelRole.VERSATILE, entry) }
+        yield()
+        gate.complete(Unit)
+
+        assertEquals(first.await().baseUrl, second.await().baseUrl)
+        assertEquals(listOf("https://api.individual.githubcopilot.com/".toHttpUrl()), updates)
         assertEquals(1, calls.requests.size)
     }
 

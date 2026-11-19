@@ -1,6 +1,8 @@
 package dev.kestrel.providers.signin
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.signin.SignInFixtures.json
 import dev.kestrel.providers.signin.SignInFixtures.read
@@ -147,6 +149,27 @@ class MiniMaxDeviceFlowTest {
 
         assertEquals("test-minimax-access-1", (result.credential as Credential.OAuthToken).access)
         assertEquals(listOf(3_000L, 8_000L, 13_000L), pauses)
+    }
+
+    @Test
+    fun aPollNeverSleepsPastTheCodesExpiry() {
+        polls += json(429, "{}", "Retry-After" to "3600")
+
+        assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
+        assertEquals(listOf(3_000L, 597_000L), pauses)
+    }
+
+    @Test
+    fun anEmptyAccessOrRefreshTokenIsAnAnswerThatKestrelCannotRead() {
+        for (field in listOf("access_token", "refresh_token")) {
+            polls += json(200, read("minimax/token.json").replace(Regex("\"$field\": \"[^\"]*\""), "\"$field\": \"\""))
+            try {
+                runBlocking { flow().let { it.await(it.start()) } }
+                fail("expected a ProviderException for an empty $field")
+            } catch (e: ProviderException) {
+                assertEquals(ProviderError.Malformed, e.error)
+            }
+        }
     }
 
     @Test

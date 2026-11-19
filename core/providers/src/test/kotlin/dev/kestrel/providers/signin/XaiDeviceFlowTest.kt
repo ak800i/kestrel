@@ -135,6 +135,17 @@ class XaiDeviceFlowTest {
     }
 
     @Test
+    fun aPollNeverSleepsPastTheCodesExpiry() {
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        server.enqueue(json(429, "{}", "Retry-After" to "3600"))
+
+        assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
+        assertEquals(listOf(5_000L, 595_000L), pauses)
+        assertEquals(0, open)
+    }
+
+    @Test
     fun anEmptyTokenIsMalformedAndAnExpiryInThePastGetsTheShortestLife() {
         val pastExp = Base64.getUrlEncoder().withoutPadding().encodeToString("""{"exp":${now / 1000 - 60}}""".toByteArray())
         server.enqueue(fixture(200, "xai/openid-configuration.json"))
