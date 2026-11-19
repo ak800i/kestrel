@@ -85,7 +85,9 @@
 #                                           end of the latest transcribed speech, Kestrel's latest reaction and how long
 #                                           after that speech it came, its latest turn-off and why, the settings asked
 #                                           for and in front, and whether Android runs the listening service in the
-#                                           foreground (foreground= from Android's list, demoted= Kestrel's decision)
+#                                           foreground (foreground= from Android's list; demoted= Android's reading of
+#                                           whether the service lost its foreground, AndroidListeningConditions.demoted,
+#                                           on which Kestrel acts only while its battery use is also Restricted)
 #   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
 #                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
 #   voice-task -Clear                       each task ends at once again, as in sub-project 2

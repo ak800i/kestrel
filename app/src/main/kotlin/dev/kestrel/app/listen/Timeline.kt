@@ -14,8 +14,8 @@ import kotlin.math.roundToLong
  * The times on the phone's clock, [now] (SystemClock.elapsedRealtime in milliseconds, which the shell's /proc/uptime
  * also counts), of the events that the A71 session measures, so that no measure counts from the owner's Enter (plan 2E;
  * analysis of the A71 session of sub-project 2). The debug hook voice-times reads them through [describe]; plan 2E's
- * "Kestrel, open settings" also reads [settingsResumes] and [settingsInFront]. It holds times and the names of kinds, never words. Any
- * thread may use it.
+ * "Kestrel, open settings" also reads [settingsResumes] and [settingsInFront]. It holds times and the names of kinds,
+ * never words. Any thread may use it.
  */
 internal class Timeline(private val now: () -> Long) {
     /** An event of [kind] at [at]; [sinceSpeech] is how long after the end of the latest speech it came, or null. */
@@ -37,10 +37,10 @@ internal class Timeline(private val now: () -> Long) {
         private set
 
     /**
-     * Kestrel's latest reaction: the start of a wait for a task ("wait"), a mode ("mode-paused"), a task or a command. Its
-     * [Mark.sinceSpeech] counts from the end of the latest transcribed speech, whatever caused the reaction, so a reaction
-     * that no transcript caused, such as a spotter's hit while Kestrel speaks, counts from older speech; a reader compares
-     * `at - sinceSpeech` with the start of its try.
+     * Kestrel's latest reaction: the start of a wait for a task ("wait"), a mode ("mode-paused"), a task or a command.
+     * Its [Mark.sinceSpeech] counts from the end of the latest transcribed speech, whatever caused the reaction, so a
+     * reaction that no transcript caused, such as a spotter's hit while Kestrel speaks, counts from older speech; a
+     * reader compares `at - sinceSpeech` with the start of its try.
      */
     @Volatile
     var reacted: Mark? = null
@@ -106,8 +106,8 @@ internal class Timeline(private val now: () -> Long) {
     }
 
     /**
-     * The answer of the hook voice-times: each time in milliseconds on the phone's clock, and 0 or none for what has not
-     * happened in this process, such as "now=81234 started=tile@80012 opened=86010 speechEnded=0 reacted=none ...".
+     * The answer of the hook voice-times: each time in milliseconds on the phone's clock, and 0 or none for what has
+     * not happened in this process, such as "now=81234 started=tile@80012 opened=86010 speechEnded=0 reacted=none ...".
      */
     fun describe(): String =
         "now=${now()} started=${text(started)} opened=$opened speechEnded=$speechEnded reacted=${text(reacted)} " +
@@ -121,8 +121,8 @@ internal class Timeline(private val now: () -> Long) {
 /**
  * What the voice sessions of this process heard, for the A71 session (plan 2E): the keyword spotter's hits by keyword,
  * the transcribed utterances, those at whose start the spotter heard the name, their audio in milliseconds, and how
- * Requests read each transcript outside a wait for a task, by the kind of request. Counts only, never words. Any thread
- * may use it.
+ * Requests read each transcript, by the kind of request; every transcript of a voice session counts, also one during
+ * a wait for a task or during a call. Counts only, never words. Any thread may use it.
  */
 internal class VoiceCounts {
     private val counts = ConcurrentHashMap<String, AtomicLong>()

@@ -60,7 +60,9 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     // The phone's own times (plan 2E), and whether Android runs ListeningService in the foreground: foreground= from
-    // Android's list of Kestrel's running services, demoted= Kestrel's decision from it, and none while no service runs.
+    // Android's list of Kestrel's running services, demoted= Android's reading of whether the service lost its
+    // foreground (AndroidListeningConditions.demoted), on which Kestrel acts only while its battery use is also
+    // Restricted, and none while no service runs.
     private suspend fun times(): String {
         val conditions = AndroidListeningConditions(context)
         val service = withContext(Dispatchers.Main) { ListeningService.running() }
