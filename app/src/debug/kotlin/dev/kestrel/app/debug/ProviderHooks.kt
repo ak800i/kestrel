@@ -79,7 +79,8 @@ internal class ProviderHooks(private val graph: AppGraph) {
             profile.providerId == CatalogLoader.COPILOT -> "copilot"
             else -> "other"
         }
-        return "standin=${if (standIn != null) "on" else "off"} profile=$kind"
+        val on = synchronized(lock) { standIn != null }
+        return "standin=${if (on) "on" else "off"} profile=$kind"
     }
 
     private fun switchStandIn(on: Boolean) {
@@ -110,21 +111,26 @@ internal class ProviderHooks(private val graph: AppGraph) {
             outcome = null
         }
         graph.scope.launch {
-            val answer = try {
-                runCase(case, model, headers, messagesPath)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: ProviderException) {
-                "case=$case outcome=failed error=${e.error.toString().replace(" ", "")}"
-            } catch (e: HookError) {
-                "case=$case outcome=failed error=${e.message.replace(' ', '-')}"
-            } catch (e: Exception) {
-                // Only the class, never a message (spec 13.5).
-                "case=$case outcome=failed error=${e.javaClass.simpleName}"
-            }
-            synchronized(lock) {
-                outcome = answer
-                running = false
+            // A cancel of the scope ends the case too, and the next case may start then.
+            var answer = "case=$case outcome=failed error=cancelled"
+            try {
+                answer = try {
+                    runCase(case, model, headers, messagesPath)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ProviderException) {
+                    "case=$case outcome=failed error=${e.error.toString().replace(" ", "")}"
+                } catch (e: HookError) {
+                    "case=$case outcome=failed error=${e.message.replace(' ', '-')}"
+                } catch (e: Exception) {
+                    // Only the class, never a message (spec 13.5).
+                    "case=$case outcome=failed error=${e.javaClass.simpleName}"
+                }
+            } finally {
+                synchronized(lock) {
+                    outcome = answer
+                    running = false
+                }
             }
         }
         return "started"
@@ -139,7 +145,7 @@ internal class ProviderHooks(private val graph: AppGraph) {
     }
 
     private suspend fun runCase(case: String, name: String?, headers: Map<String, String>, messagesPath: String?): String {
-        val server = standIn
+        val server = synchronized(lock) { standIn }
         val catalog = graph.catalog
         if (case == "allowance") {
             if (server != null) return "case=allowance outcome=skipped standin=on"
@@ -172,30 +178,26 @@ internal class ProviderHooks(private val graph: AppGraph) {
             graph.providers.localNetwork, spend, NoLimits,
         )
         val start = SystemClock.elapsedRealtime()
-        val (priced, matched) = when (case) {
-            "text" -> ask(client, listOf(user("Reply with the word OK and nothing else."))).let { it to text(it).contains("OK", ignoreCase = true) }
+        val (calls, matched) = when (case) {
+            "text" -> ask(client, listOf(user("Reply with the word OK and nothing else."))).let { listOf(it) to text(it).contains("OK", ignoreCase = true) }
             "image" -> ask(client, listOf(ChatMessage.User(listOf(Part.Text("Which word is written in the picture? Reply with the word only."), Part.Image(ImageType.PNG, picture())))))
-                .let { it to text(it).contains(PICTURE_WORD, ignoreCase = true) }
+                .let { listOf(it) to text(it).contains(PICTURE_WORD, ignoreCase = true) }
             else -> toolCase(client, case == "json")
         }
-        val millis = SystemClock.elapsedRealtime() - start
-        val usage = priced.response.usage
-        return "case=$case outcome=ok matched=$matched style=${priced.style} input=${usage.totalInput} output=${usage.output} " +
-            "estimated=${usage.estimated} credits=${String.format(Locale.ROOT, "%.3f", priced.cost.credits)} priceKnown=${priced.cost.priceKnown} " +
-            "millis=$millis${if (server != null) " standin=on" else ""}"
+        return line(case, matched, calls, SystemClock.elapsedRealtime() - start, server != null)
     }
 
     /** A call of the test tool `get_number`, its result sent back, and a final answer that must hold the number. */
-    private suspend fun toolCase(client: ProfileClient, json: Boolean): Pair<PricedResponse, Boolean> {
+    private suspend fun toolCase(client: ProfileClient, json: Boolean): Pair<List<PricedResponse>, Boolean> {
         val ask = user("Call the tool get_number, then tell me the number that it returns.")
         val first = ask(client, listOf(ask), listOf(GET_NUMBER), ToolChoice.REQUIRED)
-        val call = first.response.message.toolCalls.firstOrNull() ?: return first to false
-        if (call.name != GET_NUMBER.name) return first to false
+        val call = first.response.message.toolCalls.firstOrNull() ?: return listOf(first) to false
+        if (call.name != GET_NUMBER.name) return listOf(first) to false
         // A JSON action is the case's whole check (design D7): its tool and arguments came back as a tool call.
-        if (json) return first to true
+        if (json) return listOf(first) to true
         val history = listOf(ask, first.response.message, ChatMessage.ToolResult(call.id, call.name, ProviderStandIn.NUMBER.toString()))
         val last = ask(client, history, listOf(GET_NUMBER), ToolChoice.AUTO)
-        return last to text(last).contains(ProviderStandIn.NUMBER.toString())
+        return listOf(first, last) to text(last).contains(ProviderStandIn.NUMBER.toString())
     }
 
     private suspend fun ask(client: ProfileClient, messages: List<ChatMessage>, tools: List<ToolSpec> = emptyList(), choice: ToolChoice = ToolChoice.AUTO) =
@@ -299,10 +301,32 @@ internal class ProviderHooks(private val graph: AppGraph) {
             }
         }
 
+        /**
+         * A case's answer: the style of its last call, and the tokens and credits of all its calls, as the profile's
+         * spending counts them (design D14); estimated when any call's tokens were.
+         */
+        internal fun line(case: String, matched: Boolean, calls: List<PricedResponse>, millis: Long, standIn: Boolean): String {
+            val input = calls.sumOf { it.response.usage.totalInput }
+            val output = calls.sumOf { it.response.usage.output }
+            val estimated = calls.any { it.response.usage.estimated }
+            val credits = String.format(Locale.ROOT, "%.3f", calls.sumOf { it.cost.credits })
+            val priceKnown = calls.all { it.cost.priceKnown }
+            return "case=$case outcome=ok matched=$matched style=${calls.last().style} input=$input output=$output estimated=$estimated " +
+                "credits=$credits priceKnown=$priceKnown millis=$millis${if (standIn) " standin=on" else ""}"
+        }
+
         private val lock = Any()
+
+        @Volatile
         private var running = false
+
+        @Volatile
         private var outcome: String? = null
+
+        @Volatile
         private var standIn: ProviderStandIn? = null
+
+        @Volatile
         private var standInLease: AutoCloseable? = null
         private const val EXTRA_RESULT = "result"
         private const val EXTRA_ON = "on"

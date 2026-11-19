@@ -59,6 +59,7 @@ internal object ProviderTexts {
         SignInFailure.OTHER_ACCOUNT -> "This is another ChatGPT account than the one Kestrel is registered with."
         SignInFailure.EXCHANGE_FAILED -> "The sign-in did not finish."
         SignInFailure.TIMED_OUT -> "Android ended the sign-in, because it ran for too long. Start it again."
+        SignInFailure.NOT_STORED -> "The sign-in worked, but Kestrel could not store it. Try again."
     }
 
     /** What the add flow says when its check failed with [error]. */

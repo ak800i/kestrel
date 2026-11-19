@@ -124,8 +124,10 @@
 #                                           -MessagesPath are debug overrides for a retry in the owner's session
 #   provider-live -Case allowance           starts Copilot's allowance call for the default profile
 #   provider-live -Result                   answers running until the case has ended, then its outcome, whether the
-#                                           answer matched, the style, the tokens, the credits, whether the price was
-#                                           known and the time on the device; never a prompt, a reply or a token
+#                                           answer matched, the style, the tokens of all the case's calls and whether
+#                                           they were estimated (estimated=true when the provider sent no usage), the
+#                                           credits, whether the price was known and the time on the device; never a
+#                                           prompt, a reply or a token
 #   provider-standin [-On true|false]       answers whether the Copilot stand-in on the device runs and whether the
 #                                           default profile is a Copilot profile (profile=none|copilot|other), after
 #                                           starting or ending the stand-in; while it runs, provider-live sends its

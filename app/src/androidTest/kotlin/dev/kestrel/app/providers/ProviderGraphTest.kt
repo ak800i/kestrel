@@ -24,9 +24,11 @@ import dev.kestrel.providers.signin.LoopbackAddresses
 import dev.kestrel.providers.signin.LoopbackCallback
 import dev.kestrel.providers.signin.LoopbackListener
 import dev.kestrel.providers.signin.LoopbackSession
+import dev.kestrel.providers.signin.SignInFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -152,6 +154,47 @@ class ProviderGraphTest {
     }
 
     @Test
+    fun aProfileDeletedWhileItsSignInAgainRunsKeepsNoCredential() = runBlocking {
+        val profile = draft().copy(choiceId = "openrouter-oauth", method = AuthMethod.BROWSER, credentialId = "test-credential")
+        vault.write("test-credential", Credential.ApiKey("sk-test-old"))
+        settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(profile), defaultProfileId = profile.id))
+        server.enqueue(MockResponse.Builder().code(200).body("""{"key": "sk-test-new"}""").build())
+        loopback.hold()
+        withTimeout(10_000) { graph.stored.first { it?.profiles?.isNotEmpty() == true } }
+        graph.signInAgain(profile.id)
+        assertTrue("the loopback opened", loopback.opened.await(10, TimeUnit.SECONDS))
+
+        // The deletion stops after it deleted the credential and before it removed the profile, and the sign-in ends then.
+        vault.deleteGate = CountDownLatch(1)
+        val deletion = scope.async { graph.delete(profile.id) }
+        assertTrue("the deletion reached the vault", vault.deleted.await(10, TimeUnit.SECONDS))
+        loopback.release()
+        val ended = withTimeout(10_000) { graph.signIn.first { it !is SignInState.Waiting } }
+        vault.deleteGate.countDown()
+        withTimeout(10_000) { deletion.await() }
+
+        assertEquals(SignInState.Idle, ended)
+        assertEquals(emptySet<String>(), vault.ids())
+        assertEquals(emptyList<Profile>(), settings.get(SettingKeys.PROVIDERS).profiles)
+    }
+
+    @Test
+    fun aSignInAgainWhoseCredentialCannotBeStoredSaysSo() = runBlocking {
+        val profile = draft().copy(choiceId = "openrouter-oauth", method = AuthMethod.BROWSER, credentialId = "test-credential")
+        vault.write("test-credential", Credential.ApiKey("sk-test-old"))
+        settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(profile), defaultProfileId = profile.id))
+        server.enqueue(MockResponse.Builder().code(200).body("""{"key": "sk-test-new"}""").build())
+        withTimeout(10_000) { graph.stored.first { it?.profiles?.isNotEmpty() == true } }
+        vault.failingWrites = true
+
+        graph.signInAgain(profile.id)
+        val done = withTimeout(10_000) { graph.signIn.first { it !is SignInState.Waiting } }
+
+        assertEquals(SignInState.Failed("openrouter", "openrouter-oauth", SignInFailure.NOT_STORED, null, profile.id), done)
+        assertEquals(Credential.ApiKey("sk-test-old"), vault.read("test-credential"))
+    }
+
+    @Test
     fun aCancelledSignInNeverPublishesItsPage() = runBlocking {
         loopback.hold()
 
@@ -192,16 +235,28 @@ class ProviderGraphTest {
     private class MemoryVault : CredentialVault {
         private val stored = ConcurrentHashMap<String, Credential>()
 
+        /** Whether a write throws, as a Keystore failure would. */
+        @Volatile
+        var failingWrites = false
+
+        /** A delete removes its credential, then waits until this opens; [deleted] opens when one reached it. */
+        @Volatile
+        var deleteGate = CountDownLatch(0)
+        val deleted = CountDownLatch(1)
+
         fun ids(): Set<String> = stored.keys.toSet()
 
         override suspend fun read(id: String): Credential? = stored[id]
 
         override suspend fun write(id: String, credential: Credential) {
+            if (failingWrites) throw IllegalStateException("test: the Keystore failed")
             stored[id] = credential
         }
 
         override suspend fun delete(id: String) {
             stored.remove(id)
+            deleted.countDown()
+            deleteGate.await(10, TimeUnit.SECONDS)
         }
     }
 

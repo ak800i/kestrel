@@ -37,6 +37,12 @@ Describe 'The helpers of the live cases of sub-project 4' {
         $single[0].Models | Should -Be @('Claude Haiku 5.5')
     }
 
+    It 'refuses -Model without -Case, and a case without its model, before it touches a device' {
+        { Get-LivePlan -Case '' -Model 'GPT-6 Luna' } | Should -Throw '-Model needs -Case*'
+        { Get-LivePlan -Case 'text' -Model '' } | Should -Throw '-Case text needs -Model*'
+        @(Get-LivePlan -Case 'allowance' -Model '').Count | Should -Be 1
+    }
+
     It 'reads an answer and passes it only when it matched with a known price' {
         $answer = ConvertFrom-LiveAnswer 'case=tool outcome=ok matched=true style=ANTHROPIC input=210 output=12 estimated=false credits=0.110 priceKnown=true millis=2310'
 

@@ -34,6 +34,9 @@ enum class SignInFailure {
 
     /** Android ended the sign-in's foreground service after its daily time (Android 15 and later). */
     TIMED_OUT,
+
+    /** The sign-in succeeded, but Kestrel could not store its credential in the profile, as after a Keystore failure. */
+    NOT_STORED,
 }
 
 /**

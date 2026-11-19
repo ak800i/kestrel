@@ -1,6 +1,7 @@
 # Runs the live cases of sub-project 4 (design D20) through the debug hook provider-live on one test device, and prints
-# one line for each case: the case, the model, ok or failed, whether the answer matched, the style, the tokens, the
-# credits, whether Kestrel knew the price, and the time that the device measured. Each case starts on the device and the
+# one line for each case: the case, the model, ok or failed, whether the answer matched, the style, the tokens of all
+# the case's calls and whether Kestrel estimated them (estimated=true when the provider sent no usage), the credits,
+# whether Kestrel knew the price, and the time that the device measured. Each case starts on the device and the
 # script asks for its answer every 2 s, up to -TimeoutSeconds (4 minutes, longer than a tool case's two calls with their
 # retries); after that it waits until the device has ended the case before it starts the next. Without -Case it runs the
 # whole plan: for each
@@ -9,7 +10,8 @@
 # its list (GPT-6 Luna, then Claude Haiku 5.5; Gemini 3.8 Flash, then Gemini 4 Hydrogen); when Claude Haiku 5.5 stands in
 # for the lightweight model, its own text, tool and image cases are not run twice. A case fails when the device
 # reports a failure, when its answer did not match, or when Kestrel did not know the model's price. -Headers
-# ('name=value;name=value') and -MessagesPath are the debug overrides for a retry within the owner's session. With
+# ('name=value;name=value') and -MessagesPath are the debug overrides for a retry within the owner's session. -Model needs
+# -Case, and every case but the allowance needs -Model; the script says so before it touches a device. With
 # provider-standin on, the cases go to the stand-in on the device and make no request off it. -PassThru returns one
 # object for each case, for scripts\a71-providers.ps1. It exits with 1 when a case failed. It never prints a prompt, a
 # reply, a code, a token or a key: the hook answers only outcomes, counts and times.
@@ -31,6 +33,8 @@ Use-KestrelToolchain
 
 # The session's cases (design D20): each entry is a case and the models to try in order.
 function Get-LivePlan([string]$Case, [string]$Model) {
+    if ($Model -and -not $Case) { throw '-Model needs -Case; without -Case the script runs every case with its own models.' }
+    if ($Case -and $Case -ne 'allowance' -and -not $Model) { throw "-Case $Case needs -Model, the name of a Copilot model." }
     if ($Case) { return @([pscustomobject]@{ Case = $Case; Models = @(if ($Model) { $Model }) }) }
     $lightweight = @('GPT-6 Luna', 'Claude Haiku 5.5')
     $gemini = @('Gemini 3.8 Flash', 'Gemini 4 Hydrogen')
@@ -100,10 +104,11 @@ function Invoke-LiveCase([string]$Case, [string]$Model, [string]$Headers, [strin
     [ordered]@{ case = $Case; outcome = 'failed'; error = 'timeout' }
 }
 
+$plan = @(Get-LivePlan -Case $Case -Model $Model)
 Assert-TestDevice -Serial $Serial
 $failed = 0
 $done = @{}
-$results = foreach ($entry in Get-LivePlan -Case $Case -Model $Model) {
+$results = foreach ($entry in $plan) {
     $models = @($entry.Models)
     if ($models.Count -eq 0) { $models = @('') }
     # A case that already ran with this model, as Claude Haiku 5.5's when it stood in for GPT-6 Luna, counts once.

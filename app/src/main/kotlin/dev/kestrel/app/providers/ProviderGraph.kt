@@ -146,6 +146,12 @@ internal class ProviderGraph(
     val credentials: CredentialManager by lazy { CredentialManager(vault, http, catalog, scope, clock) }
     private val writes = Mutex()
 
+    /**
+     * Held by a deletion and by the replacement of a profile's credential, so that a "Sign in again" that ends while its
+     * profile is deleted stores nothing, and no credential stays without its profile (design D15).
+     */
+    private val profileChanges = Mutex()
+
     /** The stored provider setting, null until the store has answered. */
     val stored: StateFlow<ProvidersSetting?> = settings.observe(SettingKeys.PROVIDERS)
         .catch { report("Reading the provider setting", it) }
@@ -252,7 +258,7 @@ internal class ProviderGraph(
             val outcome = try {
                 val result = runFlow(ticket, kind, tenant, consent, newRegistration)
                 // A cancelled or replaced sign-in changes no profile.
-                if (profileId != null && signInState.isCurrent(ticket)) replaceCredential(profileId, result)
+                if (profileId != null && signInState.isCurrent(ticket)) storeRenewal(profileId, result)
                 SignInState.Succeeded(providerId, choiceId, result, profileId)
             } catch (e: CancellationException) {
                 throw e
@@ -272,6 +278,21 @@ internal class ProviderGraph(
             }
             // Only the current sign-in ends itself: after a cancel or a newer sign-in, this outcome is dropped (design D10).
             signInState.set(ticket) { outcome }
+        }
+    }
+
+    /**
+     * Stores a "Sign in again"'s result in its profile. A failure of the store, such as the Keystore's, ends the sign-in as
+     * NOT_STORED, because the exchange itself succeeded. Logged by its classes only.
+     */
+    private suspend fun storeRenewal(profileId: String, result: SignInResult) {
+        try {
+            replaceCredential(profileId, result)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            report("Storing a sign-in's credential", e)
+            throw SignInFailed(SignInFailure.NOT_STORED)
         }
     }
 
@@ -522,19 +543,23 @@ internal class ProviderGraph(
     /**
      * Deletes a profile (design D9 and D15): for the ChatGPT plan it first revokes the refresh token, while
      * `auth.openai.com` is still on the allowlist; then it deletes the credential, the model list and the profile. The
-     * ChatGPT registration and the host ID stay. Returns false when OpenAI did not confirm the sign-out.
+     * ChatGPT registration and the host ID stay. A running "Sign in again" of the profile ends first. Returns false when
+     * OpenAI did not confirm the sign-out.
      */
     suspend fun delete(profileId: String): Boolean {
-        val profile = settings.get(SettingKeys.PROVIDERS).profiles.firstOrNull { it.id == profileId } ?: return true
-        val credential = profile.credentialId?.let { credentials.read(it) }
-        val confirmed = if (chatgptPlan(profile) && credential is Credential.OAuthToken) ChatGptPlanFlow.revoke(http, credential) else true
-        profile.credentialId?.let { credentials.delete(it) }
-        settings.set(SettingKeys.providerModels(profileId), ModelList())
-        update { setting ->
-            val profiles = setting.profiles.filterNot { it.id == profileId }
-            setting.copy(profiles = profiles, defaultProfileId = setting.defaultProfileId.takeIf { it != profileId } ?: profiles.firstOrNull()?.id)
+        if (signInState.value.profileId == profileId) cancelSignIn()
+        return profileChanges.withLock {
+            val profile = settings.get(SettingKeys.PROVIDERS).profiles.firstOrNull { it.id == profileId } ?: return@withLock true
+            val credential = profile.credentialId?.let { credentials.read(it) }
+            val confirmed = if (chatgptPlan(profile) && credential is Credential.OAuthToken) ChatGptPlanFlow.revoke(http, credential) else true
+            profile.credentialId?.let { credentials.delete(it) }
+            settings.set(SettingKeys.providerModels(profileId), ModelList())
+            update { setting ->
+                val profiles = setting.profiles.filterNot { it.id == profileId }
+                setting.copy(profiles = profiles, defaultProfileId = setting.defaultProfileId.takeIf { it != profileId } ?: profiles.firstOrNull()?.id)
+            }
+            confirmed
         }
-        return confirmed
     }
 
     suspend fun setDefault(profileId: String) = update { it.copy(defaultProfileId = profileId) }
@@ -547,13 +572,24 @@ internal class ProviderGraph(
     /** Switches a borrowed sign-in on or off for every profile that uses it (design D9). */
     suspend fun setSwitch(identity: String, on: Boolean) = update { it.copy(signInSwitches = it.signInSwitches + (identity to on)) }
 
-    /** Replaces a profile's credential under its own ID, as "Sign in again" and "Change key" do (design D15). */
-    suspend fun replaceCredential(profileId: String, result: SignInResult) {
-        val profile = settings.get(SettingKeys.PROVIDERS).profiles.firstOrNull { it.id == profileId } ?: return
-        val id = credentials.store(result.credential, profile.credentialId)
-        val signedIn = profile.method == AuthMethod.DEVICE_CODE || profile.method == AuthMethod.BROWSER
-        updateProfile(profileId) {
-            it.copy(credentialId = id, signedInAt = if (signedIn) clock() else it.signedInAt, discoveredHosts = (it.discoveredHosts + result.hosts).distinct())
+    /**
+     * Replaces a profile's credential under its own ID, as "Sign in again" and "Change key" do (design D15). A profile
+     * that was deleted gets nothing; once started, the store and the profile's update finish together, also when the
+     * caller is cancelled, and a new credential whose profile could not be updated is deleted again.
+     */
+    suspend fun replaceCredential(profileId: String, result: SignInResult): Unit = profileChanges.withLock {
+        val profile = settings.get(SettingKeys.PROVIDERS).profiles.firstOrNull { it.id == profileId } ?: return@withLock
+        withContext(NonCancellable) {
+            val id = credentials.store(result.credential, profile.credentialId)
+            val signedIn = profile.method == AuthMethod.DEVICE_CODE || profile.method == AuthMethod.BROWSER
+            try {
+                updateProfile(profileId) {
+                    it.copy(credentialId = id, signedInAt = if (signedIn) clock() else it.signedInAt, discoveredHosts = (it.discoveredHosts + result.hosts).distinct())
+                }
+            } catch (e: Throwable) {
+                if (id != profile.credentialId) forget(id)
+                throw e
+            }
         }
         pendingRegistration = null
         // Another GitHub account may have another Copilot base, so the next request discovers it again.

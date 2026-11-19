@@ -11,7 +11,8 @@ import mockwebserver3.RecordedRequest
  * APK has no JVM test resources. It calls only `start`, its dispatcher, `url` and `close`, so that it names no type that
  * the audit flags. Each answer fits the live cases of the hook provider-live: a short text, a call of `get_number` and
  * then a final answer with the number, the word of the test picture, and a JSON action. It reads a request's body only to
- * choose the answer, and never keeps or logs it.
+ * choose the answer, and never logs it; MockWebServer keeps each request, with its body, in memory until the stand-in
+ * closes, and those bodies hold only the hook's fixed test prompts and picture.
  */
 internal class ProviderStandIn : AutoCloseable {
     private val server = MockWebServer()
