@@ -6,10 +6,12 @@
 param()
 
 BeforeAll {
+    # Read-YesNo asks through Read-YesNoAnswer of the sessions' library.
+    . "$PSScriptRoot\..\lib\Session.ps1"
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Format-CheckResult', 'Get-Median',
+    $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Test-CheckNotification', 'Format-CheckResult', 'Get-Median',
         'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult',
         'Complete-Restore', 'Invoke-Restore', 'Stop-KestrelForRecording', 'Invoke-OwnerRecording')
     $functions = $tree.FindAll({
@@ -121,13 +123,20 @@ Describe 'The helpers of the A71 session of the instant commands' {
         Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object" -eq 'Waiting up to 15 s for Kestrel''s command to end.' }
     }
 
-    It 'asks again until the owner''s answer is y or n' {
-        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'yes', ' N '))
+    It 'asks again until the owner''s answer is y, yes, n or no, in any letter case' {
+        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'maybe', ' N ', 'Yes'))
         Mock Read-Host { $answers.Dequeue() }
 
         Read-YesNo 'Did the page open? Type y or n.' | Should -BeExactly 'n'
+        Read-YesNo 'Did the page open? Type y or n.' | Should -BeExactly 'y'
 
-        Should -Invoke Read-Host -Times 3 -Exactly
+        Should -Invoke Read-Host -Times 4 -Exactly
+    }
+
+    It 'finds the notification "Kestrel check" in the list of notifications, and only the shell''s' {
+        Test-CheckNotification @('0|com.android.shell|2020|kestrel-check|2000', '0|android|19|null|1000') | Should -BeTrue
+        Test-CheckNotification @('0|com.example|7|kestrel-check|10123', '0|android|19|null|1000') | Should -BeFalse
+        Test-CheckNotification @() | Should -BeFalse
     }
 
     It 'asks which screen a radio command opened until the answer is q, p, i or n' {

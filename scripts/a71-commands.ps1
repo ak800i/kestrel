@@ -32,14 +32,19 @@
 # phone, also when a step fails or Ctrl+C stops it: Kestrel's mode Off, the accessibility settings, a magnification (which
 # it ends by turning Kestrel's accessibility service off and on once), the setting "Stay awake", Wi-Fi and Bluetooth, the
 # volumes of the call, ring, music, alarm and notification streams, the sound mode, the brightness, the keyboard, Kestrel's
-# contacts permission, the screenshot that it took, and a call that it placed, which it ends through Android (in the dry
-# run, it also deletes the call's row in the call log). It asks the owner to switch the setting "Require verbs" off again,
-# which only the owner can do, also at its end when a step failed before that, and names it in a warning at its end when
-# that did not work. The clipboard stays as the owner leaves it. It refuses every device but the
-# A71 and kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every question itself,
-# sends what the owner would say through the voice hook, skips what needs the owner's hands otherwise, and records two
-# silent clips into a folder of its own that it deletes. -Step runs only the named steps, also as one text separated by
-# commas. It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
+# contacts permission, the screenshot that it took, a call that it placed, which it ends through Android (in the dry
+# run, it also deletes the call's row in the call log), and the setting "Require verbs", which it sets back as it was
+# through the debug hook owner-options after the owner switched it on; last, it takes away Kestrel's notices about
+# problems, such as that its accessibility service is off, through the debug hook notices. Android has no shell command
+# that takes away the notification "Kestrel check" that the step notifications posts, so the script asks the owner to
+# swipe it away when Kestrel did not dismiss it, and names it in a warning at its end while it is still in the shade;
+# every warning at the end says how to put the thing back by hand. The clipboard stays as the owner leaves it. For the
+# check "Which one?" it opens Kestrel's test screen with two buttons named "Delete" (debug builds only). It refuses every
+# device but the A71 and kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every
+# question itself, sends what the owner would say through the voice hook, switches "Require verbs" through the hook where
+# the owner uses the page, skips what needs the owner's hands otherwise, and records two silent clips into a folder of
+# its own that it deletes. -Step runs only the named steps, also as one text separated by commas. It needs PowerShell
+# 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-commands.ps1 -Serial R58N12345AB
 #Requires -Version 7.3
 param(
@@ -92,6 +97,12 @@ function Get-NewScreenshotIds([string[]]$Rows) {
     foreach ($line in $Rows) {
         if ($line -match '\b_id=(\d+), _display_name=Screenshot') { [long]$Matches[1] }
     }
+}
+
+# Whether the answer of 'cmd notification list', whose lines read '0|com.android.shell|2020|kestrel-check|2000' (user,
+# package, ID, tag and UID), still lists the shell's notification "Kestrel check" of the step notifications.
+function Test-CheckNotification([string[]]$List) {
+    @($List | Where-Object { $_ -match '^-?\d+\|com\.android\.shell\|\d+\|kestrel-check\|' }).Count -gt 0
 }
 
 # One check's line of the results: what the owner said or did, the owner's answer, and the kind and the outcome of
@@ -172,16 +183,14 @@ function Read-OwnerAnswer([string]$Prompt, [string]$DryRunAnswer) {
     (Read-Host $Prompt).Trim()
 }
 
-# Asks the owner a question until the answer is y or n, and returns it, so that a stray Enter is never taken as an
-# answer. In a dry run it answers $DryRunAnswer itself.
+# Asks the owner a yes-or-no question until the answer is y, yes, n or no (Read-YesNoAnswer), and returns 'y' or 'n', so
+# that a stray Enter is never taken as an answer. In a dry run it answers $DryRunAnswer itself.
 function Read-YesNo([string]$Prompt, [string]$DryRunAnswer = 'dry') {
     if ($DryRun) {
         Write-Host "[dry run] $Prompt"
         return $DryRunAnswer
     }
-    $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
-    while ($answer -notin 'y', 'n') { $answer = "$(Read-Host 'Type y or n')".Trim().ToLowerInvariant() }
-    $answer
+    Read-YesNoAnswer $Prompt
 }
 
 # Asks the owner which screen a radio command opened, until the answer is q (Quick Settings), p (the radio's settings
@@ -323,6 +332,16 @@ function Invoke-Restore([object[]]$Restores, [int]$Index = 0) {
 function Initialize-Session {
     if ($script:prepared) { return }
     $script:prepared = $true
+    # First of all, so that it comes back last, after the restores whose changes make Kestrel post its notices about
+    # problems, such as the accessibility settings: the script takes them away through the debug hook notices.
+    Register-Restore 'Kestrel''s notices in the notification shade' 'Pull down the notification shade and swipe away Kestrel''s notices, such as that its accessibility service is off.' $null {
+        Assert-TestDevice -Serial $Serial
+        Invoke-Hook notices @{ Clear = $true } | Out-Null
+        # A notice that Kestrel posts a moment after the restores before this one, as when its accessibility service went off.
+        Start-Sleep -Seconds 2
+        $left = (ConvertFrom-HookPairs (Invoke-Hook notices @{ Clear = $true }))['notices']
+        if ($left -ne '0') { throw "$left of them are still in the shade" }
+    } | Out-Null
     # Last of all, because revoking a permission ends Kestrel's process.
     Register-Restore "Kestrel's contacts permission" 'Settings > Apps > Kestrel > Permissions > Contacts' (Test-ContactsGranted) {
         param($Data)
@@ -428,7 +447,7 @@ function Invoke-Check([string]$StepName, [string]$Say, [string]$Look, [string]$P
             Start-Sleep -Seconds 3
             Send-Heard $Answer
         }
-    } elseif ((Request-Owner "Say: $Say    (then press Enter once Kestrel has reacted, or after about 5 seconds if nothing happens; s skips the check)") -eq 'skip') {
+    } elseif ((Request-Owner "Say: $Say    Then watch the phone: afterwards this window asks you: ""$Look"" Press Enter once Kestrel has reacted, or after about 5 seconds if nothing happens; s skips the check.") -eq 'skip') {
         Add-Result $StepName "${label}: skipped"
         return
     }
@@ -493,30 +512,32 @@ function Invoke-ScreenStep {
     Invoke-Check screen "long press and the name of an app under its icon on the home screen" 'Did the app''s menu open?' -Heard 'long press Phone'
     Invoke-Check screen 'go back' 'Did the menu close?'
     # One check for the question and its answer: Kestrel's command runs until the answer, so a check that waited for its
-    # end before the owner's number would wait until the question's own 15 s ran out.
-    Invoke-Check screen 'tap and a name that two buttons on the screen share, and when Kestrel asks "Which one?", the number of the button that you want' 'Did Kestrel ask "Which one?" with numbers on just those buttons, tap the one that you chose, and did the numbers go?' -Prepare 'Open a screen where two buttons have the same name, such as two "Install" or two "Delete" buttons.' -Heard 'tap Delete' -Answer '1'
+    # end before the owner's number would wait until the question's own 15 s ran out. Kestrel's own test screen with two
+    # buttons named "Delete" (debug builds only) stands for a screen where two buttons share a name.
+    Invoke-Checked 'am start -n dev.kestrel/dev.kestrel.app.debug.TwinButtonsActivity' | Out-Null
+    Invoke-Check screen '"tap Delete". The phone shows Kestrel''s test screen with two buttons named "Delete". Kestrel asks "Which one?" and shows the numbers 1 and 2 on the two buttons; then say the number of the button that you want' 'Did Kestrel ask "Which one?" with numbers on just the two Delete buttons, did the numbers go after your number, and does the screen say "You tapped the first button." or "You tapped the second button." for the number that you said?' -Heard 'tap Delete' -Answer '1'
+    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
     Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
-    # Registered before the change, so that a failure, a skip or a stop before the owner switches it off again asks for it
-    # at the end of the session, or warns there.
-    $verbs = Register-Restore 'the setting "Require verbs"' 'Switch "Require verbs" off on Kestrel''s page "Instant commands".' $null {
+    # Registered before the change, so that a failure, a skip or a stop puts "Require verbs" back as it was before the step,
+    # through the debug hook owner-options, without the owner.
+    $before = (ConvertFrom-HookPairs (Invoke-Hook owner-options))['requireVerbs']
+    $verbs = Register-Restore 'the setting "Require verbs"' 'Switch "Require verbs" back on Kestrel''s page "Instant commands" as it was before the session.' $before {
+        param($Data)
         Assert-TestDevice -Serial $Serial
-        Invoke-Checked "am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE COMMANDS" | Out-Null
-        if ((Request-Owner 'Kestrel''s page "Instant commands" is open. Switch "Require verbs" off again, then press Enter.' 'go') -ne 'go') {
-            throw 'the owner did not switch it off'
-        }
+        $now = (ConvertFrom-HookPairs (Invoke-Hook owner-options @{ RequireVerbs = $(if ($Data -eq 'on') { 'true' } else { 'false' }) }))['requireVerbs']
+        if ($now -ne $Data) { throw 'Kestrel did not take it back' }
     }
-    if ((Request-Owner 'Kestrel''s page "Instant commands" is open. Switch "Require verbs" on, then press Enter.' 'skip') -eq 'go') {
+    $on = if ($DryRun) {
+        # The dry run switches it on through the hook, where the owner uses the page's switch.
+        (ConvertFrom-HookPairs (Invoke-Hook owner-options @{ RequireVerbs = 'true' }))['requireVerbs'] -eq 'on'
+    } else {
+        (Request-Owner 'Kestrel''s page "Instant commands" is open on the phone. Switch "Require verbs" on, then press Enter. After the next check the script switches it off again itself.' 'skip') -eq 'go'
+    }
+    if ($on) {
         Invoke-Checked 'am start -a android.settings.SETTINGS' | Out-Null
         Invoke-Check screen 'Display' 'Did nothing happen, because a name alone no longer taps?'
-        Complete-Restore $verbs
-    } else {
-        Remove-Restore $verbs
-        if ($DryRun) {
-            # The dry run cannot switch "Require verbs". Instead, a transcript without words, which gives Kestrel no command,
-            # shows that such a check records none.
-            Invoke-Check screen 'nothing, as a transcript without words' 'Did nothing happen?' -Heard '...'
-        }
     }
+    Complete-Restore $verbs
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
 }
 
@@ -546,6 +567,12 @@ function Invoke-SwipeStep {
 
 function Invoke-NotificationStep {
     Start-Kestrel
+    # Android has no shell command that takes away the shell's notification, so the owner swipes it away if Kestrel did
+    # not dismiss it; registered before the post, so that a warning at the end names it while it is still in the shade.
+    $check = Register-Restore 'the notification "Kestrel check"' 'Pull down the notification shade and swipe the notification "Kestrel check" away.' $null {
+        Assert-TestDevice -Serial $Serial
+        if (Test-CheckNotification (Invoke-Checked 'cmd notification list')) { throw 'it is still in the notification shade' }
+    }
     # A notification of the shell, with a long text that the shade can expand; it holds no private text.
     Invoke-Checked "cmd notification post -S bigtext -t 'Kestrel check' kestrel-check 'The first line of a long text. A second line that the expanded notification shows. A third line.'" | Out-Null
     Invoke-Check notifications 'show notifications' 'Did the notification shade open with the notification "Kestrel check"?'
@@ -553,7 +580,10 @@ function Invoke-NotificationStep {
     Invoke-Check notifications 'collapse Kestrel check' 'Did it show one line again?'
     Invoke-Check notifications 'dismiss Kestrel check' 'Did the notification go?'
     Invoke-Check notifications 'go home' 'Did the shade close?'
-    Request-Owner 'If the notification "Kestrel check" is still there, swipe it away, then press Enter.' 'go' | Out-Null
+    if (Test-CheckNotification (Invoke-Checked 'cmd notification list')) {
+        Request-Owner 'The notification "Kestrel check" is still in the notification shade. Pull down the shade, swipe the notification away, then press Enter.' 'go' | Out-Null
+    }
+    Complete-Restore $check
 }
 
 function Invoke-GlobalStep {
@@ -600,7 +630,7 @@ function Invoke-GlobalStep {
 }
 
 function Invoke-ProfileStep {
-    $answer = Read-OwnerAnswer 'Is Secure Folder on, on this phone? Type y or n (it stays as it is).' 'n'
+    $answer = Read-YesNo 'Is Secure Folder on, on this phone? Type y or n (it stays as it is).' 'n'
     Add-Result profiles "Secure Folder on: $answer"
     foreach ($user in Get-UserSummary -Users (Invoke-Checked 'pm list users') -Dump (Invoke-Checked 'dumpsys user')) { Add-Result profiles "user $user" }
     # The launcher API's profiles, as Kestrel sees them: IDs, numbers of apps and, from Android 15, types.
@@ -730,7 +760,7 @@ function Invoke-CallStep {
         Add-Result calls 'skipped: a SIM card is in the phone, or the phone does not say that none is there'
         return
     }
-    if ((Read-OwnerAnswer 'Kestrel will press Call in this step. Check that no SIM card is in the phone, then type y to go on, or anything else to skip the calls.' 'y') -ne 'y') {
+    if ((Read-YesNo 'Kestrel will press Call in this step. Check that no SIM card is in the phone, then type y to go on, or n to skip the calls.' 'y') -ne 'y') {
         Add-Result calls 'skipped by the owner'
         return
     }
@@ -744,8 +774,8 @@ function Invoke-CallStep {
     Request-Owner 'Press Enter once you have read this.' 'go' | Out-Null
     # Kestrel presses Call only for a number that the owner gives and confirms, never for a made-up one that could be a
     # stranger's; the dry run calls the emulator's made-up number.
-    $number = (Read-OwnerAnswer 'Type a phone number that is fine to call, such as another phone of yours, with digits only.' '0641234567') -replace '[\s-]', ''
-    if ($number -notmatch '^\+?\d{5,15}$' -or (Read-OwnerAnswer "You will say ""call $number"", and Kestrel will press Call for it. Type y if that is fine." 'y') -ne 'y') {
+    $number = (Read-OwnerAnswer 'Type a phone number that is fine to call, such as another phone of yours, with digits only. The A71 has no SIM card, so nothing rings: Android refuses the call, and Kestrel then says "The call didn''t start. Say it again." That is the expected result.' '0641234567') -replace '[\s-]', ''
+    if ($number -notmatch '^\+?\d{5,15}$' -or (Read-YesNo "You will say ""call $number"". Kestrel opens the phone app with the number, says it, counts down 4 seconds on its bar and presses Call, and Android refuses the call, because there is no SIM card. Type y if that is fine, or n to skip this call." 'y') -ne 'y') {
         Add-Result calls 'call by number: skipped, no number confirmed'
         $number = $null
     }
@@ -775,10 +805,10 @@ function Invoke-CallStep {
     # calls itself, and then with letters in the number field, "tap call" must ask, and the owner answers "no". Never an
     # emergency number on a phone, because emergency calls go out without a SIM card, and never "yes, call"; this runs
     # only after the SIM check above found none.
-    if ((Read-OwnerAnswer 'Next comes the check that Kestrel asks before it presses the phone app''s Call button for a number that it would not call: the phone app opens with 1234, you say "tap call", and you answer "no". Do not tap Call yourself, although Kestrel says so: the check uses the number. Type y to go on, or anything else to skip it.' 'y') -eq 'y') {
+    if ((Read-YesNo 'Next comes the check that Kestrel asks before it presses the phone app''s Call button for a number that it would not call: the phone app opens with 1234, Kestrel says that you must tap Call yourself, and you do not tap it, because the next check needs the number in the field; then you say "tap call", Kestrel asks you to say "yes, call", and you answer "no". Type y to go on, or n to skip it.' 'y') -eq 'y') {
         Invoke-Check calls 'call 1234' 'Did the phone app open with 1234, and did Kestrel say that you must tap Call yourself? Do not tap Call: the next check uses the number.'
         Invoke-Check calls 'tap call, and "no" when Kestrel asks' 'Did Kestrel ask you to say "yes, call", and after your "no", does the phone app still show 1234, without a call?' -Heard 'tap call' -Answer 'no'
-        $field = Read-OwnerAnswer 'Say "show numbers", then type the number that Kestrel shows on the phone app''s number field (the one with 1234), or s to skip this.' 'skip'
+        $field = Read-OwnerAnswer 'Say "show numbers": Kestrel shows a number on each element of the phone app. Type the number that it shows on the number field at the top, the one that shows 1234, and press Enter, or s to skip this. The script then types the letters "abc" into that field itself.' 'skip'
         try {
             if ($field -match '^\d+$') {
                 # Letters only, never the digits of an emergency number.
@@ -825,7 +855,7 @@ function Invoke-CallStep {
 function Invoke-TimingStep {
     Start-Kestrel
     $before = Invoke-Hook snapshots
-    if ((Request-Owner 'Open Settings, and for about 2 minutes scroll and open pages with Kestrel, saying a command now and then ("scroll down", "tap Display", "go back"). Press Enter when you are done.' 'go') -eq 'skip') {
+    if ((Request-Owner 'Open Settings, and for about 2 minutes scroll and open pages with Kestrel, saying a command now and then ("scroll down", "tap Display", "go back"). Kestrel does each command as usual: the list moves, pages open and close. The script asks nothing about them; it counts only the snapshots that Kestrel builds meanwhile. Press Enter when you are done.' 'go') -eq 'skip') {
         Add-Result timing 'skipped by the owner'
         return
     }
@@ -965,8 +995,8 @@ $plan = @(
     @{ Name = 'sound'; Minutes = 11; Title = 'volumes, mute, silence, media, magnification and Circle to Search'; Run = 'Invoke-SoundStep' }
     @{ Name = 'text'; Minutes = 11; Title = 'dictation and editing with Samsung Keyboard, show password and search'; Run = 'Invoke-TextStep' }
     @{ Name = 'calls'; Minutes = 12; Title = 'calls by number and name, the guard of the Call button, the contacts permission and copying a number'; Run = 'Invoke-CallStep' }
-    @{ Name = 'timing'; Minutes = 6; Title = 'the snapshots while Kestrel listens, and the transcription time with labels'; Run = 'Invoke-TimingStep' }
-    @{ Name = 'recordings'; Minutes = 35; Title = 'your recordings of the 160 lines that are marked for you'; Run = 'Invoke-RecordingStep' }
+    @{ Name = 'timing'; Minutes = 6; Title = 'the snapshots while Kestrel listens, for about 2 minutes of your commands in Settings, and then the transcription time with labels, while Kestrel is off and you neither speak nor touch the phone'; Run = 'Invoke-TimingStep' }
+    @{ Name = 'recordings'; Minutes = 35; Title = 'your recordings of the 160 lines that are marked for you; Kestrel is off, so the phone does not react to them: you say each line when this window says "Speak now"'; Run = 'Invoke-RecordingStep' }
 )
 
 $completed = $false

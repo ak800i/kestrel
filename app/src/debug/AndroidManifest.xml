@@ -24,6 +24,14 @@
             android:permission="android.permission.DUMP"
             android:taskAffinity="dev.kestrel.fixture" />
 
+        <!-- A screen with two buttons named "Delete" for the check "Which one?" of scripts\a71-commands.ps1. Only callers
+             that hold DUMP, in practice adb shell, can start it. -->
+        <activity
+            android:name=".debug.TwinButtonsActivity"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:taskAffinity="dev.kestrel.twins" />
+
         <!-- Compose UI tests show their screens in this empty activity. ui-test-manifest declares it as exported, so
              any app could start it. The tests run in Kestrel's own process and can start it without that. -->
         <activity
