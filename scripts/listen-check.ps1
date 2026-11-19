@@ -533,6 +533,8 @@ function Invoke-SettingsCheck {
         if ($asked -gt $before -and $resumed -ge $asked) {
             Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
             if ($blocked) { return "failed: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, although Kestrel said that Android blocked them" }
+            # Kestrel waits 2 s for its settings, as AssistTest checks; a later reaction may have replaced settings-blocked.
+            if ($resumed - $asked -ge 2000) { return "failed: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, after its 2 s wait, timed on the device" }
             return "ok: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, timed on the device"
         }
         Start-Sleep -Milliseconds 500
