@@ -1,6 +1,7 @@
 package dev.kestrel.voice.sherpa
 
 import dev.kestrel.voice.Keyword
+import dev.kestrel.voice.KeywordTuning
 
 /**
  * The keyword spotter's keywords, written in the word pieces of its model, one keyword spelling to a line:
@@ -15,13 +16,13 @@ internal object KeywordLines {
     )
     private const val STOP = "▁ST O P"
     private const val CANCEL = "▁CAN CE L"
-    private const val TUNING = ":2.0 #0.15"
 
-    /** The text of the spotter's keywords file. */
-    fun text(): String = buildString {
-        for (spelling in KESTREL) append("$spelling $TUNING @kestrel\n")
-        append("$STOP $TUNING @stop\n")
-        append("$CANCEL $TUNING @cancel\n")
+    /** The text of the spotter's keywords file, with [tuning]'s boost and threshold on every line. */
+    fun text(tuning: KeywordTuning = KeywordTuning()): String = buildString {
+        val suffix = ":${tuning.boost} #${tuning.threshold}"
+        for (spelling in KESTREL) append("$spelling $suffix @kestrel\n")
+        append("$STOP $suffix @stop\n")
+        append("$CANCEL $suffix @cancel\n")
     }
 
     /** The keyword that a line's name stands for; null for an empty or unknown name. */

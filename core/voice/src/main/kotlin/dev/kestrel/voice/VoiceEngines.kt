@@ -41,13 +41,21 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
         }
     }
 
+    /**
+     * The keyword spotter's boost and threshold for the spotters that load from now on (design spec, section 8.2). Only
+     * the debug hook voice-spotter changes it, so that the A71 session can try other values without a new build (plan 2E);
+     * a change lasts until the end of the process. Any thread may set it.
+     */
+    @Volatile
+    var keywordTuning = KeywordTuning()
+
     suspend fun speechDetector(): SpeechDetector = load(Engine.VAD) {
         SherpaSpeechDetector(models.file(VAD_MODEL))
     }
 
     suspend fun keywordSpotter(): KeywordSpotter = load(Engine.KWS) {
         // sherpa-onnx reads the keywords from a file.
-        val keywords = writeWorkFile("keywords.txt", KeywordLines.text())
+        val keywords = writeWorkFile("keywords.txt", KeywordLines.text(keywordTuning))
         SherpaKeywordSpotter(models.file(KWS_ENCODER), models.file(KWS_DECODER), models.file(KWS_JOINER), models.file(KWS_TOKENS), keywords)
     }
 

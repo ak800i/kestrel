@@ -93,6 +93,9 @@
 #                                           long the start waited for the headset's link, the types of Android's
 #                                           communication device and of the recording's input, and the loudest sample
 #                                           since the last voice-route, in percent; never audio
+#   voice-spotter [-Boost b] [-Threshold t] answers the keyword spotter's boost and threshold, after storing -Boost (0.5
+#                                           to 10) and -Threshold (0.01 to 0.5); a change counts from Kestrel's next
+#                                           start until the end of its process
 #   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
 #                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
 #   voice-task -Clear                       each task ends at once again, as in sub-project 2
@@ -129,9 +132,8 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
-        'voice-counts', 'voice-times', 'voice-route', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files',
-        'watch', 'profiles',
-        'snapshots')][string]$Command,
+        'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
+        'spike-results', 'files', 'watch', 'profiles', 'snapshots')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -166,7 +168,9 @@ param(
     [switch]$ScreenLabels,
     [string]$Create,
     [ValidateSet('toggle', 'pause', 'resume', 'off', 'screen-on', 'screen-off', 'heard')][string]$Send,
-    [switch]$Named
+    [switch]$Named,
+    [double]$Boost = -1,
+    [double]$Threshold = -1
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -206,6 +210,9 @@ if ($Create) { $extras += "--es create $(ConvertTo-ShellText $Create)" }
 # ValidateSet accepts any letter case, and the hook only lower case.
 if ($Send) { $extras += "--es event $(ConvertTo-ShellText $Send.ToLowerInvariant())" }
 if ($Named) { $extras += '--ez named true' }
+# In the invariant culture, whose decimal separator is always '.'.
+if ($Boost -ge 0) { $extras += "--ef boost $($Boost.ToString([Globalization.CultureInfo]::InvariantCulture))" }
+if ($Threshold -ge 0) { $extras += "--ef threshold $($Threshold.ToString([Globalization.CultureInfo]::InvariantCulture))" }
 if ($File) { $extras += "--es file $(ConvertTo-ShellText $File)" }
 if ($Voice) { $extras += "--es voice $(ConvertTo-ShellText $Voice.ToLowerInvariant())" }
 if ($PSBoundParameters.ContainsKey('Expected')) { $extras += "--es expected $(ConvertTo-ShellText $Expected)" }

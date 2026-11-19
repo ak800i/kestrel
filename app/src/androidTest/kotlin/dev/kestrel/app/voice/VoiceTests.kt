@@ -176,7 +176,7 @@ internal object VoiceTests {
     }
 
     // Linear interpolation is enough for test speech; Kestrel's microphone records at 16 kHz itself.
-    private fun resample(samples: FloatArray, from: Int, to: Int): FloatArray {
+    fun resample(samples: FloatArray, from: Int, to: Int): FloatArray {
         val count = (samples.size.toLong() * to / from).toInt()
         return FloatArray(count) { index ->
             val position = index.toDouble() * from / to

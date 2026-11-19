@@ -9,6 +9,7 @@ import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Work
+import dev.kestrel.voice.KeywordTuning
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.VoiceOptions
@@ -46,7 +47,9 @@ import kotlin.math.roundToInt
  * Kestrel's starts, sessions, ends of speech, reactions, turn-offs and settings, and whether Android runs the listening
  * service in the foreground (plan 2E). VOICE_ROUTE answers the earbud option and the route of the newest recording
  * (MicCapture.routeReport), so that the A71 session sees where the earbuds' recording goes. Their answers hold only
- * counts, lengths, levels, times, device types and the names of kinds.
+ * counts, lengths, levels, times, device types and the names of kinds. VOICE_SPOTTER sets the keyword spotter's boost and
+ * threshold for the spotters that load from Kestrel's next start, until the end of its process, so that the session can
+ * try other values without a new build.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
@@ -58,6 +61,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         "VOICE_TIMES" -> times()
         "VOICE_ROUTE" -> "earbud=${if (graph.listening.currentOptions.value.earbudMicrophone) "on" else "off"} " +
             (graph.latestMicrophone?.routeReport() ?: "microphone=none")
+        "VOICE_SPOTTER" -> spotter(intent)
         "VOICE_TASK" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clearTask() else task(intent)
         "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
         else -> throw HookError("unknown command '$command'")
@@ -73,6 +77,21 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         val foreground = conditions.listedForeground()?.toString() ?: "none"
         val demoted = service?.let { conditions.demoted(it).toString() } ?: "none"
         return "${graph.timeline.describe()} foreground=$foreground demoted=$demoted"
+    }
+
+    // The spotter's boost and threshold, after storing --ef boost and --ef threshold (plan 2E).
+    private fun spotter(intent: Intent): String {
+        if (intent.hasExtra(EXTRA_BOOST) || intent.hasExtra(EXTRA_THRESHOLD)) {
+            val now = graph.voice.keywordTuning
+            graph.voice.keywordTuning = try {
+                val boost = intent.getFloatExtra(EXTRA_BOOST, now.boost)
+                KeywordTuning(boost, intent.getFloatExtra(EXTRA_THRESHOLD, now.threshold))
+            } catch (e: IllegalArgumentException) {
+                throw HookError("add --ef boost from 0.5 to 10 and --ef threshold from 0.01 to 0.5")
+            }
+        }
+        val tuning = graph.voice.keywordTuning
+        return "boost=${tuning.boost} threshold=${tuning.threshold}"
     }
 
     private fun task(intent: Intent): String {
@@ -201,7 +220,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     companion object {
-        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_TASK", "VOICE_ECHO")
+        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_SPOTTER", "VOICE_TASK", "VOICE_ECHO")
 
         private val lock = Any()
 
@@ -219,5 +238,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         private const val EXTRA_VOICE = "voice"
         private const val EXTRA_CLEAR = "clear"
         private const val EXTRA_RESULT = "result"
+        private const val EXTRA_BOOST = "boost"
+        private const val EXTRA_THRESHOLD = "threshold"
     }
 }
