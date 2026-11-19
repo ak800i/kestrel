@@ -252,15 +252,17 @@ function Clear-TestResults([string]$Folder) {
 # Returns provider-check.ps1's results. provider-check.ps1 prints each line itself, so the lines go only to the file here.
 function Invoke-Live([string]$StepName, [string]$Device, [string]$Case, [string]$Model) {
     if ($DryRun) {
-        # Right after an install, Android can refuse the stand-in's lookup of localhost for a moment (UnknownHostException
-        # on kestrel-api37), so its start is tried up to three times, 5 s apart.
+        # Right after a new install, Android refused the stand-in's lookup of localhost (UnknownHostException on
+        # kestrel-api37) until Kestrel's settings had been opened or a minute had passed, so the step opens them first
+        # and tries the stand-in's start up to six times, 10 s apart.
+        Open-Providers $Device
         for ($try = 1; ; $try++) {
             try {
                 Invoke-Hook $Device provider-standin @{ On = 'true' } | Out-Null
                 break
             } catch {
-                if ($try -ge 3) { throw }
-                Start-Sleep -Seconds 5
+                if ($try -ge 6) { throw }
+                Start-Sleep -Seconds 10
             }
         }
         if (-not $standInDevices.Contains($Device)) { $standInDevices.Add($Device) }
@@ -470,8 +472,9 @@ try {
             & $entry.Run
         } catch {
             if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
-            # The scripts' and hooks' errors name only steps, files and classes, never a prompt, a reply or a key.
-            Add-Result $entry.Name "failed: $($_.Exception.Message)"
+            # The scripts' and hooks' errors name only steps, files and classes, never a prompt, a reply or a key; only their
+            # first line goes into the results, which hold one line per result.
+            Add-Result $entry.Name "failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
         }
     }
     $completed = $true
