@@ -39,6 +39,8 @@ dependencies {
     // Compose's test library brings Espresso 3.5, which fails on Android 17: it looks for InputManager.getInstance().
     androidTestImplementation(libs.androidx.test.espresso.core)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    // The Copilot stand-in of the debug hook provider-standin (design D20 of sub-project 4); release builds lack it.
+    debugImplementation(libs.okhttp.mockwebserver3)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.okhttp.mockwebserver3)

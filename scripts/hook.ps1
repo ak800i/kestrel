@@ -117,6 +117,19 @@
 #   profiles                                the profiles that the launcher API lists: each one's serial number, number
 #                                           of apps and, from Android 15, type; never a name
 #   snapshots                               how many snapshots the screen layer has built and how long they took in all
+# The live tests of sub-project 4 (scripts\provider-check.ps1 and scripts\a71-providers.ps1 run these):
+#   provider-live -Case text|tool|image|json -Model 'name' [-Headers 'name=value;name=value'] [-MessagesPath path]
+#                                           starts the case with the Copilot model of that name and the default
+#                                           profile, which must be a Copilot profile, and answers started; -Headers and
+#                                           -MessagesPath are debug overrides for a retry in the owner's session
+#   provider-live -Case allowance           starts Copilot's allowance call for the default profile
+#   provider-live -Result                   answers running until the case has ended, then its outcome, whether the
+#                                           answer matched, the style, the tokens, the credits, whether the price was
+#                                           known and the time on the device; never a prompt, a reply or a token
+#   provider-standin [-On true|false]       answers whether the Copilot stand-in on the device runs and whether the
+#                                           default profile is a Copilot profile (profile=none|copilot|other), after
+#                                           starting or ending the stand-in; while it runs, provider-live sends its
+#                                           cases to it and makes no request off the device
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -139,7 +152,7 @@ param(
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
-        'spike-results', 'files', 'watch', 'profiles', 'snapshots')][string]$Command,
+        'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -176,7 +189,11 @@ param(
     [ValidateSet('toggle', 'pause', 'resume', 'off', 'screen-on', 'screen-off', 'heard')][string]$Send,
     [switch]$Named,
     [double]$Boost = -1,
-    [double]$Threshold = -1
+    [double]$Threshold = -1,
+    [ValidateSet('text', 'tool', 'image', 'json', 'allowance')][string]$Case,
+    [string]$Model,
+    [string]$Headers,
+    [string]$MessagesPath
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -241,6 +258,10 @@ if ($PSBoundParameters.ContainsKey('Labels')) { $extras += "--es labels $(Conver
 if ($PSBoundParameters.ContainsKey('Contacts')) { $extras += "--es contacts $(ConvertTo-ShellText $Contacts)" }
 if ($NoLabels) { $extras += '--ez noLabels true' }
 if ($ScreenLabels) { $extras += '--ez screenLabels true' }
+if ($Case) { $extras += "--es case $(ConvertTo-ShellText $Case.ToLowerInvariant())" }
+if ($Model) { $extras += "--es model $(ConvertTo-ShellText $Model)" }
+if ($Headers) { $extras += "--es headers $(ConvertTo-ShellText $Headers)" }
+if ($MessagesPath) { $extras += "--es messagesPath $(ConvertTo-ShellText $MessagesPath)" }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
