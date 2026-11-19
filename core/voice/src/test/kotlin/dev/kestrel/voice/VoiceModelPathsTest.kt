@@ -27,13 +27,15 @@ class VoiceModelPathsTest {
     }
 
     @Test
-    fun theKokoroVoicesFilesAreInTheManifestAndOnlyItIsOptional() {
-        for (path in listOf(VoiceEngines.KOKORO_MODEL, VoiceEngines.KOKORO_VOICES, VoiceEngines.KOKORO_TOKENS)) {
+    fun theKokoroVoicesFilesAreInTheManifestAndOnlyKokoroIsOptional() {
+        val paths = listOf(VoiceEngines.KOKORO_MODEL, VoiceEngines.KOKORO_VOICES, VoiceEngines.KOKORO_TOKENS, VoiceEngines.KOKORO_INT8_MODEL)
+        for (path in paths) {
             assertEquals(path, Engine.TTS, engineOf(path))
         }
         val ids = manifest.models.map { it.id }.toSet()
-        for (id in VoiceEngines.PIPER_MODELS + VoiceEngines.KOKORO_MODELS) assertTrue(id, id in ids)
-        assertEquals(listOf("tts-kokoro"), manifest.models.filter { it.optional }.map { it.id })
+        for (id in VoiceEngines.PIPER_MODELS + VoiceEngines.KOKORO_MODELS + VoiceEngines.KOKORO_INT8_ID) assertTrue(id, id in ids)
+        // Kokoro's voice, and its int8 model, which only a voice device test loads (plan 2E).
+        assertEquals(listOf("tts-kokoro", "tts-kokoro-int8"), manifest.models.filter { it.optional }.map { it.id })
     }
 
     @Test

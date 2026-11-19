@@ -39,8 +39,12 @@
 #   voice-call-commands [-On true|false]    answers whether "Commands during a call" is on, after storing -On; Kestrel
 #                                           takes a change a moment later, as from its settings
 #   voice-choice [-Voice piper|kokoro]      answers the stored voice and speed, and whether Kokoro was chosen and Piper
-#                                           spoke the last time that a voice session opened, after storing -Voice at
-#                                           the stored speed; a new voice counts from Kestrel's next start
+#                                           spoke the last time that a voice session opened, Kokoro's real-time factor
+#                                           on the phone when Kestrel measured it above 1 (kokoroSlow=none otherwise),
+#                                           and the factor that it measured (kokoroSpeed=none before a measure), after
+#                                           storing -Voice at the stored speed; a new voice counts from Kestrel's next
+#                                           start, and -Voice kokoro forgets the measure, so that the next start with
+#                                           Kokoro measures it again
 # The voice corpus (scripts\make-corpus.ps1 and scripts\voice-eval.ps1 run these). A clip is a 16 kHz WAV file in
 # Kestrel's folder Android/data/dev.kestrel/files/eval, which -File names without '.wav':
 #   voice-synth -Text 'text' -File name [-Voice piper|kokoro]

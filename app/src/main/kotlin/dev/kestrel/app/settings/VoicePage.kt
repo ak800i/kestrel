@@ -43,11 +43,13 @@ private const val KOKORO_MODEL_ID = "tts-kokoro"
 internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Unit) {
     val stored by data.voiceOptions.collectAsState(initial = null)
     val kokoroFailed by data.kokoroFailed.collectAsState(initial = false)
+    val kokoroSlow by data.kokoroSlow.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     // The options as this page wrote them last, so that a second change builds on the first before the store reports it.
     var written by remember { mutableStateOf<VoiceOptionsSetting?>(null) }
     var trying by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    var tooSlowToTry by remember { mutableStateOf(false) }
     // Null while the check runs or after it failed; then the page says nothing about Kokoro's files.
     val kokoro = (models as? ModelCheck.Done)?.statuses?.firstOrNull { it.model.id == KOKORO_MODEL_ID }
     val kokoroReady = kokoro?.ready == true
@@ -60,6 +62,7 @@ internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Uni
     fun change(options: VoiceOptionsSetting) {
         written = options
         failed = false
+        tooSlowToTry = false
         scope.launch(start = CoroutineStart.UNDISPATCHED) { data.setVoiceOptions(options) }
     }
 
@@ -78,6 +81,13 @@ internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Uni
     if (kokoroFailed && current.voice == VoiceChoice.KOKORO) {
         Text(stringResource(R.string.voice_kokoro_failed), style = MaterialTheme.typography.bodySmall)
     }
+    // Plan 2E: Kestrel measured Kokoro's speed at its first load on this phone.
+    kokoroSlow?.takeIf { current.voice == VoiceChoice.KOKORO }?.let { factor ->
+        Text(
+            stringResource(R.string.voice_kokoro_slow, String.format(Locale.ROOT, "%.2f", factor)),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
     Text(
         stringResource(R.string.voice_speed, speedText(speed)),
         Modifier.padding(top = 16.dp),
@@ -95,11 +105,14 @@ internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Uni
         onClick = {
             trying = true
             failed = false
+            tooSlowToTry = false
             scope.launch {
                 try {
                     data.tryVoice(current)
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: KokoroTooSlowException) {
+                    tooSlowToTry = true
                 } catch (e: Exception) {
                     failed = true
                 } finally {
@@ -113,6 +126,7 @@ internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Uni
         Text(stringResource(if (trying) R.string.voice_trying else R.string.voice_try))
     }
     if (failed) Text(stringResource(R.string.voice_try_failed), style = MaterialTheme.typography.bodyMedium)
+    if (tooSlowToTry) Text(stringResource(R.string.voice_try_kokoro_off), style = MaterialTheme.typography.bodyMedium)
     Text(stringResource(R.string.voice_next_start), Modifier.padding(top = 16.dp), style = MaterialTheme.typography.bodyMedium)
 }
 

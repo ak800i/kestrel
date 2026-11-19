@@ -5,11 +5,13 @@ import dev.kestrel.app.AppGraph
 import dev.kestrel.app.R
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.commands.CommandOptions
+import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
+import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.speak.Spoke
 import dev.kestrel.voice.speak.VoicePlayer
 import kotlinx.coroutines.CoroutineStart
@@ -45,6 +47,12 @@ interface SettingsData {
     /** Whether the owner chose Kokoro and Piper spoke instead the last time that Kestrel turned on (section 14). */
     val kokoroFailed: Flow<Boolean>
 
+    /**
+     * Kokoro's real-time factor on this phone when Kestrel measured it above 1, so that Piper speaks instead, or null
+     * (sections 5.3 and 8.2).
+     */
+    val kokoroSlow: Flow<Float?>
+
     /** The owner's choices for listening (design spec, section 15). */
     val listening: Flow<ListeningOptions>
 
@@ -68,6 +76,12 @@ interface SettingsData {
     suspend fun licenceText(licence: Licence): String
 }
 
+/**
+ * "Try it" with Kokoro while Kestrel listens with Piper, because Kokoro is too slow on this phone: a second Kokoro beside
+ * the session would load several hundred MB, so the page asks the owner to turn Kestrel off first (plan 2E).
+ */
+class KokoroTooSlowException : IllegalStateException("Kokoro is too slow on this phone while Kestrel listens")
+
 class StoredSettingsData(private val graph: AppGraph, private val context: Context) : SettingsData {
     private val writes = Mutex()
 
@@ -80,6 +94,12 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override val voiceOptions: Flow<VoiceOptionsSetting> = graph.settings.observe(SettingKeys.VOICE)
 
     override suspend fun setVoiceOptions(options: VoiceOptionsSetting) = write {
+        // Plan 2E: choosing Kokoro, also with a tap on its row while it is chosen, forgets its stored speed, so that its
+        // next start measures it again. "Slower" and "Faster" change the speed and keep the measure.
+        val stored = graph.settings.get(SettingKeys.VOICE)
+        if (options.voice == VoiceChoice.KOKORO && (stored.voice != VoiceChoice.KOKORO || options == stored)) {
+            graph.settings.set(SettingKeys.KOKORO_SPEED, KokoroSpeed())
+        }
         graph.settings.set(SettingKeys.VOICE, options)
     }
 
@@ -89,7 +109,14 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     // that does not load shows as a failure.
     override suspend fun tryVoice(options: VoiceOptionsSetting) {
         val sample = context.getString(R.string.voice_sample)
-        val spoke = graph.listening.speakWithSessionVoice(options.options(), sample) ?: withContext(Dispatchers.IO) {
+        val spoke = graph.listening.speakWithSessionVoice(options.options(), sample) ?: run {
+            // Plan 2E: where Kokoro is too slow, the open session speaks with Piper, and a second Kokoro beside it would
+            // load several hundred MB.
+            if (options.voice == VoiceChoice.KOKORO && graph.listening.sessionOpen.value && graph.kokoroKnownTooSlow()) {
+                throw KokoroTooSlowException()
+            }
+            null
+        } ?: withContext(Dispatchers.IO) {
             graph.voice.synthesizer(options.options()).use { voice ->
                 val player = VoicePlayer(context, voice)
                 try {
@@ -105,6 +132,9 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     }
 
     override val kokoroFailed: Flow<Boolean> = graph.kokoroFailed
+
+    override val kokoroSlow: Flow<Float?> =
+        graph.settings.observe(SettingKeys.KOKORO_SPEED).map { it.tooSlow(graph.voice.kokoroModel, graph.installedAt) }
 
     override val listening: Flow<ListeningOptions> = graph.settings.observe(SettingKeys.LISTENING_OPTIONS)
 

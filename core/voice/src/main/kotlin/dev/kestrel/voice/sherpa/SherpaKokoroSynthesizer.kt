@@ -20,6 +20,7 @@ internal class SherpaKokoroSynthesizer(
     tokens: File,
     espeakData: File,
     private val options: VoiceOptions,
+    threads: Int = THREADS,
 ) : Synthesizer {
     private val tts = OfflineTts(
         config = OfflineTtsConfig(
@@ -33,7 +34,7 @@ internal class SherpaKokoroSynthesizer(
                     // lexicon file.
                     lang = LANGUAGE,
                 ),
-                numThreads = THREADS,
+                numThreads = threads,
             ),
         ),
     )

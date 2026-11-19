@@ -208,6 +208,22 @@
           "url": "https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b/tokens.txt"
         }
       ]
+    },
+    {
+      "id": "tts-kokoro-int8",
+      "engine": "tts",
+      "name": "Kokoro v1.0's int8 model, for a measure on the phone",
+      "licence": "Apache-2.0",
+      "project": "https://huggingface.co/hexgrad/Kokoro-82M",
+      "optional": true,
+      "files": [
+        {
+          "path": "tts-kokoro-int8/model.int8.onnx",
+          "size": 114202993,
+          "sha256": "75635ea3b85a32d00094dcdd61a258aba87c160f7c264c304a7b3ae9d734195e",
+          "url": "https://huggingface.co/csukuangfj/kokoro-int8-multi-lang-v1_0/resolve/57adb37fc0e8d4bd430cfc1b8f8c2294945b9af2/model.int8.onnx"
+        }
+      ]
     }
   ]
 }

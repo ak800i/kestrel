@@ -1033,7 +1033,7 @@ function Get-KestrelProcess { ((Invoke-Checked 'pidof dev.kestrel || true') -joi
 # time that a voice session opened.
 function Get-VoiceChoice([hashtable]$With = @{}) {
     $text = Invoke-Hook voice-choice $With
-    if ($text -notmatch '^voice=(\w+) speed=([\d.]+) kokoroFailed=(true|false)$') { throw 'Unexpected answer of voice-choice.' }
+    if ($text -notmatch '^voice=(\w+) speed=([\d.]+) kokoroFailed=(true|false)\b') { throw 'Unexpected answer of voice-choice.' }
     [pscustomobject]@{ Voice = $Matches[1]; KokoroFailed = $Matches[3] -eq 'true' }
 }
 

@@ -177,12 +177,14 @@
     <string name="voice_kokoro_missing" tools:ignore="Typos">Kokoro\'s files are not on the phone. Copy them with scripts\\push-models.ps1 -Kokoro.</string>
     <string name="voice_kokoro_damaged" tools:ignore="Typos">Some of Kokoro\'s files are missing or damaged. Copy them again with scripts\\push-models.ps1 -Kokoro.</string>
     <string name="voice_kokoro_failed">Kokoro did not load the last time that Kestrel turned on, so Piper spoke. Kestrel tries Kokoro again the next time it turns on.</string>
+    <string name="voice_kokoro_slow">Kokoro is too slow on this phone: it needs %1$s seconds to say one second of speech, so Piper speaks instead. Tap Kokoro again to measure it again.</string>
     <string name="voice_speed">Speed: %1$s</string>
     <string name="voice_slower">Slower</string>
     <string name="voice_faster">Faster</string>
     <string name="voice_try">Try it</string>
     <string name="voice_trying">Speaking…</string>
     <string name="voice_try_failed">Kestrel could not speak just now.</string>
+    <string name="voice_try_kokoro_off">Kestrel speaks with Piper while it listens, because Kokoro is too slow on this phone. Turn Kestrel off to try Kokoro.</string>
     <string name="voice_sample">This is how I sound at this speed.</string>
     <string name="voice_next_start">Kestrel uses a new voice or speed from the next time it turns on.</string>
     <string name="about_model_absent">%1$s: optional, not on the phone</string>

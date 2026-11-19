@@ -3,6 +3,7 @@ package dev.kestrel.app
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
 import dev.kestrel.app.assist.KestrelAssistantService
@@ -20,6 +21,7 @@ import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
 import dev.kestrel.app.listen.FeedbackBar
+import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
 import dev.kestrel.app.listen.ListeningOptions
@@ -38,6 +40,7 @@ import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.openWithBoostWords
+import dev.kestrel.app.listen.realTimeFactor
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
@@ -46,6 +49,7 @@ import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.settings.SettingKey
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceEngines
 import dev.kestrel.voice.listen.MicCapture
 import dev.kestrel.voice.listen.Microphone
@@ -74,6 +78,9 @@ object SettingKeys {
 
     /** The owner's voice and speed (design spec, sections 8.2 and 15). */
     val VOICE = SettingKey("voice", VoiceOptionsSetting.serializer(), VoiceOptionsSetting())
+
+    /** Kokoro's speed on this phone, measured at its first load for each model and install (sections 5.3 and 8.2). */
+    val KOKORO_SPEED = SettingKey("kokoro-speed", KokoroSpeed.serializer(), KokoroSpeed())
 
     /** The listening mode that Kestrel turns on in again after its process restarts (design spec, sections 8.5 and 14.4). */
     val LISTENING = SettingKey("listening", ListeningSetting.serializer(), ListeningSetting())
@@ -223,10 +230,14 @@ class AppGraph(context: Context) {
                             // The labels on the screen before each utterance, from the newest snapshot (section 8.3).
                             screenWords = { screenLabels.words() },
                             // The owner's voice and speed, read at each start, so that a change counts from the next one.
-                            // The page "Voice and speech" says when Kokoro did not load.
+                            // The page "Voice and speech" says when Kokoro did not load or was too slow.
                             loadVoice = {
-                                loadStoredVoice({ settings.get(SettingKeys.VOICE) }, reportFailure) { voice.synthesizer(it) }
-                                    .also { kokoroFallback.value = it.fellBack }
+                                loadStoredVoice(
+                                    { settings.get(SettingKeys.VOICE) },
+                                    reportFailure,
+                                    ::kokoroKnownTooSlow,
+                                    ::kokoroTooSlow,
+                                ) { voice.synthesizer(it) }.also { kokoroFallback.value = it.fellBack }
                             },
                         )
                     }
@@ -321,6 +332,31 @@ class AppGraph(context: Context) {
             offer = { problems.offerSettings() },
             report = reportFailure,
         )
+    }
+
+    /** When Kestrel was installed or last updated: a measure of Kokoro's speed belongs to one install (plan 2E). */
+    internal val installedAt: Long by lazy {
+        appContext.packageManager
+            .getPackageInfo(appContext.packageName, PackageManager.PackageInfoFlags.of(0))
+            .lastUpdateTime
+    }
+
+    /** Whether this phone's stored measure says that Kokoro is too slow, so that Piper speaks without loading Kokoro. */
+    internal suspend fun kokoroKnownTooSlow(): Boolean =
+        settings.get(SettingKeys.KOKORO_SPEED).tooSlow(voice.kokoroModel, installedAt) != null
+
+    /**
+     * Whether Kokoro speaks more slowly than real time on this phone (design spec, sections 5.3 and 8.2): measured once for
+     * each Kokoro model and install of Kestrel, when Kokoro first loads for a voice session, and stored. The measure
+     * synthesizes a short sentence and then one of about 5 s, which takes about 10 s on the A71 with the fp32 model, on
+     * the thread that opens the session, so it delays that session's start once.
+     */
+    private suspend fun kokoroTooSlow(kokoro: Synthesizer): Boolean {
+        val stored = settings.get(SettingKeys.KOKORO_SPEED)
+        if (stored.measures(voice.kokoroModel, installedAt)) return stored.factor > 1f
+        val factor = realTimeFactor(kokoro, SystemClock::elapsedRealtime)
+        settings.set(SettingKeys.KOKORO_SPEED, KokoroSpeed(voice.kokoroModel, installedAt, factor))
+        return factor > 1f
     }
 
     internal fun attachScreen(session: ScreenSession) {

@@ -49,6 +49,28 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
     @Volatile
     var keywordTuning = KeywordTuning()
 
+    /** The file of the Kokoro model that [synthesizer] loads, which names a measure of Kokoro's speed (plan 2E). */
+    val kokoroModel: String get() = KOKORO_MODEL
+
+    /**
+     * Kokoro with the model file [model], a path in the models folder such as "tts-kokoro-int8/model.int8.onnx", and
+     * [threads] threads, for the voice device test that compares Kokoro's models on a phone (plan 2E); Kestrel's voice
+     * session uses [synthesizer]. Throws [ModelsNotReadyException] when the model's files are missing or damaged.
+     */
+    suspend fun kokoro(model: String, threads: Int): Synthesizer {
+        val ids = if (model == KOKORO_INT8_MODEL) KOKORO_MODELS + KOKORO_INT8_ID else KOKORO_MODELS
+        return load(Engine.TTS, ids) {
+            SherpaKokoroSynthesizer(
+                models.file(model),
+                models.file(KOKORO_VOICES),
+                models.file(KOKORO_TOKENS),
+                models.file(ESPEAK_DATA),
+                VoiceOptions(voice = VoiceChoice.KOKORO),
+                threads,
+            )
+        }
+    }
+
     suspend fun speechDetector(): SpeechDetector = load(Engine.VAD) {
         SherpaSpeechDetector(models.file(VAD_MODEL))
     }
@@ -126,6 +148,10 @@ class VoiceEngines(private val models: ModelFiles, private val workFolder: File)
         const val KOKORO_MODEL = "tts-kokoro/model.onnx"
         const val KOKORO_VOICES = "tts-kokoro/voices.bin"
         const val KOKORO_TOKENS = "tts-kokoro/tokens.txt"
+
+        // Kokoro's int8 model, which only a voice device test loads until the A71 session has compared it (plan 2E).
+        const val KOKORO_INT8_ID = "tts-kokoro-int8"
+        const val KOKORO_INT8_MODEL = "tts-kokoro-int8/model.int8.onnx"
         const val KWS_ENCODER = "kws-gigaspeech/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
         const val KWS_DECODER = "kws-gigaspeech/decoder-epoch-12-avg-2-chunk-16-left-64.onnx"
         const val KWS_JOINER = "kws-gigaspeech/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"

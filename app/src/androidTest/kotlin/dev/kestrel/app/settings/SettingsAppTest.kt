@@ -472,6 +472,23 @@ class SettingsAppTest {
     }
 
     @Test
+    fun theVoicePageSaysWhenKokoroIsTooSlowOnThePhone() {
+        data.voiceOptions.value = VoiceOptionsSetting(VoiceChoice.KOKORO)
+        data.kokoroSlow.value = 1.81f
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, READY_KOKORO))))
+        openVoicePage()
+
+        compose.onNodeWithText(text(R.string.voice_kokoro_slow, "1.81")).assertIsDisplayed()
+        // While Kestrel listens with Piper, "Try it" does not load a second Kokoro.
+        data.tryFailure = KokoroTooSlowException()
+        compose.onNodeWithText(text(R.string.voice_try)).performClick()
+        compose.onNodeWithText(text(R.string.voice_try_kokoro_off)).assertIsDisplayed()
+        // With Piper chosen, the page has nothing to say about Kokoro's speed.
+        compose.onNodeWithText(text(R.string.voice_piper)).performClick()
+        compose.onAllNodesWithText(text(R.string.voice_kokoro_slow, "1.81")).assertCountEquals(0)
+    }
+
+    @Test
     fun theAboutPageSaysThatAnOptionalModelIsNotOnThePhone() {
         show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, ABSENT_KOKORO))))
         compose.onNodeWithText(text(R.string.settings_about_summary, "9.9.9 (99)")).performScrollTo().performClick()
@@ -521,6 +538,7 @@ class SettingsAppTest {
         }
 
         override val kokoroFailed = MutableStateFlow(false)
+        override val kokoroSlow = MutableStateFlow<Float?>(null)
 
         override suspend fun setListening(options: ListeningOptions) {
             listening.value = options

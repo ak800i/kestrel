@@ -4,6 +4,7 @@ import android.content.Intent
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.TestHooks.HookError
+import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Work
@@ -148,11 +149,21 @@ internal class VoiceHooks(private val graph: AppGraph) {
                 "kokoro" -> VoiceChoice.KOKORO
                 else -> throw HookError("add --es voice with piper or kokoro")
             }
+            // Plan 2E: choosing Kokoro forgets its stored speed, so that the session measures it at a known moment.
+            if (voice == VoiceChoice.KOKORO) graph.settings.set(SettingKeys.KOKORO_SPEED, KokoroSpeed())
             graph.settings.set(SettingKeys.VOICE, graph.settings.get(SettingKeys.VOICE).copy(voice = voice))
         }
         val stored = graph.settings.get(SettingKeys.VOICE)
+        // Kokoro's real-time factor on the phone, as Kestrel measured it for this model and install (plan 2E).
+        val speed = graph.settings.get(SettingKeys.KOKORO_SPEED)
+        val measured = speed.factor.takeIf { speed.measures(graph.voice.kokoroModel, graph.installedAt) }
+        val slow = measured?.takeIf { it > 1f }
         return "voice=${stored.voice.name.lowercase()} speed=${speedText(stored.options().speed)} " +
-            "kokoroFailed=${graph.kokoroFailed.value}"
+            "kokoroFailed=${graph.kokoroFailed.value} kokoroSlow=${factorText(slow)} kokoroSpeed=${factorText(measured)}"
+    }
+
+    private fun factorText(factor: Float?): String {
+        return factor?.let { String.format(Locale.ROOT, "%.2f", it) } ?: "none"
     }
 
     private fun text(intent: Intent): String = intent.getStringExtra(EXTRA_TEXT) ?: throw HookError("add --es text <text>")

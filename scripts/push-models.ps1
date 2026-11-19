@@ -5,7 +5,8 @@
 # device, into Kestrel's folder /sdcard/Android/data/dev.kestrel/files/models. Kestrel must be installed first
 # (scripts\install.ps1). Kestrel creates that folder when it starts, so the first run after an install may open Kestrel
 # on the device. The first run downloads about 760 MB; later runs download nothing. With -Kokoro, it also copies the
-# optional Kokoro voice (design spec, section 8.2), which adds about 354 MB. Uninstalling Kestrel deletes the models from
+# optional Kokoro voice (design spec, section 8.2), about 354 MB, and Kokoro's int8 model, 114 MB more, which only a voice
+# device test loads until the A71 session has compared it (plan 2E). Uninstalling Kestrel deletes the models from
 # the device.
 # Example: scripts\push-models.ps1 -Serial emulator-5554 -Kokoro
 param(
