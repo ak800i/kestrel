@@ -911,6 +911,9 @@ class RulesTest {
         assertEquals(listOf(Effect.Say(Reply.SettingsBlocked)), step.effects)
         assertEquals(1, step.state.speeches)
         assertEquals(Step(State()), Rules.next(State(), Event.SettingsBlocked))
+        // A ringing call keeps the verdict back, as it keeps back every other speech.
+        val ringing = Rules.next(listening, Event.CallState(CallState.RINGING)).state
+        assertEquals(Step(ringing), Rules.next(ringing, Event.SettingsBlocked))
     }
 
     @Test

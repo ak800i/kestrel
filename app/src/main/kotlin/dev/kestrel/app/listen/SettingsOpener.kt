@@ -21,7 +21,7 @@ internal class SettingsOpener(
     private val showSession: () -> Boolean,
     private val offer: () -> Unit,
     private val report: (String, Throwable) -> Unit,
-    private val waitMillis: Long = 2_000L,
+    private val waitMillis: Long = WAIT_MILLIS,
 ) {
     suspend fun open(): SettingsOpening {
         if (timeline.settingsInFront) return SettingsOpening.OPENED
@@ -48,5 +48,13 @@ internal class SettingsOpener(
             report("Posting the notification of the settings", e)
         }
         return SettingsOpening.BLOCKED
+    }
+
+    companion object {
+        /**
+         * How long Kestrel waits for its settings: 5 s, because the emulator took up to 1.7 s, and a false "Android did
+         * not let me open my settings" is worse than a later verdict when Android does block them.
+         */
+        const val WAIT_MILLIS = 5_000L
     }
 }

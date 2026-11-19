@@ -60,7 +60,8 @@ internal fun forgetsKokoroSpeed(stored: VoiceOptionsSetting, chosen: VoiceOption
 /**
  * Whether [kokoro] is too slow on this phone (design spec, sections 5.3 and 8.2): from [stored] when it is the measure of
  * [model] in the install of [installed]; otherwise [measure] measures the real-time factor, [store] keeps it, and the
- * answer is whether it is above 1.
+ * answer is whether it is above 1. When [store] fails, [report] gets the failure, and the measured factor still answers,
+ * so that the next start measures again.
  */
 internal suspend fun measuredTooSlow(
     kokoro: Synthesizer,
@@ -68,12 +69,20 @@ internal suspend fun measuredTooSlow(
     installed: Long,
     stored: suspend () -> KokoroSpeed,
     store: suspend (KokoroSpeed) -> Unit,
+    report: (String, Throwable) -> Unit,
     measure: suspend (Synthesizer) -> Float,
 ): Boolean {
     val known = stored()
     if (known.measures(model, installed)) return known.factor > 1f
     val factor = measure(kokoro)
-    store(KokoroSpeed(model, installed, factor))
+    try {
+        store(KokoroSpeed(model, installed, factor))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // Logged by its class and stack frames only (section 13.5).
+        report("Storing Kokoro's speed", e)
+    }
     return factor > 1f
 }
 
@@ -153,7 +162,8 @@ internal suspend fun loadChosenVoice(
     val slow = try {
         tooSlow(kokoro)
     } catch (e: CancellationException) {
-        kokoro.close()
+        // A failure of close() must not hide the cancellation.
+        closeKeeping(kokoro, e)
         throw e
     } catch (e: KokoroSilentException) {
         report("Measuring the Kokoro voice", e)
@@ -164,12 +174,17 @@ internal suspend fun loadChosenVoice(
         false
     } catch (e: Throwable) {
         // An Error, such as running out of memory: the session's clean-up does not know this voice yet.
-        kokoro.close()
+        closeKeeping(kokoro, e)
         throw e
     }
     if (!slow) return LoadedVoice(kokoro, options)
     kokoro.close()
     return LoadedVoice(load(piper), piper, slow = true)
+}
+
+/** Closes [voice], and keeps a failure of the close as a suppressed exception of [original]. */
+private fun closeKeeping(voice: Synthesizer, original: Throwable) {
+    runCatching { voice.close() }.exceptionOrNull()?.let(original::addSuppressed)
 }
 
 /**

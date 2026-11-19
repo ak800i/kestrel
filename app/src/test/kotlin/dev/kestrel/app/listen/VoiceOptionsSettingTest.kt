@@ -5,6 +5,7 @@ import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.models.Engine
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -18,7 +19,7 @@ import org.junit.Test
 import java.io.IOException
 
 class VoiceOptionsSettingTest {
-    private class FakeVoice : Synthesizer {
+    private class FakeVoice(private val closeFailure: Exception? = null) : Synthesizer {
         override val sampleRate = 22_050
         var closed = false
 
@@ -26,6 +27,7 @@ class VoiceOptionsSettingTest {
 
         override fun close() {
             closed = true
+            closeFailure?.let { throw it }
         }
     }
 
@@ -222,6 +224,48 @@ class VoiceOptionsSettingTest {
     }
 
     @Test
+    fun anErrorFromTheMeasureIsThrownAlsoWhenKokoroFailsToClose() {
+        val closing = IllegalStateException("Kokoro could not be freed")
+        val kokoro = FakeVoice(closeFailure = closing)
+        val error = OutOfMemoryError("The phone ran out of memory")
+
+        val thrown = assertThrows(OutOfMemoryError::class.java) {
+            runBlocking {
+                loadChosenVoice(VoiceOptionsSetting(VoiceChoice.KOKORO), tooSlow = { throw error }) { kokoro }
+            }
+        }
+
+        assertSame(error, thrown)
+        assertTrue(kokoro.closed)
+        assertEquals(listOf<Throwable>(closing), thrown.suppressed.toList())
+    }
+
+    @Test
+    fun aCancellationDuringTheMeasureClosesKokoroAndIsThrownOnWithoutAReport() = runTest {
+        val closing = IllegalStateException("Kokoro could not be freed")
+        val kokoro = FakeVoice(closeFailure = closing)
+        val reports = mutableListOf<String>()
+        val cancellation = CancellationException("Kestrel turned off")
+
+        val thrown = try {
+            loadChosenVoice(
+                VoiceOptionsSetting(VoiceChoice.KOKORO),
+                report = { what, _ -> reports += what },
+                tooSlow = { throw cancellation },
+            ) { kokoro }
+            null
+        } catch (e: CancellationException) {
+            e
+        }
+
+        // A failure of the close must not turn the cancellation into an ordinary failure.
+        assertSame(cancellation, thrown)
+        assertTrue(kokoro.closed)
+        assertEquals(listOf<Throwable>(closing), cancellation.suppressed.toList())
+        assertEquals(emptyList<String>(), reports)
+    }
+
+    @Test
     fun aTapOnKokoroForgetsItsSpeedAndSlowerOrFasterKeepIt() {
         val kokoro = VoiceOptionsSetting(VoiceChoice.KOKORO, speed = 1.1f)
         val piper = VoiceOptionsSetting(VoiceChoice.PIPER, speed = 1.1f)
@@ -247,6 +291,7 @@ class VoiceOptionsSettingTest {
             installed,
             stored = { known },
             store = { stored += it },
+            report = { what, _ -> fail("Reported: $what") },
         ) {
             measures++
             factor
@@ -262,6 +307,24 @@ class VoiceOptionsSettingTest {
         assertFalse(tooSlow(stored.last(), installed = 6L, factor = 0.7f))
         assertEquals(KokoroSpeed("tts-kokoro/model.onnx", 6L, 0.7f), stored.last())
         assertEquals(2, measures)
+    }
+
+    @Test
+    fun aMeasureThatCannotBeStoredIsReportedAndStillDecides() = runTest {
+        val reports = mutableListOf<String>()
+
+        suspend fun tooSlow(factor: Float) = measuredTooSlow(
+            FakeVoice(),
+            "tts-kokoro/model.onnx",
+            5L,
+            stored = { KokoroSpeed() },
+            store = { throw IOException("The store could not be written") },
+            report = { what, _ -> reports += what },
+        ) { factor }
+
+        assertTrue(tooSlow(1.8f))
+        assertFalse(tooSlow(0.7f))
+        assertEquals(listOf("Storing Kokoro's speed", "Storing Kokoro's speed"), reports)
     }
 
     @Test

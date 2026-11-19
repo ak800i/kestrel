@@ -1,6 +1,7 @@
 package dev.kestrel.app
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -29,6 +30,7 @@ import dev.kestrel.app.settings.checkModelFiles
 import dev.kestrel.app.settings.writeLogExport
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.util.UUID
 
 /** Kestrel's settings app (design spec, section 15). */
 class MainActivity : ComponentActivity() {
@@ -173,5 +175,18 @@ class MainActivity : ComponentActivity() {
 
         /** The permissions that an intent may ask for. Plan 3C declares READ_CONTACTS in the manifest. */
         val ASKABLE: Set<String> = setOf(Manifest.permission.READ_CONTACTS)
+
+        /**
+         * An intent that starts Kestrel's settings app from outside it, such as from the accessibility service or a
+         * notification, which Android lets start activities. MainActivity is singleTop, so a settings app on top of its
+         * task gets the intent. The intent gets an identifier of its own, so that it never equals the intent that started
+         * Kestrel's task: when something covers the settings app in that task, such as Android's accessibility settings
+         * that its checklist opened or a permission dialog that outlived Kestrel's process, Android then starts the
+         * settings app on top of it, as it does when the launcher started the task, and closes nothing. With an equal
+         * intent, Android only brings the task to the front, and the settings never show.
+         */
+        fun freshIntent(context: Context): Intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .setIdentifier(UUID.randomUUID().toString())
     }
 }

@@ -1,6 +1,7 @@
 package dev.kestrel.app.voice
 
 import dev.kestrel.app.debug.ClipMicrophone
+import dev.kestrel.app.listen.SettingsOpener
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Work
@@ -100,15 +101,15 @@ class AssistTest {
                             SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
                     },
                 )
-                // Kestrel gives up 2 s after it asked for its settings (SettingsOpener) and says so; settings that came
+                // Kestrel gives up 5 s after it asked for its settings (SettingsOpener) and says so; settings that came
                 // later must not hide that verdict. Timeline's own times of this run, which the hook voice-times reads,
                 // show it, while the latest reaction can be an older one or be replaced by a newer one.
                 val asked = VoiceTests.graph.timeline.settingsAsked
                 val resumed = VoiceTests.graph.timeline.settingsResumes.value
                 assertTrue("Kestrel did not ask for its settings in this run", asked > askedBefore)
                 assertTrue(
-                    "Kestrel's settings came ${resumed - asked} ms after Kestrel asked for them, after its 2 s wait",
-                    resumed - asked < 2_000,
+                    "Kestrel's settings came ${resumed - asked} ms after Kestrel asked for them, after its wait",
+                    resumed - asked < SettingsOpener.WAIT_MILLIS,
                 )
             } finally {
                 VoiceTests.shell("input keyevent KEYCODE_HOME")

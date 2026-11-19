@@ -2,12 +2,10 @@ package dev.kestrel.app
 
 import android.app.role.RoleManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
 import dev.kestrel.app.assist.KestrelAssistantService
-import dev.kestrel.app.assist.settingsIntent
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.commands.CommandRunner
@@ -72,7 +70,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.UUID
 
 /** Every setting that Kestrel stores. */
 object SettingKeys {
@@ -200,17 +197,10 @@ class AppGraph(context: Context) {
                 options = commandOptions,
                 targets = ScreenTargets { screen.value },
                 scope = scope,
-                // From the accessibility service, which Android lets start activities from the background (prototype P1).
-                // MainActivity is singleTop, so a settings app on top of its task switches to the page. Each intent gets an
-                // identifier of its own, so that it never equals the intent that started Kestrel's task: when something
-                // covers the settings app in that task, such as Android's accessibility settings that its checklist opened
-                // or a permission dialog that outlived Kestrel's process, Android then starts the settings app on top of
-                // it, as it does when the launcher started the task, and closes nothing. With an equal intent, Android only
-                // brought the task to the front, and the page never showed.
+                // From the accessibility service, which Android lets start activities from the background (prototype P1),
+                // with an intent that reaches the settings app also when something covers it in Kestrel's task.
                 openSettings = { page, permission ->
-                    val intent = Intent(appContext, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        .setIdentifier(UUID.randomUUID().toString())
+                    val intent = MainActivity.freshIntent(appContext)
                     page?.let { intent.putExtra(MainActivity.EXTRA_PAGE, it.name) }
                     permission?.let { intent.putExtra(MainActivity.EXTRA_ASK_PERMISSION, it) }
                     appContext.startActivity(intent)
@@ -342,7 +332,7 @@ class AppGraph(context: Context) {
             timeline,
             serviceOn = { screen.value != null },
             roleHeld = { appContext.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT) },
-            startActivity = { appContext.startActivity(settingsIntent(appContext)) },
+            startActivity = { appContext.startActivity(MainActivity.freshIntent(appContext)) },
             showSession = { KestrelAssistantService.openSettings() },
             offer = { problems.offerSettings() },
             report = reportFailure,
@@ -384,6 +374,7 @@ class AppGraph(context: Context) {
             installed,
             stored = { settings.get(SettingKeys.KOKORO_SPEED) },
             store = { settings.set(SettingKeys.KOKORO_SPEED, it) },
+            report = reportFailure,
         ) { withContext(Dispatchers.Default) { realTimeFactor(it, SystemClock::elapsedRealtime) } }
     }
 

@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -17,6 +18,7 @@ class SettingsOpenerTest {
     private var role = false
     private var sessionReady = true
     private var sessionFailure: RuntimeException? = null
+    private var startFailure: RuntimeException? = null
 
     private fun TestScope.timeline() = Timeline { testScheduler.currentTime }
 
@@ -24,7 +26,10 @@ class SettingsOpenerTest {
         timeline,
         serviceOn = { service },
         roleHeld = { role },
-        startActivity = { log += "start" },
+        startActivity = {
+            log += "start"
+            startFailure?.let { throw it }
+        },
         showSession = {
             log += "session"
             sessionFailure?.let { throw it }
@@ -51,7 +56,7 @@ class SettingsOpenerTest {
     }
 
     @Test
-    fun withOnlyTheRoleSettingsThatComeWithinTwoSecondsAreOpened() = runTest {
+    fun withOnlyTheRoleSettingsThatComeWithinTheWaitAreOpened() = runTest {
         role = true
         val timeline = timeline()
         val opening = async { opener(timeline).open() }
@@ -65,10 +70,10 @@ class SettingsOpenerTest {
     }
 
     @Test
-    fun withOnlyTheRoleSettingsThatDoNotComeAreOfferedAfterTwoSeconds() = runTest {
+    fun withOnlyTheRoleSettingsThatDoNotComeAreOfferedAfterTheWait() = runTest {
         role = true
         val opening = async { opener(timeline()).open() }
-        advanceTimeBy(1_999)
+        advanceTimeBy(SettingsOpener.WAIT_MILLIS - 1)
         runCurrent()
         assertFalse(opening.isCompleted)
         advanceTimeBy(2)
@@ -106,10 +111,10 @@ class SettingsOpenerTest {
     }
 
     @Test
-    fun withTheServiceSettingsThatDoNotComeAreOfferedAfterTwoSeconds() = runTest {
+    fun withTheServiceSettingsThatDoNotComeAreOfferedAfterTheWait() = runTest {
         service = true
         val opening = async { opener(timeline()).open() }
-        advanceTimeBy(1_999)
+        advanceTimeBy(SettingsOpener.WAIT_MILLIS - 1)
         runCurrent()
         assertFalse(opening.isCompleted)
         advanceTimeBy(2)
@@ -117,6 +122,23 @@ class SettingsOpenerTest {
 
         assertEquals(SettingsOpening.BLOCKED, opening.await())
         assertEquals(listOf("start", "offer"), log)
+    }
+
+    @Test
+    fun aStartThatFailsGoesToTheCallerAndNothingIsOffered() = runTest {
+        service = true
+        val failure = SecurityException("not allowed to start activities")
+        startFailure = failure
+
+        val thrown = try {
+            opener(timeline()).open()
+            null
+        } catch (e: SecurityException) {
+            e
+        }
+
+        assertSame(failure, thrown)
+        assertEquals(listOf("start"), log)
     }
 
     @Test

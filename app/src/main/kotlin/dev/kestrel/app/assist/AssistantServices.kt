@@ -14,10 +14,10 @@ import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.MainActivity
 
 /**
- * Kestrel's settings app with the launcher's own intent, so that a plain start brings Kestrel's task to the front instead
- * of a second MainActivity (design spec, sections 8.6 and 15). Started by the assistant's session, the settings open as
- * the assistant's activity, in a task of their own, beside a settings screen that the launcher opened, because Android
- * reuses only a task of the same activity type.
+ * Kestrel's settings app with the launcher's own intent, for the assistant's session (design spec, sections 8.6 and 15).
+ * Started by the assistant's session, the settings open as the assistant's activity, in a task of their own, beside a
+ * settings screen that the launcher opened, because Android reuses only a task of the same activity type. The other
+ * starts from outside the settings app use [MainActivity.freshIntent].
  */
 internal fun settingsIntent(context: Context): Intent = Intent(context, MainActivity::class.java)
     .setAction(Intent.ACTION_MAIN)

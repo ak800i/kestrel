@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 
 /**
@@ -77,7 +78,9 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
 
     /**
      * Android did not bring Kestrel's settings to the front after "Kestrel, open settings" (design spec, section 14): a
-     * tap on this notification opens them, because Android lets the tap on a notification start an activity.
+     * tap on this notification opens them, because Android lets the tap on a notification start an activity. Each post
+     * gets an intent of its own, so that the tap reaches the settings app also when something covers it in Kestrel's
+     * task.
      */
     fun offerSettings() {
         if (!allowed()) return
@@ -85,12 +88,13 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
             NotificationChannel(PROBLEMS, context.getString(R.string.problems_channel), NotificationManager.IMPORTANCE_DEFAULT),
         )
         val text = context.getString(R.string.problem_settings_text)
+        val open = PendingIntent.getActivity(context, 0, MainActivity.freshIntent(context), PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(context, PROBLEMS)
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setContentTitle(context.getString(R.string.problem_settings_title))
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
-            .setContentIntent(ListeningService.openKestrel(context))
+            .setContentIntent(open)
             .setAutoCancel(true)
             .build()
         notifications.notify(SETTINGS_ID, notification)

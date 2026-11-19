@@ -108,7 +108,7 @@ internal enum class SettingsOpening {
     /** Kestrel's accessibility service is off and Kestrel does not hold the assistant role, so Kestrel did not try. */
     NEED_SERVICE,
 
-    /** Android did not bring the settings to the front within 2 s; a notification that opens them was posted. */
+    /** Android did not bring the settings to the front within 5 s; a notification that opens them was posted. */
     BLOCKED,
 }
 
@@ -747,8 +747,8 @@ class Listening internal constructor(
             serviceState = ServiceState.STOPPED
             requested = false
         }
-        // Under the battery restriction, Android stops the service a minute after it took its foreground (prototype
-        // P2).
+        // Under the battery restriction, Android 17 stopped the service a minute after it took its foreground on the
+        // emulator (prototype P2); Android 13 did not stop it on the A71 (A71 session of sub-project 2, item 2).
         stopBecause(if (conditions.backgroundRestricted()) StopReason.BATTERY_RESTRICTED else StopReason.STOPPED_BY_ANDROID)
     }
 
@@ -993,9 +993,10 @@ class Listening internal constructor(
                 }
                 if (effect.feedback == Feedback.AwaitingTask) timeline.reacted("wait")
                 if (effect.feedback == Feedback.MicBusy && demotedByBattery()) {
-                    // Section 14.6: the microphone stays silenced, and Android stops the service a minute later. Only
-                    // the first MicBusy asks: when something else already blocked the microphone, the bar says
-                    // "Microphone blocked" until Android stops the service, and destroyed() then names the battery.
+                    // Section 14.6: the microphone stays silenced, and Android may never stop the service: Android 13
+                    // did not on the A71 (A71 session of sub-project 2, item 2). Only the first MicBusy asks: when
+                    // something else already blocked the microphone, the bar says "Microphone blocked", and Kestrel
+                    // stays on until Android stops the service, if it does, when destroyed() names the battery.
                     stopBecause(StopReason.BATTERY_RESTRICTED)
                 } else {
                     bar.show(text(effect.feedback), keep = (effect.feedback as? Feedback.CommandText)?.keep == true)
@@ -1029,7 +1030,7 @@ class Listening internal constructor(
     // Section 14: Kestrel never fails silently. Android blocks an activity start from the background without an
     // exception unless Kestrel's accessibility service is on (prototype P1) or Kestrel holds the assistant role, and with
     // only the role Android 13 may block it too (A71 session of sub-project 2, item 5); without the service the bar does
-    // not exist either, so Kestrel says why. openSettings waits up to 2 s for the settings, so it runs off the
+    // not exist either, so Kestrel says why. openSettings waits up to 5 s for the settings, so it runs off the
     // controller's thread.
     private fun openSettingsOrSayWhy() {
         scope.launch {
