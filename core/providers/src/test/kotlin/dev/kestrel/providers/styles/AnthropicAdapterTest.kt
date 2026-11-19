@@ -186,10 +186,11 @@ class AnthropicAdapterTest {
         assertNull(firstBody["thinking"])
         assertNull(firstBody["output_config"])
         val messages = bench.body(bench.take())["messages"]!!.jsonArray
-        // Two IDs that become the same get `_2`, as in OpenClaw's normalizeCopilotAnthropicToolIds.
-        val calls = messages[1].jsonObject["content"]!!.jsonArray.map { it.jsonObject["id"] }
-        val results = messages[2].jsonObject["content"]!!.jsonArray.map { it.jsonObject["tool_use_id"] }
-        assertEquals(listOf(json(""""call_1_x""""), json(""""call_1_x_2"""")), calls)
+        // Two IDs whose allowed characters are the same differ by the hash of the original ID.
+        val calls = messages[1].jsonObject["content"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
+        val results = messages[2].jsonObject["content"]!!.jsonArray.map { it.jsonObject["tool_use_id"]!!.jsonPrimitive.content }
+        assertTrue(calls.all { Regex("^call_1_x_[0-9a-f]{8}$").matches(it) })
+        assertEquals(2, calls.toSet().size)
         assertEquals(calls, results)
     }
 
@@ -339,9 +340,51 @@ class AnthropicAdapterTest {
         val messages = bench.body(bench.take())["messages"]!!.jsonArray
         val calls = messages[1].jsonObject["content"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
         val results = messages[2].jsonObject["content"]!!.jsonArray.map { it.jsonObject["tool_use_id"]!!.jsonPrimitive.content }
-        assertEquals(listOf("functions_open_app_0", "call_1"), calls)
+        assertTrue(Regex("^functions_open_app_0_[0-9a-f]{8}$").matches(calls[0]))
+        assertEquals("call_1", calls[1])
         assertEquals(calls, results)
         assertTrue(calls.all { Regex("^[a-zA-Z0-9_-]+$").matches(it) })
+    }
+
+    @Test
+    fun aRewrittenIdDependsOnlyOnTheIdSoATrimmedHistoryKeepsItAndTwoIdsNeverShareOne() = runBlocking {
+        bench.reply("anthropic/text.sse")
+        bench.reply("anthropic/text.sse")
+        val long = "x".repeat(70)
+        val ids = listOf("a.b", "a_b", "a:b", "$long.1", "${long}2", "${long}3")
+        fun step(id: String) = listOf(
+            ChatMessage.Assistant(listOf(AssistantPart.ToolCall(id, "open_app", obj("""{"name":"Camera"}""")))),
+            ChatMessage.ToolResult(id, "open_app", "Opened."),
+        )
+        suspend fun sent(history: List<ChatMessage>): List<String> {
+            adapter.complete(request(*history.toTypedArray()), anthropic)
+            val messages = bench.body(bench.take())["messages"]!!.jsonArray
+            val calls = messages.filter { it.jsonObject["role"]!!.jsonPrimitive.content == "assistant" }
+                .map { it.jsonObject["content"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content }
+            val results = messages.drop(1).filter { it.jsonObject["role"]!!.jsonPrimitive.content == "user" }
+                .map { it.jsonObject["content"]!!.jsonArray.first().jsonObject["tool_use_id"]!!.jsonPrimitive.content }
+            assertEquals(calls, results)
+            return calls
+        }
+
+        val whole = sent(listOf(user("Open the camera.")) + ids.flatMap(::step))
+        // A later sub-project may drop old turns: every surviving ID must go out as it did before.
+        val trimmed = sent(listOf(user("Open the camera.")) + ids.drop(1).flatMap(::step))
+
+        assertEquals(whole.drop(1), trimmed)
+        assertEquals(ids.size, whole.toSet().size)
+        assertEquals("a_b", whole[1])
+        assertTrue(whole.all { Regex("^[a-zA-Z0-9_-]{1,64}$").matches(it) })
+    }
+
+    @Test
+    fun startBlocksCountTowardsTheGatherLimit() {
+        val data = "a".repeat(512 * 1024)
+        val starts = List(17) { """{"type":"content_block_start","index":$it,"content_block":{"type":"redacted_thinking","data":"$data"}}""" }
+
+        bench.status(200, stream(*starts.toTypedArray()), "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), anthropic))
     }
 
     @Test

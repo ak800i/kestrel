@@ -188,6 +188,8 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
             val candidate = chunk.arr("candidates").objects().firstOrNull() ?: return
             for (part in candidate.obj("content")?.arr("parts").objects()) {
                 val signature = part["thoughtSignature"]
+                // A signature is kept whole in the raw parts, so it counts too.
+                (signature as? JsonPrimitive)?.content?.length?.let(limit::add)
                 val call = part.obj("functionCall")
                 val piece = part.str("text")
                 when {

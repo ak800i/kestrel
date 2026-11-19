@@ -10,6 +10,7 @@ import dev.kestrel.providers.chat.ReasoningLevel
 import dev.kestrel.providers.chat.ReasoningState
 import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.chat.StopReason
+import dev.kestrel.providers.chat.StyleOptions
 import dev.kestrel.providers.chat.Usage
 import dev.kestrel.providers.http.ApiKeyAuth
 import dev.kestrel.providers.http.KeyHeader
@@ -210,5 +211,33 @@ class GeminiAdapterTest {
         bench.status(200, chunk.repeat(17) + last, "Content-Type" to "text/event-stream")
 
         assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), google))
+    }
+
+    @Test
+    fun thoughtSignaturesCountTowardsTheGatherLimit() {
+        val signature = "a".repeat(512 * 1024)
+        val chunk = """data: {"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"$signature"}],"role":"model"},"index":0}]}""" + "\n\n"
+        val last = """data: {"candidates":[{"content":{"parts":[{"text":"."}],"role":"model"},"index":0,"finishReason":"STOP"}]}""" + "\n\n"
+        bench.status(200, chunk.repeat(17) + last, "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), google))
+    }
+
+    @Test
+    fun withoutStreamingTheReplyIsOneBodyFromGenerateContent() = runBlocking {
+        bench.status(
+            200,
+            """{"candidates":[{"content":{"parts":[{"text":"Hello, owner."}],"role":"model"},"finishReason":"STOP","index":0}],""" +
+                """"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":5},"modelVersion":"gemini-3.8-flash"}""",
+            "Content-Type" to "application/json",
+        )
+
+        val response = adapter.complete(request(user("Hi")), google.copy(options = StyleOptions(stream = false)))
+
+        assertEquals(listOf(AssistantPart.Text("Hello, owner.")), response.message.parts)
+        assertEquals(StopReason.END, response.stop)
+        assertEquals(Usage(input = 40, output = 5), response.usage)
+        assertEquals(listOf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent".toHttpUrl()), bench.calls.requests)
+        assertEquals("application/json", bench.take().headers["accept"])
     }
 }

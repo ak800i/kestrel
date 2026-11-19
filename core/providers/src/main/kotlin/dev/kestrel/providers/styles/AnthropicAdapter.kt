@@ -42,7 +42,7 @@ import okhttp3.HttpUrl
  * (except for Claude Haiku 5.5, [AnthropicModels.keepsForcedToolChoice]), as OpenClaw sends it, and no temperature is
  * sent. A route that strips thinking (Copilot's) keeps no thinking blocks, also for a model that thinks by default, as
  * OpenClaw's Copilot replay policy does. Every request rewrites the tool-use IDs of its history to Anthropic's pattern
- * ([ToolIds]), and a thinking block without a signature goes back as text. The end of the system prompt and
+ * ([Wire.toolUseId]), and a thinking block without a signature goes back as text. The end of the system prompt and
  * the last tool carry Anthropic's default cache marker (design D4). [complete] with `vertex` is the form of Claude on
  * Vertex (design D4, research r35): no streaming, `anthropic_version` in the body and the model in the URL.
  */
@@ -120,7 +120,6 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     /** Consecutive tool results and the user message after them become one user turn, results first. */
     private fun messages(request: ChatRequest, target: ModelTarget, tools: Boolean): JsonArray = buildJsonArray {
-        val ids = ToolIds()
         val pending = mutableListOf<JsonObject>()
         fun flush() {
             if (pending.isEmpty()) return
@@ -134,7 +133,7 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
             when (message) {
                 is ChatMessage.ToolResult -> pending += if (tools) buildJsonObject {
                     put("type", "tool_result")
-                    put("tool_use_id", ids.of(message.callId))
+                    put("tool_use_id", Wire.toolUseId(message.callId))
                     put("content", message.text)
                     if (message.failed) put("is_error", true)
                 } else text(Wire.resultText(message))
@@ -154,14 +153,14 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                 }
                 is ChatMessage.Assistant -> {
                     flush()
-                    assistant(message, target, tools, ids)
+                    assistant(message, target, tools)
                 }
             }
         }
         flush()
     }
 
-    private fun JsonArrayBuilder.assistant(message: ChatMessage.Assistant, target: ModelTarget, tools: Boolean, ids: ToolIds) {
+    private fun JsonArrayBuilder.assistant(message: ChatMessage.Assistant, target: ModelTarget, tools: Boolean) {
         val keep = keepsThinking(target)
         val blocks = buildJsonArray {
             for (part in message.parts) {
@@ -175,7 +174,7 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                     is AssistantPart.Text -> if (part.text.isNotBlank()) add(text(part.text))
                     is AssistantPart.ToolCall -> if (tools) addJsonObject {
                         put("type", "tool_use")
-                        put("id", ids.of(part.id))
+                        put("id", Wire.toolUseId(part.id))
                         put("name", part.name)
                         put("input", part.arguments)
                     } else {
@@ -203,29 +202,6 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
     private fun replayed(block: JsonObject): JsonObject? {
         if (block.str("type") != "thinking" || !block.str("signature").isNullOrBlank()) return block
         return block.str("thinking")?.takeIf { it.isNotBlank() }?.let(::text)
-    }
-
-    /**
-     * Anthropic takes only tool-use IDs of `^[a-zA-Z0-9_-]+$` (Copilot's Claude models also at most 64 characters, design
-     * D12), so every request rewrites the IDs of its calls and results alike, as OpenClaw's `normalizeAnthropicToolCallId`
-     * does; an ID that already fits stays as it is. Two IDs that become the same get `_2`, `_3` and so on, as in OpenClaw's
-     * `normalizeCopilotAnthropicToolIds`.
-     */
-    private class ToolIds {
-        private val mapped = mutableMapOf<String, String>()
-
-        fun of(value: String): String =
-            mapped.getOrPut(value) {
-                val base = value.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64).ifEmpty { "_" }
-                var candidate = base
-                var n = 2
-                while (candidate in mapped.values) {
-                    val suffix = "_$n"
-                    candidate = base.take(64 - suffix.length) + suffix
-                    n++
-                }
-                candidate
-            }
     }
 
     /** One reply, from the stream's events or from one complete message. */
@@ -260,7 +236,8 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                         "thinking" -> block.str("thinking")
                         else -> null
                     }.orEmpty()
-                    limit.add(first.length)
+                    // The whole start counts, because a redacted_thinking or tool_use start carries its data or input.
+                    limit.add(block.toString().length)
                     blocks[event.long("index")?.toInt() ?: blocks.size] = Block(type, block).apply { text.append(first) }
                 }
                 "content_block_delta" -> {

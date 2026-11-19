@@ -29,10 +29,10 @@ data class ModelTarget(
 /**
  * Per-target switches of the adapters (design D4, D5, D12 and D17): [chatgptPlan] makes the Responses adapter follow the
  * ChatGPT plan's preview limits and map its error codes; [stripThinking] and [messagesPath] act in the Anthropic adapter
- * (Copilot sets `"/messages"`); [sanitizeToolCallIds] marks Copilot's Claude route, but the Anthropic adapter rewrites
- * tool-use IDs to Anthropic's pattern on every request, so it changes nothing there; [wire] chooses the wire format of a
- * VERTEX or AZURE model (null: the adapter's own rule); [compat] replaces the model's compat flags for Chat Completions
- * (Copilot's); [stream] overrides the streaming rule of design D4 (null: the rule).
+ * (Copilot sets `"/messages"`); [sanitizeToolCallIds] is kept for plan 4C, which sets it for Copilot's Claude route, but
+ * no adapter reads it, because the Anthropic adapter rewrites tool-use IDs to Anthropic's pattern on every request;
+ * [wire] chooses the wire format of a VERTEX or AZURE model (null: the adapter's own rule); [compat] replaces the model's
+ * compat flags for Chat Completions (Copilot's); [stream] overrides the streaming rule of design D4 (null: the rule).
  */
 data class StyleOptions(
     val chatgptPlan: Boolean = false,
