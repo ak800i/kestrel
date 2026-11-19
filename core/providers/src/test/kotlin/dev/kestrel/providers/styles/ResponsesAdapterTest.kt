@@ -266,4 +266,136 @@ class ResponsesAdapterTest {
         assertEquals(ProviderError.QuotaOrPolicy(429, null), errorOf(adapter, request(user("Hi")), plan))
         assertEquals(ProviderError.QuotaOrPolicy(403, "subscription_sharing_user_not_eligible"), errorOf(adapter, request(user("Hi")), plan))
     }
+
+    @Test
+    fun theEstimateCountsTheReasoningOnceAndAlsoWithoutEncryptedContent() = runBlocking {
+        val summary = "a".repeat(400)
+        val message = """{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello, owner."}]}"""
+        val completed = """{"type":"response.completed","response":{"status":"completed","output":[]}}"""
+        bench.status(
+            200,
+            sse(
+                """{"type":"response.reasoning_summary_text.delta","delta":"$summary"}""",
+                """{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"$summary"}],"encrypted_content":"x"}}""",
+                """{"type":"response.output_item.done","output_index":1,"item":$message}""",
+                completed,
+            ),
+            "Content-Type" to "text/event-stream",
+        )
+        bench.status(
+            200,
+            sse(
+                """{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"$summary"}]}}""",
+                """{"type":"response.output_item.done","output_index":1,"item":$message}""",
+                completed,
+            ),
+            "Content-Type" to "text/event-stream",
+        )
+
+        val withDeltas = adapter.complete(request(user("Hi")), openAi)
+        val withoutEncrypted = adapter.complete(request(user("Hi")), openAi)
+
+        assertEquals(100L, withDeltas.usage.reasoning)
+        assertEquals(100L, withoutEncrypted.usage.reasoning)
+        assertTrue(withoutEncrypted.usage.estimated)
+    }
+
+    @Test
+    fun withoutStreamingTheReplyIsOneResponseObject() = runBlocking {
+        bench.status(
+            200,
+            """{"id":"resp_1","object":"response","model":"gpt-5.5-2026-08-01","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello, owner."}]}],"usage":{"input_tokens":100,"output_tokens":5}}""",
+            "Content-Type" to "application/json",
+        )
+
+        val response = adapter.complete(request(user("Hi")), openAi.copy(options = StyleOptions(stream = false)))
+
+        assertEquals(listOf(AssistantPart.Text("Hello, owner.")), response.message.parts)
+        assertEquals(Usage(input = 100, output = 5), response.usage)
+        val recorded = bench.take()
+        assertEquals("application/json", recorded.headers["accept"])
+        assertEquals(json("false"), bench.body(recorded)["stream"])
+    }
+
+    @Test
+    fun aFailedResponseWithoutStreamingFailsWithItsErrorOrAsMalformed() {
+        bench.status(200, """{"id":"resp_1","object":"response","status":"failed","output":[],"error":{"code":"server_error","message":"The server had an error."}}""", "Content-Type" to "application/json")
+        bench.status(200, """{"id":"resp_1","object":"response","status":"failed","output":[]}""", "Content-Type" to "application/json")
+        val unstreamed = openAi.copy(options = StyleOptions(stream = false))
+
+        assertEquals(ProviderError.ServerError(500), errorOf(adapter, request(user("Hi")), unstreamed))
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), unstreamed))
+    }
+
+    @Test
+    fun theChatGptPlanSendsNoTemperatureAndAsksForTheEncryptedReasoningOfAnyModel() = runBlocking {
+        bench.reply("responses/plan-tool-call.sse")
+        val plain = plan.copy(model = ModelEntry("gpt-6-luna", "GPT-6 Luna"))
+
+        adapter.complete(request(user("Open the camera.")) { copy(temperature = 0.2) }, plain)
+
+        val body = bench.body(bench.take())
+        assertNull(body["temperature"])
+        assertEquals(json("""["reasoning.encrypted_content"]"""), body["include"])
+    }
+
+    @Test
+    fun onlyA400ForAHistoryThatSentReasoningItemsIsSentOnceMore() {
+        bench.status(422, """{"error":{"code":"invalid_encrypted_content","message":"could not decrypt"}}""")
+        bench.status(400, """{"error":{"code":"invalid_encrypted_content","message":"could not decrypt"}}""")
+        val call = AssistantPart.ToolCall("call_1", "open_app", obj("""{"name":"Camera"}"""))
+        fun history(state: ReasoningState) =
+            request(user("Open the camera."), ChatMessage.Assistant(listOf(AssistantPart.Reasoning(state), call)), ChatMessage.ToolResult("call_1", "open_app", "Opened."))
+        val own = ReasoningState(RequestStyle.RESPONSES, "openai", "gpt-5.5", obj("""{"type":"reasoning","encrypted_content":"x"}"""))
+        val another = ReasoningState(RequestStyle.RESPONSES, "openai", "gpt-5.4", obj("""{"type":"reasoning","encrypted_content":"x"}"""))
+
+        assertEquals(ProviderError.BadRequest(422, "invalid_encrypted_content"), errorOf(adapter, history(own), openAi))
+        assertEquals(ProviderError.BadRequest(400, "invalid_encrypted_content"), errorOf(adapter, history(another), openAi))
+        assertEquals(2, bench.server.requestCount)
+    }
+
+    @Test
+    fun withoutAFinalOutputTheItemsGoByTheirIndexAndElseTheTextDeltasAreTheReply() = runBlocking {
+        val completed = """{"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":5}}}"""
+        bench.status(
+            200,
+            sse(
+                """{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"open_app","arguments":"{\"name\":\"Camera\"}"}}""",
+                """{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Opening."}]}}""",
+                completed,
+            ),
+            "Content-Type" to "text/event-stream",
+        )
+        bench.status(
+            200,
+            sse("""{"type":"response.output_text.delta","delta":"Hello, "}""", """{"type":"response.output_text.delta","delta":"owner."}""", completed),
+            "Content-Type" to "text/event-stream",
+        )
+
+        val ordered = adapter.complete(request(user("Open the camera.")), openAi)
+        val deltas = adapter.complete(request(user("Hi")), openAi)
+
+        assertEquals(listOf(AssistantPart.Text("Opening."), AssistantPart.ToolCall("call_1", "open_app", obj("""{"name":"Camera"}"""))), ordered.message.parts)
+        assertEquals(listOf(AssistantPart.Text("Hello, owner.")), deltas.message.parts)
+    }
+
+    @Test
+    fun aStreamThatGathersMoreThan8MiBIsMalformed() {
+        val piece = "a".repeat(512 * 1024)
+        val item = """{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"$piece"}]}}"""
+        val events = List(17) { item } + """{"type":"response.completed","response":{"status":"completed","output":[]}}"""
+        bench.status(200, sse(*events.toTypedArray()), "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), openAi))
+    }
+
+    @Test
+    fun aModelThatTakesNoReasoningEffortGetsNoReasoningSettings() = runBlocking {
+        bench.reply("responses/text.sse")
+        val grok = xai.copy(model = ModelEntry("grok-4.3", "Grok 4.3", reasoning = true, compat = CompatFlags(supportsReasoningEffort = false)))
+
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, grok)
+
+        assertNull(bench.body(bench.take())["reasoning"])
+    }
 }

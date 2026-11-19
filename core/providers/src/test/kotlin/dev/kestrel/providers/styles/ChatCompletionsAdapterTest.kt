@@ -431,4 +431,22 @@ class ChatCompletionsAdapterTest {
         assertEquals(JsonPrimitive("Say hello."), assistant["reasoning"])
         assertNull(assistant["reasoning_text"])
     }
+
+    @Test
+    fun aModelThatTakesNoReasoningEffortGetsNoEffortInAnyFormat() = runBlocking {
+        bench.reply("chat-completions/text.sse")
+        bench.reply("chat-completions/text.sse")
+        val noEffort = CompatFlags(supportsReasoningEffort = false)
+        val glm = target("openrouter", RequestStyle.CHAT_COMPLETIONS, "https://openrouter.ai/api/v1", ModelEntry("z-ai/glm-5", "GLM 5", reasoning = true, compat = noEffort))
+        val qwen = target(
+            "vllm", RequestStyle.CHAT_COMPLETIONS, "http://127.0.0.1:8000/v1",
+            ModelEntry("Qwen/Qwen3.6", "Qwen 3.6", reasoning = true, compat = noEffort.copy(thinkingFormat = "qwen-chat-template", supportedReasoningEfforts = listOf("low", "medium", "high"))),
+        )
+
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, glm)
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, qwen)
+
+        assertNull(bench.body(bench.take())["reasoning"])
+        assertEquals(json("""{"enable_thinking":true}"""), bench.body(bench.take())["chat_template_kwargs"])
+    }
 }

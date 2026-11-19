@@ -137,9 +137,11 @@ internal object Wire {
      * list for its GPT-5 or GPT-6 family, or else OpenClaw's generic `low`, `medium` and `high` and the efforts that its
      * `thinkingLevelMap` names, so that `minimal` becomes `low` on DeepSeek and the other rows without a list.
      * [chatCompletions] says that the request goes to Chat Completions, where OpenClaw gives GPT-5.6 and GPT-6 no `max`.
-     * Null when the effort would be `none`.
+     * Null when the effort would be `none`, or when the model's compat says `supportsReasoningEffort: false`, for which
+     * OpenClaw sends no effort at all.
      */
     fun effort(level: String, model: ModelEntry, compat: CompatFlags, chatCompletions: Boolean = false): String? {
+        if (compat.supportsReasoningEffort == false) return null
         val mapped = model.thinkingLevelMap[level] ?: level
         if (mapped == "none") return null
         val declared = compat.supportedReasoningEfforts ?: openAiEfforts(model.id, chatCompletions)

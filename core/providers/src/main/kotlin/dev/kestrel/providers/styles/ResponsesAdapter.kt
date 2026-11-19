@@ -36,9 +36,10 @@ import kotlinx.serialization.json.putJsonObject
  * OpenAI's Responses style (spec 10.3, design D4, D5, D6 and D17), used by OpenAI's API keys, the ChatGPT plan, xAI,
  * Meta, Copilot's GPT models, Mantle's GPT models and Azure's GPT deployments. Requests send `store: false` and ask for
  * the encrypted reasoning, which goes back unchanged (without its `id`) to the same provider and model. The reply comes
- * from the stream's `response.completed` (its `output_item.done` items when the final event has no output);
- * `response.incomplete` is a reply that stopped early. A 400 with `invalid_encrypted_content` or
- * `thinking_signature_invalid` is sent once more without reasoning items.
+ * from the stream's `response.completed` (its `output_item.done` items by their `output_index` when the final event has no
+ * output, or else its text deltas); `response.incomplete` is a reply that stopped early, and a final response whose status
+ * is `failed` fails with its error. A 400 with `invalid_encrypted_content` or `thinking_signature_invalid` is sent once
+ * more without reasoning items, when the request sent any.
  *
  * With [dev.kestrel.providers.chat.StyleOptions.chatgptPlan] the request follows the ChatGPT plan's preview limits (OpenAI's
  * "Preview limitations", research r46): `instructions`, `input` as an array, `store: false`, `stream: true`, none of the
@@ -53,7 +54,8 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
             send(request, target)
         } catch (e: ProviderException) {
             val error = e.error
-            if (error is ProviderError.BadRequest && error.code in STALE_REASONING && hasReasoning(request)) send(withoutReasoning(request), target) else throw e
+            val stale = error is ProviderError.BadRequest && error.status == 400 && error.code in STALE_REASONING
+            if (stale && sendsReasoning(request, target)) send(withoutReasoning(request), target) else throw e
         }
     }
 
@@ -187,13 +189,7 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     /** The assistant's items in their order: its reasoning items, its text as one message, and its function calls. */
     private fun JsonArrayBuilder.assistant(message: ChatMessage.Assistant, target: ModelTarget, tools: Boolean) {
-        for (part in message.parts) {
-            if (part !is AssistantPart.Reasoning) continue
-            val state = part.state
-            if (state.style == RequestStyle.RESPONSES && state.providerId == target.providerId && state.modelId == target.sentModelId) {
-                (state.payload as? JsonObject)?.let { add(it) }
-            }
-        }
+        reasoningItems(message, target).forEach { add(it) }
         val text = Wire.assistantText(message, callsAsText = !tools)
         if (text.isNotEmpty()) addJsonObject {
             put("type", "message")
@@ -214,8 +210,15 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
         }
     }
 
-    private fun hasReasoning(request: ChatRequest): Boolean =
-        request.messages.any { it is ChatMessage.Assistant && it.parts.any { part -> part is AssistantPart.Reasoning } }
+    /** The reasoning items that go back: only those of this style, provider and model. */
+    private fun reasoningItems(message: ChatMessage.Assistant, target: ModelTarget): List<JsonObject> =
+        message.parts.filterIsInstance<AssistantPart.Reasoning>().map { it.state }
+            .filter { it.style == RequestStyle.RESPONSES && it.providerId == target.providerId && it.modelId == target.sentModelId }
+            .mapNotNull { it.payload as? JsonObject }
+
+    /** Whether the request sent any reasoning item, so that a resend without them would differ. */
+    private fun sendsReasoning(request: ChatRequest, target: ModelTarget): Boolean =
+        request.messages.any { it is ChatMessage.Assistant && reasoningItems(it, target).isNotEmpty() }
 
     private fun withoutReasoning(request: ChatRequest): ChatRequest =
         request.copy(messages = request.messages.map { message ->
@@ -224,16 +227,28 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     /** One reply, gathered from the stream's events or from one complete response object. */
     private class Gather(private val request: ChatRequest, private val target: ModelTarget) {
-        private val items = mutableListOf<JsonObject>()
+        private val items = mutableListOf<Pair<Int, JsonObject>>()
+        private val deltaText = StringBuilder()
         private var response: JsonObject? = null
         private var stop: StopReason? = null
-        private var reasoningChars = 0
+        private var deltaReasoningChars = 0
+        private val limit = GatherLimit()
 
         /** One event; a server that leaves out `type` names the event in the SSE `event:` line instead. */
         fun event(event: JsonObject, name: String? = null) {
             when (event.str("type") ?: name) {
-                "response.output_item.done" -> event.obj("item")?.let { items += it }
-                "response.reasoning_summary_text.delta", "response.reasoning_text.delta" -> reasoningChars += event.str("delta")?.length ?: 0
+                "response.output_item.done" -> event.obj("item")?.let { item ->
+                    limit.add(item.toString().length)
+                    items += (event.long("output_index")?.toInt() ?: Int.MAX_VALUE) to item
+                }
+                "response.output_text.delta" -> event.str("delta")?.let {
+                    limit.add(it.length)
+                    deltaText.append(it)
+                }
+                "response.reasoning_summary_text.delta", "response.reasoning_text.delta" -> event.str("delta")?.let {
+                    limit.add(it.length)
+                    deltaReasoningChars += it.length
+                }
                 "response.completed" -> final(event.obj("response") ?: JsonObject(emptyMap()))
                 "response.incomplete" -> final(event.obj("response") ?: JsonObject(emptyMap()), incomplete = true)
                 "response.failed" -> {
@@ -244,8 +259,15 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
             }
         }
 
-        /** A final reply; an incomplete one keeps its output and usage and stops by its reason (OpenAI's "Models and inference"). */
+        /**
+         * A final reply; an incomplete one keeps its output and usage and stops by its reason (OpenAI's "Models and
+         * inference"), and a failed one fails with its error's code, or as Malformed without an error.
+         */
         fun final(reply: JsonObject, incomplete: Boolean = reply.str("status") == "incomplete") {
+            if (reply.str("status") == "failed") {
+                val error = reply.obj("error") ?: throw ProviderException(ProviderError.Malformed)
+                throw ProviderException(failure(error.str("code")))
+            }
             response = reply
             stop = if (!incomplete) StopReason.END else when (reply.obj("incomplete_details")?.str("reason")) {
                 "max_output_tokens" -> StopReason.MAX_TOKENS
@@ -254,18 +276,22 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
             }
         }
 
-        private fun failure(code: String?): ProviderError =
-            (if (target.options.chatgptPlan) planError(code, target) else null) ?: Wire.streamError(null, code, target)
+        /** The plan's codes are mapped once, in [send]'s catch, which also sees the errors before the stream. */
+        private fun failure(code: String?): ProviderError = Wire.streamError(null, code, target)
 
         fun finish(): ChatResponse {
             val reply = response ?: throw ProviderException(ProviderError.Malformed)
-            val output = reply.arr("output").objects().ifEmpty { items }
+            // A final event without output: the `output_item.done` items by their `output_index`, else the text deltas.
+            val output = reply.arr("output").objects().ifEmpty { items.sortedBy { it.first }.map { it.second } }
             val builder = ReplyBuilder(request)
+            var summaryChars = 0
             for (item in output) {
                 when (item.str("type")) {
-                    "reasoning" -> if (item.str("encrypted_content") != null) {
-                        builder.reasoning(ReasoningState(RequestStyle.RESPONSES, target.providerId, target.sentModelId, JsonObject(item - "id")))
-                        reasoningChars += item.arr("summary").objects().sumOf { it.str("text")?.length ?: 0 }
+                    "reasoning" -> {
+                        if (item.str("encrypted_content") != null) {
+                            builder.reasoning(ReasoningState(RequestStyle.RESPONSES, target.providerId, target.sentModelId, JsonObject(item - "id")))
+                        }
+                        summaryChars += (item.arr("summary").objects() + item.arr("content").objects()).sumOf { it.str("text")?.length ?: 0 }
                     }
                     "message" -> for (content in item.arr("content").objects()) {
                         content.str("text")?.let(builder::text)
@@ -278,6 +304,9 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
                     }
                 }
             }
+            if (output.isEmpty()) builder.text(deltaText.toString())
+            // The stream sends the reasoning both as deltas and in its items, so the estimate counts it once.
+            val reasoningChars = if (deltaReasoningChars > 0) deltaReasoningChars else summaryChars
             val usage = reply.obj("usage")?.let(::usageOf) ?: Wire.estimate(request, builder.replyChars, reasoningChars, target.model.reasoning)
             return builder.response(stop ?: StopReason.END, usage, reply.str("model") ?: target.sentModelId)
         }
