@@ -23,6 +23,7 @@ import dev.kestrel.providers.styles.Wire.objects
 import dev.kestrel.providers.styles.Wire.str
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonArrayBuilder
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -172,7 +173,7 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
                 is ChatMessage.ToolResult -> if (tools) {
                     addJsonObject {
                         put("type", "function_call_output")
-                        put("call_id", message.callId)
+                        put("call_id", callId(message.callId))
                         put("output", message.text)
                     }
                 } else {
@@ -190,10 +191,14 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
         }
     }
 
-    /** The assistant's items in their order: its reasoning items, its text as one message, and its function calls. */
+    /**
+     * The assistant's items in their order: its reasoning items, its text as one message, and its function calls. The
+     * reasoning items go back only when the message also sends text or a call, because OpenAI refuses a reasoning item
+     * without the item that followed it (a reply whose only call Kestrel left out keeps nothing else).
+     */
     private fun JsonArrayBuilder.assistant(message: ChatMessage.Assistant, target: ModelTarget, tools: Boolean) {
-        reasoningItems(message, target).forEach { add(it) }
         val text = Wire.assistantText(message, callsAsText = !tools)
+        if (text.isNotEmpty() || (tools && message.toolCalls.isNotEmpty())) reasoningItems(message, target).forEach { add(it) }
         if (text.isNotEmpty()) addJsonObject {
             put("type", "message")
             put("role", "assistant")
@@ -206,7 +211,7 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
         }
         if (tools) for (call in message.toolCalls) addJsonObject {
             put("type", "function_call")
-            put("call_id", call.id)
+            put("call_id", callId(call.id))
             put("name", call.name)
             if (target.options.chatgptPlan) put("namespace", NAMESPACE)
             put("arguments", call.arguments.toString())
@@ -291,8 +296,13 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
             for (item in output) {
                 when (item.str("type")) {
                     "reasoning" -> {
-                        if (item.str("encrypted_content") != null) {
-                            builder.reasoning(ReasoningState(RequestStyle.RESPONSES, target.providerId, target.sentModelId, JsonObject(item - "id")))
+                        // As OpenClaw's Copilot replay keeps them: a non-empty encrypted content, a status that is absent
+                        // or `completed`, and no null status.
+                        val status = item["status"]
+                        val usable = status == null || status is JsonNull || (status as? JsonPrimitive)?.content == "completed"
+                        if (!item.str("encrypted_content").isNullOrEmpty() && usable) {
+                            val payload = if (status is JsonNull) item - "id" - "status" else item - "id"
+                            builder.reasoning(ReasoningState(RequestStyle.RESPONSES, target.providerId, target.sentModelId, JsonObject(payload)))
                         }
                         summaryChars += (item.arr("summary").objects() + item.arr("content").objects()).sumOf { it.str("text")?.length ?: 0 }
                     }
@@ -334,6 +344,13 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
         const val NAMESPACE = "kestrel"
 
         private val STALE_REASONING = setOf("invalid_encrypted_content", "thinking_signature_invalid")
+
+        /**
+         * A call ID as OpenAI's Responses API accepts it (at most 64 characters, as OpenClaw's
+         * `openai-responses-tool-call-id-shape.ts` shapes them): an ID that fits stays, any other is rewritten by
+         * [Wire.toolUseId], so that a call and its result keep one ID.
+         */
+        private fun callId(id: String): String = Wire.toolUseId(id, Wire.OPENAI_ID_CHARS)
 
         /** The ChatGPT plan's error codes (design D17; OpenAI's "Errors and recovery", research r46), or null for another code. */
         fun planError(code: String?, target: ModelTarget): ProviderError? = when (code) {

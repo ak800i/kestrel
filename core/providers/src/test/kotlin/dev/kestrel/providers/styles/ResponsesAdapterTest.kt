@@ -398,4 +398,49 @@ class ResponsesAdapterTest {
 
         assertNull(bench.body(bench.take())["reasoning"])
     }
+
+    @Test
+    fun aReasoningItemWhoseOnlyCallWasLeftOutDoesNotGoBackAlone() = runBlocking {
+        bench.reply("responses/tool-call.sse")
+        bench.reply("responses/text.sse")
+        val tools = listOf(AdapterHarness.GET_NUMBER)
+
+        val first = adapter.complete(request(user("Open the camera."), tools = tools), openAi)
+        adapter.complete(request(user("Open the camera."), first.message, user("Use a tool that you have."), tools = tools), openAi)
+
+        assertTrue(first.message.parts.single() is AssistantPart.Reasoning)
+        bench.take()
+        val types = bench.body(bench.take())["input"]!!.jsonArray.mapNotNull { it.jsonObject["type"]?.jsonPrimitive?.content }
+        assertTrue("reasoning" !in types)
+    }
+
+    @Test
+    fun aCallIdLongerThan64CharactersIsRewrittenAlikeForTheCallAndItsResult() = runBlocking {
+        bench.reply("responses/text.sse")
+        val long = "call_" + "a".repeat(150) + "__thought__" + "b+/=".repeat(8) + "c".repeat(2)
+        val call = AssistantPart.ToolCall(long, "open_app", obj("""{"name":"Camera"}"""))
+
+        adapter.complete(request(user("Open the camera."), ChatMessage.Assistant(listOf(call)), ChatMessage.ToolResult(long, "open_app", "Opened.")), openAi)
+
+        val ids = bench.body(bench.take())["input"]!!.jsonArray.mapNotNull { it.jsonObject["call_id"]?.jsonPrimitive?.content }
+        assertEquals(200, long.length)
+        assertEquals(2, ids.size)
+        assertEquals(ids[0], ids[1])
+        assertTrue(Regex("^[A-Za-z0-9_-]{1,64}$").matches(ids[0]))
+    }
+
+    @Test
+    fun onlyAReasoningItemWithEncryptedContentAndACompletedOrNoStatusIsKept() = runBlocking {
+        val output = """[{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":""},""" +
+            """{"id":"rs_2","type":"reasoning","summary":[],"encrypted_content":"x","status":"in_progress"},""" +
+            """{"id":"rs_3","type":"reasoning","summary":[],"encrypted_content":"y","status":null},""" +
+            """{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi."}]}]"""
+        val completed = """{"type":"response.completed","response":{"status":"completed","output":$output,"usage":{"input_tokens":10,"output_tokens":5}}}"""
+        bench.status(200, sse(completed), "Content-Type" to "text/event-stream")
+
+        val response = adapter.complete(request(user("Hi")), openAi)
+
+        val kept = response.message.parts.filterIsInstance<AssistantPart.Reasoning>().map { it.state.payload }
+        assertEquals(listOf(json("""{"type":"reasoning","summary":[],"encrypted_content":"y"}""")), kept)
+    }
 }

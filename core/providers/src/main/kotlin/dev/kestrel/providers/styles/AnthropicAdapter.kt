@@ -183,7 +183,8 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                 }
             }
         }
-        if (blocks.isEmpty()) return
+        // A message that would hold only thinking carries nothing for the next turn, so it is left out.
+        if (blocks.all { (it as? JsonObject)?.str("type") in THINKING_BLOCKS }) return
         addJsonObject {
             put("role", "assistant")
             put("content", blocks)
@@ -347,6 +348,8 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
     }
 
     companion object {
+        private val THINKING_BLOCKS = setOf("thinking", "redacted_thinking")
+
         /** Whether thinking blocks are kept and replayed: never on a route that strips thinking (Copilot's, design D12). */
         private fun keepsThinking(target: ModelTarget): Boolean = !target.options.stripThinking
 

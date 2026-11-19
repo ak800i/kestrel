@@ -490,4 +490,15 @@ class AnthropicAdapterTest {
 
         assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), anthropic))
     }
+
+    @Test
+    fun aMessageThatWouldHoldOnlyThinkingIsLeftOut() = runBlocking {
+        bench.reply("anthropic/text.sse")
+        val thinking = ReasoningState(RequestStyle.ANTHROPIC, "anthropic", "claude-sonnet-5", obj("""{"type":"thinking","thinking":"Open it.","signature":"c2ln"}"""))
+
+        adapter.complete(request(user("Open the camera."), ChatMessage.Assistant(listOf(AssistantPart.Reasoning(thinking))), user("Again.")), anthropic)
+
+        val roles = bench.body(bench.take())["messages"]!!.jsonArray.map { it.jsonObject["role"]!!.jsonPrimitive.content }
+        assertFalse("assistant" in roles)
+    }
 }
