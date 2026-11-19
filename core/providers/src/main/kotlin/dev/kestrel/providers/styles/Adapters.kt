@@ -3,6 +3,7 @@ package dev.kestrel.providers.styles
 import dev.kestrel.providers.catalog.CompatFlags
 import dev.kestrel.providers.catalog.ModelEntry
 import dev.kestrel.providers.chat.AssistantPart
+import dev.kestrel.providers.chat.ChatAdapter
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.ChatResponse
@@ -11,11 +12,13 @@ import dev.kestrel.providers.chat.InvalidToolCall
 import dev.kestrel.providers.chat.ModelTarget
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.providers.chat.ReasoningState
+import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.chat.StopReason
 import dev.kestrel.providers.chat.Usage
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
+import dev.kestrel.providers.http.ProviderHttp
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -358,4 +361,21 @@ internal class ReplyBuilder(request: ChatRequest) {
             modelId = modelId,
             invalidToolCall = invalid,
         )
+}
+
+/**
+ * The adapter of each request style (spec 10.3, design D4). For VERTEX and AZURE it returns the platform's adapter, which
+ * chooses the wire format per model (StyleOptions.wire). Plan 4C reaches the adapters only through this object.
+ */
+object Adapters {
+    fun forStyle(style: RequestStyle, http: ProviderHttp): ChatAdapter = when (style) {
+        RequestStyle.CHAT_COMPLETIONS -> ChatCompletionsAdapter(http)
+        RequestStyle.RESPONSES -> ResponsesAdapter(http)
+        RequestStyle.ANTHROPIC -> AnthropicAdapter(http)
+        RequestStyle.GEMINI -> GeminiAdapter(http)
+        RequestStyle.OLLAMA -> OllamaAdapter(http)
+        RequestStyle.BEDROCK -> BedrockAdapter(http)
+        RequestStyle.VERTEX -> VertexAdapter(http)
+        RequestStyle.AZURE -> AzureAdapter(http)
+    }
 }

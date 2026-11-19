@@ -1,0 +1,46 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "name": "Anthropic: Claude Sonnet 5",
+      "context_length": 1000000,
+      "architecture": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "top_provider": {
+        "max_completion_tokens": 128000
+      },
+      "supported_parameters": [
+        "tools",
+        "tool_choice",
+        "reasoning",
+        "max_tokens"
+      ]
+    },
+    {
+      "id": "mistralai/mistral-small",
+      "name": "Mistral: Mistral Small",
+      "context_length": 32768,
+      "architecture": {
+        "input_modalities": [
+          "text"
+        ]
+      },
+      "supported_parameters": [
+        "max_tokens",
+        "temperature"
+      ]
+    },
+    {
+      "id": "plain-model",
+      "object": "model",
+      "owned_by": "someone"
+    }
+  ]
+}

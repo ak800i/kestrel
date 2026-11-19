@@ -1,0 +1,15 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "openai.gpt-oss-120b",
+      "object": "model",
+      "owned_by": "openai"
+    },
+    {
+      "id": "qwen.qwen3-235b-a22b",
+      "object": "model",
+      "owned_by": "qwen"
+    }
+  ]
+}

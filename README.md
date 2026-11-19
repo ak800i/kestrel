@@ -165,6 +165,8 @@ Kestrel counts the cost of each request on the phone from the tokens that the pr
 
 Credentials are encrypted with their own Android Keystore key, in StrongBox when the phone has it, and are never logged or exported. Only the hosts of your profiles are on the network allowlist; a sign-in's other hosts are allowed only while the sign-in runs.
 
+Kestrel sends each profile's requests in its provider's request style, one of eight (design spec, section 10.3): OpenAI's Chat Completions and Responses, Anthropic Messages, Gemini, Ollama, Bedrock Converse, Vertex, and Azure OpenAI with Microsoft Foundry. It streams the answer from most providers and calls Bedrock, Ollama and Claude on Vertex without streaming, and it always works with one complete answer, keeping the reasoning data that a provider needs on the next request. For a model that handles tool calls badly, it asks for a JSON action instead of a tool call. The tests of the request styles use answers written from each provider's documented format, under `core/providers/src/test/resources/fixtures/`, and a local mock server, so no test sends a request to a provider.
+
 <!-- Plan 4B: request styles -->
 <!-- Plan 4C: sign-in, Copilot and the session -->
 
