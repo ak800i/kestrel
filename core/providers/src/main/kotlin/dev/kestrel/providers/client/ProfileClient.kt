@@ -48,10 +48,11 @@ interface PlanLimits {
  * model with JSON actions) with a limit of 30 s per attempt, and retries a timeout, a rate limit, a server error or an
  * unreachable provider twice, after 1 s and 3 s or after a `Retry-After` of at most 10 s. A longer `Retry-After` fails at
  * once, so that sub-project 5 can switch models; a QuotaOrPolicy is never retried, and on a ChatGPT plan profile its 429
- * marks the plan's usage limit until a later call works. Each answer is priced, and its credits and tokens are added to the month's spending, also when the caller stops
- * meanwhile. A stop reaches the caller as a CancellationException, unchanged. Each call reads the profile with [profile]'s
- * ID from the applied setting, for its hosts, its target and its price, so that a client that sub-project 5 keeps follows
- * the owner's edits, a new Copilot base and a new sign-in; resolving the target has the limit of one attempt.
+ * marks the plan's usage limit until a later call works. Each answer is priced, and its credits and tokens are added to
+ * the month's spending, also when the caller stops meanwhile. A stop reaches the caller as a CancellationException,
+ * unchanged. Each call reads the profile with [profile]'s ID from the applied setting, for its hosts, its target and its
+ * price, so that a client that sub-project 5 keeps follows the owner's edits, a new Copilot base and a new sign-in;
+ * resolving the target has the limit of one attempt.
  */
 class ProfileClient(
     val profile: Profile,

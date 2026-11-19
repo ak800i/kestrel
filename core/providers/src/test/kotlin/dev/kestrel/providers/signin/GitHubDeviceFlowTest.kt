@@ -7,20 +7,16 @@ import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.signin.SignInFixtures.fixture
 import dev.kestrel.providers.signin.SignInFixtures.json
 import dev.kestrel.providers.signin.SignInFixtures.read
+import dev.kestrel.providers.testing.FailingCalls
 import dev.kestrel.providers.testing.RedirectingCalls
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockWebServer
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.Request
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
-import java.io.IOException
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Copilot's device flow on github.com and a GHE.com tenant (design D9 and D12; research r27). */
 class GitHubDeviceFlowTest {
@@ -154,18 +150,5 @@ class GitHubDeviceFlowTest {
         assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
         // The last code expired before its first poll, so no poll was sent for it.
         assertEquals(5, calls.requests.size)
-    }
-
-    /** Fails the calls with the numbers in [failing], counted from 1, as a lost connection, and sends the others through [inner]. */
-    private class FailingCalls(private val inner: Call.Factory, private val failing: Set<Int>) : Call.Factory {
-        private val count = AtomicInteger()
-
-        override fun newCall(request: Request): Call {
-            val real = inner.newCall(request)
-            if (count.incrementAndGet() !in failing) return real
-            return object : Call by real {
-                override fun enqueue(responseCallback: Callback) = responseCallback.onFailure(this, IOException("test connection lost"))
-            }
-        }
     }
 }

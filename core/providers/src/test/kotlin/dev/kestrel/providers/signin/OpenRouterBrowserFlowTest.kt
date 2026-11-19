@@ -1,6 +1,8 @@
 package dev.kestrel.providers.signin
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.signin.SignInFixtures.json
 import dev.kestrel.providers.testing.RedirectingCalls
@@ -12,6 +14,7 @@ import mockwebserver3.MockWebServer
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
@@ -84,4 +87,36 @@ class OpenRouterBrowserFlowTest {
         loopback.answer = { null }
         assertEquals(SignInFailure.NO_CALLBACK, failureOf { OpenRouterBrowserFlow(http).run(loopback, loopback.open) })
     }
+
+    @Test
+    fun aCallbackWithoutACodeIsARefusalAndWithoutALoopbackPortTheBrowserIsNeverOpened() {
+        loopback.answer = { page -> mapOf("error" to "access_denied", "state" to page.queryParameter("callback_url")!!.toHttpUrl().queryParameter("state")!!) }
+        assertEquals(SignInFailure.REFUSED, failureOf { OpenRouterBrowserFlow(http).run(loopback, loopback.open) })
+
+        loopback.busy = setOf(3000, null)
+        loopback.page = null
+        assertEquals(SignInFailure.EXCHANGE_FAILED, failureOf { OpenRouterBrowserFlow(http).run(loopback, loopback.open) })
+        assertNull(loopback.page)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun aRateLimitOrAServerErrorAtTheExchangeIsTheProvidersErrorAndAnUnusableKeyFailsTheExchange() {
+        server.enqueue(json(429, "{}", "Retry-After" to "7"))
+        server.enqueue(json(502, "{}"))
+        server.enqueue(json(200, """{"key":"sk or test key"}"""))
+
+        assertEquals(ProviderError.RateLimited(7_000), errorOf { OpenRouterBrowserFlow(http).run(loopback, loopback.open) })
+        assertEquals(ProviderError.ServerError(502), errorOf { OpenRouterBrowserFlow(http).run(loopback, loopback.open) })
+        assertEquals(SignInFailure.EXCHANGE_FAILED, failureOf { OpenRouterBrowserFlow(http).run(loopback, loopback.open) })
+    }
+
+    private fun errorOf(block: suspend () -> Unit): ProviderError =
+        try {
+            runBlocking { block() }
+            fail("expected a ProviderException")
+            throw AssertionError()
+        } catch (e: ProviderException) {
+            e.error
+        }
 }

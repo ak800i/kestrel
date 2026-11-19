@@ -5,6 +5,7 @@ import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.profiles.ChatGptRegistration
 import dev.kestrel.providers.signin.SignInFixtures.json
 import dev.kestrel.providers.signin.SignInFixtures.read
+import dev.kestrel.providers.testing.FailingCalls
 import dev.kestrel.providers.testing.RedirectingCalls
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -35,7 +36,9 @@ class ChatGptPlanFlowTest {
     private val now = TestIdTokens.NOW_SECONDS * 1000
 
     private var discovery = read("chatgpt-plan/openid-configuration.json")
+    private val discoveryReplies = ArrayDeque<MockResponse>()
     private val keySets = ArrayDeque<String>()
+    private val keyReplies = ArrayDeque<MockResponse>()
     private var tokenReply: (Map<String, String>) -> MockResponse = { json(200, tokenBody()) }
     private val revocations = ArrayDeque<MockResponse>()
     private val forms = mutableListOf<Map<String, String>>()
@@ -52,8 +55,8 @@ class ChatGptPlanFlowTest {
                     name to URLDecoder.decode(value, Charsets.UTF_8)
                 }
                 return when (request.url.encodedPath) {
-                    "/.well-known/openid-configuration" -> json(200, discovery)
-                    "/.well-known/jwks.json" -> json(200, keySets.removeFirstOrNull() ?: keys.keySet())
+                    "/.well-known/openid-configuration" -> discoveryReplies.removeFirstOrNull() ?: json(200, discovery)
+                    "/.well-known/jwks.json" -> keyReplies.removeFirstOrNull() ?: json(200, keySets.removeFirstOrNull() ?: keys.keySet())
                     "/api/accounts/oauth/token" -> tokenReply(form.also { forms += it })
                     "/oauth/revoke" -> revocations.removeFirst().also { forms += form }
                     else -> json(404, "{}")
@@ -70,7 +73,7 @@ class ChatGptPlanFlowTest {
         server.close()
     }
 
-    private fun flow(registration: ChatGptRegistration? = null, consent: Boolean = false) =
+    private fun flow(registration: ChatGptRegistration? = null, consent: Boolean = false, http: ProviderHttp = this.http) =
         ChatGptPlanFlow("urn:uuid:00000000-0000-4000-8000-000000000001", registration, consent, http) { now }
 
     private fun run(flow: ChatGptPlanFlow) = runBlocking { flow.run(loopback, loopback.open) }
@@ -136,6 +139,19 @@ class ChatGptPlanFlowTest {
     }
 
     @Test
+    fun noLoopbackPortEndsTheSignInAsAnExchangeFailureWithoutOpeningTheBrowser() {
+        loopback.busy = setOf(1455, null)
+        val kept = ChatGptRegistration("oaiapp_test", "test-subject")
+
+        val failed = failureOf(flow(kept))
+
+        assertEquals(SignInFailure.EXCHANGE_FAILED, failed.kind)
+        assertEquals(kept, failed.registration)
+        assertNull(loopback.page)
+        assertTrue(forms.isEmpty())
+    }
+
+    @Test
     fun aFirstCallbackWithoutAnIssuedClientIdOrWithTheDynamicOneIsAnIncompleteRegistration() {
         loopback.answer = issuedCallback(null)
         assertEquals(SignInFailure.REGISTRATION_INCOMPLETE, failureOf(flow()).kind)
@@ -170,6 +186,47 @@ class ChatGptPlanFlowTest {
     }
 
     @Test
+    fun aRefusedClientInAnErrorObjectRefusesTheRegistrationToo() {
+        loopback.answer = issuedCallback("oaiapp_test")
+        tokenReply = { json(401, """{"error":{"type":"invalid_request_error","code":"invalid_client"}}""") }
+
+        val failed = failureOf(flow())
+
+        assertEquals(SignInFailure.REGISTRATION_REFUSED, failed.kind)
+        assertNull(failed.registration)
+    }
+
+    @Test
+    fun aKeySetFailureALostConnectionOrARateLimitKeepsTheIssuedClientId() {
+        loopback.answer = issuedCallback("oaiapp_test")
+        val kept = ChatGptRegistration("oaiapp_test", null)
+
+        keyReplies += json(500, "{}")
+        assertEquals(kept, failureOf(flow()).also { assertEquals(SignInFailure.EXCHANGE_FAILED, it.kind) }.registration)
+        tokenReply = { json(429, "{}") }
+        assertEquals(kept, failureOf(flow()).also { assertEquals(SignInFailure.EXCHANGE_FAILED, it.kind) }.registration)
+        // The second call, the exchange after the discovery document, loses its connection.
+        tokenReply = { json(200, tokenBody()) }
+        val lost = failureOf(flow(http = ProviderHttp(FailingCalls(calls, setOf(2)))))
+        assertEquals(SignInFailure.EXCHANGE_FAILED, lost.kind)
+        assertEquals(kept, lost.registration)
+    }
+
+    @Test
+    fun anEmptyAccessOrRefreshTokenFailsTheExchangeAndKeepsTheIssuedClientId() {
+        loopback.answer = issuedCallback("oaiapp_test")
+        val kept = ChatGptRegistration("oaiapp_test", null)
+
+        tokenReply = { json(200, tokenBody().replace("\"test-access-1\"", "\"\"")) }
+        val noAccess = failureOf(flow())
+        tokenReply = { json(200, tokenBody().replace("\"test-refresh-1\"", "\"\"")) }
+        val noRefresh = failureOf(flow())
+
+        assertEquals(listOf(SignInFailure.EXCHANGE_FAILED, SignInFailure.EXCHANGE_FAILED), listOf(noAccess.kind, noRefresh.kind))
+        assertEquals(listOf(kept, kept), listOf(noAccess.registration, noRefresh.registration))
+    }
+
+    @Test
     fun invalidGrantAtTheExchangeKeepsTheIssuedClientIdForTryAgain() {
         loopback.answer = issuedCallback("oaiapp_test")
         tokenReply = { json(400, """{"error":"invalid_grant"}""") }
@@ -191,6 +248,8 @@ class ChatGptPlanFlowTest {
         discovery = original.replace("https://auth.openai.com/.well-known/jwks.json", "https://keys.example.com/jwks.json")
         assertEquals(SignInFailure.UNTRUSTED_ADDRESS, failureOf(flow()).kind)
         discovery = original.replace("https://auth.openai.com/oauth/revoke", "http://auth.openai.com/oauth/revoke")
+        assertEquals(SignInFailure.UNTRUSTED_ADDRESS, failureOf(flow()).kind)
+        discovery = original.replace("\"issuer\": \"https://auth.openai.com\"", "\"issuer\": \"https://auth.example.com\"")
         assertEquals(SignInFailure.UNTRUSTED_ADDRESS, failureOf(flow()).kind)
         assertNull(loopback.page)
     }
@@ -249,5 +308,16 @@ class ChatGptPlanFlowTest {
 
         repeat(3) { revocations += json(503, "{}") }
         assertFalse(ChatGptPlanFlow.revoke(http, token) {})
+    }
+
+    @Test
+    fun aRefusedDiscoveryDocumentEndsTheSignOutWithoutARetry() = runBlocking {
+        val token = Credential.OAuthToken("test-access-1", "test-refresh-1", null, clientId = "oaiapp_test")
+        val pauses = mutableListOf<Long>()
+        discoveryReplies += json(404, "{}")
+
+        assertFalse(ChatGptPlanFlow.revoke(http, token) { pauses += it })
+        assertEquals(emptyList<Long>(), pauses)
+        assertEquals(1, calls.requests.size)
     }
 }

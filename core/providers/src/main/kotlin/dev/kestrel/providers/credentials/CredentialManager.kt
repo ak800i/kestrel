@@ -182,7 +182,10 @@ class CredentialManager(
         override suspend fun refresh(): RefreshResult {
             val refresher = refresher ?: return RefreshResult.NotPossible
             val used = lastAccess ?: (read(id) as? Credential.OAuthToken)?.access ?: return RefreshResult.Expired
-            return refresh(id, used, refresher)
+            // ProviderHttp refreshes after a 401, so the provider has refused the token whatever its own expiry says: a 4xx
+            // refusal of the refresh then ends the sign-in, as for an expired token. An early refresh goes through headers.
+            val result = refresh(id, used, refresher)
+            return if (result is RefreshResult.FailedForNow && refused(result.error)) RefreshResult.Expired else result
         }
 
         private fun expired(token: Credential.OAuthToken): Boolean = token.expiresAtMillis?.let { clock() >= it } == true

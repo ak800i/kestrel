@@ -74,13 +74,15 @@ class ChatGptPlanFlow(
             if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply, http)
             val body = SignInHttp.parse(reply)
             if (reply.status !in 200..299) {
-                throw when (body?.string("error")) {
+                throw when (SignInHttp.errorCode(body)) {
                     "invalid_client", "unauthorized_client" -> SignInFailed(SignInFailure.REGISTRATION_REFUSED)
                     else -> SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
                 }
             }
             val access = body?.string("access_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
             val refresh = body.string("refresh_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
+            // An empty token is an answer that Kestrel cannot read; the catch below keeps the issued client ID for it.
+            if (access.isEmpty() || refresh.isEmpty()) throw ProviderException(ProviderError.Malformed)
             val idToken = body.string("id_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
             val claims = checkIdToken(idToken, discovery, clientId, nonce) ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED, kept)
             if (registration?.subject != null && registration.subject != claims.subject) throw SignInFailed(SignInFailure.OTHER_ACCOUNT)
@@ -185,7 +187,10 @@ class ChatGptPlanFlow(
                     if (reply.status in 200..299) return true
                     if (reply.status !in 500..599) return false
                 } catch (e: ProviderException) {
-                    // No network or a server error: try again.
+                    // Only no network or a server error, also of the discovery document, is tried again (design D9).
+                    if (e.error !is ProviderError.ServerError && e.error != ProviderError.Unreachable && e.error != ProviderError.Timeout) {
+                        return false
+                    }
                 } catch (e: SignInFailed) {
                     return false
                 }

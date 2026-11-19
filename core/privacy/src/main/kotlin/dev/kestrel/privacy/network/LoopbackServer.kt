@@ -125,6 +125,8 @@ class LoopbackServer(private val ipv6Loopback: () -> Boolean = ::hasIpv6Loopback
             // One limit for the whole head, not for each read, so that a client that sends a byte now and then cannot hold
             // the server past its time or Cancel.
             val until = System.nanoTime() + READ_TIMEOUT_MILLIS * 1_000_000L
+            // The last four bytes that were read, so that the head's end is found without copying the head after each byte.
+            var tail = 0
             while (head.size() < MAX_REQUEST_BYTES) {
                 val left = (until - System.nanoTime()) / 1_000_000
                 if (left <= 0 || closed) throw SocketTimeoutException()
@@ -132,9 +134,8 @@ class LoopbackServer(private val ipv6Loopback: () -> Boolean = ::hasIpv6Loopback
                 val byte = input.read()
                 if (byte < 0) break
                 head.write(byte)
-                val bytes = head.toByteArray()
-                val size = bytes.size
-                if (size >= 4 && bytes[size - 4] == CR && bytes[size - 3] == LF && bytes[size - 2] == CR && bytes[size - 1] == LF) break
+                tail = (tail shl 8) or byte
+                if (tail == END_OF_HEAD) break
             }
             return head.toByteArray().decodeToString().substringBefore("\r\n").takeIf { it.isNotEmpty() }
         }
@@ -180,8 +181,8 @@ class LoopbackServer(private val ipv6Loopback: () -> Boolean = ::hasIpv6Loopback
         private const val ACCEPT_SLICE_MILLIS = 200
         private const val READ_TIMEOUT_MILLIS = 2_000
         private const val MAX_REQUEST_BYTES = 8 * 1024
-        private const val CR = '\r'.code.toByte()
-        private const val LF = '\n'.code.toByte()
+        /** `\r\n\r\n`, the end of a request's head, as four bytes in an Int. */
+        private const val END_OF_HEAD = 0x0D0A0D0A
         private const val PAGE_RECEIVED =
             "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Kestrel</title></head><body>" +
                 "<p>Kestrel received the sign-in. You can close this tab.</p></body></html>"

@@ -232,6 +232,21 @@ class CredentialManagerTest {
     }
 
     @Test
+    fun aRefreshAfterA401ThatTheProviderRefusesWithA4xxEndsTheSignInWhateverTheTokensExpiry() = runBlocking {
+        val refused = TestRefresher({ Refresh.ForNow(ProviderError.BadRequest(400, null)) })
+        vault.stored["test-credential"] = token()
+        val valid = manager(refused).auth(profile(), KeyHeader.BEARER).also { it.headers(request) }
+        assertEquals(RefreshResult.Expired, valid.refresh())
+
+        vault.stored["test-credential"] = token().copy(expiresAtMillis = null)
+        assertEquals(RefreshResult.Expired, manager(refused).auth(profile(), KeyHeader.BEARER).refresh())
+        // A rate limit of the refresh is not a refusal.
+        val limited = TestRefresher({ Refresh.ForNow(ProviderError.RateLimited(null)) })
+        assertEquals(RefreshResult.FailedForNow(ProviderError.RateLimited(null)), manager(limited).auth(profile(), KeyHeader.BEARER).refresh())
+        assertEquals("test-access-1", (vault.stored["test-credential"] as Credential.OAuthToken).access)
+    }
+
+    @Test
     fun aRefusedRefreshExpiresTheSignInAndInvalidClientClearsTheClientId() = runBlocking {
         val original = token()
         vault.stored["test-credential"] = original

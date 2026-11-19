@@ -29,14 +29,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -213,8 +213,8 @@ class ProfileClientTest {
         assertEquals(ProviderError.NotAllowed, error)
         assertEquals(listOf(2_000L), calls)
 
-        // A stored profile that gained a host, as after a new Copilot base, still holds this client's hosts, and the call
-        // resolves the profile as the allowlist holds it.
+        // A stored profile that gained a host, as after a new Copilot base, is in the applied setting once the allowlist holds
+        // its hosts, and the call resolves the profile as the applied setting holds it, not as the client was made with.
         val moved = profile().copy(discoveredHosts = listOf("api.example.com"))
         val resolved = mutableListOf<Profile>()
         val later = adapter({ answer })

@@ -4,12 +4,13 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /**
- * A loopback listener for the JVM tests of the browser flows: [busy] ports are refused, a null port gets port 54321, and
- * the session's callback comes from [answer], which sees the query of the page that the flow opened ([page]). As
- * LoopbackServer does, a callback with another `state` than the one that the flow waits for never arrives.
+ * A loopback listener for the JVM tests of the browser flows: [busy] ports are refused (a null in it refuses a free port
+ * too), a null port gets port 54321, and the session's callback comes from [answer], which sees the query of the page
+ * that the flow opened ([page]). As LoopbackServer does, a callback with another `state` than the one that the flow waits
+ * for never arrives.
  */
 internal class FakeLoopback : LoopbackListener {
-    var busy = emptySet<Int>()
+    var busy = emptySet<Int?>()
     var page: HttpUrl? = null
     val opened = mutableListOf<Triple<LoopbackAddresses, Int?, String>>()
     var closed = 0
