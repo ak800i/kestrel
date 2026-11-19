@@ -355,7 +355,7 @@ class ProviderHttpTest {
     }
 
     @Test
-    fun anErrorReplyLargerThanTheLimitKeepsItsStatussError() = runBlocking {
+    fun anErrorReplyLargerThanTheLimitKeepsItsStatusError() = runBlocking {
         server.enqueue(MockResponse.Builder().code(503).body(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1))).build())
         server.enqueue(
             MockResponse.Builder().code(503).chunkedBody(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1)), 64 * 1024).build(),

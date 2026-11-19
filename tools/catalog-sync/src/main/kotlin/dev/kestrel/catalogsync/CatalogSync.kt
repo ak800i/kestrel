@@ -1,6 +1,7 @@
 package dev.kestrel.catalogsync
 
 import dev.kestrel.providers.catalog.CatalogFile
+import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.CompatFlags
 import dev.kestrel.providers.catalog.Discovery
 import dev.kestrel.providers.catalog.InputKind
@@ -85,6 +86,9 @@ object CatalogSync {
         // CatalogLoader would keep only the last of two entries with one ID, so a duplicate stops the sync instead.
         val duplicate = providers.groupBy { it.id }.filterValues { it.size > 1 }.keys.firstOrNull()
         check(duplicate == null) { "Two manifests define the provider $duplicate" }
+        // CatalogLoader keys its corrections by provider and model, so two models with one ID stop the sync too.
+        val doubled = providers.firstOrNull { provider -> provider.models.groupBy { it.id }.any { it.value.size > 1 } }
+        check(doubled == null) { "The provider ${doubled?.id} has two models with one ID" }
         val catalog = CatalogFile(
             openclawCommit = commit,
             providers = providers.sortedBy { it.id }.map { it.copy(models = it.models.sortedBy(ModelEntry::id)) },
@@ -177,7 +181,7 @@ object CatalogSync {
                 label = own.firstOrNull()?.string("groupLabel") ?: manifest.string("name") ?: id,
                 style = style,
                 baseUrl = baseUrl,
-                hosts = (listOf(baseUrl) + models.map { it.baseUrl }).mapNotNull(::hostOf).distinct(),
+                hosts = (listOf(baseUrl) + models.map { it.baseUrl }).mapNotNull(CatalogLoader::hostOf).distinct(),
                 headers = entry?.obj("headers")?.mapNotNull { (key, value) -> (value as? JsonPrimitive)?.content?.let { key to it } }?.toMap()
                     .orEmpty(),
                 defaultModel = entry?.string("defaultModel"),
@@ -233,10 +237,6 @@ object CatalogSync {
         }.toSet()
         return kinds.ifEmpty { setOf(InputKind.TEXT) }
     }
-
-    private fun hostOf(url: String?): String? =
-        url?.substringAfter("://", "")?.substringBefore('/')?.substringBefore('?')?.substringBefore(':')?.lowercase()
-            ?.takeIf { it.isNotEmpty() }
 
     private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
 
