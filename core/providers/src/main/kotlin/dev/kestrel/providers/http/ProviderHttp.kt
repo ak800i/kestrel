@@ -60,13 +60,20 @@ class ProviderHttp(
         return reply
     }
 
-    /** Returns any status with its headers and body, for the sign-in flows and refreshers; only transport failures throw. */
+    /**
+     * Returns any status with its headers and body, for the sign-in flows and refreshers, without a refresh. It throws as
+     * the class says: ProviderException for a transport failure, for a 2xx body longer than [MAX_BODY_BYTES] (Malformed)
+     * and for a credential header that OkHttp refuses (BadCredential), and IllegalStateException for a refused header that
+     * the request itself sets.
+     */
     suspend fun exchange(request: HttpRequest, auth: RequestAuth = NoAuth): HttpReply =
         transport { fetch(request, auth.headers(request)) }
 
     /**
      * Reads a 2xx body of server-sent events and calls [onEvent] once per event. An error status throws ProviderException
-     * as [send] does; an exception that [onEvent] throws ends the stream and reaches the caller.
+     * as [send] does, and so does an event line or event that is too long (Malformed). An exception that [onEvent] throws
+     * ends the stream: an IOException that is not a ProviderException is classified first, as a transport failure is
+     * (by `classify`, else Timeout or Unreachable); any other exception reaches the caller unchanged.
      */
     suspend fun stream(request: HttpRequest, auth: RequestAuth, onEvent: suspend (SseEvent) -> Unit) {
         var failed = transport { open(request, auth.headers(request), onEvent) }

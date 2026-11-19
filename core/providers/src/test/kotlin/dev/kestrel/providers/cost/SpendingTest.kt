@@ -31,6 +31,16 @@ class SpendingTest {
     }
 
     @Test
+    fun aCallCountedInAnEarlierMonthKeepsTheNewerMonth() {
+        // For example after the phone's clock went back across the 1st.
+        val spending = Spending().add("p1", "2026-12", 1.0, 1).add("p1", "2026-11", 2.0, 2)
+
+        assertEquals(setOf("2026-11", "2026-12"), spending.months.keys)
+        assertEquals(MonthUse(1.0, 1), spending.of("p1", "2026-12"))
+        assertEquals(MonthUse(2.0, 2), spending.of("p1", "2026-11"))
+    }
+
+    @Test
     fun theMonthIsTheUtcMonth() {
         assertEquals("2026-11", Spending.monthOf(Instant.parse("2026-11-30T23:59:59Z").toEpochMilli()))
         assertEquals("2026-12", Spending.monthOf(Instant.parse("2026-12-01T00:00:00Z").toEpochMilli()))

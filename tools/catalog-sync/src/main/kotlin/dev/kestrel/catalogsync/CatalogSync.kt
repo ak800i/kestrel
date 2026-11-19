@@ -78,7 +78,12 @@ object CatalogSync {
             val manifest = parse(file)
             if (manifest.strings("categories").none { it == "models" }) continue
             modelsPlugins++
-            val result = read(manifest, file.parentFile.name)
+            val result = try {
+                read(manifest, file.parentFile.name)
+            } catch (e: SerializationException) {
+                // kotlinx's message names the JSON path but not the manifest, for example a flag of another type.
+                throw IllegalStateException("Cannot read extensions/${file.parentFile.name}/${file.name}", e)
+            }
             providers += result.providers
             skipped += result.skipped
             noPrice += result.noPrice

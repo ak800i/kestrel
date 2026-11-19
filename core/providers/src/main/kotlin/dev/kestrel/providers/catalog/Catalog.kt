@@ -47,7 +47,10 @@ data class ProviderEntry(
     val style: RequestStyle?,
     /** May hold `{region}` or `{location}`, which the profile fills in (design D13). */
     val baseUrl: String?,
-    /** The hosts of the base URL and of the models' base URLs; a host may hold `{region}` too. */
+    /**
+     * The hosts of the base URL and of the models' base URLs, and after the merge the hosts that overrides.json adds
+     * (Bedrock's control plane, for example); a host may hold `{region}` too.
+     */
     val hosts: List<String>,
     val regions: List<Region> = emptyList(),
     val headers: Map<String, String> = emptyMap(),

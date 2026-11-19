@@ -61,6 +61,15 @@ class CatalogSyncTest {
     }
 
     @Test
+    fun aManifestWhoseFlagsDoNotDecodeStopsTheSyncWithItsPath() {
+        manifest("""[{"id": "a", "compat": {"reasoningEffortMap": {"low": null}}}]""")
+
+        val error = assertThrows(IllegalStateException::class.java) { CatalogSync.generate(temporary.root.resolve("openclaw"), commit) }
+
+        assertEquals("Cannot read extensions/acme/openclaw.plugin.json", error.message)
+    }
+
+    @Test
     fun twoManifestsThatDefineOneProviderStopTheSync() {
         val groq = File(checkout, "extensions/groq/openclaw.plugin.json")
         for (folder in listOf("groq", "groq-copy")) {
