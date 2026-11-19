@@ -128,9 +128,31 @@ class OverridesTest {
         for (model in overrides.models.filter { it.prices != null }) {
             assertTrue("${model.provider}/${model.model}", model.pricesCopiedOn != null && model.pricesSource?.startsWith("https://") == true)
         }
-        assertEquals("2026-11-17", overrides.copilot.pricesCopiedOn)
+        assertEquals("2026-11-19", overrides.copilot.pricesCopiedOn)
         val names = overrides.copilot.models.map { it.name }.toSet()
         assertTrue(names.containsAll(overrides.copilot.lightweight + overrides.copilot.versatile))
+    }
+
+    @Test
+    fun everySyncedCopilotModelHasAPriceRowOrAReasonWhyGitHubDoesNotPriceIt() {
+        // The github-copilot models of providers.json that GitHub's price page of 2026-11-19 does not list. A sync that adds
+        // a model fails here until the model gets a row in copilot.models or a reason in this list.
+        val unpriced = mapOf(
+            "claude-opus-5" to "the page prices Claude Opus 4.8 and 5.5, not Opus 5",
+            "gemini-2.5-pro" to "the page lists no Gemini 2.5 model",
+            "gemini-3.1-pro-preview" to "the page lists no Gemini 3.1 model",
+            "gemini-3.5-flash" to "the page's only Flash model is Gemini 3.8 Flash",
+            "gemini-3.6-flash" to "the page's only Flash model is Gemini 3.8 Flash",
+            "gpt-5.4" to "the page prices only GPT-5.4 nano of the GPT-5.4 models",
+            "gpt-5.4-mini" to "the page prices only GPT-5.4 nano of the GPT-5.4 models",
+            "gpt-5.5" to "the page lists no GPT-5.5 model",
+            "gpt-5.6-terra" to "the page prices GPT-5.6 Luna and Sol, not Terra",
+        )
+        val models = synced.providers.single { it.id == CatalogLoader.COPILOT }.models
+        val withoutRow = models.filter { CatalogLoader.copilotPrice(overrides.copilot, it.id, it.name) == null }.map { it.id }
+
+        assertEquals(unpriced.keys.sorted(), withoutRow.sorted())
+        assertTrue(unpriced.values.all { it.isNotBlank() })
     }
 
     @Test
