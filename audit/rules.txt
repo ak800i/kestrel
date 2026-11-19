@@ -3,7 +3,7 @@
 #   deny <group:name> <reason>
 #   pin <group:name> <version glob>
 #   allow <group:name> <SPDX licence>
-#   allow-network-class <internal class prefix> <justification>
+#   allow-network-class <module path> <internal class prefix> <justification>
 #   allow-native-symbol <library.so> <symbol> <justification>
 # "*" matches any run of characters. Deny rules win over allow rules.
 # Every exception needs a written justification.
@@ -42,7 +42,7 @@ pin com.microsoft.onnxruntime:* 1.28.*
 pin com.k2fsa.sherpa.onnx:* 1.13.8
 
 # Network API exceptions
-allow-network-class dev/kestrel/privacy/network/ The network gateway is the only HTTP client in Kestrel (design spec, section 13.1).
+allow-network-class :core:privacy dev/kestrel/privacy/network/ The network gateway is the only HTTP client in Kestrel (design spec, section 13.1).
 
 # Reviewed licences
 allow androidx.*:* Apache-2.0

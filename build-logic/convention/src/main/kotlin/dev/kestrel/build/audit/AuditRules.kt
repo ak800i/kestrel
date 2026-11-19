@@ -27,7 +27,8 @@ internal fun globToRegex(glob: String): Regex =
 data class AllowRule(val pattern: CoordinatePattern, val license: String)
 data class DenyRule(val pattern: CoordinatePattern, val reason: String)
 data class PinRule(val pattern: CoordinatePattern, val versionGlob: String)
-data class NetworkClassException(val classPrefix: String, val justification: String)
+/** Exempts the classes under [classPrefix] in the module [modulePath], such as `:core:privacy`, and in no other module. */
+data class NetworkClassException(val modulePath: String, val classPrefix: String, val justification: String)
 data class NativeSymbolException(val libraryName: String, val symbol: String, val justification: String)
 
 /** The parsed contents of `audit/rules.txt`. */
@@ -62,8 +63,8 @@ class AuditRules(
         return problems
     }
 
-    fun isNetworkClassExcepted(internalClassName: String): Boolean =
-        networkClassExceptions.any { internalClassName.startsWith(it.classPrefix) }
+    fun isNetworkClassExcepted(modulePath: String, internalClassName: String): Boolean =
+        networkClassExceptions.any { it.modulePath == modulePath && internalClassName.startsWith(it.classPrefix) }
 
     fun isNativeSymbolExcepted(libraryName: String, symbol: String): Boolean =
         nativeSymbolExceptions.any { it.libraryName == libraryName && it.symbol == symbol }
@@ -102,8 +103,10 @@ class AuditRules(
                         pins += PinRule(CoordinatePattern(parts[1]), parts[2])
                     }
                     "allow-network-class" -> {
-                        if (parts.size < 3) fail("expected 'allow-network-class <class prefix> <justification>'")
-                        networkClasses += NetworkClassException(parts[1], rest(2))
+                        if (parts.size < 4 || !parts[1].startsWith(":")) {
+                            fail("expected 'allow-network-class <module path> <class prefix> <justification>'")
+                        }
+                        networkClasses += NetworkClassException(parts[1], parts[2], rest(3))
                     }
                     "allow-native-symbol" -> {
                         if (parts.size < 4) fail("expected 'allow-native-symbol <library.so> <symbol> <justification>'")

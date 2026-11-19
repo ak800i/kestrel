@@ -7,6 +7,8 @@ import org.gradle.api.file.Directory
 import org.gradle.api.file.RegularFile
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputFile
@@ -34,6 +36,10 @@ abstract class ScanNetworkApisTask : DefaultTask() {
     @get:InputFile
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val rulesFile: RegularFileProperty
+
+    /** The Gradle path of the scanned module, such as `:core:privacy`: an exception in the rules applies to one module only. */
+    @get:Input
+    abstract val modulePath: Property<String>
 
     @get:OutputFile
     abstract val report: RegularFileProperty
@@ -63,7 +69,8 @@ abstract class ScanNetworkApisTask : DefaultTask() {
                     .forEach { entry -> findings += scanner.scan(zip.getInputStream(entry).use { it.readBytes() }) }
             }
         }
-        val (excepted, violations) = findings.distinct().partition { rules.isNetworkClassExcepted(it.className) }
+        val module = modulePath.get()
+        val (excepted, violations) = findings.distinct().partition { rules.isNetworkClassExcepted(module, it.className) }
         reportFile.writeText(
             buildString {
                 appendLine(if (violations.isEmpty()) "No network API use outside the exceptions." else "Violations:")

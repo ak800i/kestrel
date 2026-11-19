@@ -18,15 +18,28 @@ object NetworkApiRules {
         "java/net/URLConnection", "java/net/HttpURLConnection", "java/net/JarURLConnection",
         "java/nio/channels/SocketChannel", "java/nio/channels/ServerSocketChannel",
         "java/nio/channels/DatagramChannel", "java/nio/channels/AsynchronousSocketChannel",
+        "java/nio/channels/AsynchronousServerSocketChannel",
         "android/webkit/WebView", "android/app/DownloadManager", "android/location/Geocoder",
         // Only the gateway may build an OkHttp client. Other code uses the gateway's Call.Factory.
         "okhttp3/OkHttpClient", "okhttp3/OkHttpClient\$Builder",
+        // OkHttp's name lookups send a host name to the network's resolver outside the gateway's allowlist and log.
+        "okhttp3/Dns",
     )
-    private val networkPackages = listOf("java/net/http/", "javax/net/", "android/net/http/", "org/chromium/net/")
+    private val networkPackages = listOf(
+        "java/net/http/", "javax/net/", "android/net/http/", "org/chromium/net/",
+        "okhttp3/Dns\$", "okhttp3/android/", "okhttp3/dnsoverhttps/",
+    )
     private val networkMethods = mapOf(
         "java/net/URL" to setOf("openConnection", "openStream", "getContent"),
-        "java/net/InetAddress" to setOf("getByName", "getAllByName", "getLocalHost"),
+        "java/net/InetAddress" to setOf(
+            "getByName", "getAllByName", "getLocalHost", "isReachable", "getHostName", "getCanonicalHostName",
+        ),
         "android/net/Network" to setOf("openConnection", "bindSocket", "getSocketFactory", "getByName", "getAllByName"),
+    )
+
+    /** Calls that are network access only with this descriptor: this constructor looks the name up at once. */
+    private val networkSignatures = mapOf(
+        "java/net/InetSocketAddress" to setOf("<init>(Ljava/lang/String;I)V"),
     )
     private val typeInDescriptor = Regex("L([^;]+);")
 
@@ -36,6 +49,7 @@ object NetworkApiRules {
     fun isNetworkCall(owner: String, name: String, descriptor: String): Boolean =
         isNetworkType(owner) ||
             networkMethods[owner]?.contains(name) == true ||
+            networkSignatures[owner]?.contains(name + descriptor) == true ||
             (owner.startsWith("kotlin/io/") && descriptor.contains("Ljava/net/URL;")) ||
             typeInDescriptor.findAll(descriptor).any { isNetworkType(it.groupValues[1]) }
 }

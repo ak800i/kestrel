@@ -39,6 +39,7 @@ class AuditPlugin : Plugin<Project> {
             val scan = project.tasks.register("kestrelScanNetworkApis", ScanNetworkApisTask::class.java) {
                 extraClassDirectories.from(classes)
                 rulesFile.set(rules)
+                modulePath.set(project.path)
                 report.set(project.layout.buildDirectory.file("reports/kestrel-audit/network-apis.txt"))
             }
             audit.configure { dependsOn(scan) }
@@ -53,6 +54,7 @@ class AuditPlugin : Plugin<Project> {
             val reports = project.layout.buildDirectory.dir("reports/kestrel-audit")
             val scan = project.tasks.register("kestrelScanNetworkApis$suffix", ScanNetworkApisTask::class.java) {
                 rulesFile.set(rules)
+                modulePath.set(project.path)
                 report.set(reports.map { it.file("network-apis-${variant.name}.txt") })
             }
             variant.artifacts.forScope(ScopedArtifacts.Scope.PROJECT)

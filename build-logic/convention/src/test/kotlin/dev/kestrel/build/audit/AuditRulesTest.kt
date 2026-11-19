@@ -16,7 +16,7 @@ class AuditRulesTest {
         allow androidx.*:* Apache-2.0
         allow com.microsoft.onnxruntime:* MIT
         allow org.example:gpl2 GPL-2.0-only
-        allow-network-class dev/kestrel/tools/ Runs on the PC only
+        allow-network-class :tools dev/kestrel/tools/ Runs on the PC only
         allow-native-symbol libexample.so connect Connects to a local socket only
         """.trimIndent(),
     )
@@ -52,6 +52,15 @@ class AuditRulesTest {
     }
 
     @Test
+    fun projectRulesExemptTheGatewaysPackageOnlyInCorePrivacy() {
+        val projectRules = AuditRules.parse(File("../../audit/rules.txt").readText())
+
+        assertTrue(projectRules.isNetworkClassExcepted(":core:privacy", "dev/kestrel/privacy/network/NetworkGateway"))
+        assertFalse(projectRules.isNetworkClassExcepted(":core:providers", "dev/kestrel/privacy/network/NetworkGateway"))
+        assertFalse(projectRules.isNetworkClassExcepted(":app", "dev/kestrel/privacy/network/NetworkGateway"))
+    }
+
+    @Test
     fun dependencyWithoutAllowRuleFails() {
         val problems = rules.checkDependencies(listOf(Coordinates("org.unknown", "lib", "1.0")))
         assertEquals(
@@ -80,8 +89,10 @@ class AuditRulesTest {
 
     @Test
     fun exceptionsNeedAnExactMatch() {
-        assertTrue(rules.isNetworkClassExcepted("dev/kestrel/tools/Fetcher"))
-        assertFalse(rules.isNetworkClassExcepted("dev/kestrel/app/Fetcher"))
+        assertTrue(rules.isNetworkClassExcepted(":tools", "dev/kestrel/tools/Fetcher"))
+        assertFalse(rules.isNetworkClassExcepted(":tools", "dev/kestrel/app/Fetcher"))
+        assertFalse(rules.isNetworkClassExcepted(":app", "dev/kestrel/tools/Fetcher"))
+        assertFalse(rules.isNetworkClassExcepted(":tools:other", "dev/kestrel/tools/Fetcher"))
         assertTrue(rules.isNativeSymbolExcepted("libexample.so", "connect"))
         assertFalse(rules.isNativeSymbolExcepted("libexample.so", "socket"))
         assertFalse(rules.isNativeSymbolExcepted("libother.so", "connect"))
@@ -92,7 +103,7 @@ class AuditRulesTest {
         val error = runCatching { AuditRules.parse("allow androidx.*:* Apache-2.0\nallow-network-class dev/kestrel/") }
             .exceptionOrNull()
         assertEquals(
-            "audit/rules.txt line 2: expected 'allow-network-class <class prefix> <justification>'",
+            "audit/rules.txt line 2: expected 'allow-network-class <module path> <class prefix> <justification>'",
             error?.message,
         )
     }
