@@ -236,6 +236,20 @@ class HeadsetRouteTest {
     }
 
     @Test
+    fun aHeadsetThatAndroidAlreadyNamesIsUsedWithoutAWait() {
+        // Android names the headset as its communication device at once and sends no report of it.
+        val devices = FakeDevices(headsets = listOf(classic), linksAtOnce = true)
+        val route = HeadsetRoute(devices, linkMillis = 2_000)
+        val started = System.nanoTime()
+
+        assertSame(classic, route.open {})
+
+        assertTrue("The start waited", (System.nanoTime() - started) / 1_000_000 < 1_000)
+        assertTrue("${route.linkedMillis}", (route.linkedMillis ?: -1) in 0..<1_000)
+        assertTrue(route.holding)
+    }
+
+    @Test
     fun openGivesUpWaitingAfterItsLimitAndKeepsTheRequest() {
         val devices = FakeDevices(headsets = listOf(classic), linksAtOnce = false)
         val route = HeadsetRoute(devices, linkMillis = 50)

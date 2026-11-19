@@ -58,8 +58,11 @@ class HeadsetRoute(private val devices: CommunicationDevices, private val linkMi
     /**
      * Asks for a connected headset and returns it, or returns null when no headset is connected or Android refused it;
      * the phone's microphone then records as before. [onLost] runs at most once, on the thread of Android's report, when
-     * the route has given the headset up on its own; [close] waits for it. Throws [IllegalStateException] while a
-     * headset is asked for, and rethrows a failure to watch Android's reports after it has withdrawn the request.
+     * the route has given the headset up on its own; [close] waits for it. After the request, it waits up to [linkMillis]
+     * until Android names the headset as its communication device, and returns the headset also when Android does not
+     * name it in time. Throws [IllegalStateException] while a headset is asked for, and rethrows a failure to watch
+     * Android's reports, or a failure to ask Android for its current communication device, after it has withdrawn the
+     * request.
      */
     fun open(onLost: () -> Unit): Headset? {
         // Ends the wait below: the headset's own report, which names it, or a report of another device, after which the

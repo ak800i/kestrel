@@ -31,10 +31,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * its communication device, so that Android routes the recording there from its first frame (on Android 13 a classic
  * headset is named only once its link is up), and for an LE Audio headset the recording also names the headset's
  * microphone as its preferred device, because Android gives that microphone to VOICE_RECOGNITION only then (research
- * r12). When the earbuds go away,
- * or a call takes the audio over, the phone's microphone records until the next start. [stop] withdraws the request.
- * Without earbuds, when Android refuses them, or when Android lists no microphone for an LE Audio headset, the phone's
- * microphone records as before.
+ * r12). When the earbuds go away, or a call takes the audio over, the phone's microphone records until the next start.
+ * [stop] withdraws the request. Without earbuds, when Android refuses them, or when Android lists no microphone for an
+ * LE Audio headset, the phone's microphone records as before.
  *
  * Any thread may call [start] and [stop], except the microphone's own thread.
  */

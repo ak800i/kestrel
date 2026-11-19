@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.debug.HookReply
 import dev.kestrel.app.debug.TestHooks
@@ -91,28 +92,53 @@ class SessionHookTest {
         VoiceTests.assumeModels(Engine.VAD, Engine.KWS, Engine.ASR, Engine.TTS)
         VoiceTests.grantListeningPermissions()
         val answer = Regex(
-            "earbud=(on|off) microphone=open holding=false headset=none linkedMillis=none " +
+            "earbud=off microphone=open holding=false headset=none linkedMillis=none " +
                 "communication=[a-z0-9-]+ routed=[a-z0-9-]+ loudest=\\d+",
         )
-
-        // With Kestrel's own microphone, which records from the emulator's microphone; the earbud option is off.
-        ActivityScenario.launch(MainActivity::class.java).use {
-            listening.send(Event.Toggle)
+        // The earbud option off, so that the recording asks for no earbuds, also on a phone where the owner turned it
+        // on and earbuds are connected. The owner's value comes back after the voice session has closed.
+        val earbud = storedEarbudMicrophone()
+        storeEarbudMicrophone(false)
+        try {
             assertTrue(
-                "The voice session did not open",
-                VoiceTests.waitUntil(60_000) { listening.sessionOpen.value && VoiceTests.graph.latestMicrophone != null },
+                "Kestrel did not take the earbud option off",
+                VoiceTests.waitUntil(5_000) { !listening.currentOptions.value.earbudMicrophone },
             )
-            // The recording reports its route a moment after it starts.
-            var reply = hook("VOICE_ROUTE")
-            VoiceTests.waitUntil(5_000) {
-                reply = hook("VOICE_ROUTE")
-                answer.matches(reply.text) && !reply.text.contains(" routed=none ")
-            }
 
-            assertEquals(reply.text, Activity.RESULT_OK, reply.code)
-            assertTrue(reply.text, answer.matches(reply.text))
-            assertTrue(reply.text, !reply.text.contains(" routed=none "))
+            // With Kestrel's own microphone, which records from the emulator's microphone.
+            ActivityScenario.launch(MainActivity::class.java).use {
+                listening.send(Event.Toggle)
+                val opened = VoiceTests.waitUntil(60_000) {
+                    listening.sessionOpen.value && VoiceTests.graph.latestMicrophone != null
+                }
+                assertTrue("The voice session did not open", opened)
+                // The recording reports its route a moment after it starts.
+                var reply = hook("VOICE_ROUTE")
+                VoiceTests.waitUntil(5_000) {
+                    reply = hook("VOICE_ROUTE")
+                    answer.matches(reply.text) && !reply.text.contains(" routed=none ")
+                }
+
+                assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+                assertTrue(reply.text, answer.matches(reply.text))
+                assertTrue(reply.text, !reply.text.contains(" routed=none "))
+            }
+        } finally {
+            try {
+                VoiceTests.stopListening()
+            } finally {
+                storeEarbudMicrophone(earbud)
+            }
         }
+    }
+
+    private fun storedEarbudMicrophone(): Boolean =
+        runBlocking { VoiceTests.graph.settings.get(SettingKeys.LISTENING_OPTIONS) }.earbudMicrophone
+
+    private fun storeEarbudMicrophone(on: Boolean) = runBlocking {
+        val settings = VoiceTests.graph.settings
+        val stored = settings.get(SettingKeys.LISTENING_OPTIONS)
+        settings.set(SettingKeys.LISTENING_OPTIONS, stored.copy(earbudMicrophone = on))
     }
 
     @Test
