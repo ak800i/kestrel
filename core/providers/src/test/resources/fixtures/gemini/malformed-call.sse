@@ -1,0 +1,1 @@
+data: {"candidates":[{"content":{"parts":[],"role":"model"},"index":0,"finishReason":"MALFORMED_FUNCTION_CALL","finishMessage":"Malformed function call: open_app(name=Camera"}],"modelVersion":"gemini-3.8-flash","usageMetadata":{"promptTokenCount":300,"candidatesTokenCount":0,"totalTokenCount":300}}

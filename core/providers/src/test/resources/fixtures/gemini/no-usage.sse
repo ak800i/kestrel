@@ -1,0 +1,1 @@
+data: {"candidates":[{"content":{"parts":[{"text":"Hello, owner."}],"role":"model"},"index":0,"finishReason":"STOP"}],"modelVersion":"gemini-3.8-flash"}

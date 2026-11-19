@@ -1,0 +1,56 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are Kestrel."
+      }
+    ]
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Hi"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "open_app",
+          "description": "Opens an app by its name.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The app's name."
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "name": "get_number",
+          "description": "Returns the test number."
+        }
+      ]
+    }
+  ],
+  "toolConfig": {
+    "functionCallingConfig": {
+      "mode": "AUTO"
+    }
+  },
+  "generationConfig": {
+    "maxOutputTokens": 256,
+    "thinkingConfig": {
+      "thinkingLevel": "LOW"
+    }
+  }
+}

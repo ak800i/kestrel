@@ -1,0 +1,1 @@
+data: {"promptFeedback":{"blockReason":"SAFETY"},"modelVersion":"gemini-3.8-flash","usageMetadata":{"promptTokenCount":300,"totalTokenCount":300}}

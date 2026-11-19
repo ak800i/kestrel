@@ -1,0 +1,1 @@
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"open_app","args":{"name":"Camera"}},"thoughtSignature":"c2lnLXRocmVl"},{"functionCall":{"name":"close_app","args":{"name":"Clock"}}}],"role":"model"},"index":0,"finishReason":"STOP"}],"modelVersion":"gemini-3.8-flash","usageMetadata":{"promptTokenCount":300,"candidatesTokenCount":20,"totalTokenCount":320}}
