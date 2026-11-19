@@ -37,9 +37,10 @@ internal const val MAX_BODY_BYTES = 8L * 1024 * 1024
  * BlockedRequestException; (4) an InterruptedIOException is a Timeout; (5) any other IOException is Unreachable. A value
  * of the credential's headers that OkHttp refuses becomes BadCredential without its message, because the message can hold
  * a key; a refused header that the request itself sets is a bug and throws IllegalStateException, also without the
- * message. A body longer than [MAX_BODY_BYTES] (8 MiB), an event line longer than [SseReader.MAX_LINE_BYTES] (1 MiB) or an
- * event whose joined data is longer than [SseReader.MAX_EVENT_BYTES] (8 MiB) is Malformed, and the rest of it is not read,
- * so that a broken or hostile server cannot exhaust the app's memory.
+ * message. A 2xx body longer than [MAX_BODY_BYTES] (8 MiB), an event line longer than [SseReader.MAX_LINE_BYTES] (1 MiB)
+ * or an event whose joined data is longer than [SseReader.MAX_EVENT_BYTES] (8 MiB) is Malformed, and the rest of it is not
+ * read, so that a broken or hostile server cannot exhaust the app's memory; an error reply keeps its status's error and
+ * only the first 8 MiB of its body.
  */
 class ProviderHttp(
     private val calls: Call.Factory,
@@ -138,11 +139,18 @@ class ProviderHttp(
         }
     }
 
-    /** Reads a whole body of at most [MAX_BODY_BYTES]; a longer one is Malformed, and its rest is not read. */
+    /**
+     * Reads a whole body of at most [MAX_BODY_BYTES]; a longer one is Malformed, and its rest is not read. An error reply's
+     * longer body keeps only its first [MAX_BODY_BYTES], so that the reply keeps its status's error.
+     */
     private fun bodyBytes(response: Response): ByteArray {
         val body = response.body
-        if (body.contentLength() > MAX_BODY_BYTES) throw ProviderException(ProviderError.Malformed)
         val source = body.source()
+        if (response.code !in 200..299) {
+            source.request(MAX_BODY_BYTES)
+            return source.buffer.readByteArray(minOf(source.buffer.size, MAX_BODY_BYTES))
+        }
+        if (body.contentLength() > MAX_BODY_BYTES) throw ProviderException(ProviderError.Malformed)
         if (source.request(MAX_BODY_BYTES + 1)) throw ProviderException(ProviderError.Malformed)
         return source.readByteArray()
     }

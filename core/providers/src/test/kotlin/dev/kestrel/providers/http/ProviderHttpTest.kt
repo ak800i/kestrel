@@ -28,6 +28,7 @@ import org.junit.Test
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 
 class ProviderHttpTest {
@@ -305,8 +306,8 @@ class ProviderHttpTest {
     @Test
     fun aCancelReturnsAtOnceAlsoWhileTheHostIsStillLookedUp() = runBlocking {
         val client = OkHttpClient()
-        var hanging: HangingCall? = null
-        val http = ProviderHttp(Call.Factory { request: Request -> HangingCall(client.newCall(request)).also { hanging = it } })
+        val hanging = AtomicReference<HangingCall?>()
+        val http = ProviderHttp(Call.Factory { request: Request -> HangingCall(client.newCall(request)).also { hanging.set(it) } })
         val ended = CompletableDeferred<Throwable?>()
         val job = launch(Dispatchers.Default) {
             try {
@@ -317,8 +318,8 @@ class ProviderHttpTest {
                 throw e
             }
         }
-        withTimeout(5_000) { while (hanging == null) delay(10) }
-        val call = hanging!!
+        withTimeout(5_000) { while (hanging.get() == null) delay(10) }
+        val call = hanging.get()!!
         try {
             withTimeout(5_000) { call.started.await() }
 
@@ -340,6 +341,31 @@ class ProviderHttpTest {
 
         assertEquals(MAX_BODY_BYTES.toInt(), http.send(post(), NoAuth).body.size)
         assertEquals(ProviderError.Malformed, errorOf { http.send(post(), NoAuth) })
+    }
+
+    @Test
+    fun aChunkedBodyLargerThanTheLimitIsMalformed() = runBlocking {
+        // A chunked reply has no Content-Length, so only the read itself can stop at the limit.
+        server.enqueue(MockResponse.Builder().chunkedBody(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt())), 64 * 1024).build())
+        server.enqueue(MockResponse.Builder().chunkedBody(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1)), 64 * 1024).build())
+        val http = ProviderHttp(calls)
+
+        assertEquals(MAX_BODY_BYTES.toInt(), http.send(post(), NoAuth).body.size)
+        assertEquals(ProviderError.Malformed, errorOf { http.send(post(), NoAuth) })
+    }
+
+    @Test
+    fun anErrorReplyLargerThanTheLimitKeepsItsStatussError() = runBlocking {
+        server.enqueue(MockResponse.Builder().code(503).body(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1))).build())
+        server.enqueue(
+            MockResponse.Builder().code(503).chunkedBody(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1)), 64 * 1024).build(),
+        )
+        server.enqueue(MockResponse.Builder().code(500).body(Buffer().write(ByteArray(MAX_BODY_BYTES.toInt() + 1))).build())
+        val http = ProviderHttp(calls)
+
+        assertEquals(ProviderError.ServerError(503), errorOf { http.send(post(), NoAuth) })
+        assertEquals(ProviderError.ServerError(503), errorOf { http.stream(post(), NoAuth) { } })
+        assertEquals(MAX_BODY_BYTES.toInt(), http.exchange(post()).body.size)
     }
 
     @Test
