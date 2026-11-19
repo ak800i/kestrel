@@ -7,6 +7,8 @@ import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.chat.StyleOptions
 import dev.kestrel.providers.http.ApiKeyAuth
 import dev.kestrel.providers.http.KeyHeader
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.styles.AdapterHarness.Companion.errorOf
 import dev.kestrel.providers.styles.AdapterHarness.Companion.json
 import dev.kestrel.providers.styles.AdapterHarness.Companion.request
 import dev.kestrel.providers.styles.AdapterHarness.Companion.target
@@ -91,5 +93,39 @@ class AzureAdapterTest {
         // OpenClaw's resolveOpenAIModelReasoningEfforts gives GPT-6 on Azure's Responses API no GPT-6 list (which lacks
         // `minimal`), so the generic efforts and the ones that the model's own map names apply.
         assertEquals(json("""{"effort":"minimal"}"""), bench.body(bench.take())["reasoning"])
+    }
+
+    @Test
+    fun aGpt6DeploymentOnFoundryKeepsTheGpt6EffortsAsOpenClawsFoundryPluginDoes() = runBlocking {
+        bench.reply("azure/responses-text.sse")
+        val model = ModelEntry("gpt-6-luna", "gpt-6-luna", reasoning = true, thinkingLevelMap = mapOf("minimal" to "minimal"))
+        val luna = target("microsoft-foundry", RequestStyle.AZURE, "https://kestrel.services.ai.azure.com", model, ApiKeyAuth("test-key", KeyHeader.API_KEY))
+
+        adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.MINIMAL) }, luna)
+
+        // OpenClaw's Foundry plugin sends openai-responses, whose GPT-6 list has no `minimal`, so the nearest effort is `low`.
+        assertEquals(json("""{"effort":"low"}"""), bench.body(bench.take())["reasoning"])
+    }
+
+    @Test
+    fun aGpt35DeploymentOnChatCompletionsKeepsMaxTokens() = runBlocking {
+        bench.reply("azure/chat-text.sse")
+
+        adapter.complete(request(user("Hi")), deployment("gpt-35-turbo", "https://kestrel.openai.azure.com", KeyHeader.API_KEY, StyleOptions(wire = RequestStyle.CHAT_COMPLETIONS)))
+
+        val body = bench.body(bench.take())
+        assertEquals(json("256"), body["max_tokens"])
+        assertNull(body["max_completion_tokens"])
+    }
+
+    @Test
+    fun anEndpointOrAnApiThatAzureDoesNotServeFailsWithoutARequest() {
+        val cases = listOf(
+            deployment("gpt-6-luna", "https://example.com/openai/v1?api-version=1", KeyHeader.API_KEY),
+            deployment("gpt-6-luna", "https://kestrel.openai.azure.com:8443/openai/v1", KeyHeader.API_KEY),
+            deployment("gemini-3.8-flash", "https://kestrel.services.ai.azure.com", KeyHeader.API_KEY, StyleOptions(wire = RequestStyle.GEMINI)),
+        )
+        for (case in cases) assertEquals(ProviderError.NotAllowed, errorOf(adapter, request(user("Hi")), case))
+        assertEquals(0, bench.server.requestCount)
     }
 }

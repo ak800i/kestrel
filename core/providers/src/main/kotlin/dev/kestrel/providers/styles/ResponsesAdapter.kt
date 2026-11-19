@@ -47,8 +47,8 @@ import kotlinx.serialization.json.putJsonObject
  * D17 says, inside the stream and before it, and every 429 is QuotaOrPolicy, because a plan's limit does not end within a
  * retry.
  *
- * [azure] is set by the Azure adapter: Azure's Responses API gives a GPT-6 deployment OpenClaw's generic efforts
- * ([Wire.effort]'s `azureResponses`).
+ * [azure] is set by the Azure adapter for an Azure OpenAI endpoint: Azure OpenAI's Responses API gives a GPT-6
+ * deployment OpenClaw's generic efforts ([Wire.effort]'s `azureResponses`); Microsoft Foundry's other hosts do not set it.
  */
 internal class ResponsesAdapter(private val http: ProviderHttp, private val azure: Boolean = false) : ChatAdapter {
     override suspend fun complete(request: ChatRequest, target: ModelTarget): ChatResponse {

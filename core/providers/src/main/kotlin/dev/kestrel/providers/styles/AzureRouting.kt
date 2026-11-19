@@ -24,16 +24,19 @@ object AzureRouting {
     }
 
     /**
-     * The endpoint that the owner typed, reduced to `https://<resource>.<Azure host>/`: it must be HTTPS on an Azure OpenAI
-     * or Foundry host, without user information or a fragment, and its path may only be an `/openai…` or `/anthropic…`
-     * suffix, which is dropped together with any query. Null when the address is none of these.
+     * The endpoint that the owner typed, reduced to `https://<resource>.<Azure host>/`: it must be HTTPS on port 443 on an
+     * Azure OpenAI or Foundry host, without user information or a fragment, and its path may only be an `/openai…` or
+     * `/anthropic…` suffix, which is dropped together with any query. Null when the address is none of these.
      */
     fun normalise(endpoint: String): HttpUrl? {
         val url = endpoint.trim().toHttpUrlOrNull() ?: return null
-        if (!url.isHttps || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null) return null
+        if (!url.isHttps || url.port != 443 || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null) return null
         if (HOSTS.none { url.host.endsWith(it) }) return null
         val path = url.encodedPath.trimEnd('/')
         if (path.isNotEmpty() && path != "/openai" && !path.startsWith("/openai/") && path != "/anthropic" && !path.startsWith("/anthropic/")) return null
         return url.newBuilder().encodedPath("/").query(null).build()
     }
+
+    /** Whether [root] is an Azure OpenAI endpoint (`*.openai.azure.com`), as OpenClaw's `isAzureOpenAIBaseUrl` tells it. */
+    internal fun isAzureOpenAi(root: HttpUrl): Boolean = root.host.endsWith(".openai.azure.com")
 }

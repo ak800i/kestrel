@@ -140,8 +140,9 @@ internal object Wire {
      * list for its GPT-5 or GPT-6 family, or else OpenClaw's generic `low`, `medium` and `high` and the efforts that its
      * `thinkingLevelMap` names, so that `minimal` becomes `low` on DeepSeek and the other rows without a list.
      * [chatCompletions] says that the request goes to Chat Completions, where OpenClaw gives GPT-5.6 and GPT-6 no `max`;
-     * [azureResponses] says that it goes to Azure's Responses API, where OpenClaw gives GPT-6 no GPT-6 list until Azure's
-     * GPT-6 contracts are verified, so that such a deployment gets the generic efforts.
+     * [azureResponses] says that it goes to Azure OpenAI's Responses API (OpenClaw's `azure-openai-responses`), where
+     * OpenClaw gives GPT-6 no GPT-6 list until Azure's GPT-6 contracts are verified, so that such a deployment gets the
+     * generic efforts; Microsoft Foundry's other hosts keep the GPT-6 lists, as OpenClaw's Foundry plugin does.
      * Null when the effort would be `none`, or when the model's compat says `supportsReasoningEffort: false`, for which
      * OpenClaw sends no effort at all.
      */

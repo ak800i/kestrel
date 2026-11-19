@@ -35,6 +35,7 @@ class AzureRoutingTest {
         assertNull(AzureRouting.normalise("https://kestrel.openai.azure.com.evil.example"))
         assertNull(AzureRouting.normalise("https://user:pass@kestrel.openai.azure.com"))
         assertNull(AzureRouting.normalise("https://kestrel.openai.azure.com/other/path"))
+        assertNull(AzureRouting.normalise("https://kestrel.openai.azure.com:8443/openai"))
         assertNull(AzureRouting.normalise("not an address"))
     }
 }
