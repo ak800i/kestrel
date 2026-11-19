@@ -44,7 +44,9 @@ import kotlin.math.roundToInt
  * answer shows. VOICE_COUNTS also counts the keyword hits by keyword, the transcribed utterances, those that began with
  * the name, their audio in milliseconds and how Requests read each one, and VOICE_TIMES answers the phone's own times of
  * Kestrel's starts, sessions, ends of speech, reactions, turn-offs and settings, and whether Android runs the listening
- * service in the foreground (plan 2E). Their answers hold only counts, lengths, levels, times and the names of kinds.
+ * service in the foreground (plan 2E). VOICE_ROUTE answers the earbud option and the route of the newest recording
+ * (MicCapture.routeReport), so that the A71 session sees where the earbuds' recording goes. Their answers hold only
+ * counts, lengths, levels, times, device types and the names of kinds.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
@@ -54,6 +56,8 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
                 if (counts.isEmpty()) "" else " $counts"
         }
         "VOICE_TIMES" -> times()
+        "VOICE_ROUTE" -> "earbud=${if (graph.listening.currentOptions.value.earbudMicrophone) "on" else "off"} " +
+            (graph.latestMicrophone?.routeReport() ?: "microphone=none")
         "VOICE_TASK" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clearTask() else task(intent)
         "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
         else -> throw HookError("unknown command '$command'")
@@ -197,7 +201,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     companion object {
-        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_TASK", "VOICE_ECHO")
+        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_TASK", "VOICE_ECHO")
 
         private val lock = Any()
 

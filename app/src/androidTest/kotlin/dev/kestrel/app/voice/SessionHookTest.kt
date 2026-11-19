@@ -87,6 +87,35 @@ class SessionHookTest {
     }
 
     @Test
+    fun theRouteHookAnswersTheRecordingsRouteAsTypesAndLevelsOnly() {
+        VoiceTests.assumeModels(Engine.VAD, Engine.KWS, Engine.ASR, Engine.TTS)
+        VoiceTests.grantListeningPermissions()
+        val answer = Regex(
+            "earbud=(on|off) microphone=open holding=false headset=none linkedMillis=none " +
+                "communication=[a-z0-9-]+ routed=[a-z0-9-]+ loudest=\\d+",
+        )
+
+        // With Kestrel's own microphone, which records from the emulator's microphone; the earbud option is off.
+        ActivityScenario.launch(MainActivity::class.java).use {
+            listening.send(Event.Toggle)
+            assertTrue(
+                "The voice session did not open",
+                VoiceTests.waitUntil(60_000) { listening.sessionOpen.value && VoiceTests.graph.latestMicrophone != null },
+            )
+            // The recording reports its route a moment after it starts.
+            var reply = hook("VOICE_ROUTE")
+            VoiceTests.waitUntil(5_000) {
+                reply = hook("VOICE_ROUTE")
+                answer.matches(reply.text) && !reply.text.contains(" routed=none ")
+            }
+
+            assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+            assertTrue(reply.text, answer.matches(reply.text))
+            assertTrue(reply.text, !reply.text.contains(" routed=none "))
+        }
+    }
+
+    @Test
     fun theTimesHookAnswersOnlyTimesAndKinds() {
         VoiceTests.graph.timeline.start("tile")
 

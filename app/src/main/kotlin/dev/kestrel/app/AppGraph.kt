@@ -268,10 +268,17 @@ class AppGraph(context: Context) {
             options = settings.observe(SettingKeys.LISTENING_OPTIONS),
             conditions = AndroidListeningConditions(appContext),
             // The owner's choice as Listening read it last, on the controller's thread, where the microphone starts.
-            microphones = { MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }) },
+            microphones = {
+                MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }).also { latestMicrophone = it }
+            },
             timeline = timeline,
         ).also(::keepScreenFresh)
     }
+
+    /** The microphone of the newest voice session, for the debug hook voice-route (plan 2E). */
+    @Volatile
+    internal var latestMicrophone: MicCapture? = null
+        private set
 
     private val screens = MutableStateFlow<ScreenSession?>(null)
 

@@ -1,6 +1,7 @@
 package dev.kestrel.voice.listen
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
@@ -14,8 +15,17 @@ import kotlin.concurrent.thread
 
 class HeadsetRouteTest {
     /** Android's communication devices: the headsets that it offers, and the requests and watchers that it got. */
-    private class FakeDevices(var headsets: List<Headset> = emptyList(), var accepts: Boolean = true) : CommunicationDevices {
+    private class FakeDevices(
+        var headsets: List<Headset> = emptyList(),
+        var accepts: Boolean = true,
+        // Android names the chosen headset its communication device at once, or only when the test reports it.
+        var linksAtOnce: Boolean = true,
+    ) : CommunicationDevices {
         val chosen = mutableListOf<Headset>()
+
+        @Volatile
+        var currentId: Int? = null
+        var currentFails = false
         var cleared = 0
         val watchers = CopyOnWriteArrayList<(Int?) -> Unit>()
 
@@ -31,8 +41,11 @@ class HeadsetRouteTest {
         override fun choose(headset: Headset): Boolean {
             chosen += headset
             events += "choose"
+            if (accepts && linksAtOnce) currentId = headset.id
             return accepts
         }
+
+        override fun current() = if (currentFails) throw RuntimeException("The audio service failed") else currentId
 
         override fun clear() {
             clearing()
@@ -202,6 +215,70 @@ class HeadsetRouteTest {
         // The earlier route's withdrawal and onLost come before the next request, so neither reaches the next
         // recording.
         assertEquals(listOf("choose", "clear", "lost", "choose"), devices.events)
+    }
+
+    @Test
+    fun openWaitsUntilAndroidNamesTheHeadset() {
+        val devices = FakeDevices(headsets = listOf(classic), linksAtOnce = false)
+        val route = HeadsetRoute(devices, linkMillis = 5_000)
+        // Android reports the headset once its SCO link is up, a moment after the request (A71 session of sub-project 2).
+        val link = thread {
+            while (devices.watchers.isEmpty()) Thread.sleep(1)
+            Thread.sleep(100)
+            devices.change(classic.id)
+        }
+
+        assertSame(classic, route.open {})
+        link.join(5_000)
+
+        assertTrue("${route.linkedMillis}", (route.linkedMillis ?: -1) >= 50)
+        assertTrue(route.holding)
+    }
+
+    @Test
+    fun openGivesUpWaitingAfterItsLimitAndKeepsTheRequest() {
+        val devices = FakeDevices(headsets = listOf(classic), linksAtOnce = false)
+        val route = HeadsetRoute(devices, linkMillis = 50)
+
+        assertSame(classic, route.open {})
+
+        assertNull(route.linkedMillis)
+        assertTrue(route.holding)
+        assertEquals(0, devices.cleared)
+    }
+
+    @Test
+    fun aLossDuringTheWaitEndsItAtOnce() {
+        val devices = FakeDevices(headsets = listOf(classic), linksAtOnce = false)
+        val route = HeadsetRoute(devices, linkMillis = 5_000)
+        var lost = 0
+        // Android reports another device, such as the phone's earpiece, while the start waits for the link.
+        val other = thread {
+            while (devices.watchers.isEmpty()) Thread.sleep(1)
+            devices.change(null)
+        }
+        val started = System.nanoTime()
+
+        route.open { lost++ }
+        other.join(5_000)
+
+        assertTrue("The wait did not end at once", (System.nanoTime() - started) / 1_000_000 < 4_000)
+        assertEquals(1, lost)
+        assertFalse(route.holding)
+        assertNull(route.linkedMillis)
+        assertEquals(1, devices.cleared)
+    }
+
+    @Test
+    fun aFailureWhileWaitingWithdrawsTheRequest() {
+        val devices = FakeDevices(headsets = listOf(classic), linksAtOnce = false).apply { currentFails = true }
+        val route = HeadsetRoute(devices)
+
+        assertThrows(RuntimeException::class.java) { route.open {} }
+
+        assertFalse(route.holding)
+        assertEquals(1, devices.cleared)
+        assertEquals(0, devices.watchers.size)
     }
 
     @Test

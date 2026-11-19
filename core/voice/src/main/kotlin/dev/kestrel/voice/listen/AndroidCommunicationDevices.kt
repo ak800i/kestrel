@@ -26,6 +26,8 @@ internal class AndroidCommunicationDevices(private val audio: AudioManager, priv
         audio.clearCommunicationDevice()
     }
 
+    override fun current(): Int? = audio.communicationDevice?.id
+
     override fun watch(changed: (Int?) -> Unit): AutoCloseable {
         val listener = AudioManager.OnCommunicationDeviceChangedListener { device -> changed(device?.id) }
         audio.addOnCommunicationDeviceChangedListener(executor, listener)

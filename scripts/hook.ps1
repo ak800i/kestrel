@@ -88,6 +88,11 @@
 #                                           foreground (foreground= from Android's list; demoted= Android's reading of
 #                                           whether the service lost its foreground, AndroidListeningConditions.demoted,
 #                                           on which Kestrel acts only while its battery use is also Restricted)
+#   voice-route                             the earbud option and the route of Kestrel's newest recording: whether it is
+#                                           open, whether the request for the earbuds holds, the headset's kind, how
+#                                           long the start waited for the headset's link, the types of Android's
+#                                           communication device and of the recording's input, and the loudest sample
+#                                           since the last voice-route, in percent; never audio
 #   voice-task -Seconds n -Reply 'text'     makes each task take n seconds, at most 120, and then say the reply, unless
 #                                           Kestrel cancelled it, until voice-task -Clear or the end of Kestrel's process
 #   voice-task -Clear                       each task ends at once again, as in sub-project 2
@@ -124,7 +129,8 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
-        'voice-counts', 'voice-times', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files', 'watch', 'profiles',
+        'voice-counts', 'voice-times', 'voice-route', 'voice-task', 'voice-echo', 'location', 'spike-results', 'files',
+        'watch', 'profiles',
         'snapshots')][string]$Command,
     [string]$Key,
     [int]$Number,

@@ -3,6 +3,7 @@ package dev.kestrel.voice.listen
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -16,6 +17,7 @@ import dev.kestrel.voice.SAMPLE_RATE
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Records the microphone for listening (design spec, section 8.1): source VOICE_RECOGNITION, 16 kHz, mono, 16-bit, in
@@ -25,9 +27,11 @@ import kotlinx.coroutines.flow.asStateFlow
  * Android counts Kestrel as idle, such as in the background without a foreground service.
  *
  * When [earbud] returns true at a start, the microphone of connected Bluetooth earbuds records instead (section 8.8): a
- * [HeadsetRoute] asks Android for the earbuds before the recording exists, so that Android routes the recording there
- * from its first frame, and for an LE Audio headset the recording also names the headset's microphone as its preferred
- * device, because Android gives that microphone to VOICE_RECOGNITION only then (research r12). When the earbuds go away,
+ * [HeadsetRoute] asks Android for the earbuds before the recording exists, and waits up to 3 s until Android names them
+ * its communication device, so that Android routes the recording there from its first frame (on Android 13 a classic
+ * headset is named only once its link is up), and for an LE Audio headset the recording also names the headset's
+ * microphone as its preferred device, because Android gives that microphone to VOICE_RECOGNITION only then (research
+ * r12). When the earbuds go away,
  * or a call takes the audio over, the phone's microphone records until the next start. [stop] withdraws the request.
  * Without earbuds, when Android refuses them, or when Android lists no microphone for an LE Audio headset, the phone's
  * microphone records as before.
@@ -41,7 +45,15 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
     private var canceller: AcousticEchoCanceler? = null
+
+    @Volatile
     private var route: HeadsetRoute? = null
+
+    // For routeReport: the kind of the headset that the latest start asked for, and the loudest sample since its last
+    // call, in percent.
+    @Volatile
+    private var headsetKind = "none"
+    private val loudest = AtomicInteger()
 
     @Volatile
     private var reader: Thread? = null
@@ -63,6 +75,23 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     override var echoCancelling = false
         private set
 
+    /**
+     * The route of the current recording, for the debug hook voice-route (plan 2E; A71 session of sub-project 2, item 6):
+     * whether a recording is open, whether the request for the earbuds holds, the headset's kind (sco, le-audio or none),
+     * how long the start waited until Android named the headset, the types of Android's communication device and of the
+     * recording's input, and the loudest sample since the last call, in percent. Types and levels only, never audio. Any
+     * thread may call it.
+     */
+    fun routeReport(): String {
+        val recorder = record
+        val current = route
+        val routed = runCatching { recorder?.routedDevice?.type }.getOrNull()
+        return "microphone=${if (recorder != null) "open" else "closed"} holding=${current?.holding == true} " +
+            "headset=$headsetKind linkedMillis=${current?.linkedMillis ?: "none"} " +
+            "communication=${typeName(audio.communicationDevice?.type)} routed=${typeName(routed)} " +
+            "loudest=${loudest.getAndSet(0)}"
+    }
+
     private val callback = object : AudioManager.AudioRecordingCallback() {
         override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>) = update(configs)
     }
@@ -82,6 +111,9 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
      * not start; then it has released everything, also the request for the earbuds, so that a later call can try again.
      * Only when Android's audio service fails after the microphone opened, or no thread can be created, does [start]
      * throw with the microphone still open; then [stop] releases it.
+     *
+     * With the earbud microphone allowed and earbuds connected, [start] waits up to 3 s for the earbuds' link
+     * ([HeadsetRoute.open]), so it must not run on the main thread, which delivers Android's reports.
      */
     override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         checkNotOnTheMicrophonesThread()
@@ -102,6 +134,11 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
         // Before the recording exists, so that Android routes it to the earbuds from its first frame (research r12).
         var earbuds = if (earbud()) HeadsetRoute(devices) else null
         val headset = earbuds?.open(onLost = ::usePhoneMicrophone)
+        headsetKind = when {
+            headset == null -> "none"
+            headset.leAudio -> "le-audio"
+            else -> "sco"
+        }
         val recorder = try {
             AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
@@ -238,7 +275,13 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
             // A read returns fewer samples when stop() interrupts it, or when an error follows some samples; then the next
             // read reports the error. The rest is dropped.
             if (count == FRAME) {
-                val frame = FloatArray(count) { buffer[it] / 32_768f }
+                var peak = 0
+                val frame = FloatArray(count) { index ->
+                    val sample = buffer[index].toInt()
+                    if (sample > peak) peak = sample else if (-sample > peak) peak = -sample
+                    sample / 32_768f
+                }
+                loudest.accumulateAndGet(peak * 100 / 32_768) { a, b -> maxOf(a, b) }
                 // Errors, such as OutOfMemoryError, are not caught.
                 try {
                     onFrame(frame)
@@ -255,6 +298,18 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
 
     private companion object {
         const val FRAME = SAMPLE_RATE / 50
+
+        /** The name of an audio device's type for routeReport, such as "bluetooth-sco", or "none". */
+        fun typeName(type: Int?): String = when (type) {
+            null -> "none"
+            AudioDeviceInfo.TYPE_BUILTIN_MIC -> "builtin-mic"
+            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "earpiece"
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "bluetooth-sco"
+            AudioDeviceInfo.TYPE_BLE_HEADSET -> "ble-headset"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "wired-headset"
+            else -> "type-$type"
+        }
 
         // 200 ms of 16-bit samples, so that a short stall of the microphone's thread loses nothing.
         const val BUFFER_BYTES = SAMPLE_RATE / 5 * 2
