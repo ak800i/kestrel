@@ -22,18 +22,25 @@ object NetworkApiRules {
         "android/webkit/WebView", "android/app/DownloadManager", "android/location/Geocoder",
         // Only the gateway may build an OkHttp client. Other code uses the gateway's Call.Factory.
         "okhttp3/OkHttpClient", "okhttp3/OkHttpClient\$Builder",
-        // OkHttp's name lookups send a host name to the network's resolver outside the gateway's allowlist and log.
-        "okhttp3/Dns",
+        // OkHttp's and Android's name lookups send a host name to the network's resolver outside the gateway's allowlist and log.
+        "okhttp3/Dns", "android/net/DnsResolver",
     )
     private val networkPackages = listOf(
         "java/net/http/", "javax/net/", "android/net/http/", "org/chromium/net/",
-        "okhttp3/Dns\$", "okhttp3/android/", "okhttp3/dnsoverhttps/",
+        "okhttp3/Dns\$", "okhttp3/android/", "okhttp3/dnsoverhttps/", "android/net/DnsResolver\$",
     )
+    private val inetAddressLookups = setOf(
+        "getByName", "getAllByName", "getLocalHost", "isReachable", "getHostName", "getCanonicalHostName",
+    )
+
+    // A call through a receiver or class typed Inet4Address or Inet6Address names that class as its owner.
     private val networkMethods = mapOf(
         "java/net/URL" to setOf("openConnection", "openStream", "getContent"),
-        "java/net/InetAddress" to setOf(
-            "getByName", "getAllByName", "getLocalHost", "isReachable", "getHostName", "getCanonicalHostName",
-        ),
+        "java/net/InetAddress" to inetAddressLookups,
+        "java/net/Inet4Address" to inetAddressLookups,
+        "java/net/Inet6Address" to inetAddressLookups,
+        // A reverse lookup when the address was built from an InetAddress without a name.
+        "java/net/InetSocketAddress" to setOf("getHostName"),
         "android/net/Network" to setOf("openConnection", "bindSocket", "getSocketFactory", "getByName", "getAllByName"),
     )
 

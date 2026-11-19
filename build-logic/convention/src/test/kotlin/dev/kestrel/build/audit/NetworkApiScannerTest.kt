@@ -9,8 +9,10 @@ import dev.kestrel.build.audit.fixtures.OpensAsynchronousServer
 import dev.kestrel.build.audit.fixtures.OpensUrl
 import dev.kestrel.build.audit.fixtures.PassesSocket
 import dev.kestrel.build.audit.fixtures.ReadsNetworkField
+import dev.kestrel.build.audit.fixtures.ReadsSocketAddressNames
 import dev.kestrel.build.audit.fixtures.ReadsUrlText
 import dev.kestrel.build.audit.fixtures.ResolvesNames
+import dev.kestrel.build.audit.fixtures.ResolvesNamesOnSubtypes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -79,6 +81,22 @@ class NetworkApiScannerTest {
     }
 
     @Test
+    fun findsTheSameLookupsThroughInet4AddressAndInet6Address() {
+        assertEquals(
+            listOf(
+                "java/net/Inet4Address.getByName", "java/net/Inet6Address.getAllByName", "java/net/Inet4Address.getLocalHost",
+                "java/net/Inet4Address.isReachable", "java/net/Inet6Address.getHostName", "java/net/Inet4Address.getCanonicalHostName",
+            ),
+            referencesIn(ResolvesNamesOnSubtypes::class.java),
+        )
+    }
+
+    @Test
+    fun findsTheReverseLookupOfASocketAddressButNotItsHostString() {
+        assertEquals(listOf("java/net/InetSocketAddress.getHostName"), referencesIn(ReadsSocketAddressNames::class.java))
+    }
+
+    @Test
     fun findsOnlyTheSocketAddressConstructorThatLooksUpAName() {
         assertEquals(listOf("java/net/InetSocketAddress.<init>"), referencesIn(BuildsSocketAddresses::class.java))
     }
@@ -109,6 +127,21 @@ class NetworkApiScannerTest {
         assertTrue(NetworkApiRules.isNetworkType("okhttp3/dnsoverhttps/DnsOverHttps"))
         assertTrue(NetworkApiRules.isNetworkCall("okhttp3/Dns", "lookup", "(Ljava/lang/String;)Ljava/util/List;"))
         assertFalse(NetworkApiRules.isNetworkType("okhttp3/HttpUrl"))
+    }
+
+    @Test
+    fun classifiesAndroidsDnsResolver() {
+        assertTrue(NetworkApiRules.isNetworkType("android/net/DnsResolver"))
+        assertTrue(NetworkApiRules.isNetworkType("android/net/DnsResolver\$Callback"))
+        assertTrue(NetworkApiRules.isNetworkCall("android/net/DnsResolver", "getInstance", "()Landroid/net/DnsResolver;"))
+        assertTrue(
+            NetworkApiRules.isNetworkCall(
+                "android/net/DnsResolver", "query",
+                "(Landroid/net/Network;Ljava/lang/String;ILjava/util/concurrent/Executor;Landroid/os/CancellationSignal;" +
+                    "Landroid/net/DnsResolver\$Callback;)V",
+            ),
+        )
+        assertFalse(NetworkApiRules.isNetworkType("android/net/DnsResolverHelper"))
     }
 
     @Test

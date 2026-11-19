@@ -1,5 +1,7 @@
 package dev.kestrel.build.audit.fixtures
 
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -53,6 +55,26 @@ class ResolvesNames {
     fun name(address: InetAddress) = address.hostName
 
     fun canonicalName(address: InetAddress) = address.canonicalHostName
+}
+
+class ResolvesNamesOnSubtypes {
+    fun byName4() = Inet4Address.getByName("host.test")
+
+    fun allByName6() = Inet6Address.getAllByName("host.test")
+
+    fun localHost4() = Inet4Address.getLocalHost()
+
+    fun reachable4(address: Inet4Address) = address.isReachable(1)
+
+    fun name6(address: Inet6Address) = address.hostName
+
+    fun canonicalName4(address: Inet4Address) = address.canonicalHostName
+}
+
+class ReadsSocketAddressNames {
+    fun name(address: InetSocketAddress) = address.hostName
+
+    fun nameWithoutLookup(address: InetSocketAddress) = address.hostString
 }
 
 class BuildsSocketAddresses {

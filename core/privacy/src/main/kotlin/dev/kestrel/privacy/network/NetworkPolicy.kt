@@ -21,7 +21,10 @@ class NetworkPolicy {
 
     private val temporaryLocalServers = mutableMapOf<String, Int>()
 
-    /** The hosts of the configured profiles, including the hosts they need for token refresh. */
+    /**
+     * The hosts of the configured profiles, including the hosts they need for token refresh. Throws
+     * IllegalArgumentException, and keeps the hosts that it had, when a text is not a host name.
+     */
     fun setProfileHosts(hosts: Collection<String>) {
         profileHosts = hosts.map(::normalize).toSet()
     }
@@ -31,7 +34,10 @@ class NetworkPolicy {
         localServers = localOnly(hosts)
     }
 
-    /** Allows [hosts] until the returned lease is closed, for example while a sign-in runs. */
+    /**
+     * Allows [hosts] until the returned lease is closed, for example while a sign-in runs. Throws IllegalArgumentException,
+     * and allows nothing, when a text is not a host name.
+     */
     fun openTemporaryHosts(hosts: Collection<String>): AutoCloseable = lease(temporaryHosts, hosts.map(::normalize).toSet())
 
     /**
