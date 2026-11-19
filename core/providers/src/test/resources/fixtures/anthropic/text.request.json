@@ -1,0 +1,56 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 256,
+  "system": [
+    {
+      "type": "text",
+      "text": "You are Kestrel.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hi"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "open_app",
+      "description": "Opens an app by its name.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The app's name."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto",
+    "disable_parallel_tool_use": true
+  },
+  "thinking": {
+    "type": "adaptive"
+  },
+  "output_config": {
+    "effort": "low"
+  },
+  "stream": true
+}
