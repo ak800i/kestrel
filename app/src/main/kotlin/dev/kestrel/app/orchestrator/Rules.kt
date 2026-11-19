@@ -453,7 +453,7 @@ object Rules {
         is Event.WaitEnded ->
             if (state.work == Work.AWAITING_TASK && event.wait == state.wait) Step(state.copy(work = Work.IDLE)) else Step(state)
         Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
-        // Not over a ringing call: the verdict comes up to 2 s after the request.
+        // Not over a ringing call: the verdict comes up to 5 s after the request (SettingsOpener.WAIT_MILLIS).
         Event.SettingsBlocked -> if (state.mode == Mode.OFF || state.inCall) Step(state) else say(state, Reply.SettingsBlocked)
         Event.NothingHeard ->
             if (state.mode != Mode.OFF && state.work == Work.AWAITING_TASK) waitForTask(state) else Step(state)

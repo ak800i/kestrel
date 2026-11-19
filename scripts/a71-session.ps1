@@ -524,16 +524,7 @@ function Invoke-BatteryRulesStep {
     # Kestrel's process from being demoted, as the accessibility service does (analysis, item 2). So when Kestrel holds the
     # role, the step takes it away for its measure and gives it back at its end, as the step assistant does.
     $roleHeld = @(Get-AssistantHolders) -contains 'dev.kestrel'
-    $roleRestore = $null
-    if ($roleHeld) {
-        $roleRestore = Register-AssistantRestore
-        Invoke-Checked "cmd role remove-role-holder $assistantRole dev.kestrel" | Out-Null
-        if (@(Get-AssistantHolders) -contains 'dev.kestrel') {
-            Complete-Restore $roleRestore
-            Add-Result battery-rules 'failed: Kestrel holds the assistant role, and Android did not take it away'
-            return
-        }
-    }
+    $roleRestore = if ($roleHeld) { Register-AssistantRestore }
     $roleText = if ($roleHeld) { 'Kestrel held the assistant role, and the step took it away for its measure' } else { 'Kestrel did not hold the assistant role' }
     # 'allow', also for an op that has no entry ('No operations.'), or 'ignore'; never 'default', which Android counts as
     # restricted (prototype P2).
@@ -548,6 +539,14 @@ function Invoke-BatteryRulesStep {
     }
     $accessibilityRestore = Register-AccessibilityRestore
     try {
+        # Inside the try, after all restores are registered, so that a failure gives the role back at the step's end.
+        if ($roleHeld) {
+            Invoke-Checked "cmd role remove-role-holder $assistantRole dev.kestrel" | Out-Null
+            if (@(Get-AssistantHolders) -contains 'dev.kestrel') {
+                Add-Result battery-rules 'failed: Kestrel holds the assistant role, and Android did not take it away'
+                return
+            }
+        }
         $others = @(Get-OtherServices $accessibilityRestore.Data)
         $seconds = [int](180 * $minuteScale)
         foreach ($restricted in $false, $true) {
