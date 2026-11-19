@@ -7,8 +7,9 @@ import dev.kestrel.providers.credentials.CredentialVault
 
 /**
  * The providers' credentials in `:core:privacy`'s encrypted store (design spec, section 10.7): `:core:providers` gives a
- * credential as data, and the store keeps its bytes under the credentials key. A credential that cannot be read is null,
- * so that its profile asks the owner to sign in again.
+ * credential as data, and the store keeps its bytes under the credentials key. A credential that is missing, not authentic
+ * or cannot be decoded is null, so that its profile asks the owner to sign in again. A failure of Android's Keystore throws
+ * from [read], as CredentialVault says, because it can be temporary.
  */
 internal class StoredCredentials(private val store: CredentialStore) : CredentialVault {
     override suspend fun read(id: String): Credential? {
