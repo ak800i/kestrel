@@ -26,6 +26,25 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Resolve the build's plugins
+        # The Gradle Plugin Portal sometimes answers "not found" for artifacts that it serves: runs 44402545586,
+        # 44479089258, 44481188438 and 44484185188 failed while configuring build-logic. A failed job still saves its
+        # Gradle home, so a rerun can start from a cache that records the artifact as missing.
+        # Configure the build up to five times, 30 s apart, and print what the repositories answered when an attempt
+        # fails. A retry adds --refresh-dependencies, so that Gradle asks the repositories again.
+        run: |
+          refresh=""
+          for attempt in 1 2 3 4 5; do
+            if ./gradlew help --info --console=plain $refresh > "$RUNNER_TEMP/resolve.log" 2>&1; then
+              exit 0
+            fi
+            echo "Attempt $attempt to configure the build failed:"
+            grep -iE "could not|status code|not found|timed out|refused|reset" "$RUNNER_TEMP/resolve.log" | head -n 40 || true
+            refresh="--refresh-dependencies"
+            sleep 30
+          done
+          tail -n 80 "$RUNNER_TEMP/resolve.log"
+          exit 1
       - name: Unit tests, lint and the privacy audit
         run: ./gradlew :build-logic:convention:check check kestrelAudit --console=plain
       - name: Check that generated files are committed
