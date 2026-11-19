@@ -19,9 +19,10 @@ import dev.kestrel.providers.http.ProviderHttp
  * with `gpt-5` to `gpt-19`, or with `o` and a digit, and `max_tokens` otherwise (also `gpt-35-turbo`, Azure's GPT-3.5, and
  * `gpt-4*`): OpenClaw's `requiresFoundryMaxCompletionTokens` (`extensions/microsoft-foundry/shared.ts`: `gpt-5`, `o1`, `o3`
  * and `o4`), widened to OpenAI's later reasoning models.
- * A GPT-6 deployment on Azure OpenAI's Responses API (an endpoint on `*.openai.azure.com`) gets OpenClaw's generic
- * efforts, not its GPT-6 list, as OpenClaw's `resolveOpenAIModelReasoningEfforts` does for its `azure-openai-responses`
- * API; on Microsoft Foundry's other hosts it keeps the GPT-6 lists, because OpenClaw's Foundry plugin uses
+ * A GPT-6 deployment on Azure OpenAI's Responses API (an endpoint on `*.openai.azure.com`) gets no GPT-6 list, as
+ * OpenClaw's `resolveOpenAIModelReasoningEfforts` gives none for its `azure-openai-responses` API; where OpenClaw then
+ * sends the level unchanged, Kestrel clamps it to the generic efforts by its own rule ([Wire.effort]). On Microsoft
+ * Foundry's other hosts it keeps the GPT-6 lists, because OpenClaw's Foundry plugin uses
  * `openai-responses`. An endpoint that [AzureRouting.normalise] refuses, or a wire that none of the three APIs serves,
  * fails with NotAllowed without a request.
  */

@@ -54,8 +54,19 @@ class WireTest {
         assertNull(Wire.level(asked.copy(reasoning = null), model, CompatFlags()))
         assertNull(Wire.level(asked, model.copy(reasoning = false), CompatFlags()))
         assertNull(Wire.level(asked, model, CompatFlags(thinkingLevels = listOf("off"))))
-        // An empty effort list sends none, and the effort map renames the chosen effort.
+        // An empty effort list sends none, and a label from the effort map is checked against the list like any effort.
         assertNull(Wire.effort("high", model, CompatFlags(supportedReasoningEfforts = emptyList())))
-        assertEquals("HIGH", Wire.effort("high", model, CompatFlags(supportedReasoningEfforts = listOf("high"), reasoningEffortMap = mapOf("high" to "HIGH"))))
+        assertEquals("HIGH", Wire.effort("high", model, CompatFlags(supportedReasoningEfforts = listOf("HIGH"), reasoningEffortMap = mapOf("high" to "HIGH"))))
+        assertEquals("high", Wire.effort("high", model, CompatFlags(supportedReasoningEfforts = listOf("high"), reasoningEffortMap = mapOf("high" to "HIGH"))))
+    }
+
+    @Test
+    fun theEffortMapAppliesBeforeTheEffortIsClampedAsInOpenClaw() {
+        // Particle-1's row: OpenClaw maps MEDIUM to `high` first, and `high` is in the list.
+        val particle = ModelEntry("particle-1", "Particle-1", reasoning = true)
+        val compat = CompatFlags(supportedReasoningEfforts = listOf("none", "low", "high", "max"), reasoningEffortMap = mapOf("medium" to "high"))
+
+        assertEquals("high", Wire.effort("medium", particle, compat))
+        assertEquals("low", Wire.effort("low", particle, compat))
     }
 }

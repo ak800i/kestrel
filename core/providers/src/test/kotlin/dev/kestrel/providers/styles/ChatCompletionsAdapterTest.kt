@@ -446,7 +446,28 @@ class ChatCompletionsAdapterTest {
         adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, glm)
         adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, qwen)
 
-        assertNull(bench.body(bench.take())["reasoning"])
+        assertEquals(json("""{"enabled":true}"""), bench.body(bench.take())["reasoning"])
         assertEquals(json("""{"enable_thinking":true}"""), bench.body(bench.take())["chat_template_kwargs"])
+    }
+
+    @Test
+    fun callPiecesCountTowardsTheGatherLimitWithTheirIdsAndNames() {
+        val piece = "a".repeat(512 * 1024)
+        val events = (1..17).joinToString("") {
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":$it,\"id\":\"$piece$it\",\"function\":{\"name\":\"open_app\"}}]}}]}\n\n"
+        } + "data: [DONE]\n\n"
+        bench.status(200, events, "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), gptOss))
+    }
+
+    @Test
+    fun theUsageAliasesOfOpenClawAreRead() = runBlocking {
+        val events = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":10,\"cached_tokens\":600,\"reasoning_tokens\":4}}\n\n" +
+            "data: [DONE]\n\n"
+        bench.status(200, events, "Content-Type" to "text/event-stream")
+
+        assertEquals(Usage(input = 400, output = 10, cacheRead = 600, reasoning = 4), adapter.complete(request(user("Hi")), gptOss).usage)
     }
 }

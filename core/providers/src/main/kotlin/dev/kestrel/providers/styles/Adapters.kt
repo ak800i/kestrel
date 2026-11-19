@@ -40,6 +40,9 @@ internal object Wire {
     private val CODE = Regex("^[A-Za-z0-9_.:-]{1,64}$")
     const val ANTHROPIC_ID_CHARS = "a-zA-Z0-9_-"
     const val CONVERSE_ID_CHARS = "a-zA-Z0-9_.:-"
+
+    /** The characters of OpenAI's Responses call IDs, as OpenClaw's `OPENAI_RESPONSES_CALL_ID_RE` keeps them. */
+    const val OPENAI_ID_CHARS = "a-zA-Z0-9_-"
     private val LEVELS = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
     private val EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -137,21 +140,24 @@ internal object Wire {
     }
 
     /**
-     * The provider's effort word for [level] (design D5), as OpenClaw's `resolveOpenAIReasoningEffortForModel` chooses
-     * it: the model's `thinkingLevelMap`, then the nearest of the efforts that the model accepts, then its
-     * `reasoningEffortMap`. The model accepts its `supportedReasoningEfforts`; a model without that list accepts OpenClaw's
-     * list for its GPT-5 or GPT-6 family, or else OpenClaw's generic `low`, `medium` and `high` and the efforts that its
-     * `thinkingLevelMap` names, so that `minimal` becomes `low` on DeepSeek and the other rows without a list.
+     * The provider's effort word for [level] (design D5), in the order of OpenClaw's `resolveOpenAIRequestReasoning`: the
+     * compat's `reasoningEffortMap`, else the model's `thinkingLevelMap`, else the level itself, and then the nearest of
+     * the efforts that the model accepts, as `resolveOpenAIReasoningEffortForModel` chooses it. The model accepts its
+     * `supportedReasoningEfforts`, or OpenClaw's list for its GPT-5 or GPT-6 family. A model without either list is
+     * clamped by Kestrel's own rule, where OpenClaw would send the level unchanged: it accepts OpenClaw's generic `low`,
+     * `medium` and `high` and the efforts that its `thinkingLevelMap` names, so that `minimal` becomes `low` on DeepSeek and
+     * the other rows without a list.
      * [chatCompletions] says that the request goes to Chat Completions, where OpenClaw gives GPT-5.6 and GPT-6 no `max`;
      * [azureResponses] says that it goes to Azure OpenAI's Responses API (OpenClaw's `azure-openai-responses`), where
      * OpenClaw gives GPT-6 no GPT-6 list until Azure's GPT-6 contracts are verified, so that such a deployment gets the
      * generic efforts; Microsoft Foundry's other hosts keep the GPT-6 lists, as OpenClaw's Foundry plugin does.
      * Null when the effort would be `none`, or when the model's compat says `supportsReasoningEffort: false`, for which
-     * OpenClaw sends no effort at all.
+     * OpenClaw sends no effort at all. The one exception is not decided here: ChatCompletionsAdapter sends GPT-5.6 with
+     * tools `"none"` on OpenAI's and Azure's own endpoints whatever the flag says, as OpenClaw does.
      */
     fun effort(level: String, model: ModelEntry, compat: CompatFlags, chatCompletions: Boolean = false, azureResponses: Boolean = false): String? {
         if (compat.supportsReasoningEffort == false) return null
-        val mapped = model.thinkingLevelMap[level] ?: level
+        val mapped = compat.reasoningEffortMap?.get(level) ?: model.thinkingLevelMap[level] ?: level
         if (mapped == "none") return null
         val declared = compat.supportedReasoningEfforts ?: openAiEfforts(model.id, chatCompletions, azureResponses)
         val supported = (declared ?: (GENERIC_EFFORTS + model.thinkingLevelMap.values.filterNotNull())).filter { it != "none" }.distinct()
@@ -160,7 +166,7 @@ internal object Wire {
             supported.isEmpty() -> return null
             else -> nearest(mapped, supported, EFFORTS)
         }
-        return compat.reasoningEffortMap?.get(chosen) ?: chosen
+        return chosen
     }
 
     /**

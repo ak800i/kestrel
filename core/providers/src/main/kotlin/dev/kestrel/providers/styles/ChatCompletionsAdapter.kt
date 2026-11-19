@@ -72,7 +72,9 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
     /**
      * OpenClaw's `applyOpenAICompletionsToolReasoning` (`packages/ai/src/providers/openai-reasoning-effort.ts`) on OpenAI's
      * and Azure's own endpoints: with tools, GPT-5.6 needs `reasoning_effort: "none"`, and GPT-5.4 mini and GPT-5.5 refuse
-     * the field.
+     * the field. This applies after the compat-driven reasoning and whatever the compat flags say: GPT-5.6 with tools gets
+     * `"none"` even when `supportsReasoningEffort` is false (the one exception to [Wire.effort]'s rule), because OpenAI's
+     * Chat Completions refuses tools while GPT-5.6 reasons, as OpenClaw sends it.
      */
     private fun openAiToolReasoning(target: ModelTarget, tools: Boolean): String? {
         val host = target.baseUrl.host
@@ -136,7 +138,15 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
         val effort = Wire.effort(level, target.model, compat, chatCompletions = true)
         val scalar = effort != null && compat.supportsReasoningEffort == true
         when (compat.thinkingFormat) {
-            "openrouter" -> if (effort != null) putJsonObject("reasoning") { put("effort", effort) }
+            "openrouter" -> {
+                // OpenClaw's usesBinaryOpenRouterThinking: a model whose own compat declares no effort only turns thinking on.
+                val own = target.model.compat
+                if (own.supportsReasoningEffort == false || own.supportedReasoningEfforts?.isEmpty() == true) {
+                    putJsonObject("reasoning") { put("enabled", true) }
+                } else if (effort != null) {
+                    putJsonObject("reasoning") { put("effort", effort) }
+                }
+            }
             "zai" -> putJsonObject("thinking") {
                 put("type", "enabled")
                 put("clear_thinking", false)
@@ -325,6 +335,8 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
                 reasoning.append(piece)
             }
             delta.arr("tool_calls").objects().forEachIndexed { position, piece ->
+                // The whole piece counts, so that pieces that only open calls with an ID or a name count too.
+                limit.add(piece.toString().length)
                 val id = piece.str("id")?.takeIf { it.isNotEmpty() }
                 // Some servers send no `index`: a new `id`, or a later piece of the same delta, starts a new call, and the
                 // first piece of a delta without either continues the last call.
@@ -336,10 +348,7 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
                 if (id != null && call.id.isEmpty()) call.id = id
                 piece.obj("function")?.let { function ->
                     function.str("name")?.let { if (call.name.isEmpty()) call.name = it }
-                    function.str("arguments")?.let {
-                        limit.add(it.length)
-                        call.arguments.append(it)
-                    }
+                    function.str("arguments")?.let { call.arguments.append(it) }
                 }
                 // OpenClaw's extractToolCallThoughtSignature reads these three places.
                 (piece.obj("extra_content")?.obj("google")?.str("thought_signature")
@@ -382,18 +391,26 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
             return reply.response(stop, counted, modelId ?: target.sentModelId)
         }
 
-        /** Design D6, research r41. */
+        /**
+         * Design D6, research r41, with the aliases of OpenClaw's `normalizeUsage` (`src/agents/usage.ts`) that a Chat
+         * Completions server sends: a top-level `cache_read_input_tokens` or `cached_tokens` (Moonshot's) for the cache
+         * reads, a top-level `cache_creation_input_tokens` or `prompt_tokens_details.cache_creation_input_tokens` for the
+         * writes, and a top-level `reasoning_tokens`. Only the OpenAI-style counts are subtracted from the prompt.
+         */
         private fun usageOf(usage: JsonObject): Usage {
             val prompt = usage.long("prompt_tokens") ?: 0
             val details = usage.obj("prompt_tokens_details")
-            val cached = details?.long("cached_tokens") ?: 0
-            val written = details?.long("cache_write_tokens") ?: 0
+            val cached = usage.long("cache_read_input_tokens") ?: usage.long("cached_tokens") ?: details?.long("cached_tokens") ?: 0
+            val written = usage.long("cache_creation_input_tokens") ?: details?.long("cache_write_tokens")
+                ?: details?.long("cache_creation_input_tokens") ?: 0
+            val readInPrompt = usage.long("cached_tokens") != null || details?.long("cached_tokens") != null
+            val writtenInPrompt = details?.long("cache_write_tokens") != null || details?.long("cache_creation_input_tokens") != null
             return Usage(
-                input = Wire.minus(prompt, cached, written),
+                input = Wire.minus(prompt, if (readInPrompt) cached else 0, if (writtenInPrompt) written else 0),
                 output = usage.long("completion_tokens") ?: 0,
                 cacheRead = cached,
                 cacheWrite = written,
-                reasoning = usage.obj("completion_tokens_details")?.long("reasoning_tokens") ?: 0,
+                reasoning = usage.long("reasoning_tokens") ?: usage.obj("completion_tokens_details")?.long("reasoning_tokens") ?: 0,
             )
         }
     }
