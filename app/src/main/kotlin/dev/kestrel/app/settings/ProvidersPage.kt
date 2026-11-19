@@ -102,6 +102,9 @@ import java.util.UUID
 internal fun ProvidersPage(data: ProviderData, onBack: () -> Unit) {
     var view by rememberSaveable { mutableStateOf(LIST) }
     var profileId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The provider and the choice that the add flow starts with, as after "Use an API key" on a profile's page.
+    var addProvider by rememberSaveable { mutableStateOf<String?>(null) }
+    var addChoice by rememberSaveable { mutableStateOf<String?>(null) }
     var notice by rememberSaveable { mutableStateOf<String?>(null) }
     var noBrowser by remember { mutableStateOf(false) }
     // LocalActivity, not a cast of LocalContext, which lint refuses (ContextCastToActivity).
@@ -120,7 +123,7 @@ internal fun ProvidersPage(data: ProviderData, onBack: () -> Unit) {
     }
     if (noBrowser) Text(stringResource(R.string.providers_no_browser))
     when (view) {
-        ADD -> AddProfile(data, onSaved = {
+        ADD -> AddProfile(data, addProvider, addChoice, onSaved = {
             // The profile holds the credential now, so Kestrel forgets the sign-in's result (design D10).
             data.leaveAddFlow()
             view = LIST
@@ -128,10 +131,21 @@ internal fun ProvidersPage(data: ProviderData, onBack: () -> Unit) {
             data.leaveAddFlow()
             view = LIST
         }
-        PROFILE -> ProfilePage(data, profileId.orEmpty(), onDeleted = { confirmed ->
-            if (!confirmed) notice = ProviderTexts.SIGN_OUT_UNCONFIRMED
-            view = LIST
-        }) { view = LIST }
+        PROFILE -> ProfilePage(
+            data,
+            profileId.orEmpty(),
+            onDeleted = { confirmed ->
+                if (!confirmed) notice = ProviderTexts.SIGN_OUT_UNCONFIRMED
+                view = LIST
+            },
+            // "Use an API key" after a failed "Sign in again": the add flow with the provider's key choice (design D9).
+            onUseKey = { provider, choice ->
+                data.leaveAddFlow()
+                addProvider = provider
+                addChoice = choice
+                view = ADD
+            },
+        ) { view = LIST }
         else -> ProfileList(
             data,
             notice,
@@ -139,6 +153,8 @@ internal fun ProvidersPage(data: ProviderData, onBack: () -> Unit) {
                 notice = null
                 // A new add flow always signs in again.
                 data.leaveAddFlow()
+                addProvider = null
+                addChoice = null
                 view = ADD
             },
             onOpen = {
@@ -286,9 +302,9 @@ private fun decimal(value: Double): String = String.format(Locale.ROOT, "%.2f", 
  * without a model list type the model first, "Check", choose the two models, and save.
  */
 @Composable
-private fun AddProfile(data: ProviderData, onSaved: () -> Unit, onBack: () -> Unit) {
-    var providerId by rememberSaveable { mutableStateOf<String?>(null) }
-    var choiceId by rememberSaveable { mutableStateOf<String?>(null) }
+private fun AddProfile(data: ProviderData, startProvider: String?, startChoice: String?, onSaved: () -> Unit, onBack: () -> Unit) {
+    var providerId by rememberSaveable { mutableStateOf(startProvider) }
+    var choiceId by rememberSaveable { mutableStateOf(startChoice) }
     val provider = providerId?.let { data.catalog.provider(it) }
     val choice = provider?.let { p -> choiceId?.let { data.catalog.choice(p.id, it)?.settings } }
     PageHeader(stringResource(R.string.providers_add), onBack)
@@ -472,11 +488,11 @@ private fun EnterAndCheck(data: ProviderData, provider: ProviderEntry, choice: C
         }
     }
 
-    // A sign-in that ended: its credential goes on to the check.
+    // A sign-in of this add flow that ended: its credential goes on to the check. A profile's "Sign in again" is not one.
     val state by data.signIn.collectAsState()
     LaunchedEffect(state) {
         val done = state as? SignInState.Succeeded ?: return@LaunchedEffect
-        if (done.providerId == provider.id && done.choiceId == choice.choiceId && signedIn == null) {
+        if (done.profileId == null && done.providerId == provider.id && done.choiceId == choice.choiceId && signedIn == null) {
             signedIn = done.result
             check()
         }
@@ -552,12 +568,14 @@ private fun SignInSection(
     onUseKey: (String) -> Unit,
     checking: Boolean = true,
     retry: (() -> Unit)? = null,
+    profileId: String? = null,
 ) {
     val state by data.signIn.collectAsState()
     val setting by data.setting.collectAsState(initial = null)
     val context = LocalContext.current
     val activity = LocalActivity.current
-    val running = state.takeIf { it.matches(provider.id, choice.choiceId) }
+    // The add flow shows only its own sign-in, and a profile's page only its own "Sign in again".
+    val running = state.takeIf { it.matches(provider.id, choice.choiceId) && it.profileId == profileId }
     val kind = SignInRegistry.kind(provider.id, choice.choiceId)
     var tenantProblem by remember { mutableStateOf(false) }
     // A profile's "Sign in again" takes the tenant from its token, so only the add flow asks for it.
@@ -601,7 +619,9 @@ private fun SignInSection(
                     (choice.chatgptPlan && (failure == SignInFailure.REGISTRATION_REFUSED || failure == SignInFailure.NO_CALLBACK))
                 )
             if (failure == SignInFailure.PLAN_USE_NOT_ALLOWED) {
-                Button(onClick = { data.startSignIn(provider.id, choice.choiceId, consent = true) }) { Text(stringResource(R.string.providers_allow_plan)) }
+                Button(onClick = { data.startSignIn(provider.id, choice.choiceId, consent = true, profileId = profileId) }) {
+                    Text(stringResource(R.string.providers_allow_plan))
+                }
             }
             if (register) {
                 Button(onClick = { data.startSignIn(provider.id, choice.choiceId, newRegistration = true) }) {
@@ -678,12 +698,22 @@ private fun ChooseModels(data: ProviderData, provider: ProviderEntry, choice: Ch
     SwitchRow(stringResource(R.string.providers_make_default), makeDefault) { makeDefault = it }
     val firstPlan = choice.chatgptPlan &&
         setting?.profiles.orEmpty().none { data.catalog.choice(it.providerId, it.choiceId)?.settings?.chatgptPlan == true }
-    Button(onClick = {
+    // One save per add flow: a second tap while the first save runs, or after it, would store the credential twice.
+    var saving by remember { mutableStateOf(false) }
+    Button(enabled = !saving, onClick = {
+        saving = true
         scope.launch {
-            attempt(provider.label, { problem = it }) {
-                val draft = checked.draft.copy(name = name.ifBlank { provider.label }, lightweight = ProfileModel(light), versatile = ProfileModel(versatile))
-                data.save(draft, credential, checked.discovered, makeDefault)
-                if (firstPlan) planNotice = true else onSaved()
+            var saved = false
+            try {
+                attempt(provider.label, { problem = it }) {
+                    val draft = checked.draft.copy(name = name.ifBlank { provider.label }, lightweight = ProfileModel(light), versatile = ProfileModel(versatile))
+                    data.save(draft, credential, checked.discovered, makeDefault)
+                    saved = true
+                    if (firstPlan) planNotice = true else onSaved()
+                }
+            } finally {
+                // After a failed save the owner can try again.
+                if (!saved) saving = false
             }
         }
     }) { Text(stringResource(R.string.providers_save)) }
@@ -721,7 +751,7 @@ private fun PlanNotice(onDone: () -> Unit) {
  * month's cost or tokens, the ChatGPT plan's notes, "Check allowance" for Copilot, and "Delete profile".
  */
 @Composable
-private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boolean) -> Unit, onBack: () -> Unit) {
+private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boolean) -> Unit, onUseKey: (String, String) -> Unit, onBack: () -> Unit) {
     val setting by data.setting.collectAsState(initial = null)
     val spending by data.spending.collectAsState(initial = Spending())
     val limited by data.planLimitReached.collectAsState()
@@ -734,21 +764,13 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
     var newKey by remember { mutableStateOf("") }
     var problem by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
-    // Only a sign-in that this page started replaces the profile's credential, never an add flow's result.
-    var signingIn by rememberSaveable(profileId) { mutableStateOf(false) }
     val profile = setting?.profiles?.firstOrNull { it.id == profileId }
-    LaunchedEffect(profileId) {
-        attempt(profileId, { problem = it }) {
+    // Read again after "Sign in again", which stores its credential in the profile itself (design D10).
+    LaunchedEffect(profileId, profile == null, profile?.signedInAt) {
+        val shown = profile ?: return@LaunchedEffect
+        attempt(data.catalog.provider(shown.providerId)?.label ?: shown.name, { problem = it }) {
             rows = data.models(profileId)
             masked = data.maskedKey(profileId)
-        }
-    }
-    LaunchedEffect(signIn) {
-        val done = signIn as? SignInState.Succeeded ?: return@LaunchedEffect
-        if (signingIn && profile != null && done.providerId == profile.providerId && done.choiceId == profile.choiceId) {
-            signingIn = false
-            attempt(profile.name, { problem = it }) { data.replaceCredential(profile.id, done.result) }
-            data.cancelSignIn()
         }
     }
     PageHeader(profile?.name ?: stringResource(R.string.providers_title), onBack)
@@ -788,13 +810,13 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
         AuthMethod.DEVICE_CODE, AuthMethod.BROWSER -> {
             // A GHE.com tenant's profile signs in again on the tenant of its token.
             val again = {
-                signingIn = true
                 scope.launch { attempt(label, { problem = it }) { data.signInAgain(profile.id) } }
                 Unit
             }
             Button(onClick = again) { Text(stringResource(R.string.providers_sign_in_again)) }
-            if (signingIn && provider != null && choice != null && signIn.matches(profile.providerId, profile.choiceId) && signIn !is SignInState.Succeeded) {
-                SignInSection(data, provider, choice, "", {}, {}, retry = again)
+            // The page's own "Sign in again", also one that runs or failed while the owner was on another page.
+            if (signIn.profileId == profile.id && provider != null && choice != null && signIn !is SignInState.Succeeded) {
+                SignInSection(data, provider, choice, "", {}, { keyChoice -> onUseKey(provider.id, keyChoice) }, retry = again, profileId = profile.id)
             }
         }
         AuthMethod.API_KEY -> {

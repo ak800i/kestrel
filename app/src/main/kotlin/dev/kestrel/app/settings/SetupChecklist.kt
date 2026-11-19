@@ -23,9 +23,6 @@ enum class StepState {
     /** The owner still has to do the step. */
     TO_DO,
 
-    /** A later sub-project adds what the step sets up. */
-    LATER,
-
     /** The step is optional and not done. */
     OPTIONAL,
 

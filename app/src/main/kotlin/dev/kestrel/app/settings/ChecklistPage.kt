@@ -142,7 +142,6 @@ private fun texts(step: SetupStep, samsung: Boolean): StepTexts = when (step) {
 private fun stateLabel(state: StepState): Int = when (state) {
     StepState.DONE -> R.string.setup_state_done
     StepState.TO_DO -> R.string.setup_state_to_do
-    StepState.LATER -> R.string.setup_state_later
     StepState.OPTIONAL -> R.string.setup_state_optional
     StepState.WARNING -> R.string.setup_state_warning
 }

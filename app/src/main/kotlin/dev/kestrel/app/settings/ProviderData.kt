@@ -45,13 +45,22 @@ interface ProviderData {
     /** Opens the running browser sign-in's page again, after the owner closed its tab. */
     fun reopenPage()
 
-    fun startSignIn(providerId: String, choiceId: String, tenant: String? = null, consent: Boolean = false, newRegistration: Boolean = false)
+    /** Starts a sign-in; [profileId] names the profile of a "Sign in again", which stores its result itself. */
+    fun startSignIn(
+        providerId: String,
+        choiceId: String,
+        tenant: String? = null,
+        consent: Boolean = false,
+        newRegistration: Boolean = false,
+        profileId: String? = null,
+    )
 
     fun cancelSignIn()
 
-    /** "Sign in again" on a profile's page, on the GHE.com tenant of its GitHub token where it has one. */
+    /** "Sign in again" on a profile's page, on the GHE.com tenant of its GitHub token; it stores its result in the profile. */
     suspend fun signInAgain(profileId: String)
 
+    /** Forgets the add flow's sign-in, but not a profile's "Sign in again", when the owner leaves the add flow or the page. */
     fun leaveAddFlow()
 
     /** Whether Android lets Kestrel reach [host] now; false only for a host on the owner's network without the permission. */
@@ -102,8 +111,8 @@ internal class StoredProviderData(private val graph: ProviderGraph) : ProviderDa
 
     override suspend fun signInAgain(profileId: String) = graph.signInAgain(profileId)
 
-    override fun startSignIn(providerId: String, choiceId: String, tenant: String?, consent: Boolean, newRegistration: Boolean) =
-        graph.startSignIn(providerId, choiceId, tenant, consent, newRegistration)
+    override fun startSignIn(providerId: String, choiceId: String, tenant: String?, consent: Boolean, newRegistration: Boolean, profileId: String?) =
+        graph.startSignIn(providerId, choiceId, tenant, consent, newRegistration, profileId)
 
     override fun cancelSignIn() = graph.cancelSignIn()
 

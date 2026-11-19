@@ -25,6 +25,7 @@ import dev.kestrel.commands.CommandHelp
 import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.orchestrator.WakeUpMode
+import dev.kestrel.app.providers.SignInState
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
@@ -505,6 +506,23 @@ class SettingsAppTest {
     }
 
     @Test
+    fun aRequestForAnotherPageLeavesTheAddFlowAndForgetsItsSignIn() {
+        val providers = FakeProviderData()
+        data.providers = providers
+        var request by mutableStateOf<PageRequest?>(PageRequest(SettingsPage.PROVIDERS))
+        compose.setContent { MaterialTheme { SettingsApp(NOTHING_SET_UP, data, { actions += it }, { checks++ }, request) { exports++ } } }
+        compose.onNodeWithText(text(R.string.providers_add)).performScrollTo().performClick()
+        providers.signIn.value = SignInState.Waiting("xai", "xai-oauth")
+        compose.waitForIdle()
+
+        // "What can I say?" while the add flow's sign-in waits.
+        request = PageRequest(SettingsPage.COMMANDS)
+
+        compose.onNodeWithText(text(R.string.commands_list)).assertExists()
+        assertEquals(SignInState.Idle, providers.signIn.value)
+    }
+
+    @Test
     fun theProviderStepOpensTheProvidersPage() {
         show(NOTHING_SET_UP)
         openChecklist()
@@ -519,6 +537,7 @@ class SettingsAppTest {
         override val listening = MutableStateFlow(ListeningOptions())
         override val commandOptions = MutableStateFlow(CommandOptions())
         override val version = "9.9.9 (99)"
+        override var providers: ProviderData? = null
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
         var deletions = 0

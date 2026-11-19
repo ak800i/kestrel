@@ -76,6 +76,8 @@ internal class SignInService : Service() {
                 is SignInState.Waiting -> waited = true
                 is SignInState.Succeeded -> {
                     if (graph.providers.tabOpened && !graph.providers.settingsResumed) returnToKestrel()
+                    // A profile's "Sign in again" stored its credential already, so its token need not stay in memory.
+                    graph.providers.forgetRenewal()
                     stop()
                 }
                 is SignInState.Failed -> stop()

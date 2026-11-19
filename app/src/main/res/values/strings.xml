@@ -75,7 +75,6 @@
 
     <string name="setup_state_done">Done</string>
     <string name="setup_state_to_do">To do</string>
-    <string name="setup_state_later">Comes later</string>
     <string name="setup_state_optional">Optional</string>
     <string name="setup_state_warning">Needs attention</string>
 

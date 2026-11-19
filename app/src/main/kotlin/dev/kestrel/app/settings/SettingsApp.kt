@@ -64,6 +64,8 @@ fun SettingsApp(
     // A new request, such as a second "What can I say?" while the app shows another page, switches to its page.
     LaunchedEffect(request) {
         request?.let {
+            // Leaving the Providers page this way leaves its add flow too, whose sub-page goes with the page (design D10).
+            if (page == SettingsPage.PROVIDERS && it.page != SettingsPage.PROVIDERS) data.providers?.leaveAddFlow()
             page = it.page
             licence = null
         }

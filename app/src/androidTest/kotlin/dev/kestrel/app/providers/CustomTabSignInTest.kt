@@ -182,7 +182,16 @@ class CustomTabSignInTest {
         SignInService.stop(context)
         SignInService.start(context, "Test")
 
-        waitFor("SignInService in the foreground again") { "isForeground=true" in service() }
+        // Android lists a start until the service has handled it, so after this wait both commands have been handled; a
+        // stop that ended the service would leave no record of it.
+        waitFor("SignInService to handle the stop and the new start") {
+            val dump = service()
+            "Pending Starts" !in dump && "Delivered Starts" !in dump
+        }
+        repeat(8) {
+            assertTrue("SignInService runs in the foreground after the new start", "isForeground=true" in service())
+            Thread.sleep(250)
+        }
     }
 
     // The rule redirectOnlyWhenAsked skips this test unless kestrelRedirectCheck=true.

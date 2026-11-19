@@ -5,10 +5,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * The state of the add flow's sign-in, which the sign-in's job changes on another thread than the page (design D9 and
- * D10). Each sign-in gets a ticket from [begin], and its job changes the state only with that ticket, so that a sign-in
- * that was cancelled or replaced never overwrites Idle or a newer sign-in's state, even when its job had already
- * finished when the cancel came.
+ * The state of the sign-in, the add flow's or a profile's "Sign in again", which the sign-in's job changes on another
+ * thread than the page (design D9 and D10). Each sign-in gets a ticket from [begin], and its job changes the state only
+ * with that ticket, so that a sign-in that was cancelled or replaced never overwrites Idle or a newer sign-in's state, even
+ * when its job had already finished when the cancel came.
  */
 internal class SignInStates {
     private val state = MutableStateFlow<SignInState>(SignInState.Idle)
@@ -32,6 +32,16 @@ internal class SignInStates {
         state.value = change(state.value)
         return true
     }
+
+    /** Runs [action] while [ticket]'s sign-in is the current one, so that a cancelled or replaced sign-in changes nothing. */
+    @Synchronized
+    fun ifCurrent(ticket: Long, action: () -> Unit): Boolean {
+        if (ticket != this.ticket) return false
+        action()
+        return true
+    }
+
+    fun isCurrent(ticket: Long): Boolean = ifCurrent(ticket) {}
 
     /**
      * Ends the current sign-in with what [change] makes of its state, or leaves it when [change] gives null; returns the

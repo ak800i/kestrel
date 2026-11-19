@@ -67,6 +67,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -81,21 +82,39 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
 import java.util.UUID
 
-/** Where a sign-in stands, for the sign-in page and SignInService (design D9 and D10). */
+/**
+ * Where a sign-in stands, for the sign-in page and SignInService (design D9 and D10). [profileId] names the profile whose
+ * "Sign in again" this is, or null for the add flow's sign-in.
+ */
 sealed interface SignInState {
+    val profileId: String? get() = null
+
     data object Idle : SignInState
 
     /** A sign-in runs; [prompt] is the device code once the provider gave it. */
-    data class Waiting(val providerId: String, val choiceId: String, val prompt: DeviceCodePrompt? = null) : SignInState
+    data class Waiting(
+        val providerId: String,
+        val choiceId: String,
+        val prompt: DeviceCodePrompt? = null,
+        override val profileId: String? = null,
+    ) : SignInState
 
-    data class Succeeded(val providerId: String, val choiceId: String, val result: SignInResult) : SignInState
+    /** For a profile's "Sign in again", the graph has already stored [result]'s credential in the profile. */
+    data class Succeeded(val providerId: String, val choiceId: String, val result: SignInResult, override val profileId: String? = null) : SignInState
 
     /** [failure] is a reason that the page explains; [error] a transport or HTTP failure. */
-    data class Failed(val providerId: String, val choiceId: String, val failure: SignInFailure?, val error: ProviderError?) : SignInState
+    data class Failed(
+        val providerId: String,
+        val choiceId: String,
+        val failure: SignInFailure?,
+        val error: ProviderError?,
+        override val profileId: String? = null,
+    ) : SignInState
 }
 
 /** What a check found before the owner saves the profile (design D9 and D13). Model names can be the owner's own. */
@@ -207,36 +226,49 @@ internal class ProviderGraph(
     /**
      * Starts the sign-in of [choiceId] on [providerId] and SignInService. [tenant] is a GHE.com tenant for Copilot's
      * enterprise choice; [consent] asks again for ChatGPT plan use; [newRegistration] registers Kestrel with another
-     * ChatGPT account, replacing the kept registration.
+     * ChatGPT account, replacing the kept registration. [profileId] names the profile of a "Sign in again", whose
+     * credential the sign-in replaces itself, so that its result is kept also when the owner left the profile page.
      */
-    fun startSignIn(providerId: String, choiceId: String, tenant: String? = null, consent: Boolean = false, newRegistration: Boolean = false) {
+    fun startSignIn(
+        providerId: String,
+        choiceId: String,
+        tenant: String? = null,
+        consent: Boolean = false,
+        newRegistration: Boolean = false,
+        profileId: String? = null,
+    ) {
         val kind = SignInRegistry.kind(providerId, choiceId) ?: return
         job?.cancel()
         tabOpened = false
         pages.value = null
         // A GHE.com tenant that is not one fails before the service starts.
         if (kind == SignInKind.GITHUB_TENANT && tenant?.let(GitHubDeviceFlow::tenant) == null) {
-            signInState.end { SignInState.Failed(providerId, choiceId, SignInFailure.UNTRUSTED_ADDRESS, null) }
+            signInState.end { SignInState.Failed(providerId, choiceId, SignInFailure.UNTRUSTED_ADDRESS, null, profileId) }
             return
         }
-        val ticket = signInState.begin(SignInState.Waiting(providerId, choiceId))
+        val ticket = signInState.begin(SignInState.Waiting(providerId, choiceId, profileId = profileId))
         SignInService.start(context, catalog.provider(providerId)?.label ?: providerId)
         job = scope.launch {
             val outcome = try {
-                SignInState.Succeeded(providerId, choiceId, runFlow(ticket, kind, tenant, consent, newRegistration))
+                val result = runFlow(ticket, kind, tenant, consent, newRegistration)
+                // A cancelled or replaced sign-in changes no profile.
+                if (profileId != null && signInState.isCurrent(ticket)) replaceCredential(profileId, result)
+                SignInState.Succeeded(providerId, choiceId, result, profileId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: SignInFailed) {
                 // OpenAI refused this add flow's issued client ID, or it is another account's: the next sign-in registers again.
-                if (e.kind == SignInFailure.REGISTRATION_REFUSED || e.kind == SignInFailure.OTHER_ACCOUNT) pendingRegistration = null
-                keep(e)
-                SignInState.Failed(providerId, choiceId, e.kind, null)
+                if (e.kind == SignInFailure.REGISTRATION_REFUSED || e.kind == SignInFailure.OTHER_ACCOUNT) {
+                    signInState.ifCurrent(ticket) { pendingRegistration = null }
+                }
+                keep(ticket, e)
+                SignInState.Failed(providerId, choiceId, e.kind, null, profileId)
             } catch (e: ProviderException) {
-                SignInState.Failed(providerId, choiceId, null, e.error)
+                SignInState.Failed(providerId, choiceId, null, e.error, profileId)
             } catch (e: Exception) {
                 // A failure that no flow names: the sign-in ends instead of waiting for ever. Logged by its classes only.
                 report("A sign-in", e)
-                SignInState.Failed(providerId, choiceId, SignInFailure.EXCHANGE_FAILED, null)
+                SignInState.Failed(providerId, choiceId, SignInFailure.EXCHANGE_FAILED, null, profileId)
             }
             // Only the current sign-in ends itself: after a cancel or a newer sign-in, this outcome is dropped (design D10).
             signInState.set(ticket) { outcome }
@@ -250,13 +282,22 @@ internal class ProviderGraph(
     suspend fun signInAgain(profileId: String) {
         val profile = stored.value?.profiles?.firstOrNull { it.id == profileId } ?: return
         val tenant = (profile.credentialId?.let { credentials.read(it) } as? Credential.GitHubToken)?.domain
-        startSignIn(profile.providerId, profile.choiceId, tenant)
+        startSignIn(profile.providerId, profile.choiceId, tenant, profileId = profileId)
+    }
+
+    /**
+     * Forgets a profile's "Sign in again" that succeeded, whose credential the profile holds now, so that its token does not
+     * stay in memory; SignInService calls it after it handled the success.
+     */
+    fun forgetRenewal() {
+        signInState.end { if (it is SignInState.Succeeded && it.profileId != null) SignInState.Idle else null }
     }
 
     /** Android ended SignInService after its time (Android 15 and later): the sign-in ends with a clear sentence. */
     fun timeOutSignIn() {
-        signInState.end { state -> (state as? SignInState.Waiting)?.let { SignInState.Failed(it.providerId, it.choiceId, SignInFailure.TIMED_OUT, null) } }
-            ?: return
+        signInState.end { state ->
+            (state as? SignInState.Waiting)?.let { SignInState.Failed(it.providerId, it.choiceId, SignInFailure.TIMED_OUT, null, it.profileId) }
+        } ?: return
         job?.cancel()
         job = null
         pages.value = null
@@ -279,9 +320,12 @@ internal class ProviderGraph(
         }
     }
 
-    /** Forgets the add flow's sign-in and pending registration when the owner leaves the add flow. */
+    /**
+     * Forgets the add flow's sign-in and pending registration when the owner leaves the add flow, also by a request for
+     * another page. A profile's "Sign in again" goes on, because it stores its result in the profile itself.
+     */
     fun leaveAddFlow() {
-        cancelSignIn()
+        if (signInState.value.profileId == null) cancelSignIn()
         pendingRegistration = null
     }
 
@@ -291,8 +335,8 @@ internal class ProviderGraph(
         SignInKind.XAI -> deviceCode(ticket, XaiDeviceFlow(http, { policy.openTemporaryHosts(it) }))
         SignInKind.MINIMAX_GLOBAL -> deviceCode(ticket, MiniMaxDeviceFlow(MiniMaxRegion.GLOBAL, http))
         SignInKind.MINIMAX_CHINA -> deviceCode(ticket, MiniMaxDeviceFlow(MiniMaxRegion.CHINA, http))
-        SignInKind.CHATGPT_PLAN -> browser(ChatGptPlanFlow(chatgptHostId(), chatgptRegistration(newRegistration), consent, http))
-        SignInKind.OPENROUTER -> browser(OpenRouterBrowserFlow(http))
+        SignInKind.CHATGPT_PLAN -> browser(ticket, ChatGptPlanFlow(chatgptHostId(), chatgptRegistration(newRegistration), consent, http))
+        SignInKind.OPENROUTER -> browser(ticket, OpenRouterBrowserFlow(http))
     }.also { result -> result.registration?.let { registration -> update { it.copy(chatgptRegistration = registration) } } }
 
     private suspend fun deviceCode(ticket: Long, flow: DeviceCodeFlow): SignInResult = policy.openTemporaryHosts(flow.signInHosts).use {
@@ -301,17 +345,24 @@ internal class ProviderGraph(
         flow.await(prompt)
     }
 
-    private suspend fun browser(flow: BrowserFlow): SignInResult = policy.openTemporaryHosts(flow.signInHosts).use {
+    private suspend fun browser(ticket: Long, flow: BrowserFlow): SignInResult = policy.openTemporaryHosts(flow.signInHosts).use {
         flow.run(loopback) { page ->
-            lastPage = page
-            pages.value = page
+            // A cancelled sign-in whose job still runs never publishes its page over a newer sign-in's.
+            signInState.ifCurrent(ticket) {
+                lastPage = page
+                pages.value = page
+            }
         }
     }
 
     /** A failure's registration: kept in the setting when it has the account's `sub`, else only for this add flow. */
-    private suspend fun keep(failure: SignInFailed) {
+    private suspend fun keep(ticket: Long, failure: SignInFailed) {
         val registration = failure.registration ?: return
-        if (registration.subject != null) update { it.copy(chatgptRegistration = registration) } else pendingRegistration = registration
+        if (registration.subject != null) {
+            update { it.copy(chatgptRegistration = registration) }
+        } else {
+            signInState.ifCurrent(ticket) { pendingRegistration = registration }
+        }
     }
 
     /** The installation's opaque host ID for the ChatGPT plan, made once (design D9). */
@@ -427,22 +478,45 @@ internal class ProviderGraph(
     /**
      * Saves [draft] with its new [credential], if any, under the profile's credential ID or a new one, and its model list;
      * the first profile, or one that the owner marks, becomes the default. Kestrel forgets the add flow's pending
-     * registration then.
+     * registration then. A new credential that no profile names after a failed save is deleted, and so is the credential of
+     * an earlier save of the same profile, as after a second tap on Save, so that no key stays on the phone without its
+     * profile (design D15).
      */
     suspend fun save(draft: Profile, credential: Credential?, discovered: List<DiscoveredModel>, makeDefault: Boolean): Profile {
         val id = credential?.let { credentials.store(it, draft.credentialId) } ?: draft.credentialId
+        val created = id.takeIf { credential != null && it != draft.credentialId }
         val signedIn = draft.method == AuthMethod.DEVICE_CODE || draft.method == AuthMethod.BROWSER
         val profile = draft.copy(credentialId = id, signedInAt = if (credential != null && signedIn) clock() else draft.signedInAt)
-        settings.set(SettingKeys.providerModels(profile.id), ModelList(discovered, clock()))
-        update { setting ->
-            val profiles = setting.profiles.filterNot { it.id == profile.id } + profile
-            setting.copy(profiles = profiles, defaultProfileId = if (makeDefault || setting.defaultProfile == null) profile.id else setting.defaultProfileId)
+        var replaced: String? = null
+        try {
+            settings.set(SettingKeys.providerModels(profile.id), ModelList(discovered, clock()))
+            update { setting ->
+                val earlier = setting.profiles.firstOrNull { it.id == profile.id }?.credentialId
+                replaced = earlier?.takeIf { old -> old != id && setting.profiles.none { it.id != profile.id && it.credentialId == old } }
+                val profiles = setting.profiles.filterNot { it.id == profile.id } + profile
+                setting.copy(profiles = profiles, defaultProfileId = if (makeDefault || setting.defaultProfile == null) profile.id else setting.defaultProfileId)
+            }
+        } catch (e: Throwable) {
+            created?.let { withContext(NonCancellable) { forget(it) } }
+            throw e
         }
+        replaced?.let { forget(it) }
         pendingRegistration = null
         // The save ends the add flow: Kestrel forgets its sign-in, so that the next add flow signs in again (design D10).
         signInState.end { if (it is SignInState.Succeeded) SignInState.Idle else null }
         tabOpened = false
         return profile
+    }
+
+    /** Deletes a credential that no profile names; a failure is logged by its classes, and the save stands. */
+    private suspend fun forget(credentialId: String) {
+        try {
+            credentials.delete(credentialId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            report("Deleting a credential without a profile", e)
+        }
     }
 
     /**
