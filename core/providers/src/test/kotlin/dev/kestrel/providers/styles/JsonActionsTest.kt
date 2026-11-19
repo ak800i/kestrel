@@ -105,4 +105,24 @@ class JsonActionsTest {
 
         assertEquals(obj("""{"name":"Notes {draft}"}"""), response.message.toolCalls.single().arguments)
     }
+
+    @Test
+    fun theIdIsNumberedAfterTheHighestInATrimmedHistory() {
+        val kept = ChatMessage.Assistant(listOf(AssistantPart.ToolCall("json-2", "get_number", obj("{}"))))
+
+        val (response, _) = run("""{"tool":"get_number","arguments":{}}""", user("Get the number."), kept, ChatMessage.ToolResult("json-2", "get_number", "7"), user("Again."))
+
+        assertEquals("json-3", response.message.toolCalls.single().id)
+    }
+
+    @Test
+    fun aRequestWithoutToolsOrWithToolChoiceNoneGoesToTheInnerAdapterUnchanged() {
+        val inner = Scripted("Hello.")
+        val none = request(user("Hi"), tools = listOf(OPEN_APP)) { copy(toolChoice = ToolChoice.NONE) }
+        val empty = request(user("Hi"), tools = emptyList())
+
+        val answers = runBlocking { listOf(none, empty).map { JsonActions(inner).complete(it, model).also { _ -> assertEquals(it, inner.sent) } } }
+
+        assertTrue(answers.all { it.invalidToolCall == null && it.message.parts == listOf(AssistantPart.Text("Hello.")) })
+    }
 }

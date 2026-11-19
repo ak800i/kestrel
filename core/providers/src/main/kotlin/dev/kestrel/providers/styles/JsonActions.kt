@@ -27,12 +27,15 @@ import kotlinx.serialization.json.putJsonObject
  * adds a fixed instruction with each tool's name, description and parameter schema to the end of the system prompt, and
  * sets [ChatRequest.jsonSchema] to the action schema, which each adapter passes on where its style allows. The reply's
  * first JSON object, after any code fence, must name a tool of the request and give an `arguments` object with the
- * schema's required keys; it becomes a normal tool call with the ID `json-<n>`. Any other reply keeps its text and gets
- * an [InvalidToolCall], so that the agent can ask once more (spec 14.2). Earlier calls and results go back as text.
+ * schema's required keys; it becomes a normal tool call with the ID `json-<n>`, numbered after the highest `json-<n>` of
+ * the request's history, so that a trimmed history never repeats an ID. Any other reply keeps its text and gets
+ * an [InvalidToolCall], so that the agent can ask once more (spec 14.2). Earlier calls and results go back as text. A
+ * request without tools or with [ToolChoice.NONE] asks for no action, so it goes to the inner adapter unchanged.
  */
 class JsonActions(private val inner: ChatAdapter) : ChatAdapter {
     override suspend fun complete(request: ChatRequest, target: ModelTarget): ChatResponse {
         ChatRequests.check(request)
+        if (request.tools.isEmpty() || request.toolChoice == ToolChoice.NONE) return inner.complete(request, target)
         val names = request.tools.map { it.name }
         val sent = request.copy(
             system = listOf(request.system, instruction(request.tools)).filter { it.isNotEmpty() }.joinToString("\n\n"),
@@ -47,7 +50,7 @@ class JsonActions(private val inner: ChatAdapter) : ChatAdapter {
             return response.copy(invalidToolCall = InvalidToolCall(action.kind, text))
         }
         action as Action.Good
-        val id = "json-${request.messages.sumOf { message -> (message as? ChatMessage.Assistant)?.toolCalls?.count { it.id.startsWith("json-") } ?: 0 } + 1}"
+        val id = "json-${maxOf(1, Wire.nextSyntheticNumber(request, "json-"))}"
         val parts = response.message.parts.filterNot { it is AssistantPart.Text || it is AssistantPart.ToolCall } +
             AssistantPart.ToolCall(id, action.tool, action.arguments)
         return response.copy(message = ChatMessage.Assistant(parts), stop = StopReason.TOOL_CALL, invalidToolCall = null)

@@ -5,6 +5,8 @@ import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.InputKind
 import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.http.NoAuth
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.styles.AdapterHarness
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -101,6 +103,82 @@ class DiscoveriesTest {
         assertNull(Discoveries.forProvider(catalog.provider("google-vertex")!!, "https://aiplatform.googleapis.com".toHttpUrl(), "global", NoAuth, bench.http))
         assertNull(Discoveries.forProvider(catalog.provider("microsoft-foundry")!!, "https://kestrel.openai.azure.com".toHttpUrl(), null, NoAuth, bench.http))
         assertNull(Discoveries.forProvider(catalog.provider("amazon-bedrock")!!, "https://bedrock-runtime.us-east-1.amazonaws.com".toHttpUrl(), null, NoAuth, bench.http))
+        assertNull(Discoveries.forProvider(catalog.provider("amazon-bedrock-mantle")!!, "https://bedrock-mantle.eu-west-1.api.aws/v1".toHttpUrl(), null, NoAuth, bench.http))
         assertEquals(0, bench.server.requestCount)
+    }
+
+    private fun errorOf(provider: String, base: String): ProviderError =
+        try {
+            list(provider, base)
+            throw AssertionError("expected a ProviderException")
+        } catch (e: ProviderException) {
+            e.error
+        }
+
+    @Test
+    fun anthropicsPagesStopWhenALastIdRepeatsAndAfterFiftyPages() {
+        repeat(2) { bench.status(200, """{"data":[],"has_more":true,"last_id":"again"}""") }
+        bench.status(200, """{"data":[],"has_more":false}""")
+
+        list("anthropic", "https://api.anthropic.com")
+
+        assertEquals(2, bench.server.requestCount)
+        AdapterHarness().use { other ->
+            repeat(60) { other.status(200, """{"data":[],"has_more":true,"last_id":"page-$it"}""") }
+            other.status(200, """{"data":[],"has_more":false}""")
+            runBlocking { Discoveries.forProvider(catalog.provider("anthropic")!!, "https://api.anthropic.com".toHttpUrl(), null, NoAuth, other.http)!!.list() }
+            assertEquals(50, other.server.requestCount)
+        }
+    }
+
+    @Test
+    fun geminisSecondPageIsReadAndItsPagesStopWhenATokenRepeats() {
+        bench.status(200, """{"models":[{"name":"models/gemini-3.8-flash","supportedGenerationMethods":["generateContent"]}],"nextPageToken":"page-2"}""")
+        bench.status(200, """{"models":[{"name":"models/gemini-4-argon","supportedGenerationMethods":["generateContent"]}],"nextPageToken":"page-2"}""")
+        bench.status(200, """{"models":[]}""")
+
+        val models = list("google", "https://generativelanguage.googleapis.com/v1beta")!!
+
+        assertEquals(listOf("gemini-3.8-flash", "gemini-4-argon"), models.map { it.id })
+        assertEquals(
+            listOf(
+                "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+                "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&pageToken=page-2",
+            ).map { it.toHttpUrl() },
+            bench.calls.requests,
+        )
+    }
+
+    @Test
+    fun aGeminiKeyThatGoogleRefusesIsTheCredentialsRejection() {
+        bench.status(
+            400,
+            """{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT",""" +
+                """"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID"}]}}""",
+        )
+
+        assertEquals(ProviderError.Unauthorized, errorOf("google", "https://generativelanguage.googleapis.com/v1beta"))
+    }
+
+    @Test
+    fun aListThatIsNotJsonIsMalformed() {
+        bench.status(200, "<html>Not a list</html>")
+
+        assertEquals(ProviderError.Malformed, errorOf("openrouter", "https://openrouter.ai/api/v1"))
+    }
+
+    @Test
+    fun aResponsesProviderListsOnlyItsChatModelsAndANumberAboveIntMaxIsUnknown() {
+        bench.status(
+            200,
+            """{"data":[{"id":"gpt-5.5","context_window":3000000000},{"id":"text-embedding-3-small"},{"id":"whisper-1"},""" +
+                """{"id":"tts-1-hd"},{"id":"gpt-4o-mini-tts"},{"id":"dall-e-3"},{"id":"gpt-image-1"},{"id":"omni-moderation-latest"},""" +
+                """{"id":"gpt-realtime"},{"id":"gpt-4o-transcribe"}]}""",
+        )
+
+        val models = list("openai", "https://api.openai.com/v1")!!
+
+        assertEquals(listOf(DiscoveredModel("gpt-5.5", "gpt-5.5")), models)
+        assertEquals(listOf("https://api.openai.com/v1/models".toHttpUrl()), bench.calls.requests)
     }
 }
