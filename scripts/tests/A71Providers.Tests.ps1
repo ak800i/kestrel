@@ -10,7 +10,7 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-providers.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer')
+    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -42,11 +42,23 @@ Describe 'The helpers of the owner''s session of sub-project 4' {
         Get-RetryOverride -Overrides $null -ErrorText 'Malformed' | Should -BeNullOrEmpty
     }
 
-    It 'reads the stand-in''s answer with the kind of the default profile' {
-        $state = ConvertFrom-StandInAnswer 'standin=off profile=copilot'
+    It 'reads the stand-in''s answer with the kind of the default profile and the number of Copilot profiles' {
+        $state = ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1'
 
         $state['standin'] | Should -Be 'off'
         $state['profile'] | Should -Be 'copilot'
+        $state['copilot'] | Should -Be '1'
         { ConvertFrom-StandInAnswer 'standin=on' } | Should -Throw 'Not an answer of provider-standin*'
+        # An older build answers without the count, which the end step needs.
+        { ConvertFrom-StandInAnswer 'standin=off profile=none' } | Should -Throw 'Not an answer of provider-standin*install.ps1*'
+    }
+
+    It 'reads the answer of provider-delete, and refuses another text' {
+        $answer = ConvertFrom-DeleteAnswer 'deleted=1 failed=0 copilot=0'
+
+        $answer['deleted'] | Should -Be '1'
+        $answer['copilot'] | Should -Be '0'
+        { ConvertFrom-DeleteAnswer 'deleted=1' } | Should -Throw 'Not an answer of provider-delete*'
+        { ConvertFrom-DeleteAnswer 'error: unknown command' } | Should -Throw
     }
 }

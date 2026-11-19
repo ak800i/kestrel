@@ -12,7 +12,8 @@
 # reports a failure, when its answer did not match, or when Kestrel did not know the model's price. -Headers
 # ('name=value;name=value') and -MessagesPath are the debug overrides for a retry within the owner's session. -Model needs
 # -Case, and every case but the allowance needs -Model; the script says so before it touches a device. With
-# provider-standin on, the cases go to the stand-in on the device and make no request off it. -PassThru returns one
+# provider-standin on, the cases go to the stand-in on the device and make no request off it; -RequireStandIn fails a
+# case whose answer does not say standin=on, so that a dry run never counts a real case as its own. -PassThru returns one
 # object for each case, for scripts\a71-providers.ps1. It exits with 1 when a case failed. It never prints a prompt, a
 # reply, a code, a token or a key: the hook answers only outcomes, counts and times.
 # It needs PowerShell 7.3 or newer, because it runs scripts\hook.ps1.
@@ -25,6 +26,7 @@ param(
     [string]$Headers,
     [string]$MessagesPath,
     [int]$TimeoutSeconds = 240,
+    [switch]$RequireStandIn,
     [switch]$PassThru
 )
 $ErrorActionPreference = 'Stop'
@@ -62,8 +64,9 @@ function ConvertFrom-LiveAnswer([string]$Text) {
 }
 
 # Whether a case passed: the device reported ok, the answer matched, and Kestrel knew the price (design D20). The
-# stand-in skips the allowance, which counts as passed.
-function Test-LivePassed($Answer) {
+# stand-in skips the allowance, which counts as passed. With -StandIn, only an answer of the stand-in (standin=on) passes.
+function Test-LivePassed($Answer, [switch]$StandIn) {
+    if ($StandIn -and $Answer['standin'] -ne 'on') { return $false }
     if ($Answer['outcome'] -eq 'skipped') { return $true }
     if ($Answer['outcome'] -ne 'ok') { return $false }
     if ($Answer.Contains('matched') -and $Answer['matched'] -ne 'true') { return $false }
@@ -75,8 +78,8 @@ function Test-LivePassed($Answer) {
 function Test-ModelMissing($Answer) { $Answer['outcome'] -eq 'failed' -and $Answer['error'] -eq 'the-subscription-does-not-offer-this-model' }
 
 # One line of the results, with only what the hook answered.
-function Format-LiveLine([string]$Case, [string]$Model, $Answer) {
-    $verdict = if ($Answer['outcome'] -eq 'skipped') { 'skipped' } elseif (Test-LivePassed $Answer) { 'ok' } else { 'failed' }
+function Format-LiveLine([string]$Case, [string]$Model, $Answer, [switch]$StandIn) {
+    $verdict = if (-not (Test-LivePassed $Answer -StandIn:$StandIn)) { 'failed' } elseif ($Answer['outcome'] -eq 'skipped') { 'skipped' } else { 'ok' }
     $rest = @($Answer.Keys | Where-Object { $_ -notin 'case', 'outcome' } | ForEach-Object { "$_=$($Answer[$_])" }) -join ' '
     "$Case$(if ($Model) { " ($Model)" }): $verdict $rest".TrimEnd()
 }
@@ -121,9 +124,9 @@ $results = foreach ($entry in $plan) {
         if (-not (Test-ModelMissing $answer)) { break }
     }
     $done["$($entry.Case)|$used"] = $true
-    $line = Format-LiveLine -Case $entry.Case -Model $used -Answer $answer
+    $line = Format-LiveLine -Case $entry.Case -Model $used -Answer $answer -StandIn:$RequireStandIn
     Write-Host $line
-    $passed = Test-LivePassed $answer
+    $passed = Test-LivePassed $answer -StandIn:$RequireStandIn
     if (-not $passed) { $failed++ }
     [pscustomobject]@{ Case = $entry.Case; Model = $used; Passed = $passed; Answer = $answer; Line = $line }
 }

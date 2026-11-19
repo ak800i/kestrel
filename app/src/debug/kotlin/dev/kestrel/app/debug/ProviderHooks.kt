@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.os.SystemClock
 import androidx.core.graphics.createBitmap
 import dev.kestrel.app.AppGraph
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.ToolMode
@@ -59,28 +60,56 @@ import java.util.Locale
  * model, taken by name, of the default profile, which must be a Copilot profile: Copilot is the only provider of the live
  * tests (spec D9). It answers at once, because a hook ends after 20 s, and `provider-live -Result` answers `running` until
  * the case has ended. `provider-standin` starts or ends a Copilot stand-in on the device; while it runs, `provider-live`
- * sends its cases there, with targets that it builds itself, and makes no request off the device. The answers hold only
- * outcomes, the style, token counts, credits, whether the price was known, and times measured on the device; never a
+ * sends its cases there, with targets that it builds itself, and makes no request off the device. `provider-delete`
+ * deletes every Copilot profile, as the owner's session does at its end. The answers hold only outcomes, the style,
+ * token counts, credits, whether the price was known, counts of profiles, and times measured on the device; never a
  * prompt, a reply, a code, a token or a key.
  */
 internal class ProviderHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "PROVIDER_LIVE" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) result() else live(intent)
         "PROVIDER_STANDIN" -> standIn(intent)
+        "PROVIDER_DELETE" -> deleteCopilot()
         else -> throw HookError("unknown command '$command'")
     }
 
-    /** Starts or ends the stand-in with `--ez on`, and answers whether it runs and what the default profile is. */
+    /**
+     * Starts or ends the stand-in with `--ez on`, and answers whether it runs, what the default profile is, and how many
+     * Copilot profiles there are.
+     */
     private suspend fun standIn(intent: Intent): String {
         if (intent.hasExtra(EXTRA_ON)) switchStandIn(intent.getBooleanExtra(EXTRA_ON, false))
-        val profile = stored().defaultProfile
+        val setting = stored()
+        val profile = setting.defaultProfile
         val kind = when {
             profile == null -> "none"
             profile.providerId == CatalogLoader.COPILOT -> "copilot"
             else -> "other"
         }
         val on = synchronized(lock) { standIn != null }
-        return "standin=${if (on) "on" else "off"} profile=$kind"
+        return "standin=${if (on) "on" else "off"} profile=$kind copilot=${setting.profiles.count { it.providerId == CatalogLoader.COPILOT }}"
+    }
+
+    /**
+     * Deletes every Copilot profile as the profile page's "Delete profile" does, with its credential and its model list,
+     * so that the owner's session leaves no Copilot sign-in on the shared emulator (design D20), and answers how many it
+     * deleted, how many deletions failed (logged by their classes only) and how many Copilot profiles are left.
+     */
+    private suspend fun deleteCopilot(): String {
+        val copilot = graph.settings.get(SettingKeys.PROVIDERS).profiles.filter { it.providerId == CatalogLoader.COPILOT }
+        var failed = 0
+        for (profile in copilot) {
+            try {
+                graph.providers.delete(profile.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                graph.report("Deleting a Copilot profile for the session", e)
+                failed++
+            }
+        }
+        val left = graph.settings.get(SettingKeys.PROVIDERS).profiles.count { it.providerId == CatalogLoader.COPILOT }
+        return "deleted=${copilot.size - failed} failed=$failed copilot=$left"
     }
 
     private fun switchStandIn(on: Boolean) {
@@ -265,7 +294,7 @@ internal class ProviderHooks(private val graph: AppGraph) {
     }
 
     companion object {
-        val COMMANDS = setOf("PROVIDER_LIVE", "PROVIDER_STANDIN")
+        val COMMANDS = setOf("PROVIDER_LIVE", "PROVIDER_STANDIN", "PROVIDER_DELETE")
         val CASES = listOf("text", "tool", "image", "json", "allowance")
 
         /** The word of the test picture, which the image case's model must read. */

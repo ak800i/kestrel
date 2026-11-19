@@ -1,12 +1,15 @@
 package dev.kestrel.app.debug
 
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.ListeningService
+import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.KeywordTuning
@@ -49,7 +52,8 @@ import kotlin.math.roundToInt
  * (MicCapture.routeReport), so that the A71 session sees where the earbuds' recording goes. Their answers hold only
  * counts, lengths, levels, times, device types and the names of kinds. VOICE_SPOTTER sets the keyword spotter's boost and
  * threshold for every keyword spotter that loads afterwards, also the spotter of VOICE_ECHO, until the hook sets them
- * again or Kestrel's process ends, so that the session can try other values without a new build.
+ * again or Kestrel's process ends, so that the session can try other values without a new build. OWNER_OPTIONS and
+ * NOTICES let the A71 sessions put back the owner's options and take away Kestrel's notices at their end.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
@@ -64,7 +68,40 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         "VOICE_SPOTTER" -> spotter(intent)
         "VOICE_TASK" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clearTask() else task(intent)
         "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
+        "OWNER_OPTIONS" -> ownerOptions(intent)
+        "NOTICES" -> notices(intent)
         else -> throw HookError("unknown command '$command'")
+    }
+
+    /**
+     * The owner's options that the A71 sessions ask him to change, "Require verbs" (CommandOptions) and "Use the earbud
+     * microphone" (ListeningOptions), after storing --ez requireVerbs and --ez earbudMicrophone, so that a session puts them
+     * back at its end, also after a failure, a skip or Ctrl+C. Kestrel takes a change a moment later, as from its pages.
+     */
+    private suspend fun ownerOptions(intent: Intent): String {
+        if (intent.hasExtra(EXTRA_REQUIRE_VERBS)) {
+            val commands = graph.settings.get(SettingKeys.COMMANDS)
+            graph.settings.set(SettingKeys.COMMANDS, commands.copy(requireVerbs = intent.getBooleanExtra(EXTRA_REQUIRE_VERBS, false)))
+        }
+        if (intent.hasExtra(EXTRA_EARBUD_MICROPHONE)) {
+            val listening = graph.settings.get(SettingKeys.LISTENING_OPTIONS)
+            graph.settings.set(SettingKeys.LISTENING_OPTIONS, listening.copy(earbudMicrophone = intent.getBooleanExtra(EXTRA_EARBUD_MICROPHONE, false)))
+        }
+        val requireVerbs = graph.settings.get(SettingKeys.COMMANDS).requireVerbs
+        val earbud = graph.settings.get(SettingKeys.LISTENING_OPTIONS).earbudMicrophone
+        return "requireVerbs=${if (requireVerbs) "on" else "off"} earbudMicrophone=${if (earbud) "on" else "off"}"
+    }
+
+    /**
+     * How many of Kestrel's notices about problems (ProblemNotifications: Kestrel stopped listening, its accessibility
+     * service is off, "Open Kestrel's settings") are in the shade, after cancelling them with --ez clear, so that a session
+     * takes away the notices that its steps caused, at its end. The listening and sign-in notifications stay.
+     */
+    private fun notices(intent: Intent): String {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: throw HookError("the notification service is missing")
+        val notices = setOf(ProblemNotifications.STOPPED_ID, ProblemNotifications.ACCESSIBILITY_ID, ProblemNotifications.SETTINGS_ID)
+        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) notices.forEach(manager::cancel)
+        return "notices=${manager.activeNotifications.count { it.id in notices }}"
     }
 
     // The phone's own times (plan 2E), and whether Android runs ListeningService in the foreground: foreground= from
@@ -220,7 +257,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     companion object {
-        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_SPOTTER", "VOICE_TASK", "VOICE_ECHO")
+        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_SPOTTER", "VOICE_TASK", "VOICE_ECHO", "OWNER_OPTIONS", "NOTICES")
 
         private val lock = Any()
 
@@ -240,5 +277,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         private const val EXTRA_RESULT = "result"
         private const val EXTRA_BOOST = "boost"
         private const val EXTRA_THRESHOLD = "threshold"
+        private const val EXTRA_REQUIRE_VERBS = "requireVerbs"
+        private const val EXTRA_EARBUD_MICROPHONE = "earbudMicrophone"
     }
 }

@@ -66,4 +66,15 @@ Describe 'The helpers of the live cases of sub-project 4' {
         Test-LivePassed $skipped | Should -BeTrue
         Format-LiveLine -Case 'allowance' -Model '' -Answer $skipped | Should -BeExactly 'allowance: skipped standin=on'
     }
+
+    It 'passes only the stand-in''s answers when the stand-in is required, as in the dry run' {
+        $real = ConvertFrom-LiveAnswer 'case=text outcome=ok matched=true priceKnown=true millis=900'
+        $standIn = ConvertFrom-LiveAnswer 'case=text outcome=ok matched=true priceKnown=true millis=40 standin=on'
+
+        Test-LivePassed $real -StandIn | Should -BeFalse
+        Test-LivePassed $standIn -StandIn | Should -BeTrue
+        Test-LivePassed (ConvertFrom-LiveAnswer 'case=allowance outcome=skipped standin=on') -StandIn | Should -BeTrue
+        Test-LivePassed (ConvertFrom-LiveAnswer 'case=allowance outcome=ok quotas=2 millis=410') -StandIn | Should -BeFalse
+        Format-LiveLine -Case 'text' -Model 'GPT-6 Luna' -Answer $real -StandIn | Should -BeExactly 'text (GPT-6 Luna): failed matched=true priceKnown=true millis=900'
+    }
 }

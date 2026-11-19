@@ -18,6 +18,32 @@ Describe 'The helpers of the A71 session' {
         ($lines[1] -split "`t")[1] | Should -BeExactly 'room'
     }
 
+    It 'takes y and yes, n and no, in any letter case, and asks again for anything else' {
+        $script:answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'maybe', 'q', 'YES'))
+        $script:asked = [System.Collections.Generic.List[string]]::new()
+        $read = { param($Text) $script:asked.Add($Text); $script:answers.Dequeue() }
+
+        Read-YesNoAnswer -Prompt 'Did it work?' -Read $read | Should -BeExactly 'y'
+        $script:asked.Count | Should -Be 4
+        $script:asked[0] | Should -BeExactly 'Did it work?'
+        $script:asked[1] | Should -BeLike 'Type y or yes, or n or no*'
+        foreach ($no in 'n', ' No ', 'NO') {
+            $script:answers = [System.Collections.Generic.Queue[string]]::new([string[]]@($no))
+            Read-YesNoAnswer -Prompt 'Did it work?' -Read $read | Should -BeExactly 'n'
+        }
+        $script:answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('y'))
+        Read-YesNoAnswer -Prompt 'Did it work?' -Read $read | Should -BeExactly 'y'
+    }
+
+    It 'takes the emulator''s lock only when its file does not exist, and says who took it' {
+        $path = Join-Path $TestDrive 'sdd\emulator.lock'
+
+        Enter-EmulatorLock -Path $path -Owner 'a71-providers session' | Should -BeTrue
+        Enter-EmulatorLock -Path $path -Owner 'another task' | Should -BeFalse
+
+        Get-Content -LiteralPath $path -Raw | Should -Match '^a71-providers session, since \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\n$'
+    }
+
     It 'reads the memory of a process from the line TOTAL PSS, in MB' {
         $dump = @('** MEMINFO in pid 4321 [dev.kestrel] **', '           TOTAL    99999    88888', '            TOTAL PSS:   245,678            TOTAL RSS:   300,000')
 

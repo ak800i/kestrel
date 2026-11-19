@@ -98,6 +98,14 @@
 #                                           long the start waited for the headset's link, the types of Android's
 #                                           communication device and of the recording's input, and the loudest sample
 #                                           since the last voice-route, in percent; never audio
+# The owner's options and Kestrel's notices, which the A71 sessions put back at their end:
+#   owner-options [-RequireVerbs true|false] [-EarbudMicrophone true|false]
+#                                           answers whether "Require verbs" and "Use the earbud microphone" are on,
+#                                           after storing the options given; Kestrel takes a change a moment later, as
+#                                           from its settings
+#   notices [-Clear]                        answers how many of Kestrel's notices about problems (it stopped
+#                                           listening, its accessibility service is off, "Open Kestrel's settings") are
+#                                           in the notification shade, after taking them away with -Clear
 #   voice-spotter [-Boost b] [-Threshold t] answers the keyword spotter's boost and threshold, after storing -Boost (0.5
 #                                           to 10) and -Threshold (0.01 to 0.5); a change counts for every keyword
 #                                           spotter that loads afterwards, also the spotter of the hook voice-echo,
@@ -128,10 +136,14 @@
 #                                           they were estimated (estimated=true when the provider sent no usage), the
 #                                           credits, whether the price was known and the time on the device; never a
 #                                           prompt, a reply or a token
-#   provider-standin [-On true|false]       answers whether the Copilot stand-in on the device runs and whether the
-#                                           default profile is a Copilot profile (profile=none|copilot|other), after
-#                                           starting or ending the stand-in; while it runs, provider-live sends its
-#                                           cases to it and makes no request off the device
+#   provider-standin [-On true|false]       answers whether the Copilot stand-in on the device runs, whether the default
+#                                           profile is a Copilot profile (profile=none|copilot|other), and how many
+#                                           Copilot profiles there are (copilot=n), after starting or ending the
+#                                           stand-in; while it runs, provider-live sends its cases to it and makes no
+#                                           request off the device
+#   provider-delete                         deletes every Copilot profile with its credential, as the profile page's
+#                                           "Delete profile" does, and answers how many it deleted, how many deletions
+#                                           failed and how many Copilot profiles are left
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -154,7 +166,8 @@ param(
     [ValidateSet('state', 'test-mode', 'snapshot', 'overlay', 'tap', 'type', 'scroll', 'global', 'crash', 'voice',
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
-        'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin')][string]$Command,
+        'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
+        'owner-options', 'notices')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -195,7 +208,9 @@ param(
     [ValidateSet('text', 'tool', 'image', 'json', 'allowance')][string]$Case,
     [string]$Model,
     [string]$Headers,
-    [string]$MessagesPath
+    [string]$MessagesPath,
+    [ValidateSet('true', 'false')][string]$RequireVerbs,
+    [ValidateSet('true', 'false')][string]$EarbudMicrophone
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -264,6 +279,9 @@ if ($Case) { $extras += "--es case $(ConvertTo-ShellText $Case.ToLowerInvariant(
 if ($Model) { $extras += "--es model $(ConvertTo-ShellText $Model)" }
 if ($Headers) { $extras += "--es headers $(ConvertTo-ShellText $Headers)" }
 if ($MessagesPath) { $extras += "--es messagesPath $(ConvertTo-ShellText $MessagesPath)" }
+# ValidateSet accepts any letter case, and Android's --ez only lower case.
+if ($RequireVerbs) { $extras += "--ez requireVerbs $($RequireVerbs.ToLowerInvariant())" }
+if ($EarbudMicrophone) { $extras += "--ez earbudMicrophone $($EarbudMicrophone.ToLowerInvariant())" }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

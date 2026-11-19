@@ -1,7 +1,7 @@
-# Helpers for the A71 sessions (scripts\a71-session.ps1 and scripts\a71-commands.ps1; plan 2D, design D8) and for
-# scripts\listen-check.ps1. They read Android's dumps and logs on this computer and keep only numbers, intent actions,
-# the short names of exception classes and Kestrel's own fixed descriptions, never what the owner said or other apps'
-# text.
+# Helpers for the A71 sessions (scripts\a71-session.ps1, scripts\a71-commands.ps1 and scripts\a71-providers.ps1; plan
+# 2D, design D8) and for scripts\listen-check.ps1. They read Android's dumps and logs on this computer and keep only
+# numbers, intent actions, the short names of exception classes and Kestrel's own fixed descriptions, never what the
+# owner said or other apps' text.
 
 # Appends a line to the session's results: the time, the step and the text, separated by tabs, and creates the file's
 # folder. The text must hold no private data, such as what Kestrel heard.
@@ -11,6 +11,48 @@ function Add-SessionResult([string]$Path, [string]$Step, [string]$Text) {
     # In the invariant culture, whose time separator is always ':'.
     $time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
     [IO.File]::AppendAllText($Path, "$time`t$Step`t$Text`n", [Text.UTF8Encoding]::new($false))
+}
+
+# Asks $Prompt until the answer, in any letter case, is a key of $Choices, and returns that key's value; any other
+# answer, also an empty one, asks again with $Again, so that a stray Enter or a typo is never taken as an answer. $Read
+# reads one answer; the tests give their own.
+function Read-Choice([string]$Prompt, [hashtable]$Choices, [string]$Again, [scriptblock]$Read = { param($Text) Read-Host $Text }) {
+    $text = $Prompt
+    while ($true) {
+        $answer = "$(& $Read $text)".Trim().ToLowerInvariant()
+        if ($answer -and $Choices.ContainsKey($answer)) { return $Choices[$answer] }
+        $text = $Again
+    }
+}
+
+# A yes-or-no question of the sessions (Read-Choice): y or yes gives 'y', n or no gives 'n', in any letter case.
+function Read-YesNoAnswer([string]$Prompt, [scriptblock]$Read = { param($Text) Read-Host $Text }) {
+    Read-Choice -Prompt $Prompt -Choices @{ y = 'y'; yes = 'y'; n = 'n'; no = 'n' } -Again 'Type y or yes, or n or no, and press Enter' -Read $Read
+}
+
+# Takes the emulator's lock (process rule 9) by creating its file, which fails when the file exists, so that two
+# processes cannot both take it; the file says who took it and when. Returns $true when it took the lock, and $false when
+# the file exists.
+function Enter-EmulatorLock([string]$Path, [string]$Owner) {
+    $folder = Split-Path -Parent $Path
+    if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+    $time = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    } catch {
+        # PowerShell wraps the IOException of a file that exists in a MethodInvocationException.
+        $failure = $_.Exception
+        while ($failure -and $failure -isnot [IO.IOException]) { $failure = $failure.InnerException }
+        if ($failure -and (Test-Path -LiteralPath $Path)) { return $false }
+        throw
+    }
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes("$Owner, since $time`n")
+        $stream.Write($bytes, 0, $bytes.Length)
+    } finally {
+        $stream.Dispose()
+    }
+    $true
 }
 
 # The memory of a process (PSS) in MB, from 'dumpsys meminfo <package>': its line 'TOTAL PSS:', or else the row 'TOTAL' of
