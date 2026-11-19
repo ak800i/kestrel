@@ -49,7 +49,9 @@ import kotlinx.serialization.json.putJsonObject
  * `convertMessages`
  * (`extensions/amazon-bedrock/stream.runtime.ts`); other models keep no reasoning state (design D5). A Claude model that
  * thinks by default ([AnthropicModels.thinksByDefault]) gets a required tool choice as `auto` (except Claude Haiku 5.5), as
- * in OpenClaw's `normalizeAdaptiveClaudeToolChoice`, and no temperature, which every Claude 5 model refuses. Without tools
+ * in OpenClaw's `normalizeAdaptiveClaudeToolChoice`, and no temperature, which every Claude 5 model refuses; Grok 4.6's
+ * Converse profiles get none either, as in OpenClaw. A Claude model refusing to answer (`refusal`) stops as FILTERED, as
+ * in the Anthropic adapter, and Claude's prompt is cached at `cachePoint` blocks ([cachesPrompt]). Without tools
  * the history becomes text, so reasoning blocks are neither kept from nor sent in such a request (Anthropic checks the
  * prefix that produced them).
  */
@@ -68,9 +70,14 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
     private fun body(request: ChatRequest, target: ModelTarget): JsonObject = buildJsonObject {
         val tools = sendsTools(request, target)
         val thinks = AnthropicModels.thinksByDefault(target.sentModelId)
-        val sampling = !thinks && !AnthropicModels.defaultSamplingOnly(target.sentModelId) && target.model.compat.supportsTemperature != false
+        val sampling = !thinks && !AnthropicModels.defaultSamplingOnly(target.sentModelId) && target.model.compat.supportsTemperature != false &&
+            target.sentModelId !in REFUSE_TEMPERATURE
+        val cache = cachesPrompt(target)
         put("messages", messages(request, target, tools))
-        if (request.system.isNotBlank()) putJsonArray("system") { addJsonObject { put("text", request.system) } }
+        if (request.system.isNotBlank()) putJsonArray("system") {
+            addJsonObject { put("text", request.system) }
+            if (cache) add(CACHE_POINT)
+        }
         putJsonObject("inferenceConfig") {
             put("maxTokens", request.maxOutputTokens)
             if (request.temperature != null && sampling) put("temperature", request.temperature)
@@ -84,6 +91,7 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
                         putJsonObject("inputSchema") { put("json", tool.parameters) }
                     }
                 }
+                if (cache) add(CACHE_POINT)
             }
             // `auto` is Converse's default, so only a required choice is sent, as OpenClaw's convertToolConfig does.
             if (request.toolChoice == ToolChoice.REQUIRED) putJsonObject("toolChoice") { putJsonObject(if (thinks && !AnthropicModels.keepsForcedToolChoice(target.sentModelId)) "auto" else "any") {} }
@@ -170,7 +178,7 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
             null, "end_turn", "stop_sequence" -> StopReason.END
             "tool_use" -> StopReason.TOOL_CALL
             "max_tokens", "model_context_window_exceeded" -> StopReason.MAX_TOKENS
-            "guardrail_intervened", "content_filtered" -> StopReason.FILTERED
+            "guardrail_intervened", "content_filtered", "refusal" -> StopReason.FILTERED
             "malformed_model_output", "malformed_tool_use" -> {
                 reply.invalid(InvalidKind.BAD_JSON, "")
                 StopReason.OTHER
@@ -190,5 +198,25 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
 
     companion object {
         const val LOG_PATH = "/model/{model}/converse"
+
+        private val CACHE_POINT = buildJsonObject { putJsonObject("cachePoint") { put("type", "default") } }
+
+        /** OpenClaw sends these Converse profiles no temperature, because they refuse one. */
+        private val REFUSE_TEMPERATURE = setOf("us.xai.grok-4.6", "global.xai.grok-4.6")
+
+        private val CLAUDE_CACHED = Regex(
+            "^claude-(?:haiku-(?:4-5|5-5)|sonnet-(?:4-[56]|5(?:-5)?)|opus-(?:4-[5-8]|5(?:-5)?)|(?:fable|mythos)-5(?:-1)?)(?:$|-v\\d|-\\d{8}(?:-|$))",
+        )
+        private val CLAUDE_SHORT = Regex("^claude-(?:fable-5|mythos-5|opus-5|sonnet-5|haiku-5|3-7-sonnet|3-5-haiku)")
+
+        /**
+         * Whether the request marks its system prompt and its tools with Converse's `cachePoint` blocks, as the Anthropic
+         * adapter marks the same two places: for the Claude models that OpenClaw's `resolveBedrockClaudeCachePolicy`
+         * (`extensions/amazon-bedrock/bedrock-options.ts`) names, by the model's ID or name; never for other models.
+         */
+        private fun cachesPrompt(target: ModelTarget): Boolean =
+            listOfNotNull(AnthropicModels.identity(target.sentModelId), AnthropicModels.identity(target.model.name)).any {
+                CLAUDE_CACHED.containsMatchIn(it) || "-4-" in it || CLAUDE_SHORT.containsMatchIn(it)
+            }
     }
 }

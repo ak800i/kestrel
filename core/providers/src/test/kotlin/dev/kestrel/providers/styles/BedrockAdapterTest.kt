@@ -272,6 +272,38 @@ class BedrockAdapterTest {
     }
 
     @Test
+    fun claudeGetsCachePointsAfterTheSystemPromptAndTheLastToolAndOtherModelsNone() = runBlocking {
+        bench.reply("bedrock/text.json")
+        bench.reply("bedrock/text.json")
+        val nova = bedrock.copy(model = ModelEntry("amazon.nova-pro-v1:0", "Nova Pro"), sentModelId = "amazon.nova-pro-v1:0")
+
+        adapter.complete(request(user("Hi")), bedrock)
+        adapter.complete(request(user("Hi")), nova)
+
+        val point = json("""{"cachePoint":{"type":"default"}}""")
+        val claude = bench.body(bench.take())
+        assertEquals(json("""[{"text":"You are Kestrel."},{"cachePoint":{"type":"default"}}]"""), claude["system"])
+        assertEquals(point, claude["toolConfig"]!!.jsonObject["tools"]!!.jsonArray.last())
+        assertEquals(2, claude["toolConfig"]!!.jsonObject["tools"]!!.jsonArray.size)
+        val other = bench.body(bench.take())
+        assertEquals(json("""[{"text":"You are Kestrel."}]"""), other["system"])
+        assertEquals(1, other["toolConfig"]!!.jsonObject["tools"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun claudesRefusalIsFilteredAndGrok46GetsNoTemperature() = runBlocking {
+        bench.status(200, """{"output":{"message":{"role":"assistant","content":[]}},"stopReason":"refusal"}""")
+        bench.reply("bedrock/text.json")
+        val grok = bedrock.copy(model = ModelEntry("us.xai.grok-4.6", "Grok 4.6"), sentModelId = "us.xai.grok-4.6")
+
+        assertEquals(StopReason.FILTERED, adapter.complete(request(user("Hi")), bedrock).stop)
+        adapter.complete(request(user("Hi")) { copy(temperature = 0.2) }, grok)
+
+        bench.take()
+        assertNull(bench.body(bench.take())["inferenceConfig"]!!.jsonObject["temperature"])
+    }
+
+    @Test
     fun aSecondRefusalOrARefusalWithoutASkewIsTheCredentialsRefusal() {
         val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }), ClockSkew())
         val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))

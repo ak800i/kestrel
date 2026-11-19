@@ -55,6 +55,11 @@
   "system": [
     {
       "text": "You are Kestrel."
+    },
+    {
+      "cachePoint": {
+        "type": "default"
+      }
     }
   ],
   "inferenceConfig": {
@@ -80,6 +85,11 @@
               ]
             }
           }
+        }
+      },
+      {
+        "cachePoint": {
+          "type": "default"
         }
       }
     ]
