@@ -1,0 +1,40 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "reasoningContent": {
+            "reasoningText": {
+              "text": "The owner wants the camera.",
+              "signature": "RXF3U2lnbmF0dXJl"
+            }
+          }
+        },
+        {
+          "reasoningContent": {
+            "redactedContent": "UmVkYWN0ZWQ="
+          }
+        },
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_t",
+            "name": "open_app",
+            "input": {
+              "name": "Camera"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "stopReason": "tool_use",
+  "metrics": {
+    "latencyMs": 900
+  },
+  "usage": {
+    "inputTokens": 300,
+    "outputTokens": 60,
+    "totalTokens": 360
+  }
+}

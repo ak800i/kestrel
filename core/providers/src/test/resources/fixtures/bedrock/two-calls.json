@@ -1,0 +1,36 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_a",
+            "name": "open_app",
+            "input": {
+              "name": "Camera"
+            }
+          }
+        },
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_b",
+            "name": "open_app",
+            "input": {
+              "name": "Clock"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "stopReason": "tool_use",
+  "metrics": {
+    "latencyMs": 800
+  },
+  "usage": {
+    "inputTokens": 300,
+    "outputTokens": 30,
+    "totalTokens": 330
+  }
+}

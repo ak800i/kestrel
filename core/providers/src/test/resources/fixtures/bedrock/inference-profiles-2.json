@@ -1,0 +1,11 @@
+{
+  "inferenceProfileSummaries": [
+    {
+      "inferenceProfileId": "global.anthropic.claude-sonnet-5-v1:0",
+      "inferenceProfileName": "Global Claude Sonnet 5",
+      "status": "ACTIVE",
+      "type": "SYSTEM_DEFINED",
+      "models": []
+    }
+  ]
+}

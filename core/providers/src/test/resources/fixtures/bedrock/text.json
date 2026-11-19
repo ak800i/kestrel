@@ -1,0 +1,23 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "Hello, owner."
+        }
+      ]
+    }
+  },
+  "stopReason": "end_turn",
+  "metrics": {
+    "latencyMs": 800
+  },
+  "usage": {
+    "inputTokens": 100,
+    "outputTokens": 12,
+    "totalTokens": 1062,
+    "cacheReadInputTokens": 900,
+    "cacheWriteInputTokens": 50
+  }
+}

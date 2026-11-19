@@ -1,0 +1,30 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "I will open it."
+        },
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_1",
+            "name": "open_app",
+            "input": {
+              "name": "Camera"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "stopReason": "tool_use",
+  "metrics": {
+    "latencyMs": 800
+  },
+  "usage": {
+    "inputTokens": 300,
+    "outputTokens": 25,
+    "totalTokens": 325
+  }
+}

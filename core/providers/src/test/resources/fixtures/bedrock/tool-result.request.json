@@ -1,0 +1,87 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "Open the camera."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "I will open it."
+        },
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_1",
+            "name": "open_app",
+            "input": {
+              "name": "Camera"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "toolResult": {
+            "toolUseId": "tooluse_1",
+            "content": [
+              {
+                "text": "Opened."
+              }
+            ]
+          }
+        },
+        {
+          "text": "The screen now."
+        },
+        {
+          "image": {
+            "format": "png",
+            "source": {
+              "bytes": "iVBORw0KGgo="
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "system": [
+    {
+      "text": "You are Kestrel."
+    }
+  ],
+  "inferenceConfig": {
+    "maxTokens": 256
+  },
+  "toolConfig": {
+    "tools": [
+      {
+        "toolSpec": {
+          "name": "open_app",
+          "description": "Opens an app by its name.",
+          "inputSchema": {
+            "json": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The app's name."
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}

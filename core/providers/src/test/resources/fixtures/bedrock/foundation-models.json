@@ -1,0 +1,97 @@
+{
+  "modelSummaries": [
+    {
+      "modelId": "anthropic.claude-sonnet-5-v1:0",
+      "modelName": "Claude Sonnet 5",
+      "providerName": "Anthropic",
+      "inputModalities": [
+        "TEXT",
+        "IMAGE"
+      ],
+      "outputModalities": [
+        "TEXT"
+      ],
+      "responseStreamingSupported": true,
+      "inferenceTypesSupported": [
+        "INFERENCE_PROFILE"
+      ],
+      "modelLifecycle": {
+        "status": "ACTIVE"
+      }
+    },
+    {
+      "modelId": "amazon.nova-pro-v1:0",
+      "modelName": "Nova Pro",
+      "providerName": "Amazon",
+      "inputModalities": [
+        "TEXT",
+        "IMAGE"
+      ],
+      "outputModalities": [
+        "TEXT"
+      ],
+      "responseStreamingSupported": true,
+      "inferenceTypesSupported": [
+        "ON_DEMAND"
+      ],
+      "modelLifecycle": {
+        "status": "ACTIVE"
+      }
+    },
+    {
+      "modelId": "meta.llama3-8b-instruct-v1:0",
+      "modelName": "Llama 3 8B Instruct",
+      "providerName": "Meta",
+      "inputModalities": [
+        "TEXT"
+      ],
+      "outputModalities": [
+        "TEXT"
+      ],
+      "responseStreamingSupported": true,
+      "inferenceTypesSupported": [
+        "ON_DEMAND"
+      ],
+      "modelLifecycle": {
+        "status": "LEGACY"
+      }
+    },
+    {
+      "modelId": "amazon.titan-embed-text-v2:0",
+      "modelName": "Titan Text Embeddings V2",
+      "providerName": "Amazon",
+      "inputModalities": [
+        "TEXT"
+      ],
+      "outputModalities": [
+        "EMBEDDING"
+      ],
+      "responseStreamingSupported": false,
+      "inferenceTypesSupported": [
+        "ON_DEMAND"
+      ],
+      "modelLifecycle": {
+        "status": "ACTIVE"
+      }
+    },
+    {
+      "modelId": "anthropic.claude-mythos-preview-v1:0",
+      "modelName": "Claude Mythos Preview",
+      "providerName": "Anthropic",
+      "inputModalities": [
+        "TEXT",
+        "IMAGE"
+      ],
+      "outputModalities": [
+        "TEXT"
+      ],
+      "responseStreamingSupported": true,
+      "inferenceTypesSupported": [
+        "ON_DEMAND"
+      ],
+      "modelLifecycle": {
+        "status": "ACTIVE"
+      }
+    }
+  ]
+}

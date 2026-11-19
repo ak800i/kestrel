@@ -1,0 +1,36 @@
+{
+  "inferenceProfileSummaries": [
+    {
+      "inferenceProfileId": "us.anthropic.claude-sonnet-5-v1:0",
+      "inferenceProfileName": "US Claude Sonnet 5",
+      "inferenceProfileArn": "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-5-v1:0",
+      "status": "ACTIVE",
+      "type": "SYSTEM_DEFINED",
+      "models": [
+        {
+          "modelArn": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-v1:0"
+        }
+      ]
+    },
+    {
+      "inferenceProfileId": "global.anthropic.claude-mythos-preview-v1:0",
+      "inferenceProfileName": "Global Claude Mythos Preview",
+      "inferenceProfileArn": "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-mythos-preview-v1:0",
+      "status": "ACTIVE",
+      "type": "SYSTEM_DEFINED",
+      "models": [
+        {
+          "modelArn": "arn:aws:bedrock::foundation-model/anthropic.claude-mythos-preview-v1:0"
+        }
+      ]
+    },
+    {
+      "inferenceProfileId": "eu.amazon.nova-pro-v1:0",
+      "inferenceProfileName": "EU Nova Pro",
+      "status": "DISABLED",
+      "type": "SYSTEM_DEFINED",
+      "models": []
+    }
+  ],
+  "nextToken": "page-2"
+}
