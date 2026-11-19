@@ -1,6 +1,7 @@
 package dev.kestrel.providers.catalog
 
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Merges `catalog/providers.json` with `catalog/overrides.json` into one [Catalog] at runtime (design D2), so that a
@@ -21,6 +22,10 @@ object CatalogLoader {
         require(file.schema == 1 && overrides.schema == 1) { "Unknown catalog schema" }
         val excluded = overrides.excludeProviders.map { it.id }.toSet()
         val excludedChoices = overrides.excludeAuthChoices.map { it.provider to it.choiceId }.toSet()
+        // Settings for an excluded choice would add it back as Kestrel's own choice, and offer it.
+        overrides.choices.firstOrNull { (it.provider to it.choiceId) in excludedChoices }?.let {
+            throw IllegalArgumentException("The choice ${it.choiceId} is excluded and has settings")
+        }
         val corrections = overrides.models.associateBy { it.provider to it.model }
         val byId = linkedMapOf<String, ProviderEntry>()
 
@@ -100,10 +105,11 @@ object CatalogLoader {
     /** Lower case, with spaces, hyphens and underscores removed: "GPT-6.1 Terra" and "gpt-6.1-terra" both give "gpt6.1terra". */
     fun normalise(name: String): String = name.lowercase().filterNot { it == ' ' || it == '-' || it == '_' }
 
-    /** The host of a URL that may hold `{region}`, which HttpUrl cannot parse. */
-    fun hostOf(url: String?): String? =
-        url?.substringAfter("://", "")?.substringBefore('/')?.substringBefore('?')?.substringBefore(':')?.lowercase()
-            ?.takeIf { it.isNotEmpty() }
+    /**
+     * The host of a URL as OkHttp reads it, so that user info, a fragment or the brackets of an IPv6 address do not end up in
+     * it; a URL that does not parse has no host.
+     */
+    fun hostOf(url: String?): String? = url?.toHttpUrlOrNull()?.host
 
     private fun correct(model: ModelEntry, change: ModelOverride?): ModelEntry =
         model.copy(

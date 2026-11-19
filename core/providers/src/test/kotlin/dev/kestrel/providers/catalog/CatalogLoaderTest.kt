@@ -7,6 +7,7 @@ import dev.kestrel.providers.http.KeyHeader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -139,5 +140,27 @@ class CatalogLoaderTest {
         assertEquals("GPT-6.1 Terra", CatalogLoader.copilotPrice(copilot, "terra-2026", "GPT 6.1_Terra")?.name)
         assertNull(CatalogLoader.copilotPrice(copilot, "gpt-6-luna", "GPT-6 Luna"))
         assertEquals("gpt6.1terra", CatalogLoader.normalise("GPT-6.1 Terra"))
+    }
+
+    @Test
+    fun settingsForAnExcludedChoiceAreRefusedByTheChoicesId() {
+        val clash = overrides.replace(
+            """{"provider": "acme", "choiceId": "acme-api-key", "method": "API_KEY", "label": "Acme key"},""",
+            """{"provider": "acme", "choiceId": "acme-cli", "method": "API_KEY", "baseUrl": "https://secret.acme.test/v1"},""",
+        )
+        assertTrue(clash != overrides)
+
+        val error = assertThrows(IllegalArgumentException::class.java) { CatalogLoader.load(providers, clash) }
+
+        assertEquals("The choice acme-cli is excluded and has settings", error.message)
+    }
+
+    @Test
+    fun hostOfReadsTheRealHost() {
+        assertEquals("api.acme.test", CatalogLoader.hostOf("https://user:pass@API.acme.test/v1"))
+        assertEquals("api.acme.test", CatalogLoader.hostOf("https://api.acme.test#section"))
+        assertEquals("::1", CatalogLoader.hostOf("http://[::1]:8080/v1"))
+        assertNull(CatalogLoader.hostOf("not a url"))
+        assertNull(CatalogLoader.hostOf(null))
     }
 }
