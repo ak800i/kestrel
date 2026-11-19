@@ -14,6 +14,7 @@ import dev.kestrel.privacy.db.SettingRow
 import dev.kestrel.privacy.db.SettingsDao
 import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
+import dev.kestrel.privacy.network.PolicyDecision
 import dev.kestrel.privacy.settings.SettingsStore
 import dev.kestrel.providers.catalog.AuthMethod
 import dev.kestrel.providers.credentials.Credential
@@ -34,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -44,6 +46,7 @@ import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.Call
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -79,6 +82,8 @@ class ProviderGraphTest {
     private val vault = MemoryVault()
     private val loopback = FakeLoopback()
 
+    /** The graph's allowlist, where its sign-ins and checks open their temporary leases. */
+    private val leases = NetworkPolicy()
     /** Whether the context refuses to start a foreground service, as Android does while Kestrel is in the background. */
     @Volatile
     private var refuseServiceStarts = false
@@ -115,7 +120,7 @@ class ProviderGraphTest {
                 onMain += Looper.myLooper() == Looper.getMainLooper()
                 ProviderHttp(calls)
             },
-            vault, MutableStateFlow(null), NetworkPolicy(), { _, _ -> }, loopback, { true },
+            vault, MutableStateFlow(null), leases, { _, _ -> }, loopback, { true },
         )
     }
 
@@ -278,12 +283,41 @@ class ProviderGraphTest {
         val switchedOff = ProviderError.SignInSwitchedOff("github-copilot")
 
         assertEquals(switchedOff, errorOf { graph.refreshModels(profile.id) })
+        assertNoCopilotLease()
         assertEquals(switchedOff, errorOf { graph.signInAgain(profile.id) })
+        assertNoCopilotLease()
         assertEquals(switchedOff, errorOf { graph.check(profile.copy(id = "test-draft", credentialId = null), Credential.GitHubToken("test-github-token", "github.com")) })
+        assertNoCopilotLease()
         graph.startSignIn("github-copilot", "github-copilot")
 
         assertEquals(SignInState.Failed("github-copilot", "github-copilot", null, switchedOff), graph.signIn.value)
+        assertNoCopilotLease()
         assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun switchingABorrowedSignInOffEndsASignInThatRunsWithIt() = runBlocking {
+        val code = """{"device_code": "test-device", "user_code": "TEST-CODE", "verification_uri": "https://github.com/login/device", "expires_in": 900, "interval": 5}"""
+        server.enqueue(MockResponse.Builder().code(200).body(code).build())
+        graph.startSignIn("github-copilot", "github-copilot")
+        val shown = withTimeout(10_000) { graph.signIn.first { it !is SignInState.Waiting || it.prompt != null } }
+        assertTrue("the sign-in shows its code: $shown", shown is SignInState.Waiting)
+        assertTrue("the sign-in leased github.com", leases.check("https://github.com/".toHttpUrl()) is PolicyDecision.Allowed)
+
+        graph.setSwitch("copilot", false)
+
+        assertEquals(SignInState.Failed("github-copilot", "github-copilot", null, ProviderError.SignInSwitchedOff("github-copilot")), graph.signIn.value)
+        withTimeout(5_000) { while (leases.check("https://github.com/".toHttpUrl()) !is PolicyDecision.Blocked) delay(50) }
+        // The flow would poll 5 s after the code; it no longer runs, so only the code's request reached the server.
+        delay(6_000)
+        assertEquals(1, server.requestCount)
+    }
+
+    /** That no lease of the graph lets a Copilot host through. */
+    private fun assertNoCopilotLease() {
+        for (host in listOf("github.com", "api.github.com", "api.individual.githubcopilot.com")) {
+            assertTrue("$host is leased", leases.check("https://$host/".toHttpUrl()) is PolicyDecision.Blocked)
+        }
     }
 
     @Test

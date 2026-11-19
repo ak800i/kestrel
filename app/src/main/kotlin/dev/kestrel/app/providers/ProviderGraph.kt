@@ -621,8 +621,24 @@ internal class ProviderGraph(
     suspend fun setModel(profileId: String, role: ModelRole, model: ProfileModel) =
         updateProfile(profileId) { if (role == ModelRole.LIGHTWEIGHT) it.copy(lightweight = model) else it.copy(versatile = model) }
 
-    /** Switches a borrowed sign-in on or off for every profile that uses it (design D9). */
-    suspend fun setSwitch(identity: String, on: Boolean) = update { it.copy(signInSwitches = it.signInSwitches + (identity to on)) }
+    /**
+     * Switches a borrowed sign-in on or off for every profile that uses it (design D9). Switching it off also ends a
+     * sign-in that runs with it, as Failed with SignInSwitchedOff, so that its polls stop and its lease closes (spec 10.4).
+     */
+    suspend fun setSwitch(identity: String, on: Boolean) {
+        update { it.copy(signInSwitches = it.signInSwitches + (identity to on)) }
+        if (on) return
+        signInState.end { state ->
+            (state as? SignInState.Waiting)
+                ?.takeIf { catalog.choice(it.providerId, it.choiceId)?.settings?.borrowedIdentity == identity }
+                ?.let { SignInState.Failed(it.providerId, it.choiceId, null, ProviderError.SignInSwitchedOff(it.providerId), it.profileId) }
+        } ?: return
+        // SignInService stops itself at the failure.
+        job?.cancel()
+        job = null
+        pages.value = null
+        lastPage = null
+    }
 
     /**
      * Replaces a profile's credential under its own ID, as "Sign in again" and "Change key" do (design D15). A profile
