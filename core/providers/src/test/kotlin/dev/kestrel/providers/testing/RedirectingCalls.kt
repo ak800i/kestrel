@@ -25,7 +25,11 @@ class RedirectingCalls(private val server: MockWebServer, readTimeoutMillis: Lon
         .addInterceptor { chain ->
             val original = chain.request().url
             recorded += original
-            val target = server.url(original.encodedPath).newBuilder().encodedQuery(original.encodedQuery).build()
+            // The server's own scheme, host and port: resolving the path would read one that starts with "//" as a host.
+            val target = server.url("/").newBuilder()
+                .encodedPath(original.encodedPath)
+                .encodedQuery(original.encodedQuery)
+                .build()
             chain.proceed(chain.request().newBuilder().url(target).build())
         }
         .build()

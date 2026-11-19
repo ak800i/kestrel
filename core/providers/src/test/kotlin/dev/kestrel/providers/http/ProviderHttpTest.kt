@@ -96,6 +96,19 @@ class ProviderHttpTest {
     }
 
     @Test
+    fun aPathThatStartsWithTwoSlashesStillReachesTheTestServer() = runBlocking {
+        // Resolved against the server, this path would name the host 127.0.0.1 and its closed port 1 instead.
+        val doubled = "https://api.kestrel.test//127.0.0.1:1/v1/chat".toHttpUrl()
+        server.enqueue(reply(200, "ok"))
+
+        val reply = ProviderHttp(calls).exchange(HttpRequest("GET", doubled))
+
+        assertEquals(200, reply.status)
+        assertEquals(listOf(doubled), calls.requests)
+        assertEquals("//127.0.0.1:1/v1/chat", server.takeRequest(5, TimeUnit.SECONDS)?.url?.encodedPath)
+    }
+
+    @Test
     fun theDecoratorSeesEveryRequestWithItsMeta() = runBlocking {
         server.enqueue(reply(200))
         val http = ProviderHttp(calls, decorator = { builder, meta -> builder.header("X-Task", meta.taskId ?: "none") })
