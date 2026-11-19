@@ -15,6 +15,7 @@ import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.chat.StopReason
 import dev.kestrel.providers.chat.ToolChoice
 import dev.kestrel.providers.chat.Usage
+import dev.kestrel.providers.http.ClockSkew
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
@@ -40,7 +41,8 @@ import kotlinx.serialization.json.putJsonObject
  * records `/model/{model}/converse`, because a model ID can be an inference-profile ARN with the AWS account ID. AWS's
  * refusals go through [BedrockErrors]: its token errors (403 with `ExpiredTokenException`, `UnrecognizedClientException` or
  * `InvalidSignatureException`) are the credential's own refusal (`rejected`), new keys for IAM keys and a new key for an
- * API key, and a refused signature with a clock skew of more than 5 minutes is signed once more with AWS's time. The
+ * API key, and a refused signature with a clock skew of more than 5 minutes is signed once more with AWS's time, which
+ * [skew] keeps for every later request. The
  * history's tool-use IDs are rewritten on every request to Converse's pattern (`[a-zA-Z0-9_.:-]`, 1 to 64 characters) by
  * [Wire.toolUseId], so that a call and its result still pair. A Claude model's `reasoningContent` blocks (signed
  * reasoning text or redacted content) go back unchanged, in their order, to the same provider and model, as in OpenClaw's
@@ -51,7 +53,7 @@ import kotlinx.serialization.json.putJsonObject
  * the history becomes text, so reasoning blocks are neither kept from nor sent in such a request (Anthropic checks the
  * prefix that produced them).
  */
-internal class BedrockAdapter(private val http: ProviderHttp) : ChatAdapter {
+internal class BedrockAdapter(private val http: ProviderHttp, private val skew: ClockSkew = ClockSkew.SHARED) : ChatAdapter {
     override suspend fun complete(request: ChatRequest, target: ModelTarget): ChatResponse {
         ChatRequests.check(request)
         val url = target.baseUrl.newBuilder()
@@ -59,7 +61,7 @@ internal class BedrockAdapter(private val http: ProviderHttp) : ChatAdapter {
             .addEncodedPathSegment(SigV4Auth.encode(target.sentModelId))
             .addPathSegment("converse")
             .build()
-        val reply = BedrockErrors.send(http, Wire.post(url, body(request, target), target, request, stream = false, logPath = LOG_PATH), target.auth)
+        val reply = BedrockErrors.send(http, Wire.post(url, body(request, target), target, request, stream = false, logPath = LOG_PATH), target.auth, skew)
         return read(Wire.parse(reply.text()), request, target)
     }
 

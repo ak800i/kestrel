@@ -1,6 +1,7 @@
 package dev.kestrel.providers.styles
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ClockSkew
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
@@ -37,7 +38,8 @@ class ServiceAccountAuthTest {
     private val key = Credential.ServiceAccountKey("kestrel@test-project.iam.gserviceaccount.com", pem, "key-1", "test-project")
     private var now = 1_800_000_000_000L
     private val tokens = ServiceAccountTokens()
-    private val auth = ServiceAccountAuth(key, bench.http, { now }, tokens)
+    private val skew = ClockSkew()
+    private val auth = ServiceAccountAuth(key, bench.http, { now }, tokens, skew)
     private val anyRequest = HttpRequest("GET", "https://aiplatform.googleapis.com/v1/x".toHttpUrl())
 
     @After
@@ -181,6 +183,35 @@ class ServiceAccountAuthTest {
         val (_, corrected) = jwtOf(bench.take())
         assertEquals(1_800_003_600L - 60, corrected["iat"]!!.jsonPrimitive.long)
         assertEquals(1_800_003_600L - 60 + 3600, corrected["exp"]!!.jsonPrimitive.long)
+    }
+
+    @Test
+    fun aTokenAfterACorrectionIsOneExchangeSignedWithTheLearntOffset() = runBlocking {
+        bench.status(400, bench.fixture("vertex/token-invalid-grant.json"), "Date" to httpDate(now + 3_600_000))
+        bench.reply("vertex/token.json")
+        bench.reply("vertex/token.json")
+
+        auth.headers(anyRequest)
+        // Another cache, so that the next token needs its own exchange.
+        ServiceAccountAuth(key, bench.http, { now }, ServiceAccountTokens(), skew).headers(anyRequest)
+
+        assertEquals(3, bench.server.requestCount)
+        bench.take()
+        bench.take()
+        assertEquals(1_800_003_600L - 60, jwtOf(bench.take()).second["iat"]!!.jsonPrimitive.long)
+    }
+
+    @Test
+    fun aStoredOffsetThatHasBecomeWrongIsReplaced() = runBlocking {
+        skew.learn(3_600_000)
+        bench.status(400, bench.fixture("vertex/token-invalid-grant.json"), "Date" to httpDate(now))
+        bench.reply("vertex/token.json")
+
+        auth.headers(anyRequest)
+
+        assertEquals(1_800_003_600L - 60, jwtOf(bench.take()).second["iat"]!!.jsonPrimitive.long)
+        assertEquals(1_800_000_000L - 60, jwtOf(bench.take()).second["iat"]!!.jsonPrimitive.long)
+        assertEquals(0L, skew.offsetMillis)
     }
 
     @Test

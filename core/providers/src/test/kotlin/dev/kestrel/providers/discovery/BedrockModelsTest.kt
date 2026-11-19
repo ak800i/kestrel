@@ -2,6 +2,7 @@ package dev.kestrel.providers.discovery
 
 import dev.kestrel.providers.catalog.InputKind
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ClockSkew
 import dev.kestrel.providers.http.NoAuth
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
@@ -66,10 +67,21 @@ class BedrockModelsTest {
         bench.status(200, """{"inferenceProfileSummaries":[],"nextToken":"page-2"}""")
         bench.status(200, """{"inferenceProfileSummaries":[]}""")
 
-        val models = runBlocking { BedrockModels("us-east-1", signer({ NOW }), ProviderHttp(bench.calls, clock = { NOW })).list() }
+        val models = runBlocking { BedrockModels("us-east-1", signer({ NOW }), ProviderHttp(bench.calls, clock = { NOW }), ClockSkew()).list() }
 
         assertEquals(emptyList<DiscoveredModel>(), models)
         assertEquals(listOf("20261119T100000Z", "20261119T090000Z", "20261119T090000Z", "20261119T090000Z"), List(4) { bench.take().headers["x-amz-date"] })
+    }
+
+    @Test
+    fun aLaterListIsSignedWithTheOffsetThatTheAdapterLearnt() {
+        val skew = ClockSkew().apply { learn(-3_600_000) }
+        bench.status(200, """{"modelSummaries":[]}""")
+        bench.status(200, """{"inferenceProfileSummaries":[]}""")
+
+        runBlocking { BedrockModels("us-east-1", signer({ NOW }), ProviderHttp(bench.calls, clock = { NOW }), skew).list() }
+
+        assertEquals(listOf("20261119T090000Z", "20261119T090000Z"), List(2) { bench.take().headers["x-amz-date"] })
     }
 
     @Test

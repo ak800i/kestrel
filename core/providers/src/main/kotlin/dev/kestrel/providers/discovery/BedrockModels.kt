@@ -1,6 +1,7 @@
 package dev.kestrel.providers.discovery
 
 import dev.kestrel.providers.catalog.InputKind
+import dev.kestrel.providers.http.ClockSkew
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
@@ -23,15 +24,16 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
  * `extensions/amazon-bedrock/discovery.ts`), with the input kinds of its base model. Profiles are
  * read page by page through `nextToken`, at most [MAX_PAGES] pages and until a token repeats, and `global.` profiles come
  * first. AWS's refusals map as in the Converse adapter ([dev.kestrel.providers.styles.BedrockErrors]): its token errors are
- * the credential's refusal, and a refused signature with a clock skew is signed once more with AWS's time, which the
- * later requests keep.
+ * the credential's refusal, and a refused signature with a clock skew is signed once more with AWS's time, which [skew]
+ * keeps for the later requests.
  */
-internal class BedrockModels(region: String, private val auth: RequestAuth, private val http: ProviderHttp) : ModelDiscovery {
+internal class BedrockModels(
+    region: String,
+    private val auth: RequestAuth,
+    private val http: ProviderHttp,
+    private val skew: ClockSkew = ClockSkew.SHARED,
+) : ModelDiscovery {
     private val base: HttpUrl
-
-    /** The clock offset that AWS's Date gave after a refused signature, for the next requests (BedrockErrors). */
-    @Volatile
-    private var clockOffset = 0L
 
     init {
         require(Regex("^[a-z0-9-]+$").matches(region)) { "A region must match ^[a-z0-9-]+$" }
@@ -76,8 +78,8 @@ internal class BedrockModels(region: String, private val auth: RequestAuth, priv
     }
 
     private suspend fun get(url: HttpUrl): JsonObject {
-        val request = HttpRequest("GET", url, mapOf("accept" to "application/json"), clockOffsetMillis = clockOffset)
-        val text = BedrockErrors.send(http, request, auth) { clockOffset = it }.text()
+        val request = HttpRequest("GET", url, mapOf("accept" to "application/json"))
+        val text = BedrockErrors.send(http, request, auth, skew).text()
         return try {
             JSON.parseToJsonElement(text) as? JsonObject
         } catch (e: SerializationException) {

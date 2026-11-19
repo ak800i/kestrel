@@ -1,6 +1,7 @@
 package dev.kestrel.providers.styles
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ClockSkew
 import dev.kestrel.providers.http.ErrorCodes
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderError
@@ -34,8 +35,10 @@ import kotlin.math.abs
  * not refused, and its header names the key's `kid` when the file has one. Google's `invalid_grant` (a deleted or
  * disabled key) and any other refusal mean that the owner imports a new file; a network failure, a 429 or a 5xx keeps the
  * key (design D9's FailedForNow). Google also answers `invalid_grant` when the phone's clock is far off: when the reply's
- * `Date` differs from the phone's clock by more than [SKEW_LIMIT_MILLIS], the JWT is signed once more with the clock moved
- * by that difference, as BedrockErrors does for AWS, and only a second refusal maps as above. Neither the `Date` nor
+ * `Date` differs from the clock that signed the JWT by more than [SKEW_LIMIT_MILLIS], the JWT is signed once more with the
+ * clock moved by that difference, as BedrockErrors does for AWS, and only a second refusal maps as above. A corrected
+ * exchange that succeeds keeps its offset in [skew] (the process's [ClockSkew] by default), so that every later JWT is
+ * signed with `clock() + offset` at once. Neither the `Date` nor
  * Google's text is logged or kept. The token is never kept in the instance, only in [tokens].
  */
 class ServiceAccountAuth(
@@ -43,6 +46,7 @@ class ServiceAccountAuth(
     private val http: ProviderHttp,
     private val clock: () -> Long = System::currentTimeMillis,
     private val tokens: ServiceAccountTokens = ServiceAccountTokens.SHARED,
+    private val skew: ClockSkew = ClockSkew.SHARED,
 ) : RequestAuth {
     private val identity = "${key.clientEmail}\n${key.privateKeyId ?: sha256(key.privateKeyPem)}\n$SCOPE\n$TOKEN_URL"
 
@@ -78,11 +82,13 @@ class ServiceAccountAuth(
 
     /**
      * Called with the cache's mutex held. [offsetMillis] is the correction of the phone's clock for the second attempt
-     * after Google refused a JWT that the phone signed with a clock far off; null on the first attempt.
+     * after Google refused a JWT that the phone signed with a clock far off; null on the first attempt, which is signed
+     * with [skew]'s stored offset.
      */
     private suspend fun exchange(offsetMillis: Long? = null): Exchanged {
+        val used = offsetMillis ?: skew.offsetMillis
         val assertion = try {
-            jwt(clock() + (offsetMillis ?: 0))
+            jwt(clock() + used)
         } catch (e: GeneralSecurityException) {
             return Exchanged.Failed(RefreshResult.Expired)
         } catch (e: IllegalArgumentException) {
@@ -105,14 +111,15 @@ class ServiceAccountAuth(
                     ?: return Exchanged.Failed(RefreshResult.FailedForNow(ProviderError.Malformed))
                 val seconds = (body["expires_in"] as? JsonPrimitive)?.longOrNull ?: 3600
                 tokens.put(identity, access, clock() + seconds * 1000)
+                offsetMillis?.let(skew::learn)
                 Exchanged.Token(access)
             }
             429 -> Exchanged.Failed(RefreshResult.FailedForNow(ProviderError.RateLimited(http.retryAfterMillis(reply.headers["Retry-After"]), ErrorCodes.from(reply))))
             in 500..599 -> Exchanged.Failed(RefreshResult.FailedForNow(ProviderError.ServerError(reply.status)))
             else -> {
-                val skew = reply.headers.getDate("Date")?.let { it.time - clock() }
-                if (offsetMillis == null && skew != null && abs(skew) > SKEW_LIMIT_MILLIS && ErrorCodes.from(reply) == INVALID_GRANT) {
-                    exchange(skew)
+                val server = reply.headers.getDate("Date")?.let { it.time - clock() }
+                if (offsetMillis == null && server != null && abs(server - used) > SKEW_LIMIT_MILLIS && ErrorCodes.from(reply) == INVALID_GRANT) {
+                    exchange(server)
                 } else {
                     Exchanged.Failed(RefreshResult.Expired)
                 }

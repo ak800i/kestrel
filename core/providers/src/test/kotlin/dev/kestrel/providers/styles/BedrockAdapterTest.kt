@@ -12,6 +12,7 @@ import dev.kestrel.providers.chat.StopReason
 import dev.kestrel.providers.chat.ToolChoice
 import dev.kestrel.providers.chat.Usage
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ClockSkew
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.styles.AdapterHarness.Companion.SCREENSHOT
@@ -226,7 +227,7 @@ class BedrockAdapterTest {
 
     @Test
     fun aRefusedSignatureWithAClockSkewIsSignedOnceMoreWithAwsTime() = runBlocking {
-        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }))
+        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }), ClockSkew())
         val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))
         bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
         bench.reply("bedrock/text.json")
@@ -239,8 +240,40 @@ class BedrockAdapterTest {
     }
 
     @Test
+    fun theLaterCallsAreSignedWithTheCorrectedClockAtOnce() = runBlocking {
+        val skew = ClockSkew()
+        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }), skew)
+        val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
+        bench.reply("bedrock/text.json")
+        bench.reply("bedrock/text.json")
+
+        clocked.complete(request(user("Hi")), signed)
+        clocked.complete(request(user("Hi")), signed)
+
+        assertEquals(3, bench.server.requestCount)
+        assertEquals(listOf("20261119T100000Z", "20261119T110000Z", "20261119T110000Z"), List(3) { bench.take().headers["x-amz-date"] })
+        assertEquals(3_600_000L, skew.offsetMillis)
+    }
+
+    @Test
+    fun aStoredOffsetThatHasBecomeWrongIsReplaced() = runBlocking {
+        // The phone's clock was fixed after the offset was learnt: AWS refuses the old offset, and its Date gives the new one.
+        val skew = ClockSkew().apply { learn(3_600_000) }
+        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }), skew)
+        val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW))
+        bench.reply("bedrock/text.json")
+
+        clocked.complete(request(user("Hi")), signed)
+
+        assertEquals(listOf("20261119T110000Z", "20261119T100000Z"), List(2) { bench.take().headers["x-amz-date"] })
+        assertEquals(0L, skew.offsetMillis)
+    }
+
+    @Test
     fun aSecondRefusalOrARefusalWithoutASkewIsTheCredentialsRefusal() {
-        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }))
+        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }), ClockSkew())
         val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))
         bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
         bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
