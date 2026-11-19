@@ -128,15 +128,6 @@ function Request-Owner([string]$Prompt, [string]$DryRunAnswer = 'skip') {
     if ($answer -in 's', 'skip') { 'skip' } else { 'go' }
 }
 
-# Asks the owner a question, and returns the answer as typed. In a dry run it answers $DryRunAnswer itself.
-function Read-OwnerAnswer([string]$Prompt, [string]$DryRunAnswer) {
-    if ($DryRun) {
-        Write-Host "[dry run] $Prompt"
-        return $DryRunAnswer
-    }
-    (Read-Host $Prompt).Trim()
-}
-
 # Asks the owner a question until the answer, in any letter case, is one of $Choices' keys (Read-Choice), and returns its
 # value; a yes-or-no question takes y, yes, n and no. In a dry run it answers $DryRunAnswer itself.
 function Read-OwnerChoice([string]$Prompt, [string]$DryRunAnswer, [hashtable]$Choices = @{ y = 'y'; yes = 'y'; n = 'n'; no = 'n' }, [string]$Again = 'Type y or yes, or n or no, and press Enter') {
@@ -615,7 +606,7 @@ function Invoke-BatteryRulesStep {
             $foreground = if ($view) { "foreground=$($view['foreground']) demoted=$($view['demoted'])" } else { 'not read' }
             $android = "Android's record at the start: listed $($start.Listed), isForeground $($start.Foreground), types $($start.Types); at the end: listed $($record.Listed), isForeground $($record.Foreground), types $($record.Types)"
             $lostText = if ($null -ne $lost) { "Android's record lost the foreground within $lost ms" } else { 'Android''s record kept the foreground' }
-            $notice = Read-OwnerAnswer 'Pull down the notification shade and look for Kestrel''s notices. Type b if one says that Kestrel''s battery use is restricted, a if one says only that its accessibility service is off, o for another text of Kestrel''s, or n for none. Then close the shade.' 'n'
+            $notice = Read-OwnerChoice 'Pull down the notification shade and look for Kestrel''s notices. Type b if one says that Kestrel''s battery use is restricted, a if one says only that its accessibility service is off, o for another text of Kestrel''s, or n for none. Then close the shade.' 'n' @{ b = 'b'; a = 'a'; o = 'o'; n = 'n' } 'Type b, a, o or n, and press Enter'
             Add-Result battery-rules "${label}: $roleText; $android; $lostText; Kestrel's view at the end: $foreground; $turnOff; Kestrel's notice: $notice"
             Stop-Kestrel
         }

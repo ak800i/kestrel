@@ -362,7 +362,9 @@ function Initialize-Session {
         $left = (ConvertFrom-HookPairs (Invoke-Hook notices @{ Clear = $true }))['notices']
         if ($left -ne '0') { throw "$left of them are still in the shade" }
     } | Out-Null
-    # Last of all, because revoking a permission ends Kestrel's process.
+    # Registered second, so that it comes back second to last, after Kestrel's mode Off and just before the notices,
+    # because revoking a permission ends Kestrel's process. The notices' hook then starts the process again, which is
+    # harmless: Kestrel's mode Off is stored by then.
     Register-Restore "Kestrel's contacts permission" 'Settings > Apps > Kestrel > Permissions > Contacts' (Test-ContactsGranted) {
         param($Data)
         Assert-TestDevice -Serial $Serial
@@ -569,7 +571,7 @@ function Invoke-ScreenStep {
         # The dry run switches it on through the hook, where the owner uses the page's switch.
         (ConvertFrom-HookPairs (Invoke-Hook owner-options @{ RequireVerbs = 'true' }))['requireVerbs'] -eq 'on'
     } else {
-        (Request-Owner 'Kestrel''s page "Instant commands" is open on the phone. Switch "Require verbs" on, then press Enter. After the next check the script switches it off again itself.' 'skip') -eq 'go'
+        (Request-Owner 'Kestrel''s page "Instant commands" is open on the phone. Switch "Require verbs" on, then press Enter. After the next check the script switches it back as it was before this step itself.' 'skip') -eq 'go'
     }
     if ($on) {
         Invoke-Checked 'am start -a android.settings.SETTINGS' | Out-Null
@@ -1063,7 +1065,7 @@ try {
 } finally {
     try {
         # The restores that are left, the newest first, so that the screen, the clips, the sound, the radios, the
-        # keyboard, the accessibility settings, Kestrel's mode and its permission come last.
+        # keyboard, the accessibility settings, Kestrel's mode, its permission and its notices come last.
         $left = @($pending.ToArray())
         [array]::Reverse($left)
         Invoke-Restore $left
