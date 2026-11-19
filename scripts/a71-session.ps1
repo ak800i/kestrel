@@ -24,12 +24,13 @@
 #                 listen-check, whose notification check makes Android refuse a start on purpose
 #   listen-check  first whether 'dumpsys accessibility' ends with a line break (only its last byte), then
 #                 scripts\listen-check.ps1 -Reboot, which prints one line for each check; the owner unlocks the phone
-#                 after the restart
+#                 after the restart; with Kokoro chosen and its speed not stored, one untimed Kokoro start comes first
 #   battery-rules without and with the battery restriction and without Kestrel's accessibility service: Android's record
 #                 of the listening service, Kestrel's own view of it, and when Kestrel turned itself off, every 5 s for
 #                 3 minutes, timed on the phone
 #   activation    the accessibility shortcut, the accessibility button and the tile with Kestrel in the background:
-#                 the time from the event to listening, timed on the phone, and whether Android showed a dialog
+#                 the time from the event to listening, timed on the phone, and whether Android showed a dialog; with
+#                 Kokoro chosen and its speed not stored, one untimed Kokoro start comes first
 #   assistant     with only the assistant role and Kestrel in the background: a start through the hook, "Kestrel, open
 #                 settings" with the time from Kestrel's request to its settings in front, timed on the phone, or
 #                 Kestrel's own verdict that Android blocked them and its notification, read on the phone, and the
@@ -49,7 +50,8 @@
 #   memory        three starts and closes with the chosen voice and with Kokoro, whose speed Kestrel measures at its
 #                 first start here, with the peak PSS while each session opens and the memory categories before, while
 #                 listening and after each close, and a cold start through the tile after the script ended Kestrel's
-#                 process itself
+#                 process itself, before which one untimed Kokoro start comes when Kokoro is chosen and its speed is
+#                 not stored
 #   battery       three measures of 30 minutes, each timed by batterystats: a quiet room, the quiet room with one
 #                 generated task for Kestrel from this computer's speaker every 5 minutes, and ordinary room talk; with
 #                 the breakdown of Kestrel's use, the audio that it transcribed, its utterances, hits and instant
@@ -378,13 +380,22 @@ function Get-VoiceChoice([hashtable]$With = @{}) {
 # Before a step times Kestrel's start with Kokoro (the controller's decision after the review of plan 2E's Task 8): the
 # first start with Kokoro after an install or a choice of Kokoro measures Kokoro's speed for about 10 s on the A71 before
 # its session opens, so one untimed start and turn-off comes first while that measure is not stored, and the step
-# records voice-choice's kokoroSpeed= after it, which shows that the measure was stored.
+# records voice-choice's kokoroSpeed= after it, which shows that the measure was stored. When Kokoro did not load, no
+# measure is stored and Piper speaks, so the later steps of this run do not try again.
+$kokoroFailedToLoad = $false
 function Initialize-KokoroSpeed([string]$StepName) {
+    if ($script:kokoroFailedToLoad) { return }
     $choice = Get-VoiceChoice
     if ($choice.Voice -ne 'kokoro' -or $choice.KokoroSpeed -ne 'none') { return }
     Start-Kestrel
     Stop-Kestrel
-    Add-Result $StepName "an untimed start with Kokoro first, so that the timed starts do not include the measure of Kokoro's speed: kokoroSpeed=$((Get-VoiceChoice).KokoroSpeed)"
+    $after = Get-VoiceChoice
+    if ($after.KokoroSpeed -eq 'none') {
+        $script:kokoroFailedToLoad = $true
+        Add-Result $StepName "an untimed start with Kokoro first: Kokoro did not load (kokoroFailed=$($after.KokoroFailed.ToString().ToLowerInvariant())), so its speed is not stored, Piper speaks in the timed starts, and the later steps do not try again"
+        return
+    }
+    Add-Result $StepName "an untimed start with Kokoro first, so that the timed starts do not include the measure of Kokoro's speed: kokoroSpeed=$($after.KokoroSpeed)"
 }
 
 # In a dry run, the owner's taps on Kestrel's tile: the tile goes into Quick Settings through SystemUI once, with a
@@ -490,6 +501,8 @@ function Invoke-ListenCheckStep {
         Add-Result listen-check 'skipped'
         return
     }
+    # listen-check.ps1's restart, role and reboot checks time Kestrel's starts.
+    Initialize-KokoroSpeed listen-check
     $lines = @(& "$PSScriptRoot\listen-check.ps1" -Serial $Serial -Reboot:(-not $DryRun) *>&1 | ForEach-Object { $text = "$_"; Write-Host $text; $text })
     $code = $LASTEXITCODE
     # listen-check's restart and role checks end Kestrel's process with 'am crash'; its end is no earlier than the last.
@@ -1070,8 +1083,6 @@ function Invoke-MemoryStep {
     } finally {
         Complete-Restore $voiceRestore
     }
-    # The restore of Kokoro forgets its measure, and the cold start below is timed.
-    Initialize-KokoroSpeed memory
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
     # A cold start: the tile starts the service in a new process, which must reach startForeground() in time. The script
     # ends Kestrel's process itself, which the debug build allows, so that a kill that Android refuses cannot look like
@@ -1082,6 +1093,8 @@ function Invoke-MemoryStep {
             Add-Result memory 'a cold start through the tile: skipped'
             return
         }
+        # The restore of Kokoro above forgets its measure, and the cold start below is timed.
+        Initialize-KokoroSpeed memory
         # Before the kill: SystemUI binds the tile's service, which starts Kestrel's process, as on the owner's phone.
         if ($DryRun) { Add-DryRunTile }
         Invoke-Checked (Get-ServicesCommand @(Get-OtherServices $restore.Data)) | Out-Null
