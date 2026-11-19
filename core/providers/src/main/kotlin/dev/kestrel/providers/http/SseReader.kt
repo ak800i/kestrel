@@ -1,22 +1,28 @@
 package dev.kestrel.providers.http
 
 import okio.BufferedSource
+import okio.utf8Size
 
 /**
  * Reads a body of server-sent events (the WHATWG rules, except that a bare CR does not end a line): one leading byte order
  * mark is dropped, `data:` lines are joined with a newline, `event:` names the event, a blank line ends it, lines that
  * start with `:` are comments, and `id:` and `retry:` are ignored. An event that the body ends without a blank line is
  * still delivered, because some servers end that way; an adapter decides whether its final event came (design D4). A line
- * longer than [MAX_LINE_BYTES] throws ProviderException with Malformed, and the rest of the body is not read.
+ * longer than [MAX_LINE_BYTES], or an event whose joined data is longer than [MAX_EVENT_BYTES], throws ProviderException
+ * with Malformed, and the rest of the body is not read.
  */
 object SseReader {
     /** The longest line that the reader keeps in memory, 1 MiB. */
     internal const val MAX_LINE_BYTES = 1024L * 1024
 
+    /** The longest joined data of one event that the reader keeps in memory, 8 MiB in UTF-8 (the newlines included). */
+    internal const val MAX_EVENT_BYTES = 8L * 1024 * 1024
+
     suspend fun read(source: BufferedSource, onEvent: suspend (SseEvent) -> Unit) {
         var event: String? = null
         val data = StringBuilder()
         var hasData = false
+        var dataBytes = 0L
         var first = true
         while (true) {
             var line = readLine(source) ?: break
@@ -28,6 +34,7 @@ object SseReader {
                 if (hasData) onEvent(SseEvent(event, data.toString()))
                 event = null
                 data.setLength(0)
+                dataBytes = 0L
                 hasData = false
                 continue
             }
@@ -38,6 +45,8 @@ object SseReader {
             when (field) {
                 "event" -> event = value
                 "data" -> {
+                    dataBytes += value.utf8Size() + if (hasData) 1 else 0
+                    if (dataBytes > MAX_EVENT_BYTES) throw ProviderException(ProviderError.Malformed)
                     if (hasData) data.append('\n')
                     data.append(value)
                     hasData = true

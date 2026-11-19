@@ -52,4 +52,24 @@ class SseReaderTest {
         val error = assertThrows(ProviderException::class.java) { read("${longest}x\n\n") }
         assertEquals(ProviderError.Malformed, error.error)
     }
+
+    @Test
+    fun anEventWhoseJoinedDataIsLongerThanTheLimitIsMalformed() {
+        val largest = SseReader.MAX_EVENT_BYTES.toInt()
+
+        assertEquals(listOf(largest, largest), read(eventOf(largest) + eventOf(largest)).map { it.data.length })
+        val error = assertThrows(ProviderException::class.java) { read(eventOf(largest + 1)) }
+        assertEquals(ProviderError.Malformed, error.error)
+    }
+
+    /** One event of data lines below the line limit whose joined data (the newlines included) is [bytes] long. */
+    private fun eventOf(bytes: Int): String {
+        val text = StringBuilder()
+        var left = bytes
+        while (left > 1_000_000) {
+            text.append("data: ").append("x".repeat(1_000_000)).append('\n')
+            left -= 1_000_001
+        }
+        return text.append("data: ").append("x".repeat(left)).append("\n\n").toString()
+    }
 }
