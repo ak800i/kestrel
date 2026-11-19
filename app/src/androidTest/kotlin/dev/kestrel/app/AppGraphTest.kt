@@ -69,13 +69,16 @@ class AppGraphTest {
         val server = MockWebServer()
         server.start(InetAddress.getByName(host), 0)
         try {
-            graph.networkPolicy.setLocalServers(listOf(host))
-            server.enqueue(MockResponse.Builder().body("hello").build())
-            val request = Request.Builder().url("http://$host:${server.port}/v1/models?key=secret").build()
+            // A lease, because AppGraph's allowlist job replaces the local servers with those of the provider profiles at
+            // start and after each change of the profiles (design D11 and D16 of sub-project 4).
+            graph.networkPolicy.openTemporaryLocalServers(listOf(host)).use {
+                server.enqueue(MockResponse.Builder().body("hello").build())
+                val request = Request.Builder().url("http://$host:${server.port}/v1/models?key=secret").build()
 
-            val response = graph.network.callFactory.newCall(request).execute()
+                val response = graph.network.callFactory.newCall(request).execute()
 
-            assertEquals(200 to "hello", response.use { it.code to it.body.string() })
+                assertEquals(200 to "hello", response.use { it.code to it.body.string() })
+            }
             val entry = withTimeout(5_000) {
                 var local = graph.logs.network().firstOrNull { it.event.host == host }
                 while (local == null) {
@@ -88,7 +91,6 @@ class AppGraphTest {
             assertEquals(200, entry.event.status)
             assertEquals("/v1/models", entry.event.path)
         } finally {
-            graph.networkPolicy.setLocalServers(emptyList())
             server.close()
         }
     }

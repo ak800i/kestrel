@@ -157,6 +157,17 @@ The voice corpus also has the instant commands, with the labels that the screen 
 
 <!-- Plan 3C: apps, phone settings and calls -->
 
+## Providers
+
+Kestrel sends its requests to the LLM provider of a profile that you set up (design spec, section 10). The providers that it offers come from OpenClaw's provider manifests at the commit in `catalog/openclaw.lock` (MIT License; see `THIRD_PARTY_NOTICES.md`). `scripts\sync-catalog.ps1` makes a shallow, sparse checkout of OpenClaw's repository at that commit in `build\openclaw\<commit>` and runs the Gradle task `:tools:catalog-sync:syncCatalog`, which writes `catalog/providers.json` and prints how many manifests, providers and models it read; `-Commit <hash>` moves the catalog to another commit and writes that commit into the lock. The script fetches only OpenClaw's repository. `catalog/overrides.json` is kept by hand: the providers and sign-in choices that Kestrel leaves out, each with the reason; the settings of each sign-in choice that Kestrel offers, among them the borrowed sign-ins of GitHub Copilot, xAI and MiniMax, of which only Copilot's is on until you turn the others on, and the links to their providers' terms; the providers that OpenClaw defines in code, such as Bedrock, Vertex and Microsoft Foundry; the local servers; and the prices that the manifests lack, among them Copilot's per-token prices and Google's Gemini prices, each with the day it was copied. The app merges both files from its assets, so a change of the overrides needs no new sync. A unit test checks that `providers.json` names the commit in the lock, and another that every name in the overrides exists.
+
+Kestrel counts the cost of each request on the phone from the tokens that the provider reports and these prices, in GitHub AI Credits, where one credit is one US cent. It counts a model whose price it does not know at $5 per million input tokens and $25 per million output tokens until you type the model's price. For a sign-in or key whose subscription pays for the requests, such as xAI's or MiniMax's sign-in, it counts tokens only.
+
+Credentials are encrypted with their own Android Keystore key, in StrongBox when the phone has it, and are never logged or exported. Only the hosts of your profiles are on the network allowlist; a sign-in's other hosts are allowed only while the sign-in runs.
+
+<!-- Plan 4B: request styles -->
+<!-- Plan 4C: sign-in, Copilot and the session -->
+
 ## Licence
 
 Kestrel is free software under the GNU General Public License, version 3 or (at your option) any later version. See [LICENSE](LICENSE). The licences of the libraries that Kestrel uses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and the [licences](licences) folder holds the texts of those licences. Kestrel's About page shows all of these texts.

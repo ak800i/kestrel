@@ -56,6 +56,13 @@ androidComponents {
             folder.set("licences")
         }
         variant.sources.assets?.addGeneratedSourceDirectory(licences, CopyAssetsTask::outputDirectory)
+        // The provider catalog and its overrides, which AppGraph merges on first use (design spec, section 10.2).
+        val catalog = tasks.register<CopyAssetsTask>("${variant.name}CatalogAssets") {
+            val root = rootProject.layout.projectDirectory
+            files.from(root.file("catalog/providers.json"), root.file("catalog/overrides.json"))
+            folder.set("catalog")
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(catalog, CopyAssetsTask::outputDirectory)
     }
 }
 

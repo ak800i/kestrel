@@ -41,11 +41,24 @@ import dev.kestrel.app.listen.measuredTooSlow
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.listen.realTimeFactor
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.providers.ProviderAllowlist
+import dev.kestrel.app.providers.StoredCredentials
 import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
+import dev.kestrel.privacy.network.BlockedRequestException
+import dev.kestrel.privacy.network.LogPathTag
 import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
+import dev.kestrel.privacy.network.TaskTag
 import dev.kestrel.privacy.settings.SettingKey
+import dev.kestrel.providers.catalog.Catalog
+import dev.kestrel.providers.catalog.CatalogLoader
+import dev.kestrel.providers.cost.Spending
+import dev.kestrel.providers.credentials.CredentialVault
+import dev.kestrel.providers.discovery.ModelList
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderHttp
+import dev.kestrel.providers.profiles.ProvidersSetting
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.voice.Synthesizer
@@ -70,6 +83,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 
 /** Every setting that Kestrel stores. */
 object SettingKeys {
@@ -89,7 +103,23 @@ object SettingKeys {
 
     /** The options of the instant commands: "Require verbs" and where the numbers go (design spec, sections 9.8 and 15). */
     val COMMANDS = SettingKey("commands", CommandOptions.serializer(), CommandOptions())
+
+    /**
+     * The provider profiles, the default profile, the switches of the borrowed sign-ins and the ChatGPT plan's registration
+     * (design spec, section 10.6). Credentials are not in it.
+     */
+    val PROVIDERS = SettingKey("providers", ProvidersSetting.serializer(), ProvidersSetting())
+
+    /** Each profile's credits and tokens of this month and the one before (design spec, section 10.6). */
+    val SPENDING = SettingKey("spending", Spending.serializer(), Spending())
 }
+
+/**
+ * The last model list of the profile [profileId], in a setting of its own, because lists of hundreds of rows should not be
+ * rewritten at every change of a profile. Deleting a profile writes an empty list (design D13 of sub-project 4).
+ */
+fun SettingKeys.providerModels(profileId: String): SettingKey<ModelList> =
+    SettingKey("provider-models-$profileId", ModelList.serializer(), ModelList())
 
 /** Wires Kestrel's parts together by hand; there is no dependency-injection framework (design spec, section 17). */
 class AppGraph(context: Context) {
@@ -130,6 +160,72 @@ class AppGraph(context: Context) {
     // Built on first use: building the HTTP client on the main thread made Kestrel miss Android's start-up deadline
     // on a busy emulator just after it booted.
     val network: NetworkGateway by lazy { NetworkGateway(networkPolicy) { event -> scope.launch { logs.append(event) } } }
+
+    /**
+     * The providers' requests (design spec, sections 7.4 and 13.1): each one goes through the network gateway, carries its
+     * task and the path for the network log as tags and Kestrel's User-Agent when it names no other, and a request that the
+     * allowlist refuses becomes ProviderError.NotAllowed. Built on first use, like the gateway.
+     */
+    val providerHttp: ProviderHttp by lazy {
+        val version = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
+        ProviderHttp(
+            calls = network.callFactory,
+            decorator = { builder, meta ->
+                meta.taskId?.let { builder.tag(TaskTag::class.java, TaskTag(it)) }
+                meta.logPath?.let { builder.tag(LogPathTag::class.java, LogPathTag(it)) }
+                if (builder.build().header("User-Agent") == null) builder.header("User-Agent", "Kestrel/$version")
+            },
+            classify = { error -> if (error is BlockedRequestException) ProviderError.NotAllowed else null },
+        )
+    }
+
+    /** The provider catalog that the app bundles (design spec, section 10.2), read from the assets on first use. */
+    val catalog: Catalog by lazy {
+        fun asset(name: String) = appContext.assets.open("catalog/$name").use { it.readBytes().decodeToString() }
+        CatalogLoader.load(asset("providers.json"), asset("overrides.json"))
+    }
+
+    /** The providers' credentials, encrypted under their own key (design spec, section 10.7). */
+    val credentialVault: CredentialVault by lazy { StoredCredentials(store.credentials) }
+
+    private val appliedSetting = MutableStateFlow<ProvidersSetting?>(null)
+
+    /**
+     * The provider setting whose hosts the network allowlist holds, null until the first update after the start. Plan 4C's
+     * ProfileClient waits for it before a request, so that a new profile's hosts are allowed first.
+     */
+    val appliedProviders: StateFlow<ProvidersSetting?> = appliedSetting.asStateFlow()
+
+    init {
+        keepProviderHosts()
+    }
+
+    /**
+     * Keeps the allowlist in step with the stored profiles (design spec, section 13.1): at start and after each change, the
+     * hosts of every profile whose borrowed sign-in is on go to the allowlist and the local servers to its list of local
+     * servers, and then the applied setting is published. A failed update is logged by its classes only, and the next
+     * change tries again. If reading the setting fails, the flow ends: the allowlist keeps the hosts of the last update
+     * until the process restarts.
+     */
+    private fun keepProviderHosts() {
+        scope.launch {
+            settings.observe(SettingKeys.PROVIDERS)
+                .catch { reportFailure("Reading the provider setting", it) }
+                .collect { setting ->
+                    try {
+                        networkPolicy.setProfileHosts(ProviderAllowlist.profileHosts(setting, catalog))
+                        networkPolicy.setLocalServers(ProviderAllowlist.localServers(setting))
+                        appliedSetting.value = setting
+                    } catch (e: IllegalArgumentException) {
+                        reportFailure("Updating the allowlist", e)
+                    } catch (e: IOException) {
+                        reportFailure("Updating the allowlist", e)
+                    }
+                }
+        }
+    }
+
+    // Plan 4C: provider graph
 
     /**
      * Kestrel's speech model files, which scripts\push-models.ps1 copies into Kestrel's external files folder (design
