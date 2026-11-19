@@ -765,7 +765,9 @@ private fun PlanNotice(onDone: () -> Unit) {
  * The profile page (design D18): rename, make default, the models of both roles with "Use JSON actions" and a price for a
  * model whose price Kestrel does not know, a local server's switches, "Refresh models", the credential's masked form or
  * "Signed in on <date>", "Sign in again" or "Change key", the unencrypted-connection warning, this month's and last
- * month's cost or tokens, the ChatGPT plan's notes, "Check allowance" for Copilot, and "Delete profile".
+ * month's cost or tokens, the ChatGPT plan's notes, "Check allowance" for Copilot, and "Delete profile". A local server's
+ * optional key and imported credentials have no "Change key" (plan 4C leaves them out; spec 10.7): the owner deletes the
+ * profile and adds it again.
  */
 @Composable
 private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boolean) -> Unit, onUseKey: (String, String) -> Unit, onBack: () -> Unit) {
@@ -825,7 +827,7 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
     Button(enabled = !switchedOff, onClick = {
         scope.launch { attempt(label, { problem = it }, signedIn) { rows = data.refreshModels(profile.id) } }
     }) { Text(stringResource(R.string.providers_refresh)) }
-    if (switchedOff && identity != null) {
+    if (switchedOff) {
         Text(stringResource(R.string.providers_switched_off_profile, switchTitle(identity)), style = MaterialTheme.typography.bodyMedium)
     }
     if (profile.baseUrl?.startsWith("http://") == true) Text(stringResource(R.string.providers_unencrypted))

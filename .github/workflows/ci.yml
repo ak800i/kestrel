@@ -20,7 +20,11 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          # Gradle User Home is saved and restored by the next step, not by this action.
+          # This action saves and restores no part of Gradle User Home. The next step saves only the downloaded
+          # dependencies and the Gradle distributions (caches/modules-2 and wrapper/dists), not the rest of Gradle User
+          # Home, such as caches/journal-1, so Gradle cannot tell which downloads a build stopped using: they stay in every
+          # later cache entry. When an entry has grown too large, change the prefix gradle- of both the key and the
+          # restore key once, so that the next job starts with a fresh cache.
           cache-provider: external
       - name: Restore Gradle's downloads
         # Maven Central answers GitHub's runners HTTP 429 (Too Many Requests) when a job downloads every dependency at
