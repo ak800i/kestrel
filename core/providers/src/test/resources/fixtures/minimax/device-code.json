@@ -1,0 +1,7 @@
+{
+  "user_code": "MM-1234",
+  "verification_uri": "https://www.minimax.io/oauth/device?user_code=MM-1234",
+  "expired_in": 600,
+  "interval": 3000,
+  "state": "STATE"
+}

@@ -1,0 +1,6 @@
+{
+  "issuer": "https://auth.x.ai",
+  "device_authorization_endpoint": "https://auth.x.ai/oauth2/device/code",
+  "token_endpoint": "https://auth.x.ai/oauth2/token",
+  "jwks_uri": "https://auth.x.ai/.well-known/jwks.json"
+}

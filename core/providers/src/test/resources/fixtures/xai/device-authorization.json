@@ -1,0 +1,8 @@
+{
+  "device_code": "test-device-code",
+  "user_code": "ABCD-EFGH",
+  "verification_uri": "https://accounts.x.ai/oauth2/device",
+  "verification_uri_complete": "https://accounts.x.ai/oauth2/device?user_code=ABCD-EFGH",
+  "expires_in": 600,
+  "interval": 5
+}
