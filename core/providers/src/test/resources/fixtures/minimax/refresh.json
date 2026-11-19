@@ -1,0 +1,6 @@
+{
+  "status": "success",
+  "access_token": "test-minimax-access-2",
+  "expired_in": 7200,
+  "base_resp": { "status_code": 0, "status_msg": "success" }
+}

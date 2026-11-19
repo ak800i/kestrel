@@ -1,0 +1,8 @@
+{
+  "access_token": "test-access-2",
+  "refresh_token": "test-refresh-2",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
+  "earliest_refresh_at": 1800000000
+}
