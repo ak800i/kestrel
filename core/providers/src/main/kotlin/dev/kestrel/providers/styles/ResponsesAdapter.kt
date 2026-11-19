@@ -46,8 +46,11 @@ import kotlinx.serialization.json.putJsonObject
  * fields that the preview rejects, and Kestrel's function tools in one namespace `kestrel`. Its error codes map as design
  * D17 says, inside the stream and before it, and every 429 is QuotaOrPolicy, because a plan's limit does not end within a
  * retry.
+ *
+ * [azure] is set by the Azure adapter: Azure's Responses API gives a GPT-6 deployment OpenClaw's generic efforts
+ * ([Wire.effort]'s `azureResponses`).
  */
-internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
+internal class ResponsesAdapter(private val http: ProviderHttp, private val azure: Boolean = false) : ChatAdapter {
     override suspend fun complete(request: ChatRequest, target: ModelTarget): ChatResponse {
         ChatRequests.check(request)
         return try {
@@ -126,7 +129,7 @@ internal class ResponsesAdapter(private val http: ProviderHttp) : ChatAdapter {
             put("parallel_tool_calls", false)
         }
         val level = Wire.level(request, target.model, compat)
-        val effort = level?.let { Wire.effort(it, target.model, compat) }
+        val effort = level?.let { Wire.effort(it, target.model, compat, azureResponses = azure) }
         if (effort != null) putJsonObject("reasoning") { put("effort", effort) }
         if (!plan) {
             put("max_output_tokens", request.maxOutputTokens)

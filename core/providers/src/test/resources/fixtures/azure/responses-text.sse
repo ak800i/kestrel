@@ -1,0 +1,2 @@
+event: response.completed
+data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_1","object":"response","model":"gpt-6-luna","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello from Azure.","annotations":[]}]}],"usage":{"input_tokens":20,"output_tokens":5}}}

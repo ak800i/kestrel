@@ -139,15 +139,17 @@ internal object Wire {
      * `reasoningEffortMap`. The model accepts its `supportedReasoningEfforts`; a model without that list accepts OpenClaw's
      * list for its GPT-5 or GPT-6 family, or else OpenClaw's generic `low`, `medium` and `high` and the efforts that its
      * `thinkingLevelMap` names, so that `minimal` becomes `low` on DeepSeek and the other rows without a list.
-     * [chatCompletions] says that the request goes to Chat Completions, where OpenClaw gives GPT-5.6 and GPT-6 no `max`.
+     * [chatCompletions] says that the request goes to Chat Completions, where OpenClaw gives GPT-5.6 and GPT-6 no `max`;
+     * [azureResponses] says that it goes to Azure's Responses API, where OpenClaw gives GPT-6 no GPT-6 list until Azure's
+     * GPT-6 contracts are verified, so that such a deployment gets the generic efforts.
      * Null when the effort would be `none`, or when the model's compat says `supportsReasoningEffort: false`, for which
      * OpenClaw sends no effort at all.
      */
-    fun effort(level: String, model: ModelEntry, compat: CompatFlags, chatCompletions: Boolean = false): String? {
+    fun effort(level: String, model: ModelEntry, compat: CompatFlags, chatCompletions: Boolean = false, azureResponses: Boolean = false): String? {
         if (compat.supportsReasoningEffort == false) return null
         val mapped = model.thinkingLevelMap[level] ?: level
         if (mapped == "none") return null
-        val declared = compat.supportedReasoningEfforts ?: openAiEfforts(model.id, chatCompletions)
+        val declared = compat.supportedReasoningEfforts ?: openAiEfforts(model.id, chatCompletions, azureResponses)
         val supported = (declared ?: (GENERIC_EFFORTS + model.thinkingLevelMap.values.filterNotNull())).filter { it != "none" }.distinct()
         val chosen = when {
             mapped in supported -> mapped
@@ -157,13 +159,18 @@ internal object Wire {
         return compat.reasoningEffortMap?.get(chosen) ?: chosen
     }
 
-    /** OpenClaw's `resolveOpenAIModelReasoningEfforts` for a model that declares no list: its known GPT families, or null. */
-    private fun openAiEfforts(modelId: String, chatCompletions: Boolean): List<String>? {
+    /**
+     * OpenClaw's `resolveOpenAIModelReasoningEfforts` for a model that declares no list: its known GPT families, or null.
+     * Its GPT-6 lists apply to every API except `azure-openai-responses` ([azureResponses]).
+     */
+    private fun openAiEfforts(modelId: String, chatCompletions: Boolean, azureResponses: Boolean): List<String>? {
         val id = modelId.trim().lowercase().replace(Regex("-\\d{4}-\\d{2}-\\d{2}$"), "")
         val max = !chatCompletions
+        val gpt6 = !azureResponses
         return when {
-            id == "gpt-6-astra" || id == "gpt-6.1-sol" -> if (max) GPT_6_MANDATORY_EFFORTS else GPT_CODEX_EFFORTS
-            id == "gpt-6-sol" || id == "gpt-6-luna" || Regex("^gpt-5\\.6(?:-|$)").containsMatchIn(id) -> if (max) GPT_56_EFFORTS else GPT_52_EFFORTS
+            gpt6 && (id == "gpt-6-astra" || id == "gpt-6.1-sol") -> if (max) GPT_6_MANDATORY_EFFORTS else GPT_CODEX_EFFORTS
+            gpt6 && (id == "gpt-6-sol" || id == "gpt-6-luna") -> if (max) GPT_56_EFFORTS else GPT_52_EFFORTS
+            Regex("^gpt-5\\.6(?:-|$)").containsMatchIn(id) -> if (max) GPT_56_EFFORTS else GPT_52_EFFORTS
             id == "gpt-5.1-codex-mini" -> listOf("medium")
             id == "gpt-5.1-codex-max" -> listOf("none", "medium", "high", "xhigh")
             Regex("^gpt-5(?:\\.\\d+)?-codex(?:-|$)").containsMatchIn(id) -> GPT_CODEX_EFFORTS
