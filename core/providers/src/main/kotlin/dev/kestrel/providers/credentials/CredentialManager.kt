@@ -53,8 +53,15 @@ class CredentialManager(
      */
     private val earlyAgainAt = ConcurrentHashMap<String, Long>()
 
-    /** The credential with [id], from memory or from the vault; null when it is missing or could not be read. */
-    suspend fun read(id: String): Credential? = cache[id] ?: vault.read(id)?.also { cache[id] = it }
+    /**
+     * The credential with [id], from memory or from the vault; null when it is missing or could not be read. A read from
+     * the vault takes the credential's lock, so that a store, delete or refresh cannot run between the vault's read and
+     * the cache's write and be undone in memory.
+     */
+    suspend fun read(id: String): Credential? = cache[id] ?: lock(id).withLock { readLocked(id) }
+
+    /** Called with the credential's lock held. */
+    private suspend fun readLocked(id: String): Credential? = cache[id] ?: vault.read(id)?.also { cache[id] = it }
 
     /**
      * Stores [credential] under [id], or under a new ID, and returns the ID; an existing ID is replaced. It waits for a
@@ -115,7 +122,7 @@ class CredentialManager(
 
     private suspend fun refreshNow(id: String, used: String, refresher: TokenRefresher): RefreshResult =
         lock(id).withLock {
-            val current = read(id) as? Credential.OAuthToken ?: return@withLock RefreshResult.Expired
+            val current = readLocked(id) as? Credential.OAuthToken ?: return@withLock RefreshResult.Expired
             // Another request refreshed the token while this one waited.
             if (current.access != used) return@withLock RefreshResult.Refreshed
             val outcome = withTimeoutOrNull(REFRESH_LIMIT_MILLIS) {

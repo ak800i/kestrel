@@ -20,9 +20,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import mockwebserver3.MockWebServer
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -54,7 +56,16 @@ class CredentialManagerTest {
         val stored = ConcurrentHashMap<String, Credential>()
         val reads = AtomicInteger()
 
-        override suspend fun read(id: String): Credential? = stored[id].also { reads.incrementAndGet() }
+        /** When set, a read takes the stored value and then waits for this gate before it returns that value. */
+        @Volatile
+        var readGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun read(id: String): Credential? {
+            val value = stored[id]
+            reads.incrementAndGet()
+            readGate?.await()
+            return value
+        }
 
         override suspend fun write(id: String, credential: Credential) {
             stored[id] = credential
@@ -250,6 +261,27 @@ class CredentialManagerTest {
         assertEquals(mapOf("Authorization" to "Bearer test-access-1"), auth.headers(request))
         assertEquals(RefreshResult.NotPossible, auth.refresh())
         assertEquals(0, refresher.calls.get())
+        assertEquals(emptyMap<String, Credential>(), vault.stored.toMap())
+    }
+
+    @Test
+    fun aDeleteDuringTheFirstReadFromTheVaultIsNotUndoneInMemory() = runBlocking {
+        vault.stored["test-credential"] = token()
+        val gate = CompletableDeferred<Unit>()
+        vault.readGate = gate
+        val manager = manager(null)
+        val first = scope.async { manager.read("test-credential") }
+        withTimeout(5_000) { while (vault.reads.get() == 0) delay(1) }
+
+        val deleted = scope.launch { manager.delete("test-credential") }
+        // The delete waits for the read's lock; without that lock it would end here, before the read puts its value in memory.
+        withTimeoutOrNull(500) { deleted.join() }
+        gate.complete(Unit)
+        first.await()
+        withTimeout(5_000) { deleted.join() }
+        vault.readGate = null
+
+        assertNull(manager.read("test-credential"))
         assertEquals(emptyMap<String, Credential>(), vault.stored.toMap())
     }
 

@@ -4,6 +4,7 @@ import dev.kestrel.providers.http.HttpReply
 import dev.kestrel.providers.http.HttpRequest
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
+import dev.kestrel.providers.http.ProviderHttp
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -39,10 +40,13 @@ internal object SignInHttp {
             null
         }
 
-    /** The error of a reply that a flow cannot use: a rate limit, a server error, or else a bad request. */
-    fun failure(reply: HttpReply): ProviderException = ProviderException(
+    /**
+     * The error of a reply that a flow cannot use: a rate limit, a server error, or else a bad request. A rate limit's
+     * `Retry-After` is read by [http], in seconds or as an HTTP date, and a negative value is none.
+     */
+    fun failure(reply: HttpReply, http: ProviderHttp): ProviderException = ProviderException(
         when {
-            reply.status == 429 -> ProviderError.RateLimited(reply.headers["Retry-After"]?.trim()?.toLongOrNull()?.times(1000))
+            reply.status == 429 -> ProviderError.RateLimited(http.retryAfterMillis(reply.headers["Retry-After"]))
             reply.status in 500..599 -> ProviderError.ServerError(reply.status)
             else -> ProviderError.BadRequest(reply.status, null)
         },

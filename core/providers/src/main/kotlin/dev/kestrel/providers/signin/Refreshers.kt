@@ -15,7 +15,10 @@ sealed interface Refresh {
     /** The new token, which CredentialManager stores before it releases the credential's lock. */
     data class Done(val token: Credential.OAuthToken) : Refresh
 
-    /** No network, a timeout, a 429 or a 5xx: the sign-in stays as it is. */
+    /**
+     * No network, a timeout, a 429, a 5xx, or any other answer that is not one of design D9's final refusals: the sign-in
+     * stays as it is, so that a refused early refresh does not fail a request whose token is still valid.
+     */
     data class ForNow(val error: ProviderError) : Refresh
 
     /** The provider refused the refresh for good; [writeBack] is the credential to keep instead, if any. */
@@ -40,7 +43,7 @@ private suspend fun ProviderHttp.tryExchange(request: HttpRequest): Pair<HttpRep
  * refresh token and the resource, without a scope. Each refresh rotates the refresh token. `invalid_client` clears the
  * client ID, so that the next sign-in registers Kestrel again; every other refusal (`invalid_grant`,
  * `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused`)
- * keeps it for the next sign-in.
+ * keeps it for the next sign-in. Any other refused answer fails for now.
  */
 class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: () -> Long = System::currentTimeMillis) : TokenRefresher {
     override suspend fun refresh(token: Credential.OAuthToken): Refresh {
@@ -58,10 +61,14 @@ class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: ()
         // A 429 of auth.openai.com is not the plan's usage limit, which only a request reports (design D17), so it is a
         // server error for now.
         if (reply.status == 429) return Refresh.ForNow(ProviderError.ServerError(503))
-        if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply).error)
+        if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
         val body = SignInHttp.parse(reply)
         if (reply.status !in 200..299) {
-            return if (body?.string("error") == "invalid_client") Refresh.Refused(token.copy(clientId = null)) else Refresh.Refused()
+            return when (body?.string("error")) {
+                "invalid_client" -> Refresh.Refused(token.copy(clientId = null))
+                in FINAL_ERRORS -> Refresh.Refused()
+                else -> Refresh.ForNow(SignInHttp.failure(reply, http).error)
+            }
         }
         val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
         val now = clock()
@@ -74,12 +81,19 @@ class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: ()
             ),
         )
     }
+
+    private companion object {
+        val FINAL_ERRORS = setOf(
+            "invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired", "refresh_token_invalidated",
+            "refresh_token_reused",
+        )
+    }
 }
 
 /**
  * xAI's refresh (design D9, research r31): a form POST to the token endpoint that the sign-in discovered, which must be
- * HTTPS on `x.ai`. `invalid_request`, `access_denied` and `invalid_grant` are final; a 429 or a 5xx keeps the sign-in,
- * and a 403 with `cf-mitigated: challenge` is tried again up to 3 times, 250 ms apart.
+ * HTTPS on `x.ai`. `invalid_request`, `access_denied` and `invalid_grant` are final; any other refused answer keeps the
+ * sign-in, and a 403 with `cf-mitigated: challenge` is tried again up to 3 times, 250 ms apart.
  */
 class XaiRefresher(
     private val http: ProviderHttp,
@@ -105,9 +119,11 @@ class XaiRefresher(
                 sleep(CHALLENGE_PAUSE_MILLIS)
                 continue
             }
-            if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply).error)
+            if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
             val body = SignInHttp.parse(reply)
-            if (reply.status !in 200..299) return Refresh.Refused()
+            if (reply.status !in 200..299) {
+                return if (body?.string("error") in FINAL_ERRORS) Refresh.Refused() else Refresh.ForNow(SignInHttp.failure(reply, http).error)
+            }
             val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
             val expiresAt = body.number("expires_in")?.let { clock() + it * 1000 } ?: TokenTimes.jwtExpiry(access)
             return Refresh.Done(token.copy(access = access, refresh = body.string("refresh_token") ?: refreshToken, expiresAtMillis = expiresAt))
@@ -117,6 +133,7 @@ class XaiRefresher(
     private companion object {
         const val CHALLENGE_RETRIES = 3
         const val CHALLENGE_PAUSE_MILLIS = 250L
+        val FINAL_ERRORS = setOf("invalid_request", "access_denied", "invalid_grant")
     }
 }
 
@@ -124,7 +141,8 @@ class XaiRefresher(
  * MiniMax's refresh (design D9, research r31): a form POST to the token endpoint of the account host that signed in, which
  * must be one of MiniMax's two and, when [region] is given, the profile's region's: a token of the other region is
  * refused, so that the owner signs in again. A body with `status: "error"` or a `base_resp.status_code` other than 0 is
- * final; without a new refresh token the old one stays.
+ * final, whatever the HTTP status; any other refused or unreadable answer keeps the sign-in. Without a new refresh token
+ * the old one stays.
  */
 class MiniMaxRefresher(
     private val http: ProviderHttp,
@@ -145,10 +163,11 @@ class MiniMaxRefresher(
         )
         val (reply, failed) = http.tryExchange(request)
         if (reply == null) return failed!!
-        if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply).error)
+        if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
         val body = SignInHttp.parse(reply)
-        if (reply.status !in 200..299 || body == null || MiniMaxAuth.failed(body)) return Refresh.Refused()
-        val access = body.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
+        if (body != null && MiniMaxAuth.failed(body)) return Refresh.Refused()
+        if (reply.status !in 200..299) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
+        val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
         val now = clock()
         return Refresh.Done(
             token.copy(

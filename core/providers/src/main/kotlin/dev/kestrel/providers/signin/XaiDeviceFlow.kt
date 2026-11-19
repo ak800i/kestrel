@@ -30,7 +30,7 @@ class XaiDeviceFlow(
 
     override suspend fun start(): DeviceCodePrompt {
         val reply = http.exchange(SignInHttp.get(XaiAuth.DISCOVERY_URL.toHttpUrl()))
-        if (reply.status !in 200..299) throw SignInHttp.failure(reply)
+        if (reply.status !in 200..299) throw SignInHttp.failure(reply, http)
         val discovery = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
         val device = trusted(discovery.string("device_authorization_endpoint"))
         val token = trusted(discovery.string("token_endpoint"))
@@ -38,7 +38,7 @@ class XaiDeviceFlow(
         lease = opened
         try {
             val answer = http.exchange(SignInHttp.form(device, "client_id" to XaiAuth.CLIENT_ID, "scope" to XaiAuth.SCOPE))
-            if (answer.status !in 200..299) throw SignInHttp.failure(answer)
+            if (answer.status !in 200..299) throw SignInHttp.failure(answer, http)
             val body = SignInHttp.parse(answer) ?: throw ProviderException(ProviderError.Malformed)
             val code = body.string("device_code") ?: throw ProviderException(ProviderError.Malformed)
             val userCode = body.string("user_code")?.trim()?.takeIf { it.isNotEmpty() } ?: throw ProviderException(ProviderError.Malformed)
@@ -70,7 +70,7 @@ class XaiDeviceFlow(
                         "device_code" to code,
                     ),
                 )
-                if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply)
+                if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply, http)
                 val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
                 if (reply.status in 200..299) {
                     val access = body.string("access_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)

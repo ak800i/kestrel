@@ -43,7 +43,7 @@ class MiniMaxDeviceFlow(
                 headers = headers,
             ),
         )
-        if (reply.status !in 200..299) throw SignInHttp.failure(reply)
+        if (reply.status !in 200..299) throw SignInHttp.failure(reply, http)
         val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
         if (body.string("state") != state) throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
         val userCode = body.string("user_code")?.trim()?.takeIf { it.isNotEmpty() } ?: throw ProviderException(ProviderError.Malformed)
@@ -71,7 +71,7 @@ class MiniMaxDeviceFlow(
                     "code_verifier" to pkce,
                 ),
             )
-            if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply)
+            if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply, http)
             // Design D9 and OpenClaw's poll parser: another refused HTTP status or `status: "error"` ends the sign-in,
             // `success` gives the token, and any other status is pending; only the refresh reads `base_resp`.
             if (reply.status !in 200..299) throw SignInFailed(SignInFailure.REFUSED)

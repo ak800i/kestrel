@@ -13,6 +13,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 /** The refreshers of the ChatGPT plan, xAI and MiniMax against MockWebServer (design D9 and D19). */
 class RefreshersTest {
@@ -137,5 +140,37 @@ class RefreshersTest {
         assertEquals(Refresh.Refused(), MiniMaxRefresher(http, { now }, MiniMaxRegion.CHINA).refresh(miniMax))
         assertEquals(3, calls.requests.size)
         assertTrue(calls.requests.all { it.toString() == "https://account.minimax.io/oauth2/token" })
+    }
+
+    @Test
+    fun anAnswerThatIsNotOneOfD9sFinalRefusalsFailsForNow() = runBlocking {
+        server.enqueue(json(403, "<html>blocked</html>"))
+        server.enqueue(json(400, """{"error":"temporarily_unavailable"}"""))
+        server.enqueue(json(403, "{}"))
+        server.enqueue(json(400, """{"error":"unsupported_grant_type"}"""))
+        server.enqueue(json(200, "not json"))
+        server.enqueue(json(401, "{}"))
+        server.enqueue(json(400, """{"status":"error"}"""))
+
+        assertEquals(Refresh.ForNow(ProviderError.BadRequest(403, null)), ChatGptPlanRefresher(http) { now }.refresh(plan))
+        assertEquals(Refresh.ForNow(ProviderError.BadRequest(400, null)), ChatGptPlanRefresher(http) { now }.refresh(plan))
+        // A 403 without Cloudflare's challenge header is not a challenge, and not a final refusal either.
+        assertEquals(Refresh.ForNow(ProviderError.BadRequest(403, null)), XaiRefresher(http, { now }) {}.refresh(xai))
+        assertEquals(Refresh.ForNow(ProviderError.BadRequest(400, null)), XaiRefresher(http, { now }) {}.refresh(xai))
+        assertEquals(Refresh.ForNow(ProviderError.Malformed), MiniMaxRefresher(http, { now }).refresh(miniMax))
+        assertEquals(Refresh.ForNow(ProviderError.BadRequest(401, null)), MiniMaxRefresher(http, { now }).refresh(miniMax))
+        // MiniMax's error status is final whatever the HTTP status.
+        assertEquals(Refresh.Refused(), MiniMaxRefresher(http, { now }).refresh(miniMax))
+    }
+
+    @Test
+    fun retryAfterIsReadAsAnHttpDateAndANegativeValueIsNone() = runBlocking {
+        val timed = ProviderHttp(calls, clock = { now })
+        val date = DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.ofEpochMilli(now + 30_000).atZone(ZoneOffset.UTC))
+        server.enqueue(json(429, "{}", "Retry-After" to date))
+        server.enqueue(json(429, "{}", "Retry-After" to "-5"))
+
+        assertEquals(Refresh.ForNow(ProviderError.RateLimited(30_000)), XaiRefresher(timed, { now }) {}.refresh(xai))
+        assertEquals(Refresh.ForNow(ProviderError.RateLimited(null)), MiniMaxRefresher(timed, { now }).refresh(miniMax))
     }
 }

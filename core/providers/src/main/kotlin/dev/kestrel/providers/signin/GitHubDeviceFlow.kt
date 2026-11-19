@@ -31,7 +31,7 @@ class GitHubDeviceFlow(
 
     override suspend fun start(): DeviceCodePrompt {
         val reply = http.exchange(SignInHttp.form("https://$domain/login/device/code".toHttpUrl(), "client_id" to CLIENT_ID, "scope" to SCOPE))
-        if (reply.status !in 200..299) throw SignInHttp.failure(reply)
+        if (reply.status !in 200..299) throw SignInHttp.failure(reply, http)
         val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
         val code = body.string("device_code") ?: throw ProviderException(ProviderError.Malformed)
         val userCode = body.string("user_code")?.trim()?.takeIf { it.length in 1..64 } ?: throw ProviderException(ProviderError.Malformed)
@@ -59,7 +59,7 @@ class GitHubDeviceFlow(
                     "grant_type" to DEVICE_GRANT,
                 ),
             )
-            if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply)
+            if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply, http)
             val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
             body.string("access_token")?.let { token ->
                 return SignInResult(Credential.GitHubToken(token, domain), hosts = setOf("api.$domain"))
