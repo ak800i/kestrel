@@ -100,6 +100,18 @@ internal interface ListeningConditions {
     fun demoted(service: Any): Boolean
 }
 
+/** How "Kestrel, open settings" ended (design spec, sections 8.6 and 14). */
+internal enum class SettingsOpening {
+    /** Kestrel's settings came to the front, or were in front already. */
+    OPENED,
+
+    /** Kestrel's accessibility service is off and Kestrel does not hold the assistant role, so Kestrel did not try. */
+    NEED_SERVICE,
+
+    /** Android did not bring the settings to the front within 2 s; a notification that opens them was posted. */
+    BLOCKED,
+}
+
 /** What Kestrel says and shows while it listens, and why it stopped (design spec, sections 8.9 and 14.6). */
 internal object ListeningTexts {
     const val YES = "Yes?"
@@ -149,6 +161,8 @@ internal object ListeningTexts {
     const val COMMAND_FAILED = "The command failed."
     const val SETTINGS_NEED_SERVICE = "I can open my settings only while my accessibility service is on or I am your " +
         "assistant app. Tap my listening notification, or open Kestrel from the launcher."
+    const val SETTINGS_BLOCKED = "Android did not let me open my settings. Tap my notification, or open Kestrel from " +
+        "the launcher."
 }
 
 /**
@@ -225,9 +239,8 @@ internal interface StopNotices {
  * must log no message. When Kestrel turns itself off, the bar shows a [StopReason] in place of "Off" (section 14.6),
  * and [notices] posts it as a notification, which goes once a voice session opens again; [conditions] tells the causes
  * apart.
- * [openSettings] opens Kestrel's settings app and returns true, or returns false while Kestrel's accessibility service
- * is off and Kestrel does not hold the assistant role, because Android then blocks the start without an exception and
- * Kestrel says why instead; the controller's thread calls it, and it throws when Android refuses.
+ * [openSettings] opens Kestrel's settings app and says how it went ([SettingsOpening]); it waits until the settings are
+ * in front, so a coroutine of [scope] calls it, and it throws when Android refuses the start.
  * [memory] is read in a coroutine on [thread] and written by one coroutine of [scope], so the newest mode is written last,
  * and by the restore, which writes Off before anything else can write.
  * [calls] reports the call state while a voice session is open (section 8.7). The stored mode is never Ringing or In
@@ -248,7 +261,7 @@ class Listening internal constructor(
     private val services: ServiceControl,
     private val bar: FeedbackBar,
     private val report: (String, Throwable) -> Unit,
-    private val openSettings: () -> Boolean,
+    private val openSettings: suspend () -> SettingsOpening,
     private val memory: ModeMemory,
     private val conditions: ListeningConditions,
     private val notices: StopNotices,
@@ -1014,17 +1027,31 @@ class Listening internal constructor(
     }
 
     // Section 14: Kestrel never fails silently. Android blocks an activity start from the background without an
-    // exception unless Kestrel's accessibility service is on (prototype P1) or Kestrel holds the assistant role; without
-    // the service the bar does not exist either, so Kestrel says why.
+    // exception unless Kestrel's accessibility service is on (prototype P1) or Kestrel holds the assistant role, and with
+    // only the role Android 13 may block it too (A71 session of sub-project 2, item 5); without the service the bar does
+    // not exist either, so Kestrel says why. openSettings waits up to 2 s for the settings, so it runs off the
+    // controller's thread.
     private fun openSettingsOrSayWhy() {
-        val opened = try {
-            openSettings()
-        } catch (e: Exception) {
-            report("Opening the settings", e)
-            bar.show(ListeningTexts.CANNOT_OPEN_SETTINGS)
-            return
+        scope.launch {
+            val opened = try {
+                openSettings()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("Opening the settings", e)
+                bar.show(ListeningTexts.CANNOT_OPEN_SETTINGS)
+                return@launch
+            }
+            when (opened) {
+                SettingsOpening.OPENED -> Unit
+                SettingsOpening.NEED_SERVICE -> send(Event.SettingsUnavailable)
+                SettingsOpening.BLOCKED -> {
+                    // The A71 session and the device test read Kestrel's verdict on the phone.
+                    timeline.reacted("settings-blocked")
+                    send(Event.SettingsBlocked)
+                }
+            }
         }
-        if (!opened) send(Event.SettingsUnavailable)
     }
 
     /**
@@ -1042,6 +1069,7 @@ class Listening internal constructor(
         val text = when (reply) {
             Reply.Yes -> ListeningTexts.YES
             Reply.SettingsNeedService -> ListeningTexts.SETTINGS_NEED_SERVICE
+            Reply.SettingsBlocked -> ListeningTexts.SETTINGS_BLOCKED
             is Reply.Text -> reply.text
             is Reply.Command -> reply.text
         }

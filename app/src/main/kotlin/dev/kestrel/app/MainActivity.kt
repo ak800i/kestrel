@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // The A71 session reads the time of the settings in front (plan 2E).
         graph.timeline.settingsResumed()
+        graph.problems.settingsOpened()
         refresh()
     }
 

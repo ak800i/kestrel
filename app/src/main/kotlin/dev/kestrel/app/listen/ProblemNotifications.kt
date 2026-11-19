@@ -75,6 +75,30 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
     /** Kestrel's accessibility service connected, so the notification of [accessibilityServiceOff] goes. */
     fun accessibilityServiceOn() = notifications.cancel(ACCESSIBILITY_ID)
 
+    /**
+     * Android did not bring Kestrel's settings to the front after "Kestrel, open settings" (design spec, section 14): a
+     * tap on this notification opens them, because Android lets the tap on a notification start an activity.
+     */
+    fun offerSettings() {
+        if (!allowed()) return
+        notifications.createNotificationChannel(
+            NotificationChannel(PROBLEMS, context.getString(R.string.problems_channel), NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        val text = context.getString(R.string.problem_settings_text)
+        val notification = Notification.Builder(context, PROBLEMS)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle(context.getString(R.string.problem_settings_title))
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(ListeningService.openKestrel(context))
+            .setAutoCancel(true)
+            .build()
+        notifications.notify(SETTINGS_ID, notification)
+    }
+
+    /** Kestrel's settings came to the front, so the notification of [offerSettings] goes. */
+    fun settingsOpened() = notifications.cancel(SETTINGS_ID)
+
     private fun allowed() =
         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
@@ -84,6 +108,9 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
 
         /** The notification that says that Kestrel's accessibility service is off. */
         internal const val ACCESSIBILITY_ID = 7_103
+
+        /** The notification that opens Kestrel's settings after Android kept them back. */
+        internal const val SETTINGS_ID = 7_104
         private const val PROBLEMS = "problems"
         private const val ACCESSIBILITY = "accessibility"
     }

@@ -86,14 +86,23 @@ class AssistTest {
                         !SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
                     },
                 )
+                val resumes = VoiceTests.graph.timeline.settingsResumes.value
                 listening.send(Event.Heard("Kestrel, open settings", named = true))
 
                 // Without the role and the accessibility service, Android would block the start without an exception.
+                // With only the role, Kestrel starts the settings through its assistant's session (A71 session of
+                // sub-project 2, item 5), and MainActivity's own resume tells Kestrel and the A71 session that they came.
                 assertTrue(
                     "Kestrel's settings did not come to the front",
                     VoiceTests.waitUntil(10_000) {
-                        SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
+                        VoiceTests.graph.timeline.settingsResumes.value > resumes &&
+                            SETTINGS_IN_FRONT.containsMatchIn(VoiceTests.shell("dumpsys activity activities"))
                     },
+                )
+                // Kestrel gives up after 2 s and says so; settings that came later must not hide that verdict.
+                assertTrue(
+                    "Kestrel said that Android kept its settings back",
+                    VoiceTests.graph.timeline.reacted?.kind != "settings-blocked",
                 )
             } finally {
                 VoiceTests.shell("input keyevent KEYCODE_HOME")
@@ -190,7 +199,9 @@ class AssistTest {
         // The settings that name the assistant's service, which Android changes with the role (design D2).
         val ASSISTANT_SETTINGS = listOf("assistant", "voice_interaction_service")
         val FOCUSED_SESSION = Regex("""mCurrentFocus=Window\{[^}]*VoiceInteractionSession""")
-        val KESTREL_IN_FRONT = Regex("""topResumedActivity=ActivityRecord\{[^}]* dev\.kestrel/""")
-        val SETTINGS_IN_FRONT = Regex("""topResumedActivity=ActivityRecord\{[^}]* dev\.kestrel/\.app\.MainActivity""")
+        // Android 13 prints "  ResumedActivity: ActivityRecord{…}", later versions "topResumedActivity=ActivityRecord{…}".
+        val KESTREL_IN_FRONT = Regex("""(?:topResumedActivity=|\bResumedActivity: )ActivityRecord\{[^}]* dev\.kestrel/""")
+        val SETTINGS_IN_FRONT =
+            Regex("""(?:topResumedActivity=|\bResumedActivity: )ActivityRecord\{[^}]* dev\.kestrel/\.app\.MainActivity""")
     }
 }

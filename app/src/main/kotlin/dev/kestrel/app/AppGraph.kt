@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
+import dev.kestrel.app.assist.KestrelAssistantService
+import dev.kestrel.app.assist.settingsIntent
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.commands.CommandRunner
@@ -28,6 +30,7 @@ import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.ScreenBoostWords
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
+import dev.kestrel.app.listen.SettingsOpener
 import dev.kestrel.app.listen.StoredMode
 import dev.kestrel.app.listen.Timeline
 import dev.kestrel.app.listen.VoiceOptionsSetting
@@ -109,6 +112,9 @@ class AppGraph(context: Context) {
             Log.w(TAG, if (index == 0) "$what failed: $part" else part)
         }
     }
+
+    /** Logs a failure that Kestrel handled, as [reportFailure] does, for the parts that AppGraph does not build. */
+    internal fun report(what: String, error: Throwable) = reportFailure(what, error)
 
     private val store = PrivacyStore(context)
     val logs = store.logs
@@ -238,26 +244,7 @@ class AppGraph(context: Context) {
             },
             report = reportFailure,
             notices = problems,
-            // The launcher's own intent, so that Kestrel's task comes to the front instead of a second MainActivity.
-            // The controller's thread calls it; startActivity may be called from any thread. Without Kestrel's
-            // accessibility service, Android blocks the start from the background without an exception (prototype P1),
-            // so Kestrel does not try, and says why instead. Android lets the holder of the assistant role start
-            // activities from the background too, because it binds the role's VoiceInteractionService (section 8.6).
-            openSettings = {
-                if (screen.value == null &&
-                    !appContext.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT)
-                ) {
-                    false
-                } else {
-                    appContext.startActivity(
-                        Intent(appContext, MainActivity::class.java)
-                            .setAction(Intent.ACTION_MAIN)
-                            .addCategory(Intent.CATEGORY_LAUNCHER)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                    true
-                }
-            },
+            openSettings = { settingsOpener.open() },
             // Encrypted like every setting (section 13.4). SettingsStore reads and writes on Dispatchers.IO.
             memory = object : ModeMemory {
                 override suspend fun read(): StoredMode =
@@ -314,6 +301,19 @@ class AppGraph(context: Context) {
                 if (mode != Mode.LISTENING) screens.value?.let { session -> scope.launch { session.hideOverlays() } }
             }
         }
+    }
+
+    // Built at the first "Kestrel, open settings", after every part of the graph that it uses.
+    private val settingsOpener by lazy {
+        SettingsOpener(
+            timeline,
+            serviceOn = { screen.value != null },
+            roleHeld = { appContext.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT) },
+            startActivity = { appContext.startActivity(settingsIntent(appContext)) },
+            showSession = { KestrelAssistantService.openSettings() },
+            offer = { problems.offerSettings() },
+            report = reportFailure,
+        )
     }
 
     internal fun attachScreen(session: ScreenSession) {

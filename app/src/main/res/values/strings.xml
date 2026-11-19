@@ -133,6 +133,8 @@
     <string name="accessibility_channel">Accessibility service</string>
     <string name="problem_service_off_title">Kestrel\'s accessibility service is off</string>
     <string name="problem_service_off_text">Kestrel cannot use the screen, the accessibility button or the shortcut until you turn the service on again. If Kestrel is listening, it goes on listening. Tap to open the accessibility settings.</string>
+    <string name="problem_settings_title">Open Kestrel\'s settings</string>
+    <string name="problem_settings_text">Android did not let Kestrel open its settings from the background. Tap here to open them.</string>
 
     <!-- The subtitle of the Quick Settings tile (design spec, sections 8.5 and 8.6). -->
     <string name="tile_listening">Listening</string>

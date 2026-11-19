@@ -60,7 +60,7 @@ class ListeningTest {
     private val microphone = FakeMicrophone()
     private val service = Any()
     private var settingsFailure: Exception? = null
-    private var settingsCanOpen = true
+    private var settingsOpening = SettingsOpening.OPENED
     private val conditions = FakeConditions()
     private val notices = FakeNotices()
     private val memory = FakeMemory()
@@ -890,7 +890,7 @@ class ListeningTest {
     @Test
     fun kestrelOpenSettingsWithoutTheAccessibilityServiceSaysWhy() = runTest {
         // Android blocks the start from the background without an exception, and the bar does not exist.
-        settingsCanOpen = false
+        settingsOpening = SettingsOpening.NEED_SERVICE
         val listening = listeningWithSession()
         log.clear()
 
@@ -900,6 +900,23 @@ class ListeningTest {
         // Recognition is off while Kestrel says why.
         assertEquals(listOf("open settings", "recognition NONE"), log)
         assertEquals(listOf(ListeningTexts.SETTINGS_NEED_SERVICE), sessions.opened.single().said)
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test
+    fun settingsThatAndroidKeptBackAreSaidAndOffered() = runTest {
+        // With only the assistant role, Android 13 may keep the settings back without an exception (A71 session of
+        // sub-project 2, item 5); AppGraph then has posted the notification that opens them.
+        settingsOpening = SettingsOpening.BLOCKED
+        val listening = listeningWithSession()
+        log.clear()
+
+        listening.send(Event.Heard("Kestrel, open settings.", named = true))
+        runCurrent()
+
+        assertEquals(listOf("open settings", "recognition NONE"), log)
+        assertEquals(listOf(ListeningTexts.SETTINGS_BLOCKED), sessions.opened.single().said)
+        assertEquals("settings-blocked", timeline.reacted?.kind)
         assertTrue(reports.isEmpty())
     }
 
@@ -2745,7 +2762,7 @@ class ListeningTest {
         openSettings = {
             log += "open settings"
             settingsFailure?.let { throw it }
-            settingsCanOpen
+            settingsOpening
         },
         memory = memory,
         conditions = conditions,
@@ -3041,7 +3058,7 @@ class ListeningTest {
             services = services,
             bar = bar,
             report = { what, error -> reports += what to error },
-            openSettings = { true },
+            openSettings = { SettingsOpening.OPENED },
             conditions = conditions,
             notices = notices,
             exits = exits,

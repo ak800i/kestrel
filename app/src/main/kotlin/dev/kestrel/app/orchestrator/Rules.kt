@@ -215,6 +215,13 @@ sealed interface Event {
     data object SettingsUnavailable : Event
 
     /**
+     * Android did not bring Kestrel's settings to the front, although Kestrel's accessibility service is on or Kestrel
+     * holds the assistant role, as Android 13 may do with only the role. Kestrel posted a notification that opens them,
+     * and says so (section 14).
+     */
+    data object SettingsBlocked : Event
+
+    /**
      * An utterance ended without a transcript: the pipeline dropped it, or transcribing it failed. Like a transcript
      * without words, it gives the owner the whole wait for a task again, but it does not count towards the hint about
      * empty transcripts (section 14.6).
@@ -270,6 +277,9 @@ sealed interface Reply {
      * (section 14).
      */
     data object SettingsNeedService : Reply
+
+    /** Android kept Kestrel's settings back, and a notification opens them (section 14). */
+    data object SettingsBlocked : Reply
 
     data class Text(val text: String) : Reply {
         override fun toString() = "Text(${text.length} characters)"
@@ -443,6 +453,8 @@ object Rules {
         is Event.WaitEnded ->
             if (state.work == Work.AWAITING_TASK && event.wait == state.wait) Step(state.copy(work = Work.IDLE)) else Step(state)
         Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
+        // Not over a ringing call: the verdict comes up to 2 s after the request.
+        Event.SettingsBlocked -> if (state.mode == Mode.OFF || state.inCall) Step(state) else say(state, Reply.SettingsBlocked)
         Event.NothingHeard ->
             if (state.mode != Mode.OFF && state.work == Work.AWAITING_TASK) waitForTask(state) else Step(state)
         is Event.CallState -> call(state, event.state)

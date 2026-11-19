@@ -905,6 +905,15 @@ class RulesTest {
     }
 
     @Test
+    fun kestrelSaysThatAndroidKeptItsSettingsBack() {
+        val step = Rules.next(listening, Event.SettingsBlocked)
+
+        assertEquals(listOf(Effect.Say(Reply.SettingsBlocked)), step.effects)
+        assertEquals(1, step.state.speeches)
+        assertEquals(Step(State()), Rules.next(State(), Event.SettingsBlocked))
+    }
+
+    @Test
     fun threeEmptyTranscriptsInARowShowTheHintOncePerSession() {
         var state = listening
         val effects = (1..6).map { Rules.next(state, Event.Heard("", named = false)).also { state = it.state }.effects }
