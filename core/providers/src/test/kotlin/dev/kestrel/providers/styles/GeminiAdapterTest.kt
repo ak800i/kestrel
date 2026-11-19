@@ -162,6 +162,62 @@ class GeminiAdapterTest {
     }
 
     @Test
+    fun theLatestAliasesAndGemma4FollowOpenClawsFamilies() = runBlocking {
+        assertEquals(obj("""{"thinkingLevel":"MINIMAL"}"""), GeminiAdapter.thinking("minimal", "gemini-flash-latest"))
+        assertEquals(obj("""{"thinkingLevel":"MEDIUM"}"""), GeminiAdapter.thinking("medium", "gemini-flash-lite-latest"))
+        assertEquals(obj("""{"thinkingLevel":"LOW"}"""), GeminiAdapter.thinking("low", "gemini-pro-latest"))
+        assertEquals(obj("""{"thinkingLevel":"HIGH"}"""), GeminiAdapter.thinking("medium", "models/gemini-pro-latest"))
+        assertEquals(obj("""{"thinkingLevel":"MINIMAL"}"""), GeminiAdapter.thinking("low", "gemma-4-27b-it"))
+        assertEquals(obj("""{"thinkingLevel":"HIGH"}"""), GeminiAdapter.thinking("medium", "gemma-4-27b-it"))
+        // A rebuilt message for a `-latest` model gets the placeholder signature.
+        bench.reply("gemini/text.sse")
+        val latest = google.copy(model = ModelEntry("gemini-flash-latest", "Gemini Flash Latest", reasoning = true), sentModelId = "gemini-flash-latest")
+        val call = AssistantPart.ToolCall("gemini-call-0", "open_app", obj("""{"name":"Camera"}"""))
+
+        adapter.complete(request(user("Open the camera."), ChatMessage.Assistant(listOf(call)), ChatMessage.ToolResult("gemini-call-0", "open_app", "Opened.")), latest)
+
+        val placeholder = json("""{"role":"model","parts":[{"functionCall":{"name":"open_app","args":{"name":"Camera"}},"thoughtSignature":"skip_thought_signature_validator"}]}""")
+        assertEquals(placeholder, bench.body(bench.take())["contents"]!!.jsonArray[1])
+    }
+
+    @Test
+    fun aKeyThatGoogleRefusesIsTheCredentialsRejection() {
+        val body = """{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT",""" +
+            """"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com"}]}}"""
+        bench.status(400, body)
+        bench.status(400, """{"error":{"code":400,"message":"Bad.","status":"INVALID_ARGUMENT"}}""")
+
+        assertEquals(ProviderError.Unauthorized, errorOf(adapter, request(user("Hi")), google))
+        assertEquals(ProviderError.BadRequest(400, "INVALID_ARGUMENT"), errorOf(adapter, request(user("Hi")), google))
+    }
+
+    @Test
+    fun aCallWithoutArgsCountsTowardsTheGatherLimit() {
+        val name = "a".repeat(512 * 1024)
+        val chunk = """data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"$name"}}],"role":"model"},"index":0}]}""" + "\n\n"
+        val last = """data: {"candidates":[{"content":{"parts":[{"text":"."}],"role":"model"},"index":0,"finishReason":"STOP"}]}""" + "\n\n"
+        bench.status(200, chunk.repeat(17) + last, "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), google))
+    }
+
+    @Test
+    fun gemini36AndLaterAndGemini4GetNoTemperature() = runBlocking {
+        repeat(3) { bench.reply("gemini/text.sse") }
+        val asked = request(user("Hi")) { copy(temperature = 0.2) }
+        val flash25 = google.copy(model = ModelEntry("gemini-2.5-flash", "Gemini 2.5 Flash"), sentModelId = "gemini-2.5-flash")
+        val argon = google.copy(model = ModelEntry("gemini-4-argon", "Gemini 4 Argon"), sentModelId = "gemini-4-argon")
+
+        adapter.complete(asked, google)
+        adapter.complete(asked, argon)
+        adapter.complete(asked, flash25)
+
+        assertNull(bench.body(bench.take())["generationConfig"]!!.jsonObject["temperature"])
+        assertNull(bench.body(bench.take())["generationConfig"]!!.jsonObject["temperature"])
+        assertEquals(json("0.2"), bench.body(bench.take())["generationConfig"]!!.jsonObject["temperature"])
+    }
+
+    @Test
     fun theStatusErrorsAndTheStreamsErrorAreMapped() {
         bench.status(401)
         bench.status(401)

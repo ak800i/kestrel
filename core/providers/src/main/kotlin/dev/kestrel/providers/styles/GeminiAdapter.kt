@@ -42,7 +42,9 @@ import okhttp3.HttpUrl
  * assistant message that is rebuilt instead (after an escalation, for example) gets Google's placeholder
  * `skip_thought_signature_validator` on its first function call, for Gemini 3 and later, as OpenClaw does (research r38).
  * Tool results go back as `functionResponse` parts, all of a step together with the next screen in one user turn. JSON
- * actions set `responseMimeType` without a schema (design D7).
+ * actions set `responseMimeType` without a schema (design D7). Unlike OpenClaw, which sends a call's `id` only to the
+ * provider and model that made the call, a rebuilt message sends every ID that is not Kestrel's own made-up one (Google
+ * documents `id` as optional, and calls and results always pair).
  */
 internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
     override suspend fun complete(request: ChatRequest, target: ModelTarget): ChatResponse {
@@ -54,10 +56,14 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
         ChatRequests.check(request)
         val gather = Gather(request, target)
         val post = Wire.post(url, body(request, target), target, request, stream, logPath = logPath)
-        if (stream) {
-            http.stream(post, target.auth) { event -> gather.chunk(Wire.parse(event.data)) }
-        } else {
-            gather.chunk(Wire.parse(http.send(post, target.auth).text()))
+        try {
+            if (stream) {
+                http.stream(post, target.auth) { event -> gather.chunk(Wire.parse(event.data)) }
+            } else {
+                gather.chunk(Wire.parse(http.send(post, target.auth).text()))
+            }
+        } catch (e: ProviderException) {
+            throw if (isKeyRefused(e.error)) ProviderException(target.auth.rejected) else e
         }
         return gather.finish()
     }
@@ -93,7 +99,7 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
         }
         putJsonObject("generationConfig") {
             put("maxOutputTokens", request.maxOutputTokens)
-            if (request.temperature != null && compat.supportsTemperature != false) put("temperature", request.temperature)
+            if (request.temperature != null && compat.supportsTemperature != false && !ignoresTemperature(target.sentModelId)) put("temperature", request.temperature)
             Wire.level(request, target.model, compat)?.let { thinking(it, target.sentModelId) }?.let { put("thinkingConfig", it) }
             if (request.jsonSchema != null) put("responseMimeType", "application/json")
         }
@@ -194,7 +200,8 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
                 val piece = part.str("text")
                 when {
                     call != null -> {
-                        limit.add(call["args"]?.toString()?.length ?: 0)
+                        // The whole call counts, so that a call without `args` counts too.
+                        limit.add(call.toString().length)
                         calls += call
                         raw += part.toMutableMap()
                     }
@@ -270,9 +277,43 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
          */
         const val SYNTHETIC_ID = "gemini-call-"
 
-        /** Gemini 3 and later refuse a call of the current turn without its signature (research r38 §3); OpenClaw's `requiresToolCallSignature`. */
-        private fun needsSignature(modelId: String): Boolean =
-            (Regex("gemini-(\\d+)").find(modelId.lowercase())?.groupValues?.get(1)?.toIntOrNull() ?: 0) >= 3
+        /**
+         * Google refuses a wrong, revoked or expired API key with 400 `INVALID_ARGUMENT` and the ErrorInfo reason
+         * `API_KEY_INVALID`, which ErrorCodes keeps: that is the credential's `rejected` (design D17), not a bad request.
+         */
+        fun isKeyRefused(error: ProviderError): Boolean = error is ProviderError.BadRequest && error.status == 400 && error.code == "API_KEY_INVALID"
+
+        /**
+         * Gemini 3 and later refuse a call of the current turn without its signature (research r38 §3); OpenClaw's
+         * `requiresToolCallSignature`, which also counts the `-latest` aliases that Google's model list returns.
+         */
+        private fun needsSignature(modelId: String): Boolean = thinkingLevelFamily(modelId)
+
+        // OpenClaw's model families (`packages/ai/src/internal/google-model-family.ts` and
+        // `transports/google-thinking-level.ts` at the pinned commit).
+        private fun gemini3Pro(id: String) = Regex("(?:^|/)gemini-(?:3(?:\\.\\d+)?-pro|pro-latest)(?:-|$)").containsMatchIn(id.lowercase())
+
+        private fun gemini3Flash(id: String) = Regex("(?:^|/)gemini-(?:3(?:\\.\\d+)?-flash|flash(?:-lite)?-latest)(?:-|$)").containsMatchIn(id.lowercase())
+
+        private fun gemini4(id: String) = Regex("(?:^|/)gemini-4(?:[-.]|$)").containsMatchIn(id.lowercase())
+
+        private fun gemma4(id: String) = Regex("gemma-?4").containsMatchIn(id.lowercase())
+
+        private fun thinkingLevelFamily(id: String) = gemini3Pro(id) || gemini3Flash(id) || gemini4(id)
+
+        /** Gemini 4 and Gemini 3.7 Flash and later refuse MINIMAL. */
+        private fun takesMinimal(id: String): Boolean {
+            if (gemini4(id)) return false
+            val minor = Regex("(?:^|/)gemini-3\\.(\\d+)-flash(?:-|$)").find(id.lowercase())?.groupValues?.get(1)?.toIntOrNull() ?: return true
+            return minor < 7
+        }
+
+        /**
+         * Gemini 3.6 and later and Gemini 4 ignore `temperature`, and Google's troubleshooting page says that they will
+         * refuse it with a 400 in a future release, so it is not sent to them.
+         */
+        private fun ignoresTemperature(modelId: String): Boolean =
+            gemini4(modelId) || (Regex("(?:^|/)gemini-3\\.(\\d+)-").find(modelId.lowercase())?.groupValues?.get(1)?.toIntOrNull() ?: 0) >= 6
 
         /** `<base>/<collection>/<model>:streamGenerateContent?alt=sse`, or `:generateContent` without streaming. */
         fun url(base: HttpUrl, collection: String, modelId: String, stream: Boolean): HttpUrl =
@@ -284,8 +325,9 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
 
         /**
          * Ported from OpenClaw's thinking settings for Gemini (`packages/ai/src/providers/google-shared.ts` at the pinned commit): a
-         * budget for Gemini 2.5, a level for Gemini 3 and later (only LOW and HIGH on Gemini 3 Pro; no MINIMAL on Gemini 4 or
-         * on Gemini 3.7 Flash and later), and nothing for older models.
+         * budget for Gemini 2.5, a level for OpenClaw's Gemini 3 Pro, Gemini 3 Flash and Gemini 4 families with their `-latest`
+         * aliases (only LOW and HIGH on Gemini 3 Pro; no MINIMAL on Gemini 4 or on Gemini 3.7 Flash and later), MINIMAL or HIGH
+         * for Gemma 4, and nothing for older models.
          */
         fun thinking(level: String, modelId: String): JsonObject? {
             val id = modelId.lowercase().substringAfterLast('/')
@@ -293,8 +335,7 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
                 "xhigh", "max" -> "high"
                 else -> level
             }
-            val major = Regex("gemini-(\\d+)").find(id)?.groupValues?.get(1)?.toIntOrNull()
-            if (major == null || major < 3) {
+            if (!thinkingLevelFamily(id) && !gemma4(id)) {
                 val pro = "2.5-pro" in id
                 if (!pro && "2.5-flash" !in id) return null
                 val budget = when (effort) {
@@ -307,8 +348,9 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
             }
             val low = effort == "minimal" || effort == "low"
             val value = when {
-                Regex("gemini-3(?:\\.\\d+)?-pro").containsMatchIn(id) -> if (low) "LOW" else "HIGH"
-                effort == "minimal" -> if (major >= 4 || (Regex("gemini-3\\.(\\d+)-flash").find(id)?.groupValues?.get(1)?.toIntOrNull() ?: 0) >= 7) "LOW" else "MINIMAL"
+                gemini3Pro(id) -> if (low) "LOW" else "HIGH"
+                gemma4(id) -> if (low) "MINIMAL" else "HIGH"
+                effort == "minimal" -> if (takesMinimal(id)) "MINIMAL" else "LOW"
                 else -> effort.uppercase()
             }
             return buildJsonObject { put("thinkingLevel", value) }
