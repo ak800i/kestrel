@@ -526,15 +526,15 @@ function Invoke-SettingsCheck {
         $times = ConvertFrom-HookPairs (Invoke-Hook voice-times)
         $asked = [long]$times['settingsAsked']
         $resumed = [long]$times['settingsResumed']
-        # Kestrel gives up after 2 s, says that Android blocked its settings, and records that as its reaction; settings
+        # Kestrel gives up after 5 s, says that Android blocked its settings, and records that as its reaction; settings
         # that came later must not count as a pass (plan 2E, Task 4).
         $reaction = ConvertFrom-TimeMark -Text $times['reacted']
         $blocked = $asked -gt $before -and $reaction -and $reaction.Kind -eq 'settings-blocked' -and $reaction.At -ge $asked
         if ($asked -gt $before -and $resumed -ge $asked) {
             Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
             if ($blocked) { return "failed: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, although Kestrel said that Android blocked them" }
-            # Kestrel waits 2 s for its settings, as AssistTest checks; a later reaction may have replaced settings-blocked.
-            if ($resumed - $asked -ge 2000) { return "failed: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, after its 2 s wait, timed on the device" }
+            # Kestrel waits 5 s for its settings, as AssistTest checks; a later reaction may have replaced settings-blocked.
+            if ($resumed - $asked -ge 5000) { return "failed: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, after its 5 s wait, timed on the device" }
             return "ok: Kestrel's settings came to the front $($resumed - $asked) ms after Kestrel asked for them, timed on the device"
         }
         Start-Sleep -Milliseconds 500
@@ -793,7 +793,7 @@ function Invoke-RebootCheck {
     # On a phone, the screen is off or locked after the reboot, and Kestrel records only while it is on and unlocked.
     if (-not $isEmulator) {
         Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
-        Read-Host 'Unlock the phone, then press Enter' | Out-Null
+        Read-Host 'Check that the phone is unlocked, then press Enter' | Out-Null
     }
     # 'dumpsys audio' starts its history afresh at each boot, so every recording of Kestrel's that it lists is new.
     $problem = Get-RecordingProblem @()

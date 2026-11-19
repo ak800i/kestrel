@@ -875,21 +875,36 @@ function Invoke-TimingStep {
     }
 }
 
+# Turns Kestrel off for a recording, brings Kestrel's settings to the front again, as the step's start does, and tells
+# the owner.
+function Stop-KestrelForRecording {
+    Stop-Kestrel
+    Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+    Write-Host 'Kestrel was on, and the script has now turned it off.'
+}
+
 # Records the owner into a clip of up to $Seconds seconds and copies it to $File. The recording starts once the
 # microphone records, the screen is woken and Kestrel's settings brought to the front first, because Android silences a
-# recording otherwise. Returns the hook's answer.
+# recording otherwise. The hook records only while Kestrel is off, and refuses with "turn Kestrel off first" otherwise,
+# which hook.ps1 throws. So when Kestrel's state shows it on, as on 2026-11-17, when the owner had turned it on, the
+# script turns it off first, and when the hook still refuses, because Kestrel came on after that check, the script turns
+# it off and asks once more. Returns the hook's answer.
 function Invoke-OwnerRecording([string]$File, [int]$Seconds) {
     Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
-    Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-    $started = Invoke-Hook voice-record @{ File = 'owner'; Seconds = $Seconds }
-    if ($started -ne 'recording') {
-        # The hook refuses to record while Kestrel is on, as on 2026-11-17, when the owner had turned it on.
-        Stop-Kestrel
+    $state = Get-VoiceState
+    if ($state -and ($state.mode -ne 'off' -or $state.session -ne 'closed')) {
+        Stop-KestrelForRecording
+    } else {
         Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-        Write-Host 'Kestrel was on, so the script turned it off. Say the line when this window says "Speak now".'
-        $started = Invoke-Hook voice-record @{ File = 'owner'; Seconds = $Seconds }
-        if ($started -ne 'recording') { throw "voice-record did not start: $started" }
     }
+    try {
+        $started = Invoke-Hook voice-record @{ File = 'owner'; Seconds = $Seconds }
+    } catch {
+        if ("$($_.Exception.Message)" -notmatch 'turn Kestrel off first') { throw }
+        Stop-KestrelForRecording
+        $started = Invoke-Hook voice-record @{ File = 'owner'; Seconds = $Seconds }
+    }
+    if ($started -ne 'recording') { throw "voice-record did not start: $started" }
     Write-Host "Speak now: say the line once ($Seconds s). The phone does not change and does not answer while it records."
     Start-Sleep -Seconds $Seconds
     $watch = [Diagnostics.Stopwatch]::StartNew()

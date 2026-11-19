@@ -75,7 +75,8 @@
 #                                           its contacts, which are never boost words; -ScreenLabels takes the labels
 #                                           from the screen in front, which never leave the device
 #   voice-eval -Close                       closes that recogniser
-# The A71 session (scripts\a71-session.ps1 runs these):
+# The A71 session (scripts\a71-session.ps1 runs these, except voice-echo, which plan 2D's session ran and no script runs
+# now):
 #   voice-counts                            the number of Kestrel's latest wait for a task, which rises with each wait and
 #                                           also when a wait starts again, how many tasks Kestrel started in its process,
 #                                           how many words the last slow task had, and how many keyword hits its voice

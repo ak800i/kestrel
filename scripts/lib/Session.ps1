@@ -1,5 +1,7 @@
-# Helpers for scripts\a71-session.ps1 (plan 2D, design D8). They read Android's dumps and logs on this computer and keep
-# only numbers, intent actions and Kestrel's own fixed descriptions, never what the owner said or other apps' text.
+# Helpers for the A71 sessions (scripts\a71-session.ps1 and scripts\a71-commands.ps1; plan 2D, design D8) and for
+# scripts\listen-check.ps1. They read Android's dumps and logs on this computer and keep only numbers, intent actions,
+# the short names of exception classes and Kestrel's own fixed descriptions, never what the owner said or other apps'
+# text.
 
 # Appends a line to the session's results: the time, the step and the text, separated by tabs, and creates the file's
 # folder. The text must hold no private data, such as what Kestrel heard.

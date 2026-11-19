@@ -11,7 +11,7 @@ BeforeAll {
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Format-CheckResult', 'Get-Median',
         'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult',
-        'Complete-Restore', 'Invoke-Restore')
+        'Complete-Restore', 'Invoke-Restore', 'Stop-KestrelForRecording', 'Invoke-OwnerRecording')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -19,6 +19,11 @@ BeforeAll {
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
     # Wait-State reads Kestrel's state through this function, which the tests mock.
     function Get-VoiceState { }
+    # Invoke-OwnerRecording works on the device through these, which the tests mock.
+    function Invoke-Checked([string]$Command) { }
+    function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { }
+    function Stop-Kestrel { }
+    function Invoke-AdbCopy([string]$Serial, [string]$Direction, [string]$From, [string]$To) { }
 }
 
 Describe 'The helpers of the A71 session of the instant commands' {
@@ -137,6 +142,56 @@ Describe 'The helpers of the A71 session of the instant commands' {
     It 'writes a radio check''s line with Android''s state and the screen that opened, as one letter' {
         Format-RadioResult -Say 'turn off Bluetooth' -Done $true -Screen 'q' | Should -BeExactly 'turn off Bluetooth: Android says done screen=q'
         Format-RadioResult -Say 'turn on Wi-Fi' -Done $false -Screen 'n' | Should -BeExactly 'turn on Wi-Fi: Android says not done screen=n'
+    }
+
+    Context 'An owner''s recording while Kestrel may be on' {
+        BeforeEach {
+            $Serial = 'emulator-5554'
+            $remote = '/sdcard/eval'
+            $records = [System.Collections.Generic.List[string]]::new()
+            Mock Write-Host { }
+            Mock Start-Sleep { }
+            Mock Invoke-Checked { }
+            Mock Invoke-AdbCopy { }
+            Mock Stop-Kestrel { }
+            Mock Invoke-Hook { 'done 1000 ms loudest 40 % silenced=false' } -ParameterFilter { $With.Result }
+        }
+
+        It 'turns a Kestrel that is on off first, brings the settings to the front, says so and records' {
+            Mock Get-VoiceState { [ordered]@{ mode = 'listening'; session = 'open' } }
+            Mock Invoke-Hook { $records.Add('record'); 'recording' } -ParameterFilter { $Command -eq 'voice-record' -and -not $With.Result }
+
+            Invoke-OwnerRecording -File 'clip.wav' -Seconds 3 | Should -BeExactly 'done 1000 ms loudest 40 % silenced=false'
+
+            Should -Invoke Stop-Kestrel -Times 1 -Exactly
+            Should -Invoke Invoke-Checked -Times 1 -Exactly -ParameterFilter { $Command -eq 'am start -n dev.kestrel/.app.MainActivity' }
+            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object" -eq 'Kestrel was on, and the script has now turned it off.' }
+            $records.Count | Should -Be 1
+        }
+
+        It 'turns Kestrel off and records again when the hook refuses because Kestrel came on after the check' {
+            Mock Get-VoiceState { [ordered]@{ mode = 'off'; session = 'closed' } }
+            Mock Invoke-Hook {
+                $records.Add('record')
+                if ($records.Count -eq 1) { throw 'turn Kestrel off first, with voice -Send off' }
+                'recording'
+            } -ParameterFilter { $Command -eq 'voice-record' -and -not $With.Result }
+
+            Invoke-OwnerRecording -File 'clip.wav' -Seconds 3 | Should -BeExactly 'done 1000 ms loudest 40 % silenced=false'
+
+            Should -Invoke Stop-Kestrel -Times 1 -Exactly
+            Should -Invoke Invoke-Checked -Times 2 -Exactly -ParameterFilter { $Command -eq 'am start -n dev.kestrel/.app.MainActivity' }
+            $records.Count | Should -Be 2
+        }
+
+        It 'leaves a Kestrel that is off alone, and passes on every other refusal of the hook' {
+            Mock Get-VoiceState { [ordered]@{ mode = 'off'; session = 'closed' } }
+            Mock Invoke-Hook { throw 'the clip name must be letters and digits' } -ParameterFilter { $Command -eq 'voice-record' -and -not $With.Result }
+
+            { Invoke-OwnerRecording -File 'clip.wav' -Seconds 3 } | Should -Throw 'the clip name must be letters and digits'
+
+            Should -Invoke Stop-Kestrel -Times 0 -Exactly
+        }
     }
 
     It 'stops a step at the owner''s "q" at a restore''s prompt, and at the session''s end runs the other restores and keeps the reason' {
