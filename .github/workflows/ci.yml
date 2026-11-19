@@ -41,7 +41,7 @@ jobs:
             echo "Attempt $attempt to configure the build failed:"
             grep -iE "could not|status code|not found|timed out|refused|reset" "$RUNNER_TEMP/resolve.log" | head -n 40 || true
             refresh="--refresh-dependencies"
-            sleep 30
+            if [ "$attempt" -lt 5 ]; then sleep 30; fi
           done
           tail -n 80 "$RUNNER_TEMP/resolve.log"
           exit 1
