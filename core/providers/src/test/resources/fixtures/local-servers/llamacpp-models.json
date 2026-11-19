@@ -1,0 +1,19 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemma-4-31b-q4",
+      "object": "model",
+      "owned_by": "llamacpp",
+      "architecture": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      }
+    }
+  ]
+}

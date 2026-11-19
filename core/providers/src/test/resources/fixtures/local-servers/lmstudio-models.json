@@ -1,0 +1,39 @@
+{
+  "models": [
+    {
+      "type": "llm",
+      "key": "qwen/qwen3.6-27b",
+      "display_name": "Qwen3.6 27B",
+      "max_context_length": 262144,
+      "format": "gguf",
+      "loaded_instances": [],
+      "capabilities": {
+        "vision": true,
+        "trained_for_tool_use": true,
+        "reasoning": {
+          "allowed_options": [
+            "off",
+            "on"
+          ],
+          "default": "on"
+        }
+      }
+    },
+    {
+      "type": "embedding",
+      "key": "text-embedding-nomic-embed-text-v1.5",
+      "display_name": "Nomic Embed Text v1.5",
+      "max_context_length": 2048
+    },
+    {
+      "type": "llm",
+      "key": "google/gemma-4-e4b",
+      "display_name": "Gemma 4 E4B",
+      "max_context_length": 131072,
+      "capabilities": {
+        "vision": false,
+        "trained_for_tool_use": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "default_generation_settings": {
+    "n_ctx": 32768
+  },
+  "chat_template_caps": {
+    "supports_tool_calls": true
+  },
+  "modalities": {
+    "vision": true
+  }
+}

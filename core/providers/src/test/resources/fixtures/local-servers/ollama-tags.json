@@ -1,0 +1,36 @@
+{
+  "models": [
+    {
+      "name": "qwen3.6:27b",
+      "model": "qwen3.6:27b",
+      "size": 17000000000,
+      "details": {
+        "family": "qwen3"
+      }
+    },
+    {
+      "name": "llama3.2:3b",
+      "model": "llama3.2:3b",
+      "size": 2000000000,
+      "details": {
+        "family": "llama"
+      }
+    },
+    {
+      "name": "nomic-embed-text:v1.5",
+      "model": "nomic-embed-text:v1.5",
+      "size": 274000000,
+      "details": {
+        "family": "nomic-bert"
+      }
+    },
+    {
+      "name": "mistral:7b",
+      "model": "mistral:7b",
+      "size": 4100000000,
+      "details": {
+        "family": "llama"
+      }
+    }
+  ]
+}

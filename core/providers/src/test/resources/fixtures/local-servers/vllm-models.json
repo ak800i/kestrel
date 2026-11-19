@@ -1,0 +1,11 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "Qwen/Qwen3.6-27B",
+      "object": "model",
+      "owned_by": "vllm",
+      "max_model_len": 131072
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "model": "qwen3.6",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are Kestrel."
+    },
+    {
+      "role": "user",
+      "content": "What is on the screen?",
+      "images": [
+        "iVBORw0KGgo="
+      ]
+    }
+  ],
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "open_app",
+        "description": "Opens an app by its name.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The app's name."
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    }
+  ],
+  "think": true,
+  "truncate": false,
+  "shift": false,
+  "options": {
+    "num_predict": 256,
+    "num_ctx": 32768
+  }
+}
