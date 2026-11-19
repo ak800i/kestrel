@@ -231,15 +231,15 @@ private fun ProfileList(data: ProviderData, notice: String?, onAdd: () -> Unit, 
 
 /**
  * Runs [block], and turns every failure but a cancellation into a sentence for the page (design D17), so that a failure,
- * such as a Keystore error, never ends Kestrel.
+ * such as a Keystore error, never ends Kestrel. [signIn] names the account instead of a key in a refusal.
  */
-private suspend fun attempt(provider: String, onProblem: (String) -> Unit, block: suspend () -> Unit) {
+private suspend fun attempt(provider: String, onProblem: (String) -> Unit, signIn: Boolean = false, block: suspend () -> Unit) {
     try {
         block()
     } catch (e: CancellationException) {
         throw e
     } catch (e: ProviderException) {
-        onProblem(ProviderTexts.check(e.error, provider))
+        onProblem(ProviderTexts.check(e.error, provider, signIn))
     } catch (e: SignInFailed) {
         onProblem(ProviderTexts.signIn(e.kind, provider))
     } catch (e: Exception) {
@@ -485,7 +485,7 @@ private fun EnterAndCheck(data: ProviderData, provider: ProviderEntry, choice: C
         busy = true
         scope.launch {
             try {
-                attempt(provider.label, { problem = it }) {
+                attempt(provider.label, { problem = it }, signedInMethod(choice.method)) {
                     result = data.check(profile, typed)
                     credential = typed
                 }
@@ -585,6 +585,8 @@ private fun SignInSection(
     val running = state.takeIf { it.matches(provider.id, choice.choiceId) && it.profileId == profileId }
     val kind = SignInRegistry.kind(provider.id, choice.choiceId)
     var tenantProblem by remember { mutableStateOf(false) }
+    // The device code's page did not open, because no browser handles it (design D10: "with no browser at all it says so").
+    var noBrowser by remember { mutableStateOf(false) }
     // A profile's "Sign in again" takes the tenant from its token, so only the add flow asks for it.
     if (kind == SignInKind.GITHUB_TENANT && running !is SignInState.Waiting && retry == null) {
         TextField(tenant, onTenant, stringResource(R.string.providers_tenant))
@@ -602,9 +604,14 @@ private fun SignInSection(
                 Text(stringResource(R.string.providers_code_title), style = MaterialTheme.typography.titleSmall)
                 Text(prompt.userCode, fontSize = 32.sp)
                 Button(onClick = { copySensitive(context, prompt.userCode) }) { Text(stringResource(R.string.providers_copy)) }
-                Button(onClick = { if (activity?.let { CustomTabs.open(it, prompt.verificationUrl) } == true) data.pageOpened() }) {
+                Button(onClick = {
+                    val opened = activity?.let { CustomTabs.open(it, prompt.verificationUrl) } == true
+                    noBrowser = !opened
+                    if (opened) data.pageOpened()
+                }) {
                     Text(stringResource(R.string.providers_open_page))
                 }
+                if (noBrowser) Text(stringResource(R.string.providers_no_browser))
                 Text(prompt.verificationUrl, style = MaterialTheme.typography.bodySmall)
                 Countdown(prompt.expiresAtMillis)
             } else {
@@ -618,7 +625,7 @@ private fun SignInSection(
         }
         is SignInState.Failed -> {
             val failure = running.failure
-            Text(failure?.let { ProviderTexts.signIn(it, provider.label) } ?: running.error?.let { ProviderTexts.check(it, provider.label) }.orEmpty())
+            Text(failure?.let { ProviderTexts.signIn(it, provider.label) } ?: running.error?.let { ProviderTexts.check(it, provider.label, signIn = true) }.orEmpty())
             val ownProfile = setting?.profiles.orEmpty().any { it.providerId == provider.id && it.choiceId == choice.choiceId }
             // A kept registration that OpenAI no longer knows refuses every sign-in, so the owner can register again.
             val register = !ownProfile && (
@@ -666,6 +673,9 @@ private fun SignInState.matches(providerId: String, choiceId: String): Boolean =
 /** The provider's API-key choice, which a failed or refused sign-in offers instead (design D9 and D10). */
 private fun apiKeyChoice(provider: ProviderEntry): String? =
     provider.authChoices.mapNotNull { it.settings }.firstOrNull { it.offered && it.method == AuthMethod.API_KEY }?.choiceId
+
+/** Whether [method] signs in instead of taking a key, so that a refusal names the account, not a key (design D17). */
+private fun signedInMethod(method: AuthMethod): Boolean = method == AuthMethod.DEVICE_CODE || method == AuthMethod.BROWSER
 
 /** Copies the device code, marked sensitive, so that Android's clipboard preview does not show it (design D9). */
 private fun copySensitive(context: Context, code: String) {
@@ -775,7 +785,7 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
     // Read again after "Sign in again", which stores its credential in the profile itself (design D10).
     LaunchedEffect(profileId, profile == null, profile?.signedInAt) {
         val shown = profile ?: return@LaunchedEffect
-        attempt(data.catalog.provider(shown.providerId)?.label ?: shown.name, { problem = it }) {
+        attempt(data.catalog.provider(shown.providerId)?.label ?: shown.name, { problem = it }, signedInMethod(shown.method)) {
             rows = data.models(profileId)
             masked = data.maskedKey(profileId)
         }
@@ -785,6 +795,11 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
     val choice = data.catalog.choice(profile.providerId, profile.choiceId)?.settings
     val provider = data.catalog.provider(profile.providerId)
     val label = provider?.label ?: profile.providerId
+    val signedIn = signedInMethod(profile.method)
+    // A borrowed sign-in that the owner switched off sends nothing (design D9), so the buttons that would use it are off,
+    // and the page says why.
+    val identity = choice?.borrowedIdentity
+    val switchedOff = identity != null && setting?.switchedOn(identity, data.catalog) == false
     var name by rememberSaveable(profileId) { mutableStateOf(profile.name) }
     TextField(name, { name = it }, stringResource(R.string.providers_name))
     TextButton(onClick = { scope.launch { attempt(label, { problem = it }) { data.rename(profile.id, name) } } }) { Text(stringResource(R.string.providers_rename)) }
@@ -807,20 +822,23 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
     for (role in ModelRole.entries) {
         ProfileModelSection(data, profile, role, rows) { model -> scope.launch { attempt(label, { problem = it }) { data.setModel(profile.id, role, model) } } }
     }
-    Button(onClick = {
-        scope.launch { attempt(label, { problem = it }) { rows = data.refreshModels(profile.id) } }
+    Button(enabled = !switchedOff, onClick = {
+        scope.launch { attempt(label, { problem = it }, signedIn) { rows = data.refreshModels(profile.id) } }
     }) { Text(stringResource(R.string.providers_refresh)) }
+    if (switchedOff && identity != null) {
+        Text(stringResource(R.string.providers_switched_off_profile, switchTitle(identity)), style = MaterialTheme.typography.bodyMedium)
+    }
     if (profile.baseUrl?.startsWith("http://") == true) Text(stringResource(R.string.providers_unencrypted))
     masked?.let { Text(stringResource(R.string.providers_key_masked, it)) }
     profile.signedInAt?.let { Text(stringResource(R.string.providers_signed_in, DateFormat.getDateInstance().format(Date(it)))) }
     when (profile.method) {
         AuthMethod.DEVICE_CODE, AuthMethod.BROWSER -> {
-            // A GHE.com tenant's profile signs in again on the tenant of its token.
+            // A GHE.com tenant's profile signs in again on the tenant of its token, or of its own hosts.
             val again = {
-                scope.launch { attempt(label, { problem = it }) { data.signInAgain(profile.id) } }
+                scope.launch { attempt(label, { problem = it }, signIn = true) { data.signInAgain(profile.id) } }
                 Unit
             }
-            Button(onClick = again) { Text(stringResource(R.string.providers_sign_in_again)) }
+            Button(onClick = again, enabled = !switchedOff) { Text(stringResource(R.string.providers_sign_in_again)) }
             // The page's own "Sign in again", also one that runs or failed while the owner was on another page.
             if (signIn.profileId == profile.id && provider != null && choice != null && signIn !is SignInState.Succeeded) {
                 SignInSection(data, provider, choice, "", {}, { keyChoice -> onUseKey(provider.id, keyChoice) }, retry = again, profileId = profile.id)
@@ -853,7 +871,7 @@ private fun ProfilePage(data: ProviderData, profileId: String, onDeleted: (Boole
         val chat = stringResource(R.string.providers_allowance_chat)
         Button(onClick = {
             scope.launch {
-                attempt(label, { quotas = it }) {
+                attempt(label, { quotas = it }, signedIn) {
                     quotas = data.allowance(profile.id).joinToString("\n") { quota ->
                         String.format(Locale.ROOT, if (quota.label == "premium") premium else chat, String.format(Locale.ROOT, "%.0f", quota.percentRemaining))
                     }.ifEmpty { NO_ALLOWANCE }

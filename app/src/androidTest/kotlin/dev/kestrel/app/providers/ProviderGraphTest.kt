@@ -18,6 +18,8 @@ import dev.kestrel.privacy.settings.SettingsStore
 import dev.kestrel.providers.catalog.AuthMethod
 import dev.kestrel.providers.credentials.Credential
 import dev.kestrel.providers.credentials.CredentialVault
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.profiles.Profile
 import dev.kestrel.providers.profiles.ProfileModel
@@ -77,8 +79,15 @@ class ProviderGraphTest {
     private val vault = MemoryVault()
     private val loopback = FakeLoopback()
 
+    /** Whether the context refuses to start a foreground service, as Android does while Kestrel is in the background. */
+    @Volatile
+    private var refuseServiceStarts = false
+
     private val context = object : ContextWrapper(target) {
-        override fun startForegroundService(service: Intent): ComponentName? = null
+        override fun startForegroundService(service: Intent): ComponentName? {
+            if (refuseServiceStarts) throw IllegalStateException("test: Android refused the start")
+            return null
+        }
 
         override fun startService(service: Intent): ComponentName? = null
     }
@@ -121,6 +130,20 @@ class ProviderGraphTest {
         "test-profile", "Test", "openrouter", "openrouter-api-key", AuthMethod.API_KEY, null,
         lightweight = ProfileModel("test-model"), versatile = ProfileModel("test-model"),
     )
+
+    private fun copilot(choiceId: String = "github-copilot", credentialId: String? = "test-credential") = Profile(
+        "test-copilot", "Copilot", "github-copilot", choiceId, AuthMethod.DEVICE_CODE, credentialId,
+        baseUrl = "https://api.individual.githubcopilot.com", lightweight = ProfileModel("test-model"), versatile = ProfileModel("test-model"),
+    )
+
+    /** The error of [block]'s ProviderException, or null when it ended without one; a request that hangs fails after 5 s. */
+    private suspend fun errorOf(block: suspend () -> Unit): ProviderError? =
+        try {
+            withTimeout(5_000) { block() }
+            null
+        } catch (e: ProviderException) {
+            e.error
+        }
 
     @Test
     fun aSecondSaveOfTheSameProfileLeavesOneCredential() = runBlocking {
@@ -211,10 +234,7 @@ class ProviderGraphTest {
 
     @Test
     fun thePagesCallsBuildAndUseTheHttpClientOffTheMainThread() = runBlocking {
-        val copilot = Profile(
-            "test-copilot", "Copilot", "github-copilot", "github-copilot", AuthMethod.DEVICE_CODE, "test-credential",
-            baseUrl = "https://api.individual.githubcopilot.com", lightweight = ProfileModel("test-model"), versatile = ProfileModel("test-model"),
-        )
+        val copilot = copilot()
         vault.write("test-credential", Credential.GitHubToken("test-github-token", "github.com"))
         settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(copilot), defaultProfileId = copilot.id))
         server.enqueue(MockResponse.Builder().code(200).body("""{"data": []}""").build())
@@ -225,6 +245,87 @@ class ProviderGraphTest {
 
         assertEquals("the client was built and one request sent", 2, onMain.size)
         assertEquals(listOf(false, false), onMain.toList())
+    }
+
+    @Test
+    fun aProfileDeletedWhileItsSignInAgainStoresTheNewCredentialKeepsNoCredential() = runBlocking {
+        // Without a credential ID, the store takes a new one, so only the graph's profileChanges orders the store with the
+        // deletion: the credential's own lock already orders a store and a delete of the same ID.
+        val profile = draft().copy(choiceId = "openrouter-oauth", method = AuthMethod.BROWSER, credentialId = null)
+        settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(profile), defaultProfileId = profile.id))
+        server.enqueue(MockResponse.Builder().code(200).body("""{"key": "sk-test-new"}""").build())
+        withTimeout(10_000) { graph.stored.first { it?.profiles?.isNotEmpty() == true } }
+        // The store's vault write waits until the deletion has run, or for 2 s when the deletion waits for the store.
+        val deleted = CountDownLatch(1)
+        vault.writeGate = deleted
+
+        graph.signInAgain(profile.id)
+        assertTrue("the store reached the vault", vault.writing.await(10, TimeUnit.SECONDS))
+        val deletion = scope.async { graph.delete(profile.id).also { deleted.countDown() } }
+        withTimeout(10_000) { deletion.await() }
+        assertTrue("the store wrote the vault", vault.written.await(10, TimeUnit.SECONDS))
+
+        assertEquals(emptySet<String>(), vault.ids())
+        assertEquals(emptyList<Profile>(), settings.get(SettingKeys.PROVIDERS).profiles)
+    }
+
+    @Test
+    fun aSwitchedOffBorrowedSignInIsRefusedBeforeAnyLeaseOrRequest() = runBlocking {
+        val profile = copilot()
+        vault.write("test-credential", Credential.GitHubToken("test-github-token", "github.com"))
+        settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(profile), defaultProfileId = profile.id, signInSwitches = mapOf("copilot" to false)))
+        withTimeout(10_000) { graph.stored.first { it?.profiles?.isNotEmpty() == true } }
+        val switchedOff = ProviderError.SignInSwitchedOff("github-copilot")
+
+        assertEquals(switchedOff, errorOf { graph.refreshModels(profile.id) })
+        assertEquals(switchedOff, errorOf { graph.signInAgain(profile.id) })
+        assertEquals(switchedOff, errorOf { graph.check(profile.copy(id = "test-draft", credentialId = null), Credential.GitHubToken("test-github-token", "github.com")) })
+        graph.startSignIn("github-copilot", "github-copilot")
+
+        assertEquals(SignInState.Failed("github-copilot", "github-copilot", null, switchedOff), graph.signIn.value)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun aTenantsSignInAgainWithoutItsTokenSignsInOnTheTenantThatTheProfileNames() = runBlocking {
+        val profile = copilot("github-copilot-enterprise", "test-missing").copy(
+            baseUrl = "https://copilot-api.octo.ghe.com",
+            discoveredHosts = listOf("api.octo.ghe.com", "copilot-api.octo.ghe.com"),
+        )
+        settings.set(SettingKeys.PROVIDERS, ProvidersSetting(listOf(profile), defaultProfileId = profile.id))
+        val code = """{"device_code": "test-device", "user_code": "TEST-CODE", "verification_uri": "https://octo.ghe.com/login/device", "expires_in": 900, "interval": 5}"""
+        server.enqueue(MockResponse.Builder().code(200).body(code).build())
+        withTimeout(10_000) { graph.stored.first { it?.profiles?.isNotEmpty() == true } }
+
+        graph.signInAgain(profile.id)
+        val shown = withTimeout(10_000) { graph.signIn.first { it !is SignInState.Waiting || it.prompt != null } }
+        graph.cancelSignIn()
+
+        assertTrue("the sign-in shows its code: $shown", shown is SignInState.Waiting && shown.prompt?.verificationUrl == "https://octo.ghe.com/login/device")
+        assertEquals("/login/device/code", server.takeRequest().url.encodedPath)
+    }
+
+    @Test
+    fun aSignInThatEndsBeforeItsPageOpenedNeverOpensItLater() = runBlocking {
+        server.enqueue(MockResponse.Builder().code(200).body("""{"key": "sk-test-new"}""").build())
+
+        // As when the Providers page was not shown while the sign-in published its page.
+        graph.startSignIn("openrouter", "openrouter-oauth")
+        val done = withTimeout(10_000) { graph.signIn.first { it !is SignInState.Waiting } }
+        graph.reopenPage()
+
+        assertTrue("the sign-in succeeded: $done", done is SignInState.Succeeded)
+        assertNull(graph.browserPage.value)
+    }
+
+    @Test
+    fun aSignInWhoseServiceAndroidRefusesToStartEndsAtOnce() = runBlocking {
+        refuseServiceStarts = true
+
+        graph.startSignIn("openrouter", "openrouter-oauth")
+
+        assertEquals(SignInState.Failed("openrouter", "openrouter-oauth", SignInFailure.EXCHANGE_FAILED, null), graph.signIn.value)
+        assertEquals("the sign-in's flow never ran", 1L, loopback.opened.count)
     }
 
     @Test
@@ -277,13 +378,22 @@ class ProviderGraphTest {
         var deleteGate = CountDownLatch(0)
         val deleted = CountDownLatch(1)
 
+        /** A write opens [writing], waits until this opens or for 2 s, stores its credential and opens [written]. */
+        @Volatile
+        var writeGate = CountDownLatch(0)
+        val writing = CountDownLatch(1)
+        val written = CountDownLatch(1)
+
         fun ids(): Set<String> = stored.keys.toSet()
 
         override suspend fun read(id: String): Credential? = stored[id]
 
         override suspend fun write(id: String, credential: Credential) {
             if (failingWrites) throw IllegalStateException("test: the Keystore failed")
+            writing.countDown()
+            writeGate.await(2, TimeUnit.SECONDS)
             stored[id] = credential
+            written.countDown()
         }
 
         override suspend fun delete(id: String) {

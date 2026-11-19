@@ -40,6 +40,7 @@ import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.providers.profiles.Profile
 import dev.kestrel.providers.profiles.ProfileModel
 import dev.kestrel.providers.profiles.ProvidersSetting
+import dev.kestrel.providers.signin.DeviceCodePrompt
 import dev.kestrel.providers.signin.SignInFailure
 import dev.kestrel.providers.signin.SignInResult
 import kotlinx.coroutines.CompletableDeferred
@@ -243,6 +244,34 @@ class ProvidersPageTest {
         assertTrue(compose.onAllNodes(hasText(KEY_PROFILE.id, substring = true)).fetchSemanticsNodes().isEmpty())
     }
 
+    @Test
+    fun aProfileWhoseBorrowedSignInIsSwitchedOffCannotRefreshOrSignInAgainAndSaysWhy() {
+        data.setting.value = ProvidersSetting(listOf(COPILOT_PROFILE), defaultProfileId = COPILOT_PROFILE.id, signInSwitches = mapOf("copilot" to false))
+        show()
+
+        tap("Copilot (${text(R.string.providers_default)})")
+
+        compose.onNode(hasText(text(R.string.providers_refresh)) and hasClickAction()).performScrollTo().assertIsNotEnabled()
+        compose.onNode(hasText(text(R.string.providers_sign_in_again)) and hasClickAction()).performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText(text(R.string.providers_switched_off_profile, text(R.string.providers_switch_copilot))).performScrollTo()
+    }
+
+    @Test
+    fun aDeviceCodesPageThatNoBrowserOpensSaysSo() {
+        data.setting.value = ProvidersSetting(listOf(COPILOT_PROFILE), defaultProfileId = COPILOT_PROFILE.id)
+        // An address that no browser handles, as on a phone without any browser.
+        val prompt = DeviceCodePrompt("TEST-CODE", "kestrel-test://no-browser", System.currentTimeMillis() + 600_000, 5_000)
+        data.onSignIn = { _ -> data.signIn.value = SignInState.Waiting("github-copilot", "github-copilot", prompt, COPILOT_PROFILE.id) }
+        show()
+        tap("Copilot (${text(R.string.providers_default)})")
+        tap(text(R.string.providers_sign_in_again))
+        compose.waitUntil(5_000) { shows("TEST-CODE") }
+
+        tap(text(R.string.providers_open_page))
+
+        compose.onNodeWithText(text(R.string.providers_no_browser)).performScrollTo()
+    }
+
     private companion object {
         val KEY_PROFILE = Profile(
             "test-first", "First", "groq", "groq-api-key", AuthMethod.API_KEY, "test-first-key",
@@ -251,6 +280,10 @@ class ProvidersPageTest {
         val OTHER_PROFILE = KEY_PROFILE.copy(id = "test-second", name = "Second", credentialId = "test-second-key")
         val BROWSER_PROFILE = Profile(
             "test-router", "Router", "openrouter", "openrouter-oauth", AuthMethod.BROWSER, "test-router-key",
+            lightweight = ProfileModel("a"), versatile = ProfileModel("b"),
+        )
+        val COPILOT_PROFILE = Profile(
+            "test-copilot", "Copilot", "github-copilot", "github-copilot", AuthMethod.DEVICE_CODE, "test-copilot-token",
             lightweight = ProfileModel("a"), versatile = ProfileModel("b"),
         )
     }

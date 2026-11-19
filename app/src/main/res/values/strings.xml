@@ -284,6 +284,7 @@
     <string name="providers_price_input">Input, US dollars per million tokens</string>
     <string name="providers_price_output">Output, US dollars per million tokens</string>
     <string name="providers_refresh">Refresh models</string>
+    <string name="providers_switched_off_profile">Kestrel does not use this profile, because \"%1$s\" is switched off under \"Borrowed sign-ins\" on the list of profiles. Switch it on there to refresh the models or to sign in again.</string>
     <string name="providers_not_offered">not offered any more</string>
     <string name="providers_signed_in">Signed in on %1$s</string>
     <string name="providers_key_masked">Key %1$s</string>

@@ -63,10 +63,18 @@ internal object ProviderTexts {
         SignInFailure.NOT_STORED -> "The sign-in worked, but Kestrel could not store it. Try again."
     }
 
-    /** What the add flow says when its check failed with [error]. */
-    fun check(error: ProviderError, provider: String): String = when {
-        error == ProviderError.Unauthorized -> KEY_REFUSED
-        error is ProviderError.QuotaOrPolicy && error.status == 403 && error.code != "subscription_sharing_user_not_eligible" -> KEY_REFUSED
-        else -> spoken(error, provider)
+    /**
+     * What the add flow and the profile page say when a check or a request failed with [error]. A refusal names the key,
+     * or, when [signIn] is true for a profile that signs in instead of taking a key (Copilot, the ChatGPT plan), the
+     * account that the owner signed in with.
+     */
+    fun check(error: ProviderError, provider: String, signIn: Boolean = false): String {
+        val refused = error == ProviderError.Unauthorized ||
+            (error is ProviderError.QuotaOrPolicy && error.status == 403 && error.code != "subscription_sharing_user_not_eligible")
+        return when {
+            !refused -> spoken(error, provider)
+            signIn -> "$provider refused the account that you signed in with. Check its subscription, or sign in with another account."
+            else -> KEY_REFUSED
+        }
     }
 }

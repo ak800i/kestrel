@@ -85,6 +85,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.UUID
 
 /**
@@ -235,7 +236,9 @@ internal class ProviderGraph(
      * Starts the sign-in of [choiceId] on [providerId] and SignInService. [tenant] is a GHE.com tenant for Copilot's
      * enterprise choice; [consent] asks again for ChatGPT plan use; [newRegistration] registers Kestrel with another
      * ChatGPT account, replacing the kept registration. [profileId] names the profile of a "Sign in again", whose
-     * credential the sign-in replaces itself, so that its result is kept also when the owner left the profile page.
+     * credential the sign-in replaces itself, so that its result is kept also when the owner left the profile page. A
+     * borrowed sign-in that the owner switched off ends as Failed with SignInSwitchedOff before anything is leased or sent,
+     * and so does a sign-in whose SignInService Android refused to start, with EXCHANGE_FAILED.
      */
     fun startSignIn(
         providerId: String,
@@ -249,15 +252,30 @@ internal class ProviderGraph(
         job?.cancel()
         tabOpened = false
         pages.value = null
+        lastPage = null
         // A GHE.com tenant that is not one fails before the service starts.
         if (kind == SignInKind.GITHUB_TENANT && tenant?.let(GitHubDeviceFlow::tenant) == null) {
             signInState.end { SignInState.Failed(providerId, choiceId, SignInFailure.UNTRUSTED_ADDRESS, null, profileId) }
             return
         }
+        // A borrowed sign-in that the owner switched off never starts (design D9); the job checks the stored setting again.
+        if (stored.value?.let { switchedOff(it, providerId, choiceId) } == true) {
+            signInState.end { SignInState.Failed(providerId, choiceId, null, ProviderError.SignInSwitchedOff(providerId), profileId) }
+            return
+        }
         val ticket = signInState.begin(SignInState.Waiting(providerId, choiceId, profileId = profileId))
-        SignInService.start(context, catalog.provider(providerId)?.label ?: providerId)
+        try {
+            SignInService.start(context, catalog.provider(providerId)?.label ?: providerId)
+        } catch (e: RuntimeException) {
+            // As Android's refusal of a foreground service while Kestrel is in the background: no job runs, so the sign-in
+            // ends here instead of waiting until the owner cancels it. Logged by its classes only.
+            report("Starting the sign-in service", e)
+            signInState.set(ticket) { SignInState.Failed(providerId, choiceId, SignInFailure.EXCHANGE_FAILED, null, profileId) }
+            return
+        }
         job = scope.launch {
             val outcome = try {
+                refuseSwitchedOff(providerId, choiceId)
                 val result = runFlow(ticket, kind, tenant, consent, newRegistration)
                 // A cancelled or replaced sign-in changes no profile.
                 if (profileId != null && signInState.isCurrent(ticket)) storeRenewal(profileId, result)
@@ -278,9 +296,28 @@ internal class ProviderGraph(
                 report("A sign-in", e)
                 SignInState.Failed(providerId, choiceId, SignInFailure.EXCHANGE_FAILED, null, profileId)
             }
-            // Only the current sign-in ends itself: after a cancel or a newer sign-in, this outcome is dropped (design D10).
-            signInState.set(ticket) { outcome }
+            // Only the current sign-in ends itself: after a cancel or a newer sign-in, this outcome is dropped (design D10). Its
+            // page, if the settings have not opened it yet, never opens after the end.
+            signInState.set(ticket) {
+                pages.value = null
+                lastPage = null
+                outcome
+            }
         }
+    }
+
+    /**
+     * Refuses a borrowed sign-in that the owner switched off (design D9; spec 10.4): its sign-in, its model list and its
+     * check send the borrowed client's identity, so they fail with SignInSwitchedOff before any lease opens or any request
+     * is sent.
+     */
+    private suspend fun refuseSwitchedOff(providerId: String, choiceId: String) {
+        if (switchedOff(settings.get(SettingKeys.PROVIDERS), providerId, choiceId)) throw ProviderException(ProviderError.SignInSwitchedOff(providerId))
+    }
+
+    private fun switchedOff(setting: ProvidersSetting, providerId: String, choiceId: String): Boolean {
+        val identity = catalog.choice(providerId, choiceId)?.settings?.borrowedIdentity ?: return false
+        return !setting.switchedOn(identity, catalog)
     }
 
     /**
@@ -300,13 +337,25 @@ internal class ProviderGraph(
 
     /**
      * "Sign in again" on a profile's page: the sign-in of its choice, on the GHE.com tenant of its GitHub token for
-     * Copilot's enterprise choice.
+     * Copilot's enterprise choice, or, when the token is missing (design D15), on the tenant that the profile's own hosts
+     * name. A borrowed sign-in that the owner switched off fails with SignInSwitchedOff.
      */
     suspend fun signInAgain(profileId: String) {
         val profile = stored.value?.profiles?.firstOrNull { it.id == profileId } ?: return
-        val tenant = (profile.credentialId?.let { credentials.read(it) } as? Credential.GitHubToken)?.domain
+        refuseSwitchedOff(profile.providerId, profile.choiceId)
+        val tenant = if (SignInRegistry.kind(profile.providerId, profile.choiceId) == SignInKind.GITHUB_TENANT) {
+            (profile.credentialId?.let { credentials.read(it) } as? Credential.GitHubToken)?.domain ?: tenantOf(profile)
+        } else {
+            null
+        }
         startSignIn(profile.providerId, profile.choiceId, tenant, profileId = profileId)
     }
+
+    /** The GHE.com tenant that a Copilot profile's hosts name: `api.<tenant>` from its sign-in, or its API base. */
+    private fun tenantOf(profile: Profile): String? =
+        (profile.discoveredHosts + listOfNotNull(profile.baseUrl?.toHttpUrlOrNull()?.host))
+            .map { host -> host.split('.').takeLast(3).joinToString(".") }
+            .firstOrNull { it != GitHubDeviceFlow.PUBLIC && GitHubDeviceFlow.validDomain(it) }
 
     /**
      * Forgets a profile's "Sign in again" that succeeded, whose credential the profile holds now, so that its token does not
@@ -428,9 +477,10 @@ internal class ProviderGraph(
      * hosts leased on the allowlist (its local server through the local-server lease), a model discovery, Vertex's token
      * exchange, or one short request with the model that the owner chose first. Returns the offered rows and their
      * defaults, and the draft with what the check found (Copilot's API base and host). Throws ProviderException or
-     * SignInFailed.
+     * SignInFailed; a borrowed sign-in that the owner switched off fails with SignInSwitchedOff before anything is leased.
      */
     suspend fun check(draft: Profile, credential: Credential?): CheckResult {
+        refuseSwitchedOff(draft.providerId, draft.choiceId)
         val held = credential?.let { credentials.hold(it) }
         val leases = mutableListOf<AutoCloseable>()
         try {
@@ -600,9 +650,13 @@ internal class ProviderGraph(
 
     suspend fun models(profileId: String): ModelList = settings.get(SettingKeys.providerModels(profileId))
 
-    /** "Refresh models" on the profile page: the profile's list again, with its hosts leased. */
+    /**
+     * "Refresh models" on the profile page: the profile's list again, with its hosts leased. A borrowed sign-in that the
+     * owner switched off fails with SignInSwitchedOff before the lease (design D9).
+     */
     suspend fun refreshModels(profileId: String): List<ModelEntry> {
         val profile = settings.get(SettingKeys.PROVIDERS).profiles.firstOrNull { it.id == profileId } ?: return emptyList()
+        refuseSwitchedOff(profile.providerId, profile.choiceId)
         val discovered = policy.openTemporaryHosts(ProfileHosts.hosts(profile, catalog)).use { discover(profile) }.orEmpty()
         settings.set(SettingKeys.providerModels(profileId), ModelList(discovered, clock()))
         return OfferedModels.rows(catalog, profile.providerId, profile.choiceId, discovered)
