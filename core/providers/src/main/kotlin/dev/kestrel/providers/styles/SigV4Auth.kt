@@ -29,10 +29,12 @@ class SigV4Auth(
     /** Refused keys need new keys, so a refusal is a sign-in that the owner must renew (design D9). */
     override val rejected: ProviderError get() = ProviderError.SignInExpired("amazon-bedrock")
 
-    override suspend fun headers(request: HttpRequest): Map<String, String> = sign(request.method, request.url, request.body ?: ByteArray(0))
+    override suspend fun headers(request: HttpRequest): Map<String, String> =
+        sign(request.method, request.url, request.body ?: ByteArray(0), request.clockOffsetMillis)
 
-    internal fun sign(method: String, url: HttpUrl, body: ByteArray): Map<String, String> {
-        val amzDate = DATE_TIME.format(Instant.ofEpochMilli(clock()))
+    /** Signs with the clock moved by [clockOffsetMillis], which BedrockErrors sets after AWS said that the clocks differ. */
+    internal fun sign(method: String, url: HttpUrl, body: ByteArray, clockOffsetMillis: Long = 0): Map<String, String> {
+        val amzDate = DATE_TIME.format(Instant.ofEpochMilli(clock() + clockOffsetMillis))
         val date = amzDate.take(8)
         val signed = signedHeaders(url, amzDate)
         val scope = "$date/$region/$service/aws4_request"

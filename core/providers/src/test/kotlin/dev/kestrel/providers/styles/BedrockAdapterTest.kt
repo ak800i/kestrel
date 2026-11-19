@@ -4,6 +4,7 @@ import dev.kestrel.providers.catalog.ModelEntry
 import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.ImageType
+import dev.kestrel.providers.chat.InvalidKind
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.providers.chat.ReasoningState
 import dev.kestrel.providers.chat.RequestStyle
@@ -23,11 +24,15 @@ import dev.kestrel.providers.styles.AdapterHarness.Companion.user
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 /**
  * The fixtures follow AWS's Converse API reference (`Converse`, `ContentBlock`, `ReasoningContentBlock`, `ToolChoice` and
@@ -219,4 +224,139 @@ class BedrockAdapterTest {
         assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), bedrock))
     }
 
+    @Test
+    fun aRefusedSignatureWithAClockSkewIsSignedOnceMoreWithAwsTime() = runBlocking {
+        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }))
+        val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
+        bench.reply("bedrock/text.json")
+
+        val response = clocked.complete(request(user("Hi")), signed)
+
+        assertEquals(listOf(AssistantPart.Text("Hello, owner.")), response.message.parts)
+        assertEquals("20261119T100000Z", bench.take().headers["x-amz-date"])
+        assertEquals("20261119T110000Z", bench.take().headers["x-amz-date"])
+    }
+
+    @Test
+    fun aSecondRefusalOrARefusalWithoutASkewIsTheCredentialsRefusal() {
+        val clocked = BedrockAdapter(ProviderHttp(bench.calls, clock = { NOW }))
+        val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { NOW }))
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 3_600_000))
+        // Clocks that agree within 5 minutes, and a reply without a Date.
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException", "Date" to httpDate(NOW + 120_000))
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException")
+        bench.reply("bedrock/text.json")
+
+        assertEquals(ProviderError.SignInExpired("amazon-bedrock"), errorOf(clocked, request(user("Hi")), signed))
+        assertEquals(ProviderError.SignInExpired("amazon-bedrock"), errorOf(clocked, request(user("Hi")), signed))
+        assertEquals(ProviderError.SignInExpired("amazon-bedrock"), errorOf(clocked, request(user("Hi")), signed))
+        assertEquals(4, bench.server.requestCount)
+    }
+
+    @Test
+    fun theOtherTokenErrorsAndA400AreTheCredentialsRefusal() {
+        val signed = bedrock.copy(auth = SigV4Auth(Credential.AwsAccessKeys("AKIDEXAMPLE", "secret"), "us-east-1", clock = { 0L }))
+        bench.status(403, """{"message":"The security token included in the request is expired"}""", "x-amzn-ErrorType" to "ExpiredTokenException")
+        bench.status(403, SIGNATURE_EXPIRED, "x-amzn-ErrorType" to "InvalidSignatureException")
+        bench.status(400, """{"message":"The security token included in the request is expired"}""", "x-amzn-ErrorType" to "ExpiredTokenException")
+        bench.status(400, """{"message":"Malformed input request"}""", "x-amzn-ErrorType" to "ValidationException")
+
+        assertEquals(ProviderError.SignInExpired("amazon-bedrock"), errorOf(adapter, request(user("Hi")), signed))
+        assertEquals(ProviderError.SignInExpired("amazon-bedrock"), errorOf(adapter, request(user("Hi")), signed))
+        assertEquals(ProviderError.Unauthorized, errorOf(adapter, request(user("Hi")), bedrock))
+        assertEquals(ProviderError.BadRequest(400, "ValidationException"), errorOf(adapter, request(user("Hi")), bedrock))
+    }
+
+    @Test
+    fun aModelOtherThanClaudeKeepsNoReasoningAndOnlyClaudeAndNovaGetTheFailedStatus() = runBlocking {
+        val deepSeek = bedrock.copy(model = ModelEntry("deepseek.r1-v1:0", "DeepSeek R1"), sentModelId = "deepseek.r1-v1:0")
+        val nova = bedrock.copy(model = ModelEntry("amazon.nova-pro-v1:0", "Nova Pro"), sentModelId = "amazon.nova-pro-v1:0")
+        bench.reply("bedrock/thinking-tool-call.json")
+        bench.reply("bedrock/text.json")
+        bench.reply("bedrock/text.json")
+
+        val first = adapter.complete(request(user("Open the camera.")), deepSeek)
+        val failed = request(user("Open the camera."), first.message, ChatMessage.ToolResult("tooluse_t", "open_app", "Not run.", failed = true))
+        adapter.complete(failed, deepSeek)
+        adapter.complete(failed, nova)
+
+        assertEquals(listOf(AssistantPart.ToolCall("tooluse_t", "open_app", obj("""{"name":"Camera"}"""))), first.message.parts)
+        bench.take()
+        val toDeepSeek = bench.body(bench.take())["messages"]!!.jsonArray
+        assertEquals(json("""[{"toolUse":{"toolUseId":"tooluse_t","name":"open_app","input":{"name":"Camera"}}}]"""), toDeepSeek[1].jsonObject["content"])
+        assertEquals(json("""[{"toolResult":{"toolUseId":"tooluse_t","content":[{"text":"Not run."}]}}]"""), toDeepSeek[2].jsonObject["content"])
+        val toNova = bench.body(bench.take())["messages"]!!.jsonArray
+        assertEquals(json(""""error""""), toNova[2].jsonObject["content"]!!.jsonArray[0].jsonObject["toolResult"]!!.jsonObject["status"])
+    }
+
+    @Test
+    fun theStopReasonsAreMappedAndAMalformedToolUseIsAnInvalidCall() {
+        val cases = listOf(
+            "max_tokens" to StopReason.MAX_TOKENS,
+            "model_context_window_exceeded" to StopReason.MAX_TOKENS,
+            "guardrail_intervened" to StopReason.FILTERED,
+            "content_filtered" to StopReason.FILTERED,
+            "malformed_tool_use" to StopReason.OTHER,
+            "malformed_model_output" to StopReason.OTHER,
+        )
+        for ((reason, _) in cases) {
+            bench.status(200, """{"output":{"message":{"role":"assistant","content":[{"text":"Partly."}]}},"stopReason":"$reason","usage":{"inputTokens":1,"outputTokens":1}}""")
+        }
+
+        for ((reason, stop) in cases) {
+            val response = runBlocking { adapter.complete(request(user("Hi")), bedrock) }
+            assertEquals(reason, stop, response.stop)
+            val invalid = if (reason.startsWith("malformed_")) InvalidKind.BAD_JSON else null
+            assertEquals(reason, invalid, response.invalidToolCall?.kind)
+        }
+    }
+
+    @Test
+    fun aClaudeModelThatTakesOnlyItsOwnSamplingGetsNoTemperatureButKeepsAForcedChoice() = runBlocking {
+        bench.reply("bedrock/text.json")
+        val opus47 = bedrock.copy(model = ModelEntry("anthropic.claude-opus-4-7", "Claude Opus 4.7"), sentModelId = "anthropic.claude-opus-4-7")
+
+        adapter.complete(request(user("Hi")) { copy(toolChoice = ToolChoice.REQUIRED, temperature = 0.2) }, opus47)
+
+        val body = bench.body(bench.take())
+        assertNull(body["inferenceConfig"]!!.jsonObject["temperature"])
+        assertEquals(json("""{"any":{}}"""), body["toolConfig"]!!.jsonObject["toolChoice"])
+    }
+
+    @Test
+    fun toolUseIdsThatConverseRefusesAreRewrittenAndStillPair() = runBlocking {
+        bench.reply("bedrock/text.json")
+        val long = "call_" + "a".repeat(70)
+        val odd = "call|1/ä"
+        val fits = "tooluse.x:1"
+        val calls = listOf(long, odd, fits).map { AssistantPart.ToolCall(it, "open_app", obj("""{"name":"Camera"}""")) }
+
+        adapter.complete(
+            request(
+                user("Open the camera."),
+                ChatMessage.Assistant(calls),
+                ChatMessage.ToolResult(long, "open_app", "Opened."),
+                ChatMessage.ToolResult(odd, "open_app", "Opened."),
+                ChatMessage.ToolResult(fits, "open_app", "Opened."),
+            ),
+            bedrock,
+        )
+
+        val messages = bench.body(bench.take())["messages"]!!.jsonArray
+        val used = messages[1].jsonObject["content"]!!.jsonArray.map { it.jsonObject["toolUse"]!!.jsonObject["toolUseId"]!!.jsonPrimitive.content }
+        val answered = messages[2].jsonObject["content"]!!.jsonArray.map { it.jsonObject["toolResult"]!!.jsonObject["toolUseId"]!!.jsonPrimitive.content }
+        assertEquals(used, answered)
+        assertEquals(3, used.toSet().size)
+        assertEquals(fits, used[2])
+        assertTrue(used.toString(), used.all { Regex("^[a-zA-Z0-9_.:-]{1,64}$").matches(it) })
+    }
+
+    private companion object {
+        val NOW = Instant.parse("2026-11-19T10:00:00Z").toEpochMilli()
+        const val SIGNATURE_EXPIRED = """{"message":"Signature expired"}"""
+
+        fun httpDate(millis: Long): String = DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC))
+    }
 }

@@ -6,6 +6,7 @@ import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.http.RequestAuth
+import dev.kestrel.providers.styles.BedrockErrors
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -20,10 +21,17 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
  * OpenClaw's filters: a foundation model is offered when it streams, writes text, is ACTIVE, is not the Mythos preview,
  * and can run on demand; an inference profile when it is ACTIVE and not for the Mythos preview (OpenClaw's
  * `extensions/amazon-bedrock/discovery.ts`), with the input kinds of its base model. Profiles are
- * read page by page through `nextToken`, and `global.` profiles come first.
+ * read page by page through `nextToken`, at most [MAX_PAGES] pages and until a token repeats, and `global.` profiles come
+ * first. AWS's refusals map as in the Converse adapter ([dev.kestrel.providers.styles.BedrockErrors]): its token errors are
+ * the credential's refusal, and a refused signature with a clock skew is signed once more with AWS's time, which the
+ * later requests keep.
  */
 internal class BedrockModels(region: String, private val auth: RequestAuth, private val http: ProviderHttp) : ModelDiscovery {
     private val base: HttpUrl
+
+    /** The clock offset that AWS's Date gave after a refused signature, for the next requests (BedrockErrors). */
+    @Volatile
+    private var clockOffset = 0L
 
     init {
         require(Regex("^[a-z0-9-]+$").matches(region)) { "A region must match ^[a-z0-9-]+$" }
@@ -44,11 +52,14 @@ internal class BedrockModels(region: String, private val auth: RequestAuth, priv
             DiscoveredModel(id = id, name = model.string("modelName") ?: id, input = model.inputs())
         }
         val profiles = mutableListOf<DiscoveredModel>()
+        val used = mutableSetOf<String>()
+        var pages = 0
         var token: String? = null
         do {
             val url = base.newBuilder().addPathSegment("inference-profiles").addQueryParameter("maxResults", "1000")
                 .apply { token?.let { addQueryParameter("nextToken", it) } }.build()
             val page = get(url)
+            pages++
             for (profile in objects(page["inferenceProfileSummaries"])) {
                 if (profile.string("status") != "ACTIVE") continue
                 val id = profile.string("inferenceProfileId") ?: continue
@@ -58,13 +69,15 @@ internal class BedrockModels(region: String, private val auth: RequestAuth, priv
                 if (MYTHOS_PREVIEW in baseModel || MYTHOS_PREVIEW in id) continue
                 profiles += DiscoveredModel(id = id, name = profile.string("inferenceProfileName") ?: id, input = inputs[baseModel] ?: setOf(InputKind.TEXT))
             }
-            token = page.string("nextToken")?.takeIf { it.isNotEmpty() }
-        } while (token != null)
+            // A token that came before would read the same pages again.
+            token = page.string("nextToken")?.takeIf { it.isNotEmpty() && used.add(it) }
+        } while (token != null && pages < MAX_PAGES)
         return profiles.sortedBy { if (it.id.startsWith("global.")) 0 else 1 } + models
     }
 
     private suspend fun get(url: HttpUrl): JsonObject {
-        val text = http.send(HttpRequest("GET", url, mapOf("accept" to "application/json")), auth).text()
+        val request = HttpRequest("GET", url, mapOf("accept" to "application/json"), clockOffsetMillis = clockOffset)
+        val text = BedrockErrors.send(http, request, auth) { clockOffset = it }.text()
         return try {
             JSON.parseToJsonElement(text) as? JsonObject
         } catch (e: SerializationException) {
@@ -88,5 +101,6 @@ internal class BedrockModels(region: String, private val auth: RequestAuth, priv
     private companion object {
         val JSON = Json { ignoreUnknownKeys = true }
         const val MYTHOS_PREVIEW = "claude-mythos-preview"
+        const val MAX_PAGES = 50
     }
 }

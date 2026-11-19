@@ -18,7 +18,11 @@ fun interface RequestDecorator {
     fun decorate(builder: Request.Builder, meta: RequestMeta)
 }
 
-/** A request that ProviderHttp sends. Its headers and body can hold keys and prompts, so toString prints only sizes. */
+/**
+ * A request that ProviderHttp sends. Its headers and body can hold keys and prompts, so toString prints only sizes.
+ * [clockOffsetMillis] is what a signer whose signature carries the time (AWS's SigV4) adds to its clock, after the server
+ * said that the phone's clock is off ([ProviderException.serverClockOffsetMillis]); every other credential ignores it.
+ */
 class HttpRequest(
     val method: String,
     val url: HttpUrl,
@@ -26,7 +30,11 @@ class HttpRequest(
     val body: ByteArray? = null,
     val contentType: String? = null,
     val meta: RequestMeta = RequestMeta(),
+    val clockOffsetMillis: Long = 0,
 ) {
+    /** The same request, signed with the clock moved by [offsetMillis]. */
+    fun withClockOffset(offsetMillis: Long): HttpRequest = HttpRequest(method, url, headers, body, contentType, meta, offsetMillis)
+
     override fun toString(): String = "HttpRequest(method=$method, headers=${headers.size}, bodyBytes=${body?.size ?: 0})"
 }
 

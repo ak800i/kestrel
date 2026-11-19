@@ -38,10 +38,13 @@ import kotlinx.serialization.json.putJsonObject
  * alternating roles, so tool results and the next user message become one user turn; it refuses `toolUse` and
  * `toolResult` blocks without a `toolConfig`, so a request without tools sends its tool history as text. The network log
  * records `/model/{model}/converse`, because a model ID can be an inference-profile ARN with the AWS account ID. AWS's
- * answers for expired or invalid keys (403 with `ExpiredTokenException`, `UnrecognizedClientException` or
- * `InvalidSignatureException`) are the credential's own refusal (`rejected`): new keys for IAM keys, and a new key for
- * an API key. A Claude model's `reasoningContent` blocks (signed reasoning text or redacted content) go back unchanged,
- * in their order, to the same provider and model, as in OpenClaw's `convertMessages`
+ * refusals go through [BedrockErrors]: its token errors (403 with `ExpiredTokenException`, `UnrecognizedClientException` or
+ * `InvalidSignatureException`) are the credential's own refusal (`rejected`), new keys for IAM keys and a new key for an
+ * API key, and a refused signature with a clock skew of more than 5 minutes is signed once more with AWS's time. The
+ * history's tool-use IDs are rewritten on every request to Converse's pattern (`[a-zA-Z0-9_.:-]`, 1 to 64 characters) by
+ * [Wire.toolUseId], so that a call and its result still pair. A Claude model's `reasoningContent` blocks (signed
+ * reasoning text or redacted content) go back unchanged, in their order, to the same provider and model, as in OpenClaw's
+ * `convertMessages`
  * (`extensions/amazon-bedrock/stream.runtime.ts`); other models keep no reasoning state (design D5). A Claude model that
  * thinks by default ([AnthropicModels.thinksByDefault]) gets a required tool choice as `auto` (except Claude Haiku 5.5), as
  * in OpenClaw's `normalizeAdaptiveClaudeToolChoice`, and no temperature, which every Claude 5 model refuses. Without tools
@@ -56,17 +59,7 @@ internal class BedrockAdapter(private val http: ProviderHttp) : ChatAdapter {
             .addEncodedPathSegment(SigV4Auth.encode(target.sentModelId))
             .addPathSegment("converse")
             .build()
-        val reply = try {
-            http.send(Wire.post(url, body(request, target), target, request, stream = false, logPath = LOG_PATH), target.auth)
-        } catch (e: ProviderException) {
-            val code = when (val error = e.error) {
-                is ProviderError.QuotaOrPolicy -> error.code
-                is ProviderError.BadRequest -> error.code
-                else -> null
-            }
-            if (code in TOKEN_ERRORS) throw ProviderException(target.auth.rejected)
-            throw e
-        }
+        val reply = BedrockErrors.send(http, Wire.post(url, body(request, target), target, request, stream = false, logPath = LOG_PATH), target.auth)
         return read(Wire.parse(reply.text()), request, target)
     }
 
@@ -122,7 +115,7 @@ internal class BedrockAdapter(private val http: ProviderHttp) : ChatAdapter {
                         is AssistantPart.Text -> part.text.takeIf { it.isNotBlank() }?.let(::text)
                         is AssistantPart.ToolCall -> if (tools) buildJsonObject {
                             putJsonObject("toolUse") {
-                                put("toolUseId", part.id)
+                                put("toolUseId", Wire.toolUseId(part.id, Wire.CONVERSE_ID_CHARS))
                                 put("name", part.name)
                                 put("input", part.arguments)
                             }
@@ -135,7 +128,7 @@ internal class BedrockAdapter(private val http: ProviderHttp) : ChatAdapter {
                 })
                 is ChatMessage.ToolResult -> add("user", listOf(if (tools) buildJsonObject {
                     putJsonObject("toolResult") {
-                        put("toolUseId", message.callId)
+                        put("toolUseId", Wire.toolUseId(message.callId, Wire.CONVERSE_ID_CHARS))
                         // Converse refuses a blank text block; OpenClaw's createBedrockToolResultContent sends this instead.
                         putJsonArray("content") { addJsonObject { put("text", message.text.ifBlank { "(no output)" }) } }
                         if (message.failed && statusAllowed) put("status", "error")
@@ -195,7 +188,5 @@ internal class BedrockAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     companion object {
         const val LOG_PATH = "/model/{model}/converse"
-
-        private val TOKEN_ERRORS = setOf("ExpiredTokenException", "UnrecognizedClientException", "InvalidSignatureException")
     }
 }

@@ -56,7 +56,7 @@ class ProviderHttp(
             reply = transport { fetch(request, auth.headers(request)) }
             if (reply.status == 401) throw ProviderException(auth.rejected)
         }
-        if (reply.status !in 200..299) throw ProviderException(errorFor(reply))
+        if (reply.status !in 200..299) throw failure(reply)
         return reply
     }
 
@@ -82,7 +82,7 @@ class ProviderHttp(
             failed = transport { open(request, auth.headers(request), onEvent) }
             if (failed?.status == 401) throw ProviderException(auth.rejected)
         }
-        if (failed != null) throw ProviderException(errorFor(failed))
+        if (failed != null) throw failure(failed)
     }
 
     private suspend fun refreshOrThrow(auth: RequestAuth) {
@@ -196,6 +196,10 @@ class ProviderHttp(
             currentCoroutineContext().ensureActive()
             throw ProviderException(classify(e) ?: if (e is InterruptedIOException) ProviderError.Timeout else ProviderError.Unreachable)
         }
+
+    /** The error of [reply], with the offset of the server's clock when the reply has a `Date` header. */
+    private fun failure(reply: HttpReply): ProviderException =
+        ProviderException(errorFor(reply), reply.headers.getDate("Date")?.let { it.time - clock() })
 
     private fun errorFor(reply: HttpReply): ProviderError {
         val code = ErrorCodes.from(reply)

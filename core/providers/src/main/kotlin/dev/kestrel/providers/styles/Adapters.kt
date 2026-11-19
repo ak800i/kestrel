@@ -35,8 +35,8 @@ internal object Wire {
     val json = Json { ignoreUnknownKeys = true }
 
     private val CODE = Regex("^[A-Za-z0-9_.:-]{1,64}$")
-    private val TOOL_USE_ID = Regex("^[a-zA-Z0-9_-]{1,64}$")
-    private val NOT_TOOL_USE_ID_CHAR = Regex("[^a-zA-Z0-9_-]")
+    const val ANTHROPIC_ID_CHARS = "a-zA-Z0-9_-"
+    const val CONVERSE_ID_CHARS = "a-zA-Z0-9_.:-"
     private val LEVELS = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
     private val EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -222,18 +222,20 @@ internal object Wire {
     fun minus(total: Long, vararg parts: Long): Long = (total - parts.sum()).coerceAtLeast(0)
 
     /**
-     * A tool-use ID in the pattern `^[a-zA-Z0-9_-]+$` with at most 64 characters, which Anthropic (and Copilot's Claude
-     * models, design D12) take, as OpenClaw's `normalizeAnthropicToolCallId` makes it. An ID that already fits stays as it
-     * is; any other becomes its allowed characters (each other character as `_`), cut so that `_` and the first 8 hex
-     * digits of the SHA-256 of the original ID fit in 64 characters. The result depends only on the ID, so a call and its
-     * result always pair up, and a history whose old turns are trimmed keeps each surviving ID's rewrite; the hash keeps
-     * two IDs with the same allowed characters apart.
+     * A tool-use ID with only the characters of [chars] (a regex character class without its brackets, which must hold
+     * `_`) and 1 to 64 characters: Anthropic's `^[a-zA-Z0-9_-]+$` ([ANTHROPIC_ID_CHARS]), which Copilot's Claude models
+     * take too (design D12), as OpenClaw's `normalizeAnthropicToolCallId` makes it, or Converse's `[a-zA-Z0-9_.:-]+`
+     * ([CONVERSE_ID_CHARS], AWS's `ToolUseBlock` reference). An ID that already fits stays as it is; any other becomes its
+     * allowed characters (each other character as `_`), cut so that `_` and the first 8 hex digits of the SHA-256 of the
+     * original ID fit in 64 characters. The result depends only on the ID, so a call and its result always pair up, and a
+     * history whose old turns are trimmed keeps each surviving ID's rewrite; the hash keeps two IDs with the same allowed
+     * characters apart.
      */
-    fun toolUseId(id: String): String {
-        if (TOOL_USE_ID.matches(id)) return id
+    fun toolUseId(id: String, chars: String = ANTHROPIC_ID_CHARS): String {
+        if (Regex("^[$chars]{1,64}$").matches(id)) return id
         val hash = MessageDigest.getInstance("SHA-256").digest(id.encodeToByteArray())
             .take(4).joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        return id.replace(NOT_TOOL_USE_ID_CHAR, "_").take(64 - 1 - hash.length) + "_" + hash
+        return id.replace(Regex("[^$chars]"), "_").take(64 - 1 - hash.length) + "_" + hash
     }
 
     fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject

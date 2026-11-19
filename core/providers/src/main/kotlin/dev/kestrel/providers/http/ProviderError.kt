@@ -41,5 +41,9 @@ sealed interface ProviderError {
     data object Malformed : ProviderError
 }
 
-/** Carries a [ProviderError]; its message is the error's kind, status and code only. */
-class ProviderException(val error: ProviderError) : IOException(error.toString())
+/**
+ * Carries a [ProviderError]; its message is the error's kind, status and code only. [serverClockOffsetMillis] is, for an
+ * error reply with a `Date` header, the server's time minus the phone's (ProviderHttp's clock), so that a signer whose
+ * signature carries the time (AWS's SigV4) can sign once more with a corrected clock; it is never part of the message.
+ */
+class ProviderException(val error: ProviderError, val serverClockOffsetMillis: Long? = null) : IOException(error.toString())
