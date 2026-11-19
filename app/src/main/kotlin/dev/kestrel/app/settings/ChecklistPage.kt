@@ -16,7 +16,8 @@ import dev.kestrel.app.R
 
 /**
  * The setup checklist (design spec, section 15). [models] is what Kestrel knows about the model files. [samsung]: the
- * battery step also names Samsung's "Never sleeping apps".
+ * battery step also names Samsung's "Never sleeping apps". [onOpenProviders] opens the page "Providers and profiles"
+ * from the provider step (design D18 of sub-project 4).
  */
 @Composable
 internal fun ChecklistPage(
@@ -24,12 +25,17 @@ internal fun ChecklistPage(
     models: ModelCheck,
     samsung: Boolean,
     onAction: (SetupAction) -> Unit,
+    onOpenProviders: () -> Unit,
     onBack: () -> Unit,
 ) {
     PageHeader(stringResource(R.string.settings_checklist), onBack)
     for (step in SetupStep.entries) {
-        StepCard(step, states.getValue(step), samsung, onAction) {
+        val state = states.getValue(step)
+        StepCard(step, state, samsung, onAction) {
             if (step == SetupStep.COPY_MODELS) ModelProblems(models)
+            if (step == SetupStep.PROVIDER && state in NEEDS_ACTION) {
+                Button(onClick = onOpenProviders) { Text(stringResource(R.string.setup_provider_open)) }
+            }
         }
     }
 }

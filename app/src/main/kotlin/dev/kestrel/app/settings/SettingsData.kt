@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -76,6 +77,12 @@ interface SettingsData {
     val version: String
 
     suspend fun licenceText(licence: Licence): String
+
+    /** Whether the default provider profile can be used, for the checklist's step (design D18 of sub-project 4). */
+    val providerReady: Flow<Boolean> get() = flowOf(false)
+
+    /** What the page "Providers and profiles" reads and changes, or null for a fake without providers. */
+    val providers: ProviderData? get() = null
 }
 
 /**
@@ -133,6 +140,10 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     }
 
     override val kokoroFailed: Flow<Boolean> = graph.kokoroFailed
+
+    override val providerReady: Flow<Boolean> get() = graph.providers.providerReady
+
+    override val providers: ProviderData by lazy { StoredProviderData(graph.providers) }
 
     // installedAt's first read is a binder call, so the page's collector does not make it on the main thread.
     override val kokoroSlow: Flow<Float?> =

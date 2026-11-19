@@ -53,7 +53,8 @@ sealed interface ModelCheck {
  * sleeping apps". [callsAllowed]: Kestrel may read the phone state and answer calls (READ_PHONE_STATE and
  * ANSWER_PHONE_CALLS, section 8.7). [assistantRole]: Kestrel holds Android's assistant role (section 8.6).
  * [shortcutTarget] and [buttonTarget]: Android's accessibility settings name Kestrel as the target of the accessibility
- * shortcut, and of the accessibility button or gesture (section 8.6).
+ * shortcut, and of the accessibility button or gesture (section 8.6). [providerReady]: the default provider profile
+ * exists, its credential exists, and its borrowed sign-in is not switched off (design D18 of sub-project 4).
  */
 data class SetupStatus(
     val serviceOn: Boolean,
@@ -69,6 +70,7 @@ data class SetupStatus(
     val assistantRole: Boolean = false,
     val shortcutTarget: Boolean = false,
     val buttonTarget: Boolean = false,
+    val providerReady: Boolean = false,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -79,7 +81,7 @@ object SetupChecklist {
             SetupStep.INSTALL -> StepState.DONE
             // An optional model that the owner did not copy, such as the Kokoro voice, is no problem.
             SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready || it.absent } == true)
-            SetupStep.PROVIDER -> StepState.LATER
+            SetupStep.PROVIDER -> doneIf(status.providerReady)
             SetupStep.DEFAULT_ASSISTANT -> if (status.assistantRole) StepState.DONE else StepState.OPTIONAL
             SetupStep.CALLS -> if (status.callsAllowed) StepState.DONE else StepState.OPTIONAL
             SetupStep.ACCESSIBILITY_SERVICE -> when {

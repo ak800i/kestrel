@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
     private fun follow(intent: Intent) {
         intent.getStringExtra(EXTRA_PAGE)
             ?.let { name -> SettingsPage.entries.firstOrNull { it.name == name } }
-            ?.let { pageRequest = PageRequest(it) }
+            ?.let { pageRequest = PageRequest(it, resumeAdd = intent.getBooleanExtra(EXTRA_RESUME_ADD, false)) }
         intent.getStringExtra(EXTRA_ASK_PERMISSION)?.takeIf { it in ASKABLE }?.let { askForPermissions(it) }
     }
 

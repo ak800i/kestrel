@@ -30,11 +30,19 @@ class SetupChecklistTest {
                 SetupStep.BATTERY to StepState.TO_DO,
                 SetupStep.DEFAULT_ASSISTANT to StepState.OPTIONAL,
                 SetupStep.CALLS to StepState.OPTIONAL,
-                SetupStep.PROVIDER to StepState.LATER,
+                SetupStep.PROVIDER to StepState.TO_DO,
                 SetupStep.VOICE_ACCESS to StepState.DONE,
             ),
             SetupChecklist.states(nothingSetUp),
         )
+    }
+
+    @Test
+    fun theProviderStepIsDoneWhenTheDefaultProfileCanBeUsed() {
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.PROVIDER)
+
+        assertEquals(StepState.TO_DO, state(nothingSetUp))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(providerReady = true)))
     }
 
     @Test

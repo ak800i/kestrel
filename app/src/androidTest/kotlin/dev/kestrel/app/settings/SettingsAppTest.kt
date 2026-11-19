@@ -504,6 +504,16 @@ class SettingsAppTest {
         compose.onAllNodesWithText(text(R.string.setup_models_missing, "tts-kokoro/model.onnx")).assertCountEquals(0)
     }
 
+    @Test
+    fun theProviderStepOpensTheProvidersPage() {
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_provider_open)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.providers_title)).assertIsDisplayed()
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())

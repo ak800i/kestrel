@@ -30,14 +30,15 @@ import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.voice.VoiceChoice
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, COMMANDS, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT }
+enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, COMMANDS, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT, PROVIDERS }
 
 /**
  * A request to show [page], from an intent that opened the settings app, such as "What can I say?" (design spec, section
  * 15). Not a data class: two requests for the same page are different requests, so the second one still switches to the
- * page after the owner has left it.
+ * page after the owner has left it. [resumeAdd] says that the request is the return from a sign-in in the browser (design
+ * D10 of sub-project 4); the Providers page keeps its add flow by itself, because its sub-page is its own saved state.
  */
-class PageRequest(val page: SettingsPage)
+class PageRequest(val page: SettingsPage, val resumeAdd: Boolean = false)
 
 /** What the button of a checklist step does. */
 enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS }
@@ -75,12 +76,20 @@ fun SettingsApp(
         }
     }
     BackHandler(enabled = page != SettingsPage.HOME) { if (licence != null) licence = null else page = SettingsPage.HOME }
-    val states = SetupChecklist.states(status)
+    // The checklist's provider step reads the stored profiles, which SetupStatusReader does not know.
+    val providerReady by data.providerReady.collectAsState(initial = false)
+    val states = SetupChecklist.states(status.copy(providerReady = providerReady))
     val home = { page = SettingsPage.HOME }
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
-            SettingsPage.CHECKLIST -> ScrollingPage { ChecklistPage(states, status.models, status.samsung, onAction, home) }
+            SettingsPage.CHECKLIST -> ScrollingPage {
+                ChecklistPage(states, status.models, status.samsung, onAction, { page = SettingsPage.PROVIDERS }, home)
+            }
+            SettingsPage.PROVIDERS -> ScrollingPage {
+                val providers = data.providers
+                if (providers != null) ProvidersPage(providers, home) else PageHeader(stringResource(R.string.providers_title), home)
+            }
             SettingsPage.LISTENING -> ScrollingPage { ListeningPage(data, status, onAction, home) }
             SettingsPage.VOICE -> ScrollingPage { VoicePage(data, status.models, home) }
             SettingsPage.COMMANDS -> ScrollingPage { CommandsPage(data, home) }
@@ -118,6 +127,9 @@ private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOp
     PageEntry(stringResource(R.string.settings_voice), voiceSummary(voice)) { onOpen(SettingsPage.VOICE) }
     PageEntry(stringResource(R.string.settings_commands), stringResource(R.string.settings_commands_summary)) {
         onOpen(SettingsPage.COMMANDS)
+    }
+    PageEntry(stringResource(R.string.providers_title), stringResource(R.string.providers_summary)) {
+        onOpen(SettingsPage.PROVIDERS)
     }
     PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
     PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }

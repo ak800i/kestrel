@@ -72,6 +72,35 @@ class MainActivityTest {
     }
 
     @Test
+    fun theReturnFromASignInKeepsTheAddFlowOpen() {
+        await(hasText(text(R.string.settings_checklist)))
+        compose.runOnUiThread {
+            // A copy of the activity's intent, as in anIntentWithAPageOpensThatPageInTheRunningApp.
+            compose.activity.startActivity(
+                Intent(compose.activity.intent)
+                    .putExtra(MainActivity.EXTRA_PAGE, SettingsPage.PROVIDERS.name)
+                    .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+        await(hasText(text(R.string.providers_add)))
+        compose.onNodeWithText(text(R.string.providers_add)).performScrollTo().performClick()
+        await(hasText(text(R.string.providers_search)))
+
+        // As SignInService does after a sign-in in the browser (design D10 of sub-project 4).
+        compose.runOnUiThread {
+            compose.activity.startActivity(
+                Intent(compose.activity.intent)
+                    .putExtra(MainActivity.EXTRA_PAGE, SettingsPage.PROVIDERS.name)
+                    .putExtra(MainActivity.EXTRA_RESUME_ADD, true)
+                    .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+        compose.waitForIdle()
+
+        await(hasText(text(R.string.providers_search)))
+    }
+
+    @Test
     fun anIntentWithAPageOpensThatPageInTheRunningApp() {
         await(hasText(text(R.string.settings_checklist)))
 
