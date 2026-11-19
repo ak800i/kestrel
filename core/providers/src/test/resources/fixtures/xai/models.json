@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "id": "grok-4.7", "api_backend": "responses", "context_window": 2000000, "max_completion_tokens": 64000, "supports_reasoning_effort": true, "reasoning_efforts": ["low", "high"] },
+    { "id": "grok-code-2", "api_backend": "chat", "context_window": 256000 },
+    { "id": "grok-imagine", "api_backend": "language" }
+  ]
+}

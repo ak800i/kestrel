@@ -1,0 +1,38 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-6-luna", "name": "GPT-6 Luna", "object": "model", "vendor": "OpenAI", "model_picker_enabled": true,
+      "policy": { "state": "enabled" }, "supported_endpoints": ["/responses", "/chat/completions"],
+      "capabilities": { "type": "chat", "limits": { "max_context_window_tokens": 400000, "max_output_tokens": 128000 },
+        "supports": { "streaming": true, "tool_calls": true, "vision": true, "reasoning_effort": ["low", "medium", "high"] } }
+    },
+    {
+      "id": "gpt-6.1-terra", "name": "GPT-6.1 Terra", "object": "model", "vendor": "OpenAI", "model_picker_enabled": true,
+      "supported_endpoints": ["/v1/responses/"],
+      "capabilities": { "type": "chat", "supports": { "streaming": true, "tool_calls": true, "vision": true } }
+    },
+    {
+      "id": "claude-haiku-5.5", "name": "Claude Haiku 5.5", "object": "model", "vendor": "Anthropic", "model_picker_enabled": true,
+      "policy": { "state": "enabled" }, "supported_endpoints": ["/v1/messages", "/chat/completions"],
+      "capabilities": { "type": "chat", "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 64000 },
+        "supports": { "streaming": true, "tool_calls": true, "vision": true } }
+    },
+    {
+      "id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "object": "model", "vendor": "Google", "model_picker_enabled": true,
+      "supported_endpoints": ["/chat/completions"],
+      "capabilities": { "type": "chat", "supports": { "streaming": true, "tool_calls": true, "vision": true } }
+    },
+    {
+      "id": "gpt-5.4-nano", "name": "GPT-5.4 nano", "object": "model", "vendor": "OpenAI", "model_picker_enabled": true,
+      "capabilities": { "type": "chat", "supports": { "streaming": true, "tool_calls": false } }
+    },
+    { "id": "gpt-hidden", "name": "Hidden", "object": "model", "model_picker_enabled": false, "capabilities": { "type": "chat", "supports": { "tool_calls": true } } },
+    { "id": "gpt-disabled", "name": "Disabled", "object": "model", "model_picker_enabled": true, "policy": { "state": "disabled" }, "capabilities": { "type": "chat" } },
+    { "id": "gpt-unconfigured", "name": "Unconfigured", "model_picker_enabled": true, "policy": { "state": "unconfigured" } },
+    { "id": "text-embedding-4", "name": "Embedding", "object": "model", "model_picker_enabled": true, "capabilities": { "type": "embeddings" } },
+    { "id": "gpt-no-stream", "name": "No stream", "object": "model", "model_picker_enabled": true, "capabilities": { "type": "chat", "supports": { "streaming": false, "tool_calls": true } } },
+    { "id": "accounts/acme/models/custom", "name": "Custom", "object": "model", "model_picker_enabled": true },
+    { "id": "router", "name": "Router", "object": "router", "model_picker_enabled": true }
+  ]
+}

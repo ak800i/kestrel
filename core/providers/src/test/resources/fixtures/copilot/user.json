@@ -1,0 +1,13 @@
+{
+  "login": "test-login",
+  "copilot_plan": "individual",
+  "endpoints": {
+    "api": "https://api.individual.githubcopilot.com",
+    "proxy": "https://proxy.individual.githubcopilot.com"
+  },
+  "quota_snapshots": {
+    "premium_interactions": { "entitlement": 300, "remaining": 210, "percent_remaining": 70.0, "unlimited": false },
+    "chat": { "entitlement": 0, "percent_remaining": 100, "unlimited": true },
+    "completions": { "percent_remaining": null }
+  }
+}

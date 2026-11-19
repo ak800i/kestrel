@@ -1,6 +1,7 @@
 package dev.kestrel.providers.client
 
 import dev.kestrel.providers.catalog.Catalog
+import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.CompatFlags
 import dev.kestrel.providers.catalog.InputKind
 import dev.kestrel.providers.catalog.ModelEntry
@@ -21,6 +22,8 @@ import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.providers.profiles.Profile
 import dev.kestrel.providers.profiles.ProfileHosts
 import dev.kestrel.providers.profiles.ProfileModel
+import dev.kestrel.providers.signin.SignInKind
+import dev.kestrel.providers.signin.SignInRegistry
 import dev.kestrel.providers.styles.AzureRouting
 import dev.kestrel.providers.styles.MantleRouting
 import dev.kestrel.providers.styles.VertexUrls
@@ -189,4 +192,47 @@ object ModelEntries {
         val json = chosen.jsonActions || chosen.tools == false || (chosen.tools == null && entry.toolMode == ToolMode.JSON)
         return entry.copy(input = input, toolMode = if (json) ToolMode.JSON else ToolMode.NATIVE)
     }
+}
+
+/** The default models of a new profile: model IDs, which for a local server may be the owner's own names. */
+data class ModelDefaults(val lightweight: String?, val versatile: String?) {
+    override fun toString(): String = "ModelDefaults(lightweight=${lightweight != null}, versatile=${versatile != null})"
+}
+
+/** The models that a profile offers for both roles, and the defaults among them (design D12 and D13). */
+object OfferedModels {
+    private val LISTED_ONLY = setOf(SignInKind.GITHUB, SignInKind.GITHUB_TENANT, SignInKind.CHATGPT_PLAN, SignInKind.XAI)
+
+    /**
+     * The rows that a profile of [providerId] with [choiceId] offers: for the sign-ins whose list is the account's own
+     * (Copilot, the ChatGPT plan and xAI's sign-in) only the listed rows, each with the catalog's price, capabilities and
+     * compat where the catalog has it; for every other choice the catalog's rows (with those that `overrides.json` adds,
+     * such as Mantle's Claude rows) beside the listed ones. A row without tool support carries JSON actions.
+     */
+    fun rows(catalog: Catalog, providerId: String, choiceId: String, discovered: List<DiscoveredModel>): List<ModelEntry> {
+        val provider = catalog.provider(providerId)
+        val listed = discovered.map { ModelEntries.entryFor(provider, it.id, discovered) }
+        if (SignInRegistry.kind(providerId, choiceId) in LISTED_ONLY) return listed
+        return provider?.models.orEmpty().filter { row -> listed.none { it.id == row.id } } + listed
+    }
+
+    /**
+     * The defaults among [rows]: for Copilot the first of its lightweight and of its versatile names that the rows offer
+     * with tool calls, by ID or normalised name; for the others the catalog's utility model and default model when the
+     * rows have them; else the first row for both.
+     */
+    fun defaults(catalog: Catalog, providerId: String, rows: List<ModelEntry>): ModelDefaults {
+        val first = rows.firstOrNull()?.id ?: return ModelDefaults(null, null)
+        val provider = catalog.provider(providerId)
+        val copilot = catalog.overrides.copilot
+        val light = if (providerId == CatalogLoader.COPILOT) byName(copilot.lightweight, rows) else rows.firstOrNull { it.id == provider?.utilityModel }?.id
+        val versatile = if (providerId == CatalogLoader.COPILOT) byName(copilot.versatile, rows) else rows.firstOrNull { it.id == provider?.defaultModel }?.id
+        return ModelDefaults(light ?: first, versatile ?: first)
+    }
+
+    private fun byName(names: List<String>, rows: List<ModelEntry>): String? =
+        names.firstNotNullOfOrNull { name ->
+            val wanted = CatalogLoader.normalise(name)
+            rows.firstOrNull { it.toolMode == ToolMode.NATIVE && (CatalogLoader.normalise(it.name) == wanted || CatalogLoader.normalise(it.id) == wanted) }?.id
+        }
 }
