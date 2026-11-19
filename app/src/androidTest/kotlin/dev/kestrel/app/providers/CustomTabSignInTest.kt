@@ -15,10 +15,15 @@ import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.net.URLEncoder
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * The Custom Tab of browser sign-in with the device's own Chrome (design D10 and D19; prototype P5): the tab opens in
@@ -34,11 +39,26 @@ class CustomTabSignInTest {
     // Started with an intent like SignInService's return to Kestrel, without the launcher's action: MainActivity takes each
     // new intent as its own, and ActivityScenario follows the activity, and closes it after the test, only while its intent
     // has the action of the intent that started it.
-    @get:Rule
     val activity = ActivityScenarioRule<MainActivity>(Intent(InstrumentationRegistry.getInstrumentation().targetContext, MainActivity::class.java))
+
+    /** The redirect case is skipped before MainActivity starts, so that a skipped test does nothing on the device. */
+    private val redirectOnlyWhenAsked = TestRule { base, description ->
+        object : Statement() {
+            override fun evaluate() {
+                if (description.methodName == REDIRECT_TEST) {
+                    assumeTrue("Runs only with kestrelRedirectCheck=true", InstrumentationRegistry.getArguments().getString("kestrelRedirectCheck") == "true")
+                }
+                base.evaluate()
+            }
+        }
+    }
+
+    @get:Rule
+    val rules: RuleChain = RuleChain.outerRule(redirectOnlyWhenAsked).around(activity)
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
+    private val providers get() = (context.applicationContext as dev.kestrel.app.KestrelApplication).graph.providers
     private val executor = Executors.newSingleThreadExecutor()
     private val sessions = mutableListOf<LoopbackServer.Session>()
 
@@ -48,6 +68,12 @@ class CustomTabSignInTest {
     @Before
     fun needsChrome() {
         assertNotNull("Chrome with its Custom Tabs service is needed on this device", CustomTabs.chrome(context))
+    }
+
+    /** Each test starts from Idle, whatever an earlier test in the same process left in the shared graph. */
+    @Before
+    fun startIdle() {
+        providers.cancelSignIn()
     }
 
     @After
@@ -61,6 +87,23 @@ class CustomTabSignInTest {
     private fun shell(command: String): String =
         instrumentation.uiAutomation.executeShellCommand(command).let { descriptor ->
             java.io.FileInputStream(descriptor.fileDescriptor).use { it.readBytes().decodeToString() }.also { descriptor.close() }
+        }
+
+    /** The component of the top resumed activity, as `package/.Class`, without anything that the screen shows. */
+    private fun topActivity(): String =
+        shell("dumpsys activity activities").lines().firstOrNull { "topResumedActivity" in it }
+            ?.let { Regex("""ActivityRecord\{\S+ u\d+ (\S+/\S+)""").find(it)?.groupValues?.get(1) } ?: "none"
+
+    /**
+     * The loopback callback's parameters, waited for [seconds]: a cold Chrome, as on the first run after a boot, can take
+     * long. A timeout names the activity in front, so that a failure shows whether Chrome was stuck on a page or a dialog.
+     */
+    private fun callbackOf(callback: Future<Map<String, String>?>, seconds: Long): Map<String, String>? =
+        try {
+            callback.get(seconds, TimeUnit.SECONDS)
+        } catch (e: TimeoutException) {
+            fail("No callback within $seconds s; the activity in front was ${topActivity()}")
+            null
         }
 
     /** The task of each activity record in `dumpsys activity activities`, by its component. */
@@ -91,7 +134,8 @@ class CustomTabSignInTest {
     private fun listen(ipv6: Boolean, port: Int? = null): Pair<LoopbackServer.Session, java.util.concurrent.Future<Map<String, String>?>> {
         val session = LoopbackServer().open(ipv6, port, "/auth/callback") ?: error("the loopback port is busy")
         sessions += session
-        return session to executor.submit<Map<String, String>?> { session.await("test-state", 60_000) }
+        // The server outlives the test's wait for the callback, which starts later.
+        return session to executor.submit<Map<String, String>?> { session.await("test-state", 120_000) }
     }
 
     @Test
@@ -108,7 +152,7 @@ class CustomTabSignInTest {
         // Android holds an instrumented process at the foreground-service level itself, so the test checks the service.
         val service = shell("dumpsys activity services dev.kestrel/.app.providers.SignInService")
         assertTrue("SignInService runs in the foreground", "isForeground=true" in service)
-        assertEquals("test-code", callback.get(30, TimeUnit.SECONDS)?.get("code"))
+        assertEquals("test-code", callbackOf(callback, 90)?.get("code"))
 
         SignInService.returnToKestrel(context)
         waitFor("Kestrel's settings on top") { shell("dumpsys activity activities").lines().any { "topResumedActivity" in it && MAIN in it } }
@@ -116,7 +160,6 @@ class CustomTabSignInTest {
 
     @Test
     fun aSignInThatEndsBeforeTheServiceSawItWaitStopsTheService() {
-        val providers = (context.applicationContext as dev.kestrel.app.KestrelApplication).graph.providers
         val service = { shell("dumpsys activity services dev.kestrel/.app.providers.SignInService") }
         SignInService.start(context, "Test")
         waitFor("SignInService in the foreground") { "isForeground=true" in service() }
@@ -130,8 +173,21 @@ class CustomTabSignInTest {
     }
 
     @Test
+    fun aStopThatComesBeforeANewStartLeavesTheServiceToTheNewStart() {
+        val service = { shell("dumpsys activity services dev.kestrel/.app.providers.SignInService") }
+        SignInService.start(context, "Test")
+        waitFor("SignInService in the foreground") { "isForeground=true" in service() }
+
+        // As a cancel and a new sign-in right after it: cancelSignIn asks the service to stop, then startSignIn starts it.
+        SignInService.stop(context)
+        SignInService.start(context, "Test")
+
+        waitFor("SignInService in the foreground again") { "isForeground=true" in service() }
+    }
+
+    // The rule redirectOnlyWhenAsked skips this test unless kestrelRedirectCheck=true.
+    @Test
     fun aRedirectFromAPublicPageReachesTheLoopbackServerWithoutAPrompt() {
-        assumeTrue("Runs only with kestrelRedirectCheck=true", InstrumentationRegistry.getArguments().getString("kestrelRedirectCheck") == "true")
         SignInService.start(context, "Test")
         for ((ipv6, host) in listOf(false to "127.0.0.1", true to "localhost")) {
             val (session, callback) = listen(ipv6)
@@ -140,7 +196,7 @@ class CustomTabSignInTest {
             // Chrome's first-run screens give a clear message here too, not a timeout.
             waitForTab()
 
-            assertEquals("the redirect to $host", "test-code", callback.get(45, TimeUnit.SECONDS)?.get("code"))
+            assertEquals("the redirect to $host", "test-code", callbackOf(callback, 90)?.get("code"))
             shell("am force-stop com.android.chrome")
         }
     }
@@ -148,5 +204,6 @@ class CustomTabSignInTest {
     private companion object {
         const val MAIN = "dev.kestrel/.app.MainActivity"
         const val CUSTOM_TAB = "com.android.chrome/org.chromium.chrome.browser.customtabs.CustomTabActivity"
+        const val REDIRECT_TEST = "aRedirectFromAPublicPageReachesTheLoopbackServerWithoutAPrompt"
     }
 }

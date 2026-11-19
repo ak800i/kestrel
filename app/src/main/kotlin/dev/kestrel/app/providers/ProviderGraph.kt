@@ -164,8 +164,8 @@ internal class ProviderGraph(
 
     // The sign-ins.
 
-    private val signInState = MutableStateFlow<SignInState>(SignInState.Idle)
-    val signIn: StateFlow<SignInState> = signInState.asStateFlow()
+    private val signInState = SignInStates()
+    val signIn: StateFlow<SignInState> = signInState.flow
 
     private val pages = MutableStateFlow<String?>(null)
 
@@ -181,9 +181,11 @@ internal class ProviderGraph(
     @Volatile
     var settingsResumed = false
 
+    @Volatile
     private var job: Job? = null
 
     /** The ChatGPT plan's issued client ID that a failed sign-in of this add flow returned, for "Try again" (design D9). */
+    @Volatile
     private var pendingRegistration: ChatGptRegistration? = null
 
     /**
@@ -196,6 +198,7 @@ internal class ProviderGraph(
     }
 
     /** The running browser sign-in's page, so that the owner can open it again after he closed its tab. */
+    @Volatile
     private var lastPage: String? = null
 
     /** Asks the settings activity to open the running browser sign-in's page again. */
@@ -215,14 +218,14 @@ internal class ProviderGraph(
         pages.value = null
         // A GHE.com tenant that is not one fails before the service starts.
         if (kind == SignInKind.GITHUB_TENANT && tenant?.let(GitHubDeviceFlow::tenant) == null) {
-            signInState.value = SignInState.Failed(providerId, choiceId, SignInFailure.UNTRUSTED_ADDRESS, null)
+            signInState.end { SignInState.Failed(providerId, choiceId, SignInFailure.UNTRUSTED_ADDRESS, null) }
             return
         }
-        signInState.value = SignInState.Waiting(providerId, choiceId)
+        val ticket = signInState.begin(SignInState.Waiting(providerId, choiceId))
         SignInService.start(context, catalog.provider(providerId)?.label ?: providerId)
         job = scope.launch {
-            signInState.value = try {
-                SignInState.Succeeded(providerId, choiceId, runFlow(kind, tenant, consent, newRegistration))
+            val outcome = try {
+                SignInState.Succeeded(providerId, choiceId, runFlow(ticket, kind, tenant, consent, newRegistration))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: SignInFailed) {
@@ -237,6 +240,8 @@ internal class ProviderGraph(
                 report("A sign-in", e)
                 SignInState.Failed(providerId, choiceId, SignInFailure.EXCHANGE_FAILED, null)
             }
+            // Only the current sign-in ends itself: after a cancel or a newer sign-in, this outcome is dropped (design D10).
+            signInState.set(ticket) { outcome }
         }
     }
 
@@ -252,22 +257,21 @@ internal class ProviderGraph(
 
     /** Android ended SignInService after its time (Android 15 and later): the sign-in ends with a clear sentence. */
     fun timeOutSignIn() {
-        val waiting = signInState.value as? SignInState.Waiting ?: return
+        signInState.end { state -> (state as? SignInState.Waiting)?.let { SignInState.Failed(it.providerId, it.choiceId, SignInFailure.TIMED_OUT, null) } }
+            ?: return
         job?.cancel()
         job = null
         pages.value = null
-        signInState.value = SignInState.Failed(waiting.providerId, waiting.choiceId, SignInFailure.TIMED_OUT, null)
     }
 
     /** Ends the running sign-in, as the page's and the notification's Cancel do. */
     fun cancelSignIn() {
         // The cancel can come before SignInService's watcher has seen the sign-in wait, so the service is told to stop too.
-        val waiting = signInState.value is SignInState.Waiting
+        val waiting = signInState.end { SignInState.Idle } is SignInState.Waiting
         job?.cancel()
         job = null
         pages.value = null
         lastPage = null
-        signInState.value = SignInState.Idle
         if (waiting) {
             try {
                 SignInService.stop(context)
@@ -283,19 +287,19 @@ internal class ProviderGraph(
         pendingRegistration = null
     }
 
-    private suspend fun runFlow(kind: SignInKind, tenant: String?, consent: Boolean, newRegistration: Boolean): SignInResult = when (kind) {
-        SignInKind.GITHUB -> deviceCode(GitHubDeviceFlow(GitHubDeviceFlow.PUBLIC, http))
-        SignInKind.GITHUB_TENANT -> deviceCode(GitHubDeviceFlow(tenant?.let(GitHubDeviceFlow::tenant) ?: throw IllegalArgumentException("Not a tenant"), http))
-        SignInKind.XAI -> deviceCode(XaiDeviceFlow(http, { policy.openTemporaryHosts(it) }))
-        SignInKind.MINIMAX_GLOBAL -> deviceCode(MiniMaxDeviceFlow(MiniMaxRegion.GLOBAL, http))
-        SignInKind.MINIMAX_CHINA -> deviceCode(MiniMaxDeviceFlow(MiniMaxRegion.CHINA, http))
+    private suspend fun runFlow(ticket: Long, kind: SignInKind, tenant: String?, consent: Boolean, newRegistration: Boolean): SignInResult = when (kind) {
+        SignInKind.GITHUB -> deviceCode(ticket, GitHubDeviceFlow(GitHubDeviceFlow.PUBLIC, http))
+        SignInKind.GITHUB_TENANT -> deviceCode(ticket, GitHubDeviceFlow(tenant?.let(GitHubDeviceFlow::tenant) ?: throw IllegalArgumentException("Not a tenant"), http))
+        SignInKind.XAI -> deviceCode(ticket, XaiDeviceFlow(http, { policy.openTemporaryHosts(it) }))
+        SignInKind.MINIMAX_GLOBAL -> deviceCode(ticket, MiniMaxDeviceFlow(MiniMaxRegion.GLOBAL, http))
+        SignInKind.MINIMAX_CHINA -> deviceCode(ticket, MiniMaxDeviceFlow(MiniMaxRegion.CHINA, http))
         SignInKind.CHATGPT_PLAN -> browser(ChatGptPlanFlow(chatgptHostId(), chatgptRegistration(newRegistration), consent, http))
         SignInKind.OPENROUTER -> browser(OpenRouterBrowserFlow(http))
     }.also { result -> result.registration?.let { registration -> update { it.copy(chatgptRegistration = registration) } } }
 
-    private suspend fun deviceCode(flow: DeviceCodeFlow): SignInResult = policy.openTemporaryHosts(flow.signInHosts).use {
+    private suspend fun deviceCode(ticket: Long, flow: DeviceCodeFlow): SignInResult = policy.openTemporaryHosts(flow.signInHosts).use {
         val prompt = flow.start()
-        signInState.value = (signInState.value as? SignInState.Waiting)?.copy(prompt = prompt) ?: signInState.value
+        signInState.set(ticket) { (it as? SignInState.Waiting)?.copy(prompt = prompt) ?: it }
         flow.await(prompt)
     }
 
@@ -438,7 +442,7 @@ internal class ProviderGraph(
         }
         pendingRegistration = null
         // The save ends the add flow: Kestrel forgets its sign-in, so that the next add flow signs in again (design D10).
-        if (signInState.value is SignInState.Succeeded) signInState.value = SignInState.Idle
+        signInState.end { if (it is SignInState.Succeeded) SignInState.Idle else null }
         tabOpened = false
         return profile
     }

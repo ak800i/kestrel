@@ -29,9 +29,13 @@ internal class SignInService : Service() {
     private val graph get() = (application as KestrelApplication).graph
     private var watcher: Job? = null
 
+    /** The latest start, so that a stop ends the service only when no newer start came, as a sign-in right after a cancel. */
+    private var latestStartId = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         when (intent?.action) {
             ACTION_CANCEL -> {
                 graph.providers.cancelSignIn()
@@ -53,7 +57,7 @@ internal class SignInService : Service() {
         } catch (e: Exception) {
             // For example a start that Android does not allow from the background; the sign-in goes on without it.
             graph.report("Starting the sign-in service", e)
-            stopSelf()
+            stopSelf(startId)
             return START_NOT_STICKY
         }
         if (watcher == null) watcher = graph.scope.launch(Dispatchers.Main) { watch() }
@@ -110,7 +114,8 @@ internal class SignInService : Service() {
         watcher?.cancel()
         watcher = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // A start that Android queued after this one keeps the service, and its onStartCommand puts it in the foreground again.
+        stopSelf(latestStartId)
     }
 
     private fun notification(provider: String): Notification {
