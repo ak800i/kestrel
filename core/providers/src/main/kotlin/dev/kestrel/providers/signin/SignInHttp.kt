@@ -54,6 +54,13 @@ internal object SignInHttp {
 
     /** Whether a status means "try again later": a rate limit or a server error. */
     fun temporary(status: Int): Boolean = status == 429 || status in 500..599
+
+    /**
+     * The error code of an OAuth answer, in lower case: `error` as a string, else `error.code` of an error object, else a
+     * top-level `code`, as OpenAI's Codex CLI reads the answers of the same issuer.
+     */
+    fun errorCode(body: JsonObject?): String? =
+        (body?.string("error") ?: body?.obj("error")?.string("code") ?: body?.string("code"))?.lowercase()
 }
 
 internal fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content

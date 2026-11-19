@@ -81,6 +81,19 @@ class RefreshersTest {
     }
 
     @Test
+    fun aNestedOrTopLevelErrorCodeIsAFinalRefusalToo() = runBlocking {
+        server.enqueue(json(401, """{"error":{"type":"invalid_request_error","code":"refresh_token_reused"}}"""))
+        server.enqueue(json(401, """{"error":{"code":"invalid_client","message":"x"}}"""))
+        server.enqueue(json(400, """{"code":"INVALID_GRANT"}"""))
+        server.enqueue(json(400, """{"error":{"code":"invalid_grant"}}"""))
+
+        assertEquals(Refresh.Refused(), ChatGptPlanRefresher(http) { now }.refresh(plan))
+        assertEquals(Refresh.Refused(plan.copy(clientId = null)), ChatGptPlanRefresher(http) { now }.refresh(plan))
+        assertEquals(Refresh.Refused(), ChatGptPlanRefresher(http) { now }.refresh(plan))
+        assertEquals(Refresh.Refused(), XaiRefresher(http, { now }) {}.refresh(xai))
+    }
+
+    @Test
     fun aRateLimitOrAServerErrorKeepsTheSignIn() = runBlocking {
         server.enqueue(json(429, """{"error":"slow_down"}""", "Retry-After" to "7"))
         server.enqueue(json(503, "{}"))

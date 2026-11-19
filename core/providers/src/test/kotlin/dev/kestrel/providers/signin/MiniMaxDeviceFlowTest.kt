@@ -135,4 +135,33 @@ class MiniMaxDeviceFlowTest {
         codeAnswer = read("minimax/device-code.json").replace("\"expired_in\": 600", "\"expired_in\": 2")
         assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
     }
+
+    @Test
+    fun aRateLimitOrAServerErrorDuringAPollSlowsThePollsDown() = runBlocking {
+        polls += json(503, "{}")
+        polls += json(429, "{}")
+        polls += json(200, read("minimax/token.json"))
+        val flow = flow()
+
+        val result = flow.await(flow.start())
+
+        assertEquals("test-minimax-access-1", (result.credential as Credential.OAuthToken).access)
+        assertEquals(listOf(3_000L, 8_000L, 13_000L), pauses)
+    }
+
+    @Test
+    fun aResourceUrlWithUserQueryFragmentOrOnTheOtherRegionFallsBackToTheRegionsRoute() = runBlocking {
+        val refused = listOf(
+            "https://user@api.minimax.io/anthropic", "https://api.minimax.io/anthropic?a=1", "https://api.minimax.io/anthropic#a",
+            "https://api.minimaxi.com/anthropic",
+        )
+        for (address in refused) {
+            polls += json(200, read("minimax/token.json").replace("https://api.minimax.io/anthropic", address))
+            val flow = flow()
+            assertEquals(address, "https://api.minimax.io/anthropic", flow.await(flow.start()).baseUrl)
+        }
+        polls += json(200, read("minimax/token.json").replace("https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic/v2"))
+        val china = flow(MiniMaxRegion.CHINA)
+        assertEquals("https://api.minimaxi.com/anthropic/v2", china.await(china.start()).baseUrl)
+    }
 }

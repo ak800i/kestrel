@@ -1,6 +1,8 @@
 package dev.kestrel.providers.signin
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.signin.SignInFixtures.fixture
 import dev.kestrel.providers.signin.SignInFixtures.json
@@ -8,12 +10,17 @@ import dev.kestrel.providers.signin.SignInFixtures.read
 import dev.kestrel.providers.testing.RedirectingCalls
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockWebServer
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Request
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Copilot's device flow on github.com and a GHE.com tenant (design D9 and D12; research r27). */
 class GitHubDeviceFlowTest {
@@ -105,6 +112,36 @@ class GitHubDeviceFlowTest {
     }
 
     @Test
+    fun aRateLimitAServerErrorOrALostConnectionSlowsThePollsDownInsteadOfEndingTheSignIn() = runBlocking {
+        server.enqueue(fixture(200, "github/device-code.json"))
+        server.enqueue(json(200, """{"error":"authorization_pending"}"""))
+        server.enqueue(json(503, "{}"))
+        server.enqueue(json(429, "{}", "Retry-After" to "30"))
+        server.enqueue(fixture(200, "github/token.json"))
+        // The fourth call, the third poll, loses its connection.
+        val flow = GitHubDeviceFlow("github.com", ProviderHttp(FailingCalls(calls, setOf(4))), { now }) { pauses += it; now += it }
+
+        val result = flow.await(flow.start())
+
+        assertEquals(Credential.GitHubToken("test-github-token", "github.com"), result.credential)
+        assertEquals(listOf(5_000L, 5_000L, 10_000L, 15_000L, 30_000L), pauses)
+        assertEquals(5, server.requestCount)
+    }
+
+    @Test
+    fun anEmptyTokenIsAnAnswerThatKestrelCannotRead() {
+        server.enqueue(fixture(200, "github/device-code.json"))
+        server.enqueue(json(200, """{"access_token":"","token_type":"bearer"}"""))
+
+        try {
+            runBlocking { flow().let { it.await(it.start()) } }
+            fail("expected a ProviderException")
+        } catch (e: ProviderException) {
+            assertEquals(ProviderError.Malformed, e.error)
+        }
+    }
+
+    @Test
     fun refusalExpiryAndTheDeadlineEndTheSignIn() {
         server.enqueue(fixture(200, "github/device-code.json"))
         server.enqueue(json(200, """{"error":"access_denied"}"""))
@@ -117,5 +154,18 @@ class GitHubDeviceFlowTest {
         assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
         // The last code expired before its first poll, so no poll was sent for it.
         assertEquals(5, calls.requests.size)
+    }
+
+    /** Fails the calls with the numbers in [failing], counted from 1, as a lost connection, and sends the others through [inner]. */
+    private class FailingCalls(private val inner: Call.Factory, private val failing: Set<Int>) : Call.Factory {
+        private val count = AtomicInteger()
+
+        override fun newCall(request: Request): Call {
+            val real = inner.newCall(request)
+            if (count.incrementAndGet() !in failing) return real
+            return object : Call by real {
+                override fun enqueue(responseCallback: Callback) = responseCallback.onFailure(this, IOException("test connection lost"))
+            }
+        }
     }
 }

@@ -1,11 +1,17 @@
 package dev.kestrel.providers.signin
 
 import dev.kestrel.providers.credentials.Credential
+import dev.kestrel.providers.http.ProviderError
+import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.signin.SignInFixtures.fixture
 import dev.kestrel.providers.signin.SignInFixtures.json
 import dev.kestrel.providers.signin.SignInFixtures.read
 import dev.kestrel.providers.testing.RedirectingCalls
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockWebServer
 import org.junit.After
@@ -13,6 +19,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import java.util.Base64
 
 /** xAI's device flow through OIDC discovery (design D9; research r31). */
 class XaiDeviceFlowTest {
@@ -108,5 +115,63 @@ class XaiDeviceFlowTest {
         assertEquals(SignInFailure.REFUSED, failureOf { flow().let { it.await(it.start()) } })
         assertEquals(SignInFailure.EXPIRED, failureOf { flow().let { it.await(it.start()) } })
         assertEquals(0, open)
+    }
+
+    @Test
+    fun aRateLimitOrAServerErrorDuringAPollSlowsThePollsDown() = runBlocking {
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        server.enqueue(json(400, """{"error":"authorization_pending"}"""))
+        server.enqueue(json(429, "{}", "Retry-After" to "20"))
+        server.enqueue(json(502, "{}"))
+        server.enqueue(fixture(200, "xai/token.json"))
+        val flow = flow()
+
+        val result = flow.await(flow.start())
+
+        assertEquals("test-xai-access-1", (result.credential as Credential.OAuthToken).access)
+        assertEquals(listOf(5_000L, 5_000L, 20_000L, 25_000L), pauses)
+        assertEquals(0, open)
+    }
+
+    @Test
+    fun anEmptyTokenIsMalformedAndAnExpiryInThePastGetsTheShortestLife() {
+        val pastExp = Base64.getUrlEncoder().withoutPadding().encodeToString("""{"exp":${now / 1000 - 60}}""".toByteArray())
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        server.enqueue(json(200, """{"access_token":"","refresh_token":"test-xai-refresh-1","expires_in":3600}"""))
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        server.enqueue(json(200, """{"access_token":"test-xai-access-1","refresh_token":"test-xai-refresh-1","expires_in":0}"""))
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        server.enqueue(json(200, """{"access_token":"e30.$pastExp.sig","refresh_token":"test-xai-refresh-1"}"""))
+
+        try {
+            runBlocking { flow().let { it.await(it.start()) } }
+            fail("expected a ProviderException")
+        } catch (e: ProviderException) {
+            assertEquals(ProviderError.Malformed, e.error)
+        }
+        val zero = runBlocking { flow().let { it.await(it.start()) } }.credential as Credential.OAuthToken
+        assertEquals(now + TokenTimes.SHORTEST_LIFE_MILLIS, zero.expiresAtMillis)
+        val past = runBlocking { flow().let { it.await(it.start()) } }.credential as Credential.OAuthToken
+        assertEquals(now + TokenTimes.SHORTEST_LIFE_MILLIS, past.expiresAtMillis)
+        assertEquals(0, open)
+    }
+
+    @Test
+    fun cancellingTheWaitClosesTheLease() = runBlocking {
+        server.enqueue(fixture(200, "xai/openid-configuration.json"))
+        server.enqueue(fixture(200, "xai/device-authorization.json"))
+        val flow = XaiDeviceFlow(http, { hosts -> leases += hosts; open++; AutoCloseable { open-- } }, { now }) { awaitCancellation() }
+        val prompt = flow.start()
+        assertEquals(1, open)
+
+        val waiting = launch(start = CoroutineStart.UNDISPATCHED) { flow.await(prompt) }
+        waiting.cancelAndJoin()
+
+        assertEquals(0, open)
+        assertEquals(2, calls.requests.size)
     }
 }

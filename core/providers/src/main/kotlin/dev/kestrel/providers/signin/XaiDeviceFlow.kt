@@ -13,8 +13,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * xAI's sign-in (design D9, research r31): OIDC discovery at `https://auth.x.ai`, whose device-authorization and token
  * endpoints must be HTTPS on `x.ai` or a subdomain and are leased on the allowlist through [openHosts] until the flow
  * ends; then RFC 8628 with the Grok CLI's client. `verification_uri_complete` is preferred, and must be HTTPS on `x.ai`
- * too. The token answer must hold a refresh token and an expiry (`expires_in`, or the access token's `exp`); the token
- * endpoint's host goes into the profile's hosts.
+ * too. The token answer must hold a refresh token and an expiry (`expires_in`, or the access token's `exp`); an expiry that
+ * has already passed, as after a difference between the clocks, gets [TokenTimes.SHORTEST_LIFE_MILLIS]. The token
+ * endpoint's host goes into the profile's hosts. A rate limit, a server error or a network failure during a poll slows
+ * the polls down, as `slow_down` does.
  */
 class XaiDeviceFlow(
     private val http: ProviderHttp,
@@ -62,27 +64,29 @@ class XaiDeviceFlow(
             while (true) {
                 sleep(interval)
                 if (clock() >= prompt.expiresAtMillis) throw SignInFailed(SignInFailure.EXPIRED)
-                val reply = http.exchange(
+                val reply = DevicePolls.send(
+                    http,
                     SignInHttp.form(
                         endpoint,
                         "grant_type" to GitHubDeviceFlow.DEVICE_GRANT,
                         "client_id" to XaiAuth.CLIENT_ID,
                         "device_code" to code,
                     ),
-                )
-                if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply, http)
+                ) { interval = DevicePolls.slower(interval, it) } ?: continue
                 val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
                 if (reply.status in 200..299) {
                     val access = body.string("access_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
+                    if (access.isEmpty()) throw ProviderException(ProviderError.Malformed)
                     val refresh = body.string("refresh_token") ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
-                    val expiresAt = body.number("expires_in")?.let { clock() + it * 1000 } ?: TokenTimes.jwtExpiry(access)
+                    val now = clock()
+                    val expiresAt = body.number("expires_in")?.let { now + it * 1000 } ?: TokenTimes.jwtExpiry(access)
                         ?: throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
-                    val credential = Credential.OAuthToken(access, refresh, expiresAt, tokenEndpoint = endpoint.toString())
+                    val credential = Credential.OAuthToken(access, refresh, TokenTimes.notPast(expiresAt, now), tokenEndpoint = endpoint.toString())
                     return SignInResult(credential, hosts = setOf(endpoint.host))
                 }
                 when (body.string("error")) {
                     "authorization_pending" -> Unit
-                    "slow_down" -> interval += SLOW_DOWN_MILLIS
+                    "slow_down" -> interval = DevicePolls.slower(interval)
                     "access_denied", "authorization_denied" -> throw SignInFailed(SignInFailure.REFUSED)
                     "expired_token" -> throw SignInFailed(SignInFailure.EXPIRED)
                     else -> throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
@@ -103,6 +107,5 @@ class XaiDeviceFlow(
         const val DEFAULT_EXPIRY_SECONDS = 300L
         const val DEFAULT_INTERVAL_SECONDS = 5L
         const val MIN_INTERVAL_MILLIS = 1_000L
-        const val SLOW_DOWN_MILLIS = 5_000L
     }
 }

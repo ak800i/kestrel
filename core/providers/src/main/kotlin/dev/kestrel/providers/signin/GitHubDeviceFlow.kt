@@ -11,9 +11,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 /**
  * Copilot's sign-in (design D9 and D12, research r27): GitHub's device flow with GitHub's own OAuth client, on github.com
  * or a GHE.com tenant. The verification address must be `https://<domain>/login/device`, and the page shows that fixed
- * address. Polls sleep first, at least 1 s apart and by default every 5 s; each `slow_down` adds 5 s, or raises the
- * interval to a returned `interval` when that is larger. The token never expires on its own and is the bearer of every
- * Copilot call; `api.<domain>` goes into the profile's hosts.
+ * address. Polls sleep first, at least 1 s apart and by default every 5 s; each `slow_down`, rate limit, server error or
+ * network failure adds 5 s, or raises the interval to a returned `interval` or `Retry-After` when that is larger. The
+ * token never expires on its own and is the bearer of every Copilot call; `api.<domain>` goes into the profile's hosts.
  */
 class GitHubDeviceFlow(
     private val domain: String,
@@ -51,22 +51,23 @@ class GitHubDeviceFlow(
         while (true) {
             sleep(interval)
             if (clock() >= prompt.expiresAtMillis) throw SignInFailed(SignInFailure.EXPIRED)
-            val reply = http.exchange(
+            val reply = DevicePolls.send(
+                http,
                 SignInHttp.form(
                     "https://$domain/login/oauth/access_token".toHttpUrl(),
                     "client_id" to CLIENT_ID,
                     "device_code" to code,
                     "grant_type" to DEVICE_GRANT,
                 ),
-            )
-            if (SignInHttp.temporary(reply.status)) throw SignInHttp.failure(reply, http)
+            ) { interval = DevicePolls.slower(interval, it) } ?: continue
             val body = SignInHttp.parse(reply) ?: throw ProviderException(ProviderError.Malformed)
             body.string("access_token")?.let { token ->
+                if (token.isEmpty()) throw ProviderException(ProviderError.Malformed)
                 return SignInResult(Credential.GitHubToken(token, domain), hosts = setOf("api.$domain"))
             }
             when (body.string("error")) {
                 "authorization_pending" -> Unit
-                "slow_down" -> interval = maxOf(interval + SLOW_DOWN_MILLIS, (body.number("interval") ?: 0) * 1000)
+                "slow_down" -> interval = DevicePolls.slower(interval, body.number("interval")?.times(1000))
                 "expired_token" -> throw SignInFailed(SignInFailure.EXPIRED)
                 "access_denied" -> throw SignInFailed(SignInFailure.REFUSED)
                 else -> throw SignInFailed(SignInFailure.EXCHANGE_FAILED)
@@ -85,7 +86,6 @@ class GitHubDeviceFlow(
         private val TENANT = Regex("^[a-z0-9-]+\\.ghe\\.com$")
         private const val DEFAULT_INTERVAL_SECONDS = 5L
         private const val MIN_INTERVAL_MILLIS = 1_000L
-        private const val SLOW_DOWN_MILLIS = 5_000L
 
         /** github.com, or a GHE.com tenant such as `acme.ghe.com` (research r27). */
         fun validDomain(domain: String): Boolean = domain == PUBLIC || TENANT.matches(domain)

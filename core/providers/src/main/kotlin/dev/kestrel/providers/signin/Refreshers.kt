@@ -43,7 +43,8 @@ private suspend fun ProviderHttp.tryExchange(request: HttpRequest): Pair<HttpRep
  * refresh token and the resource, without a scope. Each refresh rotates the refresh token. `invalid_client` clears the
  * client ID, so that the next sign-in registers Kestrel again; every other refusal (`invalid_grant`,
  * `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused`)
- * keeps it for the next sign-in. Any other refused answer fails for now.
+ * keeps it for the next sign-in. The code is read from `error`, from an error object's `code` or from a top-level `code`.
+ * Any other refused answer fails for now.
  */
 class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: () -> Long = System::currentTimeMillis) : TokenRefresher {
     override suspend fun refresh(token: Credential.OAuthToken): Refresh {
@@ -64,7 +65,7 @@ class ChatGptPlanRefresher(private val http: ProviderHttp, private val clock: ()
         if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
         val body = SignInHttp.parse(reply)
         if (reply.status !in 200..299) {
-            return when (body?.string("error")) {
+            return when (SignInHttp.errorCode(body)) {
                 "invalid_client" -> Refresh.Refused(token.copy(clientId = null))
                 in FINAL_ERRORS -> Refresh.Refused()
                 else -> Refresh.ForNow(SignInHttp.failure(reply, http).error)
@@ -122,7 +123,7 @@ class XaiRefresher(
             if (SignInHttp.temporary(reply.status)) return Refresh.ForNow(SignInHttp.failure(reply, http).error)
             val body = SignInHttp.parse(reply)
             if (reply.status !in 200..299) {
-                return if (body?.string("error") in FINAL_ERRORS) Refresh.Refused() else Refresh.ForNow(SignInHttp.failure(reply, http).error)
+                return if (SignInHttp.errorCode(body) in FINAL_ERRORS) Refresh.Refused() else Refresh.ForNow(SignInHttp.failure(reply, http).error)
             }
             val access = body?.string("access_token") ?: return Refresh.ForNow(ProviderError.Malformed)
             val expiresAt = body.number("expires_in")?.let { clock() + it * 1000 } ?: TokenTimes.jwtExpiry(access)

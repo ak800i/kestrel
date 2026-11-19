@@ -16,6 +16,15 @@ object TokenTimes {
     private const val EPOCH_SECONDS_FROM = 1_000_000_000L
 
     /**
+     * The life that a new token gets when its expiry has already passed, as after a difference between the phone's clock
+     * and the provider's: valid for now, and refreshed early at its first use.
+     */
+    const val SHORTEST_LIFE_MILLIS = 60_000L
+
+    /** [expiresAt], or [now] plus [SHORTEST_LIFE_MILLIS] when [expiresAt] is not in the future. */
+    fun notPast(expiresAt: Long, now: Long): Long = if (expiresAt > now) expiresAt else now + SHORTEST_LIFE_MILLIS
+
+    /**
      * The ChatGPT plan's `earliest_refresh_at`, which OpenAI's pages give no format: a number below 10^12 is epoch
      * seconds, a larger one epoch milliseconds, a string an ISO-8601 time; any other value is null. It only delays the
      * early refresh, so a value that Kestrel cannot read never fails a sign-in or a refresh.
