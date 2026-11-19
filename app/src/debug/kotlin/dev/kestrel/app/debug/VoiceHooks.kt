@@ -26,7 +26,7 @@ import java.util.Locale
 internal class VoiceHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "VOICE" -> event(intent)
-        "VOICE_STATE" -> state()
+        "VOICE_STATE" -> state(intent)
         "VOICE_CLIP" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clear() else clip(intent)
         "VOICE_CALL_COMMANDS" -> callCommands(intent)
         "VOICE_CHOICE" -> voiceChoice(intent)
@@ -56,21 +56,29 @@ internal class VoiceHooks(private val graph: AppGraph) {
         return "sent $name"
     }
 
-    private fun state(): String {
+    // The latest instant command, or with --ei number the command with that number, as long as it is one of the newest 16:
+    // its number, its kind and how it ended, never its words. With a number, latest= gives the latest command's number,
+    // so that a check of the A71 sessions sees how many commands started after its own.
+    private fun state(intent: Intent): String {
         val state = graph.listening.state.value
         val session = if (graph.listening.sessionOpen.value) "open" else "closed"
         val clips = if (graph.listening.microphones === clipFactory) "on" else "off"
-        // The latest instant command: its number, its kind and how it ended, never its words.
-        val report = graph.listening.lastReport?.takeIf { it.command == state.command }
-        val kind = state.running?.javaClass?.simpleName ?: report?.kind ?: "none"
+        val asked = intent.getIntExtra(EXTRA_NUMBER, 0)
+        val number = if (asked > 0) asked else state.command
+        val recent = graph.listening.recentCommand(number)
+        val runningNow = number == state.command && state.work == Work.RUNNING_COMMAND
+        val kind = state.running?.takeIf { runningNow }?.javaClass?.simpleName ?: recent?.kind ?: "none"
         val outcome = when {
-            state.work == Work.RUNNING_COMMAND -> "running"
-            report != null -> report.outcome.name.lowercase()
+            runningNow -> "running"
+            recent != null -> recent.outcome?.name?.lowercase() ?: "running"
+            // Started, but older than the commands that Kestrel keeps, or the hook asked before the command was noted.
+            number in 1..state.command -> "unknown"
             else -> "none"
         }
+        val latest = if (asked > 0) " latest=${state.command}" else ""
         return "mode=${state.mode.name.lowercase()} work=${state.work.name.lowercase()} speaking=${state.speaking} " +
             "microphone=${state.microphone} recognition=${state.recognition.name.lowercase()} " +
-            "screenOn=${state.screenOn} micBusy=${state.micBusy} command=${state.command} kind=$kind outcome=$outcome " +
+            "screenOn=${state.screenOn} micBusy=${state.micBusy} command=$number kind=$kind outcome=$outcome$latest " +
             "session=$session clips=$clips"
     }
 
@@ -192,5 +200,6 @@ internal class VoiceHooks(private val graph: AppGraph) {
         private const val EXTRA_CLEAR = "clear"
         private const val EXTRA_ON = "on"
         private const val EXTRA_VOICE = "voice"
+        private const val EXTRA_NUMBER = "number"
     }
 }

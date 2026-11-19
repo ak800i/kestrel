@@ -54,6 +54,19 @@ class VoiceHookTest {
             assertEquals("sent toggle", hook("VOICE", "event" to "toggle").text)
             assertTrue("The voice session did not open", VoiceTests.waitUntil(60_000) { listening.sessionOpen.value })
 
+            // A check of the A71 sessions asks for its own command by its number, also after a newer one started.
+            val own = listening.state.value.command + 1
+            hook("VOICE", "event" to "heard", "text" to "Scroll down.")
+            assertTrue("No end of command $own", VoiceTests.waitUntil(10_000) { listening.recentCommand(own)?.outcome != null })
+            hook("VOICE", "event" to "heard", "text" to "Scroll up.")
+            val ended = VoiceTests.waitUntil(10_000) { listening.recentCommand(own + 1)?.outcome != null }
+            assertTrue("No end of command ${own + 1}", ended)
+            val ownState = hook("VOICE_STATE", number = own).text
+            val ownLine = Regex(".* command=$own kind=Scroll outcome=(done|failed|ignored|cancelled) latest=${own + 1} session=open clips=off")
+            assertTrue(ownState, ownLine.matches(ownState))
+            // The failed scrolls say so; the pause below expects a Kestrel that is quiet.
+            assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
+
             hook("VOICE", "event" to "heard", "text" to "Stop listening.")
             assertTrue("Not paused", VoiceTests.waitUntil(10_000) { listening.state.value.mode == Mode.PAUSED })
             val state = hook("VOICE_STATE").text
@@ -66,6 +79,18 @@ class VoiceHookTest {
             assertEquals("sent off", hook("VOICE", "event" to "off").text)
             assertTrue("The voice session did not close", VoiceTests.waitUntil(30_000) { !listening.sessionOpen.value })
         }
+    }
+
+    @Test
+    fun theStateAnswersForACommandThatHasNotStartedWithoutAKindOrAnOutcome() {
+        val latest = listening.state.value.command
+
+        val state = hook("VOICE_STATE", number = latest + 5).text
+
+        assertTrue(state, state.contains(" command=${latest + 5} kind=none outcome=none latest=$latest session="))
+        // Without a number, the answer is the latest command's, as before.
+        val plain = hook("VOICE_STATE").text
+        assertTrue(plain, STATE_WHILE_OFF.matches(plain))
     }
 
     @Test
@@ -151,15 +176,20 @@ class VoiceHookTest {
         }
     }
 
-    /** Runs a hook command as TestHookReceiver does, with string extras and the boolean extras `named` and `clear`. */
+    /**
+     * Runs a hook command as TestHookReceiver does, with string extras, the boolean extras `named` and `clear` and the
+     * integer extra `number`.
+     */
     private fun hook(
         command: String,
         vararg extras: Pair<String, String>,
         named: Boolean = false,
         clear: Boolean = false,
+        number: Int? = null,
     ): HookReply {
         val intent = Intent(TestHooks.ACTION_PREFIX + command)
         for ((key, value) in extras) intent.putExtra(key, value)
+        if (number != null) intent.putExtra("number", number)
         if (named) intent.putExtra("named", true)
         if (clear) intent.putExtra("clear", true)
         return runBlocking { TestHooks(VoiceTests.graph, context).run(intent) }

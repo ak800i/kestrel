@@ -13,14 +13,17 @@ BeforeAll {
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Test-CheckNotification', 'Format-CheckResult', 'Get-Median',
         'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult',
-        'Complete-Restore', 'Invoke-Restore', 'Stop-KestrelForRecording', 'Invoke-OwnerRecording')
+        'Complete-Restore', 'Invoke-Restore', 'Stop-KestrelForRecording', 'Invoke-OwnerRecording', 'Invoke-Check', 'Get-UtteranceCount')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
         }, $true)
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
-    # Wait-State reads Kestrel's state through this function, which the tests mock.
-    function Get-VoiceState { }
+    # Wait-State and Invoke-Check read Kestrel's state through this function, which the tests mock.
+    function Get-VoiceState([int]$Number = 0) { }
+    # Invoke-Check sends the owner's words and writes its result through these, which the tests mock.
+    function Send-Heard([string]$Text) { }
+    function Add-Result([string]$StepName, [string]$Text) { }
     # Invoke-OwnerRecording works on the device through these, which the tests mock.
     function Invoke-Checked([string]$Command) { }
     function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { }
@@ -99,6 +102,41 @@ Describe 'The helpers of the A71 session of the instant commands' {
         $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Tap'; outcome = 'done'; session = 'open' }
 
         Format-CheckResult -Name 'Display' -Owner 'y' -State $state -Before 7 | Should -BeExactly 'Display: owner=y kind=- outcome=none'
+    }
+
+    It 'adds how many more commands started during the check, and the rise of the utterances, only when there were more' {
+        $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Global'; outcome = 'done'; latest = '9'; session = 'open' }
+
+        Format-CheckResult -Name 'go home' -Owner 'y' -State $state -Before 6 -Extra 2 -Utterances '3' | Should -BeExactly 'go home: owner=y kind=Global outcome=done extra=2 utterances+3'
+        Format-CheckResult -Name 'go home' -Owner 'y' -State $state -Before 6 -Extra 2 | Should -BeExactly 'go home: owner=y kind=Global outcome=done extra=2 utterances+?'
+        Format-CheckResult -Name 'go home' -Owner 'y' -State $state -Before 6 -Extra 0 -Utterances '1' | Should -BeExactly 'go home: owner=y kind=Global outcome=done'
+    }
+
+    Context 'A check during which another voice starts a newer command' {
+        BeforeEach {
+            $DryRun = $true
+            Mock Write-Host { }
+            Mock Start-Sleep { }
+            # Command 5 ended before the check; the check's words start command 6, and the room's sound command 7.
+            $device = @{ Sent = $false }
+            Mock Send-Heard { $device.Sent = $true }
+            Mock Get-VoiceState {
+                if (-not $device.Sent) { return [ordered]@{ mode = 'listening'; command = '5'; kind = 'Tap'; outcome = 'done'; session = 'open' } }
+                if ($Number -eq 6) { return [ordered]@{ mode = 'listening'; command = '6'; kind = 'Global'; outcome = 'done'; latest = '7'; session = 'open' } }
+                [ordered]@{ mode = 'listening'; command = '7'; kind = 'Bare'; outcome = 'ignored'; session = 'open' }
+            }
+            Mock Invoke-Hook { if ($device.Sent) { 'waits=0 tasks=0 lastTaskWords=0 hits=0 utterances=3' } else { 'waits=0 tasks=0 lastTaskWords=0 hits=0 utterances=1' } }
+            Mock Add-Result { }
+        }
+
+        It 'records its own command, the first after it began, and how many more started' {
+            Invoke-Check notifications 'show notifications' 'Did the notification shade open?' -Heard 'show the notifications'
+
+            Should -Invoke Send-Heard -Times 1 -Exactly -ParameterFilter { $Text -eq 'show the notifications' }
+            Should -Invoke Add-Result -Times 1 -Exactly -ParameterFilter {
+                $StepName -eq 'notifications' -and $Text -eq 'show notifications: owner=dry kind=Global outcome=done extra=1 utterances+2'
+            }
+        }
     }
 
     It 'counts a command that still runs when a check starts, such as one that asks "Which one?", as the check''s own' {

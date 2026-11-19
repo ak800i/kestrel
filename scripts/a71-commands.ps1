@@ -2,7 +2,8 @@
 # sections 18.3 and 19.1). It takes the owner through every check of sub-project 3 that needs the A71 or the owner, in
 # order. It asks before it reads the device's model and before each step. In each check the owner says a command to
 # Kestrel, or does what the script asks, and then answers whether Kestrel did what the script describes; the script also
-# records the kind and the outcome of Kestrel's latest instant command, never what Kestrel heard. The steps' estimates
+# records the kind and the outcome of the instant command that the check started, the first one after the check began,
+# and how many more started during its wait, never what Kestrel heard. The steps' estimates
 # add up to 116 minutes; the session takes about 100 to 125 minutes, of which about 90 to 115 need the owner, because
 # almost every step needs the owner's voice or hands, and only about 8 to 13 minutes (the install at the start, the
 # transcriptions of the step timing and the restores at the end) run without the owner. The steps:
@@ -108,8 +109,11 @@ function Test-CheckNotification([string[]]$List) {
 # One check's line of the results: what the owner said or did, the owner's answer, and the kind and the outcome of
 # Kestrel's instant command from the voice-state hook, only when that command is newer than $Before, the number that
 # Get-CommandNumber read before the check; a check whose words gave no command records 'kind=- outcome=none', never the
-# command before it. Never what Kestrel heard.
-function Format-CheckResult([string]$Name, [string]$Owner, $State, [int]$Before) {
+# command before it. $State is the state of the check's own command, number $Before + 1; when $Extra more commands
+# started during the check's wait, such as from another voice in the room, the line adds 'extra=<count>' and the rise
+# of the utterances that Kestrel's voice session transcribed meanwhile, $Utterances ('?' when it is not known). Never
+# what Kestrel heard.
+function Format-CheckResult([string]$Name, [string]$Owner, $State, [int]$Before, [int]$Extra = 0, [string]$Utterances = '?') {
     $command = if (-not $State) {
         'kind=- outcome=-'
     } elseif ([int]$State['command'] -le $Before) {
@@ -117,7 +121,8 @@ function Format-CheckResult([string]$Name, [string]$Owner, $State, [int]$Before)
     } else {
         "kind=$($State['kind']) outcome=$($State['outcome'])"
     }
-    "${Name}: owner=$Owner $command"
+    $more = if ($Extra -gt 0) { " extra=$Extra utterances+$Utterances" } else { '' }
+    "${Name}: owner=$Owner $command$more"
 }
 
 # The number of Kestrel's latest instant command before a check. A command that still runs then, such as one that asks
@@ -231,17 +236,30 @@ function Invoke-Hook([string]$Command, [hashtable]$With = @{}) {
     (& "$PSScriptRoot\hook.ps1" -Serial $Serial -Command $Command @With) -join "`n"
 }
 
-# Kestrel's state from the voice-state hook, or $null while Kestrel does not answer.
-function Get-VoiceState {
-    try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
+# Kestrel's state from the voice-state hook, or $null while Kestrel does not answer. With $Number, the kind and the
+# outcome are those of the command with that number, and 'latest' is the number of the latest command.
+function Get-VoiceState([int]$Number = 0) {
+    $with = if ($Number -gt 0) { @{ Number = $Number } } else { @{} }
+    try { ConvertFrom-VoiceState (Invoke-Hook voice-state $with) } catch { $null }
 }
 
-# Waits until $Condition is true for Kestrel's state, which it gets as its argument. Returns the seconds that it waited,
-# or -1 after the timeout.
-function Wait-State([scriptblock]$Condition, [double]$TimeoutSeconds) {
+# How many utterances Kestrel's voice session has transcribed in its process (voice-counts), or $null while Kestrel does
+# not answer. The texts that the voice hook sends do not count.
+function Get-UtteranceCount {
+    try {
+        $counts = ConvertFrom-HookPairs (Invoke-Hook voice-counts)
+        if ($counts.Contains('utterances')) { [int]$counts['utterances'] } else { 0 }
+    } catch {
+        $null
+    }
+}
+
+# Waits until $Condition is true for Kestrel's state, which it gets as its argument; with $Number, for the state of the
+# command with that number (Get-VoiceState). Returns the seconds that it waited, or -1 after the timeout.
+function Wait-State([scriptblock]$Condition, [double]$TimeoutSeconds, [int]$Number = 0) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
-        $state = Get-VoiceState
+        $state = Get-VoiceState -Number $Number
         if ($state -and (& $Condition $state)) { return [math]::Round($watch.Elapsed.TotalSeconds, 1) }
         Start-Sleep -Milliseconds 250
     } while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
@@ -249,11 +267,12 @@ function Wait-State([scriptblock]$Condition, [double]$TimeoutSeconds) {
 }
 
 # After the owner's words: waits up to $StartSeconds for Kestrel to start a command newer than $Number, and only when one
-# started, up to $EndSeconds for it to end. Returns whether one started.
+# started, up to $EndSeconds for the first of them, number $Number + 1, the check's own, to end, also when a newer one
+# started meanwhile. Returns whether one started.
 function Wait-CheckCommand([int]$Number, [double]$StartSeconds = 3, [double]$EndSeconds = 15) {
     if ((Wait-State ({ param($State) [int]$State['command'] -gt $Number }.GetNewClosure()) $StartSeconds) -lt 0) { return $false }
     Write-Host "Waiting up to $EndSeconds s for Kestrel's command to end."
-    Wait-State ({ param($State) [int]$State['command'] -gt $Number -and $State['outcome'] -ne 'running' }.GetNewClosure()) $EndSeconds | Out-Null
+    Wait-State { param($State) $State['outcome'] -ne 'running' } $EndSeconds -Number ($Number + 1) | Out-Null
     $true
 }
 
@@ -439,6 +458,7 @@ function Invoke-Check([string]$StepName, [string]$Say, [string]$Look, [string]$P
     }
     $before = Get-VoiceState
     $number = if ($before) { Get-CommandNumber $before } else { 0 }
+    $transcribed = Get-UtteranceCount
     if ($DryRun) {
         Send-Heard $(if ($Heard) { $Heard } else { $Say })
         if ($Answer) {
@@ -451,11 +471,19 @@ function Invoke-Check([string]$StepName, [string]$Say, [string]$Look, [string]$P
         Add-Result $StepName "${label}: skipped"
         return
     }
-    # Without Kestrel's state before the check, no command can be told to be the check's own.
-    $state = if ($before -and (Wait-CheckCommand -Number $number)) { Get-VoiceState } else { $before }
+    # Without Kestrel's state before the check, no command can be told to be the check's own. The check's own command is
+    # the first that started after it began, number $number + 1, also when another voice started a newer one since.
+    $own = $number + 1
+    $state = if ($before -and (Wait-CheckCommand -Number $number)) { Get-VoiceState -Number $own } else { $before }
+    $extra = if ($state -and $state.Contains('latest')) { [int]$state['latest'] - $own } else { 0 }
+    $utterances = '?'
+    if ($extra -gt 0) {
+        $after = Get-UtteranceCount
+        if ($null -ne $transcribed -and $null -ne $after -and $after -ge $transcribed) { $utterances = "$($after - $transcribed)" }
+    }
     $answer = Read-YesNo "$Look Type y or n." 'dry'
     $script:lastAnswer = $answer
-    Add-Result $StepName (Format-CheckResult -Name $label -Owner $answer -State $state -Before $number)
+    Add-Result $StepName (Format-CheckResult -Name $label -Owner $answer -State $state -Before $number -Extra $extra -Utterances $utterances)
 }
 
 # Whether Kestrel may read the contacts.

@@ -355,10 +355,13 @@ class Listening internal constructor(
     /** One report for every instant command that started: its number, its kind and its outcome, never words. */
     internal val commandReports: SharedFlow<CommandReport> = reports.asSharedFlow()
 
-    /** The newest of [commandReports], for the hook voice-state. */
-    @Volatile
-    internal var lastReport: CommandReport? = null
-        private set
+    private val recentCommands = RecentCommands()
+
+    /**
+     * Command number [command] from the newest 16 commands, for the hook voice-state: its kind, and its outcome once it
+     * has ended; null when it has not started yet or is older.
+     */
+    internal fun recentCommand(command: Int): RecentCommands.Entry? = recentCommands[command]
 
     // When the restore of this process turned Kestrel on, until Kestrel next turns off; null otherwise. Written on
     // [thread], and stored with every mode by the mode's writer, so that a crash in the restored process finds it.
@@ -979,9 +982,14 @@ class Listening internal constructor(
             is Effect.RunCommand -> {
                 newestCommand = effect.command
                 timeline.reacted("command")
+                val kind = effect.parsed.javaClass.simpleName
+                recentCommands.started(effect.command, kind)
                 // Section 14: a command that cannot start says so on the bar.
                 val failed = CommandResult(Outcome.FAILED, show = ListeningTexts.COMMAND_FAILED)
-                afterStopping({ send(Event.CommandEnded(effect.command, failed)) }) { startCommand(effect) }
+                afterStopping({
+                    recentCommands.ended(CommandReport(effect.command, kind, Outcome.FAILED))
+                    send(Event.CommandEnded(effect.command, failed))
+                }) { startCommand(effect) }
             }
             Effect.CancelCommand -> cancelCommand()
             is Effect.AnswerCommand -> conversation?.answered(effect.command, effect.text)
@@ -1232,7 +1240,7 @@ class Listening internal constructor(
     }
 
     private fun publish(done: CommandReport) {
-        lastReport = done
+        recentCommands.ended(done)
         reports.tryEmit(done)
     }
 

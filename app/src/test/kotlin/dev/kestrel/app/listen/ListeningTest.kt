@@ -312,7 +312,31 @@ class ListeningTest {
         assertEquals(Work.IDLE, listening.state.value.work)
         assertEquals(Command.Scroll(Direction.DOWN, null), listening.state.value.lastCommand)
         assertEquals(listOf(CommandReport(1, "Scroll", Outcome.DONE)), commandReports)
-        assertEquals(CommandReport(1, "Scroll", Outcome.DONE), listening.lastReport)
+        assertEquals(RecentCommands.Entry(1, "Scroll", Outcome.DONE), listening.recentCommand(1))
+    }
+
+    @Test
+    fun theRecentCommandsAnswerForEachNumberAlsoAfterANewerOne() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            gate.await()
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        assertEquals(RecentCommands.Entry(1, "Scroll", null), listening.recentCommand(1))
+
+        gate.complete(Unit)
+        runCurrent()
+        runner.action = { CommandResult(Outcome.IGNORED) }
+        listening.send(Event.Heard("Go home", named = false))
+        runCurrent()
+
+        // A check of the A71 sessions asks for its own command, number 1, after another utterance started number 2.
+        assertEquals(RecentCommands.Entry(1, "Scroll", Outcome.DONE), listening.recentCommand(1))
+        assertEquals(RecentCommands.Entry(2, "Global", Outcome.IGNORED), listening.recentCommand(2))
+        assertNull(listening.recentCommand(3))
     }
 
     @Test
