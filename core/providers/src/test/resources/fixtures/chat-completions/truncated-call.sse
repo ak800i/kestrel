@@ -1,0 +1,5 @@
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"openai/gpt-oss-120b","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_t","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Cam"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"openai/gpt-oss-120b","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: [DONE]

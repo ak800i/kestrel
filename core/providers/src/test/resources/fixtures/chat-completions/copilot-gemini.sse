@@ -1,0 +1,5 @@
+data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_g1","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Clock\"}"},"extra_content":{"google":{"thought_signature":"c2lnbmF0dXJlLW9uZQ=="}}}]},"finish_reason":null}],"model":"gemini-3.8-flash"}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"model":"gemini-3.8-flash"}
+
+data: [DONE]

@@ -1,0 +1,74 @@
+{
+  "model": "deepseek-v4-pro",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are Kestrel."
+    },
+    {
+      "role": "user",
+      "content": "Hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello.",
+      "reasoning_content": ""
+    },
+    {
+      "role": "user",
+      "content": "Open the camera."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_cam",
+          "type": "function",
+          "function": {
+            "name": "open_app",
+            "arguments": "{\"name\":\"Camera\"}"
+          }
+        }
+      ],
+      "reasoning_content": "The owner wants the camera."
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_cam",
+      "content": "Opened."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "open_app",
+        "description": "Opens an app by its name.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The app's name."
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "max_tokens": 256,
+  "thinking": {
+    "type": "enabled"
+  },
+  "reasoning_effort": "low",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}
