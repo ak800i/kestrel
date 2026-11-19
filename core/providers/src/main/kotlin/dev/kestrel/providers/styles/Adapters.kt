@@ -36,6 +36,16 @@ internal object Wire {
     private val CODE = Regex("^[A-Za-z0-9_.:-]{1,64}$")
     private val LEVELS = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
     private val EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+    // OpenClaw's effort lists (`packages/ai/src/providers/openai-reasoning-effort.ts` at the pinned commit).
+    private val GENERIC_EFFORTS = listOf("low", "medium", "high")
+    private val GPT_5_EFFORTS = listOf("minimal", "low", "medium", "high")
+    private val GPT_51_EFFORTS = listOf("none", "low", "medium", "high")
+    private val GPT_52_EFFORTS = listOf("none", "low", "medium", "high", "xhigh")
+    private val GPT_56_EFFORTS = listOf("none", "low", "medium", "high", "xhigh", "max")
+    private val GPT_6_MANDATORY_EFFORTS = listOf("low", "medium", "high", "xhigh", "max")
+    private val GPT_CODEX_EFFORTS = listOf("low", "medium", "high", "xhigh")
+    private val GPT_PRO_EFFORTS = listOf("medium", "high", "xhigh")
     private val SERVER_CODES = setOf("server_error", "api_error", "overloaded_error", "internal_error", "internal", "unavailable", "service_unavailable")
     private val POLICY_CODES = setOf("permission_error", "billing_error", "permission_denied", "insufficient_quota")
 
@@ -109,7 +119,8 @@ internal object Wire {
     /**
      * The reasoning level that a request gets (design D5), as OpenClaw names it (`minimal` to `max`), or null when the
      * request asks for none, the model does not reason, or the model's only level is `off`. A level that the model's
-     * `thinkingLevels` lacks, or that its `thinkingLevelMap` maps to null, moves to the nearest allowed one, upwards first.
+     * `thinkingLevels` lacks, or that its `thinkingLevelMap` maps to null, moves to the nearest allowed one, downwards
+     * first, as OpenClaw moves an effort.
      */
     fun level(request: ChatRequest, model: ModelEntry, compat: CompatFlags): String? {
         val asked = request.reasoning ?: return null
@@ -120,30 +131,53 @@ internal object Wire {
     }
 
     /**
-     * The provider's effort word for [level] (design D5): the model's `thinkingLevelMap`, then the nearest of its
-     * `supportedReasoningEfforts`, then its `reasoningEffortMap`. Null when the effort would be `none`.
+     * The provider's effort word for [level] (design D5), as OpenClaw's `resolveOpenAIReasoningEffortForModel` chooses
+     * it: the model's `thinkingLevelMap`, then the nearest of the efforts that the model accepts, then its
+     * `reasoningEffortMap`. The model accepts its `supportedReasoningEfforts`; a model without that list accepts OpenClaw's
+     * list for its GPT-5 or GPT-6 family, or else OpenClaw's generic `low`, `medium` and `high` and the efforts that its
+     * `thinkingLevelMap` names, so that `minimal` becomes `low` on DeepSeek and the other rows without a list.
+     * [chatCompletions] says that the request goes to Chat Completions, where OpenClaw gives GPT-5.6 and GPT-6 no `max`.
+     * Null when the effort would be `none`.
      */
-    fun effort(level: String, model: ModelEntry, compat: CompatFlags): String? {
+    fun effort(level: String, model: ModelEntry, compat: CompatFlags, chatCompletions: Boolean = false): String? {
         val mapped = model.thinkingLevelMap[level] ?: level
-        val supported = compat.supportedReasoningEfforts?.filter { it != "none" }
+        if (mapped == "none") return null
+        val declared = compat.supportedReasoningEfforts ?: openAiEfforts(model.id, chatCompletions)
+        val supported = (declared ?: (GENERIC_EFFORTS + model.thinkingLevelMap.values.filterNotNull())).filter { it != "none" }.distinct()
         val chosen = when {
-            mapped == "none" -> return null
-            supported == null || mapped in supported -> mapped
+            mapped in supported -> mapped
             supported.isEmpty() -> return null
             else -> nearest(mapped, supported, EFFORTS)
         }
         return compat.reasoningEffortMap?.get(chosen) ?: chosen
     }
 
+    /** OpenClaw's `resolveOpenAIModelReasoningEfforts` for a model that declares no list: its known GPT families, or null. */
+    private fun openAiEfforts(modelId: String, chatCompletions: Boolean): List<String>? {
+        val id = modelId.trim().lowercase().replace(Regex("-\\d{4}-\\d{2}-\\d{2}$"), "")
+        val max = !chatCompletions
+        return when {
+            id == "gpt-6-astra" || id == "gpt-6.1-sol" -> if (max) GPT_6_MANDATORY_EFFORTS else GPT_CODEX_EFFORTS
+            id == "gpt-6-sol" || id == "gpt-6-luna" || Regex("^gpt-5\\.6(?:-|$)").containsMatchIn(id) -> if (max) GPT_56_EFFORTS else GPT_52_EFFORTS
+            id == "gpt-5.1-codex-mini" -> listOf("medium")
+            id == "gpt-5.1-codex-max" -> listOf("none", "medium", "high", "xhigh")
+            Regex("^gpt-5(?:\\.\\d+)?-codex(?:-|$)").containsMatchIn(id) -> GPT_CODEX_EFFORTS
+            id == "gpt-5-pro" -> listOf("high")
+            Regex("^gpt-5\\.[2-9](?:\\.\\d+)?-pro(?:-|$)").containsMatchIn(id) -> GPT_PRO_EFFORTS
+            Regex("^gpt-5\\.[2-9](?:\\.\\d+)?(?:-|$)").containsMatchIn(id) -> GPT_52_EFFORTS
+            Regex("^gpt-5\\.1(?:-|$)").containsMatchIn(id) -> GPT_51_EFFORTS
+            Regex("^gpt-5(?:-|$)").containsMatchIn(id) -> GPT_5_EFFORTS
+            else -> null
+        }
+    }
+
+    /** As OpenClaw moves an effort: the highest allowed one at or below [wanted], or else the lowest allowed one. */
     private fun nearest(wanted: String, allowed: List<String>, order: List<String>): String {
         if (wanted in allowed) return wanted
         val index = order.indexOf(wanted)
         if (index < 0) return allowed.first()
-        for (step in 1 until order.size) {
-            order.getOrNull(index + step)?.takeIf { it in allowed }?.let { return it }
-            order.getOrNull(index - step)?.takeIf { it in allowed }?.let { return it }
-        }
-        return allowed.first()
+        val ranked = order.filter { it in allowed }
+        return ranked.lastOrNull { order.indexOf(it) <= index } ?: ranked.firstOrNull() ?: allowed.first()
     }
 
     /**
@@ -196,15 +230,35 @@ internal object Wire {
 }
 
 /**
+ * Counts what one reply gathers from a stream: its text, its reasoning and its tool calls' arguments together. Above
+ * [MAX_CHARS] (8 Mi characters, as ProviderHttp's limit of 8 MiB for one body or event) the reply is Malformed, so that
+ * a stream of many small events cannot use up the app's memory.
+ */
+internal class GatherLimit {
+    private var total = 0L
+
+    fun add(chars: Int) {
+        total += chars
+        if (total > MAX_CHARS) throw ProviderException(ProviderError.Malformed)
+    }
+
+    companion object {
+        const val MAX_CHARS = 8L * 1024 * 1024
+    }
+}
+
+/**
  * Gathers one assistant reply in the order that the provider gave its parts, checks each tool call against the request
  * (design D3), and builds the [ChatResponse]. A call to a tool that the request does not have, or whose arguments are no
  * JSON object, is left out of the message and reported as [InvalidToolCall] with its raw arguments as text. A call whose
- * ID is blank or repeats an earlier call's ID of the same reply gets a fresh `call_<n>`.
+ * ID is blank or repeats an earlier call's ID of the same reply gets a fresh `call_<n>`, numbered after the `call_<n>`
+ * IDs of the request's history, so that a task's history never repeats one; an ID that the provider sent is kept.
  */
 internal class ReplyBuilder(request: ChatRequest) {
     private val parts = mutableListOf<AssistantPart>()
     private var invalid: InvalidToolCall? = null
     private val tools = request.tools.map { it.name }.toSet()
+    private val firstFresh = Wire.nextSyntheticNumber(request, "call_")
     var replyChars = 0
         private set
 
@@ -221,22 +275,25 @@ internal class ReplyBuilder(request: ChatRequest) {
         parts += AssistantPart.Reasoning(state)
     }
 
-    /** A call whose arguments came as text, as in Chat Completions and Responses; a blank text means no arguments. */
-    fun call(id: String, name: String, arguments: String) {
+    /**
+     * A call whose arguments came as text, as in Chat Completions and Responses; a blank text means no arguments. Returns
+     * the call's final ID, or null when the call is left out.
+     */
+    fun call(id: String, name: String, arguments: String): String? {
         replyChars += name.length + arguments.length
         val parsed = if (arguments.isBlank()) JsonObject(emptyMap()) else try {
             Wire.json.parseToJsonElement(arguments)
         } catch (e: SerializationException) {
             null
         }
-        add(id, name, parsed, arguments)
+        return add(id, name, parsed, arguments)
     }
 
-    /** A call whose arguments came as JSON, as in Anthropic Messages, Gemini, Bedrock and Ollama. */
-    fun call(id: String, name: String, arguments: JsonElement?) {
+    /** A call whose arguments came as JSON, as in Anthropic Messages, Gemini, Bedrock and Ollama; returns as the other. */
+    fun call(id: String, name: String, arguments: JsonElement?): String? {
         val text = arguments?.toString().orEmpty()
         replyChars += name.length + text.length
-        add(id, name, arguments ?: JsonObject(emptyMap()), text)
+        return add(id, name, arguments ?: JsonObject(emptyMap()), text)
     }
 
     /** A call that the provider itself reports as unusable, such as Gemini's MALFORMED_FUNCTION_CALL. */
@@ -244,19 +301,20 @@ internal class ReplyBuilder(request: ChatRequest) {
         invalid = invalid ?: InvalidToolCall(kind, raw)
     }
 
-    private fun add(id: String, name: String, arguments: JsonElement?, raw: String) {
+    private fun add(id: String, name: String, arguments: JsonElement?, raw: String): String? {
         when {
             name !in tools -> invalid = invalid ?: InvalidToolCall(InvalidKind.UNKNOWN_TOOL, raw)
             arguments !is JsonObject -> invalid = invalid ?: InvalidToolCall(InvalidKind.ARGUMENTS_NOT_OBJECT, raw)
-            else -> parts += AssistantPart.ToolCall(unique(id), name, arguments)
+            else -> return unique(id).also { parts += AssistantPart.ToolCall(it, name, arguments) }
         }
+        return null
     }
 
     /** A blank or repeated ID gets a fresh one, because the next request needs one result per ID (design D3). */
     private fun unique(id: String): String {
         val taken = parts.filterIsInstance<AssistantPart.ToolCall>().map { it.id }.toSet()
         if (id.isNotBlank() && id !in taken) return id
-        var n = taken.size + 1
+        var n = maxOf(taken.size + 1, firstFresh)
         while ("call_$n" in taken) n++
         return "call_$n"
     }

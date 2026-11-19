@@ -4,6 +4,7 @@ import dev.kestrel.providers.catalog.CompatFlags
 import dev.kestrel.providers.catalog.ModelEntry
 import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatMessage
+import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.ImageType
 import dev.kestrel.providers.chat.InvalidKind
 import dev.kestrel.providers.chat.Part
@@ -266,5 +267,168 @@ class ChatCompletionsAdapterTest {
         assertTrue(ChatCompletionsAdapter.replaysReasoning("moonshotai/kimi-k3-free"))
         assertTrue(ChatCompletionsAdapter.replaysReasoning("deepseek-v4-pro:cloud"))
         assertFalse(ChatCompletionsAdapter.replaysReasoning("gpt-5.5"))
+    }
+
+    @Test
+    fun eachThinkingFormatPutsTheLevelIntoItsOwnFields() = runBlocking {
+        val cases = listOf(
+            target("openrouter", RequestStyle.CHAT_COMPLETIONS, "https://openrouter.ai/api/v1", ModelEntry("z-ai/glm-5", "GLM 5", reasoning = true)) to
+                """{"reasoning":{"effort":"high"}}""",
+            target("zai", RequestStyle.CHAT_COMPLETIONS, "https://api.z.ai/api/paas/v4", ModelEntry("glm-5", "GLM 5", reasoning = true)) to
+                """{"thinking":{"type":"enabled","clear_thinking":false}}""",
+            target(
+                "qwen", RequestStyle.CHAT_COMPLETIONS, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                ModelEntry("qwen3.6-plus", "Qwen 3.6 Plus", reasoning = true, compat = CompatFlags(thinkingFormat = "qwen")),
+            ) to """{"enable_thinking":true}""",
+            target(
+                "vllm", RequestStyle.CHAT_COMPLETIONS, "http://127.0.0.1:8000/v1",
+                ModelEntry("Qwen/Qwen3.6", "Qwen 3.6", reasoning = true, compat = CompatFlags(thinkingFormat = "qwen-chat-template", supportedReasoningEfforts = listOf("low", "medium", "high"))),
+            ) to """{"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"high"}}""",
+            target("together", RequestStyle.CHAT_COMPLETIONS, "https://api.together.xyz/v1", ModelEntry("moonshotai/Kimi-K3", "Kimi K3", reasoning = true)) to
+                """{"reasoning":{"enabled":true}}""",
+            target(
+                "groq", RequestStyle.CHAT_COMPLETIONS, "https://api.groq.com/openai/v1",
+                ModelEntry("openai/gpt-oss-120b", "GPT OSS 120B", reasoning = true, compat = CompatFlags(supportedReasoningEfforts = listOf("low", "medium", "high"))),
+            ) to """{"reasoning_effort":"high"}""",
+        )
+        val fields = listOf("reasoning", "reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs")
+
+        for ((target, expected) in cases) {
+            bench.reply("chat-completions/text.sse")
+            adapter.complete(request(user("Hi")) { copy(reasoning = ReasoningLevel.HIGH) }, target)
+            val body = bench.body(bench.take())
+            assertEquals(target.providerId, json(expected), JsonObject(body.filterKeys { it in fields }))
+        }
+    }
+
+    @Test
+    fun withToolsGpt56GetsNoReasoningOnOpenAisAndAzuresEndpoints() = runBlocking {
+        repeat(4) { bench.reply("chat-completions/text.sse") }
+        val gpt56 = ModelEntry("gpt-5.6-sol", "GPT-5.6 Sol", reasoning = true)
+        val azure = target("azure-openai", RequestStyle.CHAT_COMPLETIONS, "https://kestrel.openai.azure.com/openai/v1", gpt56)
+        val high: ChatRequest.() -> ChatRequest = { copy(reasoning = ReasoningLevel.HIGH) }
+
+        adapter.complete(request(user("Hi"), block = high), openAi.copy(model = gpt56, sentModelId = gpt56.id))
+        adapter.complete(request(user("Hi"), tools = emptyList(), block = high), openAi.copy(model = gpt56, sentModelId = gpt56.id))
+        adapter.complete(request(user("Hi"), block = high), azure)
+        adapter.complete(request(user("Hi"), block = high), azure.copy(model = ModelEntry("gpt-5.4-mini", "GPT-5.4 mini", reasoning = true), sentModelId = "gpt-5.4-mini"))
+
+        assertEquals(JsonPrimitive("none"), bench.body(bench.take())["reasoning_effort"])
+        assertEquals(JsonPrimitive("high"), bench.body(bench.take())["reasoning_effort"])
+        assertEquals(JsonPrimitive("none"), bench.body(bench.take())["reasoning_effort"])
+        assertNull(bench.body(bench.take())["reasoning_effort"])
+    }
+
+    @Test
+    fun theCompatFlagsShapeTheMessages() = runBlocking {
+        bench.reply("chat-completions/text.sse")
+        bench.reply("chat-completions/text.sse")
+        val flags = CompatFlags(cacheControlFormat = "anthropic", requiresToolResultName = true, requiresAssistantAfterToolResult = true, requiresStringContent = true)
+        val strict = target("vllm", RequestStyle.CHAT_COMPLETIONS, "http://127.0.0.1:8000/v1", ModelEntry("local-model", "Local model", compat = flags))
+        val history = request(
+            ChatMessage.User(listOf(Part.Text("What is on the screen?"), Part.Image(ImageType.PNG, SCREENSHOT))),
+            ChatMessage.Assistant(listOf(AssistantPart.ToolCall("call_1", "open_app", obj("""{"name":"Camera"}""")))),
+            ChatMessage.ToolResult("call_1", "open_app", "Opened."),
+            user("Next."),
+        )
+
+        adapter.complete(history, strict)
+        adapter.complete(history, strict.copy(model = strict.model.copy(compat = CompatFlags(supportsTools = false))))
+
+        assertEquals(
+            json(
+                """[{"role":"system","content":[{"type":"text","text":"You are Kestrel.","cache_control":{"type":"ephemeral"}}]},
+                {"role":"user","content":"What is on the screen?"},
+                {"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Camera\"}"}}]},
+                {"role":"tool","tool_call_id":"call_1","name":"open_app","content":"Opened."},
+                {"role":"assistant","content":"OK."},
+                {"role":"user","content":"Next."}]""",
+            ),
+            bench.body(bench.take())["messages"],
+        )
+        // A model without tools gets the history as text.
+        val withoutTools = bench.body(bench.take())
+        assertNull(withoutTools["tools"])
+        assertEquals(
+            json(
+                """[{"role":"system","content":"You are Kestrel."},
+                {"role":"user","content":[{"type":"text","text":"What is on the screen?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]},
+                {"role":"assistant","content":"[tool call id=call_1 name=open_app] {\"name\":\"Camera\"}"},
+                {"role":"user","content":"[tool result id=call_1 name=open_app] Opened."},
+                {"role":"user","content":"Next."}]""",
+            ),
+            withoutTools["messages"],
+        )
+    }
+
+    @Test
+    fun madeUpCallIdsComeAfterThoseOfTheHistoryAndTheProvidersIdsAreKept() = runBlocking {
+        bench.status(200, """{"choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Clock\"}"}},{"type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Alarm\"}"}}]},"finish_reason":"tool_calls"}]}""")
+        bench.status(200, """{"choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Clock\"}"}},{"index":1,"id":"call_x","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Alarm\"}"}}]},"finish_reason":"tool_calls"}]}""")
+        val history = request(
+            user("Open the camera."),
+            ChatMessage.Assistant(listOf(AssistantPart.ToolCall("call_4", "open_app", obj("""{"name":"Camera"}""")))),
+            ChatMessage.ToolResult("call_4", "open_app", "Opened."),
+            user("Now the clock and the alarm."),
+        )
+        val plain = gptOss.copy(options = StyleOptions(stream = false))
+
+        val madeUp = adapter.complete(history, plain)
+        val repeated = adapter.complete(history, plain)
+
+        assertEquals(listOf("call_5", "call_6"), madeUp.message.toolCalls.map { it.id })
+        assertEquals(listOf("call_x", "call_5"), repeated.message.toolCalls.map { it.id })
+    }
+
+    @Test
+    fun aThoughtSignatureIsKeptUnderTheCallsFinalId() = runBlocking {
+        bench.status(200, """{"choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Camera\"}"},"extra_content":{"google":{"thought_signature":"c2lnLWE="}}},{"index":1,"id":"call_x","type":"function","function":{"name":"open_app","arguments":"{\"name\":\"Clock\"}"},"extra_content":{"google":{"thought_signature":"c2lnLWI="}}}]},"finish_reason":"tool_calls"}]}""")
+        bench.reply("chat-completions/deepseek-text.sse")
+        val plain = gptOss.copy(options = StyleOptions(stream = false))
+
+        val first = adapter.complete(request(user("Open the camera and the clock.")), plain)
+        val next = request(
+            user("Open the camera and the clock."),
+            first.message,
+            ChatMessage.ToolResult("call_x", "open_app", "Opened."),
+            ChatMessage.ToolResult("call_2", "open_app", "Not run: Kestrel runs one action per step", failed = true),
+        )
+        adapter.complete(next, gptOss)
+
+        assertEquals(listOf("call_x", "call_2"), first.message.toolCalls.map { it.id })
+        val signatures = first.message.parts.filterIsInstance<AssistantPart.Reasoning>().single().state.payload as JsonObject
+        assertEquals(json("""{"call_x":"c2lnLWE=","call_2":"c2lnLWI="}"""), signatures["thoughtSignatures"])
+        bench.take()
+        val replayed = bench.body(bench.take())["messages"]!!.jsonArray[2].jsonObject["tool_calls"]!!.jsonArray[1].jsonObject
+        assertEquals(json("""{"google":{"thought_signature":"c2lnLWI="}}"""), replayed["extra_content"])
+    }
+
+    @Test
+    fun aBlankFinishReasonDoesNotEndTheStream() {
+        bench.status(200, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"},\"finish_reason\":\"\"}]}\n\n", "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), gptOss))
+    }
+
+    @Test
+    fun aStreamThatGathersMoreThan8MiBIsMalformed() {
+        val piece = "a".repeat(512 * 1024)
+        val events = (1..17).joinToString("") { "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"$piece\"}}]}\n\n" } + "data: [DONE]\n\n"
+        bench.status(200, events, "Content-Type" to "text/event-stream")
+
+        assertEquals(ProviderError.Malformed, errorOf(adapter, request(user("Hi")), gptOss))
+    }
+
+    @Test
+    fun openRoutersReasoningTextGoesBackAsReasoning() = runBlocking {
+        bench.reply("chat-completions/text.sse")
+        val glm = target("openrouter", RequestStyle.CHAT_COMPLETIONS, "https://openrouter.ai/api/v1", ModelEntry("z-ai/glm-5", "GLM 5", reasoning = true))
+        val thought = ReasoningState(RequestStyle.CHAT_COMPLETIONS, "openrouter", "z-ai/glm-5", obj("""{"field":"reasoning_text","text":"Say hello."}"""))
+
+        adapter.complete(request(user("Hi"), ChatMessage.Assistant(listOf(AssistantPart.Reasoning(thought), AssistantPart.Text("Hello."))), user("Again.")), glm)
+
+        val assistant = bench.body(bench.take())["messages"]!!.jsonArray[2].jsonObject
+        assertEquals(JsonPrimitive("Say hello."), assistant["reasoning"])
+        assertNull(assistant["reasoning_text"])
     }
 }

@@ -133,7 +133,7 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
     /** Design D5: the level goes into the field that the model's thinking format names. */
     private fun JsonObjectBuilder.reasoning(request: ChatRequest, target: ModelTarget, compat: CompatFlags) {
         val level = Wire.level(request, target.model, compat) ?: return
-        val effort = Wire.effort(level, target.model, compat)
+        val effort = Wire.effort(level, target.model, compat, chatCompletions = true)
         val scalar = effort != null && compat.supportsReasoningEffort == true
         when (compat.thinkingFormat) {
             "openrouter" -> if (effort != null) putJsonObject("reasoning") { put("effort", effort) }
@@ -255,9 +255,17 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
         val reasoning = states.mapNotNull { it.payload as? JsonObject }.firstOrNull { it.str("text") != null }
             ?.takeIf { keepsReasoning(compat, target) }
         val required = compat.requiresReasoningContentOnAssistantMessages == true
-        when {
-            reasoning != null -> put(if (required) "reasoning_content" else reasoning.str("field") ?: "reasoning_content", reasoning.str("text"))
-            required -> put("reasoning_content", "")
+        if (reasoning != null) {
+            val field = reasoning.str("field") ?: "reasoning_content"
+            // OpenClaw's sanitizeOpenRouterReasoningReplayFields sends OpenRouter's `reasoning_text` back as `reasoning`.
+            val name = when {
+                required -> "reasoning_content"
+                compat.thinkingFormat == "openrouter" && field == "reasoning_text" -> "reasoning"
+                else -> field
+            }
+            put(name, reasoning.str("text"))
+        } else if (required) {
+            put("reasoning_content", "")
         }
     }
 
@@ -289,6 +297,7 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
         private var usage: JsonObject? = null
         private var modelId: String? = null
         private var lastKey = 0
+        private val limit = GatherLimit()
         var done = false
 
         fun chunk(chunk: JsonObject, key: String) {
@@ -302,13 +311,18 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
             val choice = chunk.arr("choices").objects().firstOrNull() ?: return
             // OpenClaw: some compatible providers attach the usage to the choice instead of the chunk.
             choice.obj("usage")?.let { usage = it }
-            choice.str("finish_reason")?.let { finishReason = it }
+            choice.str("finish_reason")?.takeIf { it.isNotBlank() }?.let { finishReason = it }
             val delta = choice.obj(key) ?: return
-            delta.str("content")?.let { text.append(it) }
+            delta.str("content")?.let {
+                limit.add(it.length)
+                text.append(it)
+            }
             // One field per delta: a server that fills two of them with the same text would double it.
             REASONING_FIELDS.firstOrNull { !delta.str(it).isNullOrEmpty() }?.let { field ->
                 if (reasoningField == null) reasoningField = field
-                reasoning.append(delta.str(field))
+                val piece = delta.str(field).orEmpty()
+                limit.add(piece.length)
+                reasoning.append(piece)
             }
             delta.arr("tool_calls").objects().forEachIndexed { position, piece ->
                 val id = piece.str("id")?.takeIf { it.isNotEmpty() }
@@ -322,7 +336,10 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
                 if (id != null && call.id.isEmpty()) call.id = id
                 piece.obj("function")?.let { function ->
                     function.str("name")?.let { if (call.name.isEmpty()) call.name = it }
-                    function.str("arguments")?.let { call.arguments.append(it) }
+                    function.str("arguments")?.let {
+                        limit.add(it.length)
+                        call.arguments.append(it)
+                    }
                 }
                 // OpenClaw's extractToolCallThoughtSignature reads these three places.
                 (piece.obj("extra_content")?.obj("google")?.str("thought_signature")
@@ -343,9 +360,10 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
             }
             reply.text(text.toString())
             val signatures = linkedMapOf<String, String>()
-            calls.values.forEachIndexed { index, call ->
-                val id = call.id.ifEmpty { "call_$index" }
-                reply.call(id, call.name, call.arguments.toString())
+            for (call in calls.values) {
+                // ReplyBuilder makes up an ID for a call without one and may rename a repeated one: the signature goes
+                // under the final ID, so that it is found when the call is replayed.
+                val id = reply.call(call.id, call.name, call.arguments.toString()) ?: continue
                 call.signature?.let { signatures[id] = it }
             }
             if (signatures.isNotEmpty()) {
