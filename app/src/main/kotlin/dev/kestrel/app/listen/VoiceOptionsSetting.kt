@@ -49,6 +49,34 @@ data class KokoroSpeed(val model: String = "", val installed: Long = 0L, val fac
     fun tooSlow(model: String, installed: Long): Float? = factor.takeIf { measures(model, installed) && it > 1f }
 }
 
+/**
+ * Whether storing [chosen] over [stored] forgets Kokoro's stored speed (plan 2E): choosing Kokoro, also with a tap on its
+ * row while it is chosen, forgets it, so that Kokoro's next start measures it again; "Slower" and "Faster" change only the
+ * speed and keep the measure.
+ */
+internal fun forgetsKokoroSpeed(stored: VoiceOptionsSetting, chosen: VoiceOptionsSetting): Boolean =
+    chosen.voice == VoiceChoice.KOKORO && (stored.voice != VoiceChoice.KOKORO || chosen == stored)
+
+/**
+ * Whether [kokoro] is too slow on this phone (design spec, sections 5.3 and 8.2): from [stored] when it is the measure of
+ * [model] in the install of [installed]; otherwise [measure] measures the real-time factor, [store] keeps it, and the
+ * answer is whether it is above 1.
+ */
+internal suspend fun measuredTooSlow(
+    kokoro: Synthesizer,
+    model: String,
+    installed: Long,
+    stored: suspend () -> KokoroSpeed,
+    store: suspend (KokoroSpeed) -> Unit,
+    measure: suspend (Synthesizer) -> Float,
+): Boolean {
+    val known = stored()
+    if (known.measures(model, installed)) return known.factor > 1f
+    val factor = measure(kokoro)
+    store(KokoroSpeed(model, installed, factor))
+    return factor > 1f
+}
+
 /** About 5 s of speech without a keyword or a command, for the measure of Kokoro's speed. */
 internal const val SPEED_SAMPLE = "The weather tomorrow will be mild, with a light wind from the west in the afternoon."
 
@@ -91,8 +119,8 @@ internal class LoadedVoice(
  * fails silently (section 14). Kokoro speaks more slowly than real time on some phones (plan 2E): when [knownTooSlow]
  * says that this phone's stored measure found that, Piper speaks without loading Kokoro at all; otherwise, when
  * [tooSlow] measures the loaded Kokoro voice as too slow, Kestrel closes it, and Piper speaks too. A Kokoro that says
- * nothing in the measure counts as not loaded; any other failure of the measure is reported, and Kokoro speaks. A failure
- * of the Piper voice still throws, such as [ModelsNotReadyException].
+ * nothing in the measure counts as not loaded; any other failure of the measure is reported, and Kokoro speaks, while an
+ * [Error] closes Kokoro and is thrown. A failure of the Piper voice still throws, such as [ModelsNotReadyException].
  */
 internal suspend fun loadChosenVoice(
     chosen: VoiceOptionsSetting,
@@ -134,6 +162,10 @@ internal suspend fun loadChosenVoice(
     } catch (e: Exception) {
         report("Measuring the Kokoro voice", e)
         false
+    } catch (e: Throwable) {
+        // An Error, such as running out of memory: the session's clean-up does not know this voice yet.
+        kokoro.close()
+        throw e
     }
     if (!slow) return LoadedVoice(kokoro, options)
     kokoro.close()

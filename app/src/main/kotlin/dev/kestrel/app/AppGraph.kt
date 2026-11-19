@@ -39,6 +39,7 @@ import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.loadStoredVoice
+import dev.kestrel.app.listen.measuredTooSlow
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.listen.realTimeFactor
 import dev.kestrel.app.orchestrator.Mode
@@ -69,6 +70,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -159,6 +161,16 @@ class AppGraph(context: Context) {
      */
     val kokoroFailed: StateFlow<Boolean> = kokoroFallback.asStateFlow()
 
+    /**
+     * Whether the voice session that opened last speaks with Piper because Kokoro is too slow on this phone (plan 2E):
+     * each open sets it, and it counts only while that session is open ([Listening.sessionOpen]), so that "Try it" with
+     * Kokoro loads no second Kokoro beside it, also after a tap on Kokoro forgot the stored measure.
+     */
+    private val kokoroSlowSession = MutableStateFlow(false)
+
+    /** Whether a voice session is open that speaks with Piper because Kokoro is too slow on this phone (plan 2E). */
+    internal fun sessionSpeaksPiperForSlowKokoro(): Boolean = listening.sessionOpen.value && kokoroSlowSession.value
+
     /** Kestrel's notifications about problems (design spec, section 14.6). */
     internal val problems: ProblemNotifications by lazy { ProblemNotifications(appContext) }
 
@@ -237,7 +249,10 @@ class AppGraph(context: Context) {
                                     reportFailure,
                                     ::kokoroKnownTooSlow,
                                     ::kokoroTooSlow,
-                                ) { voice.synthesizer(it) }.also { kokoroFallback.value = it.fellBack }
+                                ) { voice.synthesizer(it) }.also {
+                                    kokoroFallback.value = it.fellBack
+                                    kokoroSlowSession.value = it.slow
+                                }
                             },
                         )
                     }
@@ -334,29 +349,42 @@ class AppGraph(context: Context) {
         )
     }
 
-    /** When Kestrel was installed or last updated: a measure of Kokoro's speed belongs to one install (plan 2E). */
+    /**
+     * When Kestrel was installed or last updated: a measure of Kokoro's speed belongs to one install (plan 2E). Its first
+     * read is a binder call, so the callers read it on Dispatchers.IO, never on the main thread or Listening's thread.
+     */
     internal val installedAt: Long by lazy {
         appContext.packageManager
             .getPackageInfo(appContext.packageName, PackageManager.PackageInfoFlags.of(0))
             .lastUpdateTime
     }
 
-    /** Whether this phone's stored measure says that Kokoro is too slow, so that Piper speaks without loading Kokoro. */
-    internal suspend fun kokoroKnownTooSlow(): Boolean =
-        settings.get(SettingKeys.KOKORO_SPEED).tooSlow(voice.kokoroModel, installedAt) != null
+    /**
+     * Whether this phone's stored measure says that Kokoro is too slow, so that Piper speaks without loading Kokoro. It
+     * reads [installedAt] on Dispatchers.IO.
+     */
+    private suspend fun kokoroKnownTooSlow(): Boolean {
+        val installed = withContext(Dispatchers.IO) { installedAt }
+        return settings.get(SettingKeys.KOKORO_SPEED).tooSlow(voice.kokoroModel, installed) != null
+    }
 
     /**
      * Whether Kokoro speaks more slowly than real time on this phone (design spec, sections 5.3 and 8.2): measured once for
      * each Kokoro model and install of Kestrel, when Kokoro first loads for a voice session, and stored. The measure
-     * synthesizes a short sentence and then one of about 5 s, which takes about 10 s on the A71 with the fp32 model, on
-     * the thread that opens the session, so it delays that session's start once.
+     * synthesizes a short sentence and then one of about 5 s, which takes about 10 s on the A71 with the fp32 model, so it
+     * delays that session's start once. It reads [installedAt] on Dispatchers.IO and measures on Dispatchers.Default,
+     * because the session opens on Listening's thread, which must stay free for the Orchestrator's events (plan 2E). A
+     * cancellation of the open still reaches loadChosenVoice, which closes Kokoro.
      */
     private suspend fun kokoroTooSlow(kokoro: Synthesizer): Boolean {
-        val stored = settings.get(SettingKeys.KOKORO_SPEED)
-        if (stored.measures(voice.kokoroModel, installedAt)) return stored.factor > 1f
-        val factor = realTimeFactor(kokoro, SystemClock::elapsedRealtime)
-        settings.set(SettingKeys.KOKORO_SPEED, KokoroSpeed(voice.kokoroModel, installedAt, factor))
-        return factor > 1f
+        val installed = withContext(Dispatchers.IO) { installedAt }
+        return measuredTooSlow(
+            kokoro,
+            voice.kokoroModel,
+            installed,
+            stored = { settings.get(SettingKeys.KOKORO_SPEED) },
+            store = { settings.set(SettingKeys.KOKORO_SPEED, it) },
+        ) { withContext(Dispatchers.Default) { realTimeFactor(it, SystemClock::elapsedRealtime) } }
     }
 
     internal fun attachScreen(session: ScreenSession) {

@@ -8,6 +8,7 @@ import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.VoiceOptionsSetting
+import dev.kestrel.app.listen.forgetsKokoroSpeed
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -96,8 +98,7 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override suspend fun setVoiceOptions(options: VoiceOptionsSetting) = write {
         // Plan 2E: choosing Kokoro, also with a tap on its row while it is chosen, forgets its stored speed, so that its
         // next start measures it again. "Slower" and "Faster" change the speed and keep the measure.
-        val stored = graph.settings.get(SettingKeys.VOICE)
-        if (options.voice == VoiceChoice.KOKORO && (stored.voice != VoiceChoice.KOKORO || options == stored)) {
+        if (forgetsKokoroSpeed(graph.settings.get(SettingKeys.VOICE), options)) {
             graph.settings.set(SettingKeys.KOKORO_SPEED, KokoroSpeed())
         }
         graph.settings.set(SettingKeys.VOICE, options)
@@ -111,8 +112,8 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
         val sample = context.getString(R.string.voice_sample)
         val spoke = graph.listening.speakWithSessionVoice(options.options(), sample) ?: run {
             // Plan 2E: where Kokoro is too slow, the open session speaks with Piper, and a second Kokoro beside it would
-            // load several hundred MB.
-            if (options.voice == VoiceChoice.KOKORO && graph.listening.sessionOpen.value && graph.kokoroKnownTooSlow()) {
+            // load several hundred MB. The session's own reason counts, because a tap on Kokoro forgets the stored measure.
+            if (options.voice == VoiceChoice.KOKORO && graph.sessionSpeaksPiperForSlowKokoro()) {
                 throw KokoroTooSlowException()
             }
             null
@@ -133,8 +134,11 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
 
     override val kokoroFailed: Flow<Boolean> = graph.kokoroFailed
 
+    // installedAt's first read is a binder call, so the page's collector does not make it on the main thread.
     override val kokoroSlow: Flow<Float?> =
-        graph.settings.observe(SettingKeys.KOKORO_SPEED).map { it.tooSlow(graph.voice.kokoroModel, graph.installedAt) }
+        graph.settings.observe(SettingKeys.KOKORO_SPEED)
+            .map { it.tooSlow(graph.voice.kokoroModel, graph.installedAt) }
+            .flowOn(Dispatchers.IO)
 
     override val listening: Flow<ListeningOptions> = graph.settings.observe(SettingKeys.LISTENING_OPTIONS)
 

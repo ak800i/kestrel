@@ -5,6 +5,7 @@ import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.models.Engine
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -198,6 +199,69 @@ class VoiceOptionsSettingTest {
         assertNull(stored.tooSlow("tts-kokoro/model.onnx", 6L))
         assertNull(KokoroSpeed("tts-kokoro/model.onnx", 5L, 0.7f).tooSlow("tts-kokoro/model.onnx", 5L))
         assertTrue(KokoroSpeed("tts-kokoro/model.onnx", 5L, 0.7f).measures("tts-kokoro/model.onnx", 5L))
+    }
+
+    @Test
+    fun anErrorFromTheMeasureClosesKokoroAndIsThrown() {
+        val kokoro = FakeVoice()
+        val reports = mutableListOf<String>()
+
+        assertThrows(OutOfMemoryError::class.java) {
+            runBlocking {
+                loadChosenVoice(
+                    VoiceOptionsSetting(VoiceChoice.KOKORO),
+                    report = { what, _ -> reports += what },
+                    tooSlow = { throw OutOfMemoryError("The phone ran out of memory") },
+                ) { kokoro }
+            }
+        }
+
+        // The session's clean-up does not know the voice yet, so the measure closes it.
+        assertTrue(kokoro.closed)
+        assertEquals(emptyList<String>(), reports)
+    }
+
+    @Test
+    fun aTapOnKokoroForgetsItsSpeedAndSlowerOrFasterKeepIt() {
+        val kokoro = VoiceOptionsSetting(VoiceChoice.KOKORO, speed = 1.1f)
+        val piper = VoiceOptionsSetting(VoiceChoice.PIPER, speed = 1.1f)
+
+        // Choosing Kokoro, and a tap on Kokoro while it is chosen, which stores the same options again.
+        assertTrue(forgetsKokoroSpeed(stored = piper, chosen = kokoro))
+        assertTrue(forgetsKokoroSpeed(stored = kokoro, chosen = kokoro))
+        // "Slower" and "Faster" with Kokoro, and every choice of Piper.
+        assertFalse(forgetsKokoroSpeed(stored = kokoro, chosen = kokoro.slower()))
+        assertFalse(forgetsKokoroSpeed(stored = kokoro, chosen = kokoro.faster()))
+        assertFalse(forgetsKokoroSpeed(stored = kokoro, chosen = piper))
+        assertFalse(forgetsKokoroSpeed(stored = piper, chosen = piper.faster()))
+    }
+
+    @Test
+    fun theFirstMeasureOfAModelAndInstallIsStoredAndLaterOnesReadIt() = runTest {
+        val stored = mutableListOf<KokoroSpeed>()
+        var measures = 0
+
+        suspend fun tooSlow(known: KokoroSpeed, installed: Long, factor: Float) = measuredTooSlow(
+            FakeVoice(),
+            "tts-kokoro/model.onnx",
+            installed,
+            stored = { known },
+            store = { stored += it },
+        ) {
+            measures++
+            factor
+        }
+
+        assertTrue(tooSlow(KokoroSpeed(), installed = 5L, factor = 1.8f))
+        assertEquals(listOf(KokoroSpeed("tts-kokoro/model.onnx", 5L, 1.8f)), stored)
+        // The stored measure of this model and install answers without a second measure.
+        assertTrue(tooSlow(stored.last(), installed = 5L, factor = 0.5f))
+        assertFalse(tooSlow(KokoroSpeed("tts-kokoro/model.onnx", 5L, 0.7f), installed = 5L, factor = 1.8f))
+        assertEquals(1, measures)
+        // After an update, Kestrel measures again and stores the new factor.
+        assertFalse(tooSlow(stored.last(), installed = 6L, factor = 0.7f))
+        assertEquals(KokoroSpeed("tts-kokoro/model.onnx", 6L, 0.7f), stored.last())
+        assertEquals(2, measures)
     }
 
     @Test
