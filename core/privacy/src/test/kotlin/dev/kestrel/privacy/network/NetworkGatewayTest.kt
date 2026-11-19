@@ -7,7 +7,9 @@ import mockwebserver3.MockWebServer
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -128,5 +130,25 @@ class NetworkGatewayTest {
         val event = events.single()
         assertEquals(NetworkOutcome.FAILED, event.outcome)
         assertEquals("ConnectException", event.detail)
+    }
+
+    @Test
+    fun aCallThatAnUncheckedExceptionEndsWithoutAStatusIsLoggedAsFailed() {
+        policy.setLocalServers(listOf("127.0.0.1"))
+        // OkHttp asks for the length before it connects; an unchecked exception ends the call in callEnd, not callFailed.
+        val body = object : RequestBody() {
+            override fun contentType() = null
+
+            override fun contentLength(): Long = throw IllegalStateException("test")
+
+            override fun writeTo(sink: BufferedSink) = Unit
+        }
+
+        assertThrows(IllegalStateException::class.java) { execute(Request.Builder().url(serverUrl("/v1/chat")).post(body).build()) }
+
+        val event = events.single()
+        assertEquals(NetworkOutcome.FAILED, event.outcome)
+        assertEquals(null, event.status)
+        assertEquals(0, server.requestCount)
     }
 }

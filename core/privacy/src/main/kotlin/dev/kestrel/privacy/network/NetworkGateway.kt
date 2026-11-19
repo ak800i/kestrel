@@ -73,7 +73,9 @@ private class NetworkLogListener(private val record: (NetworkEvent) -> Unit) : E
         responseBytes += byteCount
     }
 
-    override fun callEnd(call: Call) = write(call, NetworkOutcome.COMPLETED, detail = null)
+    // An unchecked exception ends a call in callEnd, not callFailed; without a status, nothing completed.
+    override fun callEnd(call: Call) =
+        write(call, if (status == null) NetworkOutcome.FAILED else NetworkOutcome.COMPLETED, detail = null)
 
     override fun callFailed(call: Call, ioe: IOException) {
         val blocked = ioe is BlockedRequestException

@@ -20,6 +20,8 @@ class HostsTest {
             Triple("fd12::1", true, false),
             Triple("fe80::1", true, false),
             Triple("studio.local", true, false),
+            Triple("127.0.0.1.", true, true),
+            Triple("localhost.", true, true),
             Triple("api.openai.com", false, false),
             Triple("8.8.8.8", false, false),
             Triple("256.1.1.1", false, false),

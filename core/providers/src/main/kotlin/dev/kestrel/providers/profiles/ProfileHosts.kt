@@ -45,12 +45,25 @@ object ProfileHosts {
         }
         choice?.refreshHosts?.forEach { hosts += it }
         profile.discoveredHosts.forEach { hosts += it }
-        return hosts.map { it.lowercase() }.filterNot(Hosts::isLocal).toSortedSet()
+        return hosts.mapNotNull(::canonicalHost).filterNot(Hosts::isLocal).toSortedSet()
     }
 
     /** The host of a profile whose own address is local, for NetworkPolicy.setLocalServers (design D11). */
     fun localServers(profile: Profile): Set<String> =
-        profile.baseUrl?.toHttpUrlOrNull()?.host?.takeIf(Hosts::isLocal)?.let { setOf(it) } ?: emptySet()
+        profile.baseUrl?.toHttpUrlOrNull()?.host?.let(::canonicalHost)?.takeIf(Hosts::isLocal)?.let { setOf(it) } ?: emptySet()
+
+    /**
+     * [host] as NetworkPolicy keeps it: in OkHttp's form of a URL's host, without brackets or a trailing dot. Null for a
+     * text that OkHttp refuses as a host, which no request can have: NetworkPolicy would refuse the whole update.
+     */
+    private fun canonicalHost(host: String): String? {
+        val name = host.trim().removePrefix("[").removeSuffix("]").removeSuffix(".")
+        return try {
+            HttpUrl.Builder().scheme("https").host(name).build().host
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
 
     private fun fill(text: String, region: String?): String? {
         if ("{region}" !in text && "{location}" !in text) return text

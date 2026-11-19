@@ -75,7 +75,7 @@ class NetworkPolicyTest {
         assertEquals(PolicyDecision.Allowed, policy.check(url))
 
         second.close()
-        assertEquals(PolicyDecision.Blocked("HTTPS is required for 192.168.1.30"), policy.check(url))
+        assertEquals(PolicyDecision.Blocked("192.168.1.30 is not on the allowlist"), policy.check(url))
     }
 
     @Test
@@ -84,5 +84,42 @@ class NetworkPolicyTest {
 
         assertEquals("example.com is not a local-network or localhost address", error.message)
         assertEquals(PolicyDecision.Blocked("example.com is not on the allowlist"), policy.check("https://example.com/".toHttpUrl()))
+    }
+
+    @Test
+    fun plainHttpToAHostThatIsNotAllowedIsRefusedAsNotAllowed() {
+        policy.setProfileHosts(listOf("api.example.com"))
+
+        assertEquals(
+            PolicyDecision.Blocked("tracker.example.net is not on the allowlist"),
+            policy.check("http://tracker.example.net/".toHttpUrl()),
+        )
+    }
+
+    @Test
+    fun configuredHostsTakeTheFormOfAUrlsHost() {
+        policy.setProfileHosts(listOf("Bücher.example", "API.example.com."))
+        policy.setLocalServers(listOf("[FD00:0:0:0:0:0:0:1]", "studio.local."))
+
+        assertEquals(PolicyDecision.Allowed, policy.check("https://xn--bcher-kva.example/".toHttpUrl()))
+        assertEquals(PolicyDecision.Allowed, policy.check("https://api.example.com/".toHttpUrl()))
+        assertEquals(PolicyDecision.Allowed, policy.check("http://[fd00::1]:8000/v1/models".toHttpUrl()))
+        assertEquals(PolicyDecision.Allowed, policy.check("http://studio.local:1234/".toHttpUrl()))
+    }
+
+    @Test
+    fun aConfiguredHostThatIsNotAHostNameIsRefusedWithoutItsText() {
+        policy.setProfileHosts(listOf("api.example.com"))
+
+        for (junk in listOf("api.example.com/v1?key=secret", "exa mple.com", "")) {
+            val error = assertThrows(IllegalArgumentException::class.java) { policy.setProfileHosts(listOf("other.example.com", junk)) }
+            assertEquals("A configured host is not a valid host name", error.message)
+        }
+        assertThrows(IllegalArgumentException::class.java) { policy.openTemporaryHosts(listOf("exa mple.com")) }
+        assertEquals(PolicyDecision.Allowed, policy.check("https://api.example.com/".toHttpUrl()))
+        assertEquals(
+            PolicyDecision.Blocked("other.example.com is not on the allowlist"),
+            policy.check("https://other.example.com/".toHttpUrl()),
+        )
     }
 }

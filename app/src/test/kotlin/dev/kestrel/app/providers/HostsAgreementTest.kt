@@ -25,4 +25,20 @@ class HostsAgreementTest {
             assertEquals(host, LocalHosts.isLocal(host), Hosts.isLocal(host))
         }
     }
+
+    @Test
+    fun bothRulesReadOnlyPlainAsciiOctetsAndTheWholeUniqueLocalPrefixAndDropATrailingDot() {
+        val table = listOf(
+            "0127.0.0.1" to false, "127.0.0.01" to false, "+10.0.0.1" to false,
+            "\u0661\u0660.0.0.1" to false, "10.0.0.\u0665" to false, "1\uFF10.0.0.1" to false,
+            "fc::1" to false, "fd::1" to false, "fc0::1" to false, "[fd1::1]" to false,
+            "fc00::1" to true, "fdff::1" to true, "[fd12:3456::1]" to true,
+            "192.168.1.5." to true, "studio.local." to true, "localhost." to true, "8.8.8.8." to false,
+        )
+
+        for ((host, local) in table) {
+            assertEquals(host, local, LocalHosts.isLocal(host))
+            assertEquals(host, local, Hosts.isLocal(host))
+        }
+    }
 }

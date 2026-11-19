@@ -105,4 +105,18 @@ class ProfileHostsTest {
             ProfileHosts.hosts(copilot, catalog),
         )
     }
+
+    @Test
+    fun hostsTakeTheFormThatTheAllowlistKeepsAndAHostWithATrailingDotIsStillLocal() {
+        val signIn = profile(
+            "minimax-portal", "minimax-global-oauth", AuthMethod.DEVICE_CODE,
+            baseUrl = "https://api-eu.minimax.io/anthropic",
+            discovered = listOf("Account.MiniMax.io.", "bücher.test", "10.0.0.1.", "studio.local.", "exa mple.test"),
+        )
+        val lan = profile("ollama", "ollama-server", AuthMethod.SERVER_ADDRESS, baseUrl = "http://studio.local.:11434")
+            .copy(localServer = LocalServerKind.OLLAMA)
+
+        assertEquals(setOf("account.minimax.io", "api-eu.minimax.io", "xn--bcher-kva.test"), ProfileHosts.hosts(signIn, catalog))
+        assertEquals(setOf("studio.local"), ProfileHosts.localServers(lan))
+    }
 }

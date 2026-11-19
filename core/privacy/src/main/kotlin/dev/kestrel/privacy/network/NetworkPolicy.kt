@@ -44,13 +44,10 @@ class NetworkPolicy {
     fun check(url: HttpUrl): PolicyDecision {
         val host = normalize(url.host)
         if (host in localServers || synchronized(temporaryLocalServers) { host in temporaryLocalServers }) return PolicyDecision.Allowed
-        if (!url.isHttps) return PolicyDecision.Blocked("HTTPS is required for $host")
         val temporary = synchronized(temporaryHosts) { host in temporaryHosts }
-        return if (host in profileHosts || temporary) {
-            PolicyDecision.Allowed
-        } else {
-            PolicyDecision.Blocked("$host is not on the allowlist")
-        }
+        // Membership first, so that the log says "not on the allowlist" for a host that is not, also over plain HTTP.
+        if (host !in profileHosts && !temporary) return PolicyDecision.Blocked("$host is not on the allowlist")
+        return if (url.isHttps) PolicyDecision.Allowed else PolicyDecision.Blocked("HTTPS is required for $host")
     }
 
     private fun localOnly(hosts: Collection<String>): Set<String> {
@@ -79,5 +76,16 @@ class NetworkPolicy {
         }
     }
 
-    private fun normalize(host: String): String = host.trim().lowercase().removePrefix("[").removeSuffix("]").removeSuffix(".")
+    /**
+     * The host as OkHttp writes a URL's host (IDN in ASCII, IPv6 in its canonical form, lower case), without brackets or a
+     * trailing dot. A text that OkHttp refuses as a host is refused, without the text, which could be anything.
+     */
+    private fun normalize(host: String): String {
+        val name = host.trim().removePrefix("[").removeSuffix("]").removeSuffix(".")
+        return try {
+            HttpUrl.Builder().scheme("https").host(name).build().host
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("A configured host is not a valid host name")
+        }
+    }
 }
