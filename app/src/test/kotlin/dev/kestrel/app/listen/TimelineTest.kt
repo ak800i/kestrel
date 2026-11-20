@@ -63,5 +63,13 @@ class TimelineTest {
         timeline.settingsPaused()
         assertFalse(timeline.settingsInFront)
         assertEquals(18_000L, timeline.settingsResumes.value)
+
+        // The window's focus comes after onResume, and onPause ends it.
+        timeline.settingsResumed()
+        assertFalse(timeline.settingsFocused)
+        timeline.settingsFocusChanged(true)
+        assertTrue(timeline.settingsFocused)
+        timeline.settingsPaused()
+        assertFalse(timeline.settingsFocused)
     }
 }

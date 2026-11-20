@@ -67,10 +67,13 @@ class TextEditor(
 
     /**
      * Gives the field with [key] the focus when it does not have it, and waits up to 2 s until its node reports it, for an
-     * app that keeps the focus on the container around its editor, as Samsung Notes does (inv-oneui-a71, 4). False when
-     * the field is gone or does not get the focus.
+     * app that keeps the focus on the container around its editor, as Samsung Notes does (inv-oneui-a71, 4). It acts
+     * only on an editable element that [expected] accepts, because a key names a position, and after a change of the
+     * screen it may name another element, which a focus or a click must not reach. False when the field is gone, is no
+     * longer the expected field, or does not get the focus.
      */
-    suspend fun focusField(key: String): Boolean = field(key)?.let { focus(it) } ?: false
+    suspend fun focusField(key: String, expected: (ScreenElement) -> Boolean): Boolean =
+        field(key)?.takeIf { it.element.editable && expected(it.element) }?.let { focus(it) } ?: false
 
     /**
      * Replaces the text from [start] until [end] of the field with [key] by [replacement], and then selects

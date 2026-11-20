@@ -257,9 +257,11 @@ internal class VoiceHooks(private val graph: AppGraph) {
 
         private val TAG = Regex("[A-Za-z0-9_-]{1,32}")
 
+        /** Whether [hardware], Android's `Build.HARDWARE`, is an emulator's. */
+        fun emulator(hardware: String): Boolean = hardware == "ranchu" || hardware == "goldfish"
+
         /** Whether [text] is "yes, call" on a device whose [hardware] is not an emulator's, which the hooks never send. */
-        fun refused(text: String, hardware: String): Boolean =
-            hardware != "ranchu" && hardware != "goldfish" && EmergencyGuard.confirmed(text)
+        fun refused(text: String, hardware: String): Boolean = !emulator(hardware) && EmergencyGuard.confirmed(text)
 
         /**
          * Links [tag] and [options] to [event] before Kestrel handles it, and starts the record of the Orchestrator's steps

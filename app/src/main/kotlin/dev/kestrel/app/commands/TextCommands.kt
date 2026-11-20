@@ -420,9 +420,10 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
     private suspend fun focusedState(screen: ScreenSession, field: ScreenElement): FieldState? {
         val state = screen.text.read(field.key) ?: return null
         if (state.focused) return state
-        // A field that TextFields found inside the focused container gets the focus first (inv-oneui-a71, 4). A field that
-        // the snapshot showed with the focus and has lost it may be a look-alike now, so it stays untouched.
-        if (field.focused || !screen.text.focusField(field.key)) return null
+        // A field that TextFields found inside the focused container gets the focus first (inv-oneui-a71, 4), while the
+        // key still names that field. A field that the snapshot showed with the focus and has lost it may be a look-alike
+        // now, so it stays untouched.
+        if (field.focused || !screen.text.focusField(field.key, ScreenTargets.sameAs(field))) return null
         return screen.text.read(field.key)?.takeIf { it.focused }
     }
 

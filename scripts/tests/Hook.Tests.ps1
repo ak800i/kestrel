@@ -65,4 +65,15 @@ Describe 'hook.ps1' {
         $noneExit | Should -Not -Be 0
         $none | Should -BeLike '*clipboard needs exactly one of -Save, -Restore and -Clear.*'
     }
+
+    It 'refuses clipboard -Clear on a phone before it reaches the device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $output = (& pwsh -NoProfile -File $hook -Serial no-such-phone clipboard -Clear 2>&1) -join "`n"
+        $exit = $LASTEXITCODE
+
+        $exit | Should -Not -Be 0
+        $output | Should -BeLike '*clipboard -Clear was refused on no-such-phone: only the emulator kestrel-api37 may empty the clipboard.*'
+    }
 }

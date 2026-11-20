@@ -119,6 +119,19 @@ internal class Timeline(private val now: () -> Long) {
 
     fun settingsPaused() {
         settingsInFront = false
+        settingsFocused = false
+    }
+
+    /**
+     * Whether the window of Kestrel's settings has the input focus now: from MainActivity's onWindowFocusChanged, which
+     * comes a moment after onResume. Android 13 lets Kestrel read the clipboard only then (plan 4D, the clipboard hook).
+     */
+    @Volatile
+    var settingsFocused = false
+        private set
+
+    fun settingsFocusChanged(focused: Boolean) {
+        settingsFocused = focused
     }
 
     /**

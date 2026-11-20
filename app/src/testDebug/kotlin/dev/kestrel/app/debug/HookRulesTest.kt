@@ -21,6 +21,14 @@ class HookRulesTest {
     }
 
     @Test
+    fun theClipboardIsEmptiedOnlyOnAnEmulator() {
+        assertTrue(SessionHooks.clearRefused("qcom"))
+        assertTrue(SessionHooks.clearRefused(""))
+        assertFalse(SessionHooks.clearRefused("ranchu"))
+        assertFalse(SessionHooks.clearRefused("goldfish"))
+    }
+
+    @Test
     fun theNoticesKindsComeFromTheirIdsAndTheStopNoticesReason() {
         assertEquals("none", SessionHooks.noticeKinds(emptyList()))
         assertEquals(

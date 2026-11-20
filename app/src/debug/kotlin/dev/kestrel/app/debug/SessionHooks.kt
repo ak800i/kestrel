@@ -10,6 +10,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
@@ -163,21 +164,29 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     /**
      * The owner's clipboard around a check that copies (plan 4D). --ez save true keeps a copy of the clipboard in this
      * process's memory and answers its kind, text or other. Android 13 lets Kestrel read the clipboard only while its
-     * window has the input focus, and answers null both for an empty clipboard and for a refused read, so null, or Kestrel's
-     * settings not in front, is "unknown": nothing is saved, and a later restore changes nothing. While a copy from an
-     * earlier save waits, a save keeps it and answers clip=held. --ez restore true puts the copy back, which Android allows
+     * window has the input focus, which comes a moment after Kestrel's settings come to the front, so a save waits up to
+     * 2 s for that focus while the settings are in front. Android answers null both for an empty clipboard and for a
+     * refused read, so null, or Kestrel's settings without the focus, is "unknown": nothing is saved, and a later restore
+     * changes nothing. While a copy from an earlier save waits, a save keeps it and answers clip=held. --ez restore true
+     * puts the copy back, which Android allows
      * from the background, and forgets it only once that worked; when Android refuses, as for a picture whose read access
      * ended with its clip, the copy is forgotten too, because Android never gives that access back, and the answer is
      * restored=failed. A restore never empties the clipboard.
-     * --ez clear true empties the clipboard, for the emulator's tests. The answers hold kinds only, never the content, and
-     * nothing is written anywhere.
+     * --ez clear true empties the clipboard, for the emulator's tests, and is refused on every other device, so that it
+     * never empties the owner's clipboard on a phone. The answers hold kinds only, never the content, and nothing is
+     * written anywhere.
      */
     private suspend fun clipboard(intent: Intent): String = withContext(Dispatchers.Main) {
         val manager = context.getSystemService(ClipboardManager::class.java) ?: throw HookError("the clipboard service is missing")
         when {
             intent.getBooleanExtra(EXTRA_SAVE, false) -> {
                 if (saved != null) return@withContext "clip=held saved=false"
-                if (!graph.timeline.settingsInFront) return@withContext "clip=unknown saved=false"
+                val timeline = graph.timeline
+                val focused = withTimeoutOrNull(CHECK_WAIT_MILLIS) {
+                    while (timeline.settingsInFront && !timeline.settingsFocused) delay(POLL_MILLIS)
+                    timeline.settingsInFront && timeline.settingsFocused
+                } ?: false
+                if (!focused) return@withContext "clip=unknown saved=false"
                 val clip = manager.primaryClip?.takeIf { it.itemCount > 0 } ?: return@withContext "clip=unknown saved=false"
                 saved = clip
                 "clip=${kindOf(clip)} saved=true"
@@ -196,6 +205,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
                 "restored=true"
             }
             intent.getBooleanExtra(EXTRA_CLEAR, false) -> {
+                if (clearRefused(Build.HARDWARE)) throw HookError(CLEAR_REFUSED)
                 manager.clearPrimaryClip()
                 "cleared=true"
             }
@@ -370,6 +380,11 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
 
         // The clip that CLIPBOARD saved, only in this process's memory and only on the main thread; null when none waits.
         private var saved: ClipData? = null
+
+        const val CLEAR_REFUSED = "clipboard -Clear was refused: only the emulator may empty the clipboard"
+
+        /** Whether CLIPBOARD --ez clear true is refused on a device whose [hardware] is not an emulator's. */
+        fun clearRefused(hardware: String): Boolean = !VoiceHooks.emulator(hardware)
 
         /**
          * The kinds of Kestrel's notices about problems, from their IDs and the stop notice's text, sorted and joined with

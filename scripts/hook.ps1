@@ -211,7 +211,8 @@
 #   clipboard -Restore                      puts the saved copy back and forgets it (restored=true), or forgets it
 #                                           when Android refuses (restored=failed); restored=false when none waits. It
 #                                           never empties the clipboard
-#   clipboard -Clear                        empties the clipboard
+#   clipboard -Clear                        empties the clipboard, only on the emulator kestrel-api37: it is refused on
+#                                           every other device, so that it never empties the owner's clipboard
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -293,9 +294,13 @@ if ($Template -and -not $Tag) { throw 'screen-has -Template needs -Tag; give the
 if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { $_ }).Count -ne 1) {
     throw 'clipboard needs exactly one of -Save, -Restore and -Clear.'
 }
+# Emptying the clipboard would lose the owner's clip, so -Clear runs only on the emulator, which the hook checks too.
+$clipboardClearRefused = "clipboard -Clear was refused on ${Serial}: only the emulator kestrel-api37 may empty the clipboard."
+if ($Command -eq 'clipboard' -and $Clear -and $Serial -notlike 'emulator-*') { throw $clipboardClearRefused }
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
+if ($Command -eq 'clipboard' -and $Clear -and $KestrelTestDevices[$Serial].Property -ne 'ro.boot.qemu.avd_name') { throw $clipboardClearRefused }
 
 # The device's shell reads the command line, so every text value is quoted for it.
 function ConvertTo-ShellText([string]$Value) { "'" + $Value.Replace("'", "'\''") + "'" }

@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -58,6 +59,9 @@ internal fun navigationButtons(mode: Int?): Boolean? = when (mode) {
 
 private const val NAVIGATION_MODE = "navigation_mode"
 
+// How long an edge swipe that seemed to change nothing waits for an app's late events, such as those of a navigation
+// drawer that starts to open, before the screen is read again.
+private const val EDGE_LATE_MILLIS = 300L
 /** How "Which one?" ended: with the element that the owner chose, or with the command's result. */
 internal sealed interface Choice {
     data class Chosen(val element: ChosenElement) : Choice
@@ -375,8 +379,17 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
         val before = page(screen.snapshots.current().snapshot)
         val result = screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY)
         if (result is ActionResult.Failed) return done(result)
-        val changed = page(screen.snapshots.current().snapshot) != before
-        val hint = edgeSwipeHint(edge, navigationButtons(navigationMode()), changed) ?: return done(result)
+        val buttons = navigationButtons(navigationMode())
+        var changed = page(screen.snapshots.current().snapshot) != before
+        if (!changed && edgeSwipeHint(edge, buttons, changed = false) != null) {
+            // The swipe's wait ends when the screen is quiet, which can be before the app's events arrive, and the cached
+            // snapshot stays until an event comes. So the screen is read anew, with the snapshot's own wait for a quiet
+            // screen, before the hint says that the swipe changed nothing.
+            delay(EDGE_LATE_MILLIS)
+            screen.snapshots.invalidate()
+            changed = page(screen.snapshots.current().snapshot) != before
+        }
+        val hint = edgeSwipeHint(edge, buttons, changed) ?: return done(result)
         return CommandResult(Outcome.DONE, say = hint, show = hint)
     }
 

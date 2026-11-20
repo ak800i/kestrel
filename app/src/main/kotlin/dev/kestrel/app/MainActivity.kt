@@ -107,6 +107,12 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
+    // The A71 checks' clipboard hook reads the clipboard only while this window has the focus (plan 4D).
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        graph.timeline.settingsFocusChanged(hasFocus)
+    }
+
     // Whether READ_PHONE_STATE was granted at the last refresh. A grant in Android's settings does not restart Kestrel,
     // so the call monitor starts here too (section 8.7).
     private var phoneStateGranted = false
