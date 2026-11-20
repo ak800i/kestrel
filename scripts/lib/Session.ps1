@@ -413,6 +413,48 @@ function Set-EmulatorHostMicrophone([string]$Serial, [bool]$On) {
     }
 }
 
+# The newest record of PowerShell's error list $Error, or $null when the list is empty, for Remove-NewErrorRecord.
+function Get-NewestErrorRecord { if ($Error.Count -gt 0) { $Error[0] } else { $null } }
+
+# Removes from $Error every record that is newer than $Newest (Get-NewestErrorRecord), such as a record of adb's error
+# output or of a JSON parser's error, which can repeat the test PIN; PowerShell keeps such records also when a script
+# catches them.
+function Remove-NewErrorRecord($Newest) {
+    while ($Error.Count -gt 0 -and -not [object]::ReferenceEquals($Error[0], $Newest)) { $Error.RemoveAt(0) }
+}
+
+# Runs $Command in 'adb -s $Serial shell', which reads it from its standard input, so that the command is not an
+# argument of adb.exe, whose command line other processes of this user and process audits can read. Returns the exit code
+# and the lines of adb's standard output; its error output is read and dropped, and nothing reaches PowerShell's error
+# stream or $Error. Throws when adb does not end within $TimeoutSeconds. Needs scripts\lib\Kestrel.ps1.
+function Invoke-AdbShellInput([string]$Serial, [string]$Command, [int]$TimeoutSeconds = 60) {
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = Get-Adb
+    $info.Arguments = "-s $Serial shell"
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.NewLine = "`n"
+        $process.StandardInput.WriteLine($Command)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $process.Kill()
+            throw "adb did not end within $TimeoutSeconds s."
+        }
+        $process.WaitForExit()
+        $errors.Result | Out-Null
+        [pscustomobject]@{ ExitCode = $process.ExitCode; Lines = @("$($output.Result)" -split "`r?`n") }
+    } finally {
+        $process.Dispose()
+    }
+}
+
 # The owner's settings for the A71 sessions (plan 4D) from corpus\owner\a71-config.json, which git ignores, read as
 # JSON, such as {"callNumber": "0641234567", "testContacts": true, "speakerTargetDb": -26, "pin": "..."}: the number
 # that is fine to call (5 to 15 digits, with an optional '+'), his consent to the two test contacts, and the level in
@@ -423,8 +465,14 @@ function Set-EmulatorHostMicrophone([string]$Serial, [bool]$On) {
 function Read-A71Config([string]$Path) {
     $config = [pscustomobject]@{ CallNumber = $null; TestContacts = $false; SpeakerTargetDb = -26.0 }
     if (-not (Test-Path -LiteralPath $Path)) { return $config }
-    # The parser's own error can repeat the file's text, which holds the test PIN, so it never reaches the console.
-    $json = try { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { throw "$Path is not valid JSON. Write every value as in {""pin"": ""0246""}, with text in quotes." }
+    # The parser's own error can repeat the file's text, which holds the test PIN, so it never reaches the console or $Error.
+    $newest = Get-NewestErrorRecord
+    $valid = $true
+    $json = try { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { $valid = $false }
+    if (-not $valid) {
+        Remove-NewErrorRecord $newest
+        throw "$Path is not valid JSON. Write every value as in {""pin"": ""0246""}, with text in quotes."
+    }
     $field = { param($Name) $json.PSObject.Properties[$Name] }
     if ((& $field 'callNumber') -and "$($json.callNumber)") {
         $number = "$($json.callNumber)" -replace '[\s-]', ''
@@ -444,10 +492,13 @@ function Read-A71Config([string]$Path) {
 # the PIN, which is the key "pin" of $ConfigPath (corpus\owner\a71-config.json), and only this function reads it, right
 # before it types it; with -CheckOnly it only checks the key, without a device, as the scripts do at their start. A
 # missing file or key, a file that is not JSON, or a PIN that is not 4 to 16 digits in quotes, throws a message that says
-# what is wrong and never the PIN. It calls adb itself and never Invoke-SettingsCommand, whose errors repeat the whole command; the device check of
-# Format-TestDeviceCommand runs in the same shell call. adb's own output, which can repeat the command too, is dropped,
-# the PIN and the command are cleared after use, and the only error of the typing, whatever went wrong, is "the unlock
-# failed". Needs scripts\lib\Kestrel.ps1.
+# what is wrong and never the PIN. It calls adb itself and never Invoke-SettingsCommand, whose errors repeat the whole
+# command, and gives adb the command on its standard input (Invoke-AdbShellInput), so that the PIN is never an argument
+# of adb.exe. The device check of Format-TestDeviceCommand runs in the same shell call, and so does a last check of the
+# PIN pad (the view IDs of Get-PinPadState) right before the typing. adb's own output, which can repeat the command too,
+# is dropped, the PIN and the command are cleared after use, the records of $Error that the call added are removed, and
+# the only error of the typing, whatever went wrong, is "the unlock failed". Returns $true after the typing, and $false
+# when the PIN pad no longer showed, so that nothing was typed. Needs scripts\lib\Kestrel.ps1.
 function Send-TestPin([string]$Serial, [string]$ConfigPath, [switch]$CheckOnly) {
     $how = 'Write the A71''s test PIN as the key "pin" into corpus\owner\a71-config.json, which git ignores, for example {"pin": "<digits>"}.'
     if (-not (Test-Path -LiteralPath $ConfigPath)) { throw "The A71's test PIN is missing, because $ConfigPath does not exist. $how" }
@@ -455,9 +506,16 @@ function Send-TestPin([string]$Serial, [string]$ConfigPath, [switch]$CheckOnly) 
     $command = $null
     $answer = $null
     $sent = $false
+    $typed = $true
+    $newest = Get-NewestErrorRecord
     try {
-        # The parser's own error can repeat the PIN, as with {"pin": 0246}, so it never reaches the console.
-        $json = try { Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json } catch { throw "$ConfigPath is not valid JSON. Write every value as in {""pin"": ""0246""}, with text in quotes." }
+        # The parser's own error can repeat the PIN, as with {"pin": 0246}, so it never reaches the console or $Error.
+        $valid = $true
+        $json = try { Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json } catch { $valid = $false }
+        if (-not $valid) {
+            Remove-NewErrorRecord $newest
+            throw "$ConfigPath is not valid JSON. Write every value as in {""pin"": ""0246""}, with text in quotes."
+        }
         $value = $json.PSObject.Properties['pin']
         $json = $null
         if (-not $value -or -not "$($value.Value)") { throw "The A71's test PIN is missing, because $ConfigPath has no key ""pin"". $how" }
@@ -468,11 +526,18 @@ function Send-TestPin([string]$Serial, [string]$ConfigPath, [switch]$CheckOnly) 
         if ($pin -notmatch '^\d{4,16}$') { throw "The key ""pin"" of $ConfigPath must be 4 to 16 digits." }
         if ($CheckOnly) { return }
         try {
-            $command = Format-TestDeviceCommand -Serial $Serial -Command "input text $pin && input keyevent KEYCODE_ENTER && echo kestrel-pin-sent"
-            # Windows PowerShell 5.1 would stop at adb's first error line.
-            $ErrorActionPreference = 'Continue'
-            $answer = @(& (Get-Adb) -s $Serial shell $command 2>&1 | ForEach-Object { "$_" })
-            $sent = $LASTEXITCODE -eq 0 -and "$($answer | Select-Object -Last 1)".Trim() -eq 'kestrel-pin-sent'
+            # Types only when the PIN pad still shows; the hierarchy stays on the phone, as in Get-PinPadState.
+            $file = '/data/local/tmp/kestrel-keyguard.xml'
+            $command = Format-TestDeviceCommand -Serial $Serial -Command ("uiautomator dump $file >/dev/null 2>&1; pad=`$(grep -c -e id/pinEntry -e id/keyguard_pin_view $file 2>/dev/null); rm -f $file; " +
+                "if [ `"`$pad`" -gt 0 ] 2>/dev/null; then input text $pin && input keyevent KEYCODE_ENTER && echo kestrel-pin-sent; else echo kestrel-no-pad; fi")
+            $answer = Invoke-AdbShellInput -Serial $Serial -Command $command
+            $last = "$(@($answer.Lines | Where-Object { "$_".Trim() }) | Select-Object -Last 1)".Trim()
+            if ($answer.ExitCode -eq 0 -and $last -eq 'kestrel-no-pad') {
+                $typed = $false
+                $sent = $true
+            } else {
+                $sent = $answer.ExitCode -eq 0 -and $last -eq 'kestrel-pin-sent'
+            }
         } catch {
             $sent = $false
         }
@@ -480,8 +545,11 @@ function Send-TestPin([string]$Serial, [string]$ConfigPath, [switch]$CheckOnly) 
         $pin = $null
         $command = $null
         $answer = $null
+        $last = $null
+        Remove-NewErrorRecord $newest
     }
     if (-not $sent) { throw 'the unlock failed' }
+    $typed
 }
 # Whether an activity shows over the lock screen ('Occluded=true' in 'dumpsys activity activities'), such as a call's
 # screen or the camera, which would get what is typed.
@@ -511,42 +579,62 @@ function Get-PinPadState([string]$Serial) {
 # Unlocks the test phone $Serial with the owner's test PIN of $ConfigPath (Send-TestPin), also right after a restart,
 # when Android asks for the PIN: it wakes the screen and, when the keyguard shows and no activity shows over it, brings
 # up the PIN pad without looking (a swipe up from the screen's lower part, which Android's lock screen and One UI's both
-# answer with the PIN pad, and 'wm dismiss-keyguard', which shows it for a lock screen with a PIN), and then types the PIN
-# only when Get-PinPadState says clearly that the PIN pad shows; a state that Android does not say clearly never types, so
-# the PIN never reaches another app's field. Returns $true when the phone is unlocked, and $false when it typed nothing
-# (the phone did not show its PIN pad). The PIN is typed at most once in a call, and a typing that did not unlock the
-# phone within 10 s throws "the unlock failed" and stops every later unlock of the run, which then throws at once: One UI
-# locks the phone for a while after 5 wrong PINs, and can reset it after 15 when that is switched on. The PIN never
-# reaches a result, a log or the console. Needs scripts\lib\Kestrel.ps1 and scripts\lib\Oracle.ps1.
+# answer with the PIN pad, and 'wm dismiss-keyguard', which shows it for a lock screen with a PIN) unless the PIN pad
+# already shows, because a swipe over the pad could type a digit, and then types the PIN only when Get-PinPadState says
+# clearly that the PIN pad shows, and Send-TestPin finds it again right before the typing; a state that Android does not
+# say clearly never types, so the PIN never reaches another app's field. Returns $true when the phone is unlocked, and
+# $false when it typed nothing (the phone did not show its PIN pad). The PIN is typed at most once in a call, and a
+# typing that did not unlock the phone within 10 s throws "the unlock failed" and stops every later unlock of the run,
+# which then throws at once: One UI locks the phone for a while after 5 wrong PINs, and can reset it after 15 when that
+# is switched on. Every other failure on the phone throws "the unlock failed" too, and the records of $Error that the
+# call added are removed, so the PIN never reaches a result, a log, $Error or the console. Needs scripts\lib\Kestrel.ps1
+# and scripts\lib\Oracle.ps1.
 function Unlock-TestPhone([string]$Serial, [string]$ConfigPath) {
     # A missing file or key stops here, before a command reaches the phone.
     Send-TestPin -ConfigPath $ConfigPath -CheckOnly
     if ($script:TestPinRefused) { throw 'the unlock failed earlier in this run, so the session tries no more unlocks' }
-    Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_WAKEUP' | Out-Null
-    Start-Sleep -Seconds 1
-    $activities = @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')
-    $keyguard = Test-KeyguardShowing $activities
-    if ($keyguard -eq $false) { return $true }
-    if ($null -eq $keyguard -or (Test-KeyguardOccluded $activities)) { return $false }
-    if ("$(Invoke-SettingsCommand -Serial $Serial -Command 'wm size')" -match '(\d+)x(\d+)') {
-        $x = [int]([int]$Matches[1] / 2)
-        Invoke-SettingsCommand -Serial $Serial -Command "input swipe $x $([int]([int]$Matches[2] * 0.8)) $x $([int]([int]$Matches[2] * 0.3)) 300" | Out-Null
-    }
-    Invoke-SettingsCommand -Serial $Serial -Command 'wm dismiss-keyguard' | Out-Null
-    Start-Sleep -Seconds 2
-    $pad = Get-PinPadState -Serial $Serial
-    if ($pad -eq $false) { return $true }
-    # Only on the PIN pad: the PIN must never reach another app's field.
-    if ($pad -ne $true) { return $false }
-    # Set before the typing, so that also a typing that failed half-way is never repeated.
-    $script:TestPinRefused = $true
-    Send-TestPin -Serial $Serial -ConfigPath $ConfigPath
-    for ($second = 0; $second -lt 10; $second++) {
+    $newest = Get-NewestErrorRecord
+    $failed = $false
+    try {
+        Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_WAKEUP' | Out-Null
         Start-Sleep -Seconds 1
-        if ((Test-KeyguardShowing @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')) -eq $false) {
-            $script:TestPinRefused = $false
-            return $true
+        $activities = @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')
+        $keyguard = Test-KeyguardShowing $activities
+        if ($keyguard -eq $false) { return $true }
+        if ($null -eq $keyguard -or (Test-KeyguardOccluded $activities)) { return $false }
+        $pad = Get-PinPadState -Serial $Serial
+        if ($pad -eq $false) { return $true }
+        if ($pad -ne $true) {
+            if ("$(Invoke-SettingsCommand -Serial $Serial -Command 'wm size')" -match '(\d+)x(\d+)') {
+                $x = [int]([int]$Matches[1] / 2)
+                Invoke-SettingsCommand -Serial $Serial -Command "input swipe $x $([int]([int]$Matches[2] * 0.8)) $x $([int]([int]$Matches[2] * 0.3)) 300" | Out-Null
+            }
+            Invoke-SettingsCommand -Serial $Serial -Command 'wm dismiss-keyguard' | Out-Null
+            Start-Sleep -Seconds 2
+            $pad = Get-PinPadState -Serial $Serial
+            if ($pad -eq $false) { return $true }
+            # Only on the PIN pad: the PIN must never reach another app's field.
+            if ($pad -ne $true) { return $false }
         }
+        # Set before the typing, so that also a typing that failed half-way is never repeated.
+        $script:TestPinRefused = $true
+        if ((Send-TestPin -Serial $Serial -ConfigPath $ConfigPath) -eq $false) {
+            # The PIN pad no longer showed, and nothing was typed.
+            $script:TestPinRefused = $false
+            return $false
+        }
+        for ($second = 0; $second -lt 10; $second++) {
+            Start-Sleep -Seconds 1
+            if ((Test-KeyguardShowing @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')) -eq $false) {
+                $script:TestPinRefused = $false
+                return $true
+            }
+        }
+        $failed = $true
+    } catch {
+        $failed = $true
+    } finally {
+        Remove-NewErrorRecord $newest
     }
-    throw 'the unlock failed'
+    if ($failed) { throw 'the unlock failed' }
 }

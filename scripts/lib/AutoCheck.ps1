@@ -16,11 +16,13 @@ function Test-YesCall([string]$Text) {
 # Reads an answer of 'voice-state -Tag', such as 'tag=k1 role=command command=7 task=0 kind=Scroll outcome=done
 # asking=false phase=ended detail=none said=none shown=none read=other latest=7', into an ordered table. A transcript that
 # started a task has 'role=task', 'command=0' and its task's number in 'task'; an answer without 'task' gets 'task=0'.
-function ConvertFrom-TaggedState([string]$Text) {
+# With $Tag, an answer for another tag throws, because it is not the state of the check's own transcript.
+function ConvertFrom-TaggedState([string]$Text, [string]$Tag = '') {
     $state = ConvertFrom-HookPairs $Text
     foreach ($name in 'tag', 'role', 'command', 'kind', 'outcome', 'asking', 'phase') {
         if (-not $state.Contains($name)) { throw "Not an answer of voice-state -Tag: '$Text'" }
     }
+    if ($Tag -and $state['tag'] -cne $Tag) { throw "voice-state -Tag $Tag answered for another tag." }
     if (-not $state.Contains('task')) { $state['task'] = '0' }
     $state
 }
@@ -33,13 +35,20 @@ function Test-TaggedSettled($State) {
 
 # Reads 'voice-state -Tag' until $Until is true for the state, at most $TimeoutSeconds, and returns the last state.
 # Kestrel records the outcome of a command that ended or was cancelled just after its phase changes, so a state with
-# 'phase=ended' and 'outcome=running' is read again until the outcome is there.
-function Wait-TaggedState([string]$Tag, [scriptblock]$Until = { param($State) Test-TaggedSettled $State }, [double]$TimeoutSeconds = 15) {
+# 'phase=ended' and 'outcome=running' is read again until the outcome is there. With $Report, a hashtable, it sets
+# $Report.State to each state that it reads, and $Report.TimedOut to whether the time ran out before $Until was true.
+function Wait-TaggedState([string]$Tag, [scriptblock]$Until = { param($State) Test-TaggedSettled $State }, [double]$TimeoutSeconds = 15, [hashtable]$Report = $null) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
+    if ($Report) { $Report.TimedOut = $false }
     while ($true) {
-        $state = ConvertFrom-TaggedState (Invoke-Hook voice-state @{ Tag = $Tag })
+        $state = ConvertFrom-TaggedState (Invoke-Hook voice-state @{ Tag = $Tag }) -Tag $Tag
+        if ($Report) { $Report.State = $state }
         $recorded = -not ($state['phase'] -eq 'ended' -and $state['outcome'] -eq 'running')
-        if (((& $Until $state) -and $recorded) -or $watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { return $state }
+        if ((& $Until $state) -and $recorded) { return $state }
+        if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            if ($Report) { $Report.TimedOut = $true }
+            return $state
+        }
         Start-Sleep -Milliseconds 250
     }
 }
@@ -71,12 +80,19 @@ function ConvertTo-Verdict($Result) {
 # -Template does); with $Clip ({ Voice, Text, Path }) the air path asks the phone to expect the clip's text
 # (voice-expect) and $Play plays the clip. Once the command asks its question, or with -RespondAt countdown once it counts
 # down, and $RespondDelay seconds later, $Answer is sent as a tagged transcript, or $Respond runs, such as a tap on the
-# screen. A question that is still open at the end is answered "no", so that it never takes the next check's words; the
-# line says so. A countdown to a call that the check did not plan, or one that goes on after a response that failed, gets
-# "cancel" at once, before Kestrel can press Call, and the check fails; the line says so. With $Wait, such as a script block that polls sub-project 5's 'agent-task -Result -Tag' until a task
-# ends, the runner calls $Wait with the tag and $WaitSeconds (at most 600) instead of waiting for the command's end,
-# reads the tagged state after it, and gives $Verify what $Wait returned as its third argument; $Wait cannot be
-# combined with $Answer or $Respond. Returns the result with the line for the results file.
+# screen. $RespondDelay counts from the moment that the runner sees the countdown, which is up to a second after it began,
+# so with -RespondAt countdown it must leave room in Kestrel's 4 s countdown. A question that is still open at the end is
+# answered "no", so that it never takes the next check's words; the line says so. No countdown to a call may end in a
+# call: a countdown that the check did not plan, such as one after an answer, one that goes on 1 s after the check's
+# planned response (also when that response was its own "cancel"), and one that goes on after a response that failed,
+# gets "cancel" at once, before Kestrel can press Call, and the check fails; the line says so. When a hook call or a test
+# fails while the last state that the runner read was a countdown, the runner sends "cancel" before it passes the
+# failure on. A wait for the command that runs out of time fails the check, and the line says so. With $Wait, such as a
+# script block that polls sub-project 5's 'agent-task -Result -Tag' until a task ends, the runner first waits until
+# Kestrel has handled the transcript (a task, or a command that settled or counts down, which it cancels without calling
+# $Wait), then calls $Wait with the tag and $WaitSeconds (at most 600) instead of waiting for the command's end, reads the
+# tagged state after it, and gives $Verify what $Wait returned as its third argument; $Wait cannot be combined with
+# $Answer or $Respond. Returns the result with the line for the results file.
 function Invoke-AutoCheck(
     [string]$Name,
     [string]$Text,
@@ -114,49 +130,79 @@ function Invoke-AutoCheck(
     $waited = $null
     $notes = @()
     $failed = $false
-    if (-not $Clip -or ($heard -and $heard['matched'] -eq 'true')) {
-        $responds = $Answer -or $Respond
-        if ($Wait) {
-            $waited = & $Wait $tag $WaitSeconds
-            $state = Wait-TaggedState -Tag $tag -Until { $true } -TimeoutSeconds $TimeoutSeconds
-        } else {
-            $until = if ($responds -and $RespondAt -eq 'countdown') {
-                { param($State) $State['phase'] -eq 'countdown' -or ($State['role'] -ne 'pending' -and $State['phase'] -in 'none', 'ended') }
-            } else {
-                # A countdown ends the wait too, so that one that the check did not plan is cancelled in time.
-                { param($State) $State['phase'] -eq 'countdown' -or (Test-TaggedSettled $State) }
-            }
-            $state = Wait-TaggedState -Tag $tag -Until $until -TimeoutSeconds $TimeoutSeconds
-        }
-        $ready = if ($RespondAt -eq 'countdown') { $state['phase'] -eq 'countdown' } else { $state['asking'] -eq 'true' }
-        if ($responds -and $ready) {
-            if ($RespondDelay -gt 0) { Start-Sleep -Milliseconds ([int]($RespondDelay * 1000)) }
-            try {
-                if ($Respond) { & $Respond } else { Invoke-Hook voice @{ Send = 'heard'; Text = $Answer; Tag = (New-CheckTag) } | Out-Null }
-            } catch {
-                $failed = $true
-                $notes += "the response failed ($(("$($_.Exception.Message)" -split "`r?`n")[0]))"
-            }
-            $state = if ($failed) {
-                Wait-TaggedState -Tag $tag -Until { $true } -TimeoutSeconds $TimeoutSeconds
-            } else {
-                # Settled again also when the command asks another question, which the "no" below answers.
-                Wait-TaggedState -Tag $tag -Until { param($State) $State['phase'] -ne 'countdown' -and (Test-TaggedSettled $State) } -TimeoutSeconds $TimeoutSeconds
-            }
-        }
-        if ($state['phase'] -eq 'countdown' -and ($failed -or -not ($responds -and $RespondAt -eq 'countdown'))) {
-            Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
-            $state = Wait-TaggedState -Tag $tag -Until { param($State) $State['phase'] -in 'none', 'ended', 'question' } -TimeoutSeconds $TimeoutSeconds
-            $notes += 'it counted down to a call, which the check cancelled'
-            $failed = $true
-        }
-        if ($state['asking'] -eq 'true') {
-            Invoke-Hook voice @{ Send = 'heard'; Text = 'no'; Tag = (New-CheckTag) } | Out-Null
-            $state = Wait-TaggedState -Tag $tag -Until { param($State) $State['phase'] -in 'none', 'ended' } -TimeoutSeconds $TimeoutSeconds
-            $notes += 'it asked a question, which the check answered with no'
-        }
+    # The last state that a wait read, and whether a wait for the command ran out of time.
+    $run = @{ Report = @{ State = $null; TimedOut = $false }; TimedOut = $false }
+    # Waits for the tagged state; a wait for the command's end ($Settle) that runs out of time is marked.
+    $read = {
+        param([scriptblock]$Until, [double]$Seconds = $TimeoutSeconds, [bool]$Settle = $true)
+        $found = Wait-TaggedState -Tag $tag -Until $Until -TimeoutSeconds $Seconds -Report $run.Report
+        if ($Settle -and $run.Report.TimedOut) { $run.TimedOut = $true }
+        $found
     }
-    $verdict = if ($state) { ConvertTo-Verdict (& $Verify $state $context $waited) } else { [pscustomobject]@{ Passed = $false; Detail = 'the phone did not match the clip' } }
+    # A countdown ends every wait, so that one that the check did not plan is cancelled in time.
+    $settledOrCountdown = { param($State) $State['phase'] -eq 'countdown' -or (Test-TaggedSettled $State) }
+    try {
+        if (-not $Clip -or ($heard -and $heard['matched'] -eq 'true')) {
+            $responds = $Answer -or $Respond
+            if ($Wait) {
+                # A transcript that starts a command instead of a task could count down to a call while $Wait polls.
+                $state = & $read { param($State) $State['role'] -eq 'task' -or (Test-TaggedSettled $State) -or $State['phase'] -eq 'countdown' } $TimeoutSeconds $false
+                if ($state['phase'] -ne 'countdown') {
+                    $waited = & $Wait $tag $WaitSeconds
+                    $state = & $read { $true }
+                }
+            } else {
+                $state = & $read $settledOrCountdown
+            }
+            $ready = if ($RespondAt -eq 'countdown') { $state['phase'] -eq 'countdown' } else { $state['asking'] -eq 'true' }
+            if ($responds -and $ready) {
+                if ($RespondDelay -gt 0) { Start-Sleep -Milliseconds ([int]($RespondDelay * 1000)) }
+                try {
+                    if ($Respond) { & $Respond } else { Invoke-Hook voice @{ Send = 'heard'; Text = $Answer; Tag = (New-CheckTag) } | Out-Null }
+                } catch {
+                    $failed = $true
+                    $notes += "the response failed ($(("$($_.Exception.Message)" -split "`r?`n")[0]))"
+                }
+                $state = if ($failed) {
+                    & $read { $true }
+                } elseif ($RespondAt -eq 'countdown') {
+                    # The planned response has 1 s to stop the countdown; one that goes on gets "cancel" below.
+                    $graced = & $read { param($State) $State['phase'] -ne 'countdown' } 1 $false
+                    if ($graced['phase'] -eq 'countdown') { $graced } else { & $read $settledOrCountdown }
+                } else {
+                    # Settled again also when the command asks another question, which the "no" below answers, or when the
+                    # answer starts a countdown, which the check did not plan.
+                    & $read $settledOrCountdown
+                }
+            }
+            if ($state['phase'] -eq 'countdown') {
+                Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
+                $state = & $read { param($State) $State['phase'] -in 'none', 'ended', 'question' }
+                $notes += 'it counted down to a call, which the check cancelled'
+                $failed = $true
+            }
+            if ($state['asking'] -eq 'true') {
+                Invoke-Hook voice @{ Send = 'heard'; Text = 'no'; Tag = (New-CheckTag) } | Out-Null
+                $state = & $read { param($State) $State['phase'] -in 'none', 'ended' }
+                $notes += 'it asked a question, which the check answered with no'
+            }
+            if ($run.TimedOut) {
+                $notes += "the command did not settle in $TimeoutSeconds s"
+                $failed = $true
+            }
+        }
+        $verdict = if ($state) { ConvertTo-Verdict (& $Verify $state $context $waited) } else { [pscustomobject]@{ Passed = $false; Detail = 'the phone did not match the clip' } }
+    } catch {
+        # A hook call or a test that failed during a countdown must not leave it running to a call.
+        if ($run.Report.State -and $run.Report.State['phase'] -eq 'countdown') {
+            try {
+                Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
+            } catch {
+                Write-Verbose 'The cancel after a failure during a countdown failed too.'
+            }
+        }
+        throw
+    }
     if ($verdict.Detail) { $notes = @($verdict.Detail) + $notes }
     if ($failed) { $verdict.Passed = $false }
     $path = if ($Clip) { $Clip.Voice } else { 'text' }

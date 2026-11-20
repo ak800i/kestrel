@@ -466,13 +466,19 @@ Describe 'The owner''s settings and the test PIN' {
         $message = try { Send-TestPin -Serial 'R58N' -ConfigPath $path } catch { $_.Exception.Message }
         $message | Should -Match 'must be 4 to 16 digits'
         $message | Should -Not -Match '12ab'
-        # A number: PowerShell 7 refuses the leading zero, and Windows PowerShell 5.1 would read another PIN.
-        foreach ($text in '{"pin": 024680}', '{"pin": 2468}') {
+        # A number: PowerShell 7 refuses the leading zero, and Windows PowerShell 5.1 would read another PIN. A file that is
+        # not JSON: the parser's error repeats the text, in either shell.
+        $Error.Clear()
+        foreach ($text in '{"pin": 024680}', '{"pin": 2468}', '{"pin": "2468" "callNumber"}') {
             Set-Content -LiteralPath $path -Value $text
             $message = try { Send-TestPin -ConfigPath $path -CheckOnly } catch { $_.Exception.Message }
             $message | Should -Match 'quotes'
             $message | Should -Not -Match '2468'
+            $message = try { Read-A71Config $path } catch { $_.Exception.Message }
+            $message | Should -Not -Match '2468'
         }
+        # PowerShell keeps the records of caught errors in $Error.
+        @($Error | ForEach-Object { $_ | Out-String; "$($_.Exception.Message)"; "$($_.TargetObject)" }) -join "`n" | Should -Not -Match '2468'
     }
 
     Context 'The unlock with the test PIN' {
@@ -481,9 +487,10 @@ Describe 'The owner''s settings and the test PIN' {
             . "$PSScriptRoot\..\lib\Oracle.ps1"
             # A phone that Assert-TestDevice accepted, without asking a device.
             $KestrelTestDevices['R58N'] = [pscustomobject]@{ Property = 'ro.product.model'; Pattern = 'SM-A715F*' }
-            # A fake adb that fails and repeats its whole command in its error, as adb can.
+            # A fake adb that fails and repeats its whole command, its arguments and its standard input, in its error and its
+            # output, as adb can.
             $fake = Join-Path $TestDrive 'failing-adb.ps1'
-            Set-Content -LiteralPath $fake -Value '[Console]::Error.WriteLine("error: closed while running: $($args -join '' '')"); exit 1'
+            Set-Content -LiteralPath $fake -Value '$text = [Console]::In.ReadToEnd(); [Console]::Error.WriteLine("error: closed while running: $($args -join '' '') $text"); [Console]::Out.WriteLine($text); exit 1'
             $fakeAdb = Join-Path $TestDrive 'failing-adb.cmd'
             Set-Content -LiteralPath $fakeAdb -Value "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$fake"" %*`r`nexit /b %ERRORLEVEL%"
             # The owner's configuration with the test PIN.
@@ -495,10 +502,11 @@ Describe 'The owner''s settings and the test PIN' {
             Mock Start-Sleep { }
             $script:TestPinRefused = $false
             # Keyguard: 'true', 'false' or 'unknown' (no line in the dump); Occluded: whether an activity shows over it;
-            # Pad: whether the PIN pad's entry shows.
-            $phone = @{ Keyguard = 'true'; Occluded = 'false'; Pad = $true; Typed = 0; Commands = [System.Collections.Generic.List[string]]::new() }
+            # Pad: whether the PIN pad's entry shows; PadAfterSwipe: whether a swipe up brings it up.
+            $phone = @{ Keyguard = 'true'; Occluded = 'false'; Pad = $true; PadAfterSwipe = $false; Typed = 0; Commands = [System.Collections.Generic.List[string]]::new() }
             Mock Invoke-SettingsCommand {
                 $phone.Commands.Add($Command)
+                if ($Command -like 'input swipe *' -and $phone.PadAfterSwipe) { $phone.Pad = $true }
                 if ($Command -eq 'dumpsys activity activities') {
                     if ($phone.Keyguard -ne 'unknown') { "  mKeyguardShowing=$($phone.Keyguard)" } else { '  (no keyguard line)' }
                     "    Occluded=$($phone.Occluded) DismissingKeyguardActivity=null at display=0"
@@ -510,17 +518,34 @@ Describe 'The owner''s settings and the test PIN' {
 
         It 'types the PIN once, only while the lock screen''s PIN pad shows' {
             Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++; $phone.Keyguard = 'false' } }
+            $phone.Pad = $false
+            $phone.PadAfterSwipe = $true
 
             Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
 
             $phone.Typed | Should -Be 1
             @($phone.Commands | Where-Object { $_ -match '2468' }).Count | Should -Be 0
             $phone.Commands.IndexOf('wm dismiss-keyguard') | Should -BeGreaterThan -1
-            # One look at the screen's hierarchy, in the shell's folder, which exists before the first unlock.
-            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump *' }).Count | Should -Be 1
-            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump /data/local/tmp/*' }).Count | Should -Be 1
+            # A look at the screen's hierarchy before and after the swipe, in the shell's folder, which exists before the
+            # first unlock.
+            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump *' }).Count | Should -Be 2
+            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump /data/local/tmp/*' }).Count | Should -Be 2
             Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
             $phone.Typed | Should -Be 1
+        }
+
+        It 'does not swipe over a PIN pad that already shows, and types nothing when the pad is gone right before the typing' {
+            Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++; $phone.Keyguard = 'false' } }
+
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
+
+            $phone.Typed | Should -Be 1
+            @($phone.Commands | Where-Object { $_ -like 'input swipe *' -or $_ -eq 'wm dismiss-keyguard' }).Count | Should -Be 0
+            $phone.Keyguard = 'true'
+            Mock Send-TestPin { if (-not $CheckOnly) { $false } }
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
+            # Nothing was typed, so a later unlock may type.
+            $script:TestPinRefused | Should -BeFalse
         }
 
         It 'types nothing when Android does not say clearly that the PIN pad shows, or an activity shows over the lock screen' {
@@ -548,8 +573,9 @@ Describe 'The owner''s settings and the test PIN' {
             $phone.Typed | Should -Be 1
         }
 
-        It 'says only that the unlock failed when adb fails, and no output, warning or error holds the PIN' {
+        It 'says only that the unlock failed when adb fails, and no output, warning, error or record of $Error holds the PIN' {
             Mock Get-Adb { $fakeAdb }
+            $Error.Clear()
 
             $output = & {
                 try { Unlock-TestPhone -Serial 'R58N' -ConfigPath $config } catch { $_; $_.Exception.Message; $_.ScriptStackTrace }
@@ -558,6 +584,27 @@ Describe 'The owner''s settings and the test PIN' {
 
             $output | Should -Match 'the unlock failed'
             $output | Should -Not -Match '2468'
+            $Error.Count | Should -BeGreaterThan 0
+            @($Error | ForEach-Object { $_ | Out-String; "$($_.Exception.Message)"; "$($_.TargetObject)" }) -join "`n" | Should -Not -Match '2468'
+        }
+
+        It 'gives adb the typing on its standard input, never as an argument' {
+            Set-Content -LiteralPath (Join-Path $TestDrive 'echo-adb.ps1') -Value '$text = [Console]::In.ReadToEnd(); Set-Content -LiteralPath $env:KESTREL_FAKE_ADB_LOG -Value (($args -join '' '') + "`n" + $text); "kestrel-pin-sent"; exit 0'
+            $echoAdb = Join-Path $TestDrive 'echo-adb.cmd'
+            Set-Content -LiteralPath $echoAdb -Value "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$(Join-Path $TestDrive 'echo-adb.ps1')"" %*`r`nexit /b %ERRORLEVEL%"
+            $log = Join-Path $TestDrive 'echo-adb.log'
+            $env:KESTREL_FAKE_ADB_LOG = $log
+            Mock Get-Adb { $echoAdb }
+            try {
+                Send-TestPin -Serial 'R58N' -ConfigPath $config | Should -BeTrue
+            } finally {
+                Remove-Item Env:\KESTREL_FAKE_ADB_LOG
+            }
+
+            $lines = @(Get-Content -LiteralPath $log)
+            $lines[0].Trim() | Should -BeExactly '-s R58N shell'
+            # The device check, the last look at the PIN pad and the typing go in one shell call.
+            ($lines -join "`n") | Should -Match '^-s R58N shell\s+case .*uiautomator dump .*grep -c .*input text 2468 && .*esac'
         }
     }
 }

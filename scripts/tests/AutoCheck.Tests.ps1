@@ -144,6 +144,90 @@ Describe 'The check runner' {
         $failedTap.Line | Should -Match 'the response failed \(The element has no bounds on the screen\.\); it counted down to a call, which the check cancelled'
     }
 
+    It 'cancels a countdown that an answer started, and one that goes on after the planned response, and fails the check' {
+        $device = @{ Phase = 'question'; Asking = 'true' }
+        Mock Invoke-Hook {
+            $sent.Add($With)
+            # The answer picks a contact, and Kestrel counts down to the call; only "cancel" ends the countdown.
+            if ($With.Text -eq 'Ana Test') { $device.Phase = 'countdown'; $device.Asking = 'false' }
+            if ($With.Text -eq 'cancel') { $device.Phase = 'ended' }
+            'sent heard'
+        } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook { New-TaggedAnswer $With.Tag -Outcome $(if ($device.Phase -eq 'ended') { 'cancelled' } else { 'running' }) -Phase $device.Phase -Asking $device.Asking } -ParameterFilter { $Command -eq 'voice-state' }
+
+        $answered = Invoke-AutoCheck -Name 'call Ana, then Ana Test' -Text 'call Ana' -Answer 'Ana Test' -Verify { $true }
+        $device.Phase = 'countdown'
+        $device.Asking = 'false'
+        $taps = @{ Count = 0 }
+        # A tap that returns without stopping the countdown, as when the touch watcher misses it.
+        $missed = Invoke-AutoCheck -Name 'call Ana Test, then a tap' -Text 'call Ana Test' -RespondAt countdown -Respond { $taps.Count++ } -Verify { $true }
+
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana', 'Ana Test', 'cancel', 'call Ana Test', 'cancel')
+        $taps.Count | Should -Be 1
+        $answered.Passed | Should -BeFalse
+        $answered.Line | Should -BeExactly 'call Ana, then Ana Test [text]: role=command kind=Global outcome=cancelled check=fail (it counted down to a call, which the check cancelled)'
+        $missed.Passed | Should -BeFalse
+        $missed.Line | Should -BeExactly 'call Ana Test, then a tap [text]: role=command kind=Global outcome=cancelled check=fail (it counted down to a call, which the check cancelled)'
+    }
+
+    It 'sends no second cancel when the check''s own response cancels the planned countdown' {
+        $device = @{ Phase = 'countdown' }
+        Mock Invoke-Hook {
+            $sent.Add($With)
+            if ($With.Text -eq 'cancel') { $device.Phase = 'ended' }
+            'sent heard'
+        } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook { New-TaggedAnswer $With.Tag -Outcome $(if ($device.Phase -eq 'ended') { 'cancelled' } else { 'running' }) -Phase $device.Phase } -ParameterFilter { $Command -eq 'voice-state' }
+
+        $result = Invoke-AutoCheck -Name 'call Ana Test, then cancel' -Text 'call Ana Test' -RespondAt countdown -Answer 'cancel' -Verify { param($State) $State['outcome'] -eq 'cancelled' }
+
+        @($sent | Where-Object { $_.Text -eq 'cancel' }).Count | Should -Be 1
+        $result.Line | Should -BeExactly 'call Ana Test, then cancel [text]: role=command kind=Global outcome=cancelled check=pass'
+    }
+
+    It 'sends cancel when a hook call fails during a countdown, and cancels a countdown before the caller''s wait' {
+        $reads = @{ Count = 0 }
+        Mock Invoke-Hook { $sent.Add($With); 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook {
+            $reads.Count++
+            if ($reads.Count -eq 1) { return (New-TaggedAnswer $With.Tag -Outcome running -Phase countdown) }
+            throw 'adb: device offline'
+        } -ParameterFilter { $Command -eq 'voice-state' }
+
+        # The check plans the countdown, and the read after its response fails.
+        { Invoke-AutoCheck -Name 'call Ana Test, then a tap' -Text 'call Ana Test' -RespondAt countdown -Respond { } -Verify { $true } } | Should -Throw '*device offline*'
+
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana Test', 'cancel')
+
+        $sent.Clear()
+        $device = @{ Phase = 'countdown' }
+        Mock Invoke-Hook {
+            $sent.Add($With)
+            if ($With.Text -eq 'cancel') { $device.Phase = 'ended' }
+            'sent heard'
+        } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook { New-TaggedAnswer $With.Tag -Outcome $(if ($device.Phase -eq 'ended') { 'cancelled' } else { 'running' }) -Phase $device.Phase } -ParameterFilter { $Command -eq 'voice-state' }
+        $waits = @{ Count = 0 }
+
+        $result = Invoke-AutoCheck -Name 'call Ana' -Text 'Kestrel, call Ana.' -Wait { $waits.Count++ } -Verify { $true }
+
+        $waits.Count | Should -Be 0
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('Kestrel, call Ana.', 'cancel')
+        $result.Line | Should -BeExactly 'call Ana [text]: role=command kind=Global outcome=cancelled check=fail (it counted down to a call, which the check cancelled)'
+    }
+
+    It 'fails a check whose command did not settle in time, and refuses the state of another tag' {
+        Mock Invoke-Hook { 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook { New-TaggedAnswer $With.Tag -Outcome running -Phase running } -ParameterFilter { $Command -eq 'voice-state' }
+
+        $result = Invoke-AutoCheck -Name 'go home' -Text 'go home' -TimeoutSeconds 0.5 -Verify { $true }
+
+        $result.Passed | Should -BeFalse
+        $result.Line | Should -BeExactly 'go home [text]: role=command kind=Global outcome=running check=fail (the command did not settle in 0.5 s)'
+        Mock Invoke-Hook { New-TaggedAnswer 'kother' } -ParameterFilter { $Command -eq 'voice-state' }
+        { Invoke-AutoCheck -Name 'go home' -Text 'go home' -Verify { $true } } | Should -Throw '*answered for another tag*'
+    }
+
     It 'waits with the caller''s wait instead of the command''s end, such as a task''s result, for at most 10 minutes' {
         $polls = @{ Count = 0 }
         $waits = [System.Collections.Generic.List[double]]::new()
@@ -171,7 +255,8 @@ Describe 'The check runner' {
         $sent.Count | Should -Be 1
         $result.Waited['state'] | Should -BeExactly 'done'
         $result.Line | Should -BeExactly 'open the settings [text]: role=task kind=none outcome=none check=pass'
-        Should -Invoke Invoke-Hook -Times 1 -Exactly -ParameterFilter { $Command -eq 'voice-state' }
+        # Once before the wait, until Kestrel has handled the transcript, and once after it.
+        Should -Invoke Invoke-Hook -Times 2 -Exactly -ParameterFilter { $Command -eq 'voice-state' }
         { Invoke-AutoCheck -Name 'x' -Text 'x' -Wait $wait -WaitSeconds 601 -Verify { $true } } | Should -Throw
         { Invoke-AutoCheck -Name 'x' -Text 'x' -Wait $wait -Answer '1' -Verify { $true } } | Should -Throw '*cannot answer or respond*'
     }
