@@ -655,3 +655,28 @@ function Unlock-TestPhone([string]$Serial, [string]$ConfigPath) {
     }
     if ($failed) { throw 'the unlock failed' }
 }
+
+# Closes an "isn't responding" dialog that has the focus on $Serial (Get-AnrPackage), such as one of Chrome's after the
+# Custom Tab tests, with its button "Close app" (the view ID aerr_close of the package android, or the text "Close app"),
+# because it stays over every app, and the checks after it would fail without a reason in their lines. The dialog's
+# hierarchy is read as the PIN pad's is (Get-PinPadState): 'uiautomator dump' to /data/local/tmp, of which only the
+# button's bounds leave the phone. That dump unbinds every accessibility service for up to 10 s, so after a tap the
+# function waits 10 s. Returns $null when no such dialog has the focus, or else the text of a result line that says what
+# it did. Needs scripts\lib\Kestrel.ps1 and scripts\lib\Oracle.ps1.
+function Close-AnrDialog([string]$Serial) {
+    $package = Get-AnrPackage @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys window')
+    if (-not $package) { return $null }
+    $file = '/data/local/tmp/kestrel-anr.xml'
+    $found = @(Invoke-SettingsCommand -Serial $Serial -Command "uiautomator dump $file >/dev/null 2>&1; grep -o -E -e 'id/aerr_close[^>]*bounds=[^ >]*' -e 'text=.Close app.[^>]*bounds=[^ >]*' $file; rm -f $file")
+    $button = @($found | Where-Object { "$_" -match 'bounds=.\[\d+,\d+\]\[\d+,\d+\]' }) | Select-Object -First 1
+    $dialog = "an ""isn't responding"" dialog of $package had the focus"
+    if (-not ($button -and "$button" -match 'bounds=.\[(\d+),(\d+)\]\[(\d+),(\d+)\]')) {
+        return "$dialog, and the script found no ""Close app"" on it, so the checks after it may fail"
+    }
+    Invoke-SettingsCommand -Serial $Serial -Command "input tap $([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))" | Out-Null
+    Start-Sleep -Seconds 10
+    if (Get-AnrPackage @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys window')) {
+        return "$dialog, and a dialog still had it after the script tapped ""Close app"", so the checks after it may fail"
+    }
+    "$dialog, and the script closed it with ""Close app"""
+}

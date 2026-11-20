@@ -10,12 +10,15 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-providers.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer', 'Get-DeviceCode', 'Get-BoundsCentre', 'Get-LiveSkipReason', 'Test-KestrelInFront')
+    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer', 'Get-DeviceCode', 'Get-BoundsCentre', 'Get-LiveSkipReason', 'Test-KestrelInFront',
+        'Get-DeviceName', 'Wait-ServiceBound')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
         }, $true)
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
+    # Wait-ServiceBound asks Kestrel through this, which the tests mock.
+    function Invoke-Hook([string]$Device, [string]$Command, [hashtable]$With = @{}) { }
 }
 
 Describe 'The helpers of the owner''s session of sub-project 4' {
@@ -82,5 +85,23 @@ Describe 'The helpers of the owner''s session of sub-project 4' {
         Test-KestrelInFront ([ordered]@{ count = '1'; app = 'com.android.chrome' }) | Should -BeFalse
         Test-KestrelInFront ([ordered]@{ count = '1'; app = 'none' }) | Should -BeFalse
         Test-KestrelInFront ([ordered]@{ count = '1' }) | Should -BeFalse
+    }
+
+    It 'waits until Kestrel''s accessibility service is bound, and fails the step when it stays unbound' {
+        Mock Start-Sleep { }
+        $EmulatorSerial = 'emulator-5554'
+        # Kestrel's process still starts, then its service is not bound yet, then it is.
+        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('error', 'screen=off testMode=on', 'screen=on testMode=on numbers=0'))
+        Mock Invoke-Hook {
+            $next = $answers.Dequeue()
+            if ($next -eq 'error') { throw 'Kestrel did not answer.' }
+            $next
+        } -ParameterFilter { $Command -eq 'state' }
+
+        { Wait-ServiceBound 'emulator-5554' } | Should -Not -Throw
+        Should -Invoke Invoke-Hook -Times 3 -Exactly
+
+        Mock Invoke-Hook { 'screen=off testMode=on' } -ParameterFilter { $Command -eq 'state' }
+        { Wait-ServiceBound 'emulator-5554' -Seconds 0 } | Should -Throw "Kestrel's accessibility service on kestrel-api37 was not bound after 0 s."
     }
 }

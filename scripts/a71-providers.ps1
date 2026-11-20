@@ -256,11 +256,27 @@ function Enable-KestrelService([string]$Device) {
     Start-Sleep -Seconds 3
 }
 
+# Waits up to $Seconds until Kestrel's accessibility service on the device is bound (the hook state answers 'screen=on'),
+# because screen-has answers only an error until then: Android binds the service a while after the setting, and an
+# unlock's 'uiautomator dump' unbinds it while it runs. Throws when it is still not bound, so that the step fails with
+# that reason instead of at its first tap.
+function Wait-ServiceBound([string]$Device, [int]$Seconds = 30) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        # Kestrel's process may still be starting, and then answers no hook.
+        $state = try { "$(Invoke-Hook $Device state)" } catch { '' }
+        if ($state -like 'screen=on*') { return }
+        if ($watch.Elapsed.TotalSeconds -ge $Seconds) { throw "Kestrel's accessibility service on $(Get-DeviceName $Device) was not bound after $Seconds s." }
+        Start-Sleep -Seconds 1
+    }
+}
+
 # Opens Kestrel's page "Providers and profiles" on the device and taps through the add flow up to the button "Sign in" of
 # GitHub Copilot, which shows the device code; a dry run stops before that button, so that no request reaches GitHub.
 function Open-CopilotSignIn([string]$Device) {
     Enable-KestrelService $Device
     Open-Providers $Device
+    Wait-ServiceBound $Device
     Start-Sleep -Seconds 3
     Invoke-TapLabel $Device 'Add a profile'
     # The list of providers, scrolled until "Copilot" shows; the search field stays empty, so that its text is no match.
@@ -646,6 +662,10 @@ function Invoke-A71TestsStep {
     # case's result answers prototype P5's question (map P08).
     $redirect = @(Get-UnpassedTests $results | Where-Object { $_ -like 'CustomTabSignInTest#*redirect*' })
     Add-Result a71-tests "a prompt of Chrome's about the local network: $(if ($failed) { if ($redirect) { 'not known, because the redirect case did not pass' } else { 'none held the redirect' } } elseif (Test-ClassPassed $results CustomTabSignInTest) { 'none held the redirect' } else { 'not known' })"
+    # On kestrel-api37 the Custom Tab tests left Chrome's "isn't responding" dialog, which a force-stop did not close and
+    # which would stay over every app during the unattended sessions.
+    $anr = Close-AnrDialog -Serial $Serial
+    if ($anr) { Add-Result a71-tests $anr }
     # connected-test.ps1 ends with 'am force-stop', and a stopped app gets no hook broadcast, so Kestrel starts again.
     Open-Providers $Serial
     Start-Sleep -Seconds 3

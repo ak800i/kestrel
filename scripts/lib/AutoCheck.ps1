@@ -72,6 +72,20 @@ function Stop-StartedCall {
     'active'
 }
 
+# Reads Kestrel's state ('voice-state' without a tag) until it no longer speaks, at most $TimeoutSeconds, and then waits
+# 300 ms more, because the listening pipeline resumes on the next frame. Kestrel transcribes nothing while it speaks, and
+# cuts the part of an utterance that began during its reply, so a clip that plays then is lost. Returns whether Kestrel
+# stopped speaking in time.
+function Wait-NotSpeaking([double]$TimeoutSeconds = 15) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ((ConvertFrom-VoiceState (Invoke-Hook voice-state))['speaking'] -ne 'false') {
+        if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { return $false }
+        Start-Sleep -Milliseconds 250
+    }
+    Start-Sleep -Milliseconds 300
+    $true
+}
+
 # Reads 'voice-expect -Result -Tag' until the expectation has ended, at most $TimeoutSeconds, and returns its answer as
 # an ordered table, or $null while it still waits.
 function Wait-ExpectResult([string]$Tag, [double]$TimeoutSeconds = 30) {
@@ -96,12 +110,15 @@ function ConvertTo-Verdict($Result) {
 # One automatic check. $Before reads the device before the command, and its result goes to $Verify as its second
 # argument; $Verify gets the tagged state (voice-state -Tag) and returns the verdict (ConvertTo-Verdict). Without $Clip
 # the text path sends $Text as a tagged transcript, or $Send sends it with the tag as its argument (as screen-has
-# -Template does); with $Clip ({ Voice, Text, Path }) the air path asks the phone to expect the clip's text
-# (voice-expect) and $Play plays the clip. Once the command asks its question, or with -RespondAt countdown once it counts
-# down, and $RespondDelay seconds later, $Answer is sent as a tagged transcript, or $Respond runs, such as a tap on the
-# screen. $RespondDelay counts from the moment that the runner sees the countdown, which is up to a second after it began,
-# so with -RespondAt countdown it must leave room in Kestrel's 4 s countdown. A question that is still open at the end is
-# answered "no", so that it never takes the next check's words; the line says so. No countdown to a call may end in a
+# -Template does); with $Clip ({ Voice, Text, Path }) the air path waits until Kestrel no longer speaks (Wait-NotSpeaking,
+# at most $QuietSeconds, after which the check fails without its clip, and the line says so), then asks the phone to
+# expect the clip's text (voice-expect) and $Play plays the clip. Once the command asks its question, or with -RespondAt
+# countdown once it counts down, and $RespondDelay seconds later, $Answer is sent as a tagged transcript, or $Respond
+# runs, such as a tap on the screen. $RespondDelay counts from the moment that the runner sees the countdown, which is up
+# to a second after it began, so with -RespondAt countdown it must leave room in Kestrel's 4 s countdown. A question that
+# is still open at the end is answered "no", so that it never takes the next check's words; the line says so. A planned
+# response to a question has up to 5 s to end it; when the runner still has to answer "no" after a planned response, the
+# check fails, because the "no" ends a question as a touch does. No countdown to a call may end in a
 # call: a countdown that the check did not plan, such as one after an answer, one that goes on 1 s after the check's
 # planned response (also when that response was its own "cancel"), and one that goes on after a response that failed,
 # gets "cancel" at once, before Kestrel can press Call, and the check fails; the line says so. Every wait of the runner,
@@ -129,7 +146,8 @@ function Invoke-AutoCheck(
     [scriptblock]$Play = { },
     [double]$TimeoutSeconds = 15,
     [scriptblock]$Wait = $null,
-    [ValidateRange(1, 600)][double]$WaitSeconds = 600
+    [ValidateRange(1, 600)][double]$WaitSeconds = 600,
+    [double]$QuietSeconds = 15
 ) {
     if ((Test-YesCall $Text) -or (Test-YesCall $Answer) -or ($Clip -and (Test-YesCall $Clip.Text))) {
         throw 'No check may say "yes, call" (process rule 10).'
@@ -138,11 +156,16 @@ function Invoke-AutoCheck(
     $context = & $Before
     $tag = New-CheckTag
     $heard = $null
+    $quiet = $true
     if ($Clip) {
-        Invoke-Hook voice-expect @{ Text = $Clip.Text; Tag = $tag; Seconds = [int][math]::Ceiling($TimeoutSeconds + 5) } | Out-Null
-        # A clip that could not play lets its expectation end first, so that it does not drop the next check's words.
-        try { & $Play $Clip } catch { Wait-ExpectResult -Tag $tag -TimeoutSeconds ($TimeoutSeconds + 10) | Out-Null; throw }
-        $heard = Wait-ExpectResult -Tag $tag -TimeoutSeconds ($TimeoutSeconds + 10)
+        # Kestrel transcribes nothing while it speaks, such as the reply of the check before, so the clip waits for its end.
+        $quiet = Wait-NotSpeaking -TimeoutSeconds $QuietSeconds
+        if ($quiet) {
+            Invoke-Hook voice-expect @{ Text = $Clip.Text; Tag = $tag; Seconds = [int][math]::Ceiling($TimeoutSeconds + 5) } | Out-Null
+            # A clip that could not play lets its expectation end first, so that it does not drop the next check's words.
+            try { & $Play $Clip } catch { Wait-ExpectResult -Tag $tag -TimeoutSeconds ($TimeoutSeconds + 10) | Out-Null; throw }
+            $heard = Wait-ExpectResult -Tag $tag -TimeoutSeconds ($TimeoutSeconds + 10)
+        }
     } elseif ($Send) {
         & $Send $tag
     } else {
@@ -194,9 +217,12 @@ function Invoke-AutoCheck(
                     $graced = & $read { param($State) $State['phase'] -ne 'countdown' } 1 $false
                     if ($graced['phase'] -eq 'countdown') { $graced } else { & $read $settledOrCountdown }
                 } else {
-                    # Settled again also when the command asks another question, which the "no" below answers, or when the
-                    # answer starts a countdown, which the check did not plan.
-                    & $read $settledOrCountdown
+                    # The planned response has up to 5 s to end the question, because a read right after it can still show
+                    # the question before Kestrel has taken the answer or the touch. Then settled again also when the
+                    # command asks another question, which the "no" below answers, or when the answer starts a countdown,
+                    # which the check did not plan.
+                    $left = & $read { param($State) $State['asking'] -ne 'true' -or $State['phase'] -eq 'countdown' } 5 $false
+                    if ($left['asking'] -eq 'true' -and $left['phase'] -ne 'countdown') { $left } else { & $read $settledOrCountdown }
                 }
             }
             # Until the command has settled without either: a countdown gets "cancel", and a question gets "no". Every wait
@@ -221,7 +247,13 @@ function Invoke-AutoCheck(
                 }
             }
             if ($cancelled) { $notes += 'it counted down to a call, which the check cancelled' }
-            if ($answeredNo) { $notes += 'it asked a question, which the check answered with no' }
+            if ($answeredNo -and $responds -and $ready) {
+                # The planned response did not end the question, so the "no" may have ended it as the response should have.
+                $notes += 'it still asked a question after the planned response, which the check answered with no'
+                $failed = $true
+            } elseif ($answeredNo) {
+                $notes += 'it asked a question, which the check answered with no'
+            }
             # A countdown that ran out between two reads ends in a call, which is ended at once.
             if ($run.Report.Countdown -or $state['kind'] -eq 'Call') {
                 $call = Stop-StartedCall
@@ -235,7 +267,12 @@ function Invoke-AutoCheck(
                 $failed = $true
             }
         }
-        $verdict = if ($state) { ConvertTo-Verdict (& $Verify $state $context $waited) } else { [pscustomobject]@{ Passed = $false; Detail = 'the phone did not match the clip' } }
+        $verdict = if ($state) {
+            ConvertTo-Verdict (& $Verify $state $context $waited)
+        } else {
+            $why = if ($quiet) { 'the phone did not match the clip' } else { "Kestrel still spoke after $QuietSeconds s, so the clip did not play" }
+            [pscustomobject]@{ Passed = $false; Detail = $why }
+        }
     } catch {
         # A hook call or a test that failed during a countdown must not leave it running to a call.
         if ($run.Report.State -and $run.Report.State['phase'] -eq 'countdown') {

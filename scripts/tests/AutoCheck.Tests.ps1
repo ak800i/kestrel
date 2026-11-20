@@ -24,6 +24,8 @@ Describe 'The check runner' {
         Mock Start-Sleep { }
         # No call shows, unless a test's fake device starts one.
         Mock Invoke-SettingsCommand { 'mCallState=0' }
+        # Kestrel does not speak when an air check starts, unless a test says otherwise ('voice-state' without a tag).
+        Mock Invoke-Hook { 'mode=listening work=idle speaking=false microphone=true recognition=all screenOn=true micBusy=false command=0 kind=none outcome=none session=open clips=off' } -ParameterFilter { $Command -eq 'voice-state' -and -not $With.Tag }
         $sent = [System.Collections.Generic.List[hashtable]]::new()
     }
 
@@ -82,7 +84,7 @@ Describe 'The check runner' {
             if ($results.Count -eq 1) { return "waiting tag=$($With.Tag)" }
             "tag=$($With.Tag) matched=true words=2 errors=0 stray=1 split=0 speechEnded=900 closed=1600 transcribed=2100 run=true command=7 kind=Global outcome=done right=-"
         } -ParameterFilter { $Command -eq 'voice-expect' -and $With.Result }
-        Mock Invoke-Hook { New-TaggedAnswer $With.Tag } -ParameterFilter { $Command -eq 'voice-state' }
+        Mock Invoke-Hook { New-TaggedAnswer $With.Tag } -ParameterFilter { $Command -eq 'voice-state' -and $With.Tag }
         $clip = [pscustomobject]@{ Voice = 'kokoro'; Text = 'Go home.'; Path = 'c004.wav' }
 
         $result = Invoke-AutoCheck -Name 'go home' -Text 'go home' -Clip $clip -Play { param($Clip) $played.Add($Clip.Path) } -Verify { $true }
@@ -102,7 +104,35 @@ Describe 'The check runner' {
 
         $result.Passed | Should -BeFalse
         $result.Line | Should -BeExactly 'go home [piper]: role=- kind=- outcome=- check=fail (the phone did not match the clip) matched=false words=2 errors=2 stray=0 split=0'
-        Should -Invoke Invoke-Hook -Times 0 -Exactly -ParameterFilter { $Command -eq 'voice-state' }
+        Should -Invoke Invoke-Hook -Times 0 -Exactly -ParameterFilter { $Command -eq 'voice-state' -and $With.Tag }
+    }
+
+    It 'plays a clip only once Kestrel has stopped speaking, and fails the check without its clip when Kestrel speaks on' {
+        $order = [System.Collections.Generic.List[string]]::new()
+        $device = @{ Speaking = 3 }
+        Mock Invoke-Hook {
+            $order.Add('state')
+            $speaking = if ($device.Speaking -gt 0) { $device.Speaking--; 'true' } else { 'false' }
+            "mode=listening work=idle speaking=$speaking microphone=true recognition=all screenOn=true micBusy=false command=7 kind=Global outcome=done session=open clips=off"
+        } -ParameterFilter { $Command -eq 'voice-state' -and -not $With.Tag }
+        Mock Invoke-Hook { $order.Add('expect'); 'expecting' } -ParameterFilter { $Command -eq 'voice-expect' -and -not $With.Result }
+        Mock Invoke-Hook { "tag=$($With.Tag) matched=true words=2 errors=0 stray=0 split=0 speechEnded=900 closed=1600 transcribed=2100 run=true command=8 kind=Global outcome=done right=-" } -ParameterFilter { $Command -eq 'voice-expect' -and $With.Result }
+        Mock Invoke-Hook { New-TaggedAnswer $With.Tag } -ParameterFilter { $Command -eq 'voice-state' -and $With.Tag }
+        $clip = [pscustomobject]@{ Voice = 'kokoro'; Text = 'Silence.'; Path = 'c154.wav' }
+
+        $quiet = Invoke-AutoCheck -Name 'silence' -Text 'silence' -Clip $clip -Play { $order.Add('play') } -Verify { $true }
+
+        @($order) | Should -Be @('state', 'state', 'state', 'state', 'expect', 'play')
+        $quiet.Passed | Should -BeTrue
+
+        $order.Clear()
+        $device.Speaking = [int]::MaxValue
+        $spoke = Invoke-AutoCheck -Name 'silence' -Text 'silence' -Clip $clip -QuietSeconds 0.2 -Play { $order.Add('play') } -Verify { throw 'not called' }
+
+        $order | Should -Not -Contain 'expect'
+        $order | Should -Not -Contain 'play'
+        $spoke.Passed | Should -BeFalse
+        $spoke.Line | Should -BeExactly 'silence [kokoro]: role=- kind=- outcome=- check=fail (Kestrel still spoke after 0.2 s, so the clip did not play) matched=none'
     }
 
     It 'responds at the countdown after the delay, sends through the caller''s sender, and answers a question left open with no' {
@@ -127,7 +157,39 @@ Describe 'The check runner' {
         Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Milliseconds -eq 3000 }
         $sent.Count | Should -Be 1
         $sent[0].Text | Should -BeExactly 'no'
-        $result.Line | Should -BeExactly 'call Ana Test, then a tap [text]: role=command kind=Global outcome=cancelled check=pass (it asked a question, which the check answered with no)'
+        $result.Passed | Should -BeFalse
+        $result.Line | Should -BeExactly 'call Ana Test, then a tap [text]: role=command kind=Global outcome=cancelled check=fail (it still asked a question after the planned response, which the check answered with no)'
+    }
+
+    It 'fails a check whose planned tap did not end the question, and waits out a stale read after a tap that ended it' {
+        # The states that the next reads give, one each, after which the last one stays; "no" cancels the command.
+        $device = @{ Phase = 'question'; Queue = [System.Collections.Generic.Queue[string]]::new() }
+        Mock Invoke-Hook {
+            $sent.Add($With)
+            if ($With.Text -eq 'no') { $device.Phase = 'ended' }
+            'sent heard'
+        } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook {
+            if ($device.Queue.Count -gt 0) { $device.Phase = $device.Queue.Dequeue() }
+            $asking = if ($device.Phase -eq 'question') { 'true' } else { 'false' }
+            New-TaggedAnswer $With.Tag -Kind Call -Outcome $(if ($device.Phase -eq 'ended') { 'cancelled' } else { 'running' }) -Phase $device.Phase -Asking $asking
+        } -ParameterFilter { $Command -eq 'voice-state' -and $With.Tag }
+        $verify = { param($State) $State['outcome'] -eq 'cancelled' }
+
+        # A tap that did nothing: only the runner's "no" ends the question, with the same outcome as a touch.
+        $missed = Invoke-AutoCheck -Name '"Which one?", ended by a tap' -Text 'call Ana' -Respond { } -Verify $verify
+
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana', 'no')
+        $missed.Passed | Should -BeFalse
+        $missed.Line | Should -BeExactly '"Which one?", ended by a tap [text]: role=command kind=Call outcome=cancelled check=fail (it still asked a question after the planned response, which the check answered with no)'
+
+        $sent.Clear()
+        $device.Phase = 'question'
+        # A tap that ended the question, whose first read after it still shows the question.
+        $ended = Invoke-AutoCheck -Name '"Which one?", ended by a tap' -Text 'call Ana' -Respond { foreach ($phase in 'question', 'ended') { $device.Queue.Enqueue($phase) } } -Verify $verify
+
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana')
+        $ended.Line | Should -BeExactly '"Which one?", ended by a tap [text]: role=command kind=Call outcome=cancelled check=pass'
     }
     It 'cancels a countdown that the check did not plan, or that a failed response left running, and fails the check' {
         $device = @{ Phase = 'countdown' }
@@ -257,8 +319,10 @@ Describe 'The check runner' {
         $device = @{ Phase = 'question'; Queue = [System.Collections.Generic.Queue[string]]::new() }
         Mock Invoke-Hook {
             $sent.Add($With)
-            # The answer's first read is stale, then Kestrel opens the phone app, announces the call and counts down.
-            if ($With.Text -eq 'Ana Test') { foreach ($phase in 'question', 'running', 'running', 'countdown') { $device.Queue.Enqueue($phase) } }
+            # The answer's first read is stale, then Kestrel asks again; it drops the runner's "no" while it opens the
+            # phone app, announces the call and counts down.
+            if ($With.Text -eq 'Ana Test') { foreach ($phase in 'question', 'running', 'question') { $device.Queue.Enqueue($phase) } }
+            if ($With.Text -eq 'no') { foreach ($phase in 'running', 'running', 'countdown') { $device.Queue.Enqueue($phase) } }
             if ($With.Text -eq 'cancel' -and $device.Phase -eq 'countdown') { $device.Phase = 'ended' }
             'sent heard'
         } -ParameterFilter { $Command -eq 'voice' }
@@ -272,7 +336,7 @@ Describe 'The check runner' {
 
         @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana', 'Ana Test', 'no', 'cancel')
         $dropped.Passed | Should -BeFalse
-        $dropped.Line | Should -BeExactly 'call Ana, then Ana Test [text]: role=command kind=Call outcome=cancelled check=fail (it counted down to a call, which the check cancelled; it asked a question, which the check answered with no)'
+        $dropped.Line | Should -BeExactly 'call Ana, then Ana Test [text]: role=command kind=Call outcome=cancelled check=fail (it counted down to a call, which the check cancelled; it still asked a question after the planned response, which the check answered with no)'
 
         $sent.Clear()
         $device.Phase = 'question'

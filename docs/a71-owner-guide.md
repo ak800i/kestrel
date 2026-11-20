@@ -31,7 +31,7 @@ The controller installs everything first, with each script's step `install`, and
    - On the A71, Chrome opens github.com/login/device inside Kestrel. Sign in to GitHub if it asks, touch and hold the code field, tap "Paste", and tap Continue and Authorize. Do not tap Chrome's X. If Chrome offers to save your password, answer it yourself; the script never taps Chrome's buttons. Kestrel's page should come back by itself. You have 10 minutes from when Chrome opens; if Kestrel's page has not come back by then, the script brings it back.
    - The script saves both profiles itself, and then says that you may leave. The live cases spend about 4 to 8 of your GitHub AI Credits.
 
-After that, `a71-providers.ps1` goes on by itself, and then the controller runs the other steps of `a71-commands.ps1` and of `a71-session.ps1` without you, one after the other. In them Kestrel never presses Call: a countdown that a check did not plan is cancelled at once. Please do not touch the A71 or the emulator while they run; the A71's screen stays on.
+After that, `a71-providers.ps1` goes on by itself, and then the controller runs the other steps of `a71-commands.ps1` and of `a71-session.ps1` without you, one after the other. In them Kestrel never presses Call: a countdown that a check did not plan is cancelled at once. Please do not touch the A71 or the emulator while they run; the A71's screen stays on. Please keep the room quiet during those hours, with no talk, television or radio near the A71 and no other sound from this computer, because Kestrel listens all that time, and the results count what it hears.
 
 ## What stays afterwards
 

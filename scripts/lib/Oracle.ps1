@@ -84,6 +84,16 @@ function Get-FocusedWindow([string[]]$Dump) {
     $null
 }
 
+# The app that an "isn't responding" dialog names when that dialog has the focus, from 'dumpsys window', whose window
+# Android names 'Application Not Responding: <package>' ('mCurrentFocus=Window{5c1 u0 Application Not Responding:
+# com.android.chrome}'), or $null when another window has the focus.
+function Get-AnrPackage([string[]]$Dump) {
+    foreach ($line in $Dump) {
+        if ($line -match '\bmCurrentFocus=Window\{\S+ u\d+ Application Not Responding: ([\w.:]+)') { return $Matches[1] }
+    }
+    $null
+}
+
 # The hash that the hooks give for a text instead of the text: the first 16 hexadecimal characters of the SHA-256 of its
 # UTF-8 bytes (plan 4D interfaces, section 1), so that a check compares what Kestrel said or showed with a fixed
 # sentence without the words leaving the phone.

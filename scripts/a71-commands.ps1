@@ -608,6 +608,27 @@ function Test-NewSettingsPage {
 
 function Test-FirstSettingsPage { New-Verdict ((Get-Screen)['appTitle'] -eq $marks.FirstTitle) 'the first page of Settings' }
 
+# The first visible row (its hash) of Settings' own list, which the scroll checks compare, or 'none'. Only Settings'
+# elements count: an install of Kestrel while its accessibility service is on makes Android add it to the accessibility
+# button's targets, and kestrel-api37 then shows SystemUI's floating accessibility menu on the right edge, whose list came
+# first on the screen, and which a scroll of Settings does not move.
+function Get-ListRow { "$((Get-Screen @{ Package = 'com.android.settings'; State = 'scrollable' })['first'])" }
+
+# "scroll down": Settings' list shows another first row than before ($marks.ListTop); $marks.ListMoved says so for
+# "scroll to top".
+function Test-ScrolledDown {
+    $row = Get-ListRow
+    $marks.ListMoved = $row -notin '', 'none' -and $marks.ListTop -notin '', 'none' -and $row -ne $marks.ListTop
+    New-Verdict $marks.ListMoved 'another first row'
+}
+
+# "scroll to top": the first row of before "scroll down" again, which proves the scroll back only when "scroll down"
+# moved the list; otherwise the check counts as failed and says that it was not checked.
+function Test-ScrolledToTop {
+    if (-not $marks.ListMoved) { return New-Verdict $false 'not checked, because "scroll down" did not move the list' }
+    New-Verdict ((Get-ListRow) -eq $marks.ListTop) 'the first row again'
+}
+
 function Test-NoCall { -not (Test-CallActive -Registry (Invoke-Checked 'dumpsys telephony.registry')) }
 
 function Test-Cancelled($State) {
@@ -962,9 +983,10 @@ function Invoke-ScreenStep {
         New-Verdict ($now -lt $Before -and $now -gt 0) "$Before squares, then $now"
     }
     Test-Command screen 'hide grid' c194 { New-Verdict ((Get-LayerState)['grid'] -eq 'off') 'no grid' }
-    $marks.ListTop = (Get-Screen @{ State = 'scrollable' })['first']
-    Test-Command screen 'scroll down' c022 { New-Verdict ((Get-Screen @{ State = 'scrollable' })['first'] -ne $marks.ListTop) 'another first row' }
-    Test-Command screen 'scroll to top' c023 { New-Verdict ((Get-Screen @{ State = 'scrollable' })['first'] -eq $marks.ListTop) 'the first row again' }
+    $marks.ListTop = Get-ListRow
+    $marks.ListMoved = $false
+    Test-Command screen 'scroll down' c022 { Test-ScrolledDown }
+    Test-Command screen 'scroll to top' c023 { Test-ScrolledToTop }
     Test-Command screen 'tap Display' k002 { Test-NewSettingsPage }
     Test-Command screen 'go back' c003 { Test-FirstSettingsPage }
     Test-Command screen 'Display' k003 { Test-NewSettingsPage }
@@ -1618,6 +1640,9 @@ try {
         Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes."
         Initialize-Session
         try {
+            # An "isn't responding" dialog, such as Chrome's after the providers' Custom Tab tests, would stay over every check.
+            $anr = Close-AnrDialog -Serial $Serial
+            if ($anr) { Add-Result $entry.Name $anr }
             & $entry.Run
         } catch {
             if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }

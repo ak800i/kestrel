@@ -621,3 +621,47 @@ Describe 'The owner''s settings and the test PIN' {
         }
     }
 }
+
+Describe 'An "isn''t responding" dialog that has the focus' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        . "$PSScriptRoot\..\lib\Session.ps1"
+        . "$PSScriptRoot\..\lib\Oracle.ps1"
+    }
+
+    BeforeEach {
+        Mock Start-Sleep { }
+        # Anr: the app that the dialog names, or $null without one; Button: whether the dump finds "Close app"; Closes:
+        # whether a tap on it closes the dialog.
+        $phone = @{ Anr = 'com.android.chrome'; Button = $true; Closes = $true; Commands = [System.Collections.Generic.List[string]]::new() }
+        Mock Invoke-SettingsCommand {
+            $phone.Commands.Add($Command)
+            if ($Command -eq 'dumpsys window') {
+                if ($phone.Anr) { "  mCurrentFocus=Window{5c1 u0 Application Not Responding: $($phone.Anr)}" } else { '  mCurrentFocus=Window{4a8 u0 com.android.settings/com.android.settings.Settings}' }
+            }
+            if ($Command -like 'uiautomator dump *' -and $phone.Button) { 'id/aerr_close" class="android.widget.Button" package="android" content-desc="" bounds="[48,1300][1032,1420]"' }
+            if ($Command -like 'input tap *' -and $phone.Closes) { $phone.Anr = $null }
+        }
+    }
+
+    It 'closes the dialog with "Close app" and says so, and does nothing when no such dialog has the focus' {
+        Close-AnrDialog -Serial 'R58N' | Should -BeExactly 'an "isn''t responding" dialog of com.android.chrome had the focus, and the script closed it with "Close app"'
+        $phone.Commands | Should -Contain 'input tap 540 1360'
+        # The hierarchy is read in the shell's folder, and deleted on the phone.
+        @($phone.Commands | Where-Object { $_ -like 'uiautomator dump /data/local/tmp/*; rm -f /data/local/tmp/*' }).Count | Should -Be 1
+
+        $phone.Commands.Clear()
+        Close-AnrDialog -Serial 'R58N' | Should -BeNullOrEmpty
+        @($phone.Commands) | Should -Be @('dumpsys window')
+    }
+
+    It 'says when the dialog has no "Close app", or stays after the tap' {
+        $phone.Button = $false
+        Close-AnrDialog -Serial 'R58N' | Should -BeExactly 'an "isn''t responding" dialog of com.android.chrome had the focus, and the script found no "Close app" on it, so the checks after it may fail'
+        @($phone.Commands | Where-Object { $_ -like 'input tap *' }).Count | Should -Be 0
+
+        $phone.Button = $true
+        $phone.Closes = $false
+        Close-AnrDialog -Serial 'R58N' | Should -BeExactly 'an "isn''t responding" dialog of com.android.chrome had the focus, and a dialog still had it after the script tapped "Close app", so the checks after it may fail'
+    }
+}

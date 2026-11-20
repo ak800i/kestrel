@@ -13,7 +13,8 @@ BeforeAll {
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Test-SecureFolder', 'Get-NewScreenshotIds', 'Get-Percentile',
         'Get-GridCells', 'ConvertFrom-Magnification', 'Get-VolumeRange', 'Select-InstalledApp', 'New-AirTotals', 'Add-AirResult',
-        'Format-AirTotals', 'Request-OwnerItem', 'Complete-Restore', 'Invoke-Restore', 'Get-PassClip', 'Add-PassCount', 'Test-Command')
+        'Format-AirTotals', 'Request-OwnerItem', 'Complete-Restore', 'Invoke-Restore', 'Get-PassClip', 'Add-PassCount', 'Test-Command',
+        'New-Verdict', 'Get-Screen', 'Get-ListRow', 'Test-ScrolledDown', 'Test-ScrolledToTop')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -22,6 +23,8 @@ BeforeAll {
     # Test-Command runs a check and writes its result through these, which the tests mock.
     function Invoke-AutoCheck($Name, $Text, $Verify, $Before, $Answer, $Respond, $RespondAt, $RespondDelay, $Send, $Clip, $Play, $TimeoutSeconds) { }
     function Add-Result([string]$StepName, [string]$Text) { }
+    # The scroll checks read the screen through this, which the tests mock.
+    function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { }
     # Request-OwnerItem beeps through this; the tests stay silent.
     function Invoke-Beep { }
 }
@@ -154,6 +157,27 @@ Describe 'The helpers of the A71 session of the instant commands' {
             $passCounts['text'].Run | Should -Be 1
             $passCounts['text'].Passed | Should -Be 0
         }
+    }
+
+    It 'reads the rows of Settings'' own list, and checks "scroll to top" only after "scroll down" moved that list' {
+        $device = @{ Row = 'r1' }
+        # Settings' list, and SystemUI's floating accessibility menu, which comes first on the screen and never moves.
+        Mock Invoke-Hook {
+            if ($With.Package -eq 'com.android.settings' -and $With.State -eq 'scrollable') { "count=1 first=$($device.Row)" } else { 'count=2 first=menu' }
+        } -ParameterFilter { $Command -eq 'screen-has' }
+        $marks = @{ ListTop = $null; ListMoved = $false }
+
+        $marks.ListTop = Get-ListRow
+        $device.Row = 'r9'
+        (Test-ScrolledDown).Passed | Should -BeTrue
+        $device.Row = 'r1'
+        (Test-ScrolledToTop).Passed | Should -BeTrue
+
+        # A "scroll down" that moved nothing, after which "scroll to top" proves nothing.
+        (Test-ScrolledDown).Passed | Should -BeFalse
+        $top = Test-ScrolledToTop
+        $top.Passed | Should -BeFalse
+        $top.Detail | Should -BeExactly 'not checked, because "scroll down" did not move the list'
     }
 
     It 'asks the owner for his item only when he is there' {
