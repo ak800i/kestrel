@@ -50,4 +50,19 @@ Describe 'hook.ps1' {
         $exit | Should -Not -Be 0
         $output | Should -BeLike '*screen-has -Template needs -Tag; give the transcript a new tag.*'
     }
+
+    It 'refuses clipboard without exactly one of -Save, -Restore and -Clear before it reaches a device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $both = (& pwsh -NoProfile -File $hook -Serial no-such-device clipboard -Save -Restore 2>&1) -join "`n"
+        $bothExit = $LASTEXITCODE
+        $none = (& pwsh -NoProfile -File $hook -Serial no-such-device clipboard 2>&1) -join "`n"
+        $noneExit = $LASTEXITCODE
+
+        $bothExit | Should -Not -Be 0
+        $both | Should -BeLike '*clipboard needs exactly one of -Save, -Restore and -Clear.*'
+        $noneExit | Should -Not -Be 0
+        $none | Should -BeLike '*clipboard needs exactly one of -Save, -Restore and -Clear.*'
+    }
 }

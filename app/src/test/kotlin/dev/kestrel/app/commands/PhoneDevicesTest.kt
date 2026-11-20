@@ -6,6 +6,7 @@ import dev.kestrel.commands.Direction
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.RadioKind
 import dev.kestrel.commands.StreamKind
+import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -60,6 +61,49 @@ class PhoneDevicesTest {
         assertFalse(names("flashlight", RadioKind.WIFI))
         assertTrue(names("bt-tile", RadioKind.BLUETOOTH))
         assertFalse(names("wifi-calling", RadioKind.WIFI))
+    }
+
+    @Test
+    fun oneUisBluetoothTileIsItsInnerButtonNeverItsOuterLayoutOrItsLabelGroup() {
+        val ui = "com.android.systemui"
+        val click = setOf(ElementAction.CLICK, ElementAction.LONG_CLICK)
+        val focus = setOf(ElementAction.FOCUS, ElementAction.CLICK, ElementAction.LONG_CLICK)
+        fun node(key: String, parent: Int?, className: String, actions: Set<ElementAction>, label: String? = null, description: String? = null) =
+            ScreenElement(
+                key = key, windowId = 1, parent = parent, packageName = ui, className = className, label = label ?: description,
+                contentDescription = description, bounds = bounds, clickable = true, actions = actions,
+            )
+        // One UI 5.1's Quick Settings on the A71 (inv-oneui-a71, 1), with Kestrel's own tile, the only checkable one.
+        val elements = listOf(
+            node("kestrel", null, "android.widget.Switch", click, label = "Kestrel,On,Button").copy(checkable = true),
+            node("root", null, "android.widget.LinearLayout", click, label = "Bluetooth,Off,Button Bluetooth").copy(stateDescription = "Off"),
+            node("frame", 1, "android.widget.FrameLayout", click, label = "Bluetooth,Off,Button"),
+            node("icon", 2, "android.view.ViewGroup", focus, description = "Bluetooth,Off,Button"),
+            node("labels", 1, "android.widget.LinearLayout", focus, label = "Bluetooth").copy(viewId = "$ui:id/label_group"),
+            ScreenElement(
+                key = "label", windowId = 1, parent = 4, packageName = ui, className = "android.widget.TextView", text = "Bluetooth",
+                label = "Bluetooth", viewId = "$ui:id/tile_label", bounds = bounds,
+            ),
+        )
+        val oneUi = ScreenSnapshot(0, listOf(panel), elements)
+
+        assertEquals(listOf("icon"), elements.filter { DeviceCommands.bluetoothTile(oneUi, it) }.map { it.key })
+        // AOSP's checkable tile is still taken.
+        val tile = ScreenElement(key = "aosp", windowId = 1, packageName = ui, className = "android.widget.Switch", bounds = bounds, clickable = true, checkable = true)
+        val name = ScreenElement(key = "aosp-name", windowId = 1, parent = 0, packageName = ui, contentDescription = "Bluetooth", label = "Bluetooth", bounds = bounds)
+        assertTrue(DeviceCommands.bluetoothTile(ScreenSnapshot(0, listOf(panel), listOf(tile, name)), tile))
+    }
+
+    @Test
+    fun aVolumeChangeGoesWithoutThePanelsFlagAndOnlyTheSecondCallShowsThePanel() {
+        assertEquals(
+            listOf(AudioManager.ADJUST_RAISE to 0, AudioManager.ADJUST_SAME to AudioManager.FLAG_SHOW_UI),
+            DeviceCommands.adjustments(AudioManager.ADJUST_RAISE),
+        )
+        assertEquals(
+            listOf(AudioManager.ADJUST_UNMUTE to 0, AudioManager.ADJUST_SAME to AudioManager.FLAG_SHOW_UI),
+            DeviceCommands.adjustments(AudioManager.ADJUST_UNMUTE),
+        )
     }
 
     @Test

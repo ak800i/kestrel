@@ -4,6 +4,9 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -77,6 +80,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         "OWNER_OPTIONS" -> ownerOptions(intent)
         "NOTICES" -> notices(intent)
         "CHECK_NOTICE" -> checkNotice(intent)
+        "CLIPBOARD" -> clipboard(intent)
         else -> throw HookError("unknown command '$command'")
     }
 
@@ -155,6 +159,56 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         }
         return "checkNotice=${if (shown()) "shown" else "gone"}"
     }
+
+    /**
+     * The owner's clipboard around a check that copies (plan 4D). --ez save true keeps a copy of the clipboard in this
+     * process's memory and answers its kind, text or other. Android 13 lets Kestrel read the clipboard only while its
+     * window has the input focus, and answers null both for an empty clipboard and for a refused read, so null, or Kestrel's
+     * settings not in front, is "unknown": nothing is saved, and a later restore changes nothing. While a copy from an
+     * earlier save waits, a save keeps it and answers clip=held. --ez restore true puts the copy back, which Android allows
+     * from the background, and forgets it only once that worked; when Android refuses, as for a picture whose read access
+     * ended with its clip, the copy is forgotten too, because Android never gives that access back, and the answer is
+     * restored=failed. A restore never empties the clipboard.
+     * --ez clear true empties the clipboard, for the emulator's tests. The answers hold kinds only, never the content, and
+     * nothing is written anywhere.
+     */
+    private suspend fun clipboard(intent: Intent): String = withContext(Dispatchers.Main) {
+        val manager = context.getSystemService(ClipboardManager::class.java) ?: throw HookError("the clipboard service is missing")
+        when {
+            intent.getBooleanExtra(EXTRA_SAVE, false) -> {
+                if (saved != null) return@withContext "clip=held saved=false"
+                if (!graph.timeline.settingsInFront) return@withContext "clip=unknown saved=false"
+                val clip = manager.primaryClip?.takeIf { it.itemCount > 0 } ?: return@withContext "clip=unknown saved=false"
+                saved = clip
+                "clip=${kindOf(clip)} saved=true"
+            }
+            intent.getBooleanExtra(EXTRA_RESTORE, false) -> {
+                val held = saved ?: return@withContext "restored=false"
+                try {
+                    manager.setPrimaryClip(held)
+                } catch (e: SecurityException) {
+                    // Android never gives that access back, so the copy is forgotten, and a later save takes the owner's
+                    // newer clip.
+                    saved = null
+                    return@withContext "restored=failed"
+                }
+                saved = null
+                "restored=true"
+            }
+            intent.getBooleanExtra(EXTRA_CLEAR, false) -> {
+                manager.clearPrimaryClip()
+                "cleared=true"
+            }
+            else -> throw HookError("add --ez save true, --ez restore true or --ez clear true")
+        }
+    }
+
+    private fun kindOf(clip: ClipData): String =
+        if (clip.description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) || clip.description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)) {
+            "text"
+        } else {
+            "other"
+        }
 
     // The phone's own times (plan 2E), and whether Android runs ListeningService in the foreground: foreground= from
     // Android's list of Kestrel's running services, demoted= Android's reading of whether the service lost its
@@ -311,8 +365,11 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     companion object {
         val COMMANDS = setOf(
             "VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_SPOTTER", "VOICE_TASK", "VOICE_ECHO", "OWNER_OPTIONS", "NOTICES",
-            "CHECK_NOTICE",
+            "CHECK_NOTICE", "CLIPBOARD",
         )
+
+        // The clip that CLIPBOARD saved, only in this process's memory and only on the main thread; null when none waits.
+        private var saved: ClipData? = null
 
         /**
          * The kinds of Kestrel's notices about problems, from their IDs and the stop notice's text, sorted and joined with
@@ -357,5 +414,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         private const val EXTRA_REQUIRE_VERBS = "requireVerbs"
         private const val EXTRA_EARBUD_MICROPHONE = "earbudMicrophone"
         private const val EXTRA_ON = "on"
+        private const val EXTRA_SAVE = "save"
+        private const val EXTRA_RESTORE = "restore"
     }
 }

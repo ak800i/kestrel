@@ -417,8 +417,14 @@ internal class TextCommands(private val environment: CommandEnvironment) : Comma
      * The live state of [field], or null when it has gone or no longer has the focus: a key names a position, so after a
      * change of the screen it may name a look-alike field that Kestrel would otherwise focus and type into.
      */
-    private suspend fun focusedState(screen: ScreenSession, field: ScreenElement): FieldState? =
-        screen.text.read(field.key)?.takeIf { it.focused }
+    private suspend fun focusedState(screen: ScreenSession, field: ScreenElement): FieldState? {
+        val state = screen.text.read(field.key) ?: return null
+        if (state.focused) return state
+        // A field that TextFields found inside the focused container gets the focus first (inv-oneui-a71, 4). A field that
+        // the snapshot showed with the focus and has lost it may be a look-alike now, so it stays untouched.
+        if (field.focused || !screen.text.focusField(field.key)) return null
+        return screen.text.read(field.key)?.takeIf { it.focused }
+    }
 
     /**
      * Runs [edit] and records Kestrel's edit of [field] from [before] once it is done. When "stop" cancels the command, the

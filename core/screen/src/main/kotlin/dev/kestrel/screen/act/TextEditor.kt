@@ -66,6 +66,13 @@ class TextEditor(
     }
 
     /**
+     * Gives the field with [key] the focus when it does not have it, and waits up to 2 s until its node reports it, for an
+     * app that keeps the focus on the container around its editor, as Samsung Notes does (inv-oneui-a71, 4). False when
+     * the field is gone or does not get the focus.
+     */
+    suspend fun focusField(key: String): Boolean = field(key)?.let { focus(it) } ?: false
+
+    /**
      * Replaces the text from [start] until [end] of the field with [key] by [replacement], and then selects
      * [selectionStart] to [selectionEnd]. The input method comes first: it replaces only that range, makes the events
      * that web pages expect, and lands in the field's undo history. When the input does not start or the field does not
@@ -118,8 +125,12 @@ class TextEditor(
         if (!field.node.refresh()) return NOT_ON_SCREEN
         val before = field.node.shownText().orEmpty()
         val (start, end) = selection(field.node, before)
+        // A field that only its editor action "none" makes multi-line gets the line break as text, never the Enter key,
+        // which a one-line field may take as "send" (plan 4D).
+        val typed = !field.node.isMultiLine &&
+            withContext(Dispatchers.Main) { startedEditor(field)?.let { InputTypes.breakByAction(it.inputType, it.imeOptions) } } == true
         if (connection != null) {
-            withContext(Dispatchers.Main) { connection.enter() }
+            withContext(Dispatchers.Main) { if (typed) connection.commitText("\n", 1, null) else connection.enter() }
             if (changes(field.node, before)) return settled(ActionMethod.INPUT_METHOD)
         }
         if (password(field)) return NOT_TAKEN
@@ -357,10 +368,7 @@ class TextEditor(
         return editor
     }
 
-    // Only the multi-line flag: the IME multi-line flag means that the field itself has one line (InputType).
-    private fun multiLine(editor: EditorInfo): Boolean =
-        editor.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT &&
-            editor.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0
+    private fun multiLine(editor: EditorInfo): Boolean = InputTypes.multiLine(editor.inputType, editor.imeOptions)
 
     // Not the visible-password variation: apps use it to turn suggestions off in fields that are no passwords.
     private fun isPassword(editor: EditorInfo): Boolean =

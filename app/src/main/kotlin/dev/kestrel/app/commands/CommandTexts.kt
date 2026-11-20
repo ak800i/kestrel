@@ -5,6 +5,8 @@ internal object CommandTexts {
     const val SERVICE_OFF = "My accessibility service is off, so I can't use the screen."
     const val WHICH_ONE = "Which one?"
     const val SCREEN_CHANGED = "The screen changed. Say it again."
+    const val EDGE_BUTTONS_BACK = "The navigation bar has buttons, so this swipe doesn't go back. Say 'go back'."
+    const val EDGE_BUTTONS_HOME = "The navigation bar has buttons, so this swipe doesn't go home. Say 'go home'."
     const val SHOW_NUMBERS_FIRST = "Say 'show numbers' first."
     const val NOTHING_HERE = "I can't find anything for that here."
 

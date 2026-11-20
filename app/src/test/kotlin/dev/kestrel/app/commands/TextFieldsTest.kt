@@ -90,6 +90,25 @@ class TextFieldsTest {
     }
 
     @Test
+    fun theOnlyFieldInsideAFocusedContainerCountsWhileTheKeyboardShows() {
+        // Samsung Notes: the input focus is on the ScrollView that holds the note's body, and the body reports no focus.
+        val scroll = ScreenElement(
+            key = "scroll", windowId = 1, packageName = "dev.app", className = "android.widget.ScrollView",
+            bounds = IntRect(0, 200, 1080, 1500), scrollable = true, focused = true,
+        )
+        val body = field("body", null, 300).copy(parent = 0)
+        val title = field("title", "Title", 100)
+
+        assertEquals(body, TextFields.focused(snapshot(scroll, body, title, keyboardShows = true)))
+        // Without the keyboard, or with two fields inside the container, none counts.
+        assertNull(TextFields.focused(snapshot(scroll, body, title)))
+        assertNull(TextFields.focused(snapshot(scroll, body, field("second", null, 600).copy(parent = 0), keyboardShows = true)))
+        // A field that has the focus itself comes first.
+        val focusedTitle = title.copy(focused = true)
+        assertEquals(focusedTitle, TextFields.focused(snapshot(scroll, body, focusedTitle, keyboardShows = true)))
+    }
+
+    @Test
     fun startEditingWithoutANameTakesTheFocusedTheOnlyOrTheFirstFromTheTop() {
         val low = field("low", "Notes", 900)
         val high = field("high", "Subject", 300)

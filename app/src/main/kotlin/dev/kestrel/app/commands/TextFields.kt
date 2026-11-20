@@ -16,15 +16,46 @@ import kotlin.math.abs
 internal object TextFields {
     /**
      * The text field that has the focus, outside the keyboard's window, in the window that has the input focus when a
-     * window has it. WebView marks its focused field this way too (P4).
+     * window has it. WebView marks its focused field this way too (P4). Without one, while the keyboard shows, the only
+     * enabled text field inside the focused element that is no text field: Samsung Notes keeps the focus on the
+     * ScrollView around its editor, whose node reports no focus until Kestrel focuses it (inv-oneui-a71, 4), which the
+     * text commands do before they read it (TextCommands.focusedState).
      */
     fun focused(snapshot: ScreenSnapshot): ScreenElement? {
         val keyboard = keyboardWindows(snapshot)
         val fields = snapshot.elements.filter { it.editable && it.focused && it.enabled && it.windowId !in keyboard }
         // A field keeps its focus while another window has the input focus, as in split screen.
-        val input = snapshot.windows.firstOrNull { it.focused }?.id ?: return fields.firstOrNull()
-        return fields.firstOrNull { it.windowId == input }
+        val input = snapshot.windows.firstOrNull { it.focused }?.id
+        val field = if (input == null) fields.firstOrNull() else fields.firstOrNull { it.windowId == input }
+        return field ?: heldField(snapshot, input, keyboard)
     }
+
+    // The only enabled text field inside the first focused element that is no text field, in the window [input] when one
+    // has the input focus, while the keyboard shows.
+    private fun heldField(snapshot: ScreenSnapshot, input: Int?, keyboard: Set<Int>): ScreenElement? {
+        if (!keyboardShows(snapshot)) return null
+        val holder = snapshot.elements.indexOfFirst {
+            it.focused && !it.editable && it.windowId !in keyboard && (input == null || it.windowId == input)
+        }
+        if (holder < 0) return null
+        return snapshot.elements.filterIndexed { index, element ->
+            element.editable && element.enabled && inside(snapshot, index, holder)
+        }.singleOrNull()
+    }
+
+    // Whether the element at [index] lies inside the element at [ancestor], at most 20 levels down.
+    private fun inside(snapshot: ScreenSnapshot, index: Int, ancestor: Int): Boolean {
+        var parent = snapshot.elements[index].parent
+        var depth = 0
+        while (parent != null && depth < MAX_DEPTH) {
+            if (parent == ancestor) return true
+            parent = snapshot.elements.getOrNull(parent)?.parent
+            depth++
+        }
+        return false
+    }
+
+    private const val MAX_DEPTH = 20
 
     /** Whether the keyboard shows. */
     fun keyboardShows(snapshot: ScreenSnapshot): Boolean = snapshot.windows.any { it.kind == WindowKind.INPUT_METHOD }

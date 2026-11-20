@@ -1,5 +1,7 @@
 package dev.kestrel.app.commands
 
+import android.annotation.SuppressLint
+import android.provider.Settings
 import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandParser
@@ -21,6 +23,8 @@ import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.overlay.Grid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -32,6 +36,27 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal fun screenCommands(environment: CommandEnvironment): CommandPart = ScreenCommands(environment)
+
+/**
+ * What Kestrel says after a swipe from [edge] that [changed] nothing while the navigation bar has buttons ([buttons]):
+ * Android has no back gesture from a side and no home gesture from the bottom then, and the swipe reached only the app
+ * (inv-oneui-a71, 5). Null otherwise, also when the mode is not known.
+ */
+internal fun edgeSwipeHint(edge: Edge, buttons: Boolean?, changed: Boolean): String? = when {
+    buttons != true || changed -> null
+    edge == Edge.LEFT || edge == Edge.RIGHT -> CommandTexts.EDGE_BUTTONS_BACK
+    edge == Edge.BOTTOM -> CommandTexts.EDGE_BUTTONS_HOME
+    else -> null
+}
+
+/** Whether Android's navigation [mode] has buttons: 0 three buttons, 1 two buttons, 2 gestures; null when not known. */
+internal fun navigationButtons(mode: Int?): Boolean? = when (mode) {
+    0, 1 -> true
+    2 -> false
+    else -> null
+}
+
+private const val NAVIGATION_MODE = "navigation_mode"
 
 /** How "Which one?" ended: with the element that the owner chose, or with the command's result. */
 internal sealed interface Choice {
@@ -340,10 +365,41 @@ internal class ScreenCommands(private val environment: CommandEnvironment) : Com
             else -> done(result)
         }
 
-    /** "Swipe from the bottom edge" and the other edges: from one pixel inside the edge, a third of the screen inwards. */
+    /**
+     * "Swipe from the bottom edge" and the other edges: from one pixel inside the edge, a third of the screen inwards. With
+     * the navigation bar's buttons, a swipe that changed nothing says what to say instead (edgeSwipeHint); the swipe stays,
+     * because apps may use it, as for a navigation drawer.
+     */
     private suspend fun swipeFromEdge(screen: ScreenSession, edge: Edge): CommandResult {
         val line = GesturePaths.fromEdge(screen.screenBounds, screenEdge(edge))
-        return done(screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY))
+        val before = page(screen.snapshots.current().snapshot)
+        val result = screen.actions.swipe(line.fromX, line.fromY, line.toX, line.toY)
+        if (result is ActionResult.Failed) return done(result)
+        val changed = page(screen.snapshots.current().snapshot) != before
+        val hint = edgeSwipeHint(edge, navigationButtons(navigationMode()), changed) ?: return done(result)
+        return CommandResult(Outcome.DONE, say = hint, show = hint)
+    }
+
+    // What an edge swipe compares: the app window in front with its title, and the actionable elements with their places.
+    private fun page(snapshot: ScreenSnapshot): Any = Pair(
+        snapshot.windows.firstOrNull { it.kind == WindowKind.APPLICATION && it.active }?.let { it.id to it.title },
+        snapshot.elements.filter { it.isActionable }.map { it.key to it.bounds },
+    )
+
+    // Android's navigation mode: Settings.Secure's navigation_mode, or else the framework's config_navBarInteractionMode,
+    // which the navigation bar's overlays set; null when Kestrel can read neither.
+    @SuppressLint("DiscouragedApi")
+    private fun navigationMode(): Int? {
+        val context = environment.context
+        try {
+            return Settings.Secure.getInt(context.contentResolver, NAVIGATION_MODE)
+        } catch (e: Settings.SettingNotFoundException) {
+            // The framework's value below.
+        } catch (e: SecurityException) {
+            // Android keeps the setting from apps; the framework's value below.
+        }
+        val id = context.resources.getIdentifier("config_navBarInteractionMode", "integer", "android")
+        return if (id != 0) context.resources.getInteger(id) else null
     }
 
     /**

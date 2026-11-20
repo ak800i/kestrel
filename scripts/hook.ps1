@@ -203,6 +203,15 @@
 #   field -Expected 'text' [-ViewId s]      compares the focused text field, or the first one whose view ID contains s,
 #                                           with the text, and answers whether it is equal, its length, its selection
 #                                           and whether it is a password field
+# The owner's clipboard around a check that copies (plan 4D):
+#   clipboard -Save                         keeps a copy of the clipboard in Kestrel's memory, which Android allows only
+#                                           while Kestrel's settings have the focus, and answers its kind (text or
+#                                           other), unknown (empty, or Android refused the read: nothing is saved), or
+#                                           held (an earlier copy still waits and stays); never the content
+#   clipboard -Restore                      puts the saved copy back and forgets it (restored=true), or forgets it
+#                                           when Android refuses (restored=failed); restored=false when none waits. It
+#                                           never empties the clipboard
+#   clipboard -Clear                        empties the clipboard
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -215,7 +224,7 @@ param(
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
         'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
-        'owner-options', 'notices', 'check-notice', 'voice-expect', 'screen-has', 'field')][string]$Command,
+        'owner-options', 'notices', 'check-notice', 'voice-expect', 'screen-has', 'field', 'clipboard')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -269,7 +278,9 @@ param(
     [string]$Contains,
     [string]$ClassName,
     [string]$State,
-    [string]$Template
+    [string]$Template,
+    [switch]$Save,
+    [switch]$Restore
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -279,6 +290,9 @@ if ($PSBoundParameters.ContainsKey('Threshold') -and $Threshold -lt 0) {
 }
 if ($Command -eq 'voice-expect' -and -not $Tag) { throw 'voice-expect needs -Tag; give each expectation a new tag.' }
 if ($Template -and -not $Tag) { throw 'screen-has -Template needs -Tag; give the transcript a new tag.' }
+if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { $_ }).Count -ne 1) {
+    throw 'clipboard needs exactly one of -Save, -Restore and -Clear.'
+}
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
@@ -354,6 +368,8 @@ if ($PSBoundParameters.ContainsKey('Contains')) { $extras += "--es contains $(Co
 if ($ClassName) { $extras += "--es class $(ConvertTo-ShellText $ClassName)" }
 if ($State) { $extras += "--es state $(ConvertTo-ShellText $State)" }
 if ($Template) { $extras += "--es template $(ConvertTo-ShellText $Template)" }
+if ($Save) { $extras += '--ez save true' }
+if ($Restore) { $extras += '--ez restore true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

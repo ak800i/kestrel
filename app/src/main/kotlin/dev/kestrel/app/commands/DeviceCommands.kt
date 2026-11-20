@@ -19,6 +19,7 @@ import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
+import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
@@ -117,7 +118,8 @@ internal class DeviceCommands(environment: CommandEnvironment) {
      * Bluetooth through its Quick Settings tile, whose switch turns the radio off and on (prototype P4), or, when Quick
      * Settings shows no tile, through the Bluetooth settings page that Kestrel opens: its switch named Bluetooth, or else
      * the page's one main switch. Kestrel acts only on SystemUI's tile or on that page's window, never on a switch of the
-     * app in front, and the state is Android's, read for up to 6 s. The shade and the page close also when the command is
+     * app in front, and the state is Android's, read for up to 6 s. A tile click that One UI takes can still change nothing,
+     * so then Kestrel goes on to the page (inv-oneui-a71, 1). The shade and the page close also when the command is
      * cancelled.
      */
     private suspend fun bluetooth(screen: ScreenSession, on: Boolean): CommandResult {
@@ -126,13 +128,12 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         }
         try {
             screen.actions.global(GlobalAction.QUICK_SETTINGS)
-            val tile = awaitTile({ screen.snapshots.current().snapshot }) { snapshot, element ->
-                element.packageName == SYSTEM_UI && element.checkable && element.enabled && namesRadio(snapshot, element, RadioKind.BLUETOOTH)
-            }
+            val tile = awaitTile({ screen.snapshots.current().snapshot }) { snapshot, element -> bluetoothTile(snapshot, element) }
             if (tile != null) {
                 val element = targets.still(ScreenTargets.chosen(tile))
-                if (element != null && element.checked != on) screen.actions.tap(element.key)
-                return bluetoothResult(awaitState(on) { bluetoothOn() }, ROUTE_TILE)
+                // One UI's tile is not checkable; Android's state, read above, differs, so one click is right.
+                if (element != null && (!element.checkable || element.checked != on)) screen.actions.tap(element.key)
+                if (awaitState(on) { bluetoothOn() }) return bluetoothResult(true, ROUTE_TILE)
             }
         } finally {
             withContext(NonCancellable) { screen.actions.global(GlobalAction.DISMISS_SHADE) }
@@ -243,7 +244,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         val stream = streamOf(kind, audio.mode)
         val before = audio.getStreamVolume(stream)
         try {
-            audio.adjustStreamVolume(stream, if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+            adjust(audio, stream, if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER)
         } catch (e: SecurityException) {
             return CommandResult(Outcome.FAILED, say = PhoneCommandTexts.RINGER_WHILE_SILENT)
         }
@@ -264,7 +265,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             return CommandResult(Outcome.DONE, show = if (on) PhoneCommandTexts.ALREADY_MUTED else PhoneCommandTexts.NOT_MUTED)
         }
         try {
-            audio.adjustStreamVolume(stream, if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+            adjust(audio, stream, if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE)
         } catch (e: SecurityException) {
             return CommandResult(Outcome.FAILED, say = PhoneCommandTexts.RINGER_WHILE_SILENT)
         }
@@ -274,6 +275,11 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         } else {
             CommandResult(Outcome.FAILED, show = PhoneCommandTexts.VOLUME_NOT_CHANGED)
         }
+    }
+
+    // The change, and then Android's volume panel (adjustments).
+    private fun adjust(audio: AudioManager, stream: Int, direction: Int) {
+        for ((change, flags) in adjustments(direction)) audio.adjustStreamVolume(stream, change, flags)
     }
 
     /**
@@ -407,6 +413,29 @@ internal class DeviceCommands(environment: CommandEnvironment) {
                 inside.flatMap { listOfNotNull(it.label, it.text.takeUnless { _ -> it.editable }, it.contentDescription) }
             return names.any { isRadioName(it, radio) }
         }
+
+        /**
+         * Whether [element] is the part of Bluetooth's Quick Settings tile that toggles it: AOSP's checkable tile named
+         * Bluetooth, or, on One UI, whose tiles are not checkable, the clickable part inside the tile that offers FOCUS and
+         * CLICK and whose own text or description, before its first comma, is Bluetooth ("Bluetooth,Off,Button"). Never One
+         * UI's outer layout, whose click Android takes and One UI ignores, nor its label group, which opens the tile's
+         * details (inv-oneui-a71, 1). The state's words, such as "Off", are translated, so they never count.
+         */
+        fun bluetoothTile(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
+            if (element.packageName != SYSTEM_UI || !element.enabled) return false
+            if (element.checkable) return namesRadio(snapshot, element, RadioKind.BLUETOOTH)
+            return element.clickable && ElementAction.FOCUS in element.actions && ElementAction.CLICK in element.actions &&
+                element.viewId?.endsWith(":id/label_group") != true &&
+                listOfNotNull(element.text, element.contentDescription).any { isRadioName(it, RadioKind.BLUETOOTH) }
+        }
+
+        /**
+         * The calls of adjustStreamVolume for a change in [direction]: the change without flags, and then ADJUST_SAME with
+         * FLAG_SHOW_UI, which only shows Android's volume panel. One UI skips a change of the ring or notification volume
+         * that asks for the panel while the panel is hidden (inv-oneui-a71, 2).
+         */
+        fun adjustments(direction: Int): List<Pair<Int, Int>> =
+            listOf(direction to 0, AudioManager.ADJUST_SAME to AudioManager.FLAG_SHOW_UI)
 
         // Whether [name] is [radio]'s name, alone or after "use", in folded words, before a comma that may add a detail.
         private fun isRadioName(name: String, radio: RadioKind): Boolean {
