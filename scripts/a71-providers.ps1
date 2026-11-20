@@ -46,7 +46,8 @@
 # inside the emulator's lock .superpowers\sdd\emulator.lock (process rule 9), because other work shares the emulator: with
 # -LockHeld the controller holds the lock for the session, and the script only checks that its file exists; without it,
 # the script takes the lock itself, waits up to 60 minutes for another task's lock, and deletes its own at the end.
-# -Unattended runs without the owner: it skips the sign-ins, and the live steps then find no Copilot profile and say so.
+# -Unattended runs without the owner: it skips the sign-ins and the live cases (also on a Copilot profile that a device
+# kept, such as the A71's), so that it spends none of his AI Credits, and says so in a result line.
 # -DryRun runs every step on kestrel-api37 without the owner, inside the controller's lock, which it never touches: it taps
 # through Kestrel's pages up to the button "Sign in", which it never taps, runs the live cases against the hook
 # provider-standin's Copilot stand-in on the device and fails a case whose answer does not come from the stand-in, runs the
@@ -118,6 +119,20 @@ function Get-BoundsCentre([string]$Bounds) {
     "$([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))"
 }
 
+# Why a live step does not run, or $null when it runs. A dry run runs it against the stand-in; an unattended run spends
+# none of the owner's AI Credits, also on a Copilot profile that a device kept; a real session needs the device's default
+# profile ($DefaultProfile, the kind from provider-standin) to be a Copilot profile.
+function Get-LiveSkipReason([bool]$DryRun, [bool]$Unattended, [string]$DefaultProfile, [string]$DeviceName = 'the device') {
+    if ($DryRun) { return $null }
+    if ($Unattended) { return 'skipped: an unattended run spends none of the owner''s AI Credits' }
+    if ($DefaultProfile -ne 'copilot') { return "skipped: $DeviceName has no default Copilot profile" }
+    $null
+}
+
+# Whether screen-has's answer says that Kestrel is the app in front (app=, the package of the active application window),
+# so that a tap at an element's centre cannot land on another app's window that covers part of it.
+function Test-KestrelInFront($Found) { "$($Found['app'])" -eq 'dev.kestrel' }
+
 # The answer of provider-delete, such as 'deleted=1 failed=0 copilot=0', as an ordered table.
 function ConvertFrom-DeleteAnswer([string]$Text) {
     $pairs = ConvertFrom-HookPairs $Text
@@ -169,13 +184,14 @@ function Request-OwnerItem([string]$Prompt, [string]$DryRunAnswer = 'skip') {
 
 # Taps the first element of Kestrel's own windows (the package dev.kestrel) whose label is $Label (the hook screen-has
 # compares it on the phone and gives only its bounds), scrolling down up to six times to find it. Throws when the screen
-# does not show it. Never another app's element: on the A71 Chrome's Custom Tab and its prompts, such as "Save password?",
-# have buttons with the same labels.
+# does not show it, or when another app stays in front of Kestrel. Never another app's element: on the A71 Chrome's Custom
+# Tab and its prompts, such as "Save password?", have buttons with the same labels.
 function Invoke-TapLabel([string]$Device, [string]$Label) {
     for ($try = 0; $try -le 6; $try++) {
-        $found = ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = $Label })
+        $found = Find-KestrelElement $Device @{ Label = $Label }
         $centre = Get-BoundsCentre $found['bounds']
         if ([int]$found['count'] -gt 0 -and $centre) {
+            Assert-KestrelInFront $Device $found $Label
             Invoke-SettingsCommand -Serial $Device -Command "input tap $centre" | Out-Null
             Start-Sleep -Seconds 2
             return
@@ -183,7 +199,27 @@ function Invoke-TapLabel([string]$Device, [string]$Label) {
         Invoke-Hook $Device scroll @{ Direction = 'down' } | Out-Null
         Start-Sleep -Seconds 1
     }
-    throw "The screen of $(if ($Device -eq $EmulatorSerial) { 'kestrel-api37' } else { 'the A71' }) shows no ""$Label""."
+    throw "The screen of $(Get-DeviceName $Device) shows no ""$Label""."
+}
+
+function Get-DeviceName([string]$Device) { if ($Device -eq $EmulatorSerial) { 'kestrel-api37' } else { 'the A71' } }
+
+# The answer of screen-has for $With among the elements of Kestrel's own windows. While such an element shows but another
+# app is in front, it asks again for up to $Seconds, and then returns the last answer.
+function Find-KestrelElement([string]$Device, [hashtable]$With, [int]$Seconds = 10) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $found = ConvertFrom-HookPairs (Invoke-Hook $Device screen-has (@{ Package = 'dev.kestrel' } + $With))
+        if ([int]$found['count'] -eq 0 -or (Test-KestrelInFront $found) -or $watch.Elapsed.TotalSeconds -ge $Seconds) { return $found }
+        Start-Sleep -Seconds 2
+    }
+}
+
+# Throws instead of a tap while another app is in front of Kestrel.
+function Assert-KestrelInFront([string]$Device, $Found, [string]$Label) {
+    if (-not (Test-KestrelInFront $Found)) {
+        throw "The screen of $(Get-DeviceName $Device) shows ""$Label"", but another app stayed in front of Kestrel, so the script did not tap it."
+    }
 }
 
 # Waits up to $Seconds until one of Kestrel's own windows shows an element whose label is $Label. Returns whether it does.
@@ -429,11 +465,12 @@ function Invoke-InstallStep {
 # page shows; "Save" is below the lists of models, out of view), up to 5 minutes, turns on "Make default", scrolls to
 # "Save" and taps it itself, and checks that the default profile is a Copilot profile. On the A71 ($CustomTab), where Chrome is in front
 # until the sign-in ends, it records whether Kestrel's page came back to the front by itself (design D20, step 5; map
-# P10): the owner never taps Chrome's X, and when Kestrel's page has not come back within 3 minutes, the script brings it
-# to the front itself and records "no".
+# P10): the owner never taps Chrome's X, and when Kestrel's page has not come back within 10 minutes (the device code
+# lives 15), so that the owner has time to sign in to GitHub first, the script brings it to the front itself and records
+# "no".
 function Complete-SignIn([string]$StepName, [string]$Device, [switch]$CustomTab) {
     $back = $false
-    $limit = if ($CustomTab) { 3 } else { 5 }
+    $limit = if ($CustomTab) { 10 } else { 5 }
     if ($CustomTab) {
         # Chrome takes the front a moment after "Open the page".
         foreach ($try in 1..10) {
@@ -462,9 +499,10 @@ function Complete-SignIn([string]$StepName, [string]$Device, [switch]$CustomTab)
     # shows (off or already on) or "Save", the page's last element, shows without it.
     $made = $false
     for ($try = 0; $try -le 15 -and -not $made; $try++) {
-        $switch = ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = 'Make default'; State = 'unchecked' })
+        $switch = Find-KestrelElement $Device @{ Label = 'Make default'; State = 'unchecked' }
         $centre = Get-BoundsCentre $switch['bounds']
         if ([int]$switch['count'] -gt 0 -and $centre) {
+            Assert-KestrelInFront $Device $switch 'Make default'
             Invoke-SettingsCommand -Serial $Device -Command "input tap $centre" | Out-Null
             Start-Sleep -Seconds 1
             $made = $true
@@ -526,7 +564,7 @@ function Invoke-EmulatorSignInStep {
 }
 
 function Invoke-A71SignInStep {
-    if ((Request-OwnerItem 'Item 2 of 2, about 3 minutes: the Copilot sign-in on the A71, which the script unlocks itself. When you press Enter, the script taps through Kestrel''s page to its sign-in and taps "Copy" and "Open the page": Chrome opens github.com/login/device inside Kestrel. Sign in to GitHub if it asks, touch and hold the code field, tap "Paste", and tap Continue and Authorize. A few seconds after GitHub accepts, Kestrel''s page should come back by itself and show "Checking' + [char]0x2026 + '" and the lists of models. If Chrome offers to save your password, answer it yourself; the script never taps Chrome''s buttons. Do not tap Chrome''s X: if Kestrel''s page does not come back, the script brings it back after 3 minutes. The script saves the profile itself. Press Enter to start, or s to skip.' 'go') -eq 'skip') {
+    if ((Request-OwnerItem 'Item 2 of 2, about 3 minutes: the Copilot sign-in on the A71, which the script unlocks itself. When you press Enter, the script taps through Kestrel''s page to its sign-in and taps "Copy" and "Open the page": Chrome opens github.com/login/device inside Kestrel. Sign in to GitHub if it asks, touch and hold the code field, tap "Paste", and tap Continue and Authorize. A few seconds after GitHub accepts, Kestrel''s page should come back by itself and show "Checking' + [char]0x2026 + '" and the lists of models. If Chrome offers to save your password, answer it yourself; the script never taps Chrome''s buttons. Do not tap Chrome''s X. You have 10 minutes from when Chrome opens: if Kestrel''s page has not come back by then, the script brings it back. The script saves the profile itself. Press Enter to start, or s to skip.' 'go') -eq 'skip') {
         Add-Result a71-signin 'skipped, because it needs the owner''s GitHub account'
         return
     }
@@ -561,10 +599,12 @@ function Invoke-A71SignInStep {
     Write-Host 'You may leave now. The rest of the session runs without you for about 35 minutes; please do not touch the A71 or the emulator.'
 }
 
-# The live cases need a default Copilot profile, which a real session has only after the owner's sign-in.
+# The live cases need a default Copilot profile, which a real session has only after the owner's sign-in, and the owner:
+# an unattended run skips them.
 function Invoke-LiveStep([string]$StepName, [string]$Device) {
-    if (-not $DryRun -and (Get-StandIn $Device)['profile'] -ne 'copilot') {
-        Add-Result $StepName 'skipped: the device has no default Copilot profile'
+    $reason = Get-LiveSkipReason $DryRun $Unattended $(if (-not $DryRun -and -not $Unattended) { (Get-StandIn $Device)['profile'] })
+    if ($reason) {
+        Add-Result $StepName $reason
         return
     }
     Invoke-Live $StepName $Device | Out-Null
@@ -612,8 +652,9 @@ function Invoke-A71TestsStep {
 }
 
 function Invoke-A71RestartStep {
-    if (-not $DryRun -and (Get-StandIn $Serial)['profile'] -ne 'copilot') {
-        Add-Result a71-restart 'skipped: the A71 has no default Copilot profile'
+    $reason = Get-LiveSkipReason $DryRun $Unattended $(if (-not $DryRun -and -not $Unattended) { (Get-StandIn $Serial)['profile'] }) 'the A71'
+    if ($reason) {
+        Add-Result a71-restart $reason
         return
     }
     $before = Get-KestrelPid $Serial

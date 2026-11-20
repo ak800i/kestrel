@@ -10,7 +10,7 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-providers.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer', 'Get-DeviceCode', 'Get-BoundsCentre')
+    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer', 'Get-DeviceCode', 'Get-BoundsCentre', 'Get-LiveSkipReason', 'Test-KestrelInFront')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -68,5 +68,19 @@ Describe 'The helpers of the owner''s session of sub-project 4' {
         Get-DeviceCode '{}' | Should -BeNullOrEmpty
         Get-BoundsCentre '100,200,300,400' | Should -BeExactly '200 300'
         Get-BoundsCentre 'none' | Should -BeNullOrEmpty
+    }
+
+    It 'skips the live cases in an unattended run, also on a kept Copilot profile, but not in a dry run' {
+        Get-LiveSkipReason -DryRun $false -Unattended $true -DefaultProfile 'copilot' | Should -BeExactly 'skipped: an unattended run spends none of the owner''s AI Credits'
+        Get-LiveSkipReason -DryRun $true -Unattended $true -DefaultProfile '' | Should -BeNullOrEmpty
+        Get-LiveSkipReason -DryRun $false -Unattended $false -DefaultProfile 'copilot' | Should -BeNullOrEmpty
+        Get-LiveSkipReason -DryRun $false -Unattended $false -DefaultProfile 'none' -DeviceName 'the A71' | Should -BeExactly 'skipped: the A71 has no default Copilot profile'
+    }
+
+    It 'taps only while Kestrel is the app in front' {
+        Test-KestrelInFront ([ordered]@{ count = '1'; app = 'dev.kestrel' }) | Should -BeTrue
+        Test-KestrelInFront ([ordered]@{ count = '1'; app = 'com.android.chrome' }) | Should -BeFalse
+        Test-KestrelInFront ([ordered]@{ count = '1'; app = 'none' }) | Should -BeFalse
+        Test-KestrelInFront ([ordered]@{ count = '1' }) | Should -BeFalse
     }
 }
