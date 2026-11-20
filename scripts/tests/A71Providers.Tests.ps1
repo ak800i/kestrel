@@ -10,7 +10,7 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-providers.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer')
+    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer', 'Get-DeviceCode', 'Get-BoundsCentre')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -60,5 +60,13 @@ Describe 'The helpers of the owner''s session of sub-project 4' {
         $answer['copilot'] | Should -Be '0'
         { ConvertFrom-DeleteAnswer 'deleted=1' } | Should -Throw 'Not an answer of provider-delete*'
         { ConvertFrom-DeleteAnswer 'error: unknown command' } | Should -Throw
+    }
+
+    It 'finds the device code on Kestrel''s page, and the centre of an element''s bounds' {
+        Get-DeviceCode '{"elements":[{"text":"Enter this code"},{"text":"WDJB-MJHT"},{"text":"14:59"}]}' | Should -BeExactly 'WDJB-MJHT'
+        Get-DeviceCode '{"elements":[{"text":"ABCD-EFGH-IJKL"}]}' | Should -BeNullOrEmpty
+        Get-DeviceCode '{}' | Should -BeNullOrEmpty
+        Get-BoundsCentre '100,200,300,400' | Should -BeExactly '200 300'
+        Get-BoundsCentre 'none' | Should -BeNullOrEmpty
     }
 }

@@ -1,47 +1,57 @@
-# The owner's session of sub-project 4 (design D20) on kestrel-api37 and the Galaxy A71: the Copilot sign-in on each,
-# the live cases of scripts\provider-check.ps1 on each, the providers' device tests and the Custom Tab's redirect check
-# with the A71's own Chrome (prototype P5's q1 and q3), the credentials after a restart of Kestrel's process, and the end,
-# where the emulator's Copilot profile goes. Each prompt says what the owner does, on which device, and what the screen
-# shows before and after; the script then checks the device's state through the hooks instead of trusting the Enter, and
-# every time that it reports was measured on the device. It asks before each step, and before it reads each device's
-# model. The steps and their estimates, which add up to 44 minutes (about 45 with the owner's answers), of which about 8
-# need the owner's hands:
-#   install         installs Kestrel's debug build on kestrel-api37 and on the A71 (5 minutes, without the owner)
-#   emulator-signin the Copilot sign-in on kestrel-api37, which the owner approves on github.com on his computer or
-#                   phone (3 minutes with the owner)
-#   emulator-live   every live case on kestrel-api37 (8 minutes, without the owner's hands)
-#   a71-tests       the credential store, the loopback server and the Custom Tab on the A71, with the redirect check
-#                   through postman-echo.com in the A71's Chrome; whether the A71 has StrongBox (12 minutes, without the
-#                   owner's hands, but he watches the A71's screen for a prompt)
+# The owner's session of sub-project 4 (design D20, made automatic by plan 4D) on kestrel-api37 and the Galaxy A71: the
+# Copilot sign-in on each, the live cases of scripts\provider-check.ps1 on each, the providers' device tests and the
+# Custom Tab's redirect check with the A71's own Chrome (prototype P5's q1 and q3), the credentials after a restart of
+# Kestrel's process, and the end, where the emulator's Copilot profile goes. The script taps through Kestrel's own pages
+# itself, through the hook screen-has, which finds a label of Kestrel's own windows (the package dev.kestrel, never
+# Chrome's or another app's) and gives only its bounds, and checks each
+# device's state through the hooks; every time that it reports was measured on the device. The owner is needed only at
+# the start, right after the install, for what only his GitHub account can do (map section 6): he approves the
+# emulator's sign-in code in a browser on this computer (the script puts the code on this computer's clipboard and opens
+# github.com/login/device, and puts the text that was on the clipboard back afterwards), and he approves the A71's
+# sign-in in Chrome on the A71 (the script saves the A71's clipboard before Kestrel's "Copy" and puts it back afterwards).
+# Both devices stay awake during the session, and the setting comes back at its end. Each item has one prompt, which beeps
+# and says what he does and what the screens show, and the script then says that he may leave. The A71 keeps its Copilot
+# profile at the end, as the owner decided on 2026-11-20. The script unlocks the A71 itself when it is locked, with the
+# owner's test PIN, which he allows the sessions to use: it reads the PIN from the key "pin" of
+# corpus\owner\a71-config.json only for a real session, stops at its start with a clear message when the file or the key
+# is missing, types it only when Android says clearly that the PIN pad shows, never again after a typing that did not
+# unlock the A71 (the steps that need an unlocked A71 are then skipped), and never writes it
+# anywhere. The steps, in this order,
+# and their estimates, which add up to 44 minutes, of which about 5 need the owner:
+#   install         installs Kestrel's debug build on kestrel-api37 and on the A71 (5 minutes)
+#   emulator-signin the Copilot sign-in on kestrel-api37, which the owner approves on github.com (3 minutes with him)
 #   a71-signin      the Copilot sign-in on the A71 in a Custom Tab, which the owner approves in it, and whether Kestrel's
-#                   page came back to the front by itself (3 minutes with the owner)
+#                   page came back to the front by itself (3 minutes with him)
+#   emulator-live   every live case on kestrel-api37 (8 minutes)
+#   a71-tests       the credential store, the loopback server and the Custom Tab on the A71, with the redirect check
+#                   through postman-echo.com in the A71's Chrome; whether the A71 has StrongBox (12 minutes)
 #   a71-live        every live case on the A71 (8 minutes)
 #   a71-restart     Kestrel's process ended with 'am crash', started again, and one live case, so that the stored
 #                   credential decrypts after a restart (3 minutes)
-#   end             the owner deletes the emulator's Copilot profile, and decides whether the A71 keeps its profile
-#                   (2 minutes with the owner)
+#   end             the script deletes the emulator's Copilot profile through Kestrel's profile page; the A71 keeps its
+#                   profile (2 minutes)
 # The live cases spend the owner's GitHub AI Credits from his Copilot subscription: about 2 to 4 credits for each of
 # emulator-live and a71-live, and far less than 1 for a71-restart's one case, so about 4 to 8 in all, a little more with
-# retries; their prompts say so before they run. A failed case is recorded with its error kind, and gets one retry when
+# retries; the first prompt says so. A failed case is recorded with its error kind, and gets one retry when
 # corpus\owner\provider-overrides.json, which the controller writes before the session, names an override for that kind
-# ({"<kind>": {"Headers": "a=b", "MessagesPath": "/x"}}); a failure that the retry does not fix is a finding for plan 4C's
-# fix wave. The results go into corpus\owner\providers-<time>.txt, which git ignores; neither it nor the console ever hold
-# a prompt, a reply, a code, a token or a key. The script refuses every device but the A71 and kestrel-api37, and -Serial
-# must be the A71. While the Custom Tab tests run, the A71's screen stays on while it is plugged in ("Stay awake"), and
-# the setting is put back at the end. Every way that a real session ends (its end, q, Ctrl+C, an error, a skipped step or
-# a skipped deletion) deletes the owner's Copilot profile on kestrel-api37 through the debug hook provider-delete, which
-# the script registers before the emulator's sign-in, and writes a result line that says whether it did; when it cannot,
-# its last message says how to delete the profile by hand, and the result line says that it stayed. The A71 keeps its
-# profile only after the owner's explicit yes. A real session runs inside the emulator's lock
-# .superpowers\sdd\emulator.lock (process rule 9), because other work shares the emulator, and it handles the lock before
-# it sends any command to a device: with -LockHeld the controller holds the lock for the session, and the script only
-# checks that its file exists; without it, the script takes the lock itself with a create that fails while the file
-# exists, waits up to 60 minutes for another task's lock, and deletes its own at the end. -DryRun runs every step on
-# kestrel-api37 without the owner, inside the controller's lock, which it never touches: it skips the sign-ins, the
-# waits for the owner and the owner's deletion, runs the live cases against the hook provider-standin's Copilot stand-in
-# on the device and fails a case whose answer does not come from the stand-in, runs the redirect check with the
-# emulator's Chrome, and checks at the end that the stand-in is off and reports the default profile and the number of
-# Copilot profiles. -Step runs only the named steps, also as one text separated by commas.
+# ({"<kind>": {"Headers": "a=b", "MessagesPath": "/x"}}); a failure that the retry does not fix is a finding. The results
+# go into corpus\owner\providers-<time>.txt, which git ignores; neither it nor the console ever hold a prompt, a reply, a
+# code, a token or a key, and the sign-in code stays in this script's memory and on this computer's clipboard. The script
+# refuses every device but the A71 and kestrel-api37, and -Serial must be the A71. The A71's screen stays on while it is
+# plugged in ("Stay awake"), and Kestrel's accessibility service is on on both devices while the script taps through its
+# pages; both are put back at the end. Every way that a real session ends (its end, q, Ctrl+C, an error or a skipped step)
+# deletes the owner's Copilot profile on kestrel-api37 through the debug hook provider-delete, which the script registers
+# before the emulator's sign-in, and writes a result line that says whether it did; when it cannot, its last message says
+# how to delete the profile by hand. A real session runs
+# inside the emulator's lock .superpowers\sdd\emulator.lock (process rule 9), because other work shares the emulator: with
+# -LockHeld the controller holds the lock for the session, and the script only checks that its file exists; without it,
+# the script takes the lock itself, waits up to 60 minutes for another task's lock, and deletes its own at the end.
+# -Unattended runs without the owner: it skips the sign-ins, and the live steps then find no Copilot profile and say so.
+# -DryRun runs every step on kestrel-api37 without the owner, inside the controller's lock, which it never touches: it taps
+# through Kestrel's pages up to the button "Sign in", which it never taps, runs the live cases against the hook
+# provider-standin's Copilot stand-in on the device and fails a case whose answer does not come from the stand-in, runs the
+# redirect check with the emulator's Chrome, and checks at the end that the stand-in is off and reports the default profile
+# and the number of Copilot profiles. -Step runs only the named steps, also as one text separated by commas.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-providers.ps1 -Serial R58N12345AB -EmulatorSerial emulator-5554 -LockHeld
 #Requires -Version 7.3
@@ -49,15 +59,17 @@ param(
     [string]$Serial,
     [string]$EmulatorSerial = 'emulator-5554',
     [switch]$DryRun,
+    [switch]$Unattended,
     [switch]$LockHeld,
     [string[]]$Step
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 . "$PSScriptRoot\lib\Session.ps1"
+. "$PSScriptRoot\lib\Oracle.ps1"
 Use-KestrelToolchain
 
-$stepNames = @('install', 'emulator-signin', 'emulator-live', 'a71-tests', 'a71-signin', 'a71-live', 'a71-restart', 'end')
+$stepNames = @('install', 'emulator-signin', 'a71-signin', 'emulator-live', 'a71-tests', 'a71-live', 'a71-restart', 'end')
 
 # The names of -Step, also as one text separated by commas, as pwsh -File passes them; an unknown name stops the script.
 function Get-SessionSteps([string[]]$Step, [string[]]$Names) {
@@ -93,6 +105,19 @@ function ConvertFrom-StandInAnswer([string]$Text) {
     $pairs
 }
 
+# The device code on Kestrel's sign-in page, from the snapshot's JSON (the hook snapshot of Kestrel's own page), such as
+# 'WDJB-MJHT', or $null. The code stays in memory; nothing prints it.
+function Get-DeviceCode([string]$Snapshot) {
+    $found = [regex]::Match($Snapshot, '(?<![A-Z0-9-])[A-Z0-9]{4}-[A-Z0-9]{4}(?![A-Z0-9-])')
+    if ($found.Success) { $found.Value } else { $null }
+}
+
+# The centre of the bounds that screen-has gives ('left,top,right,bottom'), as 'x y' for 'input tap', or $null.
+function Get-BoundsCentre([string]$Bounds) {
+    if ($Bounds -notmatch '^(-?\d+),(-?\d+),(-?\d+),(-?\d+)$') { return $null }
+    "$([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))"
+}
+
 # The answer of provider-delete, such as 'deleted=1 failed=0 copilot=0', as an ordered table.
 function ConvertFrom-DeleteAnswer([string]$Text) {
     $pairs = ConvertFrom-HookPairs $Text
@@ -116,31 +141,132 @@ $overrides = if (Test-Path -LiteralPath $overridesFile) { Get-Content -LiteralPa
 $adb = Get-Adb
 $gradleUsed = $false
 $standInDevices = [System.Collections.Generic.List[string]]::new()
-# "Stay awake" of the A71 as it was before a71-tests changed it, or $null when it was not changed.
-$stayOn = $null
+# "Stay awake" of each device as it was before the session changed it.
+$stayOn = [ordered]@{}
+# The owner's configuration with the A71's test PIN, only for a real session: a missing file or key stops the session
+# here, before any command reaches a device. Only Unlock-TestPhone and Send-TestPin read the PIN, when they type it.
+$pinConfig = if ($DryRun) { $null } else { Join-Path $owner 'a71-config.json' }
+if ($pinConfig) { Send-TestPin -ConfigPath $pinConfig -CheckOnly }
 $lockFile = Join-Path $PSScriptRoot '..\.superpowers\sdd\emulator.lock'
 $lockTaken = $false
 
-# Asks the owner to do something, and returns 'go' after Enter or 'skip' after s. q stops the session. In a dry run it
-# answers $DryRunAnswer itself.
-function Request-Owner([string]$Prompt, [string]$DryRunAnswer = 'skip') {
+# One item of the owner's: this computer beeps, and the prompt says what he does and what the screens show; Enter starts
+# it, s skips it and q stops the session. A dry run answers $DryRunAnswer itself, and an unattended run skips it.
+function Request-OwnerItem([string]$Prompt, [string]$DryRunAnswer = 'skip') {
     if ($DryRun) {
         Write-Host "[dry run] $Prompt"
         return $DryRunAnswer
     }
-    $answer = (Read-Host $Prompt).Trim().ToLowerInvariant()
+    if ($Unattended) {
+        Write-Host "[unattended] $Prompt"
+        return 'skip'
+    }
+    try { [console]::Beep(880, 300) } catch { Write-Verbose 'This console cannot beep.' }
+    $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
     if ($answer -eq 'q') { throw 'The owner stopped the session.' }
     if ($answer -in 's', 'skip') { 'skip' } else { 'go' }
 }
 
-# Asks the owner a yes-or-no question until the answer is y, yes, n or no (Read-YesNoAnswer), and returns 'y' or 'n'. In
-# a dry run it answers $DryRunAnswer itself.
-function Read-YesNo([string]$Prompt, [string]$DryRunAnswer) {
-    if ($DryRun) {
-        Write-Host "[dry run] $Prompt"
-        return $DryRunAnswer
+# Taps the first element of Kestrel's own windows (the package dev.kestrel) whose label is $Label (the hook screen-has
+# compares it on the phone and gives only its bounds), scrolling down up to six times to find it. Throws when the screen
+# does not show it. Never another app's element: on the A71 Chrome's Custom Tab and its prompts, such as "Save password?",
+# have buttons with the same labels.
+function Invoke-TapLabel([string]$Device, [string]$Label) {
+    for ($try = 0; $try -le 6; $try++) {
+        $found = ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = $Label })
+        $centre = Get-BoundsCentre $found['bounds']
+        if ([int]$found['count'] -gt 0 -and $centre) {
+            Invoke-SettingsCommand -Serial $Device -Command "input tap $centre" | Out-Null
+            Start-Sleep -Seconds 2
+            return
+        }
+        Invoke-Hook $Device scroll @{ Direction = 'down' } | Out-Null
+        Start-Sleep -Seconds 1
     }
-    Read-YesNoAnswer $Prompt
+    throw "The screen of $(if ($Device -eq $EmulatorSerial) { 'kestrel-api37' } else { 'the A71' }) shows no ""$Label""."
+}
+
+# Waits up to $Seconds until one of Kestrel's own windows shows an element whose label is $Label. Returns whether it does.
+function Wait-Label([string]$Device, [string]$Label, [int]$Seconds) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        if ([int](ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = $Label }))['count'] -gt 0) { return $true }
+        Start-Sleep -Seconds 2
+    } while ($watch.Elapsed.TotalSeconds -lt $Seconds)
+    $false
+}
+
+# Kestrel's accessibility service on the device, which screen-has needs. The accessibility settings of each device are
+# saved before the first change, and one restore, registered with the first, puts back those of every device.
+$savedAccessibility = [ordered]@{}
+function Enable-KestrelService([string]$Device) {
+    if ($savedAccessibility.Contains($Device)) { return }
+    if ($savedAccessibility.Count -eq 0) {
+        Register-Restore 'the accessibility settings' 'Put back the accessibility services in Settings > Accessibility on kestrel-api37 and the A71.' {
+            $failed = @(foreach ($device in @($savedAccessibility.Keys)) {
+                    if (-not (Restore-AccessibilitySettings -Serial $device -Saved $savedAccessibility[$device])) { $device }
+                })
+            if ($failed) { throw "see the warning above about $($failed -join ' and ')" }
+        } | Out-Null
+    }
+    $saved = Get-AccessibilitySettings -Serial $Device
+    $savedAccessibility[$Device] = $saved
+    $service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+    $enabled = if ($saved.Contains('enabled_accessibility_services')) { "$($saved['enabled_accessibility_services'])" } else { 'null' }
+    $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) + $service
+    if (-not (Set-SecureSetting -Serial $Device -Name 'enabled_accessibility_services' -Value ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service.' }
+    if (-not (Set-SecureSetting -Serial $Device -Name 'accessibility_enabled' -Value '1')) { throw 'Could not turn on accessibility.' }
+    # Android binds the service a moment after the setting.
+    Start-Sleep -Seconds 3
+}
+
+# Opens Kestrel's page "Providers and profiles" on the device and taps through the add flow up to the button "Sign in" of
+# GitHub Copilot, which shows the device code; a dry run stops before that button, so that no request reaches GitHub.
+function Open-CopilotSignIn([string]$Device) {
+    Enable-KestrelService $Device
+    Open-Providers $Device
+    Start-Sleep -Seconds 3
+    Invoke-TapLabel $Device 'Add a profile'
+    # The list of providers, scrolled until "Copilot" shows; the search field stays empty, so that its text is no match.
+    Invoke-TapLabel $Device 'Copilot'
+    Invoke-TapLabel $Device 'GitHub Copilot'
+    if ($DryRun) {
+        if (-not (Wait-Label $Device 'Sign in' 10)) { throw 'Kestrel''s page shows no "Sign in".' }
+        return
+    }
+    Invoke-TapLabel $Device 'Sign in'
+}
+
+# Unlocks the A71 with the owner's test PIN when it shows its lock screen (Unlock-TestPhone types the PIN only when
+# Android says clearly that the PIN pad shows), and returns whether it is unlocked. An unlock that did not work stops
+# every later unlock of the session: the steps that need an unlocked A71 are then skipped, and the others go on. The
+# emulator of a dry run has no PIN and is only woken.
+function Unlock-A71 {
+    if ($DryRun) {
+        Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_WAKEUP' | Out-Null
+        return $true
+    }
+    if ($script:unlockFailed) { return $false }
+    # $false: it typed nothing; an error: the PIN did not unlock the A71 ("the unlock failed").
+    $why = 'the A71 did not show its PIN pad clearly, so the script typed nothing'
+    $unlocked = try { Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig } catch { $why = "$($_.Exception.Message)"; $false }
+    if (-not $unlocked) {
+        $script:unlockFailed = $true
+        Add-Result session "$why; the session tries no more unlocks and skips the steps that need an unlocked A71"
+    }
+    $unlocked
+}
+
+# Deletes the device's Copilot profile through Kestrel's profile page, as the owner would: "Copilot (default)", then
+# "Delete profile" and "Delete" in the dialog. Returns whether no Copilot profile is left.
+function Remove-CopilotProfile([string]$Device) {
+    Enable-KestrelService $Device
+    Open-Providers $Device
+    Start-Sleep -Seconds 3
+    Invoke-TapLabel $Device 'Copilot (default)'
+    Invoke-TapLabel $Device 'Delete profile'
+    Invoke-TapLabel $Device 'Delete'
+    Wait-NoCopilot -Device $Device
 }
 
 function Add-Result([string]$StepName, [string]$Text) {
@@ -237,6 +363,8 @@ function Register-EmulatorProfileRestore {
 
 # Opens Kestrel's page "Providers and profiles" on the device.
 function Open-Providers([string]$Device) {
+    # A start does not turn the screen on, and the taps need it.
+    Invoke-SettingsCommand -Serial $Device -Command 'input keyevent KEYCODE_WAKEUP' | Out-Null
     Invoke-SettingsCommand -Serial $Device -Command 'am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE PROVIDERS' | Out-Null
 }
 
@@ -297,50 +425,170 @@ function Invoke-InstallStep {
     }
 }
 
-function Invoke-SignIn([string]$StepName, [string]$Device, [string]$Prompt, [switch]$CustomTab) {
-    if ($DryRun) {
-        Add-Result $StepName 'skipped in a dry run: it needs the owner''s GitHub account'
+# After the owner's approval: waits until Kestrel's page shows the models (its title "Lightweight model", which only that
+# page shows; "Save" is below the lists of models, out of view), up to 5 minutes, turns on "Make default", scrolls to
+# "Save" and taps it itself, and checks that the default profile is a Copilot profile. On the A71 ($CustomTab), where Chrome is in front
+# until the sign-in ends, it records whether Kestrel's page came back to the front by itself (design D20, step 5; map
+# P10): the owner never taps Chrome's X, and when Kestrel's page has not come back within 3 minutes, the script brings it
+# to the front itself and records "no".
+function Complete-SignIn([string]$StepName, [string]$Device, [switch]$CustomTab) {
+    $back = $false
+    $limit = if ($CustomTab) { 3 } else { 5 }
+    if ($CustomTab) {
+        # Chrome takes the front a moment after "Open the page".
+        foreach ($try in 1..10) {
+            if ((Get-ResumedPackage @(Invoke-SettingsCommand -Serial $Device -Command 'dumpsys activity activities')) -ne 'dev.kestrel') { break }
+            Start-Sleep -Seconds 2
+        }
+    }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        if ($CustomTab -and (Get-ResumedPackage @(Invoke-SettingsCommand -Serial $Device -Command 'dumpsys activity activities')) -eq 'dev.kestrel') { $back = $true }
+        $saved = [int](ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = 'Lightweight model' }))['count'] -gt 0
+        if (-not $saved) { Start-Sleep -Seconds 2 }
+    } while (-not $saved -and $watch.Elapsed.TotalMinutes -lt $limit)
+    if (-not $saved -and $CustomTab -and -not $back) {
+        # The Custom Tab opened in Kestrel's task, so the page comes back only with the tab cleared off it.
+        Invoke-SettingsCommand -Serial $Device -Command 'am start -n dev.kestrel/.app.MainActivity --activity-clear-top --activity-single-top' | Out-Null
+        $saved = Wait-Label $Device 'Lightweight model' 120
+    }
+    if (-not $saved) {
+        Add-Result $StepName 'failed: Kestrel''s page did not show the models after the code'
         return
     }
-    Open-Providers $Device
-    if ((Request-Owner $Prompt) -eq 'skip') {
-        Add-Result $StepName 'skipped by the owner'
-        return
+    # Kestrel makes a new profile the default only when none is the default yet, and the switch starts off; its text is
+    # not the switch, so the script taps the switch's own element.
+    # The switch is below the two lists of models, one row per model of the account, so the script scrolls down until it
+    # shows (off or already on) or "Save", the page's last element, shows without it.
+    $made = $false
+    for ($try = 0; $try -le 15 -and -not $made; $try++) {
+        $switch = ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = 'Make default'; State = 'unchecked' })
+        $centre = Get-BoundsCentre $switch['bounds']
+        if ([int]$switch['count'] -gt 0 -and $centre) {
+            Invoke-SettingsCommand -Serial $Device -Command "input tap $centre" | Out-Null
+            Start-Sleep -Seconds 1
+            $made = $true
+        } elseif ([int](ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = 'Make default'; State = 'checked' }))['count'] -gt 0) {
+            $made = $true
+        } elseif ([int](ConvertFrom-HookPairs (Invoke-Hook $Device screen-has @{ Package = 'dev.kestrel'; Label = 'Save' }))['count'] -gt 0) {
+            break
+        } else {
+            Invoke-Hook $Device scroll @{ Direction = 'down' } | Out-Null
+            Start-Sleep -Seconds 1
+        }
     }
+    if (-not $made) { Add-Result $StepName 'the switch "Make default" did not show, so the new profile is the default only when no other profile is' }
+    Invoke-TapLabel $Device 'Save'
     $found = Wait-Profile -Device $Device -Kind copilot
     $text = if ($found) { 'the default profile is a Copilot profile' } else { 'failed: Kestrel has no default Copilot profile' }
-    if ($CustomTab) {
-        # Design D20, step 5: after a sign-in in a Custom Tab, SignInService brings Kestrel's page back (design D10). Only
-        # this sign-in checks it on the A71's Android and Chrome, and only the owner sees it.
-        $back = Read-YesNo 'Did Kestrel''s page "Providers and profiles" come back to the front by itself after you approved on GitHub, without a tap on Chrome''s X? Type y or n and press Enter.' 'n'
-        $text += "; Kestrel's page came back by itself: $(if ($back -eq 'y') { 'yes' } else { 'no' })"
-    }
+    if ($CustomTab) { $text += "; Kestrel's page came back by itself: $(if ($back) { 'yes' } else { 'no' })" }
     Add-Result $StepName $text
 }
 
 function Invoke-EmulatorSignInStep {
     # Before the owner signs in, so that every way in which the session ends deletes the profile again.
     if (-not $DryRun) { Register-EmulatorProfileRestore | Out-Null }
-    Invoke-SignIn emulator-signin $EmulatorSerial ('Now on kestrel-api37, the emulator''s window on this computer, which you use with the mouse: Kestrel''s page "Providers and profiles" is open in it. Click "Add a profile", type Copilot in the search field, click "Copilot", then "GitHub Copilot", then "Sign in". The page shows a code of 8 letters and digits with a hyphen, such as WDJB-MJHT, in large type, with a countdown. On this computer or on your phone, open github.com/login/device in a browser, sign in to GitHub if it asks, type that code and approve. A few seconds after GitHub accepts, the emulator''s page shows "Checking' + [char]0x2026 + '" and then two lists of models, with a check mark at the lightweight and at the versatile model (GPT-6 Luna and GPT-6.1 Terra when your subscription offers them). Change nothing, scroll to the end of the page and click "Save"; the page then shows the list of profiles with "Copilot (default)". Press Enter when it does, or s to skip.')
+    if ((Request-OwnerItem 'Item 1 of 2, about 2 minutes: the Copilot sign-in on kestrel-api37. When you press Enter, the script taps through Kestrel''s page on the emulator to its sign-in, puts the code that the page shows on this computer''s clipboard (afterwards it puts your text back; a picture or a file there is lost), and opens github.com/login/device in this computer''s browser. There, sign in to GitHub if it asks, paste the code with Ctrl+V and approve. The emulator''s page then shows "Checking' + [char]0x2026 + '" and the lists of models, and the script saves the profile itself. After the two sign-ins, the live cases spend about 4 to 8 of your GitHub AI Credits. Press Enter to start, or s to skip.' 'go') -eq 'skip') {
+        Add-Result emulator-signin 'skipped, because it needs the owner''s GitHub account'
+        return
+    }
+    Open-CopilotSignIn $EmulatorSerial
+    if ($DryRun) {
+        Add-Result emulator-signin 'the add flow reached "Sign in", which a dry run never taps'
+        Invoke-SettingsCommand -Serial $EmulatorSerial -Command 'input keyevent KEYCODE_BACK' | Out-Null
+        return
+    }
+    $code = $null
+    foreach ($try in 1..15) {
+        $code = Get-DeviceCode ((& "$PSScriptRoot\hook.ps1" -Serial $EmulatorSerial -Command snapshot) -join "`n")
+        if ($code) { break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $code) {
+        Add-Result emulator-signin 'failed: Kestrel''s page showed no code within 30 s'
+        return
+    }
+    # This computer's clipboard holds the code until the sign-in ends, and then the owner's text again (a picture or a
+    # file on it is not kept, which the prompt says).
+    # In the script's scope, because after an error or Ctrl+C the restore runs at the session's end, after this function.
+    $script:pcClip = Get-Clipboard -Raw
+    $pcRestore = Register-Restore 'this computer''s clipboard' 'Copy something of your own again on this computer; its clipboard may hold the sign-in code.' {
+        # A clipboard without text gets a space, so that the code does not stay on it.
+        if ($null -eq $script:pcClip) { Set-Clipboard -Value ' ' } else { Set-Clipboard -Value $script:pcClip }
+        $script:pcClip = $null
+    }
+    Set-Clipboard -Value $code
+    $code = $null
+    Start-Process 'https://github.com/login/device'
+    Write-Host 'The code is on this computer''s clipboard, and the browser shows github.com/login/device: paste it there with Ctrl+V and approve.'
+    Complete-SignIn emulator-signin $EmulatorSerial
+    Complete-Restore $pcRestore
 }
 
 function Invoke-A71SignInStep {
-    Invoke-SignIn a71-signin $Serial -CustomTab ('Now on the A71: unlock it if it is locked. Kestrel''s page "Providers and profiles" is open on it. Tap "Add a profile", type Copilot, tap "Copilot", then "GitHub Copilot", then "Sign in". The page shows a code in large type with a countdown. Tap "Copy", then "Open the page": Chrome opens github.com/login/device inside Kestrel, with a close button (X) at its top left. Sign in to GitHub if it asks, touch and hold the code field, tap "Paste", and approve. Watch the screen now: a few seconds after GitHub accepts, Kestrel''s page should come back to the front by itself and show "Checking' + [char]0x2026 + '" and then the two lists of models; the script asks you next whether it did. If Chrome stays in front, tap its X. Scroll to the end of Kestrel''s page and tap "Save"; the page shows the list of profiles with "Copilot (default)". Press Enter when it does, or s to skip.')
+    if ((Request-OwnerItem 'Item 2 of 2, about 3 minutes: the Copilot sign-in on the A71, which the script unlocks itself. When you press Enter, the script taps through Kestrel''s page to its sign-in and taps "Copy" and "Open the page": Chrome opens github.com/login/device inside Kestrel. Sign in to GitHub if it asks, touch and hold the code field, tap "Paste", and tap Continue and Authorize. A few seconds after GitHub accepts, Kestrel''s page should come back by itself and show "Checking' + [char]0x2026 + '" and the lists of models. If Chrome offers to save your password, answer it yourself; the script never taps Chrome''s buttons. Do not tap Chrome''s X: if Kestrel''s page does not come back, the script brings it back after 3 minutes. The script saves the profile itself. Press Enter to start, or s to skip.' 'go') -eq 'skip') {
+        Add-Result a71-signin 'skipped, because it needs the owner''s GitHub account'
+        return
+    }
+    if ($DryRun) {
+        Add-Result a71-signin 'skipped in a dry run: kestrel-api37 already showed the add flow'
+        return
+    }
+    if (-not (Unlock-A71)) {
+        Add-Result a71-signin 'skipped: the A71 is locked, and the session could not unlock it'
+        return
+    }
+    Open-CopilotSignIn $Serial
+    # "Copy" puts the code on the A71's clipboard, so the owner's clip is saved first, while Kestrel's page is in front,
+    # where Android lets Kestrel read it, and put back after the sign-in (hook clipboard, plan 4D interfaces, section 6).
+    $clipRestore = Register-Restore 'the A71''s clipboard' 'Copy something of your own again on the A71; its clipboard holds the sign-in code.' {
+        if ((ConvertFrom-HookPairs (Invoke-Hook $Serial clipboard @{ Restore = $true }))['restored'] -eq 'failed') {
+            Add-Result a71-signin 'Android refused to put the A71''s clipboard back, so it holds the sign-in code'
+            throw 'Android refused to put the saved clip back'
+        }
+    }
+    $clip = (ConvertFrom-HookPairs (Invoke-Hook $Serial clipboard @{ Save = $true }))['clip']
+    if ($clip -eq 'unknown') {
+        Add-Result a71-signin 'Kestrel could not read the A71''s clipboard (it was empty, or Android refused), so it saved nothing, and the clipboard keeps the sign-in code afterwards'
+    } elseif ($clip -eq 'other') {
+        Add-Result a71-signin 'the A71''s clipboard held a picture or a file, which Android may refuse to put back'
+    }
+    Invoke-TapLabel $Serial 'Copy'
+    Invoke-TapLabel $Serial 'Open the page'
+    Complete-SignIn a71-signin $Serial -CustomTab
+    Complete-Restore $clipRestore
+    try { [console]::Beep(880, 300) } catch { Write-Verbose 'This console cannot beep.' }
+    Write-Host 'You may leave now. The rest of the session runs without you for about 35 minutes; please do not touch the A71 or the emulator.'
 }
 
-function Invoke-EmulatorLiveStep { Invoke-Live emulator-live $EmulatorSerial | Out-Null }
+# The live cases need a default Copilot profile, which a real session has only after the owner's sign-in.
+function Invoke-LiveStep([string]$StepName, [string]$Device) {
+    if (-not $DryRun -and (Get-StandIn $Device)['profile'] -ne 'copilot') {
+        Add-Result $StepName 'skipped: the device has no default Copilot profile'
+        return
+    }
+    Invoke-Live $StepName $Device | Out-Null
+}
 
-function Invoke-A71LiveStep { Invoke-Live a71-live $Serial | Out-Null }
+function Invoke-EmulatorLiveStep { Invoke-LiveStep emulator-live $EmulatorSerial }
+
+function Invoke-A71LiveStep { Invoke-LiveStep a71-live $Serial }
+
+# "Stay awake" on the device until the session ends, because the taps and the Custom Tab tests need an awake screen, and
+# the builds and the owner's approvals take longer than the screen timeout; 'true' holds also an emulator, which runs on
+# AC power. The setting comes back at the end.
+function Enable-StayAwake([string]$Device) {
+    if ($stayOn.Contains($Device)) { return }
+    $stayOn[$Device] = ((Invoke-SettingsCommand -Serial $Device -Command 'settings get global stay_on_while_plugged_in') -join '').Trim()
+    Invoke-SettingsCommand -Serial $Device -Command 'svc power stayon true' | Out-Null
+}
 
 function Invoke-A71TestsStep {
     $script:gradleUsed = $true
-    # The Custom Tab tests need an unlocked, awake screen, and the builds before them take longer than the screen timeout.
-    if ($null -eq $script:stayOn) {
-        $script:stayOn = ((Invoke-SettingsCommand -Serial $Serial -Command 'settings get global stay_on_while_plugged_in') -join '').Trim()
-        Invoke-SettingsCommand -Serial $Serial -Command 'svc power stayon usb' | Out-Null
-    }
-    if ((Request-Owner 'Unlock the A71 now and leave it on its home screen. Its screen stays on while it is plugged in, until the session ends. For the next few minutes Gradle builds and installs the tests, and the A71 shows nothing new; do not touch it until this window asks you. Press Enter when the A71 shows its home screen.' 'go') -eq 'skip') {
-        Add-Result a71-tests 'skipped by the owner'
+    Enable-StayAwake $Serial
+    # The Custom Tab tests need an unlocked phone.
+    if (-not (Unlock-A71)) {
+        Add-Result a71-tests 'skipped: the A71 is locked, and the session could not unlock it'
         return
     }
     $strongBox = "$(& $adb -s $Serial shell pm has-feature android.hardware.strongbox_keystore)".Trim()
@@ -349,30 +597,23 @@ function Invoke-A71TestsStep {
     Clear-TestResults $folder
     & "$PSScriptRoot\connected-test.ps1" -Serial $Serial ':core:privacy:connectedDebugAndroidTest' '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.privacy.CredentialStoreTest,dev.kestrel.privacy.LoopbackServerTest' '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
     Add-Result a71-tests "CredentialStoreTest: $(if (Test-ClassPassed $folder CredentialStoreTest) { 'passed' } else { 'failed' }); LoopbackServerTest: $(if (Test-ClassPassed $folder LoopbackServerTest) { 'passed' } else { 'failed' })"
-    if ((Request-Owner 'Watch the A71''s screen now. Kestrel''s settings open, and Chrome opens three times inside Kestrel: once at a page of Kestrel''s own, and twice at postman-echo.com, which sends Chrome on to Kestrel at once; each time the page says "Kestrel received the sign-in. You can close this tab." and closes after a few seconds. Do not touch the phone. If Chrome asks whether it may find or connect to devices on your local network, do not answer; remember it, because this window asks you afterwards. It takes about 3 minutes. At the end the tests close Kestrel and Chrome, so the A71 shows its home screen for a moment, and then the script opens Kestrel''s page "Providers and profiles" on it. Press Enter to start.' 'go') -eq 'skip') {
-        Add-Result a71-tests 'the Custom Tab tests: skipped by the owner'
-        return
-    }
     $results = Join-Path $PSScriptRoot '..\app\build\outputs\androidTest-results\connected'
     Clear-TestResults $results
     & "$PSScriptRoot\connected-test.ps1" -Serial $Serial ':app:connectedDebugAndroidTest' '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.providers.CustomTabSignInTest' '-Pandroid.testInstrumentationRunnerArguments.kestrelRedirectCheck=true' '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
     $failed = @(Get-UnpassedTests $results | Where-Object { $_ -like 'CustomTabSignInTest#*' })
     Add-Result a71-tests "CustomTabSignInTest: $(if ($failed) { $failed -join ', ' } else { if (Test-ClassPassed $results CustomTabSignInTest) { 'passed, with the redirect to 127.0.0.1 and to localhost' } else { 'not run' } })"
-    # connected-test.ps1 ends with 'am force-stop', and a stopped app gets no hook broadcast, so Kestrel starts again, as the
-    # prompt before the tests says.
+    # A prompt of Chrome's about the local network, which nobody answers here, would hold the redirect, so the redirect
+    # case's result answers prototype P5's question (map P08).
+    $redirect = @(Get-UnpassedTests $results | Where-Object { $_ -like 'CustomTabSignInTest#*redirect*' })
+    Add-Result a71-tests "a prompt of Chrome's about the local network: $(if ($failed) { if ($redirect) { 'not known, because the redirect case did not pass' } else { 'none held the redirect' } } elseif (Test-ClassPassed $results CustomTabSignInTest) { 'none held the redirect' } else { 'not known' })"
+    # connected-test.ps1 ends with 'am force-stop', and a stopped app gets no hook broadcast, so Kestrel starts again.
     Open-Providers $Serial
-    $prompt = Read-YesNo 'Kestrel''s page "Providers and profiles" is now open on the A71. Did Chrome ask during the tests whether it may find or connect to devices on your local network? Type y or n and press Enter.' 'n'
-    Add-Result a71-tests "Chrome asked about the local network: $(if ($prompt -eq 'y') { 'yes' } else { 'no' })"
     Start-Sleep -Seconds 3
 }
 
 function Invoke-A71RestartStep {
     if (-not $DryRun -and (Get-StandIn $Serial)['profile'] -ne 'copilot') {
         Add-Result a71-restart 'skipped: the A71 has no default Copilot profile'
-        return
-    }
-    if ((Request-Owner 'On the A71: Kestrel''s process ends now and starts again. For a moment the A71 may show "Kestrel has stopped" or nothing new; then Kestrel''s page "Providers and profiles" opens. Do not touch the phone. Then one text case runs with the stored sign-in, which spends far less than 1 of your GitHub AI Credits, and the page shows nothing new. Press Enter to start.' 'go') -eq 'skip') {
-        Add-Result a71-restart 'skipped by the owner'
         return
     }
     $before = Get-KestrelPid $Serial
@@ -403,35 +644,25 @@ function Invoke-EndStep {
         if ($state['standin'] -ne 'off') { throw 'The stand-in still runs.' }
         return
     }
-    Open-Providers $EmulatorSerial
-    if ((Request-Owner 'Now on kestrel-api37, the emulator''s window on this computer, with the mouse: Kestrel''s page "Providers and profiles" is open in it. Click the profile "Copilot (default)", scroll to the end of its page, click "Delete profile" and then "Delete" in the dialog. The page shows the list of profiles again, without the Copilot profile. Press Enter when it does. If you type s, the script deletes the profile itself through its debug hook.' 'go') -eq 'skip') {
-        Add-Result end 'the owner skipped the deletion on kestrel-api37; the script deletes the profile itself'
-    } else {
-        Add-Result end $(if (Wait-NoCopilot -Device $EmulatorSerial) { 'the owner deleted the emulator''s Copilot profile' } else { 'failed: kestrel-api37 still has a Copilot profile; the script deletes it itself' })
+    # Through Kestrel's profile page, as the owner did; the hook provider-delete stays the restore when that fails.
+    if ((Get-StandIn $EmulatorSerial)['copilot'] -ne '0') {
+        $gone = try { Remove-CopilotProfile $EmulatorSerial } catch { $false }
+        Add-Result end $(if ($gone) { 'the script deleted the emulator''s Copilot profile on its profile page' } else { 'the profile page did not delete the emulator''s Copilot profile; the hook deletes it' })
     }
     Complete-Restore $restore
-    $keep = Read-YesNo 'Should the A71 keep its Copilot profile? Sub-project 5, the agent, will use the A71''s default profile for its tasks. If you keep it, the profile and its GitHub sign-in stay on the A71, encrypted, until you delete it in Kestrel''s settings; if not, you delete it now. Type y to keep it, or n to delete it, and press Enter.' 'y'
-    if ($keep -eq 'y') {
-        Add-Result end 'the A71 keeps its Copilot profile, as the owner chose'
-        return
-    }
-    Open-Providers $Serial
-    if ((Request-Owner 'Now on the A71: unlock it if it is locked. Kestrel''s page "Providers and profiles" is open on it. Tap the profile "Copilot (default)", scroll to the end of its page, tap "Delete profile" and then "Delete" in the dialog. The page shows the list of profiles again, without the Copilot profile. Press Enter when it does, or s to keep the profile after all.' 'go') -eq 'skip') {
-        Add-Result end 'the owner skipped the deletion on the A71, so the A71 keeps its Copilot profile'
-        return
-    }
-    Add-Result end $(if (Wait-NoCopilot -Device $Serial) { 'the A71''s Copilot profile is deleted' } else { 'failed: the A71 still has a Copilot profile' })
+    # The owner decided on 2026-11-20 that the A71 keeps its Copilot profile, for sub-project 5's agent.
+    Add-Result end $(if ((Get-StandIn $Serial)['copilot'] -eq '0') { 'the A71 has no Copilot profile' } else { 'the A71 keeps its Copilot profile, as the owner decided' })
 }
 
 $plan = @(
-    @{ Name = 'install'; Minutes = 5; Title = 'install Kestrel on kestrel-api37 and the A71; Kestrel closes on both if it is open, and the A71 shows nothing else; you may leave'; Run = 'Invoke-InstallStep' }
-    @{ Name = 'emulator-signin'; Minutes = 3; Title = 'you sign in to Copilot in Kestrel on kestrel-api37, the emulator''s window on this computer, with the mouse, and approve a code on github.com in a browser on this computer or your phone; the next prompt names each click'; Run = 'Invoke-EmulatorSignInStep' }
-    @{ Name = 'emulator-live'; Minutes = 8; Title = 'every live case on kestrel-api37, which spends about 2 to 4 of your GitHub AI Credits; no hands; the screens show nothing new, except that the line "This month" of the Copilot profile rises as the cases run'; Run = 'Invoke-EmulatorLiveStep' }
-    @{ Name = 'a71-tests'; Minutes = 12; Title = 'the device tests and the redirect check on the A71: you unlock it, then watch while Kestrel''s settings and Chrome open by themselves, and answer one question; at the end the A71 shows Kestrel''s page "Providers and profiles"'; Run = 'Invoke-A71TestsStep' }
-    @{ Name = 'a71-signin'; Minutes = 3; Title = 'you sign in to Copilot in Kestrel on the A71, approve the code in Chrome inside Kestrel, and say whether Kestrel''s page came back to the front by itself'; Run = 'Invoke-A71SignInStep' }
-    @{ Name = 'a71-live'; Minutes = 8; Title = 'every live case on the A71, which spends about 2 to 4 of your GitHub AI Credits; no hands; the screens show nothing new, except that the line "This month" of the Copilot profile rises as the cases run'; Run = 'Invoke-A71LiveStep' }
-    @{ Name = 'a71-restart'; Minutes = 3; Title = 'Kestrel''s process on the A71 ends and starts again by itself, and then one text case runs with the stored sign-in, which spends far less than 1 AI Credit; do not touch the A71, which may show "Kestrel has stopped" for a moment and then Kestrel''s page "Providers and profiles"'; Run = 'Invoke-A71RestartStep' }
-    @{ Name = 'end'; Minutes = 2; Title = 'you delete the Copilot profile on kestrel-api37 with the mouse, or the script deletes it, and then you decide whether the A71 keeps its Copilot profile'; Run = 'Invoke-EndStep' }
+    @{ Name = 'install'; Minutes = 5; Title = 'install Kestrel on kestrel-api37 and the A71'; Run = 'Invoke-InstallStep' }
+    @{ Name = 'emulator-signin'; Minutes = 3; Title = 'the Copilot sign-in on kestrel-api37, which the owner approves on github.com'; Run = 'Invoke-EmulatorSignInStep' }
+    @{ Name = 'a71-signin'; Minutes = 3; Title = 'the Copilot sign-in on the A71 in Chrome inside Kestrel, which the owner approves'; Run = 'Invoke-A71SignInStep' }
+    @{ Name = 'emulator-live'; Minutes = 8; Title = 'every live case on kestrel-api37, which spends about 2 to 4 of the owner''s GitHub AI Credits'; Run = 'Invoke-EmulatorLiveStep' }
+    @{ Name = 'a71-tests'; Minutes = 12; Title = 'the device tests and the redirect check on the A71'; Run = 'Invoke-A71TestsStep' }
+    @{ Name = 'a71-live'; Minutes = 8; Title = 'every live case on the A71, which spends about 2 to 4 AI Credits'; Run = 'Invoke-A71LiveStep' }
+    @{ Name = 'a71-restart'; Minutes = 3; Title = 'Kestrel''s process on the A71 ends and starts again, and one text case runs, which spends far less than 1 AI Credit'; Run = 'Invoke-A71RestartStep' }
+    @{ Name = 'end'; Minutes = 2; Title = 'the emulator''s Copilot profile goes, and the A71''s unless the owner keeps it'; Run = 'Invoke-EndStep' }
 )
 
 $completed = $false
@@ -453,7 +684,6 @@ try {
         }
     }
     foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
-        if ((Request-Owner "The session first reads the model of the device $device, to check that it is kestrel-api37 or the Galaxy A71. The device shows nothing new. Press Enter to go ahead, or q to stop." 'go') -ne 'go') { throw 'The owner stopped the session.' }
         # Refuses every device but the A71 and kestrel-api37; the daily phone would need -AllowDailyPhone, which this
         # script never passes.
         Assert-TestDevice -Serial $device
@@ -461,13 +691,12 @@ try {
     if ($KestrelTestDevices[$EmulatorSerial].Pattern -ne 'kestrel-api37') { throw "$EmulatorSerial is not kestrel-api37." }
     # Without -DryRun, the A71's steps must not run on the emulator.
     if (-not $DryRun -and $KestrelTestDevices[$Serial].Pattern -ne 'SM-A715F*') { throw "$Serial is not the Galaxy A71." }
-    Add-Result session "started$(if ($DryRun) { ' as a dry run on kestrel-api37' })"
+    $how = @(if ($DryRun) { 'as a dry run on kestrel-api37' }; if ($Unattended) { 'without the owner' }) -join ', '
+    Add-Result session "started$(if ($how) { " $how" })"
+    foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) { Enable-StayAwake $device }
     foreach ($entry in $plan) {
         if ($Step -and $entry.Name -notin $Step) { continue }
-        if ((Request-Owner "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title). Press Enter to run it, s to skip it, or q to stop the session." 'go') -eq 'skip') {
-            Add-Result $entry.Name 'skipped by the owner'
-            continue
-        }
+        Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title)."
         try {
             & $entry.Run
         } catch {
@@ -489,10 +718,10 @@ try {
     foreach ($device in $standInDevices) {
         try { Invoke-Hook $device provider-standin @{ On = 'false' } | Out-Null } catch { Write-Warning "Could not end the stand-in on $device. Run: scripts\hook.ps1 -Serial $device provider-standin -On false" }
     }
-    # "Stay awake" as it was before a71-tests.
-    if ($null -ne $stayOn) {
-        $command = if ($stayOn -in 'null', '') { 'settings delete global stay_on_while_plugged_in' } else { "settings put global stay_on_while_plugged_in $stayOn" }
-        try { Invoke-SettingsCommand -Serial $Serial -Command $command | Out-Null } catch { Write-Warning "Could not put back ""Stay awake"" on $Serial. Run: & '$adb' -s $Serial shell $command" }
+    # "Stay awake" as it was before the session, on each device.
+    foreach ($device in @($stayOn.Keys)) {
+        $command = if ($stayOn[$device] -in 'null', '') { 'settings delete global stay_on_while_plugged_in' } else { "settings put global stay_on_while_plugged_in $($stayOn[$device])" }
+        try { Invoke-SettingsCommand -Serial $device -Command $command | Out-Null } catch { Write-Warning "Could not put back ""Stay awake"" on $device. Run: & '$adb' -s $device shell $command" }
     }
     if ($lockTaken) { Remove-Item -LiteralPath $lockFile -ErrorAction SilentlyContinue }
     if (-not ($completed -or $stopped)) { Add-SessionResult -Path $resultsFile -Step session -Text 'stopped, as by Ctrl+C' }
