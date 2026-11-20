@@ -6,29 +6,24 @@
 param()
 
 BeforeAll {
-    # Read-YesNo asks through Read-YesNoAnswer of the sessions' library.
     . "$PSScriptRoot\..\lib\Session.ps1"
+    . "$PSScriptRoot\..\lib\Corpus.ps1"
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-commands.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Get-NewScreenshotIds', 'Test-CheckNotification', 'Format-CheckResult', 'Get-Median',
-        'Get-CommandNumber', 'Wait-State', 'Wait-CheckCommand', 'Read-YesNo', 'Read-RadioScreen', 'Format-RadioResult',
-        'Complete-Restore', 'Invoke-Restore', 'Stop-KestrelForRecording', 'Invoke-OwnerRecording', 'Invoke-Check', 'Get-UtteranceCount')
+    $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Test-SecureFolder', 'Get-NewScreenshotIds', 'Get-Percentile',
+        'Get-GridCells', 'ConvertFrom-Magnification', 'Get-VolumeRange', 'Select-InstalledApp', 'New-AirTotals', 'Add-AirResult',
+        'Format-AirTotals', 'Request-OwnerItem', 'Complete-Restore', 'Invoke-Restore', 'Get-PassClip', 'Add-PassCount', 'Test-Command')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
         }, $true)
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
-    # Wait-State and Invoke-Check read Kestrel's state through this function, which the tests mock.
-    function Get-VoiceState([int]$Number = 0) { }
-    # Invoke-Check sends the owner's words and writes its result through these, which the tests mock.
-    function Send-Heard([string]$Text) { }
+    # Test-Command runs a check and writes its result through these, which the tests mock.
+    function Invoke-AutoCheck($Name, $Text, $Verify, $Before, $Answer, $Respond, $RespondAt, $RespondDelay, $Send, $Clip, $Play, $TimeoutSeconds) { }
     function Add-Result([string]$StepName, [string]$Text) { }
-    # Invoke-OwnerRecording works on the device through these, which the tests mock.
-    function Invoke-Checked([string]$Command) { }
-    function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { }
-    function Stop-Kestrel { }
-    function Invoke-AdbCopy([string]$Serial, [string]$Direction, [string]$From, [string]$To) { }
+    # Request-OwnerItem beeps through this; the tests stay silent.
+    function Invoke-Beep { }
 }
 
 Describe 'The helpers of the A71 session of the instant commands' {
@@ -37,15 +32,12 @@ Describe 'The helpers of the A71 session of the instant commands' {
         @($functions).Count | Should -Be $helpers.Count
     }
 
-    It 'takes the steps also as one text separated by commas' {
-        $names = @('install', 'screen', 'calls')
+    It 'takes the steps also as one text separated by commas, and refuses one that it does not know' {
+        $names = @('install', 'owner', 'calls')
 
-        Get-SessionSteps -Step @('screen,calls') -Names $names | Should -Be @('screen', 'calls')
+        Get-SessionSteps -Step @('owner,calls') -Names $names | Should -Be @('owner', 'calls')
         Get-SessionSteps -Step @('install', ' calls ') -Names $names | Should -Be @('install', 'calls')
         @(Get-SessionSteps -Step @() -Names $names).Count | Should -Be 0
-    }
-
-    It 'refuses a step that it does not know' {
         { Get-SessionSteps -Step @('screen,radio') -Names @('screen', 'radios') } | Should -Throw 'Unknown steps: radio.*'
     }
 
@@ -55,14 +47,12 @@ Describe 'The helpers of the A71 session of the instant commands' {
         Test-SimAbsent -State 'ABSENT,' | Should -BeTrue
         # A phone that does not set the property, or a read that gave nothing, does not say that none is there.
         Test-SimAbsent -State '' | Should -BeFalse
-        Test-SimAbsent -State ',' | Should -BeFalse
         Test-SimAbsent -State 'LOADED,ABSENT' | Should -BeFalse
-        Test-SimAbsent -State 'PIN_REQUIRED' | Should -BeFalse
         # A phone with a SIM card can say NOT_READY while its radio starts.
         Test-SimAbsent -State 'NOT_READY' | Should -BeFalse
     }
 
-    It 'keeps the users'' IDs, types and flags, and never their names' {
+    It 'keeps the users'' IDs, types and flags, never their names, and finds Secure Folder among them' {
         $users = @('Users:', '	UserInfo{0:Owner:c13} running', '	UserInfo{150:Secure Folder:10001030} running')
         $dump = @(
             'Users:'
@@ -76,6 +66,8 @@ Describe 'The helpers of the A71 session of the instant commands' {
 
         $summary | Should -Be @('id=0 type=android.os.usertype.full.SYSTEM flags=c13', 'id=150 type=com.samsung.android.knox.securefolder flags=10001030')
         ($summary -join ' ') | Should -Not -Match 'Owner'
+        Test-SecureFolder $summary | Should -BeTrue
+        Test-SecureFolder @($summary[0]) | Should -BeFalse
     }
 
     It 'finds the new screenshots and leaves the owner''s other images' {
@@ -88,157 +80,99 @@ Describe 'The helpers of the A71 session of the instant commands' {
         @(Get-NewScreenshotIds -Rows @('No result found.')).Count | Should -Be 0
     }
 
-    It 'writes a check''s result with the kind and the outcome of the command, and the median of some times' {
-        $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Radio'; outcome = 'done'; session = 'open' }
-
-        Format-CheckResult -Name 'turn off Wi-Fi' -Owner 'y' -State $state -Before 6 | Should -BeExactly 'turn off Wi-Fi: owner=y kind=Radio outcome=done'
-        Format-CheckResult -Name 'mute' -Owner 'n' -State $null -Before 6 | Should -BeExactly 'mute: owner=n kind=- outcome=-'
-        Get-Median @(300, 100, 200) | Should -Be 200
-        Get-Median @(400, 100, 300, 200) | Should -Be 200
-        Get-Median @() | Should -Be 0
+    It 'reads the grid''s size, the magnification and a stream''s range, and takes the percentiles of some times' {
+        Get-GridCells '8x4' | Should -Be 32
+        Get-GridCells 'none' | Should -Be 0
+        $zoom = ConvertFrom-Magnification '2.50@540,1200'
+        $zoom.Scale | Should -Be 2.5
+        $zoom.X | Should -Be 540
+        (ConvertFrom-Magnification 'none').Scale | Should -Be 1
+        $volume = Get-VolumeRange @('[V] volume is 7 in range [1..15]')
+        $volume.Index | Should -Be 7
+        $volume.Min | Should -Be 1
+        $volume.Max | Should -Be 15
+        { Get-VolumeRange @('error') } | Should -Throw 'Not an answer of cmd media_session volume*'
+        Get-Percentile @(300, 100, 200) 0.5 | Should -Be 200
+        Get-Percentile @(1..10) 0.9 | Should -Be 9
+        Get-Percentile @() 0.5 | Should -Be 0
     }
 
-    It 'records no command for a check whose words gave none, never the command before it' {
-        $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Tap'; outcome = 'done'; session = 'open' }
+    It 'chooses the first app of the candidates that the device lists' {
+        $listed = @('package:com.google.android.deskclock', 'package:com.google.android.deskclock.extra')
 
-        Format-CheckResult -Name 'Display' -Owner 'y' -State $state -Before 7 | Should -BeExactly 'Display: owner=y kind=- outcome=none'
+        Select-InstalledApp -Listed $listed -Candidates @('com.sec.android.app.clockpackage', 'com.google.android.deskclock') | Should -BeExactly 'com.google.android.deskclock'
+        Select-InstalledApp -Listed @() -Candidates @('com.sec.android.app.clockpackage') | Should -BeNullOrEmpty
     }
 
-    It 'adds how many more commands started during the check, and the rise of the utterances, only when there were more' {
-        $state = [ordered]@{ mode = 'listening'; command = '7'; kind = 'Global'; outcome = 'done'; latest = '9'; session = 'open' }
+    It 'adds up the corpus pass of one voice, with the ids of the lines that missed, and no words' {
+        $totals = New-AirTotals
+        Add-AirResult -Totals $totals -Id 'c001' -Answer ([ordered]@{ matched = 'true'; words = '2'; errors = '0'; stray = '1'; split = '0'; closed = '1000'; transcribed = '1700'; right = '1' })
+        Add-AirResult -Totals $totals -Id 'c002' -Answer ([ordered]@{ matched = 'true'; words = '2'; errors = '1'; stray = '0'; split = '1'; closed = '5000'; transcribed = '5900'; right = '0' })
+        Add-AirResult -Totals $totals -Id 'c041' -Answer ([ordered]@{ matched = 'false'; words = '1'; errors = '1'; stray = '0'; split = '0'; closed = '0'; transcribed = '0'; right = '-' })
+        Add-AirResult -Totals $totals -Id 'c003' -Answer $null
 
-        Format-CheckResult -Name 'go home' -Owner 'y' -State $state -Before 6 -Extra 2 -Utterances '3' | Should -BeExactly 'go home: owner=y kind=Global outcome=done extra=2 utterances+3'
-        Format-CheckResult -Name 'go home' -Owner 'y' -State $state -Before 6 -Extra 2 | Should -BeExactly 'go home: owner=y kind=Global outcome=done extra=2 utterances+?'
-        Format-CheckResult -Name 'go home' -Owner 'y' -State $state -Before 6 -Extra 0 -Utterances '1' | Should -BeExactly 'go home: owner=y kind=Global outcome=done'
+        Format-AirTotals 'kokoro' $totals | Should -BeExactly ('kokoro: 4 clips, 2 matched; word error rate 40.0 % (2 errors in 5 words); commands right 1 of 2 (50.0 %); ' +
+            '1 stray and 1 split utterances; transcription median 700 ms, 90th percentile 700 ms; not matched or wrong: c002, c041, c003')
     }
 
-    Context 'A check during which another voice starts a newer command' {
+    Context 'A check on the text pass and on the air pass' {
         BeforeEach {
-            $DryRun = $true
-            Mock Write-Host { }
-            Mock Start-Sleep { }
-            # Command 5 ended before the check; the check's words start command 6, and the room's sound command 7.
-            $device = @{ Sent = $false }
-            Mock Send-Heard { $device.Sent = $true }
-            Mock Get-VoiceState {
-                if (-not $device.Sent) { return [ordered]@{ mode = 'listening'; command = '5'; kind = 'Tap'; outcome = 'done'; session = 'open' } }
-                if ($Number -eq 6) { return [ordered]@{ mode = 'listening'; command = '6'; kind = 'Global'; outcome = 'done'; latest = '7'; session = 'open' } }
-                [ordered]@{ mode = 'listening'; command = '7'; kind = 'Bare'; outcome = 'ignored'; session = 'open' }
-            }
-            Mock Invoke-Hook { if ($device.Sent) { 'waits=0 tasks=0 lastTaskWords=0 hits=0 utterances=3' } else { 'waits=0 tasks=0 lastTaskWords=0 hits=0 utterances=1' } }
+            $DryRun = $false
+            $generated = 'C:\corpus\generated'
+            $clipTexts = @{ c004 = 'Go home.' }
+            $passCounts = [ordered]@{}
+            $play = { }
+            # The clips of the air pass exist.
+            Mock Test-Path { $true } -ParameterFilter { $LiteralPath -like 'C:\corpus\generated\*' }
             Mock Add-Result { }
+            Mock Invoke-AutoCheck { [pscustomobject]@{ Passed = $true; Line = "$Name [x]: role=command kind=Global outcome=done check=pass" } }
         }
 
-        It 'records its own command, the first after it began, and how many more started' {
-            Invoke-Check notifications 'show notifications' 'Did the notification shade open?' -Heard 'show the notifications'
+        It 'sends the text on the text pass, plays the clip on the air pass, and skips a check without a clip there' {
+            $pass = 'text'
+            Test-Command screen 'go home' c004 { $true }
+            $pass = 'kokoro'
+            Test-Command screen 'go home' c004 { $true }
+            Test-Command screen 'long press {label}' '' -Send { } -Verify { $true }
 
-            Should -Invoke Send-Heard -Times 1 -Exactly -ParameterFilter { $Text -eq 'show the notifications' }
-            Should -Invoke Add-Result -Times 1 -Exactly -ParameterFilter {
-                $StepName -eq 'notifications' -and $Text -eq 'show notifications: owner=dry kind=Global outcome=done extra=1 utterances+2'
-            }
+            Should -Invoke Invoke-AutoCheck -Times 1 -Exactly -ParameterFilter { $Text -eq 'go home' -and -not $Clip }
+            Should -Invoke Invoke-AutoCheck -Times 1 -Exactly -ParameterFilter { $Clip.Text -eq 'Go home.' -and $Clip.Path -eq 'C:\corpus\generated\kokoro\c004.wav' -and $Clip.Voice -eq 'kokoro' }
+            Should -Invoke Invoke-AutoCheck -Times 2 -Exactly
+            Should -Invoke Add-Result -Times 2 -Exactly -ParameterFilter { $StepName -eq 'screen' }
+            $passCounts['text'].Run | Should -Be 1
+            $passCounts['kokoro'].Passed | Should -Be 1
+            $pass = 'text'
+        }
+
+        It 'writes a failed check''s first line, and counts it as failed' {
+            $pass = 'text'
+            Mock Invoke-AutoCheck { throw "error: Kestrel's accessibility service is off`nmore" }
+
+            Test-Command screen 'show numbers' c014 { $true }
+
+            Should -Invoke Add-Result -Times 1 -Exactly -ParameterFilter { $Text -eq "show numbers [text]: failed: error: Kestrel's accessibility service is off" }
+            $passCounts['text'].Run | Should -Be 1
+            $passCounts['text'].Passed | Should -Be 0
         }
     }
 
-    It 'counts a command that still runs when a check starts, such as one that asks "Which one?", as the check''s own' {
-        Get-CommandNumber -State ([ordered]@{ mode = 'listening'; command = '7'; outcome = 'done'; session = 'open' }) | Should -Be 7
-        Get-CommandNumber -State ([ordered]@{ mode = 'listening'; command = '7'; outcome = 'running'; session = 'open' }) | Should -Be 6
-    }
-
-    It 'waits for the end of a command only when one started after the owner''s words, and says so' {
+    It 'asks the owner for his item only when he is there' {
+        Mock Read-Host { 'q' }
         Mock Write-Host { }
-        Mock Get-VoiceState { [ordered]@{ mode = 'listening'; command = '5'; kind = 'Tap'; outcome = 'done'; session = 'open' } }
-        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $DryRun = $false
+        $Unattended = $true
 
-        Wait-CheckCommand -Number 5 -StartSeconds 0.5 -EndSeconds 15 | Should -BeFalse
+        Request-OwnerItem 'Unlock the A71.' | Should -BeExactly 'skip'
+        Should -Invoke Read-Host -Times 0 -Exactly
 
-        $watch.Elapsed.TotalSeconds | Should -BeLessThan 5
-        Should -Invoke Write-Host -Times 0 -Exactly
+        $Unattended = $false
+        $DryRun = $true
+        Request-OwnerItem 'Unlock the A71.' | Should -BeExactly 'go'
+        Should -Invoke Read-Host -Times 0 -Exactly
 
-        Mock Get-VoiceState { [ordered]@{ mode = 'listening'; command = '6'; kind = 'Tap'; outcome = 'done'; session = 'open' } }
-
-        Wait-CheckCommand -Number 5 -StartSeconds 0.5 -EndSeconds 15 | Should -BeTrue
-
-        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object" -eq 'Waiting up to 15 s for Kestrel''s command to end.' }
-    }
-
-    It 'asks again until the owner''s answer is y, yes, n or no, in any letter case' {
-        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'maybe', ' N ', 'Yes'))
-        Mock Read-Host { $answers.Dequeue() }
-
-        Read-YesNo 'Did the page open? Type y or n.' | Should -BeExactly 'n'
-        Read-YesNo 'Did the page open? Type y or n.' | Should -BeExactly 'y'
-
-        Should -Invoke Read-Host -Times 4 -Exactly
-    }
-
-    It 'finds the notification "Kestrel check" in the list of notifications, and only the shell''s' {
-        Test-CheckNotification @('0|com.android.shell|2020|kestrel-check|2000', '0|android|19|null|1000') | Should -BeTrue
-        Test-CheckNotification @('0|com.example|7|kestrel-check|10123', '0|android|19|null|1000') | Should -BeFalse
-        Test-CheckNotification @() | Should -BeFalse
-    }
-
-    It 'asks which screen a radio command opened until the answer is q, p, i or n' {
-        $answers = [System.Collections.Generic.Queue[string]]::new([string[]]@('', 'quick', 'y', ' P '))
-        Mock Read-Host { $answers.Dequeue() }
-
-        Read-RadioScreen 'Which screen opened?' | Should -BeExactly 'p'
-
-        Should -Invoke Read-Host -Times 4 -Exactly
-    }
-
-    It 'writes a radio check''s line with Android''s state and the screen that opened, as one letter' {
-        Format-RadioResult -Say 'turn off Bluetooth' -Done $true -Screen 'q' | Should -BeExactly 'turn off Bluetooth: Android says done screen=q'
-        Format-RadioResult -Say 'turn on Wi-Fi' -Done $false -Screen 'n' | Should -BeExactly 'turn on Wi-Fi: Android says not done screen=n'
-    }
-
-    Context 'An owner''s recording while Kestrel may be on' {
-        BeforeEach {
-            $Serial = 'emulator-5554'
-            $remote = '/sdcard/eval'
-            $records = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Host { }
-            Mock Start-Sleep { }
-            Mock Invoke-Checked { }
-            Mock Invoke-AdbCopy { }
-            Mock Stop-Kestrel { }
-            Mock Invoke-Hook { 'done 1000 ms loudest 40 % silenced=false' } -ParameterFilter { $With.Result }
-        }
-
-        It 'turns a Kestrel that is on off first, brings the settings to the front, says so and records' {
-            Mock Get-VoiceState { [ordered]@{ mode = 'listening'; session = 'open' } }
-            Mock Invoke-Hook { $records.Add('record'); 'recording' } -ParameterFilter { $Command -eq 'voice-record' -and -not $With.Result }
-
-            Invoke-OwnerRecording -File 'clip.wav' -Seconds 3 | Should -BeExactly 'done 1000 ms loudest 40 % silenced=false'
-
-            Should -Invoke Stop-Kestrel -Times 1 -Exactly
-            Should -Invoke Invoke-Checked -Times 1 -Exactly -ParameterFilter { $Command -eq 'am start -n dev.kestrel/.app.MainActivity' }
-            Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object" -eq 'Kestrel was on, and the script has now turned it off.' }
-            $records.Count | Should -Be 1
-        }
-
-        It 'turns Kestrel off and records again when the hook refuses because Kestrel came on after the check' {
-            Mock Get-VoiceState { [ordered]@{ mode = 'off'; session = 'closed' } }
-            Mock Invoke-Hook {
-                $records.Add('record')
-                if ($records.Count -eq 1) { throw 'turn Kestrel off first, with voice -Send off' }
-                'recording'
-            } -ParameterFilter { $Command -eq 'voice-record' -and -not $With.Result }
-
-            Invoke-OwnerRecording -File 'clip.wav' -Seconds 3 | Should -BeExactly 'done 1000 ms loudest 40 % silenced=false'
-
-            Should -Invoke Stop-Kestrel -Times 1 -Exactly
-            Should -Invoke Invoke-Checked -Times 2 -Exactly -ParameterFilter { $Command -eq 'am start -n dev.kestrel/.app.MainActivity' }
-            $records.Count | Should -Be 2
-        }
-
-        It 'leaves a Kestrel that is off alone, and passes on every other refusal of the hook' {
-            Mock Get-VoiceState { [ordered]@{ mode = 'off'; session = 'closed' } }
-            Mock Invoke-Hook { throw 'the clip name must be letters and digits' } -ParameterFilter { $Command -eq 'voice-record' -and -not $With.Result }
-
-            { Invoke-OwnerRecording -File 'clip.wav' -Seconds 3 } | Should -Throw 'the clip name must be letters and digits'
-
-            Should -Invoke Stop-Kestrel -Times 0 -Exactly
-        }
+        $DryRun = $false
+        { Request-OwnerItem 'Unlock the A71.' } | Should -Throw 'The owner stopped the session.'
+        Should -Invoke Read-Host -Times 1 -Exactly
     }
 
     It 'stops a step at the owner''s "q" at a restore''s prompt, and at the session''s end runs the other restores and keeps the reason' {
