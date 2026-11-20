@@ -607,6 +607,12 @@ function Invoke-A71SignInStep {
     } elseif ($clip -eq 'other') {
         Add-Result a71-signin 'the A71''s clipboard held a picture or a file, which Android may refuse to put back'
     }
+    # The code comes from GitHub a few seconds after "Sign in", and "Copy" shows only with it.
+    if (-not (Wait-Label $Serial 'Copy' 30)) {
+        Add-Result a71-signin 'failed: Kestrel''s page showed no code within 30 s'
+        Complete-Restore $clipRestore
+        return
+    }
     Invoke-TapLabel $Serial 'Copy'
     Invoke-TapLabel $Serial 'Open the page'
     Complete-SignIn a71-signin $Serial -CustomTab
