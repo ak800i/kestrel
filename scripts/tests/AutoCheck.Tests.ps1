@@ -5,10 +5,13 @@
 param()
 
 BeforeAll {
+    . "$PSScriptRoot\..\lib\Kestrel.ps1"
     . "$PSScriptRoot\..\lib\Session.ps1"
     . "$PSScriptRoot\..\lib\AutoCheck.ps1"
     # The session scripts define this; the tests mock it.
     function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { }
+    # The device of the session scripts, whose call state the runner reads after a countdown (mocked).
+    $Serial = 'emulator-5554'
 
     # An answer of voice-state -Tag.
     function New-TaggedAnswer([string]$Tag, [string]$Role = 'command', [string]$Outcome = 'done', [string]$Phase = 'ended', [string]$Asking = 'false', [string]$Number = '7', [string]$Task = '0', [string]$Kind = 'Global') {
@@ -19,6 +22,8 @@ BeforeAll {
 Describe 'The check runner' {
     BeforeEach {
         Mock Start-Sleep { }
+        # No call shows, unless a test's fake device starts one.
+        Mock Invoke-SettingsCommand { 'mCallState=0' }
         $sent = [System.Collections.Generic.List[hashtable]]::new()
     }
 
@@ -214,6 +219,71 @@ Describe 'The check runner' {
         $waits.Count | Should -Be 0
         @($sent | ForEach-Object { $_.Text }) | Should -Be @('Kestrel, call Ana.', 'cancel')
         $result.Line | Should -BeExactly 'call Ana [text]: role=command kind=Global outcome=cancelled check=fail (it counted down to a call, which the check cancelled)'
+    }
+
+    It 'ends a call that started when a countdown ran out before the runner''s cancel, and fails the check' {
+        $device = @{ Phase = 'countdown'; Reads = 0; Call = $false }
+        Mock Invoke-Hook { $sent.Add($With); 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        # The countdown runs out at the third read, as on a slow link: Kestrel presses Call before any cancel.
+        Mock Invoke-Hook {
+            $device.Reads++
+            if ($device.Phase -eq 'countdown' -and $device.Reads -ge 3) {
+                $device.Phase = 'ended'
+                $device.Call = $true
+            }
+            New-TaggedAnswer $With.Tag -Kind Call -Outcome $(if ($device.Phase -eq 'ended') { 'done' } else { 'running' }) -Phase $device.Phase
+        } -ParameterFilter { $Command -eq 'voice-state' }
+        Mock Invoke-SettingsCommand {
+            if ($Command -eq 'input keyevent KEYCODE_ENDCALL') {
+                $device.Call = $false
+                return
+            }
+            "mCallState=$(if ($device.Call) { 2 } else { 0 })"
+        }
+        $taps = @{ Count = 0 }
+
+        # A tap that misses, so that the countdown goes on.
+        $result = Invoke-AutoCheck -Name 'call Ana Test, then a tap' -Text 'call Ana Test' -RespondAt countdown -Respond { $taps.Count++ } -Verify { $true }
+
+        $taps.Count | Should -Be 1
+        $device.Call | Should -BeFalse
+        Should -Invoke Invoke-SettingsCommand -Times 1 -Exactly -ParameterFilter { $Command -eq 'input keyevent KEYCODE_ENDCALL' }
+        $result.Passed | Should -BeFalse
+        $result.Line | Should -BeExactly 'call Ana Test, then a tap [text]: role=command kind=Call outcome=done check=fail (a call started, which the check ended)'
+    }
+
+    It 'cancels the countdown that follows a "no" that Kestrel dropped during the announcement, or a response that failed after it took effect' {
+        # The states that the next reads give, one each, after which the last one stays; "no" changes nothing.
+        $device = @{ Phase = 'question'; Queue = [System.Collections.Generic.Queue[string]]::new() }
+        Mock Invoke-Hook {
+            $sent.Add($With)
+            # The answer's first read is stale, then Kestrel opens the phone app, announces the call and counts down.
+            if ($With.Text -eq 'Ana Test') { foreach ($phase in 'question', 'running', 'running', 'countdown') { $device.Queue.Enqueue($phase) } }
+            if ($With.Text -eq 'cancel' -and $device.Phase -eq 'countdown') { $device.Phase = 'ended' }
+            'sent heard'
+        } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-Hook {
+            if ($device.Queue.Count -gt 0) { $device.Phase = $device.Queue.Dequeue() }
+            $asking = if ($device.Phase -eq 'question') { 'true' } else { 'false' }
+            New-TaggedAnswer $With.Tag -Kind Call -Outcome $(if ($device.Phase -eq 'ended') { 'cancelled' } else { 'running' }) -Phase $device.Phase -Asking $asking
+        } -ParameterFilter { $Command -eq 'voice-state' }
+
+        $dropped = Invoke-AutoCheck -Name 'call Ana, then Ana Test' -Text 'call Ana' -Answer 'Ana Test' -Verify { $true }
+
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana', 'Ana Test', 'no', 'cancel')
+        $dropped.Passed | Should -BeFalse
+        $dropped.Line | Should -BeExactly 'call Ana, then Ana Test [text]: role=command kind=Call outcome=cancelled check=fail (it counted down to a call, which the check cancelled; it asked a question, which the check answered with no)'
+
+        $sent.Clear()
+        $device.Phase = 'question'
+        # A tap that picked a contact, and then failed.
+        $failedTap = Invoke-AutoCheck -Name 'call Ana, then a tap' -Text 'call Ana' -Respond {
+            foreach ($phase in 'running', 'countdown') { $device.Queue.Enqueue($phase) }
+            throw 'adb: closed'
+        } -Verify { $true }
+
+        @($sent | ForEach-Object { $_.Text }) | Should -Be @('call Ana', 'cancel')
+        $failedTap.Line | Should -BeExactly 'call Ana, then a tap [text]: role=command kind=Call outcome=cancelled check=fail (the response failed (adb: closed); it counted down to a call, which the check cancelled)'
     }
 
     It 'fails a check whose command did not settle in time, and refuses the state of another tag' {

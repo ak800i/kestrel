@@ -2,8 +2,9 @@
 # (the text path, hook H1) or plays the command's clip through this computer's speakers and lets the phone match it to
 # the expected text (the air path, hook H2), waits for the result of exactly that command by its tag, never for
 # Kestrel's newest command, runs the check's own test of the device, and writes one line. Dot-source
-# scripts\lib\Session.ps1 first; the caller defines Invoke-Hook([string]$Command, [hashtable]$With), as the session
-# scripts do. Nothing here holds what Kestrel heard: the hooks answer only kinds, counts, times and hashes.
+# scripts\lib\Kestrel.ps1 and scripts\lib\Session.ps1 first; the caller defines Invoke-Hook([string]$Command,
+# [hashtable]$With) and $Serial, the device that Assert-TestDevice accepted, as the session scripts do. Nothing here holds
+# what Kestrel heard: the hooks answer only kinds, counts, times and hashes.
 
 # A new tag for a transcript: 'k' and 12 hexadecimal characters, which hook.ps1 accepts ('^[A-Za-z0-9_-]{1,32}$').
 function New-CheckTag { 'k' + [guid]::NewGuid().ToString('N').Substring(0, 12) }
@@ -36,13 +37,17 @@ function Test-TaggedSettled($State) {
 # Reads 'voice-state -Tag' until $Until is true for the state, at most $TimeoutSeconds, and returns the last state.
 # Kestrel records the outcome of a command that ended or was cancelled just after its phase changes, so a state with
 # 'phase=ended' and 'outcome=running' is read again until the outcome is there. With $Report, a hashtable, it sets
-# $Report.State to each state that it reads, and $Report.TimedOut to whether the time ran out before $Until was true.
+# $Report.State to each state that it reads, $Report.TimedOut to whether the time ran out before $Until was true, and
+# $Report.Countdown to $true once it reads a countdown to a call.
 function Wait-TaggedState([string]$Tag, [scriptblock]$Until = { param($State) Test-TaggedSettled $State }, [double]$TimeoutSeconds = 15, [hashtable]$Report = $null) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     if ($Report) { $Report.TimedOut = $false }
     while ($true) {
         $state = ConvertFrom-TaggedState (Invoke-Hook voice-state @{ Tag = $Tag }) -Tag $Tag
-        if ($Report) { $Report.State = $state }
+        if ($Report) {
+            $Report.State = $state
+            if ($state['phase'] -eq 'countdown') { $Report.Countdown = $true }
+        }
         $recorded = -not ($state['phase'] -eq 'ended' -and $state['outcome'] -eq 'running')
         if ((& $Until $state) -and $recorded) { return $state }
         if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
@@ -51,6 +56,20 @@ function Wait-TaggedState([string]$Tag, [scriptblock]$Until = { param($State) Te
         }
         Start-Sleep -Milliseconds 250
     }
+}
+
+# After a check whose command counted down to a call, or was a call: whether a call started on $Serial, from Android's
+# call state ('mCallState' of 'dumpsys telephony.registry', Test-CallActive). A call that started is ended at once with
+# the end-call key, on the A71 and on the emulator alike. Returns $null without a call, 'ended' when the call ended within
+# 10 s, and 'active' when it did not.
+function Stop-StartedCall {
+    if (-not (Test-CallActive -Registry @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys telephony.registry'))) { return $null }
+    Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_ENDCALL' | Out-Null
+    foreach ($try in 1..20) {
+        Start-Sleep -Milliseconds 500
+        if (-not (Test-CallActive -Registry @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys telephony.registry'))) { return 'ended' }
+    }
+    'active'
 }
 
 # Reads 'voice-expect -Result -Tag' until the expectation has ended, at most $TimeoutSeconds, and returns its answer as
@@ -85,9 +104,12 @@ function ConvertTo-Verdict($Result) {
 # answered "no", so that it never takes the next check's words; the line says so. No countdown to a call may end in a
 # call: a countdown that the check did not plan, such as one after an answer, one that goes on 1 s after the check's
 # planned response (also when that response was its own "cancel"), and one that goes on after a response that failed,
-# gets "cancel" at once, before Kestrel can press Call, and the check fails; the line says so. When a hook call or a test
-# fails while the last state that the runner read was a countdown, the runner sends "cancel" before it passes the
-# failure on. A wait for the command that runs out of time fails the check, and the line says so. With $Wait, such as a
+# gets "cancel" at once, before Kestrel can press Call, and the check fails; the line says so. Every wait of the runner,
+# also the one after a response that failed and the one after its own "no", ends on a countdown. After a check whose
+# command counted down or was a call, the runner reads Android's call state (Stop-StartedCall): a call that started is
+# ended at once, and the check fails; the line says so. When a hook call or a test fails while the last state that the
+# runner read was a countdown, the runner sends "cancel" before it passes the failure on, and ends a call that started. A
+# wait for the command that runs out of time fails the check, and the line says so. With $Wait, such as a
 # script block that polls sub-project 5's 'agent-task -Result -Tag' until a task ends, the runner first waits until
 # Kestrel has handled the transcript (a task, or a command that settled or counts down, which it cancels without calling
 # $Wait), then calls $Wait with the tag and $WaitSeconds (at most 600) instead of waiting for the command's end, reads the
@@ -131,7 +153,7 @@ function Invoke-AutoCheck(
     $notes = @()
     $failed = $false
     # The last state that a wait read, and whether a wait for the command ran out of time.
-    $run = @{ Report = @{ State = $null; TimedOut = $false }; TimedOut = $false }
+    $run = @{ Report = @{ State = $null; TimedOut = $false; Countdown = $false }; TimedOut = $false }
     # Waits for the tagged state; a wait for the command's end ($Settle) that runs out of time is marked.
     $read = {
         param([scriptblock]$Until, [double]$Seconds = $TimeoutSeconds, [bool]$Settle = $true)
@@ -149,7 +171,7 @@ function Invoke-AutoCheck(
                 $state = & $read { param($State) $State['role'] -eq 'task' -or (Test-TaggedSettled $State) -or $State['phase'] -eq 'countdown' } $TimeoutSeconds $false
                 if ($state['phase'] -ne 'countdown') {
                     $waited = & $Wait $tag $WaitSeconds
-                    $state = & $read { $true }
+                    $state = & $read $settledOrCountdown $TimeoutSeconds $false
                 }
             } else {
                 $state = & $read $settledOrCountdown
@@ -164,7 +186,9 @@ function Invoke-AutoCheck(
                     $notes += "the response failed ($(("$($_.Exception.Message)" -split "`r?`n")[0]))"
                 }
                 $state = if ($failed) {
-                    & $read { $true }
+                    # A response that took effect before it failed, such as a tap that picked a contact, can still lead to
+                    # a countdown, which this wait ends on.
+                    & $read $settledOrCountdown
                 } elseif ($RespondAt -eq 'countdown') {
                     # The planned response has 1 s to stop the countdown; one that goes on gets "cancel" below.
                     $graced = & $read { param($State) $State['phase'] -ne 'countdown' } 1 $false
@@ -175,16 +199,36 @@ function Invoke-AutoCheck(
                     & $read $settledOrCountdown
                 }
             }
-            if ($state['phase'] -eq 'countdown') {
-                Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
-                $state = & $read { param($State) $State['phase'] -in 'none', 'ended', 'question' }
-                $notes += 'it counted down to a call, which the check cancelled'
-                $failed = $true
+            # Until the command has settled without either: a countdown gets "cancel", and a question gets "no". Every wait
+            # here ends on a countdown too, also the one after "no", which Kestrel drops while it opens the phone app and
+            # announces a call, so that the countdown that follows is cancelled in time.
+            $cancelled = $false
+            $answeredNo = $false
+            foreach ($round in 1..6) {
+                if ($state['phase'] -eq 'countdown') {
+                    Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
+                    $cancelled = $true
+                    $failed = $true
+                    # A countdown that still shows 2 s later gets "cancel" again.
+                    $state = & $read { param($State) $State['phase'] -ne 'countdown' } 2 $false
+                    if ($state['phase'] -ne 'countdown') { $state = & $read $settledOrCountdown }
+                } elseif ($state['asking'] -eq 'true') {
+                    Invoke-Hook voice @{ Send = 'heard'; Text = 'no'; Tag = (New-CheckTag) } | Out-Null
+                    $answeredNo = $true
+                    $state = & $read { param($State) $State['phase'] -in 'none', 'ended', 'countdown' }
+                } else {
+                    break
+                }
             }
-            if ($state['asking'] -eq 'true') {
-                Invoke-Hook voice @{ Send = 'heard'; Text = 'no'; Tag = (New-CheckTag) } | Out-Null
-                $state = & $read { param($State) $State['phase'] -in 'none', 'ended' }
-                $notes += 'it asked a question, which the check answered with no'
+            if ($cancelled) { $notes += 'it counted down to a call, which the check cancelled' }
+            if ($answeredNo) { $notes += 'it asked a question, which the check answered with no' }
+            # A countdown that ran out between two reads ends in a call, which is ended at once.
+            if ($run.Report.Countdown -or $state['kind'] -eq 'Call') {
+                $call = Stop-StartedCall
+                if ($call) {
+                    $notes += if ($call -eq 'ended') { 'a call started, which the check ended' } else { 'a call started, and it is still active; end it on the phone' }
+                    $failed = $true
+                }
             }
             if ($run.TimedOut) {
                 $notes += "the command did not settle in $TimeoutSeconds s"
@@ -199,6 +243,13 @@ function Invoke-AutoCheck(
                 Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
             } catch {
                 Write-Verbose 'The cancel after a failure during a countdown failed too.'
+            }
+        }
+        if ($run.Report.Countdown) {
+            try {
+                Stop-StartedCall | Out-Null
+            } catch {
+                Write-Verbose 'The check of the call state after a failure failed too.'
             }
         }
         throw
