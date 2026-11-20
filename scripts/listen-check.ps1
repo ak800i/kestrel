@@ -67,9 +67,13 @@
 # another app's notification; swipe it away. If it cannot put something back, also because Ctrl+C interrupted it while
 # it put things back, it says at the end what is left and how to put it back by hand. Then, after Ctrl+C, and when a
 # check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
-# -Reboot it reboots a phone, or closes an emulator and starts it from a cold boot; a phone with a PIN, pattern or
-# password asks you to unlock it after the reboot, and on a phone the script also wakes the screen and asks you to
-# unlock it before it checks the recording, because Kestrel records only while the screen is on and the phone unlocked.
+# -Reboot it reboots a phone, or closes an emulator and starts it from a cold boot; on a phone it unlocks it after the
+# restart with the owner's test PIN, which he allows the A71 sessions to use (plan 4D), and it wakes the screen and
+# unlocks it again if needed before it checks the recording, because Kestrel records only while the screen is on and the
+# phone unlocked. It reads the PIN from the key "pin" of corpus\owner\a71-config.json, which git ignores, only for a
+# phone's reboot, stops before any check with a clear message when the file or the key is missing, types it only when
+# Android says clearly that the PIN pad shows, never again after a typing that did not unlock the phone, and never
+# prints it. It never waits for an Enter.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
 # Example: scripts\listen-check.ps1 -Serial emulator-5554 -Reboot
 #Requires -Version 7.3
@@ -80,6 +84,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 . "$PSScriptRoot\lib\Session.ps1"
+. "$PSScriptRoot\lib\Oracle.ps1"
 Use-KestrelToolchain
 # No command reaches the device before this check.
 Assert-TestDevice -Serial $Serial
@@ -89,6 +94,13 @@ $tile = 'dev.kestrel/dev.kestrel.app.listen.KestrelTileService'
 # How sysui_qs_tiles names Kestrel's tile, as add-tile writes it.
 $tileSpec = 'custom(dev.kestrel/.app.listen.KestrelTileService)'
 $isEmulator = $Serial -like 'emulator-*'
+# The owner's configuration with the test PIN, which unlocks a phone after the reboot check's restart (plan 4D): only a
+# phone's reboot needs it, and a missing file or key stops the script here, before any check. Only Unlock-TestPhone and
+# Send-TestPin read the PIN, when they type it, and only on the lock screen.
+$pinConfig = if ($Reboot -and -not $isEmulator) { Join-Path $PSScriptRoot '..\corpus\owner\a71-config.json' } else { $null }
+if ($pinConfig) { Send-TestPin -ConfigPath $pinConfig -CheckOnly }
+# Set after an unlock whose typing did not work: the PIN is then never typed again in this run.
+$unlockStopped = $false
 # Kestrel turns itself off when a speech model is missing, so a start that never comes may have this cause.
 $modelsHint = '; are the speech models on the device? Run scripts\push-models.ps1'
 $microphonePermission = 'android.permission.RECORD_AUDIO'
@@ -293,9 +305,18 @@ function Wait-Reboot([string]$BootId) {
             if ($uptime -match '^\d+(\.\d+)?$') {
                 $script:unlockedAt = [long]([double]::Parse($uptime, [Globalization.CultureInfo]::InvariantCulture) * 1000)
             }
-        } elseif ($booted -and ++$lockedChecks -eq 5) {
-            # Without a PIN, Android unlocks the storage a few seconds after the start, so the script asks only later.
-            Write-Host 'Unlock the phone now. The script goes on by itself; do not press Enter. Kestrel shows only its notification when it listens again.'
+        } elseif ($booted -and ++$lockedChecks % 15 -eq 5) {
+            # Without a PIN, Android unlocks the storage a few seconds after the start, so the script unlocks only later,
+            # with the test PIN. Unlock-TestPhone types it only when Android says clearly that the PIN pad shows, so a try
+            # that typed nothing comes again 15 checks later; a typing that did not unlock the phone throws, and then the
+            # script tries no more unlocks (One UI locks the phone for a while after wrong PINs).
+            if ($pinConfig) {
+                if (-not $unlockStopped) {
+                    try { Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig | Out-Null } catch { $script:unlockStopped = $true; Write-Host "$($_.Exception.Message); the script tries no more unlocks." }
+                }
+            } else {
+                Write-Host 'Unlock the phone now. The script goes on by itself; do not press Enter. Kestrel shows only its notification when it listens again.'
+            }
         }
     } until ($unlocked -or (Get-Date) -gt $deadline)
     $unlocked
@@ -793,7 +814,14 @@ function Invoke-RebootCheck {
     # On a phone, the screen is off or locked after the reboot, and Kestrel records only while it is on and unlocked.
     if (-not $isEmulator) {
         Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
-        Read-Host 'Check that the phone is unlocked, then press Enter' | Out-Null
+        # The test PIN, not an Enter: the screen may have locked again since the unlock that Wait-Reboot saw. After a
+        # typing that did not work, Unlock-TestPhone throws at once and types nothing.
+        if ($pinConfig) {
+            # $false: Android did not show its PIN pad clearly, so nothing was typed; an error: the PIN did not unlock it.
+            $failure = 'the phone did not show its PIN pad clearly after the restart, so the script typed nothing'
+            $unlocked = try { Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig } catch { $failure = "$($_.Exception.Message) after the restart"; $false }
+            if (-not $unlocked) { return "failed: $failure" }
+        }
     }
     # 'dumpsys audio' starts its history afresh at each boot, so every recording of Kestrel's that it lists is new.
     $problem = Get-RecordingProblem @()

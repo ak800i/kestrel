@@ -1,77 +1,73 @@
-# The second session on the Galaxy A71 with the owner (plan 2E): it repeats the checks of sub-project 2 that failed or
-# were not valid in the session of 2026-11-17 (the controller's analysis of the session), and adds the measures that
-# were missing. Every time comes from the phone: Kestrel records when it was started, opened its session, heard the end
-# of speech, reacted and turned itself off, and the script reads these times through the hook voice-times; no measure
-# counts from the owner's Enter. Each prompt says what the owner does and what the phone shows or does not show. It asks
-# before it reads the device's model and before each step. The steps' estimates add up to 3 hours 58 minutes; about 65
-# minutes need the owner's hands or voice, and the owner may leave during the steps install and voice-tests and during
-# the first two battery measures. The owner does it in one sitting with scripts\a71-commands.ps1, which comes first, so
-# that the owner records the voice corpus while fresh: a71-commands.ps1 with all its steps (about 2 hours, of which
-# about 1.5 to 2 hours need the owner), then this script with all its steps (about 4 hours, of which about 1 hour needs
-# the owner); together about 6 hours, of which about 2.5 to 3 hours need the owner. The owner may split the sitting into
-# two at the boundary between the scripts. a71-commands.ps1's install copies neither Kokoro's models nor the
-# microphone's permission, so this script keeps its own install step, which then finds Kestrel's build up to date. The
-# steps:
-#   install       installs Kestrel's debug build, copies the speech models with the Kokoro voice and Kokoro's int8
-#                 model, which only a voice device test loads, and grants Kestrel the microphone and notification
-#                 permissions, which stay granted
+# The second session on the Galaxy A71 (plan 2E, made automatic by plan 4D): the checks of sub-project 2 that need the A71,
+# with the measures that the session of 2026-11-17 lacked. Every time comes from the phone: Kestrel records when it was
+# started, opened its session, heard the end of speech, reacted and turned itself off, and the script reads these times
+# through the hook voice-times; no measure counts from this computer's clock or from an Enter. Speech comes only from the
+# corpus's generated clips, which this computer's speakers play next to the phone once the script has set their loudness
+# at the phone (hook H7, voice-route's frameRms), never from the owner's voice, and every other event (the shortcut, the
+# button, the tile, a tap) comes from adb; Android's dumps and Kestrel's hooks check the result (process rule 12). The
+# owner is needed for one item only, right after the install: he lays his Galaxy Buds next to this computer's speaker for
+# the step earbuds, and puts them back into their case when the script beeps. It has one prompt, which beeps and says what
+# he does and what the phone shows, and the script then says that he may leave. After listen-check's restart,
+# listen-check.ps1 unlocks the A71 with the owner's test PIN, which he allows the sessions to use; this script checks at
+# its start, on the A71 only, that corpus\owner\a71-config.json has it (the key "pin"), and stops with a clear message
+# otherwise. The steps' estimates add up to 3 hours 58 minutes, of which about 2 minutes need the owner's hands, and he
+# waits near the phone for about 5 more while the step earbuds runs. The steps:
+#   install       installs Kestrel's debug build, copies the speech models with the Kokoro voice and Kokoro's int8 model,
+#                 which only a voice device test loads, installs the fixture app dev.kestrel.testapp, and grants Kestrel
+#                 the microphone and notification permissions, which stay granted (10 minutes)
+#   earbuds       with the owner's Galaxy Buds next to the speaker and "Use the earbud microphone" on: the route of the
+#                 recording (the hook voice-route), the communication device while the fixture app's player plays, so
+#                 whether music then sounds like a call, "Kestrel" from the speaker next to the earbuds with the time from
+#                 the end of the speech to the wait for a task, and the phone's microphone after Bluetooth went off and on
+#                 again (8 minutes)
 #   voice-tests   the voice device tests that may run on a phone (scripts\voice-test.ps1), among them
-#                 ListeningServiceTest, which reads the foreground as Android 13 prints it, KeywordTuningTest, which
-#                 feeds generated "Kestrel", "Hey Kestrel" and "Kestrel, wake up" and speech without a keyword to the
-#                 keyword spotter with each of its three settings, and KokoroModelsTest, which measures Kokoro's fp32
-#                 and int8 models side by side; the tests that did not pass are recorded by name
+#                 ListeningServiceTest, KeywordTuningTest and KokoroModelsTest; the tests that did not pass are recorded by
+#                 name (40 minutes)
 #   failures      Kestrel's logged failures since the voice tests, by their fixed descriptions and classes, before
-#                 listen-check, whose notification check makes Android refuse a start on purpose
+#                 listen-check, whose notification check makes Android refuse a start on purpose (1 minute)
 #   listen-check  first whether 'dumpsys accessibility' ends with a line break (only its last byte), then
-#                 scripts\listen-check.ps1 -Reboot, which prints one line for each check; the owner unlocks the phone
-#                 after the restart; with Kokoro chosen and its speed not stored, one untimed Kokoro start comes first
+#                 scripts\listen-check.ps1 -Reboot, which prints one line for each check and unlocks the A71 with the test
+#                 PIN after the restart; with Kokoro chosen and its speed not stored, one untimed Kokoro start comes first
+#                 (12 minutes)
 #   battery-rules without and with the battery restriction and without Kestrel's accessibility service: Android's record
-#                 of the listening service, Kestrel's own view of it, and when Kestrel turned itself off, every 5 s for
-#                 3 minutes, timed on the phone
-#   activation    the accessibility shortcut, the accessibility button and the tile with Kestrel in the background:
-#                 the time from the event to listening, timed on the phone, and whether Android showed a dialog; with
-#                 Kokoro chosen and its speed not stored, one untimed Kokoro start comes first
+#                 of the listening service, Kestrel's own view of it, when Kestrel turned itself off, every 5 s for 3
+#                 minutes, timed on the phone, and the kinds of Kestrel's notices (the hook notices) (10 minutes)
+#   activation    the accessibility shortcut ('input keycombination' of both volume keys), the accessibility button and
+#                 the tile ('input tap' at their bounds, 'cmd statusbar click-tile') with Kestrel in the background: the
+#                 time from the event to listening, timed on the phone, and whether a dialog took the focus (8 minutes)
 #   assistant     with only the assistant role and Kestrel in the background: a start through the hook, "Kestrel, open
-#                 settings" with the time from Kestrel's request to its settings in front, timed on the phone, or
-#                 Kestrel's own verdict that Android blocked them and its notification, read on the phone, and the
-#                 restore after Android ended Kestrel's process; it waits, and says so, until 2 minutes have passed
-#                 since the session's last crash of Kestrel, which it keeps in corpus\owner\session-state.txt
-#   earbuds       the route of the recording with the owner's earbuds (the hook voice-route), "Kestrel" into the
-#                 earbuds with the time from the end of the speech to the wait for a task, and the phone's microphone
-#                 after the earbuds went away
-#   spotter       for each of three settings of the keyword spotter's boost and threshold: "Hey Kestrel" 5 times, and
-#                 about 1.5 minutes of generated speech without a keyword from this computer's speaker while Kestrel is
-#                 paused, the same for every setting; the hits and false hits are counted on the phone, the script
-#                 prints the setting that its rule keeps (Select-SpotterWinner), and the default comes back at the end
-#   voice         "Kestrel", "Hey Kestrel", "Kestrel, wake up" while paused, interruptions with pauses of about 1, 1.5
-#                 and 2 s, which this window's prompts set, and "Stop Kestrel": per try, the spotter's hits by keyword,
-#                 the transcribed and named utterances, how each was read, and the time from the end of the speech to
-#                 Kestrel's reaction, all from the phone
-#   memory        three starts and closes with the chosen voice and with Kokoro, whose speed Kestrel measures at its
-#                 first start here, with the peak PSS while each session opens and the memory categories before, while
-#                 listening and after each close, and a cold start through the tile after the script ended Kestrel's
-#                 process itself, before which one untimed Kokoro start comes when Kokoro is chosen and its speed is
-#                 not stored
-#   battery       three measures of 30 minutes, each timed by batterystats: a quiet room, the quiet room with one
-#                 generated task for Kestrel from this computer's speaker every 5 minutes, and ordinary room talk; with
-#                 the breakdown of Kestrel's use, the audio that it transcribed, its utterances, hits and instant
-#                 commands, and the model "% per hour = baseline + cost per transcribed minute x minutes"
-#   failures-late Kestrel's logged failures from the end of listen-check to the end of the session
+#                 settings" through the hook and from the speaker, with the time from Kestrel's request to its settings
+#                 in front, and the restore after Android ended Kestrel's process; it waits until 2 minutes have passed
+#                 since the session's last crash of Kestrel, which it keeps in corpus\owner\session-state.txt (5 minutes)
+#   spotter       for each of three settings of the keyword spotter: "Hey Kestrel" 5 times from the speaker, in the
+#                 Kokoro and the Piper voice by turns, and about 1.5 minutes of generated speech without a keyword while
+#                 Kestrel is paused; the hits and false hits are counted on the phone, the script prints the setting that
+#                 its rule keeps (Select-SpotterWinner), and the default comes back at the end (16 minutes)
+#   voice         "Kestrel", "Hey Kestrel", "Kestrel, wake up" while paused, interruptions with pauses of 1, 1.5 and 2 s,
+#                 which this computer times after each clip has ended, and "Stop Kestrel", all from the speaker: per try,
+#                 the spotter's hits by keyword, the transcribed and named utterances, how each was read, and the time from
+#                 the end of the speech to Kestrel's reaction, all from the phone (20 minutes)
+#   memory        three starts and closes with the chosen voice and with Kokoro, with the peak PSS and the memory
+#                 categories, and a cold start through the tile, which the script taps itself (12 minutes)
+#   battery       three measures of 30 minutes, each timed by batterystats: a quiet room, the quiet room with one generated
+#                 task from the speaker every 5 minutes, and the room-sound track of scripts\make-room-sound.ps1 at the
+#                 level of a television 2 to 3 m away; with the breakdown of Kestrel's use, the audio that it transcribed,
+#                 its utterances, hits and instant commands, and the model "% per hour = baseline + cost per transcribed
+#                 minute x minutes"; a measure stops early when a call command starts (95 minutes)
+#   failures-late Kestrel's logged failures from the end of listen-check to the end of the session (1 minute)
 # The results go into corpus\owner\session-<time>.txt; git ignores it. Neither it nor the console ever hold what Kestrel
 # heard: the hooks answer only counts, times, kinds and device types. Once the first step runs, the phone's screen stays
 # on while the phone is plugged in. The script puts back what it changes on the phone, also when a step fails or Ctrl+C
 # stops it: Kestrel's mode Off, the hooks' slow task, the keyword spotter's setting, the setting "Stay awake", the
 # assistant role and its settings, Kestrel's battery restriction (as allow or ignore, never as default, which Android
-# counts as restricted), Kestrel's voice, the accessibility settings, the screen's timeout and the battery's state, and,
-# through the debug hooks owner-options and notices, the setting "Use the earbud microphone" as it was before the step
-# earbuds and Kestrel's notices about problems that the steps left in the shade. It cannot put back the battery
-# statistics, which the battery measures reset; every warning at its end says how to put a thing back by hand. Before
-# the speech that this computer plays (spotter and the battery's measure 2), it plays one sentence so that the owner can
-# set the speaker's volume. It refuses every device but the A71 and
-# kestrel-api37. -DryRun runs the session on kestrel-api37 without the owner: it answers every question itself, sends
-# what the owner would say through the voice hook, taps Kestrel's tile with 'cmd statusbar click-tile' in place of the
-# owner, also for the cold start, plays no sound, skips what needs the owner's hands otherwise, runs listen-check.ps1
-# without -Reboot, skips voice-test.ps1, shortens the waits and the battery measures to a minute, and turns the
+# counts as restricted), Kestrel's voice, the accessibility settings, Quick Settings' tiles, Bluetooth, the screen's
+# timeout, the battery's state, the fixture app when it was not installed before, and, through the debug hooks
+# owner-options and notices, the setting "Use the earbud microphone" and Kestrel's notices about problems. It cannot put
+# back the battery statistics, which the battery measures reset; every warning at its end says how to put a thing back by
+# hand. It refuses every device but the A71 and kestrel-api37. -Unattended runs without the owner and skips the step
+# earbuds. -DryRun runs the session on kestrel-api37 without the owner: it
+# sends each clip's text through the voice hook in place of the speaker, plays no sound, runs listen-check.ps1 without
+# -Reboot, skips voice-test.ps1 and the earbuds, shortens the waits and the battery measures to a minute, and turns the
 # emulator's host audio input off, so that this computer's microphone reaches no step, and on again at its end. -Step
 # runs only the named steps, also as one text separated by commas.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
@@ -80,15 +76,18 @@
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [switch]$DryRun,
+    [switch]$Unattended,
     [string[]]$Step
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 . "$PSScriptRoot\lib\Corpus.ps1"
 . "$PSScriptRoot\lib\Session.ps1"
+. "$PSScriptRoot\lib\Speaker.ps1"
+. "$PSScriptRoot\lib\Oracle.ps1"
 Use-KestrelToolchain
 
-$stepNames = @('install', 'voice-tests', 'failures', 'listen-check', 'battery-rules', 'activation', 'assistant', 'earbuds',
+$stepNames = @('install', 'earbuds', 'voice-tests', 'failures', 'listen-check', 'battery-rules', 'activation', 'assistant',
     'spotter', 'voice', 'memory', 'battery', 'failures-late')
 # pwsh -File passes '-Step voice,battery' as one text, so the names are split at commas.
 $Step = @($Step | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -105,7 +104,15 @@ $resultsFile = if ($DryRun) { Join-Path $owner "session-dry-run-$stamp.txt" } el
 # The session's state across its runs, such as a run with -Step: the time of its last crash of Kestrel.
 $stateFile = if ($DryRun) { Join-Path $owner 'session-dry-run-state.txt' } else { Join-Path $owner 'session-state.txt' }
 $corpusFile = Join-Path $PSScriptRoot '..\corpus\commands.txt'
-$generatedClips = Join-Path $PSScriptRoot '..\corpus\generated\piper'
+$generatedRoot = Join-Path $PSScriptRoot '..\corpus\generated'
+$generatedClips = Join-Path $generatedRoot 'piper'
+# The lines of the corpus and of the check corpus, by id, for the clips that the speaker plays.
+$clipRows = @{}
+foreach ($row in @(Read-Corpus -Path $corpusFile) + @(Read-Corpus -Path (Join-Path $PSScriptRoot '..\corpus\checks.txt'))) { $clipRows[$row.Id] = $row }
+$config = Read-A71Config (Join-Path $PSScriptRoot '..\corpus\owner\a71-config.json')
+$testApp = 'dev.kestrel.testapp'
+# The gain at which this computer's clips reach the phone at the owner's target, once Initialize-Air has measured it.
+$gain = $null
 $service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
 $assistantRole = 'android.app.role.ASSISTANT'
 $gradleUsed = $false
@@ -116,37 +123,35 @@ $afterListenCheck = $null
 # The shorter waits of a dry run.
 $minuteScale = if ($DryRun) { 1 / 30 } else { 1 }
 
-# Asks the owner to do something, and returns 'go' after Enter or 'skip' after s. q stops the session. In a dry run it
-# answers $DryRunAnswer itself.
-function Request-Owner([string]$Prompt, [string]$DryRunAnswer = 'skip') {
+# One item of the owner's: this computer beeps, and the prompt says what he does and what the phone shows; Enter starts
+# it, s skips it and q stops the session. A dry run answers $DryRunAnswer itself, and an unattended run skips it.
+function Request-OwnerItem([string]$Prompt, [string]$DryRunAnswer = 'go') {
     if ($DryRun) {
         Write-Host "[dry run] $Prompt"
         return $DryRunAnswer
     }
-    $answer = (Read-Host $Prompt).Trim().ToLowerInvariant()
+    if ($Unattended) {
+        Write-Host "[unattended] $Prompt"
+        return 'skip'
+    }
+    Invoke-Beep
+    $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
     if ($answer -eq 'q') { throw 'The owner stopped the session.' }
     if ($answer -in 's', 'skip') { 'skip' } else { 'go' }
 }
 
-# Asks the owner a question until the answer, in any letter case, is one of $Choices' keys (Read-Choice), and returns its
-# value; a yes-or-no question takes y, yes, n and no. In a dry run it answers $DryRunAnswer itself.
-function Read-OwnerChoice([string]$Prompt, [string]$DryRunAnswer, [hashtable]$Choices = @{ y = 'y'; yes = 'y'; n = 'n'; no = 'n' }, [string]$Again = 'Type y or yes, or n or no, and press Enter') {
-    if ($DryRun) {
-        Write-Host "[dry run] $Prompt"
-        return $DryRunAnswer
-    }
-    Read-Choice -Prompt $Prompt -Choices $Choices -Again $Again
-}
+function Invoke-Beep { try { [console]::Beep(880, 300) } catch { Write-Verbose 'This console cannot beep.' } }
 
-if ((Request-Owner "The session first reads the model of the device $Serial, to check that it is the Galaxy A71. Press Enter to go ahead, or q to stop." 'go') -ne 'go') {
-    exit 1
-}
 # Refuses every device but the A71 and kestrel-api37; the daily phone would need -AllowDailyPhone, which this script
 # never passes.
 Assert-TestDevice -Serial $Serial
 $isEmulator = $KestrelTestDevices[$Serial].Pattern -eq 'kestrel-api37'
 if ($DryRun -and -not $isEmulator) { throw 'A dry run runs only on the emulator kestrel-api37.' }
 $adb = Get-Adb
+# The script and listen-check.ps1 unlock the A71 with the owner's test PIN; a missing file or key stops the session here,
+# before any step. Only Unlock-TestPhone and Send-TestPin read the PIN, when they type it.
+$pinConfig = if ($isEmulator) { $null } else { Join-Path $owner 'a71-config.json' }
+if ($pinConfig) { Send-TestPin -ConfigPath $pinConfig -CheckOnly }
 
 function Add-Result([string]$StepName, [string]$Text) {
     Add-SessionResult -Path $resultsFile -Step $StepName -Text $Text
@@ -161,13 +166,65 @@ function Invoke-Hook([string]$Command, [hashtable]$With = @{}) {
     (& "$PSScriptRoot\hook.ps1" -Serial $Serial -Command $Command @With) -join "`n"
 }
 
-# In a dry run, sends what the owner would say, as if Kestrel had heard it, with a pause after each text; a text that
+# In a dry run, sends what the speaker would play, as if Kestrel had heard it, with a pause after each text; a text that
 # starts with '+' comes with the keyword spotter's "Kestrel".
 function Send-Heard([string[]]$Texts) {
     foreach ($text in $Texts) {
         Invoke-Hook voice @{ Send = 'heard'; Text = $text.TrimStart('+'); Named = $text.StartsWith('+') } | Out-Null
         Start-Sleep -Seconds 2
     }
+}
+
+# Plays the clip of a line of corpus\commands.txt or corpus\checks.txt in $Voice through this computer's speakers, at the
+# gain that Initialize-Air measured, and returns when it has ended. A dry run sends the line's text through the voice
+# hook instead (Send-Heard), with the keyword spotter's "Kestrel" for a line that starts with it.
+function Invoke-CorpusClip([string]$Id, [string]$Voice = 'kokoro') {
+    $row = $clipRows[$Id]
+    if (-not $row) { throw "No line $Id in corpus\commands.txt or corpus\checks.txt." }
+    if ($DryRun) {
+        Send-Heard @("$(if ($row.Spotted) { '+' })$($row.Text)")
+        return
+    }
+    Invoke-Clip -Path (Join-Path $generatedRoot "$Voice\$Id.wav") -Gain $gain | Out-Null
+}
+
+# Before the first clip from the speaker: the clips must be there and must reach the phone loudly enough (plan 4D,
+# decision 4). Kestrel is paused, so that the calibration sentence, a conversation line without a keyword, starts nothing,
+# and voice-route's loudest 20 ms frame (frameRms) is read around each play (Set-SpeakerLevel). Returns whether the
+# speaker may play; the results say the level either way. A dry run plays nothing and needs no level.
+function Initialize-Air([string]$StepName) {
+    if ($DryRun -or $null -ne $gain) { return $true }
+    foreach ($file in 'kokoro\c041.wav', 'piper\c041.wav', 'kokoro\k022.wav', 'piper\k022.wav') {
+        if (-not (Test-Path -LiteralPath (Join-Path $generatedRoot $file))) {
+            Add-Result $StepName "skipped: corpus\generated has no $file; make the clips with scripts\make-corpus.ps1, also with -List checks, on the emulator"
+            return $false
+        }
+    }
+    $row = @(Read-Corpus -Path $corpusFile | Where-Object { $_.Group -eq 'conversation' -and $_.Text -notmatch '(?i)kestrel|stop|cancel' }) | Select-Object -First 1
+    $script:calibration = Join-Path $generatedRoot "kokoro\$($row.Id).wav"
+    Start-Kestrel
+    Invoke-Hook voice @{ Send = 'pause' } | Out-Null
+    Wait-Mode paused 10 | Out-Null
+    try {
+        $level = Set-SpeakerLevel -TargetDb $config.SpeakerTargetDb -Measure {
+            param($Gain)
+            Invoke-Hook voice-route | Out-Null
+            Invoke-Clip -Path $script:calibration -Gain $Gain | Out-Null
+            $value = (ConvertFrom-HookPairs (Invoke-Hook voice-route))['frameRms']
+            if ($value -match '^-?\d+(\.\d+)?$') { [double]::Parse($value, [Globalization.CultureInfo]::InvariantCulture) } else { $null }
+        }
+    } finally {
+        Invoke-Hook voice @{ Send = 'resume' } | Out-Null
+        Wait-Mode listening 10 | Out-Null
+    }
+    $heard = if ($null -eq $level.LevelDb) { 'nothing' } else { "$($level.LevelDb) dBFS" }
+    Add-Result $StepName "this computer's clips reach the phone at $heard (target $($config.SpeakerTargetDb) dBFS, within 3 dB) with a gain of $([math]::Round($level.Gain, 2))"
+    if (-not $level.InBand -and ($null -eq $level.LevelDb -or $level.LevelDb -lt $config.SpeakerTargetDb - 3)) {
+        Add-Result $StepName 'skipped: the phone does not hear this computer loudly enough; turn up its volume and put its speakers next to the phone'
+        return $false
+    }
+    $script:gain = $level.Gain
+    $true
 }
 
 # Kestrel's state from the voice-state hook, or $null while Kestrel does not answer.
@@ -232,6 +289,42 @@ function Start-Kestrel {
     }
     if ((Wait-Mode listening 120) -lt 0) { throw 'Kestrel did not start listening within 120 s.' }
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+}
+
+# Kestrel records only while the screen is on and the phone unlocked, and a run without the owner can start, or go on
+# after another script put "Stay awake" back, with the phone locked. So before each step the script wakes the phone and,
+# when it is locked, unlocks it: the emulator with 'wm dismiss-keyguard', the A71 with the owner's test PIN
+# (Unlock-TestPhone, which types it only when Android says clearly that the PIN pad shows). An unlock that did not work
+# stops every later unlock of the session, and the session skips its later steps, which all need an unlocked phone; the
+# result line says whether the phone did not show its PIN pad, so that nothing was typed, or the unlock failed, never
+# with the PIN. Returns whether the phone is unlocked and awake.
+function Confirm-Unlocked {
+    if ($script:unlockFailed) { return $false }
+    $ready = { (Test-KeyguardShowing @(Invoke-Checked 'dumpsys activity activities')) -eq $false -and (Get-Wakefulness @(Invoke-Checked 'dumpsys power')) -eq 'Awake' }
+    if (& $ready) { return $true }
+    $why = 'the phone stayed locked'
+    $unlocked = if ($isEmulator) {
+        Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
+        Invoke-Checked 'wm dismiss-keyguard' | Out-Null
+        Start-Sleep -Seconds 2
+        $true
+    } else {
+        # $false: it typed nothing; an error: the PIN did not unlock the phone ("the unlock failed"), or the file lacks it.
+        try {
+            $typed = Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig
+            if (-not $typed) { $why = 'the phone did not show its PIN pad clearly, so the script typed nothing' }
+            $typed
+        } catch {
+            $why = "$($_.Exception.Message)"
+            $false
+        }
+    }
+    $unlocked = $unlocked -and (& $ready)
+    if (-not $unlocked) {
+        $script:unlockFailed = $true
+        Add-Result session "$why; the session tries no more unlocks and skips its later steps"
+    }
+    $unlocked
 }
 
 # Kestrel listens, says nothing and waits for no task, so that a try starts from the same state each time.
@@ -342,7 +435,19 @@ function Initialize-Session {
         Set-EmulatorHostMicrophone -Serial $Serial -On $false
     }
     $script:sessionStart = Get-DeviceTime
-    Request-Owner 'The phone''s screen now stays on while the phone is plugged in. Keep the phone unlocked during the whole session, unless a step asks otherwise. Press Enter to go on.' 'go' | Out-Null
+}
+
+# Installs the fixture app dev.kestrel.testapp through scripts\install.ps1 when it is not installed, and registers its
+# removal; an app that was installed before stays.
+function Initialize-TestApp {
+    if (@(Invoke-Checked "pm list packages $testApp") -contains "package:$testApp") { return }
+    Register-Restore 'the removal of the fixture app' "Run: & '$adb' -s $Serial uninstall $testApp" $null {
+        Assert-TestDevice -Serial $Serial
+        if (@(Invoke-Checked "pm list packages $testApp") -contains "package:$testApp") { Invoke-Checked "pm uninstall $testApp" | Out-Null }
+    } | Out-Null
+    $script:gradleUsed = $true
+    & "$PSScriptRoot\install.ps1" -Serial $Serial -TestApp
+    if ($LASTEXITCODE -ne 0) { throw 'scripts\install.ps1 -TestApp failed.' }
 }
 
 # Runs a command on the device once, for a command that a repeat would do twice, such as 'am crash': Android does not
@@ -421,11 +526,11 @@ function Initialize-KokoroSpeed([string]$StepName) {
     Add-Result $StepName "an untimed start with Kokoro first, so that the timed starts do not include the measure of Kokoro's speed: kokoroSpeed=$($after.KokoroSpeed)"
 }
 
-# In a dry run, the owner's taps on Kestrel's tile: the tile goes into Quick Settings through SystemUI once, with a
-# restore, and 'cmd statusbar click-tile' taps it while Quick Settings is open, as listen-check.ps1's tile check does.
+# A tap on Kestrel's tile: the tile goes into Quick Settings through SystemUI once, with a restore, and 'cmd statusbar
+# click-tile' taps it while Quick Settings is open, as listen-check.ps1's tile check does (map S19 and S38).
 $tileComponent = 'dev.kestrel/dev.kestrel.app.listen.KestrelTileService'
 $tileRestore = $null
-function Add-DryRunTile {
+function Add-Tile {
     if ($script:tileRestore -or (Get-SecureSetting -Serial $Serial -Name sysui_qs_tiles) -match 'KestrelTileService') { return }
     # SystemUI removes only a tile that it has made, so the restore removes the tile that this run added.
     $script:tileRestore = Register-Restore "Quick Settings' tiles" "Run: & '$adb' -s $Serial shell cmd statusbar remove-tile $tileComponent" $null {
@@ -435,8 +540,8 @@ function Add-DryRunTile {
     Invoke-Checked "cmd statusbar add-tile $tileComponent" | Out-Null
 }
 
-function Invoke-DryRunTileTap {
-    Add-DryRunTile
+function Invoke-TileTap {
+    Add-Tile
     Invoke-Checked 'cmd statusbar expand-settings' | Out-Null
     # SystemUI makes and binds the tile a moment after it lists it, and a tap before that is lost.
     Start-Sleep -Seconds 5
@@ -458,7 +563,8 @@ function Invoke-InstallStep {
     # (design spec, section 14.6). Both stay granted after the session, as after scripts\voice-test.ps1.
     Invoke-Checked 'pm grant dev.kestrel android.permission.RECORD_AUDIO' | Out-Null
     Invoke-Checked 'pm grant dev.kestrel android.permission.POST_NOTIFICATIONS' | Out-Null
-    Add-Result install 'Kestrel installed, the speech models copied with both of Kokoro''s models, and the microphone and notification permissions granted'
+    Initialize-TestApp
+    Add-Result install 'Kestrel installed, the speech models copied with both of Kokoro''s models, the fixture app installed, and the microphone and notification permissions granted'
     Start-Kestrel
     Add-Result install 'Kestrel started listening when the session started it'
     Stop-Kestrel
@@ -519,11 +625,8 @@ function Invoke-ListenCheckStep {
     $ends = Test-EndsWithLineBreak -Answer @(Invoke-Checked 'dumpsys accessibility | tail -c 1 | od -An -tx1')
     Add-Result listen-check "dumpsys accessibility ends with a line break: $(if ($null -eq $ends) { 'no byte read' } elseif ($ends) { 'yes' } else { 'no' })"
     # The notification check reads One UI's shade with uiautomator dump, which also holds the owner's notifications;
-    # listen-check.ps1 deletes the dump after each read and never prints it.
-    if (-not $DryRun -and (Request-Owner 'Next comes listen-check, about 12 minutes. Do not touch the phone while it runs: it opens and closes the notification shade, Quick Settings and Kestrel''s settings by itself, and it restarts the phone. After the restart, unlock the phone with your PIN as soon as it asks for it, and do nothing else: do not press Enter in this window until it asks you to. When Kestrel listens again, this window asks you once to press Enter after you checked that the phone is unlocked; the time of the restart is read on the phone, so it does not depend on your Enter. Press Enter to start, or s to skip.') -eq 'skip') {
-        Add-Result listen-check 'skipped'
-        return
-    }
+    # listen-check.ps1 deletes the dump after each read and never prints it. After the restart it unlocks the A71 with the
+    # owner's test PIN itself.
     # listen-check.ps1's restart, role and reboot checks time Kestrel's starts.
     Initialize-KokoroSpeed listen-check
     $lines = @(& "$PSScriptRoot\listen-check.ps1" -Serial $Serial -Reboot:(-not $DryRun) *>&1 | ForEach-Object { $text = "$_"; Write-Host $text; $text })
@@ -535,11 +638,11 @@ function Invoke-ListenCheckStep {
     foreach ($line in $lines | Where-Object { $_ -match '^[a-z]+\s+(ok|failed|skipped)\b' }) { Add-Result listen-check $line }
     if ($code -ne 0) { Add-Result listen-check "ended with exit code $code" }
     # listen-check turns Kestrel's accessibility service off and on, which can leave Kestrel's notice that it is off; the
-    # script takes it away itself, and asks the owner only when Kestrel does not answer.
+    # script takes it away itself, and the session's last restore tries again when Kestrel does not answer now.
     try {
         Invoke-Hook notices @{ Clear = $true } | Out-Null
     } catch {
-        Request-Owner 'Pull down the notification shade. If Kestrel''s notice that its accessibility service is off is there, swipe it away. Press Enter after it.' 'go' | Out-Null
+        Add-Result listen-check 'Kestrel''s notices: not taken away yet, because Kestrel did not answer; the session tries again at its end'
     }
 }
 
@@ -606,8 +709,11 @@ function Invoke-BatteryRulesStep {
             $foreground = if ($view) { "foreground=$($view['foreground']) demoted=$($view['demoted'])" } else { 'not read' }
             $android = "Android's record at the start: listed $($start.Listed), isForeground $($start.Foreground), types $($start.Types); at the end: listed $($record.Listed), isForeground $($record.Foreground), types $($record.Types)"
             $lostText = if ($null -ne $lost) { "Android's record lost the foreground within $lost ms" } else { 'Android''s record kept the foreground' }
-            $notice = Read-OwnerChoice 'Pull down the notification shade and look for Kestrel''s notices. Type b if one says that Kestrel''s battery use is restricted, a if one says only that its accessibility service is off, o for another text of Kestrel''s, or n for none. Then close the shade.' 'n' @{ b = 'b'; a = 'a'; o = 'o'; n = 'n' } 'Type b, a, o or n, and press Enter'
-            Add-Result battery-rules "${label}: $roleText; $android; $lostText; Kestrel's view at the end: $foreground; $turnOff; Kestrel's notice: $notice"
+            # The kinds of Kestrel's notices in the shade (the hook notices): b for the battery restriction, a for only the
+            # accessibility service, o for another kind, n for none, as the owner's letters were.
+            $kinds = @("$((ConvertFrom-HookPairs (Invoke-Hook notices))['kinds'])" -split ',' | Where-Object { $_ })
+            $notice = Get-NoticeLetter $kinds
+            Add-Result battery-rules "${label}: $roleText; $android; $lostText; Kestrel's view at the end: $foreground; $turnOff; Kestrel's notice: $notice ($($kinds -join ','))"
             Stop-Kestrel
         }
     } finally {
@@ -617,8 +723,50 @@ function Invoke-BatteryRulesStep {
     }
 }
 
+# The letter of the owner's old answer for the kinds of Kestrel's notices of the hook notices: b when one is about the
+# battery restriction, a when the only one is about the accessibility service, n for none, and o otherwise.
+function Get-NoticeLetter([string[]]$Kinds) {
+    $kinds = @($Kinds | Where-Object { $_ -and $_ -ne 'none' })
+    if ($kinds -contains 'battery') { 'b' } elseif ($kinds.Count -eq 0) { 'n' } elseif ($kinds.Count -eq 1 -and $kinds[0] -eq 'accessibility') { 'a' } else { 'o' }
+}
+
+# One activation event through adb (map S17 to S19), and the route that it took: the shortcut as both volume keys held for
+# 3.5 s, which Android 13's key rules take also from 'input keycombination'; the button as a tap at its bounds in
+# SystemUI's navigation bar; the tile through Invoke-TileTap. With -Fallback, Android's own action for the shortcut or the
+# button ('cmd accessibility call-system-action' 13 or 11), for an event that started nothing.
+function Invoke-Activation([string]$Name, [switch]$Fallback, [string]$Why = '') {
+    if ($Fallback) {
+        $action = if ($Name -eq 'shortcut') { 13 } else { 11 }
+        Invoke-Checked "cmd accessibility call-system-action $action" | Out-Null
+        return "Android's action $action, because $(if ($Why) { $Why } else { "Kestrel recorded no event of the $Name within 10 s" })"
+    }
+    switch ($Name) {
+        'shortcut' { Invoke-Checked 'input keycombination -t 3500 KEYCODE_VOLUME_DOWN KEYCODE_VOLUME_UP' | Out-Null }
+        'button' {
+            # Right after the service went on, the hook can fail; that counts as no button.
+            $button = try { ConvertFrom-HookPairs (Invoke-Hook screen-has @{ Package = 'com.android.systemui'; ViewId = 'accessibility_button' }) } catch { @{} }
+            if ("$($button['bounds'])" -notmatch '^(-?\d+),(-?\d+),(-?\d+),(-?\d+)$') { return 'there is no accessibility button on the screen' }
+            Invoke-Checked "input tap $([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))" | Out-Null
+        }
+        default { Invoke-TileTap }
+    }
+    "the $Name"
+}
+
+# Whether a dialog of SystemUI or Settings takes the focus within $Seconds, as Android's dialog about the shortcut does;
+# only the focused window's package or title is read (Get-FocusedWindow), never its text.
+function Test-ActivationDialog([int]$Seconds = 5) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $focus = Get-FocusedWindow @(Invoke-Checked 'dumpsys window windows')
+        if ($focus -in 'com.android.systemui', 'com.android.settings' -or $focus -like '*Dialog*') { return "yes ($focus)" }
+        Start-Sleep -Milliseconds 500
+    } while ($watch.Elapsed.TotalSeconds -lt $Seconds)
+    'no'
+}
+
 # The accessibility shortcut, the accessibility button and the tile with Kestrel in the background (analysis, item 11):
-# the time from Kestrel's own record of the event to its open voice session, and whether Android showed a dialog.
+# the time from Kestrel's own record of the event to its open voice session, and whether a dialog took the focus.
 function Invoke-ActivationStep {
     $restore = Register-AccessibilityRestore
     try {
@@ -629,31 +777,21 @@ function Invoke-ActivationStep {
         Invoke-Checked "settings put secure accessibility_shortcut_target_service $service" | Out-Null
         Invoke-Checked "settings put secure accessibility_button_targets $service" | Out-Null
         Invoke-Checked 'settings put secure accessibility_shortcut_dialog_shown 1' | Out-Null
-        $methods = [ordered]@{
-            shortcut = 'Press and hold both volume keys together for 3 s, once'
-            button = 'Tap the accessibility button once'
-            tile = 'Swipe down twice from the top of the screen to open Quick Settings, and tap Kestrel''s tile once'
-        }
-        # How to find the button and the tile, said before their first use.
-        $help = @{
-            shortcut = ''
-            button = ' The accessibility button is a small round button with the figure of a person, at the right end of the navigation bar at the bottom of the screen, or floating over the screen when the phone uses swipe gestures; the script has set it to start Kestrel. If you see no such button, press s.'
-            tile = ' If Kestrel''s tile is not in Quick Settings, add it first: tap the three dots at the top of Quick Settings, then "Edit buttons", touch and hold Kestrel''s tile among the available buttons, drag it into the panel and tap "Done".'
-        }
-        $sources = @{ shortcut = 'accessibility'; button = 'accessibility'; tile = 'tile' }
-        # A dry run taps the tile itself, and skips the shortcut and the button, which need hands.
-        if ($DryRun) { Add-DryRunTile }
+        $sources = [ordered]@{ shortcut = 'accessibility'; button = 'accessibility'; tile = 'tile' }
+        Add-Tile
         Initialize-KokoroSpeed activation
-        foreach ($name in $methods.Keys) {
+        foreach ($name in $sources.Keys) {
             Stop-Kestrel
             Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
             $before = ConvertFrom-TimeMark -Text ((Get-Times)['started'])
-            $dryRunAnswer = if ($name -eq 'tile') { 'go' } else { 'skip' }
-            if ((Request-Owner "Kestrel is off and in the background. $($methods[$name]).$($help[$name]) Then press Enter at once, whether or not the phone reacts. Kestrel shows nothing on the screen when it starts, only its notification. Or press s to skip." $dryRunAnswer) -eq 'skip') {
-                Add-Result activation "${name}: skipped"
-                continue
+            $route = Invoke-Activation $name
+            $dialog = Test-ActivationDialog
+            # The fallback only when Kestrel recorded no event of this start: a start that works can take more than 15 s on
+            # the A71, and a second action would pause it.
+            if ($name -ne 'tile') {
+                $recorded = Wait-State { param($State) $mark = ConvertFrom-TimeMark -Text ((Get-Times)['started']); $State -and $mark -and (-not $before -or $mark.At -gt $before.At) } 10
+                if ($recorded -lt 0) { $route = Invoke-Activation $name -Fallback -Why $(if ($route -like 'there is no *') { $route } else { '' }) }
             }
-            if ($DryRun) { Invoke-DryRunTileTap }
             $on = Wait-Mode listening 120
             $times = Get-Times
             $started = ConvertFrom-TimeMark -Text $times['started']
@@ -665,11 +803,11 @@ function Invoke-ActivationStep {
             } else {
                 "listening $($opened - $started.At) ms after the event of the $($started.Kind), timed on the phone"
             }
-            $dialog = Read-OwnerChoice 'Did Android show a dialog or a message before Kestrel started, for example about the shortcut? Type y or n.' 'n'
-            Request-Owner "Now do it once more: $($methods[$name]). Kestrel should pause; its notification then says that Kestrel is paused. Then press Enter at once, whether or not the phone reacts." 'go' | Out-Null
-            if ($DryRun) { Invoke-DryRunTileTap }
+            # The second use pauses Kestrel.
+            $again = Invoke-Activation $name
+            if ($name -ne 'tile' -and (Wait-Mode paused 10) -lt 0) { $again = Invoke-Activation $name -Fallback -Why $(if ($again -like 'there is no *') { $again } else { "Kestrel did not pause within 10 s of the $name" }) }
             $paused = Wait-Mode paused 15
-            Add-Result activation "${name}: $timed; a dialog: $dialog; the second time paused it: $(Format-Wait $paused)"
+            Add-Result activation "${name}: $timed, through $route; a dialog: $dialog; the second time, through $again, paused it: $(Format-Wait $paused)"
         }
         Stop-Kestrel
     } finally {
@@ -778,6 +916,23 @@ function Invoke-RoleAloneChecks {
     }
     Add-Result assistant "the role alone: ""Kestrel, open settings"": $text; Android's log has $blocked blocked starts in the background of Kestrel's"
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    # The same request from the speaker, through the whole speech path (map S21).
+    if (-not $DryRun -and (Initialize-Air assistant)) {
+        Start-Sleep -Seconds 2
+        $asked = [long](Get-Times)['settingsAsked']
+        Invoke-CorpusClip c057
+        $opened = $null
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        while ($null -eq $opened -and $watch.Elapsed.TotalSeconds -lt 15) {
+            Start-Sleep -Milliseconds 500
+            $times = Get-Times
+            if ([long]$times['settingsAsked'] -gt $asked -and [long]$times['settingsResumed'] -ge [long]$times['settingsAsked']) {
+                $opened = [long]$times['settingsResumed'] - [long]$times['settingsAsked']
+            }
+        }
+        Add-Result assistant "the role alone: ""Kestrel, open settings"" from the speaker: $(if ($null -ne $opened) { "Kestrel's settings came to the front $opened ms after Kestrel asked for them, timed on the phone" } else { 'the settings did not come to the front within 15 s' })"
+        Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    }
     # Kestrel stores Listening a moment after its voice session opened; a crash before that write would leave Off stored.
     Start-Sleep -Seconds 2
     $wait = Get-CrashWait -LastCrash (Read-SessionCrash -Path $stateFile -Serial $Serial) -Now (Get-Date)
@@ -827,13 +982,12 @@ function Format-Route($Route) {
     "$($parts -join ' '); routed to the earbuds at some second: $($Route.Bluetooth)"
 }
 
-# "Kestrel" once, and Kestrel's wait for a task, timed on the phone from the end of the speech; nothing is timed from
-# Enter.
-function Measure-Name([string]$Prompt) {
+# "Kestrel" once from the speaker (the clip c041), and Kestrel's wait for a task, timed on the phone from the end of the
+# speech.
+function Measure-Name {
     $before = Get-Counts
     $since = [long](Get-Times)['now']
-    if ((Request-Owner $Prompt 'go') -eq 'skip') { return 'skipped' }
-    if ($DryRun) { Send-Heard '+Kestrel' }
+    Invoke-CorpusClip c041
     $reaction = $null
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while ($null -eq $reaction -and $watch.Elapsed.TotalSeconds -lt 15) {
@@ -844,9 +998,15 @@ function Measure-Name([string]$Prompt) {
     if ($reaction) { "Kestrel began to wait for a task: $reaction; counts: $rise" } else { "no wait for a task within 15 s; counts: $rise" }
 }
 
-# The earbud microphone with the owner's earbuds (analysis, item 6): where Android routes the recording, "Kestrel" into
-# the earbuds, and the phone's microphone after the earbuds went away.
+# The earbud microphone with the owner's Galaxy Buds next to the speaker (analysis, item 6; map S23 to S26): where Android
+# routes the recording, whether the fixture's music then plays through a call's route, "Kestrel" from the speaker next to
+# the earbuds, and the phone's microphone after Bluetooth went off, in place of the earbuds' case.
 function Invoke-EarbudStep {
+    if ($DryRun) {
+        Add-Result earbuds 'skipped in a dry run: it needs the owner''s Galaxy Buds'
+        return
+    }
+    if (-not (Initialize-Air earbuds)) { return }
     Stop-Kestrel
     # Registered before the owner turns the option on, so that the script puts it back as it was through the debug hook
     # owner-options, also after a failure, a skip or Ctrl+C.
@@ -857,50 +1017,76 @@ function Invoke-EarbudStep {
         $now = (ConvertFrom-HookPairs (Invoke-Hook owner-options @{ EarbudMicrophone = $(if ($Data -eq 'on') { 'true' } else { 'false' }) }))['earbudMicrophone']
         if ($now -ne $Data) { throw 'Kestrel did not take it back' }
     }
-    if ((Request-Owner 'Connect the Galaxy Buds to the phone and put them in your ears. Open Kestrel''s settings, the page "Listening and activation", and turn on "Use the earbud microphone". Press Enter when it is on, or s to skip. At the end of the step the script turns it back as it was itself.') -eq 'skip') {
+    # Before the owner's item, so that a build of the fixture app does not keep him waiting with his Buds.
+    Initialize-TestApp
+    if ((Request-OwnerItem 'Item 1 of 1, about 2 minutes: come to the A71 and this computer, take your Galaxy Buds out of their case, check that the A71 shows them as connected, and lay them next to this computer''s speaker, which stands next to the phone. The script then turns on "Use the earbud microphone" itself, plays a quiet tone on the phone and "Kestrel" from the speaker; the Buds may sound. Meanwhile the A71 shows Kestrel''s settings for a moment and the page "Media fixture" for 2 seconds, and Bluetooth turns off and on once. When this computer beeps again, in about 5 minutes, put the Buds back into their case. Press Enter when the Buds lie by the speaker, or s to skip.') -eq 'skip') {
         Add-Result earbuds 'skipped'
         Complete-Restore $earbud
         return
     }
+    ConvertFrom-HookPairs (Invoke-Hook owner-options @{ EarbudMicrophone = 'true' }) | Out-Null
+    # Kestrel takes the option a moment later, as from its settings.
+    Start-Sleep -Seconds 2
     Start-Kestrel
-    Write-Host 'Kestrel listens. Do not speak for 5 s; the script reads where Android sends the recording.'
     $route = Watch-Route 5
     Add-Result earbuds "the route in the 5 s after the start: $(Format-Route $route)"
-    $music = Read-OwnerChoice 'Start some music on the phone, so that it plays in the earbuds, and listen for a few seconds. Does it sound like a phone call, thin and muffled? Type y or n, or x if you cannot play music now.' 'x' @{ y = 'y'; yes = 'y'; n = 'n'; no = 'n'; x = 'x' } 'Type y or yes, n or no, or x, and press Enter'
-    $named = Measure-Name 'Stop the music. Put the phone under a pillow; it stays on and unlocked while it is plugged in, and you need not look at it. Say "Kestrel" once into the earbuds. Kestrel should say "Yes?" in the earbuds and wait. Then press Enter at once, whether or not you hear anything.'
+    # The fixture's player plays a quiet tone; a communication device of Bluetooth's call profile while it plays means
+    # that music sounds like a call (map S24).
+    # The tone stops also after a failure or Ctrl+C.
+    $player = Register-Restore 'the fixture''s player' "Run: & '$adb' -s $Serial shell am force-stop $testApp" $null {
+        Assert-TestDevice -Serial $Serial
+        Invoke-Checked "am force-stop $testApp" | Out-Null
+    }
+    Invoke-Checked "am start -n $testApp/.MediaActivity" | Out-Null
+    Start-Sleep -Seconds 2
+    Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
+    $music = Watch-Route 3
+    Complete-Restore $player
+    $callLike = "$($music.Last['communication'])" -match 'sco|ble'
+    $named = Measure-Name
     $heard = Watch-Route 1
-    $inEarbuds = Read-OwnerChoice 'Did you hear "Yes?" in the earbuds? Type y or n.' 'n'
-    Add-Result earbuds """Kestrel"" into the earbuds: $named; the route afterwards: $(Format-Route $heard); ""Yes?"" in the earbuds: $inEarbuds; music sounded like a call: $music"
-    Request-Owner 'Put the earbuds into their case, so that they disconnect, and take the phone from under the pillow. Press Enter then; the script waits until Kestrel records from the phone again.' 'go' | Out-Null
+    Add-Result earbuds """Kestrel"" from the speaker next to the earbuds: $named; the route after the reply: $(Format-Route $heard); music played through a call's route: $(if ($callLike) { 'yes' } else { 'no' }) ($(Format-Route $music))"
+    # Bluetooth off stands for the earbuds' case, and comes back on through the restore.
+    $bluetooth = Register-Restore 'Bluetooth' 'Turn Bluetooth back on in Quick Settings.' $null {
+        Assert-TestDevice -Serial $Serial
+        Invoke-Checked 'cmd bluetooth_manager enable' | Out-Null
+    }
+    Invoke-Checked 'cmd bluetooth_manager disable' | Out-Null
     # Up to 15 s, until Kestrel has given the earbuds up.
     $gone = $false
     for ($i = 0; $i -lt 15 -and -not $gone; $i++) {
         $gone = (ConvertFrom-HookPairs (Invoke-Hook voice-route))['holding'] -ne 'true'
         if (-not $gone) { Start-Sleep -Seconds 1 }
     }
-    if (-not $gone) { Add-Result earbuds 'Kestrel still held the earbuds 15 s after they went into their case' }
-    $phone = Measure-Name 'Say "Kestrel" once to the phone. Kestrel should say "Yes?" from the phone and wait; the script ends the wait itself. Then press Enter at once, whether or not the phone reacts.'
-    Add-Result earbuds "after the earbuds went away, ""Kestrel"" to the phone: $phone"
+    if (-not $gone) { Add-Result earbuds 'Kestrel still held the earbuds 15 s after Bluetooth went off' }
+    $phone = Measure-Name
+    Add-Result earbuds "after Bluetooth went off, ""Kestrel"" from the speaker next to the phone: $phone"
+    Complete-Restore $bluetooth
     Stop-Kestrel
     Complete-Restore $earbud
+    Invoke-Beep
+    if (-not $Step -or @($Step | Where-Object { $_ -notin 'install', 'earbuds' }).Count -gt 0) {
+        Write-Host 'Put the Galaxy Buds back into their case now. You may leave then: the rest of the session runs without you for about 3.5 hours; the A71''s screen stays on, and it works by itself. Please do not touch it.'
+    } else {
+        Write-Host 'Put the Galaxy Buds back into their case now. Your item in this script is done.'
+    }
 }
 
 # One measure of the voice step or the spotter step: $Tries times, $Prepare brings Kestrel into the state that each try
-# needs, the owner says $Say once and presses Enter, and the script waits up to $TimeoutSeconds until $Reacted, which gets
-# the counts from before the try and Kestrel's state, is true. For each try it records the rise of the counts on the
-# phone (the spotter's hits by keyword, the transcribed and named utterances, how each was read) and Kestrel's latest
-# reaction since the try began, with its time after the end of the speech, all from the phone; nothing is timed from
-# Enter. A dry run makes one try, in which it sends $DryRunHeard (see Send-Heard) in place of the owner. A failure, such
-# as a Kestrel that does not come to rest, costs only this measure's lines.
+# needs, the speaker plays the clip $Clip once, in the Kokoro and the Piper voice by turns, and the script waits up to
+# $TimeoutSeconds until $Reacted, which gets the counts from before the try and Kestrel's state, is true. For each try it
+# records the rise of the counts on the phone (the spotter's hits by keyword, the transcribed and named utterances, how
+# each was read) and Kestrel's latest reaction since the try began, with its time after the end of the speech, all from
+# the phone. A dry run makes one try, in which it sends the clip's text through the voice hook (Invoke-CorpusClip). A
+# failure, such as a Kestrel that does not come to rest, costs only this measure's lines.
 function Measure-Tries(
     [string]$StepName,
     [string]$Name,
-    [string]$Say,
+    [string]$Clip,
     [int]$Tries,
     [scriptblock]$Prepare,
     [scriptblock]$Reacted,
-    [double]$TimeoutSeconds = 10,
-    [string[]]$DryRunHeard = @()
+    [double]$TimeoutSeconds = 10
 ) {
     if ($DryRun) { $Tries = 1 }
     $hits = 0
@@ -911,8 +1097,8 @@ function Measure-Tries(
             & $Prepare
             $counts = Get-Counts
             $since = [long](Get-Times)['now']
-            if ((Request-Owner "$Say  (try $try of ${Tries}: say it once, then press Enter at once, whether or not the phone reacts; s skips the rest)" 'go') -eq 'skip') { break }
-            if ($DryRun) { Send-Heard $DryRunHeard }
+            $voice = if ($DryRun) { 'text' } elseif ($try % 2 -eq 1) { 'kokoro' } else { 'piper' }
+            Invoke-CorpusClip $Clip $voice
             $done++
             $seen = $false
             $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -925,7 +1111,7 @@ function Measure-Tries(
             # The pipeline's counts come once the utterance is transcribed, a moment after the reaction.
             Start-Sleep -Seconds 1
             $reaction = Get-Reaction $since
-            Add-Result $StepName "${Name}, try ${try}: $(if ($seen) { 'reacted' } else { "no reaction within $TimeoutSeconds s" }); Kestrel's latest reaction: $(if ($reaction) { $reaction } else { 'none' }); counts: $(Get-CountRise $counts (Get-Counts))"
+            Add-Result $StepName "${Name}, try ${try} ($voice): $(if ($seen) { 'reacted' } else { "no reaction within $TimeoutSeconds s" }); Kestrel's latest reaction: $(if ($reaction) { $reaction } else { 'none' }); counts: $(Get-CountRise $counts (Get-Counts))"
         }
     } catch {
         if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
@@ -955,20 +1141,6 @@ function Get-PlainSpeechClips {
     , $clips.ToArray()
 }
 
-# Before a measure that plays speech from this computer's speaker (the step spotter and the battery's measure 2), plays
-# one sentence without Kestrel's keywords, so that the owner sets the speaker's volume until the sentence, at the phone,
-# is about as loud as a person who talks at a normal level from 1 m away. A dry run, and a computer without the clips,
-# play nothing.
-function Invoke-LoudnessCheck {
-    $clip = @(Get-PlainSpeechClips) | Select-Object -First 1
-    if ($DryRun -or -not $clip) { return }
-    do {
-        Write-Host 'This computer''s speaker now plays one sentence. Listen to it next to the phone.'
-        $player = [System.Media.SoundPlayer]::new($clip.File)
-        try { $player.PlaySync() } finally { $player.Dispose() }
-        $loud = Read-OwnerChoice 'At the phone, was the sentence about as loud as a person who talks to you at a normal level from 1 m away? Type y if it was. Type n to hear it again after you changed this computer''s volume.' 'y'
-    } while ($loud -ne 'y')
-}
 
 # Plays $Clips through this computer's speaker while Kestrel is paused, so that nothing that the clips say runs, and
 # returns the rise of the spotter's hits of all three keywords: false hits, because no clip holds a keyword (analysis,
@@ -982,7 +1154,7 @@ function Measure-FalseHits([string]$Setting, [object[]]$Clips) {
         Add-Result spotter "${Setting}: no false hits measured, because corpus\generated\piper has no clips of conversation or confusable lines; run scripts\make-corpus.ps1 first"
         return $null
     }
-    Write-Host 'Kestrel is paused now, and this computer plays about 1.5 minutes of speech without Kestrel''s name. Do not speak, and do not touch the phone.'
+    Write-Host 'Kestrel is paused now, and this computer plays about 1.5 minutes of speech without Kestrel''s name.'
     Invoke-Hook voice @{ Send = 'pause' } | Out-Null
     Wait-Mode paused 10 | Out-Null
     $before = Get-Counts
@@ -991,8 +1163,7 @@ function Measure-FalseHits([string]$Setting, [object[]]$Clips) {
         # A false "Kestrel, wake up" would make Kestrel listen, and act on the clips after it.
         $state = Get-VoiceState
         if ($state -and $state.mode -ne 'paused') { Invoke-Hook voice @{ Send = 'pause' } | Out-Null }
-        $player = [System.Media.SoundPlayer]::new($clip.File)
-        try { $player.PlaySync() } finally { $player.Dispose() }
+        Invoke-Clip -Path $clip.File -Gain $script:gain | Out-Null
         $seconds += $clip.Seconds
     }
     Start-Sleep -Seconds 2
@@ -1015,11 +1186,7 @@ function Invoke-SpotterStep {
     }
     $rounds = [System.Collections.Generic.List[object]]::new()
     try {
-        if ((Request-Owner 'Next come three rounds, about 16 minutes, one for each setting of the keyword spotter, in a quiet room. In each round you say "Hey Kestrel" 5 times to the phone, through its own microphone; Kestrel should say "Yes?" and wait, and the script ends each wait itself. Then this computer''s speaker plays about 1.5 minutes of generated speech without Kestrel''s name while Kestrel is paused, and the phone shows nothing; do not speak then. Put the phone about 1 m from this computer''s speaker; first the speaker plays one sentence, so that you can set its volume. Press Enter to begin, or s to skip.' 'go') -eq 'skip') {
-            Add-Result spotter 'skipped'
-            return
-        }
-        Invoke-LoudnessCheck
+        if (-not (Initialize-Air spotter)) { return }
         $clips = Get-PlainSpeechClips
         $tunings = @(@{ Boost = 2; Threshold = 0.15 }, @{ Boost = 3; Threshold = 0.1 }, @{ Boost = 4; Threshold = 0.05 })
         if ($DryRun) { $tunings = @($tunings[0], $tunings[1]) }
@@ -1034,7 +1201,7 @@ function Invoke-SpotterStep {
                 continue
             }
             $quiet = { Wait-Quiet }
-            Measure-Tries spotter "$set, ""Hey Kestrel""" 'Say "Hey Kestrel" once. Kestrel should say "Yes?" and wait; the script ends the wait itself.' 5 $quiet { param($Counts, $State) $State -and [int](Get-Counts)['waits'] -gt [int]$Counts['waits'] } 8 -DryRunHeard '+Hey Kestrel.'
+            Measure-Tries spotter "$set, ""Hey Kestrel""" c042 5 $quiet { param($Counts, $State) $State -and [int](Get-Counts)['waits'] -gt [int]$Counts['waits'] } 8
             $reacted = $script:triesReacted
             $falseHits = Measure-FalseHits $set $clips
             $rounds.Add([pscustomobject]@{ Setting = $set; Default = $tuning.Boost -eq 2 -and $tuning.Threshold -eq 0.15; Hits = $reacted; FalseHits = $falseHits })
@@ -1048,12 +1215,13 @@ function Invoke-SpotterStep {
     Add-Result spotter $(if ($winner) { "the setting that the rule keeps: $($winner.Setting) (the most reactions to your ""Hey Kestrel"" among the settings with at most twice the default's false hits plus 2; a tie goes to fewer false hits, then to the default)" } else { 'no setting chosen, because the default setting was not measured whole' })
 }
 
-# An interruption (analysis, item 8): Kestrel reads a long reply, the owner says "Kestrel", and after a pause "open the
-# weather". This window tells the owner when to say each part, so that the pause is about $Pause s: the second prompt
-# comes 0.6 s plus the pause after the first, for a "Kestrel" of about 0.6 s, so the pause is approximate; the phone
-# times only Kestrel's reactions.
+# An interruption (analysis, item 8; map S34): Kestrel reads a long reply, the speaker plays "Kestrel", and after a pause
+# of $Pause s from the end of that clip, "open the weather"; this computer times the pause after PlaySync has returned, so
+# it is the pause plus Windows' output delay, and the phone times Kestrel's reactions. The two tries take the Kokoro and
+# the Piper voice.
 function Measure-Interruption([string]$Pause) {
-    $name = "an interruption with a pause of about $Pause s"
+    # At least: the clips' silent ends and starts, and Windows' output delay, add to it.
+    $name = "an interruption with a pause of at least $Pause s"
     $tries = if ($DryRun) { 1 } else { 2 }
     $done = 0
     $hits = 0
@@ -1064,24 +1232,24 @@ function Measure-Interruption([string]$Pause) {
             Wait-Quiet
             $counts = Get-Counts
             $since = [long](Get-Times)['now']
-            if ((Request-Owner "$name, try $try of ${tries}: watch this window, not the phone, which shows nothing new while Kestrel reads. When you press Enter, this window says ""Say ""Kestrel, read me the news"" now."": say it once. Kestrel answers and reads a long reply aloud. About 3 s into the reply, the window says ""Say ""Kestrel"" now."": say it once, and Kestrel stops reading. The window itself then waits the pause of about $Pause s and says ""Say ""open the weather"" now."": say that at once. Press Enter to begin, or s to skip the rest." 'go') -eq 'skip') { break }
+            $voice = if ($DryRun) { 'text' } elseif ($try % 2 -eq 1) { 'kokoro' } else { 'piper' }
             $done++
-            if ($DryRun) { Send-Heard '+Kestrel, read me the news' } else { Write-Host 'Say "Kestrel, read me the news" now.' }
+            Invoke-CorpusClip k022 $voice
             $speaking = Wait-State { param($State) $State.speaking -eq 'true' } 30
             if ($speaking -lt 0) {
                 Add-Result voice "${name}, try ${try}: Kestrel did not begin its reply within 30 s; counts: $(Get-CountRise $counts (Get-Counts))"
                 continue
             }
             Start-Sleep -Seconds 3
-            if ($DryRun) { Send-Heard '+Kestrel' } else { Write-Host 'Say "Kestrel" now.' }
-            Start-Sleep -Milliseconds ([int](([double]::Parse($Pause, [Globalization.CultureInfo]::InvariantCulture) + 0.6) * 1000))
-            if ($DryRun) { Send-Heard 'open the weather' } else { Write-Host 'Say "open the weather" now.' }
+            Invoke-CorpusClip c041 $voice
+            Start-Sleep -Milliseconds ([int]([double]::Parse($Pause, [Globalization.CultureInfo]::InvariantCulture) * 1000))
+            Invoke-CorpusClip k023 $voice
             # The condition runs in Wait-State, called from here, so it reads $counts of this try.
             $tasks = Wait-State { param($State) $State -and [int](Get-Counts)['tasks'] -ge [int]$counts['tasks'] + 2 } 30
             if ($tasks -ge 0) { $hits++ }
             Start-Sleep -Seconds 1
             $reaction = Get-Reaction $since
-            Add-Result voice "${name}, try ${try}: $(if ($tasks -ge 0) { 'both tasks ran' } else { 'the second task did not run within 30 s' }); Kestrel's latest reaction: $(if ($reaction) { $reaction } else { 'none' }); counts: $(Get-CountRise $counts (Get-Counts))"
+            Add-Result voice "${name}, try ${try} ($voice): $(if ($tasks -ge 0) { 'both tasks ran' } else { 'the second task did not run within 30 s' }); Kestrel's latest reaction: $(if ($reaction) { $reaction } else { 'none' }); counts: $(Get-CountRise $counts (Get-Counts))"
         } catch {
             if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
             Add-Result voice "${name}, try ${try}: failed: $($_.Exception.Message)"
@@ -1092,19 +1260,16 @@ function Measure-Interruption([string]$Pause) {
 
 function Invoke-VoiceStep {
     $quiet = { Wait-Quiet }
-    if ((Request-Owner 'Next you talk to Kestrel through the phone''s own speaker and microphone, without earbuds, in a quiet room, for about 20 minutes. For each try the script shows what to say: say it once, as you would say it to Kestrel, and then press Enter at once, whether or not the phone reacts. Press Enter to begin, or s to skip.' 'go') -eq 'skip') {
-        Add-Result voice 'skipped'
-        return
-    }
+    if (-not (Initialize-Air voice)) { return }
     $waited = { param($Counts, $State) $State -and [int](Get-Counts)['waits'] -gt [int]$Counts['waits'] }
-    Measure-Tries voice '"Kestrel"' 'Say "Kestrel". Kestrel should say "Yes?" and wait; the script ends the wait itself.' 5 $quiet $waited 10 -DryRunHeard '+Kestrel'
-    Measure-Tries voice '"Hey Kestrel"' 'Say "Hey Kestrel". Kestrel should say "Yes?" and wait; the script ends the wait itself.' 5 $quiet $waited 10 -DryRunHeard '+Hey Kestrel.'
+    Measure-Tries voice '"Kestrel"' c041 5 $quiet $waited 10
+    Measure-Tries voice '"Hey Kestrel"' c042 5 $quiet $waited 10
     $paused = {
         Wait-Quiet
         Invoke-Hook voice @{ Send = 'pause' } | Out-Null
         Wait-Mode paused 10 | Out-Null
     }
-    Measure-Tries voice '"Kestrel, wake up" while paused' 'Kestrel is paused. Say "Kestrel, wake up". Kestrel should listen again; its notification then says that it listens.' 5 $paused { param($Counts, $State) $Counts -and $State.mode -eq 'listening' } 10 -DryRunHeard '+Kestrel, wake up.'
+    Measure-Tries voice '"Kestrel, wake up" while paused' c043 5 $paused { param($Counts, $State) $Counts -and $State.mode -eq 'listening' } 10
     # Each task now takes a second and then reads a long reply without any of Kestrel's keywords, which the owner
     # interrupts. A pause shorter than the speech detector's 0.7 s joins the request to Kestrel's own voice, which the
     # pipeline drops after an interruption (analysis, item 8), so the pauses start at 1 s.
@@ -1115,7 +1280,7 @@ function Invoke-VoiceStep {
     } finally {
         Invoke-Hook voice-task @{ Clear = $true } | Out-Null
     }
-    Measure-Tries voice '"Stop Kestrel"' 'Say "Stop Kestrel". Kestrel should turn off; its notification then goes.' 3 $quiet { param($Counts, $State) $Counts -and $State.mode -eq 'off' } 10 -DryRunHeard 'Stop Kestrel.'
+    Measure-Tries voice '"Stop Kestrel"' c053 3 $quiet { param($Counts, $State) $Counts -and $State.mode -eq 'off' } 10
 }
 
 # Three starts and closes from the front with the stored voice: the peak PSS while each session opens, from samples of
@@ -1158,7 +1323,7 @@ function Invoke-MemoryStep {
     # Kestrel measures Kokoro's speed at the first start after the choice, at a known moment of the session.
     if ($chosen.Voice -eq 'kokoro') { Get-VoiceChoice @{ Voice = 'kokoro' } | Out-Null }
     $starts = if ($chosen.Voice -eq 'kokoro') { 'three times, for about 3 minutes' } else { 'six times, for about 5 minutes' }
-    Write-Host "Do not touch the phone now: it shows Kestrel's settings while Kestrel starts and stops $starts. Then this window asks you to tap Kestrel's tile once."
+    Write-Host "The phone shows Kestrel's settings while Kestrel starts and stops $starts; then the script taps Kestrel's tile once."
     Measure-Starts $chosen.Voice
     # Spec 5.3's memory target holds also for an owner who chooses Kokoro; Kestrel measures Kokoro's speed at its first
     # load on the phone, and Piper speaks where it is too slow.
@@ -1180,14 +1345,10 @@ function Invoke-MemoryStep {
     # a new process (analysis, item 7).
     $restore = Register-AccessibilityRestore
     try {
-        if ((Request-Owner 'Next comes a cold start through the tile: the script turns Kestrel''s accessibility service off and ends Kestrel''s process, and then you tap the tile once. Swipe down twice from the top of the screen to open Quick Settings and check that Kestrel''s tile is there. If it is not, add it: tap the three dots at the top of Quick Settings, then "Edit buttons", touch and hold Kestrel''s tile among the available buttons, drag it into the panel and tap "Done". Close Quick Settings, then press Enter to go ahead, or s to skip.' 'go') -eq 'skip') {
-            Add-Result memory 'a cold start through the tile: skipped'
-            return
-        }
         # The restore of Kokoro above forgets its measure, and the cold start below is timed.
         Initialize-KokoroSpeed memory
         # Before the kill: SystemUI binds the tile's service, which starts Kestrel's process, as on the owner's phone.
-        if ($DryRun) { Add-DryRunTile }
+        Add-Tile
         Invoke-Checked (Get-ServicesCommand @(Get-OtherServices $restore.Data)) | Out-Null
         if (-not (Wait-KestrelService off)) { throw 'Kestrel''s accessibility service did not turn off within 30 s.' }
         $old = Get-KestrelProcess
@@ -1203,8 +1364,7 @@ function Invoke-MemoryStep {
             Add-Result memory 'a cold start through the tile: not tried, because Kestrel''s process did not end'
             return
         }
-        Request-Owner 'Now swipe down to Quick Settings and tap Kestrel''s tile once. Kestrel shows nothing on the screen when it starts, only its notification. Then press Enter at once, whether or not the phone reacts.' 'go' | Out-Null
-        if ($DryRun) { Invoke-DryRunTileTap }
+        Invoke-TileTap
         $on = Wait-Mode listening 120
         $process = Get-KestrelProcess
         $times = Get-Times
@@ -1249,6 +1409,7 @@ function Measure-Battery([string]$Name, [double]$Minutes, [string]$Uid, [scriptb
         Invoke-Checked 'dumpsys batterystats --reset' | Out-Null
         $restarts = 0
         $played = 0
+        $script:callStopped = $false
         # Instant commands run on room talk since sub-project 3, and a locked screen stops the recording while the mode
         # stays listening, so each poll also reads the command number and the screen.
         $first = Get-VoiceState
@@ -1265,6 +1426,12 @@ function Measure-Battery([string]$Name, [double]$Minutes, [string]$Uid, [scriptb
             Start-Sleep -Seconds ([math]::Min(30, [math]::Max(1, ($Minutes - $watch.Elapsed.TotalMinutes) * 60)))
             $state = Get-VoiceState
             if ($state -and $state.Contains('command')) { $lastCommand = [long]$state['command'] }
+            # The room's talk could hold a call command; the A71 has no SIM card, but the measure stops and ends any call.
+            if ($state -and $state['kind'] -eq 'Call' -and [long]$state['command'] -gt $firstCommand) {
+                $script:callStopped = $true
+                Stop-DeviceCall -Serial $Serial | Out-Null
+                break
+            }
             if ($state -and $state['screenOn'] -eq 'false') { $screenOff = $true }
             if (-not $state -or $state.mode -ne 'listening') {
                 # A false "Stop listening" or "Kestrel, turn off" would leave Kestrel paused or off for the rest of the
@@ -1285,7 +1452,7 @@ function Measure-Battery([string]$Name, [double]$Minutes, [string]$Uid, [scriptb
         $use = if ($Uid) { Get-BatteryUse -Dump $charged -Uid $Uid -Hours $hours }
         $audio = ([long]$(if ($after.Contains('audioMillis')) { $after['audioMillis'] } else { 0 }) - [long]$(if ($before.Contains('audioMillis')) { $before['audioMillis'] } else { 0 })) / 60000
         $minutesPerHour = if ($hours -gt 0) { [math]::Round($audio / $hours, 2) } else { 0 }
-        $counted = "$([math]::Round($hours * 60, 1)) minutes timed by $timedBy; batterystats counted the phone as on battery at the end: $(if ($null -eq $onBattery) { 'not shown' } else { $onBattery }); Kestrel's accessibility service: $(Get-KestrelServiceState); restarts of listening: $restarts; instant commands that ran: $($lastCommand - $firstCommand); the screen was off at a poll: $screenOff; Kestrel transcribed $([math]::Round($audio, 2)) minutes of audio, $minutesPerHour minutes per hour; counts: $(Get-CountRise $before $after)"
+        $counted = "$(if ($script:callStopped) { 'stopped early, because a call command started; ' })$([math]::Round($hours * 60, 1)) minutes timed by $timedBy; batterystats counted the phone as on battery at the end: $(if ($null -eq $onBattery) { 'not shown' } else { $onBattery }); Kestrel's accessibility service: $(Get-KestrelServiceState); restarts of listening: $restarts; instant commands that ran: $($lastCommand - $firstCommand); the screen was off at a poll: $screenOff; Kestrel transcribed $([math]::Round($audio, 2)) minutes of audio, $minutesPerHour minutes per hour; counts: $(Get-CountRise $before $after)"
         if (-not $Uid) {
             Add-Result battery "${Name}: no estimate, because neither dumpsys package nor pm list packages named Kestrel's UID; $counted"
             return $null
@@ -1322,35 +1489,36 @@ function Invoke-BatteryStep {
         $quiet = $null
         $typical = $null
         $talk = $null
-        if ((Request-Owner "Battery, measure 1 of 3, $minutes minutes: a quiet room. Put the phone on a table, unlocked and plugged into this computer; its screen stays on, and it shows only the home screen. Nobody speaks near it, and no television or music plays. You may leave. Press Enter to start, or s to skip this measure." 'go') -ne 'skip') {
-            $quiet = Measure-Battery 'measure 1, a quiet room' $minutes $uid
-        } else {
-            Add-Result battery 'measure 1, a quiet room: skipped'
-        }
+        # Measure 1 needs a quiet room, which its own counts show: the audio that Kestrel transcribed stays near 0.
+        $quiet = Measure-Battery 'measure 1, a quiet room' $minutes $uid
         $clips = @(Get-CommandClips)
         if (-not $DryRun -and $clips.Count -eq 0) {
             Add-Result battery 'measure 2, typical use: skipped, because corpus\generated\piper has no clips of commands with Kestrel''s name; run scripts\make-corpus.ps1 first'
-        } elseif ((Request-Owner "Battery, measure 2 of 3, $minutes minutes: the same quiet room, while this computer's speaker plays a short task for Kestrel every 5 minutes, such as ""Kestrel, what's the weather tomorrow?"". Put the phone about 1 m from the speaker; first the speaker plays one sentence, so that you can set its volume. Nobody else speaks. Kestrel answers each task and goes on listening. You may leave after the sentence. Press Enter to start, or s to skip this measure." 'go') -ne 'skip') {
-            Invoke-LoudnessCheck
+        } elseif (Initialize-Air battery) {
             $every = if ($DryRun) {
                 { Send-Heard "+$((Read-Corpus -Path $corpusFile | Where-Object { $_.Id -eq $batteryClipIds[0] }).Text)" }
             } else {
                 {
-                    $player = [System.Media.SoundPlayer]::new($clips[$script:clipIndex % $clips.Count].File)
-                    try { $player.PlaySync() } finally { $player.Dispose() }
+                    Invoke-Clip -Path $clips[$script:clipIndex % $clips.Count].File -Gain $script:gain | Out-Null
                     $script:clipIndex++
                 }
             }
             $script:clipIndex = 0
             Add-Result battery "measure 2 plays the clips $(@($clips | ForEach-Object { $_.Id }) -join ', ')$(if ($DryRun) { ' (in a dry run, the voice hook sends the first one''s text)' })"
             $typical = Measure-Battery 'measure 2, typical use' $minutes $uid $every
-        } else {
-            Add-Result battery 'measure 2, typical use: skipped'
         }
-        if ((Request-Owner "Battery, measure 3 of 3, $minutes minutes: ordinary room sound, as in the session of 2026-11-17. Let people talk or a television play near the phone, which lies there unlocked; nobody speaks to Kestrel. Kestrel may act on what it hears, for example scroll or open an app; let it, and do not touch the phone. Press Enter once the sound plays, or s to skip this measure." 'go') -ne 'skip') {
-            $talk = Measure-Battery 'measure 3, room talk' $minutes $uid
-        } else {
-            Add-Result battery 'measure 3, room talk: skipped'
+        # Measure 3: the room-sound track of scripts\make-room-sound.ps1 over and over, 8 dB below a voice at 1 m, about
+        # a television 2 to 3 m away (map part 7.4); a dry run plays nothing and measures a quiet room again.
+        $track = Join-Path $generatedRoot 'room-sound.wav'
+        if (-not $DryRun -and -not (Test-Path -LiteralPath $track)) {
+            Add-Result battery 'measure 3, room talk: skipped, because corpus\generated\room-sound.wav is missing; make it with scripts\make-room-sound.ps1'
+        } elseif ($DryRun -or (Initialize-Air battery)) {
+            $player = if (-not $DryRun) { Start-ClipLoop -Path $track -Gain ($script:gain * [math]::Pow(10, -8 / 20)) }
+            try {
+                $talk = Measure-Battery 'measure 3, room talk' $minutes $uid
+            } finally {
+                Stop-ClipLoop $player
+            }
         }
         # The cost comes from the measure with the most transcribed audio, and the other one checks the model.
         $costly = @($typical, $talk) | Where-Object { $_ } | Sort-Object MinutesPerHour -Descending | Select-Object -First 1
@@ -1369,32 +1537,34 @@ function Invoke-BatteryStep {
 }
 
 $plan = @(
-    @{ Name = 'install'; Minutes = 10; Title = 'install Kestrel and copy the speech models with both of Kokoro''s models; you may leave'; Run = 'Invoke-InstallStep' }
-    @{ Name = 'voice-tests'; Minutes = 40; Title = 'the voice device tests, among them the keyword spotter''s settings and Kokoro''s two models; you may leave'; Run = 'Invoke-VoiceTestStep' }
+    @{ Name = 'install'; Minutes = 10; Title = 'install Kestrel, the speech models with both of Kokoro''s models and the fixture app'; Run = 'Invoke-InstallStep' }
+    @{ Name = 'earbuds'; Minutes = 8; Title = 'the earbud microphone, with the owner''s Galaxy Buds next to the speaker'; Run = 'Invoke-EarbudStep' }
+    @{ Name = 'voice-tests'; Minutes = 40; Title = 'the voice device tests, among them the keyword spotter''s settings and Kokoro''s two models'; Run = 'Invoke-VoiceTestStep' }
     @{ Name = 'failures'; Minutes = 1; Title = 'Kestrel''s logged failures since the voice tests'; Run = 'Invoke-FailuresStep' }
-    @{ Name = 'listen-check'; Minutes = 12; Title = 'listen-check.ps1 with a restart of the phone; you unlock it once'; Run = 'Invoke-ListenCheckStep' }
-    @{ Name = 'battery-rules'; Minutes = 10; Title = 'Android''s battery rules without the accessibility service; you look at the shade twice'; Run = 'Invoke-BatteryRulesStep' }
-    @{ Name = 'activation'; Minutes = 8; Title = 'the shortcut, the button and the tile, with your hands'; Run = 'Invoke-ActivationStep' }
-    @{ Name = 'assistant'; Minutes = 5; Title = 'Kestrel as the assistant without its accessibility service; no hands'; Run = 'Invoke-AssistantStep' }
-    @{ Name = 'earbuds'; Minutes = 8; Title = 'the earbud microphone, with your earbuds, some music and your voice'; Run = 'Invoke-EarbudStep' }
-    @{ Name = 'spotter'; Minutes = 16; Title = '"Hey Kestrel" and played speech with three settings of the keyword spotter; you speak, then stay quiet'; Run = 'Invoke-SpotterStep' }
-    @{ Name = 'voice'; Minutes = 20; Title = 'talking to Kestrel, with your voice'; Run = 'Invoke-VoiceStep' }
-    @{ Name = 'memory'; Minutes = 12; Title = 'memory with Piper and Kokoro, and a cold start through the tile, which you tap once'; Run = 'Invoke-MemoryStep' }
-    @{ Name = 'battery'; Minutes = 95; Title = 'three battery measures of 30 minutes; you may leave during the first two'; Run = 'Invoke-BatteryStep' }
+    @{ Name = 'listen-check'; Minutes = 12; Title = 'listen-check.ps1 with a restart of the phone, which it unlocks with the test PIN'; Run = 'Invoke-ListenCheckStep' }
+    @{ Name = 'battery-rules'; Minutes = 10; Title = 'Android''s battery rules without the accessibility service'; Run = 'Invoke-BatteryRulesStep' }
+    @{ Name = 'activation'; Minutes = 8; Title = 'the shortcut, the button and the tile, through adb'; Run = 'Invoke-ActivationStep' }
+    @{ Name = 'assistant'; Minutes = 5; Title = 'Kestrel as the assistant without its accessibility service'; Run = 'Invoke-AssistantStep' }
+    @{ Name = 'spotter'; Minutes = 16; Title = '"Hey Kestrel" and played speech with three settings of the keyword spotter'; Run = 'Invoke-SpotterStep' }
+    @{ Name = 'voice'; Minutes = 20; Title = 'Kestrel''s keywords, interruptions and "Stop Kestrel" from the speaker'; Run = 'Invoke-VoiceStep' }
+    @{ Name = 'memory'; Minutes = 12; Title = 'memory with Piper and Kokoro, and a cold start through the tile'; Run = 'Invoke-MemoryStep' }
+    @{ Name = 'battery'; Minutes = 95; Title = 'three battery measures of 30 minutes'; Run = 'Invoke-BatteryStep' }
     @{ Name = 'failures-late'; Minutes = 1; Title = 'Kestrel''s logged failures since listen-check'; Run = 'Invoke-LateFailuresStep' }
 )
 
 $completed = $false
 $stopped = $false
-Add-Result session "started on $(if ($isEmulator) { 'kestrel-api37' } else { 'the Galaxy A71' })$(if ($DryRun) { ', as a dry run' })"
+$how = @(if ($DryRun) { 'as a dry run' }; if ($Unattended) { 'without the owner' }) -join ', '
+Add-Result session "started on $(if ($isEmulator) { 'kestrel-api37' } else { 'the Galaxy A71' })$(if ($how) { ", $how" })"
 try {
     foreach ($entry in $plan) {
         if ($Step -and $entry.Name -notin $Step) { continue }
-        if ((Request-Owner "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title). Press Enter to run it, s to skip it, or q to stop the session." 'go') -eq 'skip') {
-            Add-Result $entry.Name 'skipped by the owner'
+        Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title)."
+        Initialize-Session
+        if (-not (Confirm-Unlocked)) {
+            Add-Result $entry.Name 'skipped: the phone is locked, and the session could not unlock it'
             continue
         }
-        Initialize-Session
         try {
             & $entry.Run
         } catch {
