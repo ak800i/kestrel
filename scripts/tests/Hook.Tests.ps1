@@ -39,4 +39,15 @@ Describe 'hook.ps1' {
         $exit | Should -Not -Be 0
         $output | Should -BeLike '*voice-expect needs -Tag; give each expectation a new tag.*'
     }
+
+    It 'refuses a template of screen-has without a tag before it reaches a device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device screen-has -Package com.example -Template 'long press {label}' 2>&1) -join "`n"
+        $exit = $LASTEXITCODE
+
+        $exit | Should -Not -Be 0
+        $output | Should -BeLike '*screen-has -Template needs -Tag; give the transcript a new tag.*'
+    }
 }

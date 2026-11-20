@@ -1,6 +1,7 @@
 # Sends a test-hook command to Kestrel's debug build on a test device and prints the answer (design spec,
 # section 16.1). Commands and their options:
-#   state                                   whether the screen layer runs, test mode and the overlays
+#   state                                   whether the screen layer runs, test mode and the overlays, and (plan 4D) the
+#                                           grid's size, the magnification and whether the keyboard shows
 #   test-mode -On true|false                switches test mode
 #   snapshot [-Out file.json]               what Kestrel reads on the screen, as JSON
 #   overlay -Show numbers|unlabeled|labels|grid|none
@@ -189,6 +190,19 @@
 #   files [-Create folder]                  the files in Kestrel's external files folder, with sizes and SHA-256
 #                                           hashes, and the folders that Kestrel may not read; -Create makes Kestrel
 #                                           create that folder in it first
+# Checks of the screen on the phone (plan 4D; 2026-11-20-a71-checks-4d-interfaces.md, section 5), which answer no screen text:
+#   screen-has [-Package p] [-ViewId s] [-Label t] [-Contains t] [-ClassName c] [-State list] [-Template 'text {label}' -Tag k]
+#                                           counts the elements that a finger can reach and that match every filter
+#                                           given, and answers the first match's overlay number and bounds, the hash of
+#                                           the first name inside it, and the package and title hash of the page in
+#                                           front; -State takes checked, unchecked, selected, focused, editable,
+#                                           password, scrollable, clickable, actionable, expandable, collapsible,
+#                                           dismissable or slider, separated by commas; -Template sends the text, with
+#                                           {label} replaced on the phone by the first match's name, as a transcript
+#                                           with the tag k
+#   field -Expected 'text' [-ViewId s]      compares the focused text field, or the first one whose view ID contains s,
+#                                           with the text, and answers whether it is equal, its length, its selection
+#                                           and whether it is a password field
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -201,7 +215,7 @@ param(
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
         'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
-        'owner-options', 'notices', 'check-notice', 'voice-expect')][string]$Command,
+        'owner-options', 'notices', 'check-notice', 'voice-expect', 'screen-has', 'field')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -248,7 +262,14 @@ param(
     [ValidatePattern('^[A-Za-z0-9_-]{1,32}$')][string]$Tag,
     [switch]$Live,
     [switch]$Quiet,
-    [switch]$NoRun
+    [switch]$NoRun,
+    [string]$Package,
+    [string]$ViewId,
+    [string]$Label,
+    [string]$Contains,
+    [string]$ClassName,
+    [string]$State,
+    [string]$Template
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -257,6 +278,7 @@ if ($PSBoundParameters.ContainsKey('Threshold') -and $Threshold -lt 0) {
     throw "-Threshold $Threshold is negative; give a threshold from 0.01 to 0.5."
 }
 if ($Command -eq 'voice-expect' -and -not $Tag) { throw 'voice-expect needs -Tag; give each expectation a new tag.' }
+if ($Template -and -not $Tag) { throw 'screen-has -Template needs -Tag; give the transcript a new tag.' }
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
@@ -325,6 +347,13 @@ if ($Tag) { $extras += "--es tag $(ConvertTo-ShellText $Tag)" }
 if ($Live) { $extras += '--ez live true' }
 if ($Quiet) { $extras += '--ez quiet true' }
 if ($NoRun) { $extras += '--ez noRun true' }
+if ($Package) { $extras += "--es package $(ConvertTo-ShellText $Package)" }
+if ($ViewId) { $extras += "--es viewId $(ConvertTo-ShellText $ViewId)" }
+if ($PSBoundParameters.ContainsKey('Label')) { $extras += "--es label $(ConvertTo-ShellText $Label)" }
+if ($PSBoundParameters.ContainsKey('Contains')) { $extras += "--es contains $(ConvertTo-ShellText $Contains)" }
+if ($ClassName) { $extras += "--es class $(ConvertTo-ShellText $ClassName)" }
+if ($State) { $extras += "--es state $(ConvertTo-ShellText $State)" }
+if ($Template) { $extras += "--es template $(ConvertTo-ShellText $Template)" }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

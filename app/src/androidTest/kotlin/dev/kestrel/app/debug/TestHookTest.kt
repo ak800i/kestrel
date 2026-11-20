@@ -97,6 +97,37 @@ class TestHookTest {
     }
 
     @Test
+    fun theStateNamesTheGridAndScreenHasCountsWithoutText() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        screen.awaitElement { it.label == "SEND" && it.clickable }
+
+        assertTrue(Regex(".* gridSize=none magnification=none keyboard=(shown|hidden)").matches(answer(hook("STATE"))))
+        answer(hook("OVERLAY --es show grid"))
+        try {
+            assertTrue(Regex(".* gridSize=\\d+x4 magnification=none keyboard=(shown|hidden)").matches(answer(hook("STATE"))))
+        } finally {
+            answer(hook("OVERLAY --es show none"))
+        }
+        val send = answer(hook("SCREEN_HAS --es label SEND --es state clickable"))
+        val line = Regex("count=[1-9]\\d* number=none bounds=\\d+,\\d+,\\d+,\\d+ first=\\S+ app=\\S+ appTitle=\\S+ windows=\\d+")
+        assertTrue(send, line.matches(send))
+        assertTrue(answer(hook("SCREEN_HAS --es label no-such-label")).startsWith("count=0 number=none bounds=none first=none "))
+        assertTrue(hook("SCREEN_HAS --es state shiny").contains("result=1, data=\"error: add --es state with some of checked"))
+
+        // field compares the text on the phone; the key holds no space, which the shell command splits at.
+        val message = screen.awaitElement { it.viewId?.endsWith(":id/message_field") == true }
+        assertTrue(answer(hook("TYPE --es key ${message.key} --es text hello")).startsWith("done: "))
+        val field = answer(hook("FIELD --es expected hello --es viewId message_field"))
+        assertTrue(field, Regex("field=found equal=true length=5 start=\\d+ end=\\d+ password=false").matches(field))
+        assertTrue(answer(hook("FIELD --es expected other --es viewId message_field")).startsWith("field=found equal=false length=5 "))
+        // A template's {label} is filled on the phone and sent as a tagged transcript (Kestrel is off, so it starts nothing).
+        val tag = "t${System.nanoTime()}"
+        assertTrue(answer(hook("SCREEN_HAS --es label SEND --es template {label} --es tag $tag")).endsWith(" sent=$tag"))
+        assertTrue(answer(hook("VOICE_STATE --es tag $tag")).startsWith("tag=$tag role="))
+        assertTrue(hook("SCREEN_HAS --es label SEND --es template x --es tag u$tag").contains("result=1, data=\"error: add {label} to the template"))
+    }
+
+    @Test
     fun aFailedCommandSaysWhy() {
         val reply = hook("TYPE --es text hello")
 

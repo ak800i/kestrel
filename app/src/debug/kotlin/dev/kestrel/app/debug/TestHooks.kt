@@ -16,10 +16,13 @@ import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ScreenJson
+import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.overlay.NumbersMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /** A test hook's answer, which becomes the broadcast's result code and data. */
 internal data class HookReply(val code: Int, val text: String) {
@@ -54,6 +57,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
         if (command in SpikeHooks.COMMANDS) return SpikeHooks(context, graph).run(command, intent)
         if (command in VoiceHooks.COMMANDS) return VoiceHooks(graph).run(command, intent)
         if (command in ExpectHooks.COMMANDS) return ExpectHooks(graph).run(command, intent)
+        if (command in ScreenHooks.COMMANDS) return ScreenHooks(graph).run(command, intent)
         if (command in EvalHooks.COMMANDS) return EvalHooks(graph, context).run(command, intent)
         if (command in SessionHooks.COMMANDS) return SessionHooks(graph, context).run(command, intent)
         if (command in ProviderHooks.COMMANDS) return ProviderHooks(graph).run(command, intent)
@@ -120,11 +124,25 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
     private suspend fun state(): String {
         val testMode = onOff(graph.settings.get(SettingKeys.SAFETY).testMode)
         val session = graph.screen.value ?: return "screen=off testMode=$testMode"
+        // Plan 4D, H4: whether an input method's window is on the screen, from Kestrel's current snapshot.
+        val keyboard = session.snapshots.current().snapshot.windows.any { it.kind == WindowKind.INPUT_METHOD }
         return withContext(Dispatchers.Main) {
+            val grid = session.grid
             "screen=on testMode=$testMode numbers=${session.numberBadges.size} labels=${onOff(session.labelsShowing)} " +
-                "grid=${onOff(session.grid != null)} feedback=${onOff(session.feedbackText != null)}"
+                "grid=${onOff(grid != null)} feedback=${onOff(session.feedbackText != null)} " +
+                "gridSize=${grid?.let { "${it.rows}x${it.columns}" } ?: "none"} " +
+                "magnification=${magnification(session.actions.zoomScale, session.system.magnifiedCentre())} " +
+                "keyboard=${if (keyboard) "shown" else "hidden"}"
         }
     }
+
+    // The scale with two decimals and the centre in screen pixels while the screen is magnified, as "2.00@540,1200".
+    private fun magnification(scale: Float, centre: Pair<Float, Float>?): String =
+        if (scale > 1f && centre != null) {
+            String.format(Locale.ROOT, "%.2f@%d,%d", scale, centre.first.roundToInt(), centre.second.roundToInt())
+        } else {
+            "none"
+        }
 
     private suspend fun testMode(intent: Intent): String {
         if (!intent.hasExtra(EXTRA_ON)) throw HookError("add --ez on true or --ez on false")
