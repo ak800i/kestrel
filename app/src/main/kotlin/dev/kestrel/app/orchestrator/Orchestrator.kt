@@ -25,7 +25,9 @@ import kotlinx.coroutines.launch
  * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
  * started it; after a question without an answer, a number counts as a late answer for [lateMillis] (section 9.4). A
  * [Effect.RunCommand] that throws counts as a command that ended as failed,
- * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14).
+ * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14). [onStep] sees each event with the
+ * state before it and the step that it caused, on the Orchestrator's coroutine, after the new state is set and before the
+ * step's effects run; the debug hooks of plan 4D read it, and a failure in it goes to [onError].
  */
 class Orchestrator(
     private val scope: CoroutineScope,
@@ -37,6 +39,7 @@ class Orchestrator(
     private val questionMillis: Long = QUESTION_MILLIS,
     private val lateMillis: Long = LATE_MILLIS,
     private val commandFailed: String? = null,
+    private val onStep: (Event, State, Step) -> Unit = { _, _, _ -> },
 ) {
     // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
     private val events = Channel<Pair<Event, () -> Boolean>>(Channel.UNLIMITED)
@@ -68,8 +71,15 @@ class Orchestrator(
     }
 
     private suspend fun handle(event: Event) {
-        val step = Rules.next(current.value, event)
+        val before = current.value
+        val step = Rules.next(before, event)
         current.value = step.state
+        try {
+            onStep(event, before, step)
+        } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
+            onError(e)
+        }
         if (step.state.work != Work.AWAITING_TASK) {
             wait?.cancel()
             wait = null

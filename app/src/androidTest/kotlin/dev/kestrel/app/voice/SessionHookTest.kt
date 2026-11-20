@@ -142,6 +142,22 @@ class SessionHookTest {
     }
 
     @Test
+    fun theCheckNoticeComesAndGoesAndTheNoticesNameTheirKinds() {
+        VoiceTests.grantListeningPermissions()
+        fun checkNotice(on: Boolean): HookReply = runBlocking {
+            TestHooks(VoiceTests.graph, context).run(Intent(TestHooks.ACTION_PREFIX + "CHECK_NOTICE").putExtra("on", on))
+        }
+
+        try {
+            assertEquals("checkNotice=shown", checkNotice(true).text)
+            assertEquals("checkNotice=shown", hook("CHECK_NOTICE").text)
+        } finally {
+            assertEquals("checkNotice=gone", checkNotice(false).text)
+        }
+        assertEquals("notices=0 kinds=none", hook("NOTICES", flags = setOf("clear")).text)
+    }
+
+    @Test
     fun theTimesHookAnswersOnlyTimesAndKinds() {
         VoiceTests.graph.timeline.start("tile")
 

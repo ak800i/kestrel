@@ -21,8 +21,19 @@
 #                                           off also stops a restore of the stored mode and stores Off, also while
 #                                           Kestrel is off, so that Kestrel does not come back at the next start of
 #                                           its process
-#   voice -Send heard -Text 'text' [-Named] sends a transcript, as if Kestrel had heard it; -Named as if the keyword
-#                                           spotter had heard "Kestrel" at its start
+#   voice -Send heard -Text 'text' [-Named] [-Tag k [-Model id] [-Live]]
+#                                           sends a transcript, as if Kestrel had heard it; -Named as if the keyword
+#                                           spotter had heard "Kestrel" at its start; -Tag links the tag k (1 to 32
+#                                           letters, digits, '-' and '_', new in Kestrel's process) to it, for
+#                                           voice-state -Tag; -Model and -Live go with a task that the transcript
+#                                           starts, for sub-project 5's agent. On a phone, "yes, call" is refused and
+#                                           never sent
+#   voice-state -Tag k                      what the transcript with the tag k did: its role (pending, command, task,
+#                                           answer, cancel or none), its command's and its task's numbers, the
+#                                           command's kind and outcome, whether it asks,
+#                                           its phase, its route, the hashes of what Kestrel said and showed for it,
+#                                           how Requests read it, and the latest command's number; never text
+#                                           (docs\superpowers\plans\2026-11-20-a71-checks-4d-interfaces.md, section 2)
 #   voice-state [-Number n]                 the Orchestrator's mode, work, speaking, microphone, recognition, screen and
 #                                           "mic busy", the latest instant command's number, kind and outcome, whether
 #                                           the voice session is open, and whether Kestrel's next start uses the clip
@@ -36,9 +47,12 @@
 #                                           or at once if Kestrel already listens through it, or, if the screen is off
 #                                           then, when the screen comes back on. Kestrel hears only clips until
 #                                           voice-clip -Clear or the end of its process; reinstalling with
-#                                           scripts\install.ps1 ends the process
+#                                           scripts\install.ps1 ends the process. On a phone, "yes, call" is refused
 #   voice-clip -Clear                       drops the waiting clips, and gives Kestrel back the microphone that the
 #                                           first voice-clip replaced, from Kestrel's next start
+#   voice-clip -Quiet                       drops the waiting clips and makes the silent clip microphone Kestrel's
+#                                           microphone from its next start, so that no sound of the room reaches it,
+#                                           until voice-clip -Clear
 #   voice-call-commands [-On true|false]    answers whether "Commands during a call" is on, after storing -On; Kestrel
 #                                           takes a change a moment later, as from its settings
 #   voice-choice [-Voice piper|kokoro]      answers the stored voice and speed, and whether Kokoro was chosen and Piper
@@ -108,7 +122,10 @@
 #                                           from its settings
 #   notices [-Clear]                        answers how many of Kestrel's notices about problems (it stopped
 #                                           listening, its accessibility service is off, "Open Kestrel's settings") are
-#                                           in the notification shade, after taking them away with -Clear
+#                                           in the notification shade, and their kinds (battery, stopped,
+#                                           accessibility, settings, or none), after taking them away with -Clear
+#   check-notice [-On true|false]           posts (-On true) or takes away (-On false) Kestrel's notification
+#                                           "Kestrel check", and answers whether it is in the shade
 #   voice-spotter [-Boost b] [-Threshold t] answers the keyword spotter's boost and threshold, after storing -Boost (0.5
 #                                           to 10) and -Threshold (0.01 to 0.5); a change counts for every keyword
 #                                           spotter that loads afterwards, also the spotter of the hook voice-echo,
@@ -170,7 +187,7 @@ param(
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
         'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
-        'owner-options', 'notices')][string]$Command,
+        'owner-options', 'notices', 'check-notice')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -213,7 +230,10 @@ param(
     [string]$Headers,
     [string]$MessagesPath,
     [ValidateSet('true', 'false')][string]$RequireVerbs,
-    [ValidateSet('true', 'false')][string]$EarbudMicrophone
+    [ValidateSet('true', 'false')][string]$EarbudMicrophone,
+    [ValidatePattern('^[A-Za-z0-9_-]{1,32}$')][string]$Tag,
+    [switch]$Live,
+    [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -285,6 +305,9 @@ if ($MessagesPath) { $extras += "--es messagesPath $(ConvertTo-ShellText $Messag
 # ValidateSet accepts any letter case, and Android's --ez only lower case.
 if ($RequireVerbs) { $extras += "--ez requireVerbs $($RequireVerbs.ToLowerInvariant())" }
 if ($EarbudMicrophone) { $extras += "--ez earbudMicrophone $($EarbudMicrophone.ToLowerInvariant())" }
+if ($Tag) { $extras += "--es tag $(ConvertTo-ShellText $Tag)" }
+if ($Live) { $extras += '--ez live true' }
+if ($Quiet) { $extras += '--ez quiet true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

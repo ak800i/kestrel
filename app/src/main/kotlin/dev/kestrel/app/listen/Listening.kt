@@ -11,6 +11,7 @@ import dev.kestrel.app.orchestrator.Orchestrator
 import dev.kestrel.app.orchestrator.Reply
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.State
+import dev.kestrel.app.orchestrator.Step
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.voice.ModelsNotReadyException
@@ -392,11 +393,28 @@ class Listening internal constructor(
     /** The owner's choices for listening, as Kestrel read them last, or the defaults before the first read (section 15). */
     internal val currentOptions: StateFlow<ListeningOptions> = chosenOptions.asStateFlow()
 
+    /**
+     * The options that a debug hook passed with the transcript that started task number `task`, such as `model` and
+     * `live` (plan 4D, for sub-project 5's AgentRunner, which reads them once per task); the read removes them. Null, and
+     * so no options, outside the debug hooks, which alone set it.
+     */
+    @Volatile
+    internal var taskOptions: ((task: Int) -> Map<String, String>)? = null
+
+    /**
+     * The debug hooks' watcher of the Orchestrator's steps (plan 4D, hook H1): each event with the state before it and the
+     * step that it caused, on the Orchestrator's coroutine. It must return quickly. Null, and so nothing, outside the
+     * debug hooks.
+     */
+    @Volatile
+    internal var steps: ((Event, State, Step) -> Unit)? = null
+
     private val orchestrator = Orchestrator(
         CoroutineScope(scope.coroutineContext + thread),
         perform = ::perform,
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
+        onStep = { event, before, step -> steps?.invoke(event, before, step) },
     )
 
     /** The Orchestrator's state after the last event. */

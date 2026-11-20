@@ -32,6 +32,29 @@ class OrchestratorTest {
     }
 
     @Test
+    fun theStepWatcherSeesEachEventWithTheStateBeforeItAndItsStep() = runTest {
+        val seen = mutableListOf<Triple<Event, State, Step>>()
+        val orchestrator = Orchestrator(
+            backgroundScope,
+            { performed += it },
+            { errors += it },
+            onStep = { event, before, step -> seen += Triple(event, before, step) },
+        )
+        val heard = Event.Heard("Scroll down.", named = false)
+
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(heard)
+        runCurrent()
+
+        assertEquals(listOf(Event.Toggle, heard), seen.map { it.first })
+        assertEquals(Mode.OFF, seen[0].second.mode)
+        assertEquals(Mode.LISTENING, seen[1].second.mode)
+        assertTrue(seen[1].third.effects.any { it is Effect.RunCommand })
+        assertEquals(seen[1].third.state, orchestrator.state.value)
+        assertEquals(emptyList<Exception>(), errors)
+    }
+
+    @Test
     fun appliesTheRulesToEachEventInTurn() = runTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
 

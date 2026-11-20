@@ -1,8 +1,12 @@
 package dev.kestrel.app.debug
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
@@ -10,6 +14,7 @@ import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ProblemNotifications
+import dev.kestrel.app.listen.StopReason
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.KeywordTuning
@@ -25,6 +30,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -70,6 +76,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
         "OWNER_OPTIONS" -> ownerOptions(intent)
         "NOTICES" -> notices(intent)
+        "CHECK_NOTICE" -> checkNotice(intent)
         else -> throw HookError("unknown command '$command'")
     }
 
@@ -97,11 +104,56 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
      * service is off, "Open Kestrel's settings") are in the shade, after cancelling them with --ez clear, so that a session
      * takes away the notices that its steps caused, at its end. The listening and sign-in notifications stay.
      */
-    private fun notices(intent: Intent): String {
+    private suspend fun notices(intent: Intent): String {
         val manager = context.getSystemService(NotificationManager::class.java) ?: throw HookError("the notification service is missing")
         val notices = setOf(ProblemNotifications.STOPPED_ID, ProblemNotifications.ACCESSIBILITY_ID, ProblemNotifications.SETTINGS_ID)
-        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) notices.forEach(manager::cancel)
-        return "notices=${manager.activeNotifications.count { it.id in notices }}"
+        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
+            notices.forEach(manager::cancel)
+            // Android takes them away a moment later, so the answer waits up to 2 s for that.
+            withTimeoutOrNull(CHECK_WAIT_MILLIS) {
+                while (manager.activeNotifications.any { it.id in notices }) delay(POLL_MILLIS)
+            }
+        }
+        // The kinds come from the IDs, and for the stop notice from its fixed text, read on the phone (plan 4D, H6).
+        val active = manager.activeNotifications.filter { it.id in notices }
+        val kinds = noticeKinds(active.map { it.id to it.notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() })
+        return "notices=${active.size} kinds=$kinds"
+    }
+
+    /**
+     * Posts (--ez on true) or takes away (--ez on false) Kestrel's own notification "Kestrel check", which the A71 checks
+     * expand, collapse and dismiss by voice in place of the shell's notification, which no shell command can take away
+     * (plan 4D, H6). Its text has two lines, so that One UI offers to expand it. Answers whether it is in the shade, after
+     * waiting up to 2 s for Android to post or take it away.
+     */
+    private suspend fun checkNotice(intent: Intent): String {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: throw HookError("the notification service is missing")
+        fun shown() = manager.activeNotifications.any { it.id == CHECK_ID }
+        if (intent.hasExtra(EXTRA_ON)) {
+            val on = intent.getBooleanExtra(EXTRA_ON, false)
+            if (on) {
+                if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    throw HookError("Kestrel may not post notifications; allow them first")
+                }
+                val channel = NotificationChannel(CHECK_CHANNEL, CHECK_TITLE, NotificationManager.IMPORTANCE_DEFAULT).apply { setSound(null, null) }
+                manager.createNotificationChannel(channel)
+                val notification = Notification.Builder(context, CHECK_CHANNEL)
+                    .setSmallIcon(android.R.drawable.stat_notify_more)
+                    .setContentTitle(CHECK_TITLE)
+                    .setContentText(CHECK_TEXT)
+                    .setStyle(Notification.BigTextStyle().bigText(CHECK_TEXT))
+                    .build()
+                manager.notify(CHECK_ID, notification)
+            } else {
+                manager.cancel(CHECK_ID)
+                // So that the check leaves no channel of its own in Kestrel's notification settings.
+                manager.deleteNotificationChannel(CHECK_CHANNEL)
+            }
+            withTimeoutOrNull(CHECK_WAIT_MILLIS) {
+                while (shown() != on) delay(POLL_MILLIS)
+            }
+        }
+        return "checkNotice=${if (shown()) "shown" else "gone"}"
     }
 
     // The phone's own times (plan 2E), and whether Android runs ListeningService in the foreground: foreground= from
@@ -257,7 +309,32 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     companion object {
-        val COMMANDS = setOf("VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_SPOTTER", "VOICE_TASK", "VOICE_ECHO", "OWNER_OPTIONS", "NOTICES")
+        val COMMANDS = setOf(
+            "VOICE_COUNTS", "VOICE_TIMES", "VOICE_ROUTE", "VOICE_SPOTTER", "VOICE_TASK", "VOICE_ECHO", "OWNER_OPTIONS", "NOTICES",
+            "CHECK_NOTICE",
+        )
+
+        /**
+         * The kinds of Kestrel's notices about problems, from their IDs and the stop notice's text, sorted and joined with
+         * commas, or none: battery (it stopped because its battery use is restricted), stopped (another reason),
+         * accessibility and settings (plan 4D, H6).
+         */
+        fun noticeKinds(notices: List<Pair<Int, String?>>): String = notices.mapNotNull { (id, text) ->
+            when (id) {
+                ProblemNotifications.STOPPED_ID -> if (text == StopReason.BATTERY_RESTRICTED.text) "battery" else "stopped"
+                ProblemNotifications.ACCESSIBILITY_ID -> "accessibility"
+                ProblemNotifications.SETTINGS_ID -> "settings"
+                else -> null
+            }
+        }.distinct().sorted().joinToString(",").ifEmpty { "none" }
+
+        // The notification "Kestrel check" of plan 4D's checks.
+        private const val CHECK_ID = 7_190
+        private const val CHECK_CHANNEL = "kestrel-check"
+        private const val CHECK_TITLE = "Kestrel check"
+        private const val CHECK_TEXT = "A notification of Kestrel's own checks.\nIt has a second line, so that it can expand."
+        private const val CHECK_WAIT_MILLIS = 2_000L
+        private const val POLL_MILLIS = 100L
 
         private val lock = Any()
 
@@ -279,5 +356,6 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         private const val EXTRA_THRESHOLD = "threshold"
         private const val EXTRA_REQUIRE_VERBS = "requireVerbs"
         private const val EXTRA_EARBUD_MICROPHONE = "earbudMicrophone"
+        private const val EXTRA_ON = "on"
     }
 }

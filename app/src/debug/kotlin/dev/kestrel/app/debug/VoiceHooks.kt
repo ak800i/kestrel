@@ -1,12 +1,15 @@
 package dev.kestrel.app.debug
 
 import android.content.Intent
+import android.os.Build
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.commands.EmergencyGuard
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.app.orchestrator.Requests
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.app.settings.speedText
 import dev.kestrel.voice.ModelsNotReadyException
@@ -26,8 +29,12 @@ import java.util.Locale
 internal class VoiceHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "VOICE" -> event(intent)
-        "VOICE_STATE" -> state(intent)
-        "VOICE_CLIP" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clear() else clip(intent)
+        "VOICE_STATE" -> intent.getStringExtra(EXTRA_TAG)?.let { tagState(it) } ?: state(intent)
+        "VOICE_CLIP" -> when {
+            intent.getBooleanExtra(EXTRA_CLEAR, false) -> clear()
+            intent.getBooleanExtra(EXTRA_QUIET, false) -> quiet()
+            else -> clip(intent)
+        }
         "VOICE_CALL_COMMANDS" -> callCommands(intent)
         "VOICE_CHOICE" -> voiceChoice(intent)
         else -> throw HookError("unknown command '$command'")
@@ -49,11 +56,67 @@ internal class VoiceHooks(private val graph: AppGraph) {
             }
             "screen-on" -> Event.Screen(on = true)
             "screen-off" -> Event.Screen(on = false)
-            "heard" -> Event.Heard(text(intent), intent.getBooleanExtra(EXTRA_NAMED, false))
+            "heard" -> heard(intent)
             else -> throw HookError("add --es event with one of ${EVENTS.joinToString()}")
         }
+        val given = intent.getStringExtra(EXTRA_TAG)
+        if (given != null) {
+            if (event !is Event.Heard) throw HookError("only a transcript takes a tag; add --es event heard")
+            val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
+            tag(graph, given, event, taskOptions(intent.getStringExtra(EXTRA_MODEL), live))
+        }
         graph.listening.send(event)
-        return "sent $name"
+        return if (given != null) "sent $name tag=$given" else "sent $name"
+    }
+
+    // Plan 4D: "yes, call" reaches Kestrel only on an emulator, never on a phone (process rule 10).
+    private fun heard(intent: Intent): Event.Heard {
+        val text = text(intent)
+        if (refused(text, Build.HARDWARE)) throw HookError(YES_CALL_REFUSED)
+        return Event.Heard(text, intent.getBooleanExtra(EXTRA_NAMED, false))
+    }
+
+    // What the transcript with [tag] did (plan 4D, hook H1; 2026-11-20-a71-checks-4d-interfaces.md, section 2): never words.
+    private fun tagState(tag: String): String {
+        val tagged = tags.tagged(tag) ?: throw HookError("no transcript has the tag $tag")
+        val state = graph.listening.state.value
+        val number = tagged.command
+        val (kind, outcome) = kindAndOutcome(graph, number)
+        val runningNow = number > 0 && number == state.command && state.work == Work.RUNNING_COMMAND
+        val taskNow = tagged.task > 0 && tagged.task == state.task && state.work == Work.RUNNING_TASK
+        val phase = when {
+            tagged.role == CommandTags.Role.PENDING -> "pending"
+            tagged.task > 0 -> if (taskNow) "running" else "ended"
+            number == 0 -> "none"
+            runningNow && state.counting -> "countdown"
+            runningNow && state.asking -> "question"
+            runningNow -> "running"
+            else -> "ended"
+        }
+        val record = tags.record(number)
+        return "tag=$tag role=${tagged.role.name.lowercase()} command=$number task=${tagged.task} kind=$kind outcome=$outcome " +
+            "asking=${runningNow && state.asking} phase=$phase detail=${record.detail ?: "none"} said=${hashes(record.said)} " +
+            "shown=${hashes(record.shown)} read=${tagged.read} latest=${state.command}"
+    }
+
+    private fun hashes(list: List<String>): String = list.joinToString(",").ifEmpty { "none" }
+
+    // Plan 4D: the silent clip microphone, so that no sound of the room reaches Kestrel during the checks' text pass.
+    private fun quiet(): String {
+        microphone.clear()
+        val recording = synchronized(lock) {
+            val listening = graph.listening
+            if (listening.microphones !== clipFactory) {
+                replaced = listening.microphones
+                listening.microphones = clipFactory
+            }
+            microphone.recording
+        }
+        return if (recording) {
+            "quiet: Kestrel hears only the silent clip microphone, until voice-clip -Clear or the end of its process"
+        } else {
+            "quiet: Kestrel hears only the silent clip microphone from its next start, until voice-clip -Clear or the end of its process"
+        }
     }
 
     // The latest instant command, or with --ei number the command with that number, as long as it is one of the newest 16:
@@ -85,6 +148,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
     private suspend fun clip(intent: Intent): String {
         val text = text(intent)
         if (text.isBlank()) throw HookError("add a text that is not blank")
+        // Plan 4D: Kestrel hears this text, so a phone never gets "yes, call" (process rule 10).
+        if (refused(text, Build.HARDWARE)) throw HookError(YES_CALL_REFUSED)
         val samples = try {
             // Without variation, the voice says a text the same way every time.
             graph.voice.synthesizer(VoiceOptions(variation = 0f)).use { voice -> ClipMicrophone.speech(voice, text) }
@@ -182,6 +247,66 @@ internal class VoiceHooks(private val graph: AppGraph) {
         /** The microphone that VOICE_CLIP says its texts into, one for the whole process. */
         val microphone: ClipMicrophone by lazy { ClipMicrophone() }
 
+        /** The tags of plan 4D's checks, one record for the whole process. */
+        val tags: CommandTags by lazy { CommandTags() }
+
+        /** The options of the tasks that tagged transcripts started, for sub-project 5's AgentRunner (Listening.taskOptions). */
+        val tasks: TaskOptions by lazy { TaskOptions() }
+
+        const val YES_CALL_REFUSED = "only the emulator may answer \"yes, call\""
+
+        private val TAG = Regex("[A-Za-z0-9_-]{1,32}")
+
+        /** Whether [text] is "yes, call" on a device whose [hardware] is not an emulator's, which the hooks never send. */
+        fun refused(text: String, hardware: String): Boolean =
+            hardware != "ranchu" && hardware != "goldfish" && EmergencyGuard.confirmed(text)
+
+        /**
+         * Links [tag] and [options] to [event] before Kestrel handles it, and starts the record of the Orchestrator's steps
+         * (plan 4D, H1): a task that a tagged transcript starts gets its options in [tasks] before it runs, and
+         * Listening.taskOptions reads them from there.
+         */
+        fun tag(graph: AppGraph, tag: String, event: Event.Heard, options: Map<String, String> = emptyMap()) {
+            if (!TAG.matches(tag)) throw HookError("add --es tag with 1 to 32 letters, digits, '-' and '_'")
+            val listening = graph.listening
+            if (listening.steps == null) {
+                listening.steps = { heard, before, step -> tags.onStep(heard, before, step)?.let { tasks.put(it.task, it.options) } }
+                listening.taskOptions = tasks::take
+            }
+            if (!tags.register(tag, event, readOf(event.text, event.named), options)) {
+                throw HookError("the tag $tag is in use; give each transcript a new tag")
+            }
+        }
+
+        /**
+         * The options that a tagged transcript passes to the task that it starts, from the hook's extras: --es model and
+         * --ez live, which sub-project 5's AgentRunner reads (its design's "Shared files and anchors", item 2).
+         */
+        fun taskOptions(model: String?, live: Boolean?): Map<String, String> = buildMap {
+            model?.let { put("model", it) }
+            live?.let { put("live", it.toString()) }
+            // sub-project 5B
+        }
+
+        /** How Kestrel's Requests read [text]: the request's kind in lower case, such as other or stop, or none. */
+        fun readOf(text: String, named: Boolean): String = Requests.read(text, named)?.javaClass?.simpleName?.lowercase() ?: "none"
+
+        /** The kind and the outcome of command [number], as voice-state answers them; none and none for 0. */
+        fun kindAndOutcome(graph: AppGraph, number: Int): Pair<String, String> {
+            if (number <= 0) return "none" to "none"
+            val state = graph.listening.state.value
+            val recent = graph.listening.recentCommand(number)
+            val runningNow = number == state.command && state.work == Work.RUNNING_COMMAND
+            val kind = state.running?.takeIf { runningNow }?.javaClass?.simpleName ?: recent?.kind ?: "none"
+            val outcome = when {
+                runningNow -> "running"
+                recent != null -> recent.outcome?.name?.lowercase() ?: "running"
+                number in 1..state.command -> "unknown"
+                else -> "none"
+            }
+            return kind to outcome
+        }
+
         // One factory object, so that VOICE_STATE and VOICE_CLIP can tell whether Kestrel's next start uses the clips.
         private val clipFactory: () -> Microphone = { microphone }
 
@@ -201,5 +326,9 @@ internal class VoiceHooks(private val graph: AppGraph) {
         private const val EXTRA_ON = "on"
         private const val EXTRA_VOICE = "voice"
         private const val EXTRA_NUMBER = "number"
+        private const val EXTRA_TAG = "tag"
+        private const val EXTRA_QUIET = "quiet"
+        private const val EXTRA_MODEL = "model"
+        private const val EXTRA_LIVE = "live"
     }
 }

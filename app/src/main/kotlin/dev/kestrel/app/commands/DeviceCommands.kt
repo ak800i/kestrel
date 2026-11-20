@@ -88,9 +88,9 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             if (element != null && element.checked != on) screen.actions.tap(element.key)
             val changed = awaitState(on) { wifiOn() }
             return if (changed) {
-                CommandResult(Outcome.DONE, repeatable = true)
+                CommandResult(Outcome.DONE, repeatable = true, detail = ROUTE_PANEL)
             } else {
-                CommandResult(Outcome.FAILED, show = PhoneCommandTexts.WIFI_NOT_CHANGED)
+                CommandResult(Outcome.FAILED, show = PhoneCommandTexts.WIFI_NOT_CHANGED, detail = ROUTE_PANEL)
             }
         } finally {
             withContext(NonCancellable) { closePanel(screen, before, opening, switchWindow) }
@@ -132,7 +132,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             if (tile != null) {
                 val element = targets.still(ScreenTargets.chosen(tile))
                 if (element != null && element.checked != on) screen.actions.tap(element.key)
-                return bluetoothResult(awaitState(on) { bluetoothOn() })
+                return bluetoothResult(awaitState(on) { bluetoothOn() }, ROUTE_TILE)
             }
         } finally {
             withContext(NonCancellable) { screen.actions.global(GlobalAction.DISMISS_SHADE) }
@@ -165,7 +165,7 @@ internal class DeviceCommands(environment: CommandEnvironment) {
             } ?: return CommandResult(Outcome.FAILED, show = PhoneCommandTexts.NO_BLUETOOTH_SWITCH)
             val element = targets.still(ScreenTargets.chosen(main))
             if (element != null && element.checked != on) screen.actions.tap(element.key)
-            return bluetoothResult(awaitState(on) { bluetoothOn() })
+            return bluetoothResult(awaitState(on) { bluetoothOn() }, ROUTE_PAGE)
         } finally {
             withContext(NonCancellable) { leavePage(screen, before, opening, awaited) }
         }
@@ -183,10 +183,11 @@ internal class DeviceCommands(environment: CommandEnvironment) {
         backUntilLeft({ screen.snapshots.current().snapshot.windows }, before, awaited) { screen.actions.global(GlobalAction.BACK) }
     }
 
-    private fun bluetoothResult(changed: Boolean) = if (changed) {
-        CommandResult(Outcome.DONE, repeatable = true)
+    // [route]: the tile or the page, which the debug hook voice-state reports (plan 4D).
+    private fun bluetoothResult(changed: Boolean, route: String) = if (changed) {
+        CommandResult(Outcome.DONE, repeatable = true, detail = route)
     } else {
-        CommandResult(Outcome.FAILED, show = PhoneCommandTexts.BLUETOOTH_NOT_CHANGED)
+        CommandResult(Outcome.FAILED, show = PhoneCommandTexts.BLUETOOTH_NOT_CHANGED, detail = route)
     }
 
     // Android's own states; no permission is needed to read them at Kestrel's target SDK. Wi-Fi's global setting is 1 when
@@ -370,6 +371,11 @@ internal class DeviceCommands(environment: CommandEnvironment) {
     companion object {
         private const val SYSTEM_UI = "com.android.systemui"
         private const val SETTINGS = "com.android.settings"
+
+        /** The routes of the radios in [CommandResult.detail]: Wi-Fi's Internet panel, Bluetooth's tile or its page. */
+        const val ROUTE_PANEL = "panel"
+        const val ROUTE_TILE = "tile"
+        const val ROUTE_PAGE = "page"
         private const val PANEL_MILLIS = 3_000L
         private const val PAGE_MILLIS = 8_000L
         private const val TILES_MILLIS = 8_000L

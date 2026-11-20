@@ -17,4 +17,15 @@ Describe 'hook.ps1' {
         $thresholdExit | Should -Not -Be 0
         $threshold | Should -BeLike '*-Threshold -0.1 is negative; give a threshold from 0.01 to 0.5.*'
     }
+
+    It 'refuses a tag with other characters than letters, digits, - and _ before it reaches a device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device voice -Send heard -Text 'Scroll down.' -Tag 'bad tag!' 2>&1) -join "`n"
+        $exit = $LASTEXITCODE
+
+        $exit | Should -Not -Be 0
+        $output | Should -BeLike "*Cannot validate argument on parameter 'Tag'*"
+    }
 }
