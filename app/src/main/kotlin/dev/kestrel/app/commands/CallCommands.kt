@@ -642,7 +642,12 @@ internal class EmergencyGuard(
             val swipe: Swipe? = null,
         ) : Reach
 
-        data class Point(val x: Int, val y: Int) : Reach
+        /**
+         * A point of a gesture. [scroll]: a scroll that Kestrel aims itself, with the list's scroll action or a swipe across
+         * the list, or across the window when no list scrolls, that is longer than the touch slop, which presses no element,
+         * so R1 does not count for it and R2 does (plan 4D; inv-commands-a71).
+         */
+        data class Point(val x: Int, val y: Int, val scroll: Boolean = false) : Reach
 
         /** The end of a drag that the owner gives after "Drag it where?", which can lie anywhere. */
         data object Anywhere : Reach
@@ -774,7 +779,11 @@ internal class EmergencyGuard(
                 val found = snapshot.elements[index]
                 val centreX = found.bounds.centerX
                 val centreY = found.bounds.centerY
-                if (index in named || touchParent(snapshot, index) in named || namedBounds.any { it.holds(centreX, centreY) }) return true
+                // A scroll of a list presses no element in it, so R1 counts only for the other kinds.
+                val presses = reach.kind != TargetKind.SCROLL
+                if (presses && (index in named || touchParent(snapshot, index) in named || namedBounds.any { it.holds(centreX, centreY) })) {
+                    return true
+                }
                 if (found.windowId in blind) return true
                 // A swipe starts where a fallback tap would go.
                 val start = ScreenTargets.gesturePoint(snapshot, found)
@@ -785,7 +794,7 @@ internal class EmergencyGuard(
             }
             return reaches.any { reach ->
                 when (reach) {
-                    is Reach.Point -> point(reach.x, reach.y)
+                    is Reach.Point -> if (reach.scroll) windowBounds.any { it.holds(reach.x, reach.y) } else point(reach.x, reach.y)
                     Reach.Anywhere -> true
                     is Reach.Element -> when (val found = ScreenTargets.decide(view, reach.target, reach.kind, reach.strictness, reach.cells)) {
                         is Resolution.One -> element(found.element.key, reach)
@@ -926,6 +935,8 @@ internal class EmergencyGuard(
         /** Where [command] acts on a screen of [screen] bounds; empty for a command that acts on no element or point. */
         fun reaches(command: Command, screen: IntRect): List<Reach> {
             val centre = listOf(Reach.Point(screen.centerX, screen.centerY))
+            // Kestrel's own scroll at the screen's centre, which presses nothing there.
+            val scroll = listOf(Reach.Point(screen.centerX, screen.centerY, scroll = true))
             fun tap(target: Target) = listOf(Reach.Element(target, TargetKind.TAP, Strictness.NORMAL, cells = true))
             fun gesture(target: Target) = listOf(Reach.Element(target, TargetKind.TAP, Strictness.NORMAL, cells = true, gesture = true))
             fun element(target: Target?, kind: TargetKind) =
@@ -944,9 +955,9 @@ internal class EmergencyGuard(
                 is Command.Collapse -> listOf(Reach.Element(command.target, TargetKind.COLLAPSE, Strictness.NORMAL, cells = false))
                 is Command.Slider -> listOf(Reach.Element(command.target, TargetKind.SLIDER, Strictness.NORMAL, cells = false))
                 is Command.Dismiss -> element(command.target, TargetKind.DISMISS)
-                is Command.Scroll -> command.target?.let { element(it, TargetKind.SCROLL) } ?: centre
-                is Command.ScrollToEnd -> command.target?.let { element(it, TargetKind.SCROLL) } ?: centre
-                is Command.SwipePage -> centre
+                is Command.Scroll -> command.target?.let { element(it, TargetKind.SCROLL) } ?: scroll
+                is Command.ScrollToEnd -> command.target?.let { element(it, TargetKind.SCROLL) } ?: scroll
+                is Command.SwipePage -> scroll
                 is Command.SwipeFromEdge -> GesturePaths.fromEdge(screen, screenEdge(command.edge)).let {
                     listOf(Reach.Point(it.fromX, it.fromY), Reach.Point(it.toX, it.toY))
                 }

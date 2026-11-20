@@ -85,6 +85,32 @@ class ScreenTargetsTest {
     }
 
     @Test
+    fun aBareTitleTapsARowThatIsNamedAfterTheTextsInsideItAndItsSummaryIsNoName() {
+        fun row(key: String, title: String, summary: String, top: Int, index: Int) = listOf(
+            element(key, "$title $summary", IntRect(0, top, 1080, top + 200), className = "android.widget.LinearLayout"),
+            element("$key-title", title, IntRect(40, top + 20, 600, top + 100), clickable = false, parent = index, className = "android.widget.TextView")
+                .copy(text = title),
+            element("$key-summary", summary, IntRect(40, top + 100, 1000, top + 180), clickable = false, parent = index, className = "android.widget.TextView")
+                .copy(text = summary),
+        )
+        // One UI's main page of Settings: each row is named after its title and its summary.
+        val rows = row("notifications", "Notifications", "App notifications • Do not disturb", 300, 0) +
+            row("display", "Display", "Brightness • Eye comfort shield • Navigation bar", 500, 3) +
+            row("wallpaper", "Wallpaper and style", "Wallpapers • Colour palette", 700, 6)
+        val settings = ScreenView(ScreenSnapshot(0, listOf(app), rows), badges = emptyList(), grid = null)
+        fun bare(spoken: String) = ScreenTargets.decide(settings, Target.Label(spoken), TargetKind.BARE, Strictness.STRICT, cells = false)
+
+        assertEquals(Resolution.One(ScreenTargets.chosen(rows[3])), bare("Display."))
+        // Only the match of a spoken label gets the title; the other users of names() see the row's names as before.
+        assertEquals(listOf("Display Brightness • Eye comfort shield • Navigation bar"), ScreenTargets.names(settings.snapshot, rows[3]))
+        // The summary is no name of its own, and a longer start of the name stays below the strict limits.
+        assertFalse(bare("Brightness") is Resolution.One)
+        assertFalse(bare("Display Brightness") is Resolution.One)
+        // An element with a name of its own keeps only its own names.
+        assertEquals(listOf("Send"), ScreenTargets.names(snapshot, snapshot.element("send")!!))
+    }
+
+    @Test
     fun aLabelIsFoundAndTwoEqualOnesAsk() {
         assertEquals(one("send"), decide(plain, Target.Label("send")))
         assertEquals(one("later"), decide(plain, Target.Label("Send later")))

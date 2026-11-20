@@ -866,6 +866,37 @@ class PhoneCallsTest {
     }
 
     @Test
+    fun aScrollThatKestrelAimsItselfPressesNoElementSoANamedRowUnderTheCentreNeedsNoYes() {
+        val settings = "com.android.settings"
+        val window = WindowSummary(1, WindowKind.APPLICATION, packageName = settings, bounds = screen)
+        val snapshot = ScreenSnapshot(
+            0,
+            listOf(window),
+            listOf(
+                element("list", 1, screen, settings, description = "Settings list", clickable = false).copy(scrollable = true),
+                element("display", 1, IntRect(0, 900, 1080, 1100), settings, text = "Display Brightness", parent = 0),
+                // As on Settings' main page after "scroll down": the row covers the screen's centre, (540, 1200).
+                element("safety", 1, IntRect(0, 1100, 1080, 1300), settings, text = "Safety & emergency Emergency SOS, medical info, alerts", parent = 0),
+            ),
+        )
+        val view = ScreenView(snapshot, emptyList(), grid = null)
+        fun yes(command: Command) =
+            EmergencyGuard.needsYes(EmergencyGuard.reaches(command, screen), view, EmergencyGuard.PHONE_PACKAGES, noEmergency)
+
+        assertTrue(EmergencyGuard.emergencyNamed(snapshot, 2))
+        for (command in listOf(
+            Command.ScrollToEnd(top = true, target = null), Command.ScrollToEnd(top = false, target = null),
+            Command.Scroll(Direction.DOWN, null), Command.SwipePage(forward = true),
+            Command.Scroll(Direction.DOWN, Target.Label("settings list")),
+        )) {
+            assertFalse(command.toString(), yes(command))
+        }
+        // R1 still guards a tap on the row, and a pinch that the owner names at the centre.
+        assertTrue(yes(Command.Tap(Target.Label("safety & emergency"))))
+        assertTrue(yes(Command.Pinch(out = true, target = null)))
+    }
+
+    @Test
     fun thePhoneNumbersOnTheScreenComeFromTheAppWindowsOnly() {
         val app = WindowSummary(1, WindowKind.APPLICATION, bounds = IntRect(0, 0, 1080, 2400))
         val bar = WindowSummary(2, WindowKind.SYSTEM, bounds = IntRect(0, 0, 1080, 100))

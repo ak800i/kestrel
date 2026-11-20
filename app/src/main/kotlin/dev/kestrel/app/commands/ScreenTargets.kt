@@ -297,7 +297,7 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
         }
 
         private fun label(snapshot: ScreenSnapshot, spoken: String, candidates: List<ScreenElement>, strictness: Strictness): Resolution {
-            val named = candidates.map { MatchCandidate(it.key, names(snapshot, it)) }
+            val named = candidates.map { MatchCandidate(it.key, matchNames(snapshot, it)) }
             return when (val decision = LabelMatcher.decide(spoken, named, strictness)) {
                 is MatchDecision.Found -> snapshot.element(decision.id)?.let { Resolution.One(chosen(it)) } ?: Resolution.NotFound
                 is MatchDecision.Ambiguous -> Resolution.Several(decision.ids.mapNotNull { snapshot.element(it) }.map(::chosen))
@@ -350,6 +350,44 @@ internal class ScreenTargets(private val screen: () -> ScreenSession?) {
             if (element.scrollable) add("scroll")
             if (element.editable) add("start editing")
         }
+
+        // The title of an actionable element that has no text, description, hint or supplemental description of its own, and
+        // so is named after the texts inside it: the text of the first element inside it that takes no touch. The snapshot
+        // lists the elements inside an element right after it. A summary or a later text is no name of its own, so that a
+        // bare "On" never taps the one row whose summary says it.
+        private fun title(snapshot: ScreenSnapshot, element: ScreenElement): String? {
+            if (!element.isActionable || element.text != null || element.contentDescription != null || element.hint != null ||
+                element.supplementalDescription != null
+            ) {
+                return null
+            }
+            val index = snapshot.elements.indexOfFirst { it.key == element.key }
+            if (index < 0) return null
+            for (inner in index + 1 until snapshot.elements.size) {
+                if (!inside(snapshot, inner, index)) return null
+                val candidate = snapshot.elements[inner]
+                if (!candidate.isActionable) candidate.text?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+            return null
+        }
+
+        // Whether the element at [index] lies inside the element at [ancestor], at most MAX_DEPTH levels down.
+        private fun inside(snapshot: ScreenSnapshot, index: Int, ancestor: Int): Boolean {
+            var parent = snapshot.elements[index].parent
+            var depth = 0
+            while (parent != null && depth <= MAX_DEPTH) {
+                if (parent == ancestor) return true
+                parent = snapshot.elements.getOrNull(parent)?.parent
+                depth++
+            }
+            return false
+        }
+
+        // The names that a spoken label is matched with: the names of [element], and, for a row that is named after the texts
+        // inside it, its title, so that a bare title taps a settings row (plan 4D; inv-commands-a71). Only the match of a
+        // spoken label uses it; every other user of names() sees the names as before.
+        private fun matchNames(snapshot: ScreenSnapshot, element: ScreenElement): List<String> =
+            (names(snapshot, element) + listOfNotNull(title(snapshot, element))).distinct()
 
         private fun ownNames(element: ScreenElement): List<String> = listOfNotNull(
             element.label,
