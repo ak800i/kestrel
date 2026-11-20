@@ -13,8 +13,9 @@
 # during a call's countdown (spike S3), which no script can do, and then, while he is still there, the other checks that
 # let Kestrel count down to a call, because a countdown that is not cancelled ends with Kestrel pressing Call, which must
 # never happen on the A71 while the owner is away (AGENTS.md; process rules 10 and 13). It has one prompt, which beeps and
-# says what he does and what the phone shows, and the script then says that he may leave. On the A71 Kestrel never
-# presses Call on purpose: the call to the owner's number runs only in a dry run on kestrel-api37. The steps, about 125
+# says what he does and what the phone shows, and the script then says that he may leave. Kestrel never presses Call on
+# purpose: the check runner cancels every countdown that a check did not plan, and scripts\command-test.ps1 checks
+# Kestrel's press of Call on the emulator. The steps, about 125
 # minutes in all, of which about 3 need the owner:
 #   install        installs Kestrel's debug build, its speech models and the fixture app dev.kestrel.testapp, and records
 #                  whether a SIM card is in the phone (8 minutes)
@@ -35,8 +36,7 @@
 #                  Search (6 minutes)
 #   text           dictation and editing with the phone's keyboard (Samsung Keyboard on the A71) in the fixture app's
 #                  fields, "show password" and "search for" (4 minutes)
-#   calls          only without a SIM card: in a dry run a call to the emulator's made-up number, which Kestrel presses
-#                  (never on the A71); the question "yes, call" with 1234 and with letters in the number field, answered
+#   calls          only without a SIM card: the question "yes, call" with 1234 and with letters in the number field, answered
 #                  "no"; and, with the owner's consent in corpus\owner\a71-config.json, the contacts permission at first
 #                  use, in a dry run the calls to the test contacts "Ana Test" cancelled by voice and by a tap (on the A71
 #                  they ran in the step owner), "Which one?" for "Ana Test" and "Ana Other", and "copy this phone number"
@@ -52,7 +52,7 @@
 # The results go into corpus\owner\commands-session-<time>.txt, which git ignores; neither it nor the console ever hold what
 # Kestrel heard or screen text: the hooks answer only kinds, counts, flags, numbers and hashes. The script never sends "yes,
 # call" (process rule 10), answers every question that a check did not plan with "no", cancels every countdown that a
-# check did not plan, and lets Kestrel press Call only in a dry run's step calls. It puts back what it changes, also when a step fails or Ctrl+C stops it: Kestrel's notices, its contacts
+# check did not plan. It puts back what it changes, also when a step fails or Ctrl+C stops it: Kestrel's notices, its contacts
 # permission, its mode Off, its own microphone, the accessibility settings, the keyboard, Wi-Fi and Bluetooth, the sound
 # mode (through Kestrel's own "silence" or "unmute the ringer" where Android 13 has no shell command for it), the volumes,
 # the brightness, a magnification, the notification "Kestrel check", "Require verbs", the screenshots that it took, a call,
@@ -60,8 +60,8 @@
 # installed before, and the setting "Stay awake"; every warning at its end says how to put a thing back by hand. It
 # refuses every device but the A71 and kestrel-api37. -Unattended runs without the owner and records his items as
 # skipped. -DryRun runs the session on
-# kestrel-api37: it unlocks with 'wm dismiss-keyguard' and needs no PIN, taps the clock in place of the owner's finger, calls the
-# emulator's made-up number and deletes its row in the call log, and plays no sound: its air pass and corpus pass say each
+# kestrel-api37: it unlocks with 'wm dismiss-keyguard' and needs no PIN, taps the clock in place of the owner's finger, deletes
+# the rows of its calls in the call log, and plays no sound: its air pass and corpus pass say each
 # clip's text into Kestrel's stand-in microphone (voice-clip -Text), through the same speech path on the phone, and its
 # host audio input is off, and on again at its end. -Step runs only the named steps, also as one text separated by commas.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
@@ -223,7 +223,7 @@ Use-KestrelToolchain
 $owner = Join-Path $PSScriptRoot '..\corpus\owner'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
 $resultsFile = if ($DryRun) { Join-Path $owner "commands-dry-run-$stamp.txt" } else { Join-Path $owner "commands-session-$stamp.txt" }
-# A dry run calls the emulator's made-up number and uses test contacts there, as plan 3C's dry runs did.
+# A dry run gives its test contacts the emulator's made-up number, as plan 3C's dry runs did.
 $config = if ($DryRun) {
     [pscustomobject]@{ CallNumber = '0641234567'; TestContacts = $true; KeepA71Profile = $null; SpeakerTargetDb = -26.0 }
 } else {
@@ -548,6 +548,17 @@ function Get-Screen([hashtable]$With = @{}) { ConvertFrom-HookPairs (Invoke-Hook
 
 function Get-Count([hashtable]$With) { [int](Get-Screen $With)['count'] }
 
+# Reads screen-has with the filters of $With until it counts an element, at most $Seconds, because a page that was just
+# opened builds its screen a moment later, and returns the last answer.
+function Wait-Element([hashtable]$With, [double]$Seconds = 5) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $answer = Get-Screen $With
+        if ([int]$answer['count'] -gt 0 -or $watch.Elapsed.TotalSeconds -ge $Seconds) { return $answer }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 # The screen layer's state: numbers, labels, the grid and its size, the magnification and the keyboard.
 function Get-LayerState { ConvertFrom-HookPairs (Invoke-Hook state) }
 
@@ -559,6 +570,20 @@ function Get-Field([string]$Expected, [string]$ViewId = '') {
 }
 
 function Test-Field([string]$Expected) { New-Verdict ((Get-Field $Expected)['equal'] -eq 'true') 'the field''s text' }
+
+# Sets the fixture's field $ViewId to $Text through the hook type (Android's action that sets a field's text, which puts
+# the cursor at its end), so that a check of the step text starts from its known text, whatever an earlier dictation
+# left in the field. It finds the field by the number that the numbers overlay gives it.
+function Set-FixtureField([string]$ViewId, [string]$Text) {
+    Invoke-Hook overlay @{ Show = 'numbers' } | Out-Null
+    try {
+        $number = (Wait-Element @{ Package = $testApp; ViewId = $ViewId })['number']
+        if ($number -notmatch '^\d+$') { throw "The field $ViewId has no number of the overlay." }
+        Invoke-Hook type @{ Number = [int]$number; Text = $Text } | Out-Null
+    } finally {
+        Invoke-Hook overlay @{ Show = 'none' } | Out-Null
+    }
+}
 
 function Get-Volume([int]$Stream) { Get-VolumeRange @(Invoke-Checked "cmd media_session volume --stream $Stream --get") }
 
@@ -607,7 +632,27 @@ function Invoke-TapAt([string]$Bounds) {
     Invoke-Checked "input tap $([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))" | Out-Null
 }
 
-function Invoke-ClockTap { Invoke-TapAt (Get-Screen @{ Package = 'com.android.systemui'; ViewId = 'clock' })['bounds'] }
+# Taps the status bar's clock, or, when Kestrel's snapshot has no clock node (kestrel-api37 has none), the middle of the
+# top 3 % of the screen, which is the status bar; $script:clockTarget says which, for the check's line. It does not wait,
+# because it must act inside Kestrel's 4 s countdown.
+function Invoke-ClockTap {
+    $bounds = (Get-Screen @{ Package = 'com.android.systemui'; ViewId = 'clock' })['bounds']
+    if ($bounds -match '^(-?\d+),(-?\d+),(-?\d+),(-?\d+)$') {
+        $script:clockTarget = 'the clock'
+        Invoke-TapAt $bounds
+        return
+    }
+    $size = Read-DeviceValue 'wm size'
+    if ($size -notmatch '(\d+)x(\d+)\s*$') { throw 'The screen has no clock node, and wm size gave no size.' }
+    $script:clockTarget = 'the status bar, because the snapshot has no clock node'
+    Invoke-Checked "input tap $([int]([int]$Matches[1] / 2)) $([int]([int]$Matches[2] * 0.015))" | Out-Null
+}
+
+# A check's verdict with the target of its tap on the clock (Invoke-ClockTap) added to its detail.
+function Add-ClockTarget($Verdict) {
+    $Verdict.Detail = "$($Verdict.Detail); the tap's target: $(if ($script:clockTarget) { $script:clockTarget } else { 'none, because no tap ran' })"
+    $Verdict
+}
 
 function Invoke-Home { Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null }
 
@@ -657,7 +702,20 @@ function Test-Command(
     [double]$TimeoutSeconds = 15
 ) {
     $label = if ($Name) { $Name } else { $Say }
-    $with = @{ Name = $label; Text = $Say; Verify = $Verify; Before = $Before; Answer = $Answer; RespondAt = $RespondAt; RespondDelay = $RespondDelay; TimeoutSeconds = $TimeoutSeconds }
+    # The screen can show a command's effect a moment after the command has settled, so a test that did not pass is read
+    # again every 250 ms for up to 3 s before it counts. The tests only read the device. The name differs from Verify,
+    # because the runner calls the wrapper inside its own scope, where $Verify is the wrapper itself.
+    $checkVerify = $Verify
+    $retried = {
+        param($State, $Context, $Waited)
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        while ($true) {
+            $verdict = ConvertTo-Verdict (& $checkVerify $State $Context $Waited)
+            if ($verdict.Passed -or $watch.Elapsed.TotalSeconds -ge 3) { return $verdict }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    $with = @{ Name = $label; Text = $Say; Verify = $retried; Before = $Before; Answer = $Answer; RespondAt = $RespondAt; RespondDelay = $RespondDelay; TimeoutSeconds = $TimeoutSeconds }
     if ($Respond) { $with.Respond = $Respond }
     if ($pass -eq 'text') {
         if ($Send) { $with.Send = $Send }
@@ -786,11 +844,8 @@ function Add-TestContacts {
 }
 
 # Whether the calls' checks may run now: no SIM card is in the phone, and the owner's settings give a number that is fine
-# to call; with -Press, which the check that lets Kestrel press Call gives, also only in a dry run on kestrel-api37,
-# because on the A71 Kestrel never presses Call on purpose (process rules 10 and 13). Returns $null when they may, or the reason why
-# not.
-function Get-CallBlock([switch]$Press) {
-    if ($Press -and -not $DryRun) { return 'on the A71 Kestrel never presses Call on purpose; the dry run on kestrel-api37 checks the call' }
+# to call. Returns $null when they may, or the reason why not.
+function Get-CallBlock {
     if (-not ($DryRun -or (Test-SimAbsent -State (Read-DeviceValue 'getprop gsm.sim.state')))) { return 'a SIM card is in the phone, or the phone does not say that none is there' }
     if (-not $config.CallNumber) { return 'corpus\owner\a71-config.json names no number that is fine to call' }
     $null
@@ -822,7 +877,8 @@ function Invoke-CountdownChecks([string]$StepName) {
     Test-Command $StepName 'call Ana Test' '' -Name 'call Ana Test, then "stop" as the countdown starts' -Answer 'stop' -RespondAt countdown -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
     Invoke-Home
     # A tap through Android's input system; the owner's finger is the step owner's first check.
-    Test-Command $StepName 'call Ana Test' '' -Name 'call Ana Test, then a tap on the clock during the countdown' -RespondAt countdown -Respond { Invoke-ClockTap } -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
+    $script:clockTarget = $null
+    Test-Command $StepName 'call Ana Test' '' -Name 'call Ana Test, then a tap on the clock during the countdown' -RespondAt countdown -Respond { Invoke-ClockTap } -TimeoutSeconds 20 { param($State) Add-ClockTarget (Test-Cancelled $State) }
     Invoke-Home
 }
 
@@ -836,7 +892,7 @@ function Invoke-OwnerStep {
     if (-not $block -and -not $config.TestContacts) { $block = 'corpus\owner\a71-config.json does not give the owner''s consent to the test contacts' }
     if ($block) {
         Add-Result owner "the checks during a call's countdown: skipped: $block"
-    } elseif ((Request-OwnerItem 'Item 1 of 1, about 3 minutes, of which 1 with your hands: come to the A71, which shows its home screen. When you press Enter, Kestrel calls the test contact "Ana Test", opens the phone app and counts down 4 seconds on its bar. This computer beeps when the countdown starts: then at once touch the clock at the top of the A71''s screen with one finger, never a button of the phone app. The countdown should stop, and Kestrel''s bar should say "Cancelled". Then stay next to the A71 for about 2 minutes without touching it: Kestrel calls "Ana Test" three more times, and the session ends each countdown itself, by voice and with a tap. The A71 has no SIM card, so no call can start. (Later checks copy test text; the session saves your clipboard first and puts it back afterwards.) Press Enter to start, or s to skip.') -eq 'skip') {
+    } elseif ((Request-OwnerItem 'Item 1 of 1, about 3 minutes, of which 1 with your hands: come to the A71, which shows its home screen. When you press Enter, Kestrel calls the test contact "Ana Test", opens the phone app and counts down 4 seconds on its bar. As soon as the countdown shows on Kestrel''s bar, touch the clock at the top of the A71''s screen with one finger, never a button of the phone app; this computer beeps about half a second after the countdown shows. You have about 3 seconds from when it shows; if you are later, the session cancels the countdown itself, and Kestrel does not call. The countdown should stop, and Kestrel''s bar should say "Cancelled". Then stay next to the A71 for about 2 minutes without touching it: Kestrel calls "Ana Test" three more times, and the session ends each countdown itself, by voice and with a tap. The A71 has no SIM card, so no call can start. (Later checks copy test text; the session saves your clipboard first and puts it back afterwards.) Press Enter to start, or s to skip.') -eq 'skip') {
         Add-Result owner 'the checks during a call''s countdown: skipped'
     } else {
         Add-TestContacts | Out-Null
@@ -847,8 +903,25 @@ function Invoke-OwnerStep {
             Assert-TestDevice -Serial $Serial
             if (-not (Stop-DeviceCall -Serial $Serial)) { throw 'a call is still active' }
         }
-        $touch = if ($DryRun) { { Invoke-ClockTap } } else { { Invoke-Beep; Write-Host 'Touch the clock at the top of the A71''s screen now.' } }
-        Test-Command owner 'call Ana Test' '' -Name 'call Ana Test, then the owner''s finger on the clock' -RespondAt countdown -Respond $touch -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
+        # On the A71 the response waits up to 1.2 s after the beep for the owner's touch to end the countdown, and cancels
+        # it itself when it still runs: with the runner's reads and the beep, his touch then has about 3 s from when the
+        # countdown shows, and the cancel still comes before Kestrel's 4 s run out. The response runs inside the runner
+        # (Invoke-AutoCheck), whose variable $tag is the check's tag.
+        $touch = if ($DryRun) {
+            { Invoke-ClockTap }
+        } else {
+            {
+                Invoke-Beep
+                Write-Host 'Touch the clock at the top of the A71''s screen now.'
+                $after = Wait-TaggedState -Tag $tag -Until { param($State) $State['phase'] -ne 'countdown' } -TimeoutSeconds 1.2
+                if ($after['phase'] -eq 'countdown') {
+                    Invoke-Hook voice @{ Send = 'heard'; Text = 'cancel'; Tag = (New-CheckTag) } | Out-Null
+                    throw 'no touch ended the countdown in time, so the script cancelled it'
+                }
+            }
+        }
+        $script:clockTarget = $null
+        Test-Command owner 'call Ana Test' '' -Name 'call Ana Test, then the owner''s finger on the clock' -RespondAt countdown -Respond $touch -TimeoutSeconds 20 { param($State) $verdict = Test-Cancelled $State; if ($DryRun) { Add-ClockTarget $verdict } else { $verdict } }
         Invoke-Home
         # The dry run has these in the step calls.
         if (-not $DryRun) { Invoke-CountdownChecks owner }
@@ -1196,18 +1269,20 @@ function Invoke-TextStep {
     $clipboard = Save-Clipboard text
     # The fixture's field "Notes", which takes several lines.
     Open-Fixture 'EditActivity'
-    Invoke-TapAt (Get-Screen @{ Package = $testApp; ViewId = 'text_notes' })['bounds']
+    Invoke-TapAt (Wait-Element @{ Package = $testApp; ViewId = 'text_notes' })['bounds']
     Start-Sleep -Seconds 1
     $one = "HELLO, how are you?`nP123"
+    # Each check of a text starts from its known text (Set-FixtureField), so that one misheard dictation fails only its
+    # own check; the checks of a selection, a copy, the cursor and undo build on the check before them.
     Test-Command text 'hello comma how are you question mark' c311 { Test-Field 'Hello, how are you?' }
-    Test-Command text 'new line' c279 { Test-Field "Hello, how are you?`n" }
-    Test-Command text 'capital p one two three' c314 { Test-Field "Hello, how are you?`nP123" }
-    Test-Command text 'select hello' k018 { $field = Get-Field ''; New-Verdict ($field['start'] -eq '0' -and $field['end'] -eq '5') '"Hello" selected' }
-    Test-Command text 'uppercase hello' c220 { Test-Field "HELLO, how are you?`nP123" }
-    Test-Command text 'select all' c257 { $field = Get-Field ''; New-Verdict ($field['start'] -eq '0' -and $field['end'] -eq $field['length'] -and [int]$field['length'] -gt 0) 'all the text selected' }
+    Test-Command text 'new line' c279 -Before { Set-FixtureField text_notes 'Hello, how are you?' } { Test-Field "Hello, how are you?`n" }
+    Test-Command text 'capital p one two three' c314 -Before { Set-FixtureField text_notes "Hello, how are you?`n" } { Test-Field "Hello, how are you?`nP123" }
+    Test-Command text 'select hello' k018 -Before { Set-FixtureField text_notes "Hello, how are you?`nP123" } { $field = Get-Field ''; New-Verdict ($field['start'] -eq '0' -and $field['end'] -eq '5') '"Hello" selected' }
+    Test-Command text 'uppercase hello' c220 -Before { Set-FixtureField text_notes "Hello, how are you?`nP123" } { Test-Field "HELLO, how are you?`nP123" }
+    Test-Command text 'select all' c257 -Before { Set-FixtureField text_notes $one } { $field = Get-Field ''; New-Verdict ($field['start'] -eq '0' -and $field['end'] -eq $field['length'] -and [int]$field['length'] -gt 0) 'all the text selected' }
     Test-Command text 'copy' c031 { param($State) New-Verdict ($State['outcome'] -eq 'done') 'done; the paste checks what it copied' }
     Test-Command text 'go to the end' c244 { $field = Get-Field ''; New-Verdict ($field['start'] -eq $field['length'] -and $field['end'] -eq $field['length']) 'the cursor at the end' }
-    Test-Command text 'paste' c032 { Test-Field ($one + $one) }
+    Test-Command text 'paste' c032 -Before { Set-FixtureField text_notes $one } { Test-Field ($one + $one) }
     $marks.Pasted = [int](Get-Field '')['length']
     Test-Command text 'delete three words' c237 {
         $marks.Shorter = [int](Get-Field '')['length']
@@ -1218,7 +1293,7 @@ function Invoke-TextStep {
     Test-Command text 'hide keyboard' c033 { New-Verdict ((Test-InputShown @(Invoke-Checked 'dumpsys input_method')) -eq $false -and (Get-LayerState)['keyboard'] -eq 'hidden') 'no keyboard' }
     Test-Command text 'show keyboard' c276 { New-Verdict ((Test-InputShown @(Invoke-Checked 'dumpsys input_method')) -eq $true) 'the keyboard' }
     # Three test letters in the fixture's password field, never a password.
-    Invoke-TapAt (Get-Screen @{ Package = $testApp; ViewId = 'text_password' })['bounds']
+    Invoke-TapAt (Wait-Element @{ Package = $testApp; ViewId = 'text_password' })['bounds']
     Invoke-Checked 'input text abc' | Out-Null
     Test-Command text 'show password' c160 { New-Verdict ((Get-Count @{ Package = $testApp; ViewId = 'text_show_password'; State = 'checked' }) -gt 0) '"Show password" checked' }
     # "search for" in the fixture's address bar, which behaves as a browser's.
@@ -1238,28 +1313,11 @@ function Invoke-CallStep {
     }
     Start-Kestrel
     Initialize-TestApp
-    $number = $config.CallNumber
     # Only the dry run deletes the call-log rows of its calls, so only it reads where the call log ends.
     $callLog = if ($DryRun) { Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id') }
-    # Registered before the call, so that a failure or Ctrl+C after it still ends a call that went out, as the emulator's
-    # call does in the dry run; the A71 has no SIM card, so Android refuses the call there.
-    $press = Get-CallBlock -Press
-    if ($press) {
-        Add-Result calls "call the confirmed number: skipped: $press"
-    } else {
-        $call = Register-Restore 'the end of the call that the session placed' 'End the call on the phone app''s screen.' $null {
-            Assert-TestDevice -Serial $Serial
-            if (-not (Stop-DeviceCall -Serial $Serial)) { throw 'a call is still active' }
-        }
-        Test-Command calls "call $number" '' -Name 'call the confirmed number' -TimeoutSeconds 40 {
-            param($State)
-            $ended = Stop-DeviceCall -Serial $Serial
-            # The emulator has a SIM card, so there the call starts, and the script ends it through Android.
-            New-Verdict ($ended -and $State['outcome'] -eq 'done') 'the call started, and the script ended it'
-        }
-        Complete-Restore $call
-        Invoke-Home
-    }
+    # Kestrel never presses Call on purpose (process rules 10 and 13), and the check runner cancels every countdown that a
+    # check did not plan, so a check that lets the countdown run out could never pass.
+    Add-Result calls 'call the confirmed number: skipped: the runner cancels countdowns, so Kestrel never presses Call here; scripts\command-test.ps1 checks its press of Call on the emulator'
     # The question "yes, call" in the phone app (design spec, section 8.7), answered "no": with a short number, which
     # Kestrel never calls itself, and then with letters in the number field. Never an emergency number, and never "yes,
     # call" (process rule 10).
@@ -1317,9 +1375,10 @@ function Invoke-CallStep {
     } else {
         Add-Result calls 'the countdowns that "cancel", "stop" and a tap end: in the step owner, while the owner was at the A71'
     }
+    $script:clockTarget = $null
     Test-Command calls 'call Ana' '' -Name '"Which one?" for the two test contacts, ended by a tap on the clock' -Respond { Invoke-ClockTap } -TimeoutSeconds 20 {
         param($State)
-        New-Verdict ($State['outcome'] -eq 'cancelled' -and (Test-NoCall)) 'the question ended, and no call'
+        Add-ClockTarget (New-Verdict ($State['outcome'] -eq 'cancelled' -and (Test-NoCall)) 'the question ended, and no call')
     }
     Complete-Restore $call
     Invoke-Home
@@ -1329,7 +1388,7 @@ function Invoke-CallStep {
     Start-Sleep -Seconds 2
     Test-Command calls 'copy this phone number' '' { param($State) New-Verdict ($State['outcome'] -eq 'done') 'done; the paste checks what it copied' }
     Open-Fixture 'EditActivity'
-    Invoke-TapAt (Get-Screen @{ Package = $testApp; ViewId = 'text_paste' })['bounds']
+    Invoke-TapAt (Wait-Element @{ Package = $testApp; ViewId = 'text_paste' })['bounds']
     Test-Command calls 'paste' '' -Name 'paste the copied number' {
         $field = Get-Field $config.CallNumber 'text_paste'
         # The contacts app may show the number with spaces, which the copy keeps.
