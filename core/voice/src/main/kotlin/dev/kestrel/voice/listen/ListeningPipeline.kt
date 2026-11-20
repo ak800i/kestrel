@@ -46,7 +46,9 @@ sealed interface VoiceEvent {
      * Kestrel's own voice is never named, because the cut removed the part that held the name. [endedAt] is the end of
      * the utterance's speech on the clock of the pipeline's `now`, in milliseconds, or 0 without such a clock. It is read
      * when the microphone's thread handles the newest frame, so when that thread falls behind the recording, the end
-     * looks later than it was, by as much; on the A71 the pipeline runs faster than real time.
+     * looks later than it was, by as much; on the A71 the pipeline runs faster than real time. [closedAt] is when the
+     * end-of-speech pause ended and the endpointer let the utterance go to the recogniser, on the same clock, or 0 without
+     * one; spec 5.3's transcription time counts from it (plan 4D, H5).
      */
     data class Heard(
         val text: String,
@@ -54,6 +56,7 @@ sealed interface VoiceEvent {
         val seconds: Float,
         val millis: Long,
         val endedAt: Long = 0L,
+        val closedAt: Long = 0L,
     ) : VoiceEvent {
         override fun toString() = "Heard(${text.length} characters, named=$named, seconds=$seconds, millis=$millis)"
     }
@@ -114,7 +117,7 @@ class ListeningPipeline(
     // The worker sets it after each event that it sends; the microphone's thread reads and clears it on the next frame.
     private val sent = AtomicBoolean(false)
     private val worker = scope.launch(recognitionContext) {
-        for (queued in queue) transcribe(queued.speech, queued.endedAt)
+        for (queued in queue) transcribe(queued.speech, queued.endedAt, queued.closedAt)
     }
 
     // Only the microphone's thread uses these. Positions count samples since the audio started.
@@ -166,7 +169,7 @@ class ListeningPipeline(
                     answered = true
                 }
             } else if (transcribes(wanted, kept.named)) {
-                queue.trySend(Queued(kept, endedAt(kept)))
+                queue.trySend(Queued(kept, endedAt(kept), now?.invoke() ?: 0L))
             }
         }
         // The Orchestrator's Event.Speaking: an event for an earlier utterance may have shortened the wait for a task, so
@@ -255,16 +258,16 @@ class ListeningPipeline(
     private fun endedAt(speech: Speech): Long =
         now?.let { it() - (position - speech.endSample) * 1_000 / SAMPLE_RATE } ?: 0L
 
-    /** An utterance that waits for the recogniser, with the end of its speech on the clock of [now]. */
-    private class Queued(val speech: Speech, val endedAt: Long)
+    /** An utterance that waits for the recogniser, with the end of its speech and of its pause on the clock of [now]. */
+    private class Queued(val speech: Speech, val endedAt: Long, val closedAt: Long)
 
-    private suspend fun transcribe(speech: Speech, endedAt: Long) {
+    private suspend fun transcribe(speech: Speech, endedAt: Long, closedAt: Long) {
         val event = try {
             val words = boostWords()
             val started = System.nanoTime()
             val transcript = recognizer.transcribe(speech.samples, words)
             val millis = (System.nanoTime() - started) / 1_000_000
-            VoiceEvent.Heard(transcript.text, speech.named, speech.seconds, millis, endedAt)
+            VoiceEvent.Heard(transcript.text, speech.named, speech.seconds, millis, endedAt, closedAt)
         } catch (e: Exception) {
             // A cancellation that is not the worker's own, such as a timeout inside boostWords, is a failure like any
             // other.

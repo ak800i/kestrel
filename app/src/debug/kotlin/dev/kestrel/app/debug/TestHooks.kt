@@ -53,6 +53,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
         if (command == "CRASH") return crash(intent.requiredText())
         if (command in SpikeHooks.COMMANDS) return SpikeHooks(context, graph).run(command, intent)
         if (command in VoiceHooks.COMMANDS) return VoiceHooks(graph).run(command, intent)
+        if (command in ExpectHooks.COMMANDS) return ExpectHooks(graph).run(command, intent)
         if (command in EvalHooks.COMMANDS) return EvalHooks(graph, context).run(command, intent)
         if (command in SessionHooks.COMMANDS) return SessionHooks(graph, context).run(command, intent)
         if (command in ProviderHooks.COMMANDS) return ProviderHooks(graph).run(command, intent)

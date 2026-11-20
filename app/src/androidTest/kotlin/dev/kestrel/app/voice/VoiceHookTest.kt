@@ -165,6 +165,53 @@ class VoiceHookTest {
     }
 
     @Test
+    fun anExpectedClipIsMatchedOnThePhoneAndRunsWithItsTagWhileAStrayIsDropped() {
+        VoiceTests.assumeModels(Engine.VAD, Engine.KWS, Engine.ASR, Engine.TTS)
+        VoiceTests.grantListeningPermissions()
+        val previous = listening.microphones
+        val tag = "air-${System.nanoTime()}"
+        assertEquals(
+            HookReply(HookReply.FAILED, "error: Kestrel's voice session is not open"),
+            hook("VOICE_EXPECT", "text" to "Scroll down.", "tag" to tag),
+        )
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use {
+                // Kestrel listens through the silent clip microphone, into which voice-clip says texts in Kestrel's voice.
+                assertTrue(hook("VOICE_CLIP", quiet = true).text.startsWith("quiet: "))
+                assertEquals("sent toggle", hook("VOICE", "event" to "toggle").text)
+                assertTrue("The voice session did not open", VoiceTests.waitUntil(60_000) { listening.sessionOpen.value })
+
+                assertEquals("expecting tag=$tag seconds=15", hook("VOICE_EXPECT", "text" to "Scroll down.", "tag" to tag).text)
+                assertEquals(Activity.RESULT_OK, hook("VOICE_CLIP", "text" to "Hello there, how are you today?").code)
+                assertEquals(Activity.RESULT_OK, hook("VOICE_CLIP", "text" to "Scroll down.").code)
+
+                val done = VoiceTests.waitUntil(30_000) { !hook("VOICE_EXPECT", "tag" to tag, result = true).text.startsWith("waiting") }
+                assertTrue("The expectation did not end", done)
+                // The match may still wait in the Orchestrator's queue; its command shows once it has been handled.
+                val handled = VoiceTests.waitUntil(10_000) { !hook("VOICE_STATE", "tag" to tag).text.contains(" role=pending ") }
+                assertTrue("The Orchestrator did not handle the match", handled)
+                val answer = hook("VOICE_EXPECT", "tag" to tag, result = true).text
+                val line = Regex(
+                    "tag=$tag matched=true words=2 errors=[01] stray=[12] split=0 speechEnded=(\\d+) closed=(\\d+) transcribed=(\\d+) " +
+                        "run=true command=\\d+ kind=Scroll outcome=\\w+ right=-",
+                )
+                val found = line.matchEntire(answer)
+                assertTrue(answer, found != null)
+                val (ended, closed, transcribed) = found!!.destructured
+                // The phone's own times: the speech ends, then the pause, then the text comes.
+                assertTrue(answer, ended.toLong() in 1..closed.toLong() && closed.toLong() <= transcribed.toLong())
+                assertTrue(hook("VOICE_STATE", "tag" to tag).text.startsWith("tag=$tag role=command "))
+                assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
+                assertEquals("sent off", hook("VOICE", "event" to "off").text)
+                assertTrue("The voice session did not close", VoiceTests.waitUntil(30_000) { !listening.sessionOpen.value })
+            }
+        } finally {
+            hook("VOICE_CLIP", clear = true)
+            listening.microphones = previous
+        }
+    }
+
+    @Test
     fun theStateAnswersForACommandThatHasNotStartedWithoutAKindOrAnOutcome() {
         val latest = listening.state.value.command
 
@@ -260,8 +307,8 @@ class VoiceHookTest {
     }
 
     /**
-     * Runs a hook command as TestHookReceiver does, with string extras, the boolean extras `named`, `clear` and `quiet` and
-     * the integer extra `number`.
+     * Runs a hook command as TestHookReceiver does, with string extras, the boolean extras `named`, `clear`, `quiet` and
+     * `result` and the integer extra `number`.
      */
     private fun hook(
         command: String,
@@ -270,6 +317,7 @@ class VoiceHookTest {
         clear: Boolean = false,
         number: Int? = null,
         quiet: Boolean = false,
+        result: Boolean = false,
     ): HookReply {
         val intent = Intent(TestHooks.ACTION_PREFIX + command)
         for ((key, value) in extras) intent.putExtra(key, value)
@@ -277,6 +325,7 @@ class VoiceHookTest {
         if (named) intent.putExtra("named", true)
         if (clear) intent.putExtra("clear", true)
         if (quiet) intent.putExtra("quiet", true)
+        if (result) intent.putExtra("result", true)
         return runBlocking { TestHooks(VoiceTests.graph, context).run(intent) }
     }
 

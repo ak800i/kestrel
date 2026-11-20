@@ -117,6 +117,6 @@ class EvalHookTest {
             "words=3 substitutions=\\d+ deletions=\\d+ insertions=\\d+ request=(ok|wrong) read=\\w+ millis=\\d+ " +
                 "seconds=\\d+\\.\\d pss=\\d+ parts=\\d+ twice=\\d+",
         )
-        val RECORDED = Regex("recorded \\d+\\.\\d s, loudest \\d+ %, silenced=(true|false)")
+        val RECORDED = Regex("recorded \\d+\\.\\d s, loudest \\d+ %, silenced=(true|false), rms=(-?\\d+\\.\\d|none) frameRms=(-?\\d+\\.\\d|none)")
     }
 }

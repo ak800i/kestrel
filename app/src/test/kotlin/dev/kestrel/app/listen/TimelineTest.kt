@@ -24,10 +24,22 @@ class TimelineTest {
     }
 
     @Test
+    fun aTranscriptMarksTheEndOfItsPauseAndWhenItsTextCame() {
+        timeline.transcript(closedAt = 9_700L)
+        // A transcript without a known end of its pause, as from a pipeline without a clock, keeps the latest known one.
+        now = 10_400L
+        timeline.transcript(closedAt = 0L)
+
+        assertEquals(9_700L, timeline.segmentClosed)
+        assertEquals(10_400L, timeline.transcribed)
+        assertTrue(timeline.describe().endsWith(" segmentClosed=9700 transcribed=10400"))
+    }
+
+    @Test
     fun theHooksAnswerHoldsOnlyTimesAndKinds() {
         assertEquals(
             "now=10000 started=none opened=0 speechEnded=0 reacted=none stopped=none settingsAsked=0 settingsResumed=0 " +
-                "settingsInFront=false",
+                "settingsInFront=false segmentClosed=0 transcribed=0",
             timeline.describe(),
         )
         timeline.start("tile")
@@ -44,7 +56,8 @@ class TimelineTest {
 
         assertEquals(
             "now=18000 started=tile@10000 opened=16000 speechEnded=17000 reacted=wait@17600+600 " +
-                "stopped=BATTERY_RESTRICTED@17600 settingsAsked=17600 settingsResumed=18000 settingsInFront=true",
+                "stopped=BATTERY_RESTRICTED@17600 settingsAsked=17600 settingsResumed=18000 settingsInFront=true " +
+                "segmentClosed=0 transcribed=0",
             timeline.describe(),
         )
         timeline.settingsPaused()

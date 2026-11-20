@@ -82,6 +82,22 @@ internal class Timeline(private val now: () -> Long) {
         if (at > 0) speechEnded = at
     }
 
+    /** When the latest transcribed utterance's end-of-speech pause ended, or 0 (plan 4D, H5). */
+    @Volatile
+    var segmentClosed = 0L
+        private set
+
+    /** When the latest transcript of a voice session reached Kestrel, or 0 (plan 4D, H5). */
+    @Volatile
+    var transcribed = 0L
+        private set
+
+    /** A transcript reached Kestrel now; [closedAt], on the same clock, is when its pause ended, and 0 changes nothing. */
+    fun transcript(closedAt: Long) {
+        if (closedAt > 0) segmentClosed = closedAt
+        transcribed = now()
+    }
+
     fun reacted(kind: String) {
         val at = now()
         val speech = speechEnded
@@ -112,7 +128,7 @@ internal class Timeline(private val now: () -> Long) {
     fun describe(): String =
         "now=${now()} started=${text(started)} opened=$opened speechEnded=$speechEnded reacted=${text(reacted)} " +
             "stopped=${text(stopped)} settingsAsked=$settingsAsked settingsResumed=${resumes.value} " +
-            "settingsInFront=$settingsInFront"
+            "settingsInFront=$settingsInFront segmentClosed=$segmentClosed transcribed=$transcribed"
 
     private fun text(mark: Mark?): String =
         mark?.let { "${it.kind}@${it.at}" + (it.sinceSpeech?.let { since -> "+$since" } ?: "") } ?: "none"

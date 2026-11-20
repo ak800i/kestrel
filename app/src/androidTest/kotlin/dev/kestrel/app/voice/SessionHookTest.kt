@@ -93,7 +93,7 @@ class SessionHookTest {
         VoiceTests.grantListeningPermissions()
         val answer = Regex(
             "earbud=off microphone=open holding=false headset=none linkedMillis=none " +
-                "communication=[a-z0-9-]+ routed=[a-z0-9-]+ loudest=\\d+",
+                "communication=[a-z0-9-]+ routed=[a-z0-9-]+ loudest=\\d+ rms=(-?\\d+\\.\\d|none) frameRms=(-?\\d+\\.\\d|none)",
         )
         // The earbud option off, so that the recording asks for no earbuds, also on a phone where the owner turned it
         // on and earbuds are connected. The owner's value comes back after the voice session has closed.
@@ -166,7 +166,8 @@ class SessionHookTest {
         assertEquals(reply.text, Activity.RESULT_OK, reply.code)
         val answer = Regex(
             "now=\\d+ started=tile@\\d+ opened=\\d+ speechEnded=\\d+ reacted=\\S+ stopped=\\S+ settingsAsked=\\d+ " +
-                "settingsResumed=\\d+ settingsInFront=(true|false) foreground=(true|false|none) demoted=(true|false|none)",
+                "settingsResumed=\\d+ settingsInFront=(true|false) segmentClosed=\\d+ transcribed=\\d+ " +
+                "foreground=(true|false|none) demoted=(true|false|none)",
         )
         assertTrue(reply.text, answer.matches(reply.text))
     }

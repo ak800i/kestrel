@@ -409,6 +409,14 @@ class Listening internal constructor(
     @Volatile
     internal var steps: ((Event, State, Step) -> Unit)? = null
 
+    /**
+     * The debug hooks' check of each transcript of a voice session (plan 4D, hook H2), on the thread that delivers it:
+     * false drops the transcript, so that the Orchestrator never sees it. It must return quickly. Null, and so nothing,
+     * outside the debug hooks.
+     */
+    @Volatile
+    internal var transcripts: ((Event.Heard) -> Boolean)? = null
+
     private val orchestrator = Orchestrator(
         CoroutineScope(scope.coroutineContext + thread),
         perform = ::perform,
@@ -1352,6 +1360,8 @@ class Listening internal constructor(
                 if (event is Event.Heard) {
                     voiceCounts.heard(event)
                     timeline.speechEnded(event.endedAt)
+                    timeline.transcript(event.closedAt)
+                    if (transcripts?.invoke(event) == false) return
                 }
             }
             orchestrator.send(event) { active }

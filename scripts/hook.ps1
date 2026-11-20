@@ -74,7 +74,8 @@
 #                                           microphone, and Android silences a recording from the background, which
 #                                           the answer shows
 #   voice-record -Result                    answers recording until the recording has ended, then its length, the
-#                                           loudest sample and whether Android silenced it, never the sound
+#                                           loudest sample, whether Android silenced it and the RMS levels in dBFS
+#                                           (rms, and frameRms for the loudest 20 ms frame), never the sound
 #   voice-eval -Load                        loads a recogniser with the boost words of Kestrel's voice session in the
 #                                           background, while Kestrel is off; answers loading, ready with the numbers of
 #                                           boost words, or failed with the error's class
@@ -92,6 +93,16 @@
 #                                           its contacts, which are never boost words; -ScreenLabels takes the labels
 #                                           from the screen in front, which never leave the device
 #   voice-eval -Close                       closes that recogniser
+# Speech through the air (plan 4D; the PC plays a clip through its speakers):
+#   voice-expect -Text 'text' -Tag k [-Seconds n] [-NoRun]
+#                                           for n seconds (15 by default, at most 60) compares each transcript of
+#                                           Kestrel's voice session with the text on the phone: the first with at most
+#                                           half its words wrong runs with the tag k (with -NoRun it is only resolved and
+#                                           never runs); the others are dropped and counted; needs an open voice session
+#   voice-expect -Result -Tag k             answers waiting, then whether it matched, the word errors, the strays and
+#                                           split parts, the phone's times of the end of the speech, of its pause and of
+#                                           its text, and the command's number, kind and outcome, or with -NoRun its
+#                                           kind and whether it is right; never text (2026-11-20-a71-checks-4d-interfaces.md, section 4)
 # The A71 session (scripts\a71-session.ps1 runs these, except voice-echo, which plan 2D's session ran and no script runs
 # now):
 #   voice-counts                            the number of Kestrel's latest wait for a task, which rises with each wait and
@@ -109,12 +120,15 @@
 #                                           for and in front, and whether Android runs the listening service in the
 #                                           foreground (foreground= from Android's list; demoted= Android's reading of
 #                                           whether the service lost its foreground, AndroidListeningConditions.demoted,
-#                                           on which Kestrel acts only while its battery use is also Restricted)
+#                                           on which Kestrel acts only while its battery use is also Restricted); and
+#                                           when the latest transcript's end-of-speech pause ended and when its text came
+#                                           (segmentClosed, transcribed)
 #   voice-route                             the earbud option and the route of Kestrel's newest recording: whether it is
 #                                           open, whether the request for the earbuds holds, the headset's kind, how
 #                                           long the start waited for the headset's link, the types of Android's
-#                                           communication device and of the recording's input, and the loudest sample
-#                                           since the last voice-route, in percent; never audio
+#                                           communication device and of the recording's input, the loudest sample since
+#                                           the last voice-route, in percent, and the RMS levels of all samples and of the
+#                                           loudest 20 ms frame since then, in dBFS (rms, frameRms); never audio
 # The owner's options and Kestrel's notices, which the A71 sessions put back at their end:
 #   owner-options [-RequireVerbs true|false] [-EarbudMicrophone true|false]
 #                                           answers whether "Require verbs" and "Use the earbud microphone" are on,
@@ -187,7 +201,7 @@ param(
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
         'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
-        'owner-options', 'notices', 'check-notice')][string]$Command,
+        'owner-options', 'notices', 'check-notice', 'voice-expect')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -233,7 +247,8 @@ param(
     [ValidateSet('true', 'false')][string]$EarbudMicrophone,
     [ValidatePattern('^[A-Za-z0-9_-]{1,32}$')][string]$Tag,
     [switch]$Live,
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$NoRun
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -241,6 +256,7 @@ if ($PSBoundParameters.ContainsKey('Boost') -and $Boost -lt 0) { throw "-Boost $
 if ($PSBoundParameters.ContainsKey('Threshold') -and $Threshold -lt 0) {
     throw "-Threshold $Threshold is negative; give a threshold from 0.01 to 0.5."
 }
+if ($Command -eq 'voice-expect' -and -not $Tag) { throw 'voice-expect needs -Tag; give each expectation a new tag.' }
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
@@ -308,6 +324,7 @@ if ($EarbudMicrophone) { $extras += "--ez earbudMicrophone $($EarbudMicrophone.T
 if ($Tag) { $extras += "--es tag $(ConvertTo-ShellText $Tag)" }
 if ($Live) { $extras += '--ez live true' }
 if ($Quiet) { $extras += '--ez quiet true' }
+if ($NoRun) { $extras += '--ez noRun true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

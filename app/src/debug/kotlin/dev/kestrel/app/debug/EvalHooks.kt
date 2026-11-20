@@ -23,6 +23,7 @@ import dev.kestrel.voice.SpeechDetector
 import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.VoiceOptions
+import dev.kestrel.voice.listen.LevelMeter
 import dev.kestrel.voice.listen.MicCapture
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -174,7 +175,10 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         }
         withContext(Dispatchers.IO) { Wav.write(file, samples) }
         val loudest = ((samples.maxOfOrNull { abs(it) } ?: 0f) * 100).roundToInt()
-        return "recorded ${seconds(samples.size)} s, loudest $loudest %, silenced=$silenced"
+        // The levels of plan 4D's hook H7, frame by frame as the microphone delivered them.
+        val level = LevelMeter()
+        frames.forEach(level::add)
+        return "recorded ${seconds(samples.size)} s, loudest $loudest %, silenced=$silenced, ${level.report()}"
     }
 
     private fun recordingResult(): String {

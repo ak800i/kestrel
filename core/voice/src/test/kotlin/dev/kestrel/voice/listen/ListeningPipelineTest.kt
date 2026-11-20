@@ -74,6 +74,19 @@ class ListeningPipelineTest {
     }
 
     @Test
+    fun aTranscriptCarriesThePhonesTimeOfTheEndOfItsPause() = runTest {
+        val pipeline = pipeline()
+        pipeline.feedUntil(1.98f)
+        clock = 50_000L
+
+        // The endpointer lets the utterance go on the frame that ends at 2 s of audio, while the phone's clock reads 50 s.
+        detector.next.addLast(listOf(utterance(0.5f, 1f)))
+        pipeline.feed()
+
+        assertEquals(50_000L, (events.single() as VoiceEvent.Heard).closedAt)
+    }
+
+    @Test
     fun pausedTranscribesOnlyUtterancesThatStartWithTheName() = runTest {
         val pipeline = pipeline()
         pipeline.recognition = Recognition.NAMED

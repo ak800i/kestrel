@@ -159,7 +159,8 @@ sealed interface Event {
      * began to say it, in `SystemClock.uptimeMillis()`, or null when it is not known; a command that names a number
      * ends when the numbers changed after it (section 9.4). [seconds] is the length of its audio, and [endedAt] the end
      * of its speech on the phone's clock (SystemClock.elapsedRealtime), or 0 when it is not known; only the A71 session's
-     * counts and times read them (plan 2E).
+     * counts and times read them (plan 2E). [closedAt] is when its end-of-speech pause ended, on the same clock, or 0
+     * (plan 4D).
      */
     data class Heard(
         val text: String,
@@ -167,6 +168,7 @@ sealed interface Event {
         val spokeAt: Long? = null,
         val seconds: Float = 0f,
         val endedAt: Long = 0L,
+        val closedAt: Long = 0L,
     ) : Event {
         override fun toString() = "Heard(${text.length} characters, named=$named)"
     }

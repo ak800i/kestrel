@@ -53,6 +53,7 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     @Volatile
     private var headsetKind = "none"
     private val loudest = AtomicInteger()
+    private val level = LevelMeter()
 
     @Volatile
     private var reader: Thread? = null
@@ -78,8 +79,8 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
      * The route of the current recording, for the debug hook voice-route (plan 2E; A71 session of sub-project 2, item 6):
      * whether a recording is open, whether the request for the earbuds holds, the headset's kind (sco, le-audio or none),
      * how long the start waited until Android named the headset, the types of Android's communication device and of the
-     * recording's input, and the loudest sample since the last call, in percent. Types and levels only, never audio. Any
-     * thread may call it.
+     * recording's input, the loudest sample since the last call, in percent, and the RMS levels of [LevelMeter] since then,
+     * in dBFS (plan 4D, H7). Types and levels only, never audio. Any thread may call it.
      */
     fun routeReport(): String {
         val recorder = record
@@ -88,7 +89,7 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
         return "microphone=${if (recorder != null) "open" else "closed"} holding=${current?.holding == true} " +
             "headset=$headsetKind linkedMillis=${current?.linkedMillis ?: "none"} " +
             "communication=${typeName(audio.communicationDevice?.type)} routed=${typeName(routed)} " +
-            "loudest=${loudest.getAndSet(0)}"
+            "loudest=${loudest.getAndSet(0)} ${level.report()}"
     }
 
     private val callback = object : AudioManager.AudioRecordingCallback() {
@@ -281,6 +282,7 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
                     sample / 32_768f
                 }
                 loudest.accumulateAndGet(peak * 100 / 32_768) { a, b -> maxOf(a, b) }
+                level.add(frame)
                 // Errors, such as OutOfMemoryError, are not caught.
                 try {
                     onFrame(frame)

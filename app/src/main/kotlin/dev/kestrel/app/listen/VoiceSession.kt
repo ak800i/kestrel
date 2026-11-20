@@ -131,7 +131,7 @@ internal class VoiceSession(
     private fun forward(event: VoiceEvent) {
         when (event) {
             is VoiceEvent.Heard ->
-                listener.send(Event.Heard(event.text, event.named, starts.ended(), event.seconds, event.endedAt))
+                listener.send(Event.Heard(event.text, event.named, starts.ended(), event.seconds, event.endedAt, event.closedAt))
             is VoiceEvent.Spotted -> listener.send(Event.Spotted(event.keyword))
             VoiceEvent.SpeechStarted -> {
                 starts.speechStarted()
