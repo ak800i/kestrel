@@ -428,3 +428,136 @@ Describe 'The host audio input of kestrel-api37 in the dry runs' {
         { Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false } | Should -Throw 'The emulator''s console did not take ''avd hostmicoff''.'
     }
 }
+
+Describe 'The owner''s settings and the test PIN' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Session.ps1"
+    }
+
+    It 'reads the owner''s settings for the A71 sessions, with defaults for a missing file or field, and refuses a bad number' {
+        $path = Join-Path $TestDrive 'a71-config.json'
+        Set-Content -LiteralPath $path -Value '{"callNumber": "064 123-4567", "testContacts": true, "speakerTargetDb": -30, "pin": "2468", "later": {"plan": 5}}'
+
+        $config = Read-A71Config $path
+
+        $config.CallNumber | Should -BeExactly '0641234567'
+        $config.TestContacts | Should -BeTrue
+        $config.SpeakerTargetDb | Should -Be -30
+        ($config | Out-String) | Should -Not -Match '2468'
+        $config.PSObject.Properties.Name | Should -Not -Contain 'pin'
+        $config.later.plan | Should -Be 5
+        $missing = Read-A71Config (Join-Path $TestDrive 'none.json')
+        $missing.CallNumber | Should -BeNullOrEmpty
+        $missing.TestContacts | Should -BeFalse
+        $missing.SpeakerTargetDb | Should -Be -26
+        Set-Content -LiteralPath $path -Value '{"callNumber": "112"}'
+        { Read-A71Config $path } | Should -Throw '*callNumber must have 5 to 15 digits.'
+    }
+
+    It 'checks the A71''s test PIN, and says what is missing without the PIN' {
+        $path = Join-Path $TestDrive 'a71-config.json'
+        Set-Content -LiteralPath $path -Value '{"pin": "024680", "callNumber": "0641234567"}'
+
+        Send-TestPin -ConfigPath $path -CheckOnly | Should -BeNullOrEmpty
+        { Send-TestPin -ConfigPath (Join-Path $TestDrive 'none.json') -CheckOnly } | Should -Throw '*test PIN is missing, because*does not exist*key "pin"*'
+        Set-Content -LiteralPath $path -Value '{"callNumber": "0641234567"}'
+        { Send-TestPin -ConfigPath $path -CheckOnly } | Should -Throw '*has no key "pin"*'
+        Set-Content -LiteralPath $path -Value '{"pin": "12ab"}'
+        $message = try { Send-TestPin -Serial 'R58N' -ConfigPath $path } catch { $_.Exception.Message }
+        $message | Should -Match 'must be 4 to 16 digits'
+        $message | Should -Not -Match '12ab'
+        # A number: PowerShell 7 refuses the leading zero, and Windows PowerShell 5.1 would read another PIN.
+        foreach ($text in '{"pin": 024680}', '{"pin": 2468}') {
+            Set-Content -LiteralPath $path -Value $text
+            $message = try { Send-TestPin -ConfigPath $path -CheckOnly } catch { $_.Exception.Message }
+            $message | Should -Match 'quotes'
+            $message | Should -Not -Match '2468'
+        }
+    }
+
+    Context 'The unlock with the test PIN' {
+        BeforeAll {
+            . "$PSScriptRoot\..\lib\Kestrel.ps1"
+            . "$PSScriptRoot\..\lib\Oracle.ps1"
+            # A phone that Assert-TestDevice accepted, without asking a device.
+            $KestrelTestDevices['R58N'] = [pscustomobject]@{ Property = 'ro.product.model'; Pattern = 'SM-A715F*' }
+            # A fake adb that fails and repeats its whole command in its error, as adb can.
+            $fake = Join-Path $TestDrive 'failing-adb.ps1'
+            Set-Content -LiteralPath $fake -Value '[Console]::Error.WriteLine("error: closed while running: $($args -join '' '')"); exit 1'
+            $fakeAdb = Join-Path $TestDrive 'failing-adb.cmd'
+            Set-Content -LiteralPath $fakeAdb -Value "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$fake"" %*`r`nexit /b %ERRORLEVEL%"
+            # The owner's configuration with the test PIN.
+            $config = Join-Path $TestDrive 'pin-config.json'
+            Set-Content -LiteralPath $config -Value '{"pin": "2468"}'
+        }
+
+        BeforeEach {
+            Mock Start-Sleep { }
+            $script:TestPinRefused = $false
+            # Keyguard: 'true', 'false' or 'unknown' (no line in the dump); Occluded: whether an activity shows over it;
+            # Pad: whether the PIN pad's entry shows.
+            $phone = @{ Keyguard = 'true'; Occluded = 'false'; Pad = $true; Typed = 0; Commands = [System.Collections.Generic.List[string]]::new() }
+            Mock Invoke-SettingsCommand {
+                $phone.Commands.Add($Command)
+                if ($Command -eq 'dumpsys activity activities') {
+                    if ($phone.Keyguard -ne 'unknown') { "  mKeyguardShowing=$($phone.Keyguard)" } else { '  (no keyguard line)' }
+                    "    Occluded=$($phone.Occluded) DismissingKeyguardActivity=null at display=0"
+                }
+                if ($Command -like 'uiautomator dump*') { if ($phone.Pad) { '1' } else { '0' } }
+                if ($Command -eq 'wm size') { 'Physical size: 1080x2400' }
+            }
+        }
+
+        It 'types the PIN once, only while the lock screen''s PIN pad shows' {
+            Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++; $phone.Keyguard = 'false' } }
+
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
+
+            $phone.Typed | Should -Be 1
+            @($phone.Commands | Where-Object { $_ -match '2468' }).Count | Should -Be 0
+            $phone.Commands.IndexOf('wm dismiss-keyguard') | Should -BeGreaterThan -1
+            # One look at the screen's hierarchy, in the shell's folder, which exists before the first unlock.
+            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump *' }).Count | Should -Be 1
+            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump /data/local/tmp/*' }).Count | Should -Be 1
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
+            $phone.Typed | Should -Be 1
+        }
+
+        It 'types nothing when Android does not say clearly that the PIN pad shows, or an activity shows over the lock screen' {
+            Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++ } }
+            $phone.Keyguard = 'unknown'
+
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
+            $phone.Keyguard = 'true'
+            $phone.Occluded = 'true'
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
+            $phone.Occluded = 'false'
+            $phone.Pad = $false
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
+
+            $phone.Typed | Should -Be 0
+            @($phone.Commands | Where-Object { $_ -like 'input swipe *' }).Count | Should -Be 1
+        }
+
+        It 'types a PIN that did not unlock the phone only once in the run' {
+            Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++ } }
+
+            { Unlock-TestPhone -Serial 'R58N' -ConfigPath $config } | Should -Throw 'the unlock failed'
+            { Unlock-TestPhone -Serial 'R58N' -ConfigPath $config } | Should -Throw '*earlier in this run*'
+
+            $phone.Typed | Should -Be 1
+        }
+
+        It 'says only that the unlock failed when adb fails, and no output, warning or error holds the PIN' {
+            Mock Get-Adb { $fakeAdb }
+
+            $output = & {
+                try { Unlock-TestPhone -Serial 'R58N' -ConfigPath $config } catch { $_; $_.Exception.Message; $_.ScriptStackTrace }
+                try { Unlock-TestPhone -Serial 'R58N' -ConfigPath $config } catch { $_; $_.Exception.Message }
+            } *>&1 | Out-String
+
+            $output | Should -Match 'the unlock failed'
+            $output | Should -Not -Match '2468'
+        }
+    }
+}
