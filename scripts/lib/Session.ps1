@@ -436,7 +436,24 @@ function Invoke-AdbShellInput([string]$Serial, [string]$Command, [int]$TimeoutSe
     $info.RedirectStandardInput = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    $process = [Diagnostics.Process]::Start($info)
+    # Windows PowerShell 5.1's .NET Framework writes the console's input encoding to the process's standard input, with
+    # its byte-order mark first when that encoding has one (UTF-8 on CI), and the device's shell would not know the first
+    # word; PowerShell 7 drops the mark itself. So the process starts with UTF-8 without the mark, and the console gets
+    # its encoding back right after.
+    $inputEncoding = $null
+    try {
+        if ([Console]::InputEncoding.GetPreamble().Length -gt 0) {
+            $inputEncoding = [Console]::InputEncoding
+            [Console]::InputEncoding = New-Object Text.UTF8Encoding $false
+        }
+    } catch {
+        $inputEncoding = $null
+    }
+    try {
+        $process = [Diagnostics.Process]::Start($info)
+    } finally {
+        if ($inputEncoding) { [Console]::InputEncoding = $inputEncoding }
+    }
     try {
         $output = $process.StandardOutput.ReadToEndAsync()
         $errors = $process.StandardError.ReadToEndAsync()

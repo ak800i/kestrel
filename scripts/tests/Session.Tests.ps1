@@ -588,21 +588,34 @@ Describe 'The owner''s settings and the test PIN' {
             @($Error | ForEach-Object { $_ | Out-String; "$($_.Exception.Message)"; "$($_.TargetObject)" }) -join "`n" | Should -Not -Match '2468'
         }
 
-        It 'gives adb the typing on its standard input, never as an argument' {
-            Set-Content -LiteralPath (Join-Path $TestDrive 'echo-adb.ps1') -Value '$text = [Console]::In.ReadToEnd(); Set-Content -LiteralPath $env:KESTREL_FAKE_ADB_LOG -Value (($args -join '' '') + "`n" + $text); "kestrel-pin-sent"; exit 0'
+        It 'gives adb the typing on its standard input, never as an argument, and without a byte-order mark' {
+            # The fake adb logs its arguments, the first three bytes of its standard input in hexadecimal, and the input.
+            Set-Content -LiteralPath (Join-Path $TestDrive 'echo-adb.ps1') -Value ('$in = [Console]::OpenStandardInput(); $bytes = New-Object IO.MemoryStream; $in.CopyTo($bytes); $bytes = $bytes.ToArray(); ' +
+                '$head = -join @($bytes | Select-Object -First 3 | ForEach-Object { $_.ToString(''x2'') }); $text = (New-Object Text.UTF8Encoding $false).GetString($bytes); ' +
+                'Set-Content -LiteralPath $env:KESTREL_FAKE_ADB_LOG -Value (($args -join '' '') + "`n" + $head + "`n" + $text); "kestrel-pin-sent"; exit 0')
             $echoAdb = Join-Path $TestDrive 'echo-adb.cmd'
             Set-Content -LiteralPath $echoAdb -Value "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$(Join-Path $TestDrive 'echo-adb.ps1')"" %*`r`nexit /b %ERRORLEVEL%"
             $log = Join-Path $TestDrive 'echo-adb.log'
             $env:KESTREL_FAKE_ADB_LOG = $log
             Mock Get-Adb { $echoAdb }
+            # As on CI's Windows PowerShell 5.1: UTF-8 with a byte-order mark, whose .NET Framework writes the mark at the
+            # start of a process's standard input. Without a console the input encoding cannot change, and stays.
+            $inputEncoding = [Console]::InputEncoding
+            $outputEncoding = $OutputEncoding
             try {
+                $OutputEncoding = [System.Text.Encoding]::UTF8
+                try { [Console]::InputEncoding = [System.Text.Encoding]::UTF8 } catch { Write-Verbose 'This shell has no console.' }
                 Send-TestPin -Serial 'R58N' -ConfigPath $config | Should -BeTrue
             } finally {
+                try { [Console]::InputEncoding = $inputEncoding } catch { Write-Verbose 'This shell has no console.' }
+                $OutputEncoding = $outputEncoding
                 Remove-Item Env:\KESTREL_FAKE_ADB_LOG
             }
 
             $lines = @(Get-Content -LiteralPath $log)
             $lines[0].Trim() | Should -BeExactly '-s R58N shell'
+            $lines[1] | Should -Not -BeExactly 'efbbbf'
+            $lines = @($lines[0]) + @($lines | Select-Object -Skip 2)
             # The device check, the last look at the PIN pad and the typing go in one shell call.
             ($lines -join "`n") | Should -Match '^-s R58N shell\s+case .*uiautomator dump .*grep -c .*input text 2468 && .*esac'
         }
