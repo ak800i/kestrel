@@ -73,7 +73,8 @@
 # phone unlocked. It reads the PIN from the key "pin" of corpus\owner\a71-config.json, which git ignores, only for a
 # phone's reboot, stops before any check with a clear message when the file or the key is missing, types it only when
 # Android says clearly that the PIN pad shows, never again after a typing that did not unlock the phone, and never
-# prints it. It never waits for an Enter.
+# prints it. A phone that starts again but stays locked fails the reboot check with the reason, skips the role check, which
+# needs Kestrel running, and still gets its settings back through adb. It never waits for an Enter.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
 # Example: scripts\listen-check.ps1 -Serial emulator-5554 -Reboot
 #Requires -Version 7.3
@@ -289,11 +290,14 @@ function Get-ShellAnswer([string]$Command) {
 # does not wait for an Enter, but checks every second. At the first check that sees the storage unlocked, it keeps the
 # phone's uptime in milliseconds in $script:unlockedAt, or $null when the phone gives none, so that the reboot check can
 # time Kestrel's restore on the phone's clock (A71 session of sub-project 2: no time counts from the owner's Enter). It
-# waits for at most 5 minutes, and returns whether the phone came back.
+# waits for at most 5 minutes, and returns 'unlocked' when the phone came back unlocked, 'locked' when it started again
+# and answers adb but stayed locked (the unlock's error, if any, is then in $script:unlockFailure), and 'lost' when it
+# gave no answer from a new boot.
 function Wait-Reboot([string]$BootId) {
     $deadline = (Get-Date).AddMinutes(5)
     $lockedChecks = 0
     $script:unlockedAt = $null
+    $script:unlockFailure = $null
     do {
         Start-Sleep -Seconds 1
         $id = Get-ShellAnswer 'cat /proc/sys/kernel/random/boot_id'
@@ -312,14 +316,20 @@ function Wait-Reboot([string]$BootId) {
             # script tries no more unlocks (One UI locks the phone for a while after wrong PINs).
             if ($pinConfig) {
                 if (-not $unlockStopped) {
-                    try { Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig | Out-Null } catch { $script:unlockStopped = $true; Write-Host "$($_.Exception.Message); the script tries no more unlocks." }
+                    try {
+                        Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig | Out-Null
+                    } catch {
+                        $script:unlockStopped = $true
+                        $script:unlockFailure = "$($_.Exception.Message)"
+                        Write-Host "$($script:unlockFailure); the script tries no more unlocks."
+                    }
                 }
             } else {
                 Write-Host 'Unlock the phone now. The script goes on by itself; do not press Enter. Kestrel shows only its notification when it listens again.'
             }
         }
     } until ($unlocked -or (Get-Date) -gt $deadline)
-    $unlocked
+    if ($unlocked) { 'unlocked' } elseif ($booted) { 'locked' } else { 'lost' }
 }
 
 # The reboot check's time on a phone: from the unlock that Wait-Reboot saw to Kestrel's open voice session, both on the
@@ -796,7 +806,8 @@ function Invoke-RebootCheck {
             $script:deviceLost = $true
             return "failed: 'adb reboot' did not return within 60 s"
         }
-        if (-not (Wait-Reboot $bootId)) {
+        $started = Wait-Reboot $bootId
+        if ($started -eq 'lost') {
             $script:deviceLost = $true
             return "failed: $Serial did not start again within 5 minutes of the reboot"
         }
@@ -806,6 +817,13 @@ function Invoke-RebootCheck {
             $script:deviceLost = $true
             return "failed: $($_.Exception.Message)"
         }
+        if ($started -eq 'locked') {
+            # The phone answers adb, so the restores still run; only the checks that need Kestrel running are skipped.
+            $script:rebooted = $true
+            $script:stayedLocked = $true
+            $why = if ($script:unlockFailure) { $script:unlockFailure } else { 'the phone did not show its PIN pad clearly, so the script typed nothing' }
+            return "failed: $Serial started again but stayed locked; $why"
+        }
     }
     # Android forgets the crash of the restart check with the reboot.
     $script:rebooted = $true
@@ -814,9 +832,10 @@ function Invoke-RebootCheck {
     # On a phone, the screen is off or locked after the reboot, and Kestrel records only while it is on and unlocked.
     if (-not $isEmulator) {
         Invoke-Checked 'input keyevent KEYCODE_WAKEUP' | Out-Null
-        # The test PIN, not an Enter: the screen may have locked again since the unlock that Wait-Reboot saw. After a
-        # typing that did not work, Unlock-TestPhone throws at once and types nothing.
-        if ($pinConfig) {
+        # The test PIN, not an Enter: the screen may have locked again since the unlock that Wait-Reboot saw. The PIN is
+        # typed only when the keyguard shows, so that an unlocked phone never fails here. After a typing that did not
+        # work, Unlock-TestPhone throws at once and types nothing.
+        if ($pinConfig -and (Test-KeyguardShowing @(Invoke-Checked 'dumpsys activity activities')) -ne $false) {
             # $false: Android did not show its PIN pad clearly, so nothing was typed; an error: the PIN did not unlock it.
             $failure = 'the phone did not show its PIN pad clearly after the restart, so the script typed nothing'
             $unlocked = try { Unlock-TestPhone -Serial $Serial -ConfigPath $pinConfig } catch { $failure = "$($_.Exception.Message) after the restart"; $false }
@@ -907,12 +926,17 @@ $completed = $false
 $failed = $false
 # Set by the reboot check when the device did not answer after the reboot. The script then runs no command on it.
 $deviceLost = $false
+# Set by the reboot check when the phone answered after the reboot but stayed locked. Kestrel cannot run before the
+# first unlock, so the role check is skipped, but adb puts back every setting.
+$stayedLocked = $false
 # The restart check's crash, and whether a reboot came after it.
 $crashWatch = $null
 $rebooted = $false
 $restoresAtEnd = @(
     # First, so that Kestrel stores Off and does not come back at the next start of its process.
     Register-Restore "Kestrel's mode Off" "Run: scripts\hook.ps1 -Serial $Serial voice -Send off" {
+        # The hook needs Kestrel running, which a phone that stayed locked after the reboot does not allow.
+        if ($stayedLocked) { throw "$Serial stayed locked after the reboot, so Kestrel could not store Off; unlock it first" }
         Stop-Kestrel
     }
     Register-Restore 'the Quick Settings tiles' $tilesByHand {
@@ -1042,7 +1066,11 @@ try {
     $results['call'] = Invoke-Check { Invoke-CallCheck }
     $results['restart'] = Invoke-Check { Invoke-RestartCheck }
     if ($Reboot) { $results['reboot'] = Invoke-Check { Invoke-RebootCheck } }
-    if (-not $deviceLost) { $results['role'] = Invoke-Check { Invoke-RoleRestartCheck } }
+    if ($stayedLocked) {
+        $results['role'] = 'skipped: the phone stayed locked after the reboot, and Kestrel runs only after its first unlock'
+    } elseif (-not $deviceLost) {
+        $results['role'] = Invoke-Check { Invoke-RoleRestartCheck }
+    }
     $completed = $true
 } catch {
     $failed = $true

@@ -892,7 +892,7 @@ function Invoke-OwnerStep {
     if (-not $block -and -not $config.TestContacts) { $block = 'corpus\owner\a71-config.json does not give the owner''s consent to the test contacts' }
     if ($block) {
         Add-Result owner "the checks during a call's countdown: skipped: $block"
-    } elseif ((Request-OwnerItem 'Item 1 of 1, about 3 minutes, of which 1 with your hands: come to the A71, which shows its home screen. When you press Enter, Kestrel calls the test contact "Ana Test", opens the phone app and counts down 4 seconds on its bar. As soon as the countdown shows on Kestrel''s bar, touch the clock at the top of the A71''s screen with one finger, never a button of the phone app; this computer beeps about half a second after the countdown shows. You have about 3 seconds from when it shows; if you are later, the session cancels the countdown itself, and Kestrel does not call. The countdown should stop, and Kestrel''s bar should say "Cancelled". Then stay next to the A71 for about 2 minutes without touching it: Kestrel calls "Ana Test" three more times, and the session ends each countdown itself, by voice and with a tap. The A71 has no SIM card, so no call can start. (Later checks copy test text; the session saves your clipboard first and puts it back afterwards.) Press Enter to start, or s to skip.') -eq 'skip') {
+    } elseif ((Request-OwnerItem 'Item 1 of 1, about 3 minutes, of which 1 with your hands: come to the A71, which shows its home screen. When you press Enter, Kestrel calls the test contact "Ana Test", opens the phone app and counts down 4 seconds on its bar. As soon as the countdown shows on Kestrel''s bar, touch the clock at the top of the A71''s screen with one finger, never a button of the phone app; this computer beeps about half a second after the countdown shows. Touch it at once, within about 2 seconds of when it shows; if you are later, the session cancels the countdown itself, and Kestrel does not call. The countdown should stop, and Kestrel''s bar should say "Cancelled". Then stay next to the A71 for about 2 minutes without touching it: Kestrel calls "Ana Test" three more times, and the session ends each countdown itself, by voice and with a tap. The A71 has no SIM card, so no call can start. (Later checks copy test text; the session saves your clipboard first and puts it back afterwards.) Press Enter to start, or s to skip.') -eq 'skip') {
         Add-Result owner 'the checks during a call''s countdown: skipped'
     } else {
         Add-TestContacts | Out-Null
@@ -904,8 +904,8 @@ function Invoke-OwnerStep {
             if (-not (Stop-DeviceCall -Serial $Serial)) { throw 'a call is still active' }
         }
         # On the A71 the response waits up to 1.2 s after the beep for the owner's touch to end the countdown, and cancels
-        # it itself when it still runs: with the runner's reads and the beep, his touch then has about 3 s from when the
-        # countdown shows, and the cancel still comes before Kestrel's 4 s run out. The response runs inside the runner
+        # it itself when it still runs: with the runner's reads and the beep, his touch must end the countdown about 1.5 to
+        # 2.5 s after it shows, so the prompt asks for it at once, within about 2 s, and the cancel still comes before Kestrel's 4 s run out. The response runs inside the runner
         # (Invoke-AutoCheck), whose variable $tag is the check's tag.
         $touch = if ($DryRun) {
             { Invoke-ClockTap }
