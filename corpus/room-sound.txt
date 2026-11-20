@@ -1,0 +1,75 @@
+# The sentences of the room-sound track that scripts\make-room-sound.ps1 makes for battery measure 3 of
+# scripts\a71-session.ps1 (plan 4D): everyday talk, written for Kestrel, so free to use, in which no word of Kestrel's
+# commands, answers, numbers or names appears (scripts\tests\Corpus.Tests.ps1 checks the list), so that the talk starts
+# nothing on the phone. One sentence per line; lines that start with '#' are comments.
+The bread at the market was still warm this morning.
+My sister planted tomatoes along the fence in April.
+We should buy more coffee before the weekend.
+The bus was late, so I walked most of the way.
+Did you water the plants on the balcony?
+The soup needs a little more salt and pepper.
+Our neighbours painted their kitchen a pale yellow.
+I think it will rain later in the afternoon.
+The children built a castle out of old boxes.
+That film was much longer than I expected.
+Grandma knitted a warm scarf for the winter.
+The cat sleeps on the windowsill every evening.
+We had dinner at the little place by the river.
+The library shuts early on Saturdays.
+He fixed the bicycle chain with an old spoon.
+The garden smells lovely after a summer storm.
+My umbrella is still at the office from yesterday.
+The museum has a new exhibition about ancient ships.
+We could visit the lake if the weather is nice.
+Her cousin moved to a village near the mountains.
+The bakery makes the best cinnamon rolls in town.
+My uncle tells the same jokes at every family dinner.
+The dog chased a ball across the wet grass.
+These apples taste sweeter than the ones from last week.
+The concert in the park was crowded but fun.
+I need a new pair of boots for the walking trip.
+The kettle is boiling, would you like some tea?
+They are building a bridge over the old canal.
+The roses by the gate are finally blooming.
+Our teacher told us a story about a brave fox.
+The snow melted quickly in the bright sunshine.
+He prefers mountains, but she likes the sea.
+The market sells cheese, honey and fresh herbs.
+I forgot to buy milk on the way from work.
+The old bell in the village rings every hour.
+We painted the fence white over the holidays.
+The cake was too sweet for my taste.
+A heron stood very still in the shallow water.
+My friend is learning the violin.
+The waiter brought us bread and olives.
+There is a lovely view from the hill behind the church.
+The baby finally fell asleep after lunch.
+I prefer walking to driving in the city.
+The leaves are red and gold now.
+Our flight was delayed because of the fog.
+He bakes his own bread every Sunday.
+The river was higher than usual this spring.
+She found an old photograph in the attic.
+The farmers sell their potatoes by the road.
+It is warm enough to eat outside tonight.
+My brother repaired the roof before the storm.
+The cinema downtown has old films on Fridays.
+We met a friendly couple from Portugal at the beach.
+I usually walk the dog before breakfast.
+The festival brings musicians from many countries.
+Fresh strawberries are cheap at this time of year.
+The hotel had a small garden with lemon trees.
+He spent the whole afternoon in the shade with a novel.
+The road to the village is narrow and steep.
+My aunt keeps chickens and sells their eggs.
+The ferry leaves the harbour at dawn.
+We should invite the neighbours for a barbecue.
+The museum guide knew everything about the old castle.
+Her garden is full of bees and butterflies.
+They walked along the beach until sunset.
+The pears are ripe, so we can make a pie.
+A thick fog covered the valley this morning.
+The children laughed at the clown in the square.
+I would like to learn how to bake bread.
+The coffee at the station tastes terrible.
+We will visit my parents in the countryside soon.

@@ -1,0 +1,28 @@
+# The phrases of the A71 sessions' automatic checks that corpus\commands.txt lacks (plan 4D), in its format: the air
+# path of scripts\a71-commands.ps1 and scripts\a71-session.ps1 plays their clips through this computer's speakers, and
+# the phone matches each one to its text (hook voice-expect). scripts\make-corpus.ps1 -List checks says each line in one
+# of Kestrel's voices into corpus\generated\<voice>, next to the clips of commands.txt, so the ids start with k. No line
+# is marked for the owner, and none is private.
+k001 | appendix | idle | 0 | Other | 0 | Tap 3.
+k002 | appendix | idle | 0 | Other | 0 | Tap Display.
+k003 | appendix | idle | 0 | Other | 0 | Display.
+k004 | appendix | idle | 0 | Other | 0 | Tap Delete.
+k005 | appendix | idle | 0 | Other | 0 | Swipe from the bottom edge.
+k006 | appendix | idle | 0 | Other | 0 | Expand Kestrel check.
+k007 | appendix | idle | 0 | Other | 0 | Collapse Kestrel check.
+k008 | appendix | idle | 0 | Other | 0 | Dismiss Kestrel check.
+k009 | appendix | idle | 0 | Other | 0 | Turn off Wi-Fi.
+k010 | appendix | idle | 0 | Other | 0 | Volume up.
+k011 | appendix | idle | 0 | Other | 0 | Turn the ring volume up.
+k012 | appendix | idle | 0 | Other | 0 | Turn the ring volume down.
+k013 | appendix | idle | 0 | Other | 0 | Turn the alarm volume up.
+k014 | appendix | idle | 0 | Other | 0 | Turn the call volume up.
+k015 | appendix | idle | 0 | Other | 0 | Turn the call volume down.
+k016 | appendix | idle | 0 | Other | 0 | Mute the alarm.
+k017 | appendix | idle | 0 | Other | 0 | Unmute the ringer.
+k018 | appendix | idle | 0 | Other | 0 | Select hello.
+k019 | appendix | idle | 0 | Other | 0 | Open Calculator.
+k020 | appendix | idle | 0 | Other | 0 | Open Clock.
+k021 | appendix | idle | 0 | Other | 0 | Open Calendar.
+k022 | task | idle | 1 | Task | 0 | Kestrel, read me the news.
+k023 | answer | answer | 0 | Task | 0 | Open the weather.

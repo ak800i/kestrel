@@ -182,3 +182,44 @@ Describe 'The evaluation''s answers and totals' {
         Format-GroupErrors -Name 'Dictation lines' -Totals $totals | Should -BeExactly 'Dictation lines: 1 clips, 8 words, word error rate 12.5 %'
     }
 }
+
+Describe 'The corpora of the A71 sessions'' automatic checks' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Corpus.ps1"
+        $root = "$PSScriptRoot\..\..\corpus"
+    }
+
+    It 'reads the check corpus, whose ids and phrases are not in corpus\commands.txt' {
+        $commands = @(Read-Corpus -Path "$root\commands.txt")
+        $checks = @(Read-Corpus -Path "$root\checks.txt")
+
+        $checks.Count | Should -Be 23
+        @($checks | Where-Object { $_.Id -notmatch '^k\d{3}$' }).Count | Should -Be 0
+        @($checks | Where-Object { $_.Owner }).Count | Should -Be 0
+        $known = @($commands | ForEach-Object { $_.Text.ToLowerInvariant() })
+        @($checks | Where-Object { $_.Text.ToLowerInvariant() -in $known }).Text | Should -BeNullOrEmpty
+    }
+
+    It 'has room sound in which no word of Kestrel''s commands, answers, numbers or names appears' {
+        $words = 'kestrel', 'hey', 'call', 'dial', 'phone', 'send', 'sent', 'message', 'text', 'delete', 'emergency', 'sos',
+            'open', 'close', 'tap', 'click', 'press', 'scroll', 'swipe', 'back', 'home', 'stop', 'cancel', 'turn', 'volume',
+            'mute', 'unmute', 'silence', 'lock', 'power', 'screenshot', 'select', 'copy', 'paste', 'undo', 'redo', 'type', 'show',
+            'hide', 'number', 'numbers', 'zoom', 'magnify', 'pan', 'search', 'play', 'pause', 'next', 'previous', 'wake', 'listen',
+            'settings', 'notifications', 'wifi', 'bluetooth', 'flashlight', 'camera', 'clock', 'yes', 'no', 'go', 'up', 'down',
+            'left', 'right', 'help', 'again', 'line', 'enter', 'capital', 'all', 'end', 'start', 'top', 'bottom', 'edge', 'grid',
+            'labels', 'app', 'apps', 'recent', 'quick', 'save', 'done', 'ok', 'okay', 'read', 'wait', 'never', 'mind', 'forget',
+            'nothing', 'first', 'second', 'third', 'hello', 'alarm', 'music', 'media', 'display', 'keyboard', 'password'
+        $numbers = 'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+            'twenty', 'hundred', 'thousand'
+        $sentences = @([IO.File]::ReadAllLines("$root\room-sound.txt", [Text.UTF8Encoding]::new($false)) |
+                Where-Object { $_.Trim() -and -not $_.TrimStart().StartsWith('#') })
+
+        $sentences.Count | Should -BeGreaterThan 60
+        $found = foreach ($sentence in $sentences) {
+            foreach ($word in @($sentence.ToLowerInvariant() -split '[^a-z0-9]+' | Where-Object { $_ })) {
+                if ($word -in $words -or $word -in $numbers -or $word -match '\d') { $word }
+            }
+        }
+        @($found) | Should -BeNullOrEmpty
+    }
+}
