@@ -512,7 +512,13 @@ function Read-A71Config([string]$Path) {
 # what is wrong and never the PIN. It calls adb itself and never Invoke-SettingsCommand, whose errors repeat the whole
 # command, and gives adb the command on its standard input (Invoke-AdbShellInput), so that the PIN is never an argument
 # of adb.exe. The device check of Format-TestDeviceCommand runs in the same shell call, and so does a last check of the
-# PIN pad (the view IDs of Get-PinPadState) right before the typing. adb's own output, which can repeat the command too,
+# PIN pad right before the typing: 'uiautomator dump' writes the screen's hierarchy to /data/local/tmp, which the shell
+# owns and which exists before the first unlock after a restart (unlike /sdcard), and only the count of the PIN pad's
+# view IDs (pinEntry or keyguard_pin_view of com.android.systemui) is read on the phone before the file is deleted,
+# because the hierarchy can hold the lock screen's notifications. No dumpsys of Android 13 or 17 tells the PIN pad from
+# the rest of the lock screen. The dump takes 3 to 4 s on the A71, and unbinds every accessibility service, Kestrel's
+# included, for 1 to 10 s. The typing first deletes what the field holds, such as the digit of a swipe of
+# Unlock-TestPhone over a PIN pad that was already up. adb's own output, which can repeat the command too,
 # is dropped, the PIN and the command are cleared after use, the records of $Error that the call added are removed, and
 # the only error of the typing, whatever went wrong, is "the unlock failed". Returns $true after the typing, and $false
 # when the PIN pad no longer showed, so that nothing was typed. Needs scripts\lib\Kestrel.ps1.
@@ -543,10 +549,10 @@ function Send-TestPin([string]$Serial, [string]$ConfigPath, [switch]$CheckOnly) 
         if ($pin -notmatch '^\d{4,16}$') { throw "The key ""pin"" of $ConfigPath must be 4 to 16 digits." }
         if ($CheckOnly) { return }
         try {
-            # Types only when the PIN pad still shows; the hierarchy stays on the phone, as in Get-PinPadState.
+            # Types only when the PIN pad shows; the hierarchy stays on the phone.
             $file = '/data/local/tmp/kestrel-keyguard.xml'
             $command = Format-TestDeviceCommand -Serial $Serial -Command ("uiautomator dump $file >/dev/null 2>&1; pad=`$(grep -c -e id/pinEntry -e id/keyguard_pin_view $file 2>/dev/null); rm -f $file; " +
-                "if [ `"`$pad`" -gt 0 ] 2>/dev/null; then input text $pin && input keyevent KEYCODE_ENTER && echo kestrel-pin-sent; else echo kestrel-no-pad; fi")
+                "if [ `"`$pad`" -gt 0 ] 2>/dev/null; then input keyevent $('KEYCODE_DEL ' * 8)&& input text $pin && input keyevent KEYCODE_ENTER && echo kestrel-pin-sent; else echo kestrel-no-pad; fi")
             $answer = Invoke-AdbShellInput -Serial $Serial -Command $command
             $last = "$(@($answer.Lines | Where-Object { "$_".Trim() }) | Select-Object -Last 1)".Trim()
             if ($answer.ExitCode -eq 0 -and $last -eq 'kestrel-no-pad') {
@@ -572,40 +578,22 @@ function Send-TestPin([string]$Serial, [string]$ConfigPath, [switch]$CheckOnly) 
 # screen or the camera, which would get what is typed.
 function Test-KeyguardOccluded([string[]]$Dump) { @($Dump | Where-Object { $_ -match '(?i)\boccluded=true\b' }).Count -gt 0 }
 
-# Whether the lock screen's PIN pad shows on $Serial: $true only when 'dumpsys activity activities' says that the keyguard
-# shows and that no activity shows over it, and the screen's hierarchy holds the PIN pad's entry (the view IDs pinEntry or
-# keyguard_pin_view of com.android.systemui); $false when the keyguard does not show; $null when Android does not say it
-# clearly. No dumpsys of Android 13 or 17 tells the PIN pad from the rest of the lock screen (both are SystemUI's
-# notification shade window), so this reads the hierarchy, once per call: 'uiautomator dump' writes it to
-# /data/local/tmp, which the shell owns and which exists before the first unlock after a restart (unlike /sdcard), and
-# only the count of those two IDs is read on the phone before the file is deleted, because the hierarchy can hold the
-# lock screen's notifications; nothing of it reaches this computer. Each dump unbinds every accessibility service,
-# Kestrel's included, for 1 to 10 s, so Kestrel's notice that its service is off can show meanwhile. Needs
-# scripts\lib\Kestrel.ps1 and scripts\lib\Oracle.ps1.
-function Get-PinPadState([string]$Serial) {
-    $activities = @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')
-    $keyguard = Test-KeyguardShowing $activities
-    if ($keyguard -ne $true) { return $keyguard }
-    if (Test-KeyguardOccluded $activities) { return $null }
-    $file = '/data/local/tmp/kestrel-keyguard.xml'
-    $count = "$(@(Invoke-SettingsCommand -Serial $Serial -Command "uiautomator dump $file >/dev/null 2>&1; grep -c -e id/pinEntry -e id/keyguard_pin_view $file; rm -f $file") | Select-Object -Last 1)".Trim()
-    if ($count -match '^\d+$' -and [int]$count -gt 0) { return $true }
-    $null
-}
-
 # Unlocks the test phone $Serial with the owner's test PIN of $ConfigPath (Send-TestPin), also right after a restart,
-# when Android asks for the PIN: it wakes the screen and, when the keyguard shows and no activity shows over it, brings
-# up the PIN pad without looking (a swipe up from the screen's lower part, which Android's lock screen and One UI's both
-# answer with the PIN pad, and 'wm dismiss-keyguard', which shows it for a lock screen with a PIN) unless the PIN pad
-# already shows, because a swipe over the pad could type a digit, and then types the PIN only when Get-PinPadState says
-# clearly that the PIN pad shows, and Send-TestPin finds it again right before the typing; a state that Android does not
-# say clearly never types, so the PIN never reaches another app's field. Returns $true when the phone is unlocked, and
-# $false when it typed nothing (the phone did not show its PIN pad). The PIN is typed at most once in a call, and a
-# typing that did not unlock the phone within 10 s throws "the unlock failed" and stops every later unlock of the run,
-# which then throws at once: One UI locks the phone for a while after 5 wrong PINs, and can reset it after 15 when that
-# is switched on. Every other failure on the phone throws "the unlock failed" too, and the records of $Error that the
-# call added are removed, so the PIN never reaches a result, a log, $Error or the console. Needs scripts\lib\Kestrel.ps1
-# and scripts\lib\Oracle.ps1.
+# when Android asks for the PIN. It wakes the screen, and while the keyguard shows and no activity shows over it, it
+# turns the screen off and on, swipes up from the screen's lower part 2 s after the wake, sends 'wm dismiss-keyguard',
+# and lets Send-TestPin type the PIN when Send-TestPin finds the PIN pad; without the PIN pad it tries again, 3 times in
+# all. Android's lock screen and One UI's both answer the swipe with the PIN pad, and the command shows the pad for a
+# lock screen with a PIN. One UI (the A71) turns its lock screen off about 10 s after the screen came on, and neither a
+# swipe nor a look at the hierarchy keeps it on, so each try starts from a fresh wake, within which the PIN pad must
+# come up and the PIN be typed; One UI also loses a swipe in the first second or two after a wake. A PIN pad that is
+# still up from an earlier try gets the swipe on its key 0, and Send-TestPin deletes that digit before the typing. A
+# state that Android does not say clearly never types, so the PIN never reaches another app's field. Returns $true when
+# the phone is unlocked, and $false when it typed nothing (the phone did not show its PIN pad). The PIN is typed at most
+# once in a call, and a typing that did not unlock the phone within 10 s throws "the unlock failed" and stops every
+# later unlock of the run, which then throws at once: One UI locks the phone for a while after 5 wrong PINs, and can
+# reset it after 15 when that is switched on. Every other failure on the phone throws "the unlock failed" too, and the
+# records of $Error that the call added are removed, so the PIN never reaches a result, a log, $Error or the console.
+# Needs scripts\lib\Kestrel.ps1 and scripts\lib\Oracle.ps1.
 function Unlock-TestPhone([string]$Serial, [string]$ConfigPath) {
     # A missing file or key stops here, before a command reaches the phone.
     Send-TestPin -ConfigPath $ConfigPath -CheckOnly
@@ -615,39 +603,42 @@ function Unlock-TestPhone([string]$Serial, [string]$ConfigPath) {
     try {
         Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_WAKEUP' | Out-Null
         Start-Sleep -Seconds 1
-        $activities = @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')
-        $keyguard = Test-KeyguardShowing $activities
-        if ($keyguard -eq $false) { return $true }
-        if ($null -eq $keyguard -or (Test-KeyguardOccluded $activities)) { return $false }
-        $pad = Get-PinPadState -Serial $Serial
-        if ($pad -eq $false) { return $true }
-        if ($pad -ne $true) {
-            if ("$(Invoke-SettingsCommand -Serial $Serial -Command 'wm size')" -match '(\d+)x(\d+)') {
-                $x = [int]([int]$Matches[1] / 2)
-                Invoke-SettingsCommand -Serial $Serial -Command "input swipe $x $([int]([int]$Matches[2] * 0.8)) $x $([int]([int]$Matches[2] * 0.3)) 300" | Out-Null
-            }
-            Invoke-SettingsCommand -Serial $Serial -Command 'wm dismiss-keyguard' | Out-Null
-            Start-Sleep -Seconds 2
-            $pad = Get-PinPadState -Serial $Serial
-            if ($pad -eq $false) { return $true }
-            # Only on the PIN pad: the PIN must never reach another app's field.
-            if ($pad -ne $true) { return $false }
+        $swipe = $null
+        if ("$(Invoke-SettingsCommand -Serial $Serial -Command 'wm size')" -match '(\d+)x(\d+)') {
+            $x = [int]([int]$Matches[1] / 2)
+            $swipe = "input swipe $x $([int]([int]$Matches[2] * 0.8)) $x $([int]([int]$Matches[2] * 0.3)) 300"
         }
-        # Set before the typing, so that also a typing that failed half-way is never repeated.
-        $script:TestPinRefused = $true
-        if ((Send-TestPin -Serial $Serial -ConfigPath $ConfigPath) -eq $false) {
-            # The PIN pad no longer showed, and nothing was typed.
-            $script:TestPinRefused = $false
-            return $false
-        }
-        for ($second = 0; $second -lt 10; $second++) {
+        for ($try = 0; $try -lt 3; $try++) {
+            $activities = @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')
+            $keyguard = Test-KeyguardShowing $activities
+            if ($keyguard -eq $false) { return $true }
+            if ($null -eq $keyguard -or (Test-KeyguardOccluded $activities)) { return $false }
+            Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_SLEEP' | Out-Null
             Start-Sleep -Seconds 1
-            if ((Test-KeyguardShowing @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')) -eq $false) {
+            Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_WAKEUP' | Out-Null
+            Start-Sleep -Seconds 2
+            if ($swipe) { Invoke-SettingsCommand -Serial $Serial -Command $swipe | Out-Null }
+            Invoke-SettingsCommand -Serial $Serial -Command 'wm dismiss-keyguard' | Out-Null
+            Start-Sleep -Seconds 1
+            # Set before the typing, so that also a typing that failed half-way is never repeated.
+            $script:TestPinRefused = $true
+            if ((Send-TestPin -Serial $Serial -ConfigPath $ConfigPath) -eq $false) {
+                # No PIN pad, so nothing was typed.
                 $script:TestPinRefused = $false
-                return $true
+                continue
             }
+            for ($second = 0; $second -lt 10; $second++) {
+                Start-Sleep -Seconds 1
+                if ((Test-KeyguardShowing @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')) -eq $false) {
+                    $script:TestPinRefused = $false
+                    return $true
+                }
+            }
+            $failed = $true
+            break
         }
-        $failed = $true
+        # Nothing was typed; the last swipe can have unlocked a lock screen without a PIN.
+        if (-not $failed) { return (Test-KeyguardShowing @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys activity activities')) -eq $false }
     } catch {
         $failed = $true
     } finally {
@@ -659,7 +650,7 @@ function Unlock-TestPhone([string]$Serial, [string]$ConfigPath) {
 # Closes an "isn't responding" dialog that has the focus on $Serial (Get-AnrPackage), such as one of Chrome's after the
 # Custom Tab tests, with its button "Close app" (the view ID aerr_close of the package android, or the text "Close app"),
 # because it stays over every app, and the checks after it would fail without a reason in their lines. The dialog's
-# hierarchy is read as the PIN pad's is (Get-PinPadState): 'uiautomator dump' to /data/local/tmp, of which only the
+# hierarchy is read as the PIN pad's is (Send-TestPin): 'uiautomator dump' to /data/local/tmp, of which only the
 # button's bounds leave the phone. That dump unbinds every accessibility service for up to 10 s, so after a tap the
 # function waits 10 s. Returns $null when no such dialog has the focus, or else the text of a result line that says what
 # it did. Needs scripts\lib\Kestrel.ps1 and scripts\lib\Oracle.ps1.

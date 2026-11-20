@@ -516,8 +516,8 @@ Describe 'The owner''s settings and the test PIN' {
             }
         }
 
-        It 'types the PIN once, only while the lock screen''s PIN pad shows' {
-            Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++; $phone.Keyguard = 'false' } }
+        It 'types the PIN once, after a fresh wake and a swipe that brings up the PIN pad' {
+            Mock Send-TestPin { if (-not $CheckOnly) { if (-not $phone.Pad) { return $false }; $phone.Typed++; $phone.Keyguard = 'false' } }
             $phone.Pad = $false
             $phone.PadAfterSwipe = $true
 
@@ -525,30 +525,33 @@ Describe 'The owner''s settings and the test PIN' {
 
             $phone.Typed | Should -Be 1
             @($phone.Commands | Where-Object { $_ -match '2468' }).Count | Should -Be 0
-            $phone.Commands.IndexOf('wm dismiss-keyguard') | Should -BeGreaterThan -1
-            # A look at the screen's hierarchy before and after the swipe, in the shell's folder, which exists before the
-            # first unlock.
-            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump *' }).Count | Should -Be 2
-            @($phone.Commands | Where-Object { $_ -like 'uiautomator dump /data/local/tmp/*' }).Count | Should -Be 2
+            # One UI turns its lock screen off about 10 s after the screen came on, so the swipe follows a fresh wake.
+            $sleep = $phone.Commands.IndexOf('input keyevent KEYCODE_SLEEP')
+            $swipe = [array]::IndexOf(@($phone.Commands | ForEach-Object { $_ -like 'input swipe *' }), $true)
+            $sleep | Should -BeGreaterThan -1
+            $phone.Commands.LastIndexOf('input keyevent KEYCODE_WAKEUP') | Should -BeGreaterThan $sleep
+            $swipe | Should -BeGreaterThan $phone.Commands.LastIndexOf('input keyevent KEYCODE_WAKEUP')
+            $phone.Commands.IndexOf('wm dismiss-keyguard') | Should -BeGreaterThan $swipe
             Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
             $phone.Typed | Should -Be 1
         }
 
-        It 'does not swipe over a PIN pad that already shows, and types nothing when the pad is gone right before the typing' {
-            Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++; $phone.Keyguard = 'false' } }
+        It 'tries three times when the PIN pad does not come up, and types nothing' {
+            Mock Send-TestPin { if (-not $CheckOnly) { if (-not $phone.Pad) { return $false }; $phone.Typed++; $phone.Keyguard = 'false' } }
+            $phone.Pad = $false
 
-            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
-
-            $phone.Typed | Should -Be 1
-            @($phone.Commands | Where-Object { $_ -like 'input swipe *' -or $_ -eq 'wm dismiss-keyguard' }).Count | Should -Be 0
-            $phone.Keyguard = 'true'
-            Mock Send-TestPin { if (-not $CheckOnly) { $false } }
             Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
+
+            $phone.Typed | Should -Be 0
+            @($phone.Commands | Where-Object { $_ -like 'input swipe *' }).Count | Should -Be 3
             # Nothing was typed, so a later unlock may type.
             $script:TestPinRefused | Should -BeFalse
+            $phone.PadAfterSwipe = $true
+            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeTrue
+            $phone.Typed | Should -Be 1
         }
 
-        It 'types nothing when Android does not say clearly that the PIN pad shows, or an activity shows over the lock screen' {
+        It 'types nothing and does not swipe when Android does not say clearly that the keyguard shows, or an activity shows over it' {
             Mock Send-TestPin { if (-not $CheckOnly) { $phone.Typed++ } }
             $phone.Keyguard = 'unknown'
 
@@ -556,12 +559,9 @@ Describe 'The owner''s settings and the test PIN' {
             $phone.Keyguard = 'true'
             $phone.Occluded = 'true'
             Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
-            $phone.Occluded = 'false'
-            $phone.Pad = $false
-            Unlock-TestPhone -Serial 'R58N' -ConfigPath $config | Should -BeFalse
 
             $phone.Typed | Should -Be 0
-            @($phone.Commands | Where-Object { $_ -like 'input swipe *' }).Count | Should -Be 1
+            @($phone.Commands | Where-Object { $_ -like 'input swipe *' -or $_ -eq 'input keyevent KEYCODE_SLEEP' }).Count | Should -Be 0
         }
 
         It 'types a PIN that did not unlock the phone only once in the run' {
@@ -618,6 +618,9 @@ Describe 'The owner''s settings and the test PIN' {
             $lines = @($lines[0]) + @($lines | Select-Object -Skip 2)
             # The device check, the last look at the PIN pad and the typing go in one shell call.
             ($lines -join "`n") | Should -Match '^-s R58N shell\s+case .*uiautomator dump .*grep -c .*input text 2468 && .*esac'
+            # The field is emptied first: with One UI's PIN that confirms itself at its last digit, a digit left in the
+            # field would make the typed PIN a wrong one.
+            ($lines -join "`n") | Should -Match 'input keyevent (KEYCODE_DEL ){8}&& input text 2468 &&'
         }
     }
 }
