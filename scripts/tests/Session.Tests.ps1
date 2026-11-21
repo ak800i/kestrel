@@ -422,6 +422,12 @@ Describe 'The helpers of the re-checks of plan 2E' {
         (Get-BargeInDecision @((New-Row 15 -24.2 -12.0 0), (New-Row 5 -12.0 -30.0 2))).Branch | Should -BeExactly 'blocked'
         (Get-BargeInDecision @([pscustomobject]@{ Volume = 15; Max = 15; ClipDb = $null; EchoDb = -12.0; Tries = 1; Interrupted = 0 })).Branch | Should -BeExactly 'unmeasured'
     }
+
+    It 'measures barge-in at the owner''s assistant volume and at 2, 3 and 4 below it, never below 1 and never twice' {
+        Get-BargeInVolumes 7 | Should -Be @(7, 5, 4, 3)
+        Get-BargeInVolumes 3 | Should -Be @(3, 1)
+        Get-BargeInVolumes 1 | Should -Be @(1)
+    }
 }
 
 Describe 'The host audio input of kestrel-api37 in the dry runs' {

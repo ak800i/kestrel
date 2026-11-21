@@ -10,7 +10,8 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-session.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-NoticeLetter', 'Invoke-CorpusClip', 'Initialize-Air', 'Start-KestrelAfterTests', 'Start-Kestrel')
+    $helpers = @('Get-NoticeLetter', 'Invoke-CorpusClip', 'Initialize-Air', 'Start-KestrelAfterTests', 'Start-Kestrel',
+        'Get-AssistantVolume', 'Set-AssistantVolume', 'Invoke-BargeInStep')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -25,6 +26,15 @@ BeforeAll {
     function Invoke-Checked([string]$Command) { }
     function Get-VoiceState { }
     function Wait-Mode([string]$Mode, [double]$TimeoutSeconds) { }
+    # The step barge-in measures and restores through these, which the tests mock.
+    function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$Action) { }
+    function Complete-Restore($Restore) { }
+    function Assert-TestDevice([string]$Serial) { }
+    function Stop-Kestrel { }
+    function Get-EvalFolder { }
+    function Set-SpeakerLevel([double]$TargetDb, [scriptblock]$Measure) { }
+    function Measure-BargeInTry([double]$Gain) { }
+    function Measure-ReplyTail([int]$Try) { }
 }
 
 Describe 'The helpers of the A71 session of sub-project 2' {
@@ -93,5 +103,47 @@ Describe 'The helpers of the A71 session of sub-project 2' {
             Should -Invoke Add-Result -Times 1 -Exactly -ParameterFilter { $StepName -eq 'voice' -and $Text -like 'skipped: corpus\generated has no kokoro\c041.wav*' }
             Should -Invoke Invoke-Hook -Times 0 -Exactly
         }
+    }
+
+    It 'measures barge-in with the assistant volume (stream 11) from the owner''s index down, fails a row whose volume did not take, and puts the volume back' {
+        $DryRun = $true
+        $Serial = 'emulator-5554'
+        $adb = 'adb'
+        # The phone's assistant volume, which ignores a set to 4.
+        $device = @{ Assistant = 7; Commands = [System.Collections.Generic.List[string]]::new() }
+        $tried = [System.Collections.Generic.List[int]]::new()
+        $tailVolumes = [System.Collections.Generic.List[int]]::new()
+        $results = [System.Collections.Generic.List[string]]::new()
+        $restores = [System.Collections.Generic.List[object]]::new()
+        Mock Invoke-Checked {
+            $device.Commands.Add($Command)
+            if ($Command -match '--stream 11 --set (\d+)$' -and $Matches[1] -ne '4') { $device.Assistant = [int]$Matches[1] }
+            if ($Command -like '*--stream 11 --get') { "volume is $($device.Assistant) in range [0..15]" }
+        }
+        Mock Invoke-Hook { 'boost=2.0 threshold=0.15' }
+        Mock Add-Result { $results.Add($Text) }
+        Mock Initialize-Air { $true }
+        Mock Start-Kestrel { }
+        Mock Register-Restore {
+            $restore = [pscustomobject]@{ What = $What; Data = $Data; Action = $Action }
+            $restores.Add($restore)
+            $restore
+        }
+        Mock Complete-Restore { & $Restore.Action $Restore.Data }
+        Mock Measure-BargeInTry { $tried.Add($device.Assistant); [pscustomobject]@{ EchoDb = -15.0; Interrupted = $false; Rise = '' } }
+        Mock Measure-ReplyTail { $tailVolumes.Add($device.Assistant); $false }
+
+        Invoke-BargeInStep
+
+        $tried | Select-Object -Unique | Should -Be @(7, 5, 3)
+        $tried.Count | Should -Be 9
+        $tailVolumes | Should -Be @(7)
+        $device.Assistant | Should -Be 7
+        $restores.What | Should -Be @('the assistant volume (stream 11)')
+        $restores.Data | Should -Be @(7)
+        @($device.Commands | Where-Object { $_ -like '*--stream 3*' }) | Should -BeNullOrEmpty
+        @($results | Where-Object { $_ -like 'the assistant volume (stream 11), which Kestrel''s replies use, is 7 of 15*' }).Count | Should -Be 1
+        @($results | Where-Object { $_ -like 'assistant volume 4 of 15: failed: it read back as 5*' }).Count | Should -Be 1
+        $results[-1] | Should -BeLike 'decision: branch=unmeasured *'
     }
 }

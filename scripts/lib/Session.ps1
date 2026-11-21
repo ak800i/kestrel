@@ -474,6 +474,14 @@ function Get-BargeInDecision([object[]]$Rows) {
     $decision
 }
 
+# The assistant volume's indices at which the A71 session's step barge-in measures (plan 4E): the owner's index $Owner,
+# which gives the decision's normal row, and the indices 2, 3 and 4 below it, at least 1 and only below his. On the A71
+# (7 of 15) they are 7, 5, 4 and 3, which lower Kestrel's echo by about 0, 9, 13 and 18 dB (inv-4e-stream), on both
+# sides of the 15 dB limit of the branch volume.
+function Get-BargeInVolumes([int]$Owner) {
+    @($Owner) + @(2, 3, 4 | ForEach-Object { [math]::Max(1, $Owner - $_) } | Where-Object { $_ -lt $Owner } | Select-Object -Unique)
+}
+
 # Turns the host audio input of the emulator kestrel-api37 on or off through its console ('avd hostmicon' and 'avd
 # hostmicoff'), so that a dry run of the A71 sessions hears only the texts that it sends, and not the sound of this
 # computer's microphone, which can start a command of its own during a check. The console has no command that reads

@@ -10,7 +10,7 @@
 # he does and what the phone shows, and the script then says that he may leave. After listen-check's restart,
 # listen-check.ps1 unlocks the A71 with the owner's test PIN, which he allows the sessions to use; this script checks at
 # its start, on the A71 only, that corpus\owner\a71-config.json has it (the key "pin"), and stops with a clear message
-# otherwise. The steps' estimates add up to 4 hours 14 minutes, of which about 2 minutes need the owner's hands, and he
+# otherwise. The steps' estimates add up to 4 hours 18 minutes, of which about 2 minutes need the owner's hands, and he
 # waits near the phone for about 5 more while the step earbuds runs. The steps:
 #   install       installs Kestrel's debug build, copies the speech models with the Kokoro voice and Kokoro's int8 model,
 #                 which only a voice device test loads, installs the fixture app dev.kestrel.testapp, and grants Kestrel
@@ -49,11 +49,12 @@
 #                 the end of the speech to Kestrel's reaction, all from the phone (20 minutes)
 #   barge-in      Kestrel's own voice at its microphone against this computer's "Kestrel" (plan 4E): the spotter's
 #                 default setting again; the gains for "Kestrel" at -24, -18 and -12 dBFS at the phone, measured with
-#                 voice-record while Kestrel is off; then at its top, at two thirds and at a third of it, for each level, 4
+#                 voice-record while Kestrel is off; then, with the assistant volume (stream 11), which Kestrel's replies
+#                 use, at the owner's index and at 2, 3 and 4 below it (at least 1), each read back, for each level, 4
 #                 tries in which Kestrel reads a long reply, the phone reads the level of Kestrel's own voice (voice-route's
-#                 frameRms) and the speaker plays "Kestrel"; then 3 replies to their end and the commands that started
-#                 after them; and the decision that plan 4E's Task 5 follows (Get-BargeInDecision); the media volume comes
-#                 back at the end (16 minutes)
+#                 frameRms) and the speaker plays "Kestrel"; then 3 replies to their end at the owner's index and the
+#                 commands that started after them; and the decision that plan 4E's Task 5 follows (Get-BargeInDecision);
+#                 the assistant volume comes back at the end (20 minutes)
 #   memory        three starts and closes with the chosen voice and with Kokoro, with the peak PSS and the memory
 #                 categories, and a cold start through the tile, which the script taps itself (12 minutes)
 #   battery       three measures of 30 minutes, each timed by batterystats: a quiet room, the quiet room with one generated
@@ -67,12 +68,12 @@
 # on while the phone is plugged in. The script puts back what it changes on the phone, also when a step fails or Ctrl+C
 # stops it: Kestrel's mode Off, the hooks' slow task, the keyword spotter's setting, the setting "Stay awake", the
 # assistant role and its settings, Kestrel's battery restriction (as allow or ignore, never as default, which Android
-# counts as restricted), Kestrel's voice, the accessibility settings, Quick Settings' tiles, Bluetooth, the screen's
-# timeout, the battery's state, the fixture app when it was not installed before, and, through the debug hooks
-# owner-options and notices, the setting "Use the earbud microphone" and Kestrel's notices about problems. It cannot put
-# back the battery statistics, which the battery measures reset; every warning at its end says how to put a thing back by
-# hand. It refuses every device but the A71 and kestrel-api37. -Unattended runs without the owner and skips the step
-# earbuds. -DryRun runs the session on kestrel-api37 without the owner: it
+# counts as restricted), Kestrel's voice, the accessibility settings, Quick Settings' tiles, Bluetooth, the assistant
+# volume (stream 11), the screen's timeout, the battery's state, the fixture app when it was not installed before, and,
+# through the debug hooks owner-options and notices, the setting "Use the earbud microphone" and Kestrel's notices about
+# problems. It cannot put back the battery statistics, which the battery measures reset; every warning at its end says
+# how to put a thing back by hand. It refuses every device but the A71 and kestrel-api37. -Unattended runs without the
+# owner and skips the step earbuds. -DryRun runs the session on kestrel-api37 without the owner: it
 # sends each clip's text through the voice hook in place of the speaker, plays no sound, runs listen-check.ps1 without
 # -Reboot, skips voice-test.ps1 and the earbuds, shortens the waits and the battery measures to a minute, and turns the
 # emulator's host audio input off, so that this computer's microphone reaches no step, and on again at its end. -Step
@@ -1309,11 +1310,20 @@ function Invoke-VoiceStep {
     Measure-Tries voice '"Stop Kestrel"' c053 3 $quiet { param($Counts, $State) $Counts -and $State.mode -eq 'off' } 10
 }
 
-# The media volume, which Kestrel's replies use (stream 3), and its top, from 'cmd media_session volume --stream 3 --get'.
-function Get-MediaVolume {
-    $answer = (Invoke-Checked 'cmd media_session volume --stream 3 --get') -join ' '
+# The assistant volume, which Kestrel's replies use, and its top, from 'cmd media_session volume --stream 11 --get'.
+# VoicePlayer plays with USAGE_ASSISTANT and CONTENT_TYPE_SPEECH, which Android plays on STREAM_ASSISTANT (11); One UI
+# keeps that volume apart from the media volume (stream 3), which does not reach Kestrel's replies (inv-4e-stream).
+function Get-AssistantVolume {
+    $answer = (Invoke-Checked 'cmd media_session volume --stream 11 --get') -join ' '
     if ($answer -notmatch 'volume is (\d+) in range \[(\d+)\.\.(\d+)\]') { throw "Not an answer of cmd media_session volume: '$answer'" }
     [pscustomobject]@{ Index = [int]$Matches[1]; Max = [int]$Matches[3] }
+}
+
+# Sets the assistant volume (stream 11) to $Index, and returns the index that it reads back, so that the caller sees
+# whether the set took.
+function Set-AssistantVolume([int]$Index) {
+    Invoke-Checked "cmd media_session volume --stream 11 --set $Index" | Out-Null
+    (Get-AssistantVolume).Index
 }
 
 # The level at which the phone hears this computer's "Kestrel" (c041 in the Kokoro voice) with $Gain: Kestrel is off and
@@ -1385,11 +1395,15 @@ function Invoke-BargeInStep {
     if (-not (Initialize-Air barge-in)) { return }
     # The A71 run of plan 4D may have left another setting in Kestrel's process; it counts from the next start.
     Add-Result barge-in "the keyword spotter's setting: $(Invoke-Hook voice-spotter @{ Boost = 2; Threshold = 0.15 })"
-    $volume = Get-MediaVolume
-    $volumeRestore = Register-Restore 'the media volume' "Run: & '$adb' -s $Serial shell cmd media_session volume --stream 3 --set $($volume.Index)" $volume.Index {
+    $volume = Get-AssistantVolume
+    $indices = Get-BargeInVolumes $volume.Index
+    Add-Result barge-in ("the assistant volume (stream 11), which Kestrel's replies use, is $($volume.Index) of $($volume.Max) (the owner's), " +
+        "so the rows measure at $($indices -join ', ')")
+    $volumeRestore = Register-Restore 'the assistant volume (stream 11)' "Run: & '$adb' -s $Serial shell cmd media_session volume --stream 11 --set $($volume.Index)" $volume.Index {
         param($Data)
         Assert-TestDevice -Serial $Serial
-        Invoke-Checked "cmd media_session volume --stream 3 --set $Data" | Out-Null
+        $back = Set-AssistantVolume $Data
+        if ($back -ne $Data) { throw "the assistant volume read back as $back, not $Data" }
     }
     $story = 'Here is a long reply, so that you can interrupt it. ' + ('The news of the day comes one sentence after another, at an even pace. ' * 6)
     Invoke-Hook voice-task @{ Seconds = 1; Reply = $story } | Out-Null
@@ -1413,12 +1427,16 @@ function Invoke-BargeInStep {
             Invoke-Checked "rm -f $(Get-EvalFolder)/level.wav" | Out-Null
         }
         Start-Kestrel
-        # Two thirds of the top lowers Kestrel's echo by about as much as the branch volume may (15 dB), so the row there
-        # with the owner's level tests that branch directly.
-        foreach ($index in @($volume.Max, [int][math]::Round($volume.Max * 2 / 3), [math]::Max(1, [int][math]::Round($volume.Max / 3)))) {
-            Invoke-Checked "cmd media_session volume --stream 3 --set $index" | Out-Null
+        # The owner's index gives the normal row; the indices below it lower Kestrel's echo on both sides of the 15 dB
+        # that the branch volume may take (Get-BargeInVolumes).
+        foreach ($index in $indices) {
+            $back = Set-AssistantVolume $index
+            if ($back -ne $index) {
+                Add-Result barge-in "assistant volume $index of $($volume.Max): failed: it read back as $back, so its rows were not measured"
+                continue
+            }
             foreach ($level in $levels) {
-                $name = "volume $index of $($volume.Max), ""Kestrel"" for $($level.Target) dBFS"
+                $name = "assistant volume $index of $($volume.Max), ""Kestrel"" for $($level.Target) dBFS"
                 $echoes = [System.Collections.Generic.List[double]]::new()
                 $done = 0
                 $interrupted = 0
@@ -1446,18 +1464,23 @@ function Invoke-BargeInStep {
                 Add-Result barge-in "${name}: Kestrel's own voice at a median $(if ($null -ne $echo) { "$echo dBFS" } else { 'nothing' }); interrupted in $interrupted of $done tries"
             }
         }
-        Invoke-Checked "cmd media_session volume --stream 3 --set $($volume.Max)" | Out-Null
-        $tails = 0
+        # The replies' ends run at the owner's own assistant volume, as he hears Kestrel.
+        $back = Set-AssistantVolume $volume.Index
         $tailTries = if ($DryRun) { 1 } else { 3 }
-        for ($try = 1; $try -le $tailTries; $try++) {
-            try {
-                if (Measure-ReplyTail $try) { $tails++ }
-            } catch {
-                if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
-                Add-Result barge-in "the reply's end, try ${try}: failed: $($_.Exception.Message)"
+        if ($back -ne $volume.Index) {
+            Add-Result barge-in "the replies' ends: failed: the assistant volume read back as $back, not $($volume.Index), so they were not measured"
+        } else {
+            $tails = 0
+            for ($try = 1; $try -le $tailTries; $try++) {
+                try {
+                    if (Measure-ReplyTail $try) { $tails++ }
+                } catch {
+                    if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
+                    Add-Result barge-in "the reply's end, try ${try}: failed: $($_.Exception.Message)"
+                }
             }
+            Add-Result barge-in "a command started after $tails of $tailTries replies that nobody interrupted, at the assistant volume $($volume.Index) of $($volume.Max)"
         }
-        Add-Result barge-in "a command started after $tails of $tailTries replies that nobody interrupted"
     } finally {
         Invoke-Hook voice-task @{ Clear = $true } | Out-Null
         Complete-Restore $volumeRestore
@@ -1739,7 +1762,7 @@ $plan = @(
     @{ Name = 'assistant'; Minutes = 5; Title = 'Kestrel as the assistant without its accessibility service'; Run = 'Invoke-AssistantStep' }
     @{ Name = 'spotter'; Minutes = 16; Title = '"Hey Kestrel" and played speech with three settings of the keyword spotter'; Run = 'Invoke-SpotterStep' }
     @{ Name = 'voice'; Minutes = 20; Title = 'Kestrel''s keywords, interruptions and "Stop Kestrel" from the speaker'; Run = 'Invoke-VoiceStep' }
-    @{ Name = 'barge-in'; Minutes = 16; Title = 'Kestrel''s own voice at its microphone against "Kestrel" from the speaker'; Run = 'Invoke-BargeInStep' }
+    @{ Name = 'barge-in'; Minutes = 20; Title = 'Kestrel''s own voice at its microphone against "Kestrel" from the speaker, with the assistant volume (stream 11)'; Run = 'Invoke-BargeInStep' }
     @{ Name = 'memory'; Minutes = 12; Title = 'memory with Piper and Kokoro, and a cold start through the tile'; Run = 'Invoke-MemoryStep' }
     @{ Name = 'battery'; Minutes = 95; Title = 'three battery measures of 30 minutes'; Run = 'Invoke-BatteryStep' }
     @{ Name = 'failures-late'; Minutes = 1; Title = 'Kestrel''s logged failures since listen-check'; Run = 'Invoke-LateFailuresStep' }
