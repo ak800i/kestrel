@@ -123,9 +123,9 @@ Since plan 4D, the three A71 scripts check the device by themselves and need you
 
 | Script | Checks passed on the A71 | Notes |
 |---|---|---|
-| `a71-commands.ps1` | not run yet | |
-| `a71-session.ps1` | not run yet | |
-| `a71-providers.ps1` | not run yet | |
+| `a71-commands.ps1` | 3 of 4 (owner), 115 of 122 (text), 85 of 94 (Kokoro), 73 of 94 (Piper); corpus: 156 of 160 Kokoro and 148 of 160 Piper clips matched | 2026-11-20 and 2026-11-21. The finger did not cancel the countdown: the touch came too late, and the script cancelled it; "cancel", "stop" and the tap cancelled the other three, and no call was made. The 7 failed text checks were bugs of the checks on One UI, fixed in 8d223be; afterwards those steps passed 54 of 54. Commands right in the corpus: 91.3 % with Kokoro (target at least 95 %) and 79.3 % with Piper (at least 88 %), so both miss their targets. Transcription through the air: a median of 446 ms and a 90th percentile of 466 ms. On One UI, Kestrel's brightness change is only temporary. |
+| `a71-session.ps1` | 88 of 88 voice tests; listen-check 5 of 7, then the other 2 after the fix | "Kestrel" and "Hey Kestrel" 5 of 5, "Kestrel, wake up" 3 of 5, "Stop Kestrel" 2 of 3, interruptions 0 of 6. The keyword spotter's rule kept boost 3.0 and threshold 0.1. Each start of listening takes about 7.5 s, because the models load one after another. Memory at most 991 MB with Piper and 1037 MB with Kokoro. Battery: 0.5 % per hour in a quiet room, 0.58 % with a task every 5 minutes, 3.12 % with room talk. With Kestrel on the battery allowlist, a start in the background succeeds, but Android silences the microphone, and Kestrel only says "Microphone blocked". The step `earbuds` did not run. |
+| `a71-providers.ps1` | the sign-in on both devices; on each, 10 of 13 live cases and the allowance; the A71's `CredentialStoreTest` and `LoopbackServerTest` passed, and `CustomTabSignInTest` 3 of 4, then 4 of 4 after the fix | Claude Haiku 5.5 answered 404 on both devices. The A71's first sign-in failed, because the step did not wait for the code (fixed in 2df0d45). `CustomTabSignInTest` failed because of a bug in the test on Android 13 (fixed in 8d223be). The profile worked after Kestrel's restart, and the A71 keeps it. |
 
 ## Setting up Kestrel
 
