@@ -1,5 +1,6 @@
 package dev.kestrel.safety
 
+import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScrollAxis
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -124,6 +125,83 @@ class ConfirmationBuilderTest {
 
         assertEquals("Send to Ana Petrović on Telegram: 'My code is your one-time code'? Say confirm or cancel.", asked.question)
         assertTrue(asked.spoken, "483" !in asked.spoken)
+    }
+
+    @Test
+    fun aVaultValueThatTheAppShowsWithNoBreakNarrowFigureOrThinSpacesIsNamedByItsKind() {
+        val (screen, button) = chat("Ana Petrović", "A 483\u00A0920 B 483\u202F920 C 483\u2009920 D 483\u2007920")
+        val typed = task.withSecret("483920", "your one-time code")
+
+        val asked = confirmation(ConfirmationBuilder.build(send(button), screen.snapshot(), Category.SENDING, typed))
+
+        assertEquals(
+            "Send to Ana Petrović on Telegram: 'A your one-time code B your one-time code C your one-time code D your one-time code'? Say confirm or cancel.",
+            asked.question,
+        )
+        val (card, cardButton) = chat("Ana Petrović", "4111\u00A01111\u00A01111\u00A01111")
+        val withCard = task.withSecret("4111 1111 1111 1111", "your card number")
+        assertEquals("your card number", confirmation(ConfirmationBuilder.build(send(cardButton), card.snapshot(), Category.SENDING, withCard)).content)
+    }
+
+    @Test
+    fun aTapAtIsConfirmedWithTheElementUnderItsPoint() {
+        fun list(shift: Int): TestScreen = TestScreen("com.example.notes").apply {
+            add(80, "Inbox", id = "toolbar_title", clickable = false, height = 50)
+            val rows = add(300, null, className = "androidx.recyclerview.widget.RecyclerView", height = 1200, clickable = false)
+            for (row in 0..3) add(300 + shift + row * 140, null, id = "note_$row", parent = rows, className = "android.view.ViewGroup", height = 140)
+        }
+        val delete = Proposal("tap", ActionKind.TAP_AT, Category.DELETING, point = Point(900, 500), pointText = "Delete", frontAppLabel = "Notes")
+        val before = list(0)
+
+        val asked = confirmation(ConfirmationBuilder.build(delete, before.snapshot(), Category.DELETING, task))
+
+        assertEquals("com.example.notes|3|", asked.targetKey)
+        assertTrue(asked.sameAs(confirmation(ConfirmationBuilder.build(delete, list(0).snapshot(), Category.DELETING, task))))
+        // The list moved by one row under the point: the same question, but another row.
+        val moved = confirmation(ConfirmationBuilder.build(delete, list(140).snapshot(), Category.DELETING, task))
+        assertEquals(asked.question, moved.question)
+        assertEquals(false, asked.sameAs(moved))
+    }
+
+    @Test
+    fun inSplitScreenTheQuestionNamesTheAppOfTheWindowThatHoldsTheActionNeverTheFrontApps() {
+        fun split(title: Boolean): Pair<dev.kestrel.screen.model.ScreenSnapshot, String> {
+            val screen = TestScreen("com.android.chrome", bounds = IntRect(0, 0, 1000, 1000))
+            screen.add(100, "Search or type URL", clickable = false)
+            screen.window(2, "com.whatsapp", IntRect(0, 1000, 1000, 2000), layer = 1)
+            if (title) screen.add(1050, "Ana", id = "chat_title", clickable = false, height = 50, window = 2)
+            screen.add(1800, null, editable = true, hint = "Message", text = "I'm late", right = 850, window = 2)
+            val key = screen.add(1800, null, left = 850, className = "android.widget.ImageButton", window = 2)
+            val snapshot = screen.snapshot().let { s -> s.copy(windows = s.windows.map { if (it.id == 2) it.copy(title = "WhatsApp") else it }) }
+            return snapshot to key
+        }
+        val (untitled, untitledSend) = split(title = false)
+        val (titled, titledSend) = split(title = true)
+
+        // The other window's title is never read as a recipient by the front app's label.
+        assertEquals(Decision.HandOver(HandOver.of(HandOverKind.RECIPIENT)), ConfirmationBuilder.build(send(untitledSend, "Chrome"), untitled, Category.SENDING, task))
+        assertEquals(
+            "Send to Ana on whatsapp: 'I'm late'? Say confirm or cancel.",
+            confirmation(ConfirmationBuilder.build(send(titledSend, "Chrome"), titled, Category.SENDING, task)).question,
+        )
+    }
+
+    @Test
+    fun aForwardedEmailIsAskedByItsRecipientFieldsAlsoInAShareFlow() {
+        val compose = TestScreen(SelfChats.GMAIL)
+        val button = compose.add(80, "Send", left = 850)
+        compose.add(200, null, id = "to", editable = true, text = "marko@example.com")
+        compose.add(400, null, id = "subject", editable = true, text = "Fwd: Plan")
+        compose.add(500, null, id = "body", editable = true, text = "See below.")
+        compose.add(700, "---------- Forwarded message ---------", clickable = false)
+        val inFlow = task.copy(shareFlow = ShareFlow(SelfChats.GMAIL, emptyList(), null, serial = 1))
+
+        for (state in listOf(task, inFlow)) {
+            assertEquals(
+                "Send an e-mail to marko@example.com, subject 'Fwd: Plan' with the forwarded message: 'See below.'? Say confirm or cancel.",
+                confirmation(ConfirmationBuilder.build(send(button, "Gmail"), compose.snapshot(), Category.SENDING, state)).question,
+            )
+        }
     }
 
     @Test

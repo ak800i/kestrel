@@ -43,6 +43,7 @@ internal object ContextRules {
     private val PICKER_WORDS = setOf("search", "pretraga", "trazi", "back", "close", "nazad", "zatvori", "navigate up")
     private val CLEAR_COMPANIONS = setOf("text", "search", "query")
     private val TAB_CLASSES = listOf("TabLayout", "TabWidget", "TabRow", "TabView", "Tab")
+    private val RECIPIENT_FIELDS = setOf("to", "cc", "bcc")
 
     /** A page's heading by the title's rules 1 to 3, never the window's title (design D13). */
     fun heading(snapshot: ScreenSnapshot, window: WindowSummary): String? = ScreenTitle.of(snapshot, window, appLabel = null)
@@ -90,6 +91,16 @@ internal object ContextRules {
      */
     fun messageField(snapshot: ScreenSnapshot, windowId: Int): ScreenElement? = snapshot.elements.firstOrNull { element ->
         element.windowId == windowId && element.editable && !element.password && !notMessageField(element)
+    }
+
+    /** The e-mail's recipient fields of window [windowId]: editable fields whose view ID or hint is To, Cc or Bcc. */
+    fun recipientFields(snapshot: ScreenSnapshot, windowId: Int): List<Int> =
+        snapshot.elements.indices.filter { snapshot.elements[it].windowId == windowId && isRecipientField(snapshot.elements[it]) }
+
+    fun isRecipientField(element: ScreenElement): Boolean {
+        val id = ScreenTree.idName(element.viewId)?.lowercase()
+        val hint = (element.hint ?: element.label)?.trim()?.lowercase()
+        return element.editable && (id in RECIPIENT_FIELDS || hint in RECIPIENT_FIELDS)
     }
 
     /**

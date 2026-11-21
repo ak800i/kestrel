@@ -45,8 +45,11 @@ object EmergencyGuard {
         // A view ID such as "emergencyButton" or "sos_call" splits into words.
         val id = element.viewId?.substringAfter(":id/")?.replace(Regex("([a-z])([A-Z])"), "$1 $2")
         val names = listOfNotNull(element.text, element.contentDescription, id, element.label.takeIf { element.isActionable })
-        return names.any { name -> Normalizer.words(name).any { it in EMERGENCY_WORDS } }
+        return names.any(::namesEmergency)
     }
+
+    /** R1's words in [text], such as an OCR line under a tap at a point: "emergency" or "sos" as a whole word. */
+    fun namesEmergency(text: String?): Boolean = text != null && Normalizer.words(text).any { it in EMERGENCY_WORDS }
 
     /**
      * Whether [element] is a phone app's number field: a text field, or a field with the view ID `digits`, which

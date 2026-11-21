@@ -3,6 +3,16 @@ package dev.kestrel.safety
 import dev.kestrel.commands.text.Normalizer
 
 /**
+ * What may stand between the digits or letters of a secret's groups: Android writes them with a no-break, figure, narrow
+ * no-break or thin space too (review 5A-4 Minor 2). The redactor and the questions' hiding of vault values share them.
+ */
+internal object Gaps {
+    const val SPACE = "[ \u00A0\u2007\u202F\u2009]"
+    const val GAP = "[ \u00A0\u2007\u202F\u2009-]"
+    val CHARS = setOf(' ', '\u00A0', '\u2007', '\u202F', '\u2009', '-')
+}
+
+/**
  * Replaces secrets with typed placeholders in every text that goes into a request (design D17 of sub-project 5; spec
  * 12.6): one-time codes near a keyword (in the text or in a neighbouring text of the same window), card numbers that pass
  * the Luhn check, IBANs with a valid checksum, JMBG numbers and access tokens. Phone numbers and e-mail addresses stay.
@@ -159,10 +169,9 @@ class Redactor(val vault: Vault) {
     private companion object {
         const val NEAR = 40
 
-        // Android writes digit groups with a no-break, figure, narrow no-break or thin space too (review 5A-4 Minor 2).
-        const val SPACE = "[ \u00A0\u2007\u202F\u2009]"
-        const val GAP = "[ \u00A0\u2007\u202F\u2009-]"
-        val GAPS = setOf(' ', '\u00A0', '\u2007', '\u202F', '\u2009', '-')
+        const val SPACE = Gaps.SPACE
+        const val GAP = Gaps.GAP
+        val GAPS = Gaps.CHARS
         val KEYWORDS = setOf("code", "codes", "kod", "kodovi", "sifra", "pin", "otp", "verification", "verifikacioni", "lozinka", "password")
         // Up to three groups ("12 34 56"); a longer number, such as a phone number, has more than 8 digits (review 2-2 New 3).
         val CODE = Regex("(?<![0-9A-Za-z])[0-9]{1,8}(?:$GAP[0-9]{1,8}){0,2}(?![0-9A-Za-z])")

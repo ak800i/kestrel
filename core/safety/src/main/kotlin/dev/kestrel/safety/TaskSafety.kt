@@ -51,6 +51,22 @@ data class TaskSafety(
      */
     fun withSecret(value: String, words: String): TaskSafety = copy(secrets = secrets + (value to words))
 
+    /**
+     * [text] with every vault value of [secrets] replaced by the words for its kind, matched as the redactor matches a
+     * known value, with or without a space of any width or a dash between its characters (design D14; review 2 I3). A
+     * question and the completion check compare texts in this form, so neither ever holds the value itself.
+     */
+    fun hide(text: String): String {
+        var result = text
+        for ((value, words) in secrets.entries.sortedByDescending { it.key.length }) {
+            val compact = value.filter { it !in Gaps.CHARS }
+            if (compact.isEmpty()) continue
+            val pattern = Regex(compact.map { Regex.escape(it.toString()) }.joinToString("${Gaps.GAP}?"), RegexOption.IGNORE_CASE)
+            result = pattern.replace(result) { words }
+        }
+        return result
+    }
+
     override fun toString(): String =
         "TaskSafety(allowance=$allowance, ownerWords=${ownerWords.size}, memoryValues=${memoryValues.size}, typed=${typed.size}, " +
             "shareFlow=$shareFlow, trail=$trail, flows=$flows, secrets=${secrets.size})"

@@ -1,6 +1,7 @@
 package dev.kestrel.safety
 
 import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTitle
@@ -13,9 +14,11 @@ import java.net.URISyntaxException
  * Builds each confirmation from the screen, never from the model's words (design D14 of sub-project 5; spec 12.4). A
  * question names the recipient as the screen shows it (a chat's title by the title's rules 1, 2 and 4 only, because rule 3
  * could be a message that an attacker wrote; in a share flow the rows, the chat or the dialog that the screen shows at
- * the moment of the send; in an e-mail every address and name of To, Cc and Bcc), the app by its launcher label (or its
- * package's last part), and the content as the screen shows it, a placeholder or a vault value that the task typed by its
- * kind; a long content is cut on the voice and shown whole on the card. A link that needs the owner's
+ * the moment of the send; in an e-mail every address and name of To, Cc and Bcc, also after a share flow led to it), the
+ * app by its launcher label (or its package's last part; in split screen, the package of the window that holds the
+ * action), and the content as the screen shows it, a placeholder or a vault value that the task typed by its
+ * kind; a long content is cut on the voice and shown whole on the card. A tap at a point is confirmed with the element
+ * under the point, so that the check after the yes sees another element when the screen moved under it. A link that needs the owner's
  * yes names its host and the app that opens it, both read from the link and the activity that `:app` resolved for it,
  * never from the model's words. When the code cannot fill a
  * question (no title, a title that is the app's name, a field that it cannot read, a recipient that it cannot parse), it
@@ -35,12 +38,21 @@ object ConfirmationBuilder {
         val point = proposal.point.takeIf { element == null }
         val window = screen.windows.firstOrNull { it.id == element?.windowId }
             ?: point?.let { ContextRules.windowAt(screen, it) } ?: ScreenTree.frontWindow(screen)
-        val app = appName(proposal.frontAppLabel, window?.packageName)
+        // In split screen the action can be in the other app's window: the front app's label never names it, and never
+        // takes part in the title's rule 4 there (review fix-5a-34's note).
+        val front = ScreenTree.frontWindow(screen)
+        val label = proposal.frontAppLabel.takeIf { window == null || front == null || window.packageName == front.packageName }
+        val app = appName(label, window?.packageName)
         val prefix = why?.let { "$it " }.orEmpty()
+        // The element that the press lands on: the target, or the element under a point, which the check after the yes
+        // compares, so that a list that moved under the point is another target (design D14).
+        val pressed = ContextRules.pressed(screen, index, point)
+        val targetKey = proposal.targetKey ?: pressed?.let { screen.elements[it].key }
+        val targetBounds = (element ?: pressed?.let { screen.elements[it] })?.bounds
         fun ask(body: String, content: String?, recipients: List<String> = emptyList()): Decision {
             val question = prefix + body + TAIL
             return Decision.Confirm(
-                Confirmation(question, spoken(prefix, body, content), category, recipients, app, content, proposal.targetKey, element?.bounds),
+                Confirmation(question, spoken(prefix, body, content), category, recipients, app, content, targetKey, targetBounds),
             )
         }
         when (proposal.kind) {
@@ -58,41 +70,41 @@ object ConfirmationBuilder {
             else -> Unit
         }
         val name = element?.let { ScreenTree.name(it) }
-        val pressed = ContextRules.pressed(screen, index, point)
         val flow = task.shareFlow
         if (flow == null && ContextRules.startsShare(screen, pressed, proposal.pointText)) {
             // In a chat, some such buttons share with that chat at once (review 2 M7).
             val chat = window?.takeIf { ContextRules.messageField(screen, it.id) != null }
-                ?.let { ScreenTitle.of(screen, it, proposal.frontAppLabel, withRule3 = false) }
-                ?.takeIf { !it.equals(proposal.frontAppLabel?.trim(), ignoreCase = true) }
+                ?.let { ScreenTitle.of(screen, it, label, withRule3 = false) }
+                ?.takeIf { !it.equals(label?.trim(), ignoreCase = true) }
             if (chat != null) return ask("Share this from $app? It may go to $chat at once.", null, listOf(chat))
             return ask("Share this from $app? You'll choose the chat next.", null)
         }
         if (category == Category.SENDING && window != null) {
             val handOver = Decision.HandOver(HandOver.of(HandOverKind.RECIPIENT))
+            // An e-mail names its recipients in To, Cc and Bcc, also when a share flow led to it (Gmail's Forward; D14).
+            val fields = ContextRules.recipientFields(screen, window.id)
+            if (fields.isNotEmpty()) return email(screen, window, fields, targetKey, targetBounds, prefix, category, app, task) ?: handOver
             if (flow != null) {
-                val recipients = flowRecipients(screen, pressed, window, flow, proposal.receivingAppLabel ?: proposal.frontAppLabel) ?: return handOver
+                val recipients = flowRecipients(screen, pressed, window, flow, proposal.receivingAppLabel ?: label) ?: return handOver
                 val what = flow.count?.let { items(it) } ?: "this"
                 // A target of Android's share sheet is an app or a direct-share chat (review 2 M9).
                 if (ContextRules.isShareSheet(screen, window)) return ask("Share $what with ${recipients.joinToString(" and ")}?", what, recipients)
-                val receiver = appName(proposal.receivingAppLabel ?: proposal.frontAppLabel, flow.receivingPackage)
+                val receiver = appName(proposal.receivingAppLabel ?: label, flow.receivingPackage)
                 return ask("Send $what to ${recipients.joinToString(" and ")} on $receiver?", what, recipients)
             }
-            val fields = screen.elements.indices.filter { screen.elements[it].windowId == window.id && recipientField(screen.elements[it]) }
-            if (fields.isNotEmpty()) return email(proposal, screen, window, fields, element, prefix, category, app, task) ?: handOver
-            val title = ScreenTitle.of(screen, window, proposal.frontAppLabel, withRule3 = false)
-                ?.takeIf { !it.equals(proposal.frontAppLabel?.trim(), ignoreCase = true) } ?: return handOver
+            val title = ScreenTitle.of(screen, window, label, withRule3 = false)
+                ?.takeIf { !it.equals(label?.trim(), ignoreCase = true) } ?: return handOver
             val text = composeField(screen, window, element)?.text?.trim().orEmpty()
             if (text.isEmpty()) return handOver
-            val shown = Placeholders.forConfirmation(hide(text, task))
+            val shown = Placeholders.forConfirmation(task.hide(text))
             return ask("Send to $title on $app: '$shown'?", shown, listOf(title))
         }
         if (category == Category.DELETING) {
             // Only the selected rows of a list count, never a checked switch beside it (review 2 M8).
             val selected = window?.let { ContextRules.checkedRows(screen, it.id).size } ?: 0
-            val title = window?.let { ScreenTitle.of(screen, it, proposal.frontAppLabel, withRule3 = false) }
-                ?.takeIf { !it.equals(proposal.frontAppLabel, ignoreCase = true) }
-                ?.let { Placeholders.forConfirmation(hide(it, task)) }
+            val title = window?.let { ScreenTitle.of(screen, it, label, withRule3 = false) }
+                ?.takeIf { !it.equals(label, ignoreCase = true) }
+                ?.let { Placeholders.forConfirmation(task.hide(it)) }
             return when {
                 selected > 0 -> ask("Delete $selected ${if (selected == 1) "item" else "items"} in $app?", "$selected")
                 title != null -> ask("Delete '$title' in $app?", title)
@@ -154,21 +166,6 @@ object ConfirmationBuilder {
         return listOf(title).takeIf { flow.selected.any { Normalizer.normalize(it) == Normalizer.normalize(title) } }
     }
 
-    /**
-     * [text] with every vault value that the task typed replaced by the words for its kind, matched as the redactor
-     * matches a known value, with or without spaces or dashes between its characters (design D14; review 2 I3).
-     */
-    private fun hide(text: String, task: TaskSafety): String {
-        var result = text
-        for ((value, words) in task.secrets.entries.sortedByDescending { it.key.length }) {
-            val compact = value.filter { it != ' ' && it != '-' }
-            if (compact.isEmpty()) continue
-            val pattern = Regex(compact.map { Regex.escape(it.toString()) }.joinToString("[ -]?"), RegexOption.IGNORE_CASE)
-            result = pattern.replace(result) { words }
-        }
-        return result
-    }
-
     /** The app's launcher label, or the last part of its package. */
     fun appName(label: String?, packageName: String?): String =
         label?.takeIf { it.isNotBlank() } ?: packageName?.substringAfterLast('.') ?: "this app"
@@ -179,11 +176,11 @@ object ConfirmationBuilder {
      * recipient field cannot be read as an address.
      */
     private fun email(
-        proposal: Proposal,
         screen: ScreenSnapshot,
         window: WindowSummary,
         fields: List<Int>,
-        element: ScreenElement?,
+        targetKey: String?,
+        targetBounds: IntRect?,
         prefix: String,
         category: Category,
         app: String,
@@ -207,8 +204,8 @@ object ConfirmationBuilder {
         if (recipients.isEmpty()) return null
         val inWindow = screen.elements.filter { it.windowId == window.id }
         fun isSubject(it: ScreenElement) = ScreenTree.idName(it.viewId)?.contains("subject", ignoreCase = true) == true || it.hint.equals("Subject", ignoreCase = true)
-        val subject = Placeholders.forConfirmation(hide(inWindow.firstOrNull { it.editable && isSubject(it) }?.text?.trim().orEmpty(), task))
-        val body = hide(inWindow.firstOrNull { it.editable && !recipientField(it) && !isSubject(it) }?.text?.trim().orEmpty(), task)
+        val subject = Placeholders.forConfirmation(task.hide(inWindow.firstOrNull { it.editable && isSubject(it) }?.text?.trim().orEmpty()))
+        val body = task.hide(inWindow.firstOrNull { it.editable && !ContextRules.isRecipientField(it) && !isSubject(it) }?.text?.trim().orEmpty())
         val attachments = inWindow.count { ScreenTree.idName(it.viewId)?.contains("attachment", ignoreCase = true) == true }
         val forwarded = inWindow.any { it.text?.contains("Forwarded message", ignoreCase = true) == true }
         val extra = when {
@@ -221,14 +218,8 @@ object ConfirmationBuilder {
         val shown = Placeholders.forConfirmation(body)
         val sentence = "Send an e-mail to ${main.joinToString(" and ")}$copyText, subject '$subject'$extra: '$shown'?"
         return Decision.Confirm(
-            Confirmation(prefix + sentence + TAIL, spoken(prefix, sentence, shown), category, recipients, app, shown, proposal.targetKey, element?.bounds),
+            Confirmation(prefix + sentence + TAIL, spoken(prefix, sentence, shown), category, recipients, app, shown, targetKey, targetBounds),
         )
-    }
-
-    private fun recipientField(element: ScreenElement): Boolean {
-        val id = ScreenTree.idName(element.viewId)?.lowercase()
-        val hint = (element.hint ?: element.label)?.trim()?.lowercase()
-        return element.editable && (id in RECIPIENT_FIELDS || hint in RECIPIENT_FIELDS)
     }
 
     /** The editable field beside the send button: the one nearest to the target in the same window. */

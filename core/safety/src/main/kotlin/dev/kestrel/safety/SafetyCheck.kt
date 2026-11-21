@@ -70,7 +70,9 @@ object SafetyCheck {
             val words = names.mapNotNull { LabelWords.categoryOf(it) }.maxOrNull()
             raise(if (clears && words == Category.DELETING) Category.TYPING_REQUEST else words, Source.LABEL_WORDS)
             if (names.any { LabelWords.holds(it, Category.SENDING) }) sends = true
-            if (reached.any { EmergencyGuard.emergencyNamed(screen, it) }) raise(Category.CALLS, Source.PHONE_APP)
+            if (reached.any { EmergencyGuard.emergencyNamed(screen, it) } || EmergencyGuard.namesEmergency(proposal.pointText)) {
+                raise(Category.CALLS, Source.PHONE_APP)
+            }
         }
 
         // 3. The context rules of the window that the action reaches.
@@ -163,8 +165,8 @@ object SafetyCheck {
      * text that was typed, the vault's values revealed), a share flow starts with the next serial number (also at a press
      * on an element inside a Share or Forward button, or at a point on one), grows by the name of every row that a tap or
      * a tap at a point reached in its list of rows (never by a target of Android's share sheet, which is an
-     * app), and ends at a chat titled as a selected row, after `open_*` or `home`, or outside its apps, and a protected
-     * trail starts and ends.
+     * app), and ends at a chat titled as a selected row, at an e-mail's compose screen, after `open_*` or `home`, or
+     * outside its apps, and a protected trail starts and ends.
      */
     fun afterAction(proposal: Proposal, before: ScreenSnapshot, after: ScreenSnapshot, task: TaskSafety): TaskSafety {
         var next = task
@@ -199,6 +201,9 @@ object SafetyCheck {
         }
         if (current == null && ContextRules.shareSheetInFront(after)) current = ShareFlow(front, emptyList(), null, serial)
         current ?: return null
+        // An e-mail's compose screen (after Gmail's Forward, or a share into a mail app) is judged by the e-mail's own rules:
+        // its To, Cc and Bcc name the recipients, and its other taps send nothing (design D14).
+        ScreenTree.frontWindow(after)?.let { if (ContextRules.recipientFields(after, it.id).isNotEmpty()) return null }
         // From a share sheet into the app that the owner's task shares with.
         if (current.receivingPackage in ContextRules.SHARE_SHEETS && front !in ContextRules.SHARE_SHEETS) current = current.copy(receivingPackage = front)
         if (front != current.receivingPackage && front !in ContextRules.SHARE_SHEETS) return null

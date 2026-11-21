@@ -135,6 +135,41 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun anOcrLineThatNamesAnEmergencyUnderATapAtIsACall() {
+        val game = TestScreen("com.example.game")
+        game.add(0, null, className = "android.view.SurfaceView", height = 2000, clickable = false)
+
+        for (text in listOf("SOS", "Emergency")) {
+            val at = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(500, 1500), pointText = text, frontAppLabel = "Game")
+            assertEquals(text, "handover:CALL", decide(at, game, nothing, Mode.FULL_AUTO))
+            assertEquals(text, "block", kind(SafetyCheck.decide(at, game.snapshot(), nothing, SafetySettings(mode = Mode.FULL_AUTO))))
+        }
+    }
+
+    @Test
+    fun gmailsForwardStartsNoShareFlowSoLaterTapsAreJudgedByTheirOwnRules() {
+        val message = TestScreen(SelfChats.GMAIL)
+        message.add(100, "Plan", clickable = false)
+        val forward = message.add(1800, "Forward")
+        val compose = TestScreen(SelfChats.GMAIL)
+        compose.add(80, "Send", left = 850)
+        compose.add(200, null, id = "to", editable = true, hint = "To", text = "")
+        compose.add(500, null, id = "body", editable = true, text = "")
+        val inbox = TestScreen(SelfChats.GMAIL)
+        val list = inbox.add(300, null, scrollable = true, axis = ScrollAxis.VERTICAL, height = 1500, clickable = false)
+        val row = inbox.add(300, "Ana Lunch tomorrow", parent = list)
+
+        val forwarded = SafetyCheck.afterAction(tap(forward), message.snapshot(), compose.snapshot(), everything)
+
+        assertNull(forwarded.shareFlow)
+        assertEquals("run", decide(tap(row), inbox, forwarded))
+        // A flow that reaches an e-mail's compose screen ends there.
+        val shared = everything.copy(shareFlow = ShareFlow(SelfChats.GMAIL, emptyList(), ShareCount(1, 0), serial = 1), flows = 1)
+        val body = compose.add(600, null, editable = true, hint = "Compose email", text = "")
+        assertNull(SafetyCheck.afterAction(Proposal("type_text", ActionKind.TYPE, targetKey = body, text = "Hi"), compose.snapshot(), compose.snapshot(), shared).shareFlow)
+    }
+
+    @Test
     fun everyRowOfASharePickerSendsWhateverItsLabelAndItsControlsOnlyRead() {
         val picker = TestScreen("org.telegram.messenger")
         val bar = picker.add(0, null, id = "toolbar", clickable = false, height = 150)
