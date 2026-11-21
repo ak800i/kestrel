@@ -122,7 +122,7 @@ c100 | confusable | idle | 0 | Other | 1 | I need to stop at the store.
 c101 | confusable | idle | 0 | Other | 1 | Settings.
 c102 | confusable | idle | 0 | Other | 1 | Open settings.
 c103 | confusable | idle | 0 | Other | 1 | Turn off.
-c104 | confusable | idle | 0 | Other | 1 | Type my email is ana at example dot com.
+c104 | confusable | idle | 0 | Other | 1 | Type my email is anna at example dot com.
 c105 | call | idle | 0 | - | 1 | Answer.
 c106 | call | idle | 0 | - | 1 | Answer on speaker.
 c107 | call | idle | 0 | - | 1 | Decline.

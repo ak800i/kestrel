@@ -77,11 +77,8 @@ try {
             AfterName = $row.Context -eq 'answer'
             Reveal = [bool]$Show
             NoBoost = [bool]$NoBoost
-            Group = $row.Group
             NoLabels = [bool]$NoLabels
-        }
-        if ($scenes.ContainsKey($row.Id)) { $options.Labels = $scenes[$row.Id] -join ';' }
-        if ($contacts.Count -gt 0) { $options.Contacts = $contacts -join ';' }
+        } + (Get-CorpusLineOptions -Row $row -Scenes $scenes -Contacts $contacts)
         $answer = ConvertFrom-HookAnswer (Invoke-Hook voice-eval $options)
         Add-EvalResult -Totals $totals -Answer $answer
         if ($groups.Contains($row.Group)) { Add-EvalResult -Totals $groups[$row.Group] -Answer $answer }

@@ -15,7 +15,7 @@
 # never happen on the A71 while the owner is away (AGENTS.md; process rules 10 and 13). It has one prompt, which beeps and
 # says what he does and what the phone shows, and the script then says that he may leave. Kestrel never presses Call on
 # purpose: the check runner cancels every countdown that a check did not plan, and scripts\command-test.ps1 checks
-# Kestrel's press of Call on the emulator. The steps, about 125
+# Kestrel's press of Call on the emulator. The steps, about 140
 # minutes in all, of which about 3 need the owner:
 #   install        installs Kestrel's debug build, its speech models and the fixture app dev.kestrel.testapp, and records
 #                  whether a SIM card is in the phone (8 minutes)
@@ -47,9 +47,13 @@
 #   air            first the loudness at the phone of this computer's clips (hook H7) and the transcription time through
 #                  the air, from the end of the end-of-speech pause to the final text, timed on the phone (spec 5.3);
 #                  then the steps screen to text again with the Kokoro clips and with the Piper clips (45 minutes)
-#   corpus         every line of corpus\commands.txt that is marked for the owner, in both voices through the air, only
-#                  transcribed and resolved on the phone (voice-expect -NoRun), never acted on: whether it matched, its
-#                  word errors, whether its command is right, the stray and split utterances and the times (30 minutes)
+#   corpus         every line of corpus\commands.txt that is marked for the owner, in both voices: first fed in directly
+#                  to the phone's recogniser with Kestrel off (voice-eval), then through the air, only transcribed and
+#                  resolved on the phone (voice-expect -NoRun), never acted on, both judged with the line's group, its
+#                  scene's labels and the contacts: whether it matched, its word errors, whether its command is right, the
+#                  stray and split utterances and the times; the commands' shares fed in and through the air with their
+#                  Wilson intervals, the one-word lines apart (design spec, section 5.3); and the lines that only the air
+#                  lost, played again with Kestrel off, recorded (voice-record) and fed in (45 minutes)
 # The results go into corpus\owner\commands-session-<time>.txt, which git ignores; neither it nor the console ever hold what
 # Kestrel heard or screen text: the hooks answer only kinds, counts, flags, numbers and hashes. The script never sends "yes,
 # call" (process rule 10), answers every question that a check did not plan with "no", cancels every countdown that a
@@ -231,6 +235,14 @@ $config = if ($DryRun) {
     Read-A71Config (Join-Path $owner 'a71-config.json')
 }
 $corpusFile = Join-Path $PSScriptRoot '..\corpus\commands.txt'
+# The labels of the corpus lines' scenes and the contacts, which the step corpus gives the hooks as voice-eval does.
+$corpusScenes = Read-CorpusScenes -Path (Join-Path $PSScriptRoot '..\corpus\scenes.txt')
+$corpusContacts = @(Read-CorpusContacts -Path (Join-Path $PSScriptRoot '..\corpus\scenes.txt'))
+# The clips that the step corpus leaves out, by voice, with the reason (plan 4E).
+$leftOut = @{
+    kokoro = @{}
+    piper = @{ c163 = 'Piper''s clip says its number as whole numbers, not digit by digit (plan 3C, Task 7)' }
+}
 $clipTexts = @{}
 foreach ($row in @(Read-Corpus -Path $corpusFile) + @(Read-Corpus -Path (Join-Path $PSScriptRoot '..\corpus\checks.txt'))) { $clipTexts[$row.Id] = $row.Text }
 $generated = Join-Path $PSScriptRoot '..\corpus\generated'
@@ -1663,8 +1675,86 @@ function Invoke-AirStep {
     }
 }
 
-# The owner's lines of the corpus through the air in both voices (map C121), only transcribed and resolved on the phone,
-# so that "Call Mom." or "Kestrel, stop" never acts; the results hold only counts and the lines' ids.
+# Loads the recogniser of the hook voice-eval, which takes up to a minute on the A71. Kestrel must be off, because its
+# voice session would hold a second recogniser.
+function Initialize-EvalRecognizer {
+    $state = Invoke-Hook voice-eval @{ Load = $true }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($state -eq 'loading' -and $watch.Elapsed.TotalSeconds -lt 300) {
+        Start-Sleep -Seconds 2
+        $state = Invoke-Hook voice-eval @{ Load = $true }
+    }
+    if ($state -notmatch '^ready') { throw "the recogniser of voice-eval did not load: $state" }
+}
+
+# The direct pass of the step corpus (plan 4E): the clips of $Rows in $Voice, fed in directly to the phone's recogniser
+# with Kestrel off, as scripts\voice-eval.ps1 feeds them on the emulator (the hook voice-eval), each judged with its
+# group, its scene's labels and the contacts. Returns the commands' totals (New-CommandTotals).
+function Measure-DirectLines([string]$Voice, [object[]]$Rows) {
+    $totals = New-CommandTotals
+    Stop-Kestrel
+    try {
+        Initialize-EvalRecognizer
+        foreach ($row in $Rows) {
+            Invoke-AdbCopy -Serial $Serial -Direction push -From (Join-Path $generated "$Voice\$($row.Id).wav") -To "$remote/gen-direct.wav"
+            $options = @{ File = 'gen-direct'; Expected = $row.Text; Kind = 'skip' } + (Get-CorpusLineOptions -Row $row -Scenes $corpusScenes -Contacts $corpusContacts)
+            $answer = ConvertFrom-HookAnswer (Invoke-Hook voice-eval $options)
+            Add-CommandVerdict -Totals $totals -Id $row.Id -Text $row.Text -Right $answer['command']
+        }
+    } finally {
+        Invoke-Hook voice-eval @{ Close = $true } | Out-Null
+        Invoke-Checked "rm -f $remote/gen-direct.wav" | Out-Null
+    }
+    $totals
+}
+
+# The recorded pass of the step corpus (inv-a71-speech, step 4): each of $Rows, which were right fed in directly and
+# wrong through the air, plays through the air again in $Voice while Kestrel is off and its settings are in front, where
+# Android lets the hook voice-record record, and the recording is fed in to the phone's recogniser (voice-eval). A line
+# that is right then was lost in Kestrel's live pipeline, and one that is wrong again was lost in the room's sound. The
+# recordings stay on the phone and are deleted there; the result holds only counts.
+function Measure-RecordedLines([string]$Voice, [object[]]$Rows) {
+    if ($Rows.Count -eq 0) { return }
+    $totals = New-CommandTotals
+    Stop-Kestrel
+    try {
+        Initialize-EvalRecognizer
+        foreach ($row in $Rows) {
+            $clip = Get-PassClip -Id $row.Id -Say $row.Text
+            # 16 kHz, 16-bit mono after a header of 44 bytes, and 1.5 s more for this computer's output delay.
+            $seconds = [int][math]::Min(15, [math]::Ceiling(((Get-Item -LiteralPath $clip.Path).Length - 44) / 32000 + 1.5))
+            Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+            Invoke-Hook voice-record @{ File = 'recorded'; Seconds = $seconds } | Out-Null
+            & $script:play $clip
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                Start-Sleep -Milliseconds 500
+                $recorded = Invoke-Hook voice-record @{ Result = $true }
+            } while ($recorded -eq 'recording' -and $watch.Elapsed.TotalSeconds -lt $seconds + 10)
+            # A recording that Android silenced, or that did not end, holds nothing to judge.
+            if ($recorded -notmatch 'silenced=false') { continue }
+            $options = @{ File = 'recorded'; Expected = $row.Text; Kind = 'skip' } + (Get-CorpusLineOptions -Row $row -Scenes $corpusScenes -Contacts $corpusContacts)
+            $answer = ConvertFrom-HookAnswer (Invoke-Hook voice-eval $options)
+            Add-CommandVerdict -Totals $totals -Id $row.Id -Text $row.Text -Right $answer['command']
+        }
+    } finally {
+        Invoke-Hook voice-eval @{ Close = $true } | Out-Null
+        Invoke-Checked "rm -f $remote/recorded.wav" | Out-Null
+        Invoke-Home
+    }
+    $judged = $totals.Total + $totals.OneTotal
+    $right = $totals.Right + $totals.OneRight
+    Add-Result corpus ("${Voice}: of the $($Rows.Count) lines that were right fed in directly and wrong through the air, $judged were " +
+        "recorded through the air with Kestrel off and fed in: $right of them were right (lost in Kestrel's live pipeline) and " +
+        "$($judged - $right) wrong again (lost in the room's sound)")
+}
+
+# The owner's lines of the corpus in both voices (map C121; plan 4E): first fed in directly to the phone's recogniser,
+# then through the air, where the phone only transcribes and resolves each one, so that "Call Mom." or "Kestrel, stop"
+# never acts; both judge each line with its group, its scene's labels and the contacts, as scripts\voice-eval.ps1 does on
+# the emulator. The results hold only counts, the lines' ids and the comparison of the two passes (design spec, section
+# 5.3), and then the recorded pass of the lines that only the air lost. A dry run feeds the Kokoro clips in directly and
+# records nothing, because its air pass says the texts into Kestrel's stand-in microphone.
 function Invoke-CorpusStep {
     $voices = if ($DryRun) { @('clip') } else { @('kokoro', 'piper') }
     $rows = @(Read-Corpus -Path $corpusFile | Where-Object { $_.Owner })
@@ -1675,16 +1765,31 @@ function Invoke-CorpusStep {
         if (-not (Initialize-Air corpus)) { return }
         foreach ($voice in $voices) {
             $script:pass = $voice
+            $clipVoice = if ($DryRun) { 'kokoro' } else { $voice }
+            foreach ($id in $leftOut[$clipVoice].Keys) { Add-Result corpus "${voice}: $id left out, because $($leftOut[$clipVoice][$id])" }
+            $lines = @($rows | Where-Object { -not $leftOut[$clipVoice].ContainsKey($_.Id) })
+            $direct = Measure-DirectLines -Voice $clipVoice -Rows $lines
+            Start-Kestrel
             $totals = New-AirTotals
-            foreach ($row in $rows) {
+            $air = New-CommandTotals
+            foreach ($row in $lines) {
                 $tag = New-CheckTag
-                Invoke-Hook voice-expect @{ Text = $row.Text; Tag = $tag; Seconds = 15; NoRun = $true } | Out-Null
+                $options = @{ Text = $row.Text; Tag = $tag; Seconds = 15; NoRun = $true } + (Get-CorpusLineOptions -Row $row -Scenes $corpusScenes -Contacts $corpusContacts)
+                Invoke-Hook voice-expect $options | Out-Null
                 & $script:play (Get-PassClip -Id $row.Id -Say $row.Text)
-                Add-AirResult -Totals $totals -Answer (Wait-ExpectResult -Tag $tag -TimeoutSeconds 25) -Id $row.Id
+                $answer = Wait-ExpectResult -Tag $tag -TimeoutSeconds 25
+                Add-AirResult -Totals $totals -Answer $answer -Id $row.Id
+                # A line without an answer is wrong when its command counts.
+                $right = if ($answer) { $answer['right'] } elseif ($direct.Verdicts.ContainsKey($row.Id)) { '0' } else { '-' }
+                Add-CommandVerdict -Totals $air -Id $row.Id -Text $row.Text -Right $right
                 # Late parts of the clip that matched would count as stray parts of the next line.
                 Start-Sleep -Milliseconds 1500
             }
             Add-Result corpus (Format-AirTotals $voice $totals)
+            Add-Result corpus (Format-CommandComparison $voice $direct $air)
+            if (-not $DryRun) {
+                Measure-RecordedLines -Voice $voice -Rows @($lines | Where-Object { $direct.Verdicts[$_.Id] -eq '1' -and $air.Verdicts[$_.Id] -eq '0' })
+            }
         }
     } finally {
         $script:pass = 'text'
@@ -1705,7 +1810,7 @@ $plan = @(
     @{ Name = 'calls'; Minutes = 6; Run = 'Invoke-CallStep' }
     @{ Name = 'timing'; Minutes = 6; Run = 'Invoke-TimingStep' }
     @{ Name = 'air'; Minutes = 45; Run = 'Invoke-AirStep' }
-    @{ Name = 'corpus'; Minutes = 30; Run = 'Invoke-CorpusStep' }
+    @{ Name = 'corpus'; Minutes = 45; Run = 'Invoke-CorpusStep' }
 )
 
 $completed = $false

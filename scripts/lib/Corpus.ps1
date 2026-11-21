@@ -214,3 +214,75 @@ function Format-GroupErrors([string]$Name, $Totals) {
     $errors = $Totals.Substitutions + $Totals.Deletions + $Totals.Insertions
     "${Name}: $($Totals.Clips) clips, $($Totals.Words) words, word error rate $(Format-Percent $errors $Totals.Words) %"
 }
+
+# The options of the hooks voice-eval and voice-expect for a line of corpus\commands.txt, as scripts\voice-eval.ps1 gives
+# them (design spec, section 16.4; plan 4E): the line's group, the labels of its scene, when it has one, and the corpus's
+# contacts, when there are any. $Scenes is Read-CorpusScenes' table, and $Contacts Read-CorpusContacts' names.
+function Get-CorpusLineOptions($Row, [hashtable]$Scenes, [string[]]$Contacts) {
+    $options = @{ Group = $Row.Group }
+    if ($Scenes.ContainsKey($Row.Id)) { $options.Labels = $Scenes[$Row.Id] -join ';' }
+    if ($Contacts.Count -gt 0) { $options.Contacts = $Contacts -join ';' }
+    $options
+}
+
+# The Wilson score interval at 95 % (z = 1.96) of $Right out of $Total, in percent with one decimal (Low and High), or
+# $null for both without any line.
+function Get-WilsonInterval([int]$Right, [int]$Total) {
+    if ($Total -le 0) { return [pscustomobject]@{ Low = $null; High = $null } }
+    $z = 1.96
+    $share = $Right / $Total
+    $spread = $z * $z / $Total
+    $centre = ($share + $spread / 2) / (1 + $spread)
+    $half = $z * [math]::Sqrt($share * (1 - $share) / $Total + $spread / (4 * $Total)) / (1 + $spread)
+    [pscustomobject]@{
+        Low = [math]::Round(100 * [math]::Max([double]0, $centre - $half), 1, [MidpointRounding]::AwayFromZero)
+        High = [math]::Round(100 * [math]::Min([double]1, $centre + $half), 1, [MidpointRounding]::AwayFromZero)
+    }
+}
+
+# A share with its Wilson interval, such as '70 of 72 (97.2 %, 90.4 to 99.2 %)', or '0 of 0'.
+function Format-Share([int]$Right, [int]$Total) {
+    if ($Total -le 0) { return '0 of 0' }
+    $interval = Get-WilsonInterval -Right $Right -Total $Total
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    "$Right of $Total ($(Format-Percent $Right $Total) %, $($interval.Low.ToString('0.0', $invariant)) to $($interval.High.ToString('0.0', $invariant)) %)"
+}
+
+# New totals of the commands of one pass of the A71's corpus step (plan 4E): the lines of two or more words (Right of
+# Total) and the one-word lines apart (OneRight of OneTotal), and each line's verdict by its id (Verdicts).
+function New-CommandTotals {
+    [pscustomobject]@{ Right = 0; Total = 0; OneRight = 0; OneTotal = 0; Verdicts = @{} }
+}
+
+# Adds the verdict of the line $Id, whose text is $Text, to the totals: '1' or '0', as voice-eval's command= and
+# voice-expect's right= answer; '-', a line without a command to judge, does not count.
+function Add-CommandVerdict($Totals, [string]$Id, [string]$Text, [string]$Right) {
+    if ($Right -notin '0', '1') { return }
+    $Totals.Verdicts[$Id] = $Right
+    if (@($Text -split '\s+' | Where-Object { $_ }).Count -eq 1) {
+        $Totals.OneTotal++
+        if ($Right -eq '1') { $Totals.OneRight++ }
+    } else {
+        $Totals.Total++
+        if ($Right -eq '1') { $Totals.Right++ }
+    }
+}
+
+# The results' line that compares one voice's commands through the air with the same lines fed in directly in the same
+# run (design spec, section 5.3; plan 4E): the lines of two or more words meet the target when the air's share is at most
+# 5 points below the direct share; the one-word lines are given apart, so that they do not decide alone; and the ids of
+# the lines that were right directly and wrong through the air. Each share comes with its Wilson interval at 95 %.
+function Format-CommandComparison([string]$Voice, $Direct, $Air) {
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    $verdict = 'not compared, because a pass has no line of two or more words'
+    if ($Direct.Total -gt 0 -and $Air.Total -gt 0) {
+        $points = [math]::Round(100.0 * $Direct.Right / $Direct.Total - 100.0 * $Air.Right / $Air.Total, 1, [MidpointRounding]::AwayFromZero)
+        $gap = if ($points -ge 0) { "$($points.ToString('0.0', $invariant)) points below" } else { "$((-$points).ToString('0.0', $invariant)) points above" }
+        $verdict = "the air's share is $gap the direct share: target $(if ($points -le 5) { 'met' } else { 'missed' }) (at most 5 points below)"
+    }
+    $lost = @($Direct.Verdicts.Keys | Where-Object { $Direct.Verdicts[$_] -eq '1' -and $Air.Verdicts[$_] -eq '0' } | Sort-Object)
+    "${Voice}: commands right in the lines of two or more words: directly $(Format-Share $Direct.Right $Direct.Total), " +
+    "through the air $(Format-Share $Air.Right $Air.Total); $verdict; one-word lines: directly " +
+    "$(Format-Share $Direct.OneRight $Direct.OneTotal), through the air $(Format-Share $Air.OneRight $Air.OneTotal); " +
+    "right directly and wrong through the air: $(if ($lost.Count -gt 0) { $lost -join ', ' } else { 'none' })"
+}

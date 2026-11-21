@@ -223,3 +223,60 @@ Describe 'The corpora of the A71 sessions'' automatic checks' {
         @($found) | Should -BeNullOrEmpty
     }
 }
+
+Describe 'The comparison of the A71''s corpus step, directly and through the air (plan 4E)' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Corpus.ps1"
+    }
+
+    It 'gives the Wilson interval at 95 % in percent' {
+        $interval = Get-WilsonInterval -Right 84 -Total 92
+
+        $interval.Low | Should -Be 83.8
+        $interval.High | Should -Be 95.5
+        (Get-WilsonInterval -Right 3 -Total 3).High | Should -Be 100
+        (Get-WilsonInterval -Right 0 -Total 0).Low | Should -BeNullOrEmpty
+    }
+
+    It 'gives the hooks a line''s group, its scene''s labels and the contacts, as voice-eval does' {
+        $scenes = @{ c020 = @('Save', 'Send') }
+        $options = Get-CorpusLineOptions -Row ([pscustomobject]@{ Id = 'c020'; Group = 'appendix' }) -Scenes $scenes -Contacts @('Ana Test', 'Mom')
+        $plain = Get-CorpusLineOptions -Row ([pscustomobject]@{ Id = 'c071'; Group = 'answer' }) -Scenes $scenes -Contacts @()
+
+        $options.Group | Should -BeExactly 'appendix'
+        $options.Labels | Should -BeExactly 'Save;Send'
+        $options.Contacts | Should -BeExactly 'Ana Test;Mom'
+        @($plain.Keys) | Should -Be @('Group')
+    }
+
+    It 'counts the one-word lines apart, leaves out the lines without a command, and compares the air with the direct share' {
+        $direct = New-CommandTotals
+        $air = New-CommandTotals
+        foreach ($line in @(
+                @('c001', 'Open Chrome.', '1', '1'), @('c003', 'Go back.', '1', '0'), @('c004', 'Go home.', '1', '1'),
+                @('c038', 'Check.', '1', '0'), @('c119', 'Home.', '0', '0'), @('c041', 'Kestrel.', '-', '-'))) {
+            Add-CommandVerdict -Totals $direct -Id $line[0] -Text $line[1] -Right $line[2]
+            Add-CommandVerdict -Totals $air -Id $line[0] -Text $line[1] -Right $line[3]
+        }
+
+        $direct.Total | Should -Be 3
+        $direct.OneTotal | Should -Be 2
+        $direct.Verdicts.Contains('c041') | Should -BeFalse
+        Format-CommandComparison -Voice 'kokoro' -Direct $direct -Air $air | Should -BeExactly ("kokoro: commands right in the lines of two or more words: " +
+            "directly 3 of 3 (100.0 %, 43.8 to 100.0 %), through the air 2 of 3 (66.7 %, 20.8 to 93.9 %); the air's share is " +
+            "33.3 points below the direct share: target missed (at most 5 points below); one-word lines: directly 1 of 2 " +
+            "(50.0 %, 9.5 to 90.5 %), through the air 0 of 2 (0.0 %, 0.0 to 65.8 %); right directly and wrong through the air: c003, c038")
+    }
+
+    It 'meets the target when the air is at most 5 points below, also when it is above' {
+        $direct = New-CommandTotals
+        $air = New-CommandTotals
+        foreach ($i in 1..20) {
+            Add-CommandVerdict -Totals $direct -Id "c$i" -Text 'Go back.' -Right $(if ($i -le 19) { '1' } else { '0' })
+            Add-CommandVerdict -Totals $air -Id "c$i" -Text 'Go back.' -Right $(if ($i -le 18) { '1' } else { '0' })
+        }
+
+        Format-CommandComparison -Voice 'piper' -Direct $direct -Air $air | Should -Match "the air's share is 5\.0 points below the direct share: target met"
+        Format-CommandComparison -Voice 'piper' -Direct $air -Air $direct | Should -Match "the air's share is 5\.0 points above the direct share: target met"
+    }
+}
