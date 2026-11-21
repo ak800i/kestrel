@@ -790,6 +790,10 @@ try {
         $command = if ($stayOn[$device] -in 'null', '') { 'settings delete global stay_on_while_plugged_in' } else { "settings put global stay_on_while_plugged_in $($stayOn[$device])" }
         try { Invoke-SettingsCommand -Serial $device -Command $command | Out-Null } catch { Write-Warning "Could not put back ""Stay awake"" on $device. Run: & '$adb' -s $device shell $command" }
     }
+    # The owner's rule: a finished run leaves the A71 locked, so that its screen does not burn in.
+    if (-not $DryRun) {
+        try { Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_SLEEP' | Out-Null } catch { Write-Warning "Could not lock $Serial. Press its power button." }
+    }
     if ($lockTaken) { Remove-Item -LiteralPath $lockFile -ErrorAction SilentlyContinue }
     if (-not ($completed -or $stopped)) { Add-SessionResult -Path $resultsFile -Step session -Text 'stopped, as by Ctrl+C' }
     if ($gradleUsed) { & "$PSScriptRoot\gradle.ps1" --stop | Out-Null }

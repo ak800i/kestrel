@@ -1855,6 +1855,10 @@ try {
         $left = @($pending.ToArray())
         [array]::Reverse($left)
         Invoke-Restore $left
+        # The owner's rule: a finished run leaves the A71 locked, so that its screen does not burn in.
+        if (-not $DryRun) {
+            try { Invoke-SettingsCommand -Serial $Serial -Command 'input keyevent KEYCODE_SLEEP' | Out-Null } catch { Write-Warning "Could not lock $Serial. Press its power button." }
+        }
     } finally {
         if (-not ($completed -or $stopped)) { Add-SessionResult -Path $resultsFile -Step session -Text 'stopped, as by Ctrl+C' }
         foreach ($restore in $pending) { Write-Warning "Could not put back $($restore.What) on $Serial ($($restore.Reason)). $($restore.ByHand)" }
