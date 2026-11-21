@@ -92,6 +92,49 @@ class ObservationBuilderTest {
     }
 
     @Test
+    fun aRowsTextsAreEachOthersNeighboursSoACodeFarFromItsKeywordIsRedacted() {
+        val tree = TestTree()
+        tree.add(100, "Inbox")
+        val row = tree.add(300, clickable = true, className = "android.view.ViewGroup", height = 200)
+        tree.add(310, "Your verification code for Example Bank. Do not share it with anyone.", parent = row)
+        tree.add(400, "483920", parent = row)
+        tree.add(800, "Archive")
+
+        val observation = builder.build(ObservationInput(1, tree.snapshot(), "Mail"))
+
+        assertFalse(observation.text, "483920" in observation.text)
+        assertTrue(observation.text, "· [OTP_1]\" @top" in observation.text)
+        assertEquals(listOf(false, true, false), observation.table.entries.map { it.redacted })
+    }
+
+    @Test
+    fun aClickableScreenSizedRootLeavesItsTextsTheirOwnLinesButARowInsideItStillTakesItsTexts() {
+        val tree = TestTree()
+        val root = tree.add(0, clickable = true, className = "android.widget.FrameLayout", height = 2400)
+        listOf("Ana Petrović", "Last seen today", "See you tomorrow!", "Are you coming?", "Yes, at eight").forEachIndexed { position, text ->
+            tree.add(200 + position * 200, text, parent = root)
+        }
+        val row = tree.add(1300, clickable = true, className = "android.view.ViewGroup", height = 200, parent = root)
+        tree.add(1310, "Marko", parent = row)
+        tree.add(1380, "Thanks!", parent = row)
+
+        val lines = builder.build(ObservationInput(1, tree.snapshot(), "Chat")).text.lines().drop(1)
+
+        assertEquals(
+            listOf(
+                "[1] FrameLayout @middle",
+                "[2] Text \"Ana Petrović\" @top",
+                "[3] Text \"Last seen today\" @top",
+                "[4] Text \"See you tomorrow!\" @top",
+                "[5] Text \"Are you coming?\" @middle",
+                "[6] Text \"Yes, at eight\" @middle",
+                "[7] ViewGroup \"Marko · Thanks!\" @middle",
+            ),
+            lines,
+        )
+    }
+
+    @Test
     fun scrollDirectionsComeFromTheActionsAndTheAxis() {
         val tree = TestTree()
         tree.add(200, description = "Pager", scrollable = true, actions = setOf(ElementAction.SCROLL_FORWARD), axis = ScrollAxis.HORIZONTAL, height = 300)

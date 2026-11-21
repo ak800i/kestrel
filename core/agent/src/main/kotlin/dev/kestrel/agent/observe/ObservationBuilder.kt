@@ -8,6 +8,7 @@ import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.Region
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSignature
+import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTitle
 import dev.kestrel.screen.model.ScreenTree
 import dev.kestrel.screen.model.ScrollAxis
@@ -87,13 +88,16 @@ class ObservationBuilder(
             visible[index] = true
         }
 
-        // A clickable element takes the text of the descendants that are not actionable; they get no line.
+        // A clickable element takes the text of the descendants that are not actionable; they get no line. A clickable
+        // container of screen size (a fragment's root that stops touches) is no row, so its texts keep their lines.
         val owner = IntArray(elements.size) { -1 }
         for (index in elements.indices) {
             if (!visible[index] || actionable(elements[index]) || ownLabel(elements[index]) == null) continue
             val nearest = ScreenTree.ancestors(snapshot, index).firstOrNull { visible[it] && actionable(elements[it]) } ?: continue
             val parent = elements[nearest]
-            if ((parent.clickable || parent.longClickable) && !parent.editable && !parent.scrollable) owner[index] = nearest
+            if ((parent.clickable || parent.longClickable) && !parent.editable && !parent.scrollable && !screenSized(snapshot, parent)) {
+                owner[index] = nearest
+            }
         }
         val pieces = HashMap<Int, MutableList<String>>()
         for (index in readingOrder(elements.indices.filter { owner[it] >= 0 }, elements)) {
@@ -294,15 +298,17 @@ class ObservationBuilder(
                         actionable(element) -> ScreenText.LABEL_LIMIT
                         else -> ScreenText.VALUE_LIMIT
                     }
-                    val joined = all.joinToString(" · ")
-                    line.shown = ScreenText.quote(redact(line, joined, neighbours), limit)
-                    words += line.shown
-                    // A screenshot shows the texts after the third too, so they mark the line for its mask (design D20).
-                    val rest = (listOfNotNull(ownLabel(element)) + pieces).distinct().drop(3)
-                    if (rest.isNotEmpty()) redact(line, rest.joinToString(" · "), neighbours + joined)
-                    if (all.size > 1) {
-                        line.shortShown = ScreenText.quote(redact(line, all.first(), neighbours + joined), ScreenText.LABEL_LIMIT)
+                    // Each text of a row is redacted with the row's other texts as neighbours, as it would be on a line of
+                    // its own, so that a keyword far from a code in another text still counts (design D8 and D17). The
+                    // texts after the third are redacted too: a screenshot shows them, so they mark the line for its mask
+                    // (design D20).
+                    val texts = (listOfNotNull(ownLabel(element)) + pieces).distinct()
+                    val redacted = texts.mapIndexed { position, text ->
+                        redact(line, text, neighbours + texts.filterIndexed { other, _ -> other != position })
                     }
+                    line.shown = ScreenText.quote(redacted.take(3).joinToString(" · "), limit)
+                    words += line.shown
+                    if (all.size > 1) line.shortShown = ScreenText.quote(redacted.first(), ScreenText.LABEL_LIMIT)
                 }
                 suggested != null -> {
                     line.shown = "id " + ScreenText.quote(redact(line, suggested, neighbours), ScreenText.LABEL_LIMIT)
@@ -353,6 +359,14 @@ class ObservationBuilder(
     private fun hidden(packageName: String?): Boolean = agentFree.isAgentFree(packageName) || packageName == AgentFreeApps.PLAY_SERVICES
 
     private fun isSystemUi(window: WindowSummary): Boolean = window.packageName == SystemUiParts.SYSTEM_UI
+
+    /** Whether [element] covers at least three quarters of its window's visible area, as a screen's root or a fragment's does. */
+    private fun screenSized(snapshot: ScreenSnapshot, element: ScreenElement): Boolean {
+        val window = snapshot.windows.firstOrNull { it.id == element.windowId } ?: return false
+        val visible = ScreenTree.visibleArea(snapshot, window)
+        val covered = element.bounds.intersect(visible)?.let { area(it) } ?: return false
+        return covered * 4 >= area(visible) * 3
+    }
 
     /** The header's app: its label and package, both escaped, because an app chooses both itself (review 3 I1). */
     private fun appText(label: String?, packageName: String?): String {
