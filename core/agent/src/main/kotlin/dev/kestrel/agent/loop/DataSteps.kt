@@ -50,7 +50,7 @@ internal class DataSteps(private val run: TaskRun) {
             if (call.items.size > MAX_SILENT_SHARE && !run.askYesNo("Share ${call.items.size} items?")) throw Ended(EndReason.DECLINED)
         }
         while (true) {
-            if (run.gate()) return Done(call.tool, text = "Result: ${ScreenSteps.PAUSED}", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", after = run.fresh(), progress = false)
+            if (run.gate()) return Done(call.tool, text = "Result: ${ScreenSteps.PAUSED}", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", after = run.fresh(), progress = false, executed = false)
             val before = run.fresh()
             var proposal = ActionMapper.proposal(call, run.observation.table, run.observation.appLabel, receivingPackage = sharePackage, receivingAppLabel = receivingLabel)
             if (call is AgentCall.ShareMedia) proposal = proposal.copy(shareCount = count(call.items))

@@ -2,6 +2,7 @@ package dev.kestrel.agent.testing
 
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.RouteNote
+import dev.kestrel.agent.memory.Routine
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.AgentClock
 import dev.kestrel.agent.port.Answer
@@ -232,6 +233,8 @@ class FakeMemory : MemoryStore {
     val notes = mutableMapOf<String, List<RouteNote>>()
     val found = mutableListOf<String>()
     val approvals = mutableSetOf<Pair<String, String>>()
+    val routines = mutableListOf<Routine>()
+    val signatures = mutableMapOf<String, Int>()
 
     override suspend fun facts(): List<Fact> = facts.toList()
 
@@ -258,7 +261,16 @@ class FakeMemory : MemoryStore {
         approvals += packageName to providerId
     }
 
-    override fun toString(): String = "FakeMemory(facts=${facts.size})"
+    override suspend fun routines(): List<Routine> = routines.toList()
+
+    override suspend fun saveRoutine(routine: Routine) {
+        routines.removeAll { it.name == routine.name }
+        routines += routine
+    }
+
+    override suspend fun countSignature(signature: String): Int = (signatures.getOrDefault(signature, 0) + 1).also { signatures[signature] = it }
+
+    override fun toString(): String = "FakeMemory(facts=${facts.size}, routines=${routines.size})"
 }
 
 class FakeLog : TaskLog {

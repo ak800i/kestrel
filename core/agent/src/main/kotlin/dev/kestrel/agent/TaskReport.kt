@@ -1,5 +1,6 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.memory.Recording
 import dev.kestrel.providers.http.ProviderError
 import kotlinx.coroutines.CancellationException
 
@@ -48,7 +49,10 @@ class TaskCancellation(val reason: EndReason) : CancellationException("The task 
  * most 600 characters); it is null after a declined confirmation. [detail] is Kestrel's own part of the sentence: the
  * agent-free app's label, a block's reason, the model's `fail` reason or the profile check's sentence. [sends] are
  * Kestrel's lines for the confirmed sends ("Sent to My Notes on Viber."), [recipients] the confirmed recipients, and the
- * counts are those that the debug hook `agent-task -Result` reports (D28). toString prints only kinds and counts (D25).
+ * counts are those that the debug hook `agent-task -Result` reports (D28). A `FINISHED` task that typed no vault value
+ * carries its [recording], which `:app` keeps for 10 minutes for "Kestrel, save that as <name>" (D23); [offerRoutine] is
+ * true after the second `FINISHED` run with the same `finish` signature, and then `:app` asks `RoutineMaker.offer` after
+ * it has spoken the report (never for a tagged test task). toString prints only kinds and counts (D25).
  */
 data class TaskReport(
     val end: EndReason,
@@ -70,10 +74,12 @@ data class TaskReport(
     val beforeTestMode: Int = 0,
     val shareItems: Int = 0,
     val modelId: String? = null,
+    val recording: Recording? = null,
+    val offerRoutine: Boolean = false,
 ) {
     override fun toString(): String =
         "TaskReport(end=$end, error=$error, detail=${detail?.length}, summary=${summary?.length}, ledger=${ledger.size}, " +
             "sends=${sends.size}, recipients=${recipients.size}, steps=$steps, workMillis=$workMillis, credits=$credits, " +
             "tokens=${inputTokens + outputTokens}, cacheRead=$cacheRead, confirmed=$confirmed, unconfirmed=$unconfirmed, " +
-            "beforeTestMode=$beforeTestMode, shareItems=$shareItems)"
+            "beforeTestMode=$beforeTestMode, shareItems=$shareItems, recording=${recording != null}, offerRoutine=$offerRoutine)"
 }

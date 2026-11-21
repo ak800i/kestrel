@@ -255,7 +255,7 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     private suspend fun paused(tool: String, entry: TableEntry?): Done =
-        Done(tool, text = "Result: $PAUSED", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", target = entry, after = run.fresh(), progress = false)
+        Done(tool, text = "Result: $PAUSED", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", target = entry, after = run.fresh(), progress = false, executed = false)
 
     // The element still shows what the observation showed (D32 item 27).
     private fun fits(entry: TableEntry, screen: ScreenSnapshot): Boolean {

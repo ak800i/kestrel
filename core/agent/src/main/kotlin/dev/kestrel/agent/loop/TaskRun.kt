@@ -8,6 +8,10 @@ import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
+import dev.kestrel.agent.memory.Recording
+import dev.kestrel.agent.memory.RoutineMatcher
+import dev.kestrel.agent.memory.RoutineReplayer
+import dev.kestrel.agent.memory.RoutineStep
 import dev.kestrel.agent.memory.TaskMemory
 import dev.kestrel.agent.observe.Observation
 import dev.kestrel.agent.observe.ObservationBuilder
@@ -54,7 +58,9 @@ import dev.kestrel.safety.TaskSafety
 import dev.kestrel.safety.Vault
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
+import dev.kestrel.screen.model.Signature
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -69,8 +75,9 @@ internal class Ended(
 /**
  * What one executed call did (design D6): its [outcome] on its [target] (for `StepResult`), or Kestrel's own result
  * [text] with its [summary] and [last] line; the snapshot [after] it, from which the next observation is built; a data
- * tool's [data] lines; an [extra] text below the result line; a [screenshot]; the [ocr] lines that `look_closer` read; and
- * whether it made progress when the step decides that itself ([progress]).
+ * tool's [data] lines; an [extra] text below the result line; a [screenshot]; the [ocr] lines that `look_closer` read;
+ * whether it made progress when the step decides that itself ([progress]); and whether it ran at all ([executed] is
+ * false when a pause withdrew it).
  */
 internal class Done(
     val tool: String,
@@ -87,6 +94,7 @@ internal class Done(
     val ocr: List<OcrLine> = emptyList(),
     val progress: Boolean? = null,
     val invalid: Boolean = false,
+    val executed: Boolean = true,
 )
 
 /** A send that the owner confirmed (design D14), kept in memory for the completion check; never logged. */
@@ -125,6 +133,11 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private val dataSteps = DataSteps(this)
     private val looks = LookCloser(this)
     val memory = TaskMemory(ports.memory, ports.apps, ports.clock, redactor) { settings.closed(it) }
+    private val recorded = mutableListOf<RoutineStep>()
+    private var typedSecret = false
+    private var routineNote: String? = null
+    private var finished: Recording? = null
+    private var offerRoutine = false
     private var pausedAtFinish = false
 
     var safety = TaskSafety(TaskAllowance.NONE)
@@ -177,6 +190,12 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             memoryValues = memory.usedValues,
         )
         observation = observe(first, last = null, targetKey = null)
+        RoutineMatcher.match(task.text, ports.memory.routines(), memory.aliasKeys, task.knownNames)?.let { match ->
+            log(TaskLog.Kind.START, "routine matched")
+            routineNote = RoutineReplayer(this).replay(match)
+                ?: throw Ended(EndReason.FINISHED, summary = "I ran the routine '${match.routine.name}'.")
+            observation = observe(fresh(), last = null, targetKey = null)
+        }
         ports.model.model.lightweight.unusable?.let { throw Ended(EndReason.MODEL_UNUSABLE, it) }
         val model = ports.model.model
         conversation = Conversation(
@@ -192,13 +211,15 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         pendingPrompt = observation.text
     }
 
-    // The task message (D3): the owner's words, the local date and time, and what the task may do; it never changes.
+    // The task message (D3): the owner's words, the local date and time, what the task may do, and a failed routine's
+    // note (D23); it never changes.
     private fun taskMessage(): Redacted {
         val now = ports.clock.now()
         val date = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", Locale.ENGLISH).format(now)
-        // Only the owner's words are redacted, so that the year is never read as a code.
+        // Only the owner's words are redacted here, so that the year is never read as a code; a routine's note is built
+        // from parts that were redacted already.
         val owner = Redacted.of(redactor, "The owner's task: ${task.text}").text
-        val lines = listOf(owner, "Today is $date.", safety.allowance.describe())
+        val lines = listOfNotNull(owner, "Today is $date.", safety.allowance.describe(), routineNote)
         return Redacted.kestrel(lines.joinToString("\n"))
     }
 
@@ -277,10 +298,42 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             handle(escalation.invalid(progress))
             return
         }
-        if (!failed) memory.acted(target?.packageName, target?.label)
+        if (done.executed) record(message, reply, target, signature, failed)
         progress.record(done.tool, done.outcome, done.target?.key, signature, done.data?.text, added = done.progress == true)
         ledger(done, outcome)
         handle(escalation.afterStep(progress))
+    }
+
+    // The task's record for routines (D23) and the labels that its steps acted on, for route notes (D22).
+    private fun record(message: ChatMessage.Assistant, reply: Reply.Act, target: TableEntry?, before: Signature, failed: Boolean) {
+        val call = reply.call
+        if (call is AgentCall.TypeText && Vault.PLACEHOLDER.containsMatchIn(call.text)) typedSecret = true
+        if (failed || reply.name in UNRECORDED) return
+        memory.acted(target?.packageName, target?.label)
+        val arguments = message.toolCalls.firstOrNull { it.id == reply.callId }?.arguments
+        recorded += RoutineStep(
+            tool = reply.name,
+            key = target?.key,
+            label = target?.label,
+            className = target?.className,
+            packageName = target?.packageName,
+            category = (arguments?.get("category") as? JsonPrimitive)?.content,
+            before = before,
+            after = observation.signature,
+            title = observation.title,
+            text = (call as? AgentCall.TypeText)?.text,
+            arguments = arguments,
+        )
+    }
+
+    /** A step of a routine's replay (D23): its observation, its `ACTION` entry and its ledger line, as a model's step has. */
+    internal suspend fun replayed(done: Done, started: Long) {
+        val first = StepResult(replies, done.tool, done.outcome ?: Outcome.Answered, done.target, observation.appLabel, done.detail)
+        val next = done.after?.let { observe(it, done.last ?: first.lastLine(), done.target?.key, done.ocr) }
+        val outcome = if (done.outcome is Outcome.AnotherScreen) Outcome.AnotherScreen(next?.title) else done.outcome
+        val line = done.text ?: first.copy(outcome = outcome ?: Outcome.Answered).resultLine()
+        log(TaskLog.Kind.ACTION, "routine ${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
+        if (done.executed) ledger(done, outcome)
     }
 
     internal suspend fun execute(call: AgentCall): Done = when (call) {
@@ -710,8 +763,18 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             }
         }
         memory.admit(call.notes)
+        val signature = call.signature
+        val recording = recording(signature)
+        finished = recording
+        // `:app` offers to save the task after it has spoken the report (D23).
+        offerRoutine = recording != null && signature != null && ports.memory.countSignature(signature) == OFFER_AT
         throw Ended(EndReason.FINISHED, summary = spoken(call.summary))
     }
+
+    /** The task's steps for "Kestrel, save that as <name>", or null when it typed a vault value or did nothing (D23). */
+    private fun recording(signature: String?): Recording? =
+        if (typedSecret || recorded.isEmpty()) null
+        else Recording(redactor.redact(task.text), recorded.toList(), signature, ports.clock.elapsedMillis())
 
     // The `remember` and `forget` tools always ask the owner first (spec 11.4; D22).
     private suspend fun remember(call: AgentCall.Remember): Done {
@@ -776,6 +839,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         beforeTestMode = beforeTestMode,
         shareItems = shareItems,
         modelId = ports.model.model.lightweight.id,
+        recording = finished.takeIf { reason == EndReason.FINISHED },
+        offerRoutine = offerRoutine && reason == EndReason.FINISHED,
     )
 
     /** Writes [text] to the activity log; a failure of the log never ends the task. */
@@ -826,7 +891,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         private const val MAX_INTERRUPTIONS = 3
         private val PRESSING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT)
         private val CRASHED = Regex("""(isn't responding|keeps stopping)$""")
+        private const val OFFER_AT = 2
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
         private val STRIKING = setOf(EndReason.FAILED_BY_MODEL, EndReason.UNVERIFIED, EndReason.STUCK)
+        private val UNRECORDED = setOf(Tools.ASK_USER, Tools.SAY, Tools.FINISH, Tools.FAIL, Tools.REMEMBER, Tools.FORGET, Tools.LOOK_CLOSER)
     }
 }

@@ -2,11 +2,13 @@ package dev.kestrel.agent.port
 
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.RouteNote
+import dev.kestrel.agent.memory.Routine
 
 /**
  * Kestrel's memory as the agent reads and writes it (design D1, D20, D22 and D23). `:app`'s `SettingsMemoryStore` keeps
  * each part in its own encrypted `SettingKey`: the facts (`MEMORY_FACTS`), the route notes per app (`ROUTE_NOTES`), the
- * contacts that tasks found (`FOUND_CONTACTS`) and the screenshot approvals per app and provider (`SCREENSHOT_APPROVALS`).
+ * contacts that tasks found (`FOUND_CONTACTS`), the screenshot approvals per app and provider (`SCREENSHOT_APPROVALS`),
+ * the routines (`ROUTINES`) and the counts of `finish` signatures (`ROUTINE_SIGNATURES`).
  */
 interface MemoryStore {
     suspend fun facts(): List<Fact>
@@ -28,4 +30,12 @@ interface MemoryStore {
     suspend fun screenshotApproved(packageName: String, providerId: String): Boolean
 
     suspend fun approveScreenshots(packageName: String, providerId: String)
+
+    suspend fun routines(): List<Routine>
+
+    /** Stores [routine], replacing a routine with the same name. */
+    suspend fun saveRoutine(routine: Routine)
+
+    /** Counts one more `FINISHED` run of a task with [signature] and returns the new count. */
+    suspend fun countSignature(signature: String): Int
 }
