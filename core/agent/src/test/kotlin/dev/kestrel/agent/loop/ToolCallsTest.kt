@@ -75,6 +75,19 @@ class ToolCallsTest {
     }
 
     @Test
+    fun aCallThatTheAdapterCouldNotUseMakesTheReplyInvalidAlsoBesideAUsableCall() {
+        val invalid = InvalidToolCall(InvalidKind.ARGUMENTS_NOT_OBJECT, "type_text(\"secret words\")")
+
+        val reply = ToolCalls.read(response(call("a", Tools.TAP, tap(1)), call("b", Tools.TAP, tap(1)), invalid = invalid), table, vault)
+
+        reply as Reply.Invalid
+        assertEquals(listOf("a", "b"), reply.results.map { it.callId })
+        assertTrue(reply.results.all { it.failed && it.text.text.contains(ToolCalls.sentence(InvalidKind.ARGUMENTS_NOT_OBJECT)) })
+        assertFalse(reply.results.any { it.text.text.contains("secret words") })
+        assertNull(reply.reprompt)
+    }
+
+    @Test
     fun aCallWhoseArgumentsAreWrongGetsAFailedResultWithWhatWasWrong() {
         val expected = ToolArguments.parse(Tools.TAP, tap(9), table, vault) as ParsedCall.Invalid
 

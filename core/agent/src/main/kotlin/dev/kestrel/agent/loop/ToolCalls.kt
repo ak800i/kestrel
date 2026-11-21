@@ -20,7 +20,8 @@ sealed interface Reply {
     }
 
     /**
-     * No call that Kestrel can use: [results] answer every call of the reply, the first with what was wrong, and [reprompt]
+     * No call that Kestrel can use: [results] answer every call of the reply, the first (or each, beside a call that the
+     * adapter could not use) with what was wrong, and [reprompt]
      * follows when the reply had no call to answer (D32 item 7). It counts as one invalid tool call (spec 11.7, 14.2).
      */
     data class Invalid(val results: List<ResultText>, val reprompt: Redacted?) : Reply {
@@ -33,13 +34,15 @@ sealed interface Reply {
  * answers every other call with [NOT_RUN], which does not count as an invalid call. A reply with text and no call, a call
  * that the adapter could not use, a call whose arguments break its schema or name a number that the newest observation
  * does not have, and a reply cut by `MAX_TOKENS` or stopped as `FILTERED` are invalid: a call with an ID gets a failed
- * result with a fixed sentence (never the model's text), and a reply without one gets a re-prompt.
+ * result with a fixed sentence (never the model's text), and a reply without one gets a re-prompt. A reply with a call that
+ * the adapter could not use is invalid also when it holds usable calls: none of them runs, and each gets a failed result.
  */
 object ToolCalls {
     const val NOT_RUN = "Not run: Kestrel runs one action per step."
     const val REPROMPT = "Reply with exactly one tool call."
     const val CUT = "The reply was cut off before it ended."
     const val FILTERED = "The provider's filter stopped the reply."
+    private const val OTHER_UNUSABLE = "Not run: another call of this reply could not be used."
 
     fun read(response: ChatResponse, table: ObservationTable, vault: Vault): Reply {
         val calls = response.message.toolCalls
@@ -49,7 +52,11 @@ object ToolCalls {
             else -> null
         }
         if (stopped != null) return invalid(response, stopped)
-        val first = calls.firstOrNull() ?: return invalid(response, response.invalidToolCall?.let { sentence(it.kind) })
+        // The adapter leaves an unusable call out of the message and keeps the others, so a usable call beside it may be the
+        // model's second one: no call of such a reply runs.
+        val unusable = response.invalidToolCall?.let { sentence(it.kind) }
+        if (unusable != null) return invalid(response, if (calls.isEmpty()) unusable else "$OTHER_UNUSABLE $unusable")
+        val first = calls.firstOrNull() ?: return invalid(response, null)
         val notRun = calls.drop(1).map { ResultText(it.id, it.name, Redacted.kestrel(NOT_RUN), failed = true) }
         return when (val parsed = ToolArguments.parse(first.name, first.arguments, table, vault)) {
             is ParsedCall.Valid -> Reply.Act(first.id, first.name, parsed.call, notRun)
