@@ -34,14 +34,14 @@ class Redactor(val vault: Vault) {
         return builder.toString()
     }
 
-    /** Every value that the vault holds, where its characters appear again, with its digits' separators. */
+    /** Every value that the vault holds, where its characters appear again, with or without separators between them. */
     private fun replaceKnown(text: String): String {
         var result = text
         for ((kind, value) in vault.known()) {
             val pattern = when (kind) {
                 SecretKind.OTP, SecretKind.CARD, SecretKind.JMBG ->
-                    Regex("(?<![0-9])" + Vault.canonical(kind, value).toCharArray().joinToString("[ -]?") + "(?![0-9])")
-                SecretKind.IBAN -> Regex(Vault.canonical(kind, value).toCharArray().joinToString(" ?") { Regex.escape(it.toString()) }, RegexOption.IGNORE_CASE)
+                    Regex("(?<![0-9])" + Vault.canonical(kind, value).toCharArray().joinToString("$GAP?") + "(?![0-9])")
+                SecretKind.IBAN -> Regex(Vault.canonical(kind, value).toCharArray().joinToString("$SPACE?") { Regex.escape(it.toString()) }, RegexOption.IGNORE_CASE)
                 SecretKind.TOKEN -> Regex(Regex.escape(value))
             }
             result = pattern.replace(result) { vault.placeholderFor(kind, it.value) }
@@ -60,19 +60,19 @@ class Redactor(val vault: Vault) {
         return hits + generic
     }
 
+    /**
+     * IBANs: a run in capitals that is written without spaces or in groups of four (the last one shorter). A country of
+     * the table takes its own length from the run's start, which must end where a group ends; any other country takes
+     * the whole run. Either passes mod 97 (review 5A-4 Minor 1).
+     */
     private fun ibans(text: String): List<Hit> = IBAN.findAll(text).mapNotNull { match ->
-        val country = match.value.substring(0, 2).uppercase()
-        val compact = match.value.filter(Char::isLetterOrDigit).uppercase()
-        val lengths = Checksums.IBAN_LENGTHS[country]?.let { listOf(it) } ?: (34 downTo 15).toList()
-        val length = lengths.firstOrNull { it <= compact.length && Checksums.iban(compact.substring(0, it)) } ?: return@mapNotNull null
-        // The end of the IBAN's last character in the text.
-        var seen = 0
-        var end = match.range.first
-        while (seen < length) {
-            if (text[end].isLetterOrDigit()) seen++
-            end++
-        }
-        Hit(match.range.first until end, SecretKind.IBAN)
+        val positions = match.value.indices.filter { match.value[it].isLetterOrDigit() }.map { match.range.first + it }
+        val compact = positions.joinToString("") { text[it].toString() }
+        val length = Checksums.IBAN_LENGTHS[compact.substring(0, 2)] ?: compact.length
+        if (length > compact.length) return@mapNotNull null
+        val end = positions[length - 1]
+        if (text.getOrNull(end + 1)?.isLetterOrDigit() == true || !Checksums.iban(compact.substring(0, length))) return@mapNotNull null
+        Hit(match.range.first..end, SecretKind.IBAN)
     }.toList()
 
     private fun jmbgs(text: String): List<Hit> =
@@ -105,7 +105,10 @@ class Redactor(val vault: Vault) {
         found.asSequence()
     }.toList()
 
-    /** One-time codes: 4 to 8 digits, also in up to three groups split by a space or a dash, within 40 characters of a keyword or beside one. */
+    /**
+     * One-time codes: 4 to 8 digits, also in up to three groups split by a space (also a no-break, narrow or thin one) or
+     * a dash, within 40 characters of a keyword or beside one.
+     */
     private fun codes(text: String, neighbours: List<String>): List<Hit> {
         val candidates = CODE.findAll(text).filter { it.value.count(Char::isDigit) in 4..8 && !inNumber(text, it.range) }.toList()
         if (candidates.isEmpty()) return emptyList()
@@ -121,15 +124,15 @@ class Redactor(val vault: Vault) {
 
     /**
      * Whether the digits at [range] are part of a longer number, such as a phone number: a "+" before them, or another
-     * digit across one space or dash on either side (review 2 M4).
+     * digit across one separator on either side (review 2 M4).
      */
     private fun inNumber(text: String, range: IntRange): Boolean {
         fun at(index: Int) = text.getOrNull(index)
         val before = at(range.first - 1)
         if (before == '+') return true
-        if ((before == ' ' || before == '-') && (at(range.first - 2)?.isDigit() == true || at(range.first - 2) == '+')) return true
+        if (before in GAPS && (at(range.first - 2)?.isDigit() == true || at(range.first - 2) == '+')) return true
         val after = at(range.last + 1)
-        return (after == ' ' || after == '-') && at(range.last + 2)?.isDigit() == true
+        return after in GAPS && at(range.last + 2)?.isDigit() == true
     }
 
     /** Where the code keywords stand in [text], found on the folded text and mapped back to [text]. */
@@ -141,12 +144,17 @@ class Redactor(val vault: Vault) {
 
     private companion object {
         const val NEAR = 40
+
+        // Android writes digit groups with a no-break, figure, narrow no-break or thin space too (review 5A-4 Minor 2).
+        const val SPACE = "[ \u00A0\u2007\u202F\u2009]"
+        const val GAP = "[ \u00A0\u2007\u202F\u2009-]"
+        val GAPS = setOf(' ', '\u00A0', '\u2007', '\u202F', '\u2009', '-')
         val KEYWORDS = setOf("code", "codes", "kod", "kodovi", "sifra", "pin", "otp", "verification", "verifikacioni", "lozinka", "password")
         // Up to three groups ("12 34 56"); a longer number, such as a phone number, has more than 8 digits (review 2-2 New 3).
-        val CODE = Regex("(?<![0-9A-Za-z])[0-9]{1,8}(?:[ -][0-9]{1,8}){0,2}(?![0-9A-Za-z])")
-        val DIGIT_RUN = Regex("[0-9](?:[ -]?[0-9]){12,}")
+        val CODE = Regex("(?<![0-9A-Za-z])[0-9]{1,8}(?:$GAP[0-9]{1,8}){0,2}(?![0-9A-Za-z])")
+        val DIGIT_RUN = Regex("[0-9](?:$GAP?[0-9]){12,}")
         val THIRTEEN = Regex("(?<![0-9])[0-9]{13}(?![0-9])")
-        val IBAN = Regex("(?<![A-Za-z0-9])[A-Za-z]{2}[0-9]{2}(?: ?[A-Za-z0-9]){11,30}")
+        val IBAN = Regex("(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?:$SPACE[A-Z0-9]{4}){2,8}(?:$SPACE[A-Z0-9]{1,3})?)(?![A-Za-z0-9])")
         val LONG_RUN = Regex("(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
         val TOKEN_PATTERNS = listOf(
             Regex("eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"),

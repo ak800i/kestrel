@@ -13,7 +13,8 @@ enum class SecretKind(val tag: String, val spoken: String) {
  * The task's vault (design D17 of sub-project 5; spec 12.6): a map from Kestrel's placeholders, numbered per kind and
  * task, to the real values, in memory only, owned by one task and cleared in its `finally`. The same value always gets
  * the same placeholder, so a conversation's stable part never changes. A placeholder is revealed only in `type_text`'s
- * text after the owner's yes. Its text form prints only how many values it holds.
+ * text after the owner's yes, without the separators that the screen showed. Its text form prints only how many values
+ * it holds.
  */
 class Vault {
     private val held = LinkedHashMap<String, Pair<SecretKind, String>>()
@@ -28,7 +29,8 @@ class Vault {
         counts[kind] = number
         val placeholder = "[${kind.tag}_$number]"
         placeholders[key] = placeholder
-        held[placeholder] = kind to value
+        // Kept in the form that a field takes, so that `type_text` types "482913", not "482 913" (review 5A-4 Minor 3).
+        held[placeholder] = key
         return placeholder
     }
 
@@ -45,7 +47,7 @@ class Vault {
     /** [text] with each of the vault's placeholders replaced by its kind's words, for what Kestrel speaks (design D24). */
     fun spoken(text: String): String = PLACEHOLDER.replace(text) { held[it.value]?.first?.spoken ?: it.value }
 
-    /** The real values. */
+    /** The real values, in the form that [reveal] gives. */
     val values: Collection<String> get() = held.values.map { it.second }
 
     val isEmpty: Boolean get() = held.isEmpty()
@@ -65,7 +67,7 @@ class Vault {
         /** Kestrel's placeholders; the same pattern as [Placeholders.PATTERN]. */
         val PLACEHOLDER: Regex = Placeholders.PATTERN
 
-        /** The form in which two values count as the same: digits only, or an IBAN without spaces in capitals. */
+        /** The form in which two values count as the same and are revealed: digits only, or an IBAN without spaces in capitals. */
         internal fun canonical(kind: SecretKind, value: String): String = when (kind) {
             SecretKind.OTP, SecretKind.CARD, SecretKind.JMBG -> value.filter(Char::isDigit)
             SecretKind.IBAN -> value.filter(Char::isLetterOrDigit).uppercase()

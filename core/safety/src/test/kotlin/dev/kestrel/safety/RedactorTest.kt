@@ -58,6 +58,44 @@ class RedactorTest {
     }
 
     @Test
+    fun anIbanEndsWithItsGroupsAndAFlightNumberBeforeWordsIsNone() {
+        val redactor = redactor()
+
+        assertEquals("Flight AH38 departs from gate B at noon", redactor.redact("Flight AH38 departs from gate B at noon"))
+        assertEquals(
+            "Flight AH38 departs from gate B at noon, boarding soon",
+            redactor.redact("Flight AH38 departs from gate B at noon, boarding soon"),
+        )
+        assertEquals("To [IBAN_1].", redactor.redact("To RS35260005601001611379."))
+        assertEquals("[IBAN_2] 2027", redactor.redact("BE68 5390 0754 7034 2027"))
+        // Saudi Arabia is not in the table of lengths, so the whole run of groups must pass mod 97.
+        assertEquals("IBAN [IBAN_3] ok", redactor.redact("IBAN SA03 8000 0000 6080 1016 7519 ok"))
+    }
+
+    @Test
+    fun noBreakNarrowAndThinSpacesSplitGroupsLikeSpaces() {
+        val redactor = redactor()
+
+        assertEquals("Card [CARD_1]", redactor.redact("Card 4111\u00A01111\u00A01111\u00A01111"))
+        assertEquals("Code: [OTP_1]", redactor.redact("Code: 482\u00A0913"))
+        assertEquals("PIN [OTP_2]", redactor.redact("PIN 7731\u202F05"))
+        assertEquals("Your code is [OTP_3]", redactor.redact("Your code is 55\u200912\u200990"))
+        assertEquals("Pay to [IBAN_1]", redactor.redact("Pay to RS35\u00A02600\u00A00560\u00A01001\u00A06113\u00A079"))
+        // A known value is found again across these spaces too.
+        assertEquals("Again [OTP_1]", redactor.redact("Again 482\u202F913"))
+        assertEquals("We sent a code to +381\u00A060\u00A01234567", redactor.redact("We sent a code to +381\u00A060\u00A01234567"))
+    }
+
+    @Test
+    fun aRevealedCodeOrCardHasNoSeparators() {
+        val redactor = redactor()
+
+        assertEquals("Code: [OTP_1]", redactor.redact("Code: 482 913"))
+        assertEquals("Card [CARD_1]", redactor.redact("Card 4111-1111-1111-1111"))
+        assertEquals("482913 4111111111111111", redactor.vault.reveal("[OTP_1] [CARD_1]"))
+    }
+
+    @Test
     fun tokensKeysAndJwtsButNotAUrlSlug() {
         val redactor = redactor()
         val jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"

@@ -22,6 +22,17 @@ class VaultTest {
     }
 
     @Test
+    fun aValueFirstSeenWithSeparatorsIsRevealedWithout() {
+        val vault = Vault()
+
+        assertEquals("[OTP_1]", vault.placeholderFor(SecretKind.OTP, "483 920"))
+        assertEquals("[CARD_1]", vault.placeholderFor(SecretKind.CARD, "4111\u00A01111\u00A01111\u00A01111"))
+        assertEquals("[IBAN_1]", vault.placeholderFor(SecretKind.IBAN, "RS35 2600 0560 1001 6113 79"))
+        assertEquals("483920", vault.valueOf("[OTP_1]"))
+        assertEquals("Code 483920, card 4111111111111111, IBAN RS35260005601001611379", vault.reveal("Code [OTP_1], card [CARD_1], IBAN [IBAN_1]"))
+    }
+
+    @Test
     fun clearingEmptiesItAndItsTextFormHoldsNoValue() {
         val vault = Vault()
         vault.placeholderFor(SecretKind.TOKEN, "ghp_secretsecretsecretsecret")
