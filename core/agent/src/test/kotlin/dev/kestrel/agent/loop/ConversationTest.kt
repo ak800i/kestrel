@@ -212,11 +212,78 @@ class ConversationTest {
         observations += observe(5, chat("Ana Petrović", "Message 4"), observations.last())
         conversation.add(tapStep(4, observations.last(), thinking(4)))
         val grown = request(conversation, 5)
-        assertEquals(listOf(false, true, true, true), grown.messages.filterIsInstance<ChatMessage.Assistant>().map { reply -> reply.parts.any { it is AssistantPart.Reasoning } })
-        assertEquals("Result: tapped \"Ana\" (row) → another screen.\n" + observations[2].earlier(), texts(grown)[5])
+        assertEquals(listOf(true, true, true, true), grown.messages.filterIsInstance<ChatMessage.Assistant>().map { reply -> reply.parts.any { it is AssistantPart.Reasoning } })
+        assertEquals("Result: tapped \"Ana\" (row) → another screen.\n" + observations[2].text, texts(grown)[5])
         assertTrue(texts(grown).any { it.endsWith(observations[3].text) })
         assertFalse(texts(grown).any { it.contains(observations[3].earlier()) })
         assertTrue(conversation.growsOnly)
+    }
+
+    @Test
+    fun growOnlyResendsTheRefusedStepWithoutTheRewriteThatCausedIt() {
+        fun thinking(n: Int) = AssistantPart.Reasoning(ReasoningState(RequestStyle.ANTHROPIC, "anthropic", "claude-sonnet-5-5", JsonPrimitive("sig-$n")))
+        val observations = mutableListOf(observe(1, chat("Chats", "Ana Petrović")))
+        val conversation = conversation(observations[0], signedThinking = true)
+        for (step in 1..2) {
+            observations += observe(step + 1, chat("Ana Petrović", "Message $step"), observations.last())
+            conversation.add(tapStep(step, observations.last(), thinking(step)))
+        }
+        val accepted = request(conversation, 3)
+        observations += observe(4, chat("Ana Petrović", "Message 3"), observations.last())
+        conversation.add(tapStep(3, observations.last(), thinking(3)))
+        val refused = request(conversation, 4)
+
+        conversation.growOnly()
+        val retry = request(conversation, 4)
+
+        assertFalse(refused.messages == retry.messages)
+        assertEquals(accepted.messages, retry.messages.take(accepted.messages.size))
+        assertEquals(accepted.messages.size + 2, retry.messages.size)
+        assertEquals(listOf(true, true, true), retry.messages.filterIsInstance<ChatMessage.Assistant>().map { reply -> reply.parts.any { it is AssistantPart.Reasoning } })
+
+        observations += observe(5, chat("Ana Petrović", "Message 4"), observations.last())
+        conversation.add(tapStep(4, observations.last(), thinking(4)))
+        val next = request(conversation, 5)
+        assertEquals(retry.messages, next.messages.take(retry.messages.size))
+    }
+
+    @Test
+    fun aRewriteThatAProviderAcceptedStaysAfterGrowOnly() {
+        val observations = mutableListOf(observe(1, chat("Chats", "Ana Petrović")))
+        val conversation = conversation(observations[0], signedThinking = true)
+        for (step in 1..3) {
+            observations += observe(step + 1, chat("Ana Petrović", "Message $step"), observations.last())
+            conversation.add(tapStep(step, observations.last()))
+        }
+        val accepted = request(conversation, 4)
+        conversation.add(Step(4, ChatMessage.Assistant(listOf(AssistantPart.Text("Shall I?"))), emptyList(),
+            reprompt = Redacted.kestrel("Reply with exactly one tool call.")))
+        val refused = request(conversation, 5)
+
+        conversation.growOnly()
+
+        assertEquals(refused.messages, request(conversation, 5).messages)
+        assertEquals(accepted.messages, refused.messages.take(accepted.messages.size))
+    }
+
+    @Test
+    fun aLocalOllamaRequestLeavesRoomForTheWholeReply() {
+        val observations = mutableListOf(observe(1, chat("Chats", "Ana Petrović")))
+        val unlimited = conversation(observations[0], context = null)
+        for (step in 1..2) {
+            observations += observe(step + 1, chat("Ana Petrović", "Message $step"), observations.last())
+            unlimited.add(tapStep(step, observations.last()))
+        }
+        val tokens = tokensOf(unlimited.request(ToolChoice.REQUIRED, null, 3)!!)
+
+        fun budgeted(budget: Int) = conversation(observations[0], budget = budget, context = null).also { conversation ->
+            for (step in 1..2) conversation.add(tapStep(step, observations[step]))
+        }.request(ToolChoice.REQUIRED, null, 3)
+
+        assertNull(budgeted((tokens / 0.9).toInt() + 1))
+        val fits = budgeted(((tokens + Conversation.MAX_OUTPUT_TOKENS) / 0.9).toInt() + 1)
+        assertNotNull(fits)
+        assertEquals(tokens, tokensOf(fits!!))
     }
 
     @Test
@@ -289,7 +356,7 @@ class ConversationTest {
         // that counts the others.
         val line = ScreenText.tokens("(5 earlier steps left out.)")
         val tokens = tokensOf(full) - 5 * shrunkStepTokens() + line
-        val budgeted = conversation(observations[0], budget = (tokens / 0.9).toInt() + 1, context = null)
+        val budgeted = conversation(observations[0], budget = ((tokens + Conversation.MAX_OUTPUT_TOKENS) / 0.9).toInt() + 1, context = null)
         for (step in 1..8) budgeted.add(tapStep(step, observations[step]))
         val request = budgeted.request(ToolChoice.REQUIRED, null, 9)!!
         ChatRequests.check(request)

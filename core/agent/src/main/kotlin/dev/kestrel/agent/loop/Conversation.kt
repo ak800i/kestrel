@@ -59,10 +59,11 @@ class Step(
  *
  * Kestrel keeps every assistant message as it came, with its reasoning state, except that for a model with Claude's
  * signed thinking outside Copilot ([signedThinking]) the reasoning of the assistant messages in the stable region is
- * removed at the moment of the shrink (D32 item 9), and after [growOnly] nothing is rewritten any more. A step is only ever
- * removed whole (D32 item 8): for a local Ollama model whose [budget] (tokens) would be passed, the oldest shrunk steps go
- * and one line says how many (D32 item 10). Every text in here is [Redacted] or an [Observation], which the observation
- * builder redacted, so nothing is redacted twice (D17).
+ * removed at the moment of the shrink (D32 item 9), and [growOnly] undoes the rewrites that no accepted request carried
+ * and stops every later one. A step is only ever removed whole (D32 item 8): for a local Ollama model whose [budget]
+ * (tokens, with room for the reply) would be passed, the oldest shrunk steps go and one line says how many (D32 item 10).
+ * Every text in here is [Redacted] or an [Observation], which the observation builder redacted, so nothing is redacted
+ * twice (D17).
  */
 class Conversation(
     private val system: String,
@@ -92,11 +93,17 @@ class Conversation(
         var state = State.FULL
     }
 
+    private class Saved(val entry: Entry, val state: State, val reply: ChatMessage.Assistant?)
+
     private val entries = mutableListOf(
         Entry(0, null, emptyList(), null, null, first, null, Redacted.kestrel(first.firstScreen()), null, null),
     )
     private var leftOut = 0
     private var growing = false
+
+    // The entries as they were before the first rewrite that no provider has accepted yet: a new step's reply shows that
+    // the request built before it was accepted, so its rewrites are known good.
+    private var unconfirmed: List<Saved>? = null
 
     /** The newest observation, whose numbers the model may use. */
     val newestObservation: Observation get() = entries.last { it.observation != null }.observation!!
@@ -105,6 +112,7 @@ class Conversation(
     val growsOnly: Boolean get() = growing
 
     fun add(step: Step) {
+        unconfirmed = null
         entries += Entry(
             step.number, step.reply, step.results, step.observedCall, null, step.observation, step.data, step.summary,
             step.screenshot, step.reprompt,
@@ -120,13 +128,19 @@ class Conversation(
     }
 
     /**
-     * Nothing is rewritten from now on, because a provider refused the history after a shrink (D32 item 9): no step
-     * shrinks or loses its reasoning, and no observation is relabelled, since newer Claude models also refuse signed
-     * thinking after a change of an earlier tool result. `ToolArguments` still checks every number against the newest
-     * observation.
+     * Nothing is rewritten from now on, because a provider refused the history after a shrink (D32 item 9): the shrinks,
+     * removed reasoning and relabelled observations that no accepted request has carried yet are undone, so that the
+     * retry is the last accepted request with the new steps appended, and from then on no step shrinks or loses its
+     * reasoning, and no observation is relabelled, since newer Claude models also refuse signed thinking after a change
+     * of an earlier tool result. `ToolArguments` still checks every number against the newest observation.
      */
     fun growOnly() {
         growing = true
+        unconfirmed?.forEach { saved ->
+            saved.entry.state = saved.state
+            saved.entry.reply = saved.reply
+        }
+        unconfirmed = null
     }
 
     /**
@@ -148,7 +162,7 @@ class Conversation(
                 context = context?.text,
                 cacheAfter = cacheAfter,
             )
-            if (budget == null || tokens(request) <= budget * BUDGET_SHARE) return request
+            if (budget == null || tokens(request) + MAX_OUTPUT_TOKENS <= budget * BUDGET_SHARE) return request
             if (!leaveOutOldest()) return null
         }
     }
@@ -158,6 +172,7 @@ class Conversation(
         val observed = entries.indices.filter { entries[it].observation != null }
         if (observed.size < 2) return
         if (growing) return
+        if (unconfirmed == null) unconfirmed = entries.map { Saved(it, it.state, it.reply) }
         val second = observed[observed.size - 2]
         if (entries[second].state == State.FULL) entries[second].state = State.EARLIER
         var shrunk = false
@@ -264,7 +279,10 @@ class Conversation(
         /** `prompt_cache_key` for OpenAI's own API: one key for every task, so that tasks share the cached prefix (D5). */
         const val CACHE_KEY = "kestrel-agent"
 
-        /** A local Ollama model's budget: its window, at most 32,768 tokens; requests stay below 90 % of it (D32 item 10). */
+        /**
+         * A local Ollama model's budget: its window, at most 32,768 tokens. The prompt and the reply's [MAX_OUTPUT_TOKENS]
+         * stay below 90 % of it (D32 item 10), because Ollama's `num_ctx` holds both and the reply cannot shift the prompt.
+         */
         const val OLLAMA_BUDGET = 32_768
         private const val BUDGET_SHARE = 0.9
         private const val IMAGE_TOKENS = 1_000
