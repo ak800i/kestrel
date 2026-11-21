@@ -1,0 +1,13 @@
+Observation 4 · App: Viber (com.viber.voip) · Screen: "Ana Petrović" · Keyboard: shown · Focus: [9]
+Last: tapped "Ana Petrović" (ViewGroup) → another screen
+[1] ImageButton "Navigate up" @top-left
+[2] ImageButton "Call" @top-right
+[3] Text "Ana Petrović" @top
+[4] Text "online" @top
+[5] List "Messages" scroll up (more above) @middle
+[6] ViewGroup "Hi Ana, are we still on for tomorrow? · 10:02" @top
+[7] ViewGroup "Your Viber code: [OTP_1] · 10:05" @middle
+[8] ImageButton id "attach" @bottom-left
+[9] EditText hint "Type a message…" value "" focused @bottom
+[10] ImageButton "Send" @bottom-right
+Notifications: hidden (1 showing; use list_notifications)

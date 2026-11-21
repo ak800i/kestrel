@@ -1,0 +1,23 @@
+{
+  "about": "Which SystemUI parts an observation shows (design D9 of sub-project 5). Every source is merged. Plan 5B fills kestrel-api37 from the trees that its device test records; the controller fills a71 after the owner's first sitting. Tiles stay; notifications are counted; everything else of SystemUI is dropped.",
+  "sources": {
+    "aosp": {
+      "tileIds": [],
+      "tileClasses": [],
+      "notificationIds": ["expandableNotificationRow"],
+      "notificationClasses": []
+    },
+    "kestrel-api37": {
+      "tileIds": [],
+      "tileClasses": [],
+      "notificationIds": [],
+      "notificationClasses": []
+    },
+    "a71": {
+      "tileIds": [],
+      "tileClasses": [],
+      "notificationIds": [],
+      "notificationClasses": []
+    }
+  }
+}
