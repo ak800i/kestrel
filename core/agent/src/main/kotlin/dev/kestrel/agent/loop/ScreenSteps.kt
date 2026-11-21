@@ -35,6 +35,9 @@ import java.net.URI
  * reads the screen again and presses only when the confirmation and test mode's check still hold.
  */
 internal class ScreenSteps(private val run: TaskRun) {
+    // Whether the last open() sent its link, which the Firefox retry needs (a pause, a refusal or a hand-over sends none).
+    private var sentLink = false
+
     suspend fun element(call: AgentCall): Done {
         val table = run.observation.table
         val entry = when (call) {
@@ -172,9 +175,11 @@ internal class ScreenSteps(private val run: TaskRun) {
         val target = run.ports.screen.resolve(IntentSpec(VIEW, link, browserPackage, browsable = true))
         val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency)
         if (verdict is LinkVerdict.Refused) return Done(call.tool, Outcome.Refused(verdict.reason))
+        sentLink = false
         val done = open(call, ScreenAction.OpenUri(link, browserPackage, browsable = true), target, null, linkTarget = target)
-        // The retry is Firefox's, also when Firefox is the default browser that the link resolved to (r57).
-        if (target == null || target !in Browser.FIREFOX.packages || done.after == null) return done
+        // The retry is Firefox's, also when Firefox is the default browser that the link resolved to (r57); only after the
+        // first intent was sent, never after a pause, a refusal or a hand-over, so the link never opens unchecked (D2, D12).
+        if (!sentLink || target == null || target !in Browser.FIREFOX.packages || done.after == null) return done
         return firefox(call, done, link, browserPackage, target)
     }
 
@@ -234,6 +239,7 @@ internal class ScreenSteps(private val run: TaskRun) {
                 is Clearance.Go -> {
                     val outcome = run.ports.screen.act(action)
                     if (!outcome.done) return Done(call.tool, Outcome.Failed(outcome.reason ?: ACTION_FAILED), after = run.fresh())
+                    if (action is ScreenAction.OpenUri) sentLink = true
                     run.ports.screen.waitForFront(target, FRONT_WAIT_MILLIS, before = ScreenTree.frontWindow(before)?.packageName)
                     val after = run.fresh()
                     run.safety = SafetyCheck.afterAction(proposal, before, after, run.safety)

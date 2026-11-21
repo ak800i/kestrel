@@ -382,6 +382,12 @@ class AgentToolsTest {
         paused.run("Open en.wikipedia.org")
         assertEquals(1, opens(paused))
         assertTrue(paused.lastRequestText().contains(ScreenSteps.EMPTY_PAGE))
+
+        // A pause before the first intent: no link is sent at all, not even by the retry.
+        val pausedFirst = firefox()
+        pausedFirst.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+        pausedFirst.run("Open en.wikipedia.org")
+        assertEquals(0, opens(pausedFirst))
     }
 
     @Test
