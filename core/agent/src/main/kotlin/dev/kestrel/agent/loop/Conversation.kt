@@ -62,6 +62,8 @@ class Step(
  * removed at the moment of the shrink (D32 item 9), and [growOnly] undoes the rewrites that no accepted request carried
  * and stops every later one. A step is only ever removed whole (D32 item 8): for a local Ollama model whose [budget]
  * (tokens, with room for the reply) would be passed, the oldest shrunk steps go and one line says how many (D32 item 10).
+ * The loop sets [budget] before each request to the window of the model that gets it, so that a switch of models
+ * changes it (D7).
  * Every text in here is [Redacted] or an [Observation], which the observation builder redacted, so nothing is redacted
  * twice (D17).
  */
@@ -73,7 +75,7 @@ class Conversation(
     first: Observation,
     private val taskId: String,
     private val signedThinking: Boolean = false,
-    private val budget: Int? = null,
+    internal var budget: Int? = null,
     private val cacheKey: String? = CACHE_KEY,
 ) {
     private enum class State { FULL, EARLIER, SHRUNK }
@@ -149,6 +151,7 @@ class Conversation(
      */
     fun request(toolChoice: ToolChoice, reasoning: ReasoningLevel?, step: Int): ChatRequest? {
         while (true) {
+            val limit = budget
             val (messages, cacheAfter) = messages()
             val request = ChatRequest(
                 system = system,
@@ -162,7 +165,7 @@ class Conversation(
                 context = context?.text,
                 cacheAfter = cacheAfter,
             )
-            if (budget == null || tokens(request) + MAX_OUTPUT_TOKENS <= budget * BUDGET_SHARE) return request
+            if (limit == null || tokens(request) + MAX_OUTPUT_TOKENS <= limit * BUDGET_SHARE) return request
             if (!leaveOutOldest()) return null
         }
     }

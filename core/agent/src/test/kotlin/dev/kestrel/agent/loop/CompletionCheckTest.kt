@@ -77,6 +77,18 @@ class CompletionCheckTest {
         assertEquals(Verdict.Passed, check(finish(Evidence(number(sent, "I'm late"), null, null)), sent, sends = listOf(send)))
         // The owner's step after a hand-over may be cited as a step, but a confirmed send still needs its own evidence.
         assertTrue(check(finish(Evidence(null, 4, null)), sent, dataSteps = setOf(4), sends = listOf(send)) is Verdict.Missing)
+        // A message still in the input field (a failed or doubted Send) is no evidence, nor is a bar around that field.
+        val unsent = Screens.chat("Ana Petrović", "Hi", typed = "I'm late")
+        assertTrue(check(finish(Evidence(number(unsent, "I'm late"), null, null)), unsent, sends = listOf(send)) is Verdict.Missing)
+        val field = unsent.elements.indexOfFirst { it.editable }
+        val barred = unsent.copy(elements = unsent.elements.mapIndexed { index, element ->
+            if (index == field) element.copy(parent = unsent.elements.size) else element
+        } + unsent.elements[field].copy(
+            key = "bar", parent = null, className = "android.view.ViewGroup", text = null, hint = null, label = "I'm late",
+            editable = false, clickable = true, viewId = "dev.kestrel.testapp:id/compose_bar",
+        ))
+        val bar = table(barred).entries.first { it.key == "bar" }.number
+        assertTrue(check(finish(Evidence(bar, null, null)), barred, sends = listOf(send)) is Verdict.Missing)
 
         val shared = ConfirmedSend(listOf("Ana Petrović"), null, share = true)
         val photos = Screens.chat("Ana Petrović", "Hi", "3 photos")

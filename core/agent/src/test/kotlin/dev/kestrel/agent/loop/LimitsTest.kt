@@ -4,6 +4,7 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Harness
 import dev.kestrel.agent.Screens
 import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.testing.FakeClock
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
@@ -101,6 +102,43 @@ class LimitsTest {
         assertEquals(ToolChoice.AUTO, versatile.toolChoice)
         assertNull(harness.model.requests[0].reasoning)
         assertEquals(ToolChoice.REQUIRED, harness.model.requests[0].toolChoice)
+    }
+
+    @Test
+    fun aResumeDuringTheCostQuestionIsObservedBeforeThatTurnsModelCall() = runTest {
+        val (a, b) = twoScreens()
+        val harness = Harness(a, listOf(
+            call("tap", "Go to B", null, 6.0, "reason" to "on", "category" to "reading"),
+            call("tap", "Go to A", null, 6.0, "reason" to "back", "category" to "reading"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        harness.screen.onTap("Go to B", b)
+        harness.screen.onTap("Go to A", a)
+        // The gates of the first two turns and their taps, then the gate of the cost question.
+        harness.owner.gates += listOf(Gate.GO, Gate.GO, Gate.GO, Gate.GO, Gate.GO, Gate.RESUMED)
+        harness.owner.answers += Answer.Yes
+
+        harness.run("Keep going")
+
+        assertEquals("This task has used 12 credits. Continue?", harness.owner.asked.single().first)
+        assertEquals(3, harness.model.requests.size)
+        assertTrue(harness.requestText(2).contains(TaskRun.RESUMED))
+    }
+
+    @Test
+    fun afterASwitchALocalOllamaTaskUsesTheVersatileModelsBudget() = runTest {
+        val text = buildJsonObject { put("text", "I will tap it.") }
+        val info = ScriptedModel.INFO.copy(
+            localOllama = true,
+            lightweight = ScriptedModel.INFO.lightweight.copy(contextWindow = 32_768),
+            versatile = ScriptedModel.INFO.versatile.copy(contextWindow = 2_000),
+        )
+        val harness = Harness(Screens.chats(), listOf(text, text, call("fail", null, null, null, "reason" to "Stop.")), model = info)
+
+        val report = harness.run("Open Ana's chat")
+
+        assertEquals(EndReason.CONTEXT_TOO_SMALL, report.end)
+        assertEquals(listOf(ModelRole.LIGHTWEIGHT, ModelRole.LIGHTWEIGHT), harness.model.roles)
     }
 
     @Test

@@ -28,8 +28,9 @@ sealed interface Verdict {
  * its evidence names, or else the state that the task's own last action on it produced ([lastChecked]), and one of the two
  * must exist; a cited step must be one of [steps]: the task's data steps whose result was `ok` and the steps that the
  * owner did by hand after a hand-over. OCR lines cannot be checked; evidence made only of them is [Verdict.Unverifiable].
- * Every confirmed send needs its own evidence, also after a hand-over: a cited element that holds the sent text, or after
- * a share, a screen whose title is the confirmed recipient with a cited element of the shared items (review B M14).
+ * Every confirmed send needs its own evidence, also after a hand-over: a cited element that holds the sent text outside
+ * an input field, or after a share, a screen whose title is the confirmed recipient with a cited element of the shared
+ * items (review B M14).
  */
 internal object CompletionCheck {
     fun check(
@@ -43,6 +44,8 @@ internal object CompletionCheck {
     ): Verdict {
         if (finish.evidence.isEmpty()) return Verdict.Missing("no evidence was cited")
         val cited = mutableListOf<String>()
+        // The fresh elements that the evidence cites, by index.
+        val shown = mutableListOf<Int>()
         var media = false
         var checkable = false
         for (evidence in finish.evidence) {
@@ -66,6 +69,7 @@ internal object CompletionCheck {
             }
             val text = listOfNotNull(element.label, element.text, element.contentDescription).joinToString(" ")
             cited += text
+            fresh.elements.indexOf(element).takeIf { it >= 0 }?.let(shown::add)
             media = media || MEDIA_CLASSES.any { element.className?.endsWith(it) == true } || Normalizer.words(text).any { it in MEDIA_WORDS }
         }
         if (!checkable) return Verdict.Unverifiable
@@ -76,11 +80,28 @@ internal object CompletionCheck {
                 title != null && send.recipients.any { Normalizer.normalize(it) == Normalizer.normalize(title) } && (media || !send.share && cited.isNotEmpty())
             } else {
                 val content = Normalizer.normalize(send.content)
-                cited.any { Normalizer.normalize(it).contains(content) }
+                shown.any { holdsSent(fresh, it, content) }
             }
             if (!shown) return Verdict.Missing(if (send.share) "the chat it was shared to, with the shared items, is not on the screen" else "no cited element shows the sent message")
         }
         return Verdict.Passed
+    }
+
+    /**
+     * Whether the element at [index] shows the sent [content] (folded): a text that is still in an input field is not sent
+     * (a failed or doubted Send leaves it there), so an editable element is no evidence, and a container counts only
+     * by the text that remains when its editable descendants' texts are taken out of its label (D21).
+     */
+    private fun holdsSent(screen: ScreenSnapshot, index: Int, content: String): Boolean {
+        val element = screen.elements[index]
+        if (element.editable) return false
+        val fields = screen.elements.indices
+            .filter { screen.elements[it].editable && index in ScreenTree.ancestors(screen, it) }
+            .flatMap { listOfNotNull(screen.elements[it].text, screen.elements[it].label) }
+            .filter { it.isNotBlank() }
+        val label = fields.fold(element.label.orEmpty()) { rest, field -> rest.replace(field, " ") }
+        val own = listOfNotNull(element.text?.takeIf { fields.isEmpty() }, element.contentDescription, label).joinToString(" ")
+        return Normalizer.normalize(own).contains(content)
     }
 
     private val MEDIA_CLASSES = listOf("ImageView", "VideoView")

@@ -79,17 +79,17 @@ internal class ScreenSteps(private val run: TaskRun) {
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
         val flow = run.safety.shareFlow
         val done = perform(call, entry, proposal, fresh, category, confirmed = true)
-        // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press of
-        // the share flow needs a new yes.
-        if (done.outcome == Outcome.Uncertain) {
-            run.unsure(yes, share = flow != null)
-            run.forgetConfirmedFlow()
-        } else if (done.outcome !is Outcome.Failed) {
-            val items = flow?.count?.let { it.photos + it.videos } ?: 0
-            // A share that the report already holds is not counted again when a doubted tap of it was confirmed anew.
-            val counted = flow != null && run.countedShare == flow.serial to yes.recipients
-            run.sent(yes, share = flow != null, items = items, covered = covered || counted)
-            if (flow != null && yes.category == Category.SENDING) run.countedShare = flow.serial to yes.recipients
+        when {
+            // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press
+            // of the share flow needs a new yes.
+            done.outcome == Outcome.Uncertain -> {
+                run.unsure(yes, share = flow != null)
+                run.forgetConfirmedFlow()
+            }
+            done.outcome is Outcome.Failed -> Unit
+            // A share is sent by the tap after which its flow ends, not by a tap that only picks a chat (D14, D24).
+            flow != null && yes.category == Category.SENDING -> run.shareTapped(flow, yes, ended = run.safety.shareFlow?.serial != flow.serial)
+            else -> run.sent(yes, share = false, items = 0, covered = covered)
         }
         return done
     }
@@ -171,21 +171,29 @@ internal class ScreenSteps(private val run: TaskRun) {
         val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency)
         if (verdict is LinkVerdict.Refused) return Done(call.tool, Outcome.Refused(verdict.reason))
         val done = open(call, ScreenAction.OpenUri(link, browserPackage, browsable = true), target, null, linkTarget = target)
-        if (browser != Browser.FIREFOX || browserPackage == null || done.after == null) return done
-        return firefox(call, done, link, browserPackage)
+        // The retry is Firefox's, also when Firefox is the default browser that the link resolved to (r57).
+        if (target == null || target !in Browser.FIREFOX.packages || done.after == null) return done
+        return firefox(call, done, link, browserPackage, target)
     }
 
     // Firefox's web area can stay empty (r57's bug 2023734): wait for it, send the intent once more, then say so (D11).
-    private suspend fun firefox(call: AgentCall, done: Done, link: String, browserPackage: String): Done {
+    private suspend fun firefox(call: AgentCall, done: Done, link: String, browserPackage: String?, firefox: String): Done {
         for (attempt in 0..1) {
             repeat(WAIT_POLLS) {
                 val now = run.fresh()
-                if (webAreaFilled(now, browserPackage)) return Done(call.tool, done.outcome, after = now, detail = done.detail)
+                if (webAreaFilled(now, firefox)) return Done(call.tool, done.outcome, after = now, detail = done.detail)
                 delay(POLL_MILLIS)
             }
-            if (attempt == 0) run.ports.screen.act(ScreenAction.OpenUri(link, browserPackage, browsable = true))
+            if (attempt == 0) {
+                // The second intent is an action, so it waits at the pause gate; after a pause it is not sent, because the
+                // owner may have changed the screen (D2).
+                if (run.gate()) break
+                run.ports.screen.act(ScreenAction.OpenUri(link, browserPackage, browsable = true))
+            }
         }
-        return Done(call.tool, Outcome.Failed(EMPTY_PAGE), after = run.fresh())
+        val now = run.fresh()
+        if (webAreaFilled(now, firefox)) return Done(call.tool, done.outcome, after = now, detail = done.detail)
+        return Done(call.tool, Outcome.Failed(EMPTY_PAGE), after = now)
     }
 
     private fun webAreaFilled(snapshot: ScreenSnapshot, browserPackage: String): Boolean {
@@ -262,12 +270,15 @@ internal class ScreenSteps(private val run: TaskRun) {
 
     // A link came from the owner when its host (or for a deep link, the whole link) is in his request (D32 item 12): its
     // words as a whole run of the request's words, or the host as one spoken word ("wikipedia.org" said "wikipedia org").
+    // Only an https link has a host that names a place: in `whatsapp://send?…`, `viber://forward?…` or `tg://share?…` the
+    // "host" is an action word that most messaging requests hold (D12).
     private fun fromOwner(link: String): Boolean {
-        val host = try {
-            URI(link).host
+        val uri = try {
+            URI(link)
         } catch (e: Exception) {
             null
-        } ?: link
+        }
+        val host = uri?.host?.takeIf { uri.scheme.equals(HTTPS, ignoreCase = true) } ?: link
         val words = Normalizer.words(host)
         val request = Normalizer.words(run.task.text)
         if (words.isEmpty()) return false
@@ -295,6 +306,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         const val POLL_MILLIS = 500L
         private const val WAIT_POLLS = 10
         private const val VIEW = "android.intent.action.VIEW"
+        private const val HTTPS = "https"
         private const val WEB_VIEW = "android.webkit.WebView"
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
     }
