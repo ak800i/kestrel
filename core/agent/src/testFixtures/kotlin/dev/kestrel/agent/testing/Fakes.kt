@@ -1,6 +1,7 @@
 package dev.kestrel.agent.testing
 
 import dev.kestrel.agent.memory.Fact
+import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.AgentClock
 import dev.kestrel.agent.port.Answer
@@ -228,6 +229,8 @@ class FakeApps(val apps: List<LauncherApp> = DEFAULT) : AppsPort {
 
 class FakeMemory : MemoryStore {
     val facts = mutableListOf<Fact>()
+    val notes = mutableMapOf<String, List<RouteNote>>()
+    val found = mutableListOf<String>()
     val approvals = mutableSetOf<Pair<String, String>>()
 
     override suspend fun facts(): List<Fact> = facts.toList()
@@ -238,6 +241,16 @@ class FakeMemory : MemoryStore {
     }
 
     override suspend fun deleteFact(key: String): Boolean = facts.removeAll { it.key == key }
+
+    override suspend fun notes(packageName: String): List<RouteNote> = notes[packageName].orEmpty()
+
+    override suspend fun saveNotes(packageName: String, notes: List<RouteNote>) {
+        this.notes[packageName] = notes
+    }
+
+    override suspend fun addFoundContacts(names: List<String>) {
+        found += names
+    }
 
     override suspend fun screenshotApproved(packageName: String, providerId: String): Boolean = (packageName to providerId) in approvals
 

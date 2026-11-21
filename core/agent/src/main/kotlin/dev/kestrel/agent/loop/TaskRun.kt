@@ -8,6 +8,7 @@ import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
+import dev.kestrel.agent.memory.TaskMemory
 import dev.kestrel.agent.observe.Observation
 import dev.kestrel.agent.observe.ObservationBuilder
 import dev.kestrel.agent.observe.ObservationInput
@@ -123,6 +124,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private val screenSteps = ScreenSteps(this)
     private val dataSteps = DataSteps(this)
     private val looks = LookCloser(this)
+    val memory = TaskMemory(ports.memory, ports.apps, ports.clock, redactor) { settings.closed(it) }
+    private var pausedAtFinish = false
 
     var safety = TaskSafety(TaskAllowance.NONE)
     lateinit var conversation: Conversation
@@ -156,6 +159,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         @Suppress("UNREACHABLE_CODE")
         throw IllegalStateException()
     } catch (e: Ended) {
+        if (e.reason in STRIKING && !pausedAtFinish) memory.strike()
         report(e.reason, e.detail, e.error, e.summary)
     }
 
@@ -165,9 +169,12 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private suspend fun start() {
         log(TaskLog.Kind.START, "request: ${redactor.redact(task.text)}")
         val first = checkFront(fresh())
+        memory.load()
+        val context = memory.context(task.text)
         safety = TaskSafety(
-            allowance = TaskAllowance.from(task.text, task.knownNames),
+            allowance = TaskAllowance.from(task.text, task.knownNames + memory.aliasKeys),
             ownerWords = Normalizer.words(task.text).toSet(),
+            memoryValues = memory.usedValues,
         )
         observation = observe(first, last = null, targetKey = null)
         ports.model.model.lightweight.unusable?.let { throw Ended(EndReason.MODEL_UNUSABLE, it) }
@@ -175,7 +182,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         conversation = Conversation(
             system = SystemPrompt.TEXT,
             tools = Tools.ALL,
-            context = contextText(),
+            context = contextText(context),
             task = taskMessage(),
             first = observation,
             taskId = task.id,
@@ -195,8 +202,12 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         return Redacted.kestrel(lines.joinToString("\n"))
     }
 
-    // The per-task context (D3): the test-mode note; it never names the owner's agent-free apps (review B M6).
-    private fun contextText(): Redacted? = TEST_MODE_NOTE.takeIf { settings.safety.testMode }?.let { Redacted.of(redactor, it) }
+    // The per-task context (D3): the memory that the task needs and the test-mode note; it never names the owner's
+    // agent-free apps (review B M6).
+    private fun contextText(memoryText: String?): Redacted? {
+        val parts = listOfNotNull(memoryText, TEST_MODE_NOTE.takeIf { settings.safety.testMode })
+        return parts.takeIf { it.isNotEmpty() }?.let { Redacted.of(redactor, it.joinToString("\n\n")) }
+    }
 
     private suspend fun turn() {
         if (gate() || resumePending) resumed()
@@ -224,6 +235,14 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private suspend fun act(message: ChatMessage.Assistant, reply: Reply.Act) {
         val signature = observation.signature
         val started = ports.clock.elapsedMillis()
+        val target = when (val call = reply.call) {
+            is AgentCall.Tap -> observation.table.entry(call.target)
+            is AgentCall.LongPress -> observation.table.entry(call.target)
+            is AgentCall.TypeText -> observation.table.entry(call.target)
+            is AgentCall.Scroll -> call.target?.let(observation.table::entry)
+            is AgentCall.Swipe -> call.target?.let(observation.table::entry)
+            else -> null
+        }
         val done = execute(reply.call)
         val first = StepResult(replies, done.tool, done.outcome ?: Outcome.Answered, done.target, observation.appLabel, done.detail)
         val next = done.after?.let { observe(it, done.last ?: first.lastLine(), done.target?.key, done.ocr) }
@@ -258,6 +277,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             handle(escalation.invalid(progress))
             return
         }
+        if (!failed) memory.acted(target?.packageName, target?.label)
         progress.record(done.tool, done.outcome, done.target?.key, signature, done.data?.text, added = done.progress == true)
         ledger(done, outcome)
         handle(escalation.afterStep(progress))
@@ -671,7 +691,11 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     private suspend fun finish(call: AgentCall.Finish): Done {
         // A lock or a call while the model answered: the check cannot run on the screen that the model saw (D21).
-        if (gate()) throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
+        if (gate()) {
+            // The pause says nothing about the route notes, so it gives them no strike (D22).
+            pausedAtFinish = true
+            throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
+        }
         val fresh = ports.screen.snapshot()
         val front = fresh?.let { ScreenTree.frontWindow(it)?.packageName }
         if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
@@ -685,6 +709,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
                 return Done(call.tool, text = "Result: $what.", summary = "Step $replies: $what.", last = what, after = fresh, invalid = true)
             }
         }
+        memory.admit(call.notes)
         throw Ended(EndReason.FINISHED, summary = spoken(call.summary))
     }
 
@@ -802,5 +827,6 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         private val PRESSING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT)
         private val CRASHED = Regex("""(isn't responding|keeps stopping)$""")
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
+        private val STRIKING = setOf(EndReason.FAILED_BY_MODEL, EndReason.UNVERIFIED, EndReason.STUCK)
     }
 }

@@ -153,7 +153,9 @@ internal class ScreenSteps(private val run: TaskRun) {
             is Pick.One -> pick.item
         }
         if (run.settings.closed(app.packageName)) return Done(call.tool, Outcome.Refused("${quoted(app.label)} is agent-free"))
-        return open(call, ScreenAction.OpenApp(app.packageName), app.packageName, app.label)
+        val done = open(call, ScreenAction.OpenApp(app.packageName), app.packageName, app.label)
+        val notes = run.memory.notesFor(app.packageName) ?: return done
+        return Done(done.tool, done.outcome, detail = done.detail, after = done.after, extra = Redacted.kestrel(notes), text = done.text, summary = done.summary, last = done.last, progress = done.progress)
     }
 
     suspend fun openLink(call: AgentCall): Done {

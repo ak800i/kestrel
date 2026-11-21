@@ -34,7 +34,8 @@ internal class DataSteps(private val run: TaskRun) {
     // find_media's note on partial photo access, which the owner hears once before a share uses the items (D12).
     private var mediaNote: String? = null
 
-    suspend fun run(call: AgentCall): Done {
+    suspend fun run(asked: AgentCall): Done {
+        val call = resolved(asked)
         var sharePackage: String? = null
         var receivingLabel: String? = null
         if (call is AgentCall.ShareMedia) {
@@ -72,7 +73,8 @@ internal class DataSteps(private val run: TaskRun) {
                 null
             }
             val outcome = if (ok.lines.isEmpty()) Outcome.DataEmpty else Outcome.DataOk(ok.lines.size)
-            return Done(call.tool, outcome, detail = detail(call), data = DataResultText.of(ok, run.redactor), after = after)
+            val notes = sharePackage?.let { run.memory.notesFor(it) }?.let { Redacted.kestrel(it) }
+            return Done(call.tool, outcome, detail = detail(call), data = DataResultText.of(ok, run.redactor), after = after, extra = notes)
         }
     }
 
@@ -120,8 +122,18 @@ internal class DataSteps(private val run: TaskRun) {
     private fun unknownApp(call: AgentCall.ShareMedia): Done =
         Done(call.tool, Outcome.Failed("no single installed app named ${quoted(call.app)}"))
 
-    // What the task learns from a result: find_media's kinds per item (for the share's question).
-    private fun remember(call: AgentCall, ok: DataResult.Ok) {
+    // Memory's aliases come first (D12, D22): "mom = contact Mama" before `find_contact`, "home = …" before `navigate`.
+    private fun resolved(call: AgentCall): AgentCall = when (call) {
+        is AgentCall.FindContact -> run.memory.alias(call.name)?.let { call.copy(name = it) } ?: call
+        is AgentCall.Navigate -> run.memory.alias(call.to)?.let { call.copy(to = it) } ?: call
+        else -> call
+    }
+
+    // What the task learns from a result: the contacts that it found (D32 item 44) and find_media's kinds per item.
+    private suspend fun remember(call: AgentCall, ok: DataResult.Ok) {
+        if (call is AgentCall.FindContact) {
+            run.memory.foundContacts(ok.lines.flatMap { line -> line.fields.filter { it.name == NAME_FIELD }.map { it.value } })
+        }
         if (call is AgentCall.FindMedia) {
             mediaNote = ok.note
             for (line in ok.lines) {
@@ -182,6 +194,9 @@ internal class DataSteps(private val run: TaskRun) {
 
     companion object {
         const val MAX_SILENT_SHARE = 10
+
+        /** The field of a `find_contact` line that holds the contact's name (5B's contract). */
+        const val NAME_FIELD = "name"
         private const val NOT_DATA = "this is not a data tool"
         private const val NO_ACCESS = "Kestrel still has no notification access"
     }
