@@ -157,6 +157,11 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
         if (run.settings.closed(app.packageName)) return Done(call.tool, Outcome.Refused("${quoted(app.label)} is agent-free"))
         val done = open(call, ScreenAction.OpenApp(app.packageName), app.packageName, app.label)
+        // The notes come only with an app that is in front now: not after a failure, a refusal, a pause or a hand-over,
+        // so that a task never sees, and never strikes, the notes of an app that did not open (D22).
+        val opened = done.executed && done.text == null && done.outcome !is Outcome.Failed && done.outcome !is Outcome.Refused &&
+            done.after?.let { ScreenTree.frontWindow(it)?.packageName } == app.packageName
+        if (!opened) return done
         val notes = run.memory.notesFor(app.packageName) ?: return done
         return Done(done.tool, done.outcome, detail = done.detail, after = done.after, extra = Redacted.kestrel(notes), text = done.text, summary = done.summary, last = done.last, progress = done.progress)
     }

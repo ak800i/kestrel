@@ -1,12 +1,19 @@
 package dev.kestrel.agent.memory
 
+import dev.kestrel.agent.Agent
+import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Harness
 import dev.kestrel.agent.Screens
+import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
+import dev.kestrel.agent.port.MemoryStore
+import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.FakeApps
 import dev.kestrel.agent.testing.FakeClock
 import dev.kestrel.agent.testing.FakeMemory
@@ -20,6 +27,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class MemoryTest {
     private val fixtures = Screens.MESSENGER
@@ -155,5 +163,77 @@ class MemoryTest {
         memory.load()
         assertNull(memory.alias("gate code"))
         assertEquals(setOf("home", "mom"), memory.aliasKeys)
+    }
+
+    @Test
+    fun aStepThatAPauseWithdrewActedOnNothingSoItsLabelNeverGoesIntoANote() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+            call("finish", null, null, null, "summary" to "Done.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Chats"))),
+                "notes" to listOf(mapOf("app" to "Kestrel fixtures", "note" to "tap \"Ana Petrović\""))),
+        ))
+        harness.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+
+        assertEquals(EndReason.FINISHED, harness.run("Open the chats in Kestrel fixtures").end)
+        assertTrue(harness.screen.actions.isEmpty())
+        assertNull(harness.memory.notes[fixtures])
+    }
+
+    @Test
+    fun theNotesOfAnAppThatDidNotOpenNeverComeWithTheResultAndGetNoStrike() = runTest {
+        val telegram = "org.telegram.messenger"
+        val note = RouteNote(telegram, "tap \"Saved Messages\"", "12.2", "en", proposals = 2)
+        fun task(): Harness = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
+            call("open_app", null, null, null, "name" to "Telegram", "reason" to "open it"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        )).apply { memory.notes[telegram] = listOf(note) }
+
+        val failed = task().apply { screen.outcome = { ActionOutcome(done = false, reason = "the app did not start") } }
+        val paused = task().apply {
+            screen.onOpen(Screens.app(telegram, "Chats"))
+            owner.gates += listOf(Gate.GO, Gate.RESUMED)
+        }
+        // The open went out, but Telegram never came to the front.
+        val elsewhere = task()
+        for (harness in listOf(failed, paused, elsewhere)) {
+            assertEquals(EndReason.FAILED_BY_MODEL, harness.run("Send a note to myself").end)
+            assertFalse(harness.lastRequestText().contains(TaskMemory.NOTES_HEADER))
+            assertEquals(0, harness.memory.notes[telegram]!!.single().strikes)
+        }
+    }
+
+    @Test
+    fun aFailureOfTheMemoryStoreNeverChangesTheTasksEnd() = runTest {
+        val finished = noteTask("tap \"Ana Petrović\"")
+        assertEquals(EndReason.FINISHED, finished.runWith(BrokenMemory(finished.memory), "Open Ana's chat in Kestrel fixtures").end)
+
+        val struck = Harness(Screens.chats(), listOf(call("fail", null, null, null, "reason" to "Stop.")))
+        struck.memory.notes[fixtures] = listOf(RouteNote(fixtures, "tap \"Ana Petrović\"", "1.0", "en", proposals = 2))
+        assertEquals(EndReason.FAILED_BY_MODEL, struck.runWith(BrokenMemory(struck.memory), "Open Ana's chat in Kestrel fixtures").end)
+
+        val found = Harness(Screens.chats(), listOf(
+            call("find_contact", null, null, null, "name" to "mom"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        found.data.answer("find_contact", DataResult.Ok(listOf(DataLine("contact 1", listOf(DataField("name", "Mama"))))))
+        assertEquals(EndReason.FAILED_BY_MODEL, found.runWith(BrokenMemory(found.memory), "Find mom").end)
+        assertTrue(found.lastRequestText().contains("Mama"))
+
+        // The failure goes to the activity log by its class only, never with its message.
+        for (harness in listOf(finished, struck, found)) {
+            assertEquals(listOf("memory: java.io.IOException"), harness.log.texts(TaskLog.Kind.ERROR))
+        }
+    }
+
+    private class BrokenMemory(store: FakeMemory) : MemoryStore by store {
+        override suspend fun saveNotes(packageName: String, notes: List<RouteNote>) = throw IOException("the store is full")
+
+        override suspend fun addFoundContacts(names: List<String>) = throw IOException("the store is full")
+    }
+
+    private suspend fun Harness.runWith(store: MemoryStore, text: String): TaskReport {
+        val reports = mutableListOf<TaskReport>()
+        Agent(AgentPorts(screen, eyes, data, owner, model, apps, store, log, clock), settings).run(TaskRequest("task-1-0a1b2c3d", text, emptySet())) { reports += it }
+        return reports.single()
     }
 }

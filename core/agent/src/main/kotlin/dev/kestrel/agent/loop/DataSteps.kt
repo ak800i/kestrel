@@ -132,7 +132,7 @@ internal class DataSteps(private val run: TaskRun) {
     // What the task learns from a result: the contacts that it found (D32 item 44) and find_media's kinds per item.
     private suspend fun remember(call: AgentCall, ok: DataResult.Ok) {
         if (call is AgentCall.FindContact) {
-            run.memory.foundContacts(ok.lines.flatMap { line -> line.fields.filter { it.name == NAME_FIELD }.map { it.value } })
+            run.remembering { run.memory.foundContacts(ok.lines.flatMap { line -> line.fields.filter { it.name == NAME_FIELD }.map { it.value } }) }
         }
         if (call is AgentCall.FindMedia) {
             mediaNote = ok.note

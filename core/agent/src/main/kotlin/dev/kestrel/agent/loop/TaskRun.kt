@@ -172,7 +172,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         @Suppress("UNREACHABLE_CODE")
         throw IllegalStateException()
     } catch (e: Ended) {
-        if (e.reason in STRIKING && !pausedAtFinish) memory.strike()
+        if (e.reason in STRIKING && !pausedAtFinish) remembering { memory.strike() }
         report(e.reason, e.detail, e.error, e.summary)
     }
 
@@ -762,7 +762,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
                 return Done(call.tool, text = "Result: $what.", summary = "Step $replies: $what.", last = what, after = fresh, invalid = true)
             }
         }
-        memory.admit(call.notes)
+        remembering { memory.admit(call.notes) }
         val signature = call.signature
         val recording = recording(signature)
         finished = recording
@@ -851,6 +851,17 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             throw e
         } catch (e: Exception) {
             // The log is advisory for the task; its own store reports its failure.
+        }
+    }
+
+    /** Writes to memory, which is only advice (D22): a failure of its store is logged by class and never ends the task. */
+    suspend fun remembering(write: suspend () -> Unit) {
+        try {
+            write()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log(TaskLog.Kind.ERROR, "memory: ${e.javaClass.name}")
         }
     }
 
