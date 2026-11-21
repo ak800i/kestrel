@@ -31,6 +31,7 @@ import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
+import dev.kestrel.providers.chat.ReasoningLevel
 import dev.kestrel.providers.client.PricedResponse
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
@@ -83,6 +84,7 @@ internal class Done(
     val screenshot: Part.Image? = null,
     val ocr: List<OcrLine> = emptyList(),
     val progress: Boolean? = null,
+    val invalid: Boolean = false,
 )
 
 /** A send that the owner confirmed (design D14), kept in memory for the completion check; never logged. */
@@ -112,7 +114,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     val vault = Vault()
     val redactor = Redactor(vault)
     val ledger = Ledger()
-    val limits = Limits(ports.clock)
+    val limits = Limits(ports.clock, ports.model.model.countsCredits)
+    val progress = Progress()
+    val escalation = Escalation(ports.model.model)
     private val builder = ObservationBuilder(redactor, settings.agentFree)
     private val choices = ToolChoices()
     private val screenSteps = ScreenSteps(this)
@@ -130,6 +134,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     val sends = mutableListOf<String>()
     val recipients = mutableListOf<String>()
     val confirmedSends = mutableListOf<ConfirmedSend>()
+    val okDataSteps = mutableSetOf<Int>()
+    private val ownerSteps = mutableSetOf<Int>()
     val lastChecked = mutableMapOf<String, Boolean>()
     var confirmed = 0
     var unconfirmed = 0
@@ -163,6 +169,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             ownerWords = Normalizer.words(task.text).toSet(),
         )
         observation = observe(first, last = null, targetKey = null)
+        ports.model.model.lightweight.unusable?.let { throw Ended(EndReason.MODEL_UNUSABLE, it) }
         val model = ports.model.model
         conversation = Conversation(
             system = SystemPrompt.TEXT,
@@ -192,20 +199,27 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     private suspend fun turn() {
         if (gate() || resumePending) resumed()
+        checkLimits()
         val priced = callModel()
         replies++
+        if (priced == null) {
+            handle(escalation.invalid(progress))
+            return
+        }
         account(priced)
         val message = priced.response.message
         when (val reply = ToolCalls.read(priced.response, observation.table, vault)) {
             is Reply.Invalid -> {
                 conversation.add(Step(replies, message, reply.results, reprompt = reply.reprompt))
                 pendingPrompt = (reply.results.map { it.text.text } + listOfNotNull(reply.reprompt?.text)).joinToString("\n")
+                handle(escalation.invalid(progress))
             }
             is Reply.Act -> act(message, reply)
         }
     }
 
     private suspend fun act(message: ChatMessage.Assistant, reply: Reply.Act) {
+        val signature = observation.signature
         val started = ports.clock.elapsedMillis()
         val done = execute(reply.call)
         val first = StepResult(replies, done.tool, done.outcome ?: Outcome.Answered, done.target, observation.appLabel, done.detail)
@@ -222,7 +236,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             line += "\n" + APP_STOPPED
             appStopped = false
         }
-        val failed = done.outcome is Outcome.Failed || done.outcome is Outcome.Refused || done.outcome is Outcome.CheckFailed
+        val failed = done.outcome is Outcome.Failed || done.outcome is Outcome.Refused || done.outcome is Outcome.CheckFailed || done.invalid
         conversation.add(Step(
             number = replies,
             reply = message,
@@ -235,7 +249,15 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         ))
         pendingPrompt = listOfNotNull(line, next?.text, data?.text).joinToString("\n")
         log(TaskLog.Kind.ACTION, "${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
+        if (done.outcome is Outcome.DataOk) okDataSteps += replies
+        if (done.text == OWNER_DID_IT_RESULT) ownerSteps += replies
+        if (done.invalid) {
+            handle(escalation.invalid(progress))
+            return
+        }
+        progress.record(done.tool, done.outcome, done.target?.key, signature, done.data?.text, added = done.progress == true)
         ledger(done, outcome)
+        handle(escalation.afterStep(progress))
     }
 
     internal suspend fun execute(call: AgentCall): Done = when (call) {
@@ -257,16 +279,27 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     // --- The model ---
 
-    private suspend fun callModel(): PricedResponse {
-        val current = currentModel
-        val choice = choices.choice(current.id, null)
-        val request = conversation.request(choice, null, replies + 1) ?: throw Ended(EndReason.CONTEXT_TOO_SMALL)
-        log(TaskLog.Kind.PROMPT, "model=${current.id} role=${ModelRole.LIGHTWEIGHT} new: $pendingPrompt")
-        try {
-            return ports.model.call(ModelRole.LIGHTWEIGHT, request, replies + 1)
-        } catch (e: ProviderException) {
-            log(TaskLog.Kind.ERROR, "provider: ${e.error}")
-            throw Ended(EndReason.PROVIDER, error = e.error)
+    private suspend fun callModel(): PricedResponse? {
+        while (true) {
+            val role = escalation.role
+            val current = escalation.current
+            val reasoning = if (role == ModelRole.VERSATILE) ReasoningLevel.LOW else null
+            val choice = choices.choice(current.id, reasoning)
+            val request = conversation.request(choice, reasoning, replies + 1) ?: throw Ended(EndReason.CONTEXT_TOO_SMALL)
+            log(TaskLog.Kind.PROMPT, "model=${current.id} role=$role new: $pendingPrompt")
+            try {
+                return ports.model.call(role, request, replies + 1)
+            } catch (e: ProviderException) {
+                val error = e.error
+                log(TaskLog.Kind.ERROR, "provider: $error")
+                when {
+                    choices.fallBack(current.id, choice, error) -> continue
+                    error is ProviderError.BadRequest && current.signedThinking && !conversation.growsOnly -> conversation.growOnly()
+                    error == ProviderError.Malformed -> return null
+                    escalation.switchesFor(error, progress) -> continue
+                    else -> throw Ended(EndReason.PROVIDER, error = error)
+                }
+            }
         }
     }
 
@@ -290,6 +323,23 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         )
     }
 
+    private suspend fun checkLimits() {
+        if (limits.repliesUsed(replies)) throw Ended(EndReason.STEPS)
+        if (limits.timeUsed()) throw Ended(EndReason.TIME)
+        val question = limits.creditQuestion() ?: return
+        if (askYesNo(question)) limits.allowMoreCredits() else throw Ended(EndReason.COST)
+    }
+
+    private suspend fun handle(escalate: Escalate) {
+        when (escalate) {
+            Escalate.NOTHING -> Unit
+            Escalate.SWITCHED -> log(TaskLog.Kind.ACTION, "switched to the versatile model")
+            Escalate.ASK_STUCK -> if (askYesNo(Limits.STUCK_QUESTION)) escalation.keepTrying(progress) else throw Ended(EndReason.STUCK)
+            Escalate.END_INVALID -> throw Ended(EndReason.INVALID_CALLS)
+            Escalate.END_STUCK -> throw Ended(EndReason.STUCK, detail = ports.model.model.versatile.unusable)
+        }
+    }
+
     // --- The screen ---
 
     suspend fun fresh(): ScreenSnapshot = ports.screen.snapshot() ?: throw Ended(EndReason.NO_SCREEN)
@@ -297,8 +347,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     /** The front app's launcher label, which the observation and the safety check name (D8, D13). */
     suspend fun label(packageName: String?): String? = packageName?.let { ports.apps.label(it) }
 
-    /** The model that the task uses, whose `takesImages` decides `look_closer`'s screenshot (D20). */
-    val currentModel: RoleModel get() = ports.model.model.lightweight
+    /** The model that the task uses now (D7), whose `takesImages` decides `look_closer`'s screenshot (D20). */
+    val currentModel: RoleModel get() = escalation.current
 
     /**
      * Checks the app in front of [snapshot] before it is observed (D16, D24): an agent-free app or Kestrel ends the task;
@@ -572,8 +622,24 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         return Done(call.tool, text = "Result: said.", summary = "Step $replies: said something to the owner.", last = "said", progress = false)
     }
 
-    // `finish` ends the task with the model's summary.
-    private fun finish(call: AgentCall.Finish): Done = throw Ended(EndReason.FINISHED, summary = spoken(call.summary))
+    private suspend fun finish(call: AgentCall.Finish): Done {
+        // A lock or a call while the model answered: the check cannot run on the screen that the model saw (D21).
+        if (gate()) throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
+        val fresh = ports.screen.snapshot()
+        val front = fresh?.let { ScreenTree.frontWindow(it)?.packageName }
+        if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
+            throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
+        }
+        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends, lastChecked)) {
+            Verdict.Passed -> Unit
+            Verdict.Unverifiable -> throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
+            is Verdict.Missing -> {
+                val what = "finish failed: ${verdict.what}"
+                return Done(call.tool, text = "Result: $what.", summary = "Step $replies: $what.", last = what, after = fresh, invalid = true)
+            }
+        }
+        throw Ended(EndReason.FINISHED, summary = spoken(call.summary))
+    }
 
     // The `remember` and `forget` tools always ask the owner first (spec 11.4; D22).
     private suspend fun remember(call: AgentCall.Remember): Done {
