@@ -1,5 +1,6 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataLine
@@ -118,6 +119,68 @@ class AgentToolsTest {
         assertEquals(2, harness.screen.actions.count { it is ScreenAction.Tap })
         assertEquals(listOf("Sent to John Smith on Telegram."), report.sends)
         assertEquals(1, report.confirmed)
+        assertEquals(3, report.shareItems)
+    }
+
+    @Test
+    fun aDoubtedTapOfAShareAsksAgainAndTheTapThatWorksIsReported() = runTest {
+        val harness = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
+            call("find_media", null, null, null, "day" to "yesterday", "kinds" to "photos"),
+            call("share_media", null, null, null, "app" to "telegram", "items" to listOf("m1", "m2", "m3")),
+            call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"),
+            call("tap", "John Smith", null, null, "reason" to "pick John again", "category" to "reading"),
+            call("tap", "Send", null, null, "reason" to "send them", "category" to "sending"),
+            call("finish", null, null, null, "summary" to "Sent.", "evidence" to listOf(mapOf("target" to mapOf("label" to "3 photos")))),
+        ))
+        harness.data.answer("find_media", photos("m1", "m2", "m3"))
+        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+        harness.data.onCall = { if (it == "share_media") harness.screen.current = picker() }
+        // The first tap on John's row may not have worked and changes nothing; the second one works.
+        val taps = { harness.screen.actions.count { it is ScreenAction.Tap } }
+        harness.screen.outcome = { ActionOutcome(done = true, uncertain = it is ScreenAction.Tap && taps() == 1, method = "fake") }
+        harness.screen.on({ action, _ -> action is ScreenAction.Tap && taps() == 2 }) { picker(send = true) }
+        harness.screen.onTap("Send", john())
+        harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.YES)
+
+        val report = harness.run("Send yesterday's photos to John on Telegram")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertEquals(2, harness.owner.confirmations.size)
+        assertEquals(3, taps())
+        assertEquals(listOf("Sent to John Smith on Telegram."), report.sends)
+        assertEquals(3, report.shareItems)
+        val tried = report.ledger.indexOf("tried to share the items with John Smith, but the tap may not have worked")
+        val shared = report.ledger.indexOf("shared 3 items with John Smith")
+        assertTrue(report.ledger.toString(), tried >= 0 && shared > tried)
+    }
+
+    @Test
+    fun aDoubtedSendOfAShareThatWasCountedAsksAgainAndIsCountedOnce() = runTest {
+        val harness = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
+            call("find_media", null, null, null, "day" to "yesterday", "kinds" to "photos"),
+            call("share_media", null, null, null, "app" to "telegram", "items" to listOf("m1", "m2", "m3")),
+            call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"),
+            call("tap", "Send", null, null, "reason" to "send them", "category" to "sending"),
+            call("tap", "Send", null, null, "reason" to "send them again", "category" to "sending"),
+            call("finish", null, null, null, "summary" to "Sent.", "evidence" to listOf(mapOf("target" to mapOf("label" to "3 photos")))),
+        ))
+        harness.data.answer("find_media", photos("m1", "m2", "m3"))
+        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+        harness.data.onCall = { if (it == "share_media") harness.screen.current = picker() }
+        // The first tap on Send may not have worked and changes nothing; the second one works.
+        val taps = { harness.screen.actions.count { it is ScreenAction.Tap } }
+        harness.screen.outcome = { ActionOutcome(done = true, uncertain = it is ScreenAction.Tap && taps() == 2, method = "fake") }
+        harness.screen.onTap("John Smith", picker(send = true))
+        harness.screen.on({ action, _ -> action is ScreenAction.Tap && taps() == 3 }) { john() }
+        harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.YES)
+
+        val report = harness.run("Send yesterday's photos to John on Telegram")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertEquals(2, harness.owner.confirmations.size)
+        assertEquals(3, taps())
+        assertEquals(listOf("Sent to John Smith on Telegram."), report.sends)
+        assertEquals(listOf("John Smith"), report.recipients)
         assertEquals(3, report.shareItems)
     }
 

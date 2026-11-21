@@ -300,6 +300,28 @@ class AgentTest {
     }
 
     @Test
+    fun aSendWhosePressMayNotHaveWorkedStillNeedsItsEvidence() = runTest {
+        val harness = Harness(Screens.chat("Ana Petrović", "Hi"), sendSteps().take(2) + call("fail", null, null, null, "reason" to "Stop."))
+        harness.owner.confirms += ConfirmEnd.YES
+        harness.screen.outcome = { action ->
+            ActionOutcome(done = true, uncertain = action is ScreenAction.Tap, method = "fake")
+        }
+        val ports = with(harness) { AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock) }
+        val run = TaskRun(ports, harness.settings, TaskRequest("task-1-0a1b2c3d", "Send Ana a message that I'm late", emptySet()))
+
+        val report = try {
+            run.run()
+        } finally {
+            run.close()
+        }
+
+        assertTrue(report.sends.isEmpty())
+        // The completion check (D21) must still find evidence for the doubted send.
+        assertEquals(listOf(listOf("Ana Petrović")), run.confirmedSends.map { it.recipients })
+        assertFalse(run.confirmedSends.single().share)
+    }
+
+    @Test
     fun testModeBlocksASendToAnotherPersonAndEndsTheTaskWithoutAQuestion() = runTest {
         val harness = Harness(Screens.chat("Ana Petrović", "Hi", typed = "I'm late"), listOf(
             call("tap", "Send", "Button", null, "reason" to "send it", "category" to "sending"),

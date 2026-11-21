@@ -440,6 +440,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private var confirmedSerial: Int? = null
     private var confirmedRecipients: List<String> = emptyList()
 
+    /** The share flow, by its serial, and the recipients whose send the report already holds (D14, D24). */
+    var countedShare: Pair<Int, List<String>>? = null
+
     // The Cc and Bcc expanders that the task tapped, each only once (D14).
     private val expanded = mutableSetOf<String>()
 
@@ -483,7 +486,10 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         return outcome.done
     }
 
-    /** The screen changed after a yes, so a later send of the share flow needs a new yes (D14). */
+    /**
+     * The screen changed after a yes, or a press after it may not have worked, so a later send of the share flow needs a
+     * new yes (D14, D32 item 29).
+     */
     fun forgetConfirmedFlow() {
         confirmedSerial = null
     }
@@ -516,8 +522,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     }
 
     /**
-     * A confirmed press that may not have worked (D32 item 29): it does not count as done, so it adds no "Sent to …" line,
-     * no recipient and no confirmed send; the ledger says that the tap may not have worked (D24).
+     * A confirmed press that may not have worked (D32 item 29): it does not count as done, so it adds no "Sent to …" line
+     * and no recipient, and the ledger says that the tap may not have worked (D24). A send stays among the confirmed
+     * sends, so that the completion check still asks for its evidence (D21).
      */
     fun unsure(confirmation: Confirmation, share: Boolean) {
         val to = confirmation.recipients.joinToString(" and ")
@@ -527,6 +534,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             share -> "share the items with $to"
             else -> "send the message to $to"
         }
+        if (confirmation.category == Category.SENDING) confirmedSends += ConfirmedSend(confirmation.recipients, confirmation.content, share)
         ledger.add("tried to $what, but the tap may not have worked")
     }
 

@@ -79,12 +79,17 @@ internal class ScreenSteps(private val run: TaskRun) {
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
         val flow = run.safety.shareFlow
         val done = perform(call, entry, proposal, fresh, category, confirmed = true)
-        // A press that may not have worked is not a send (D32 item 29): the report never claims it.
+        // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press of
+        // the share flow needs a new yes.
         if (done.outcome == Outcome.Uncertain) {
             run.unsure(yes, share = flow != null)
+            run.forgetConfirmedFlow()
         } else if (done.outcome !is Outcome.Failed) {
             val items = flow?.count?.let { it.photos + it.videos } ?: 0
-            run.sent(yes, share = flow != null, items = items, covered = covered)
+            // A share that the report already holds is not counted again when a doubted tap of it was confirmed anew.
+            val counted = flow != null && run.countedShare == flow.serial to yes.recipients
+            run.sent(yes, share = flow != null, items = items, covered = covered || counted)
+            if (flow != null && yes.category == Category.SENDING) run.countedShare = flow.serial to yes.recipients
         }
         return done
     }
