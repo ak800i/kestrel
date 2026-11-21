@@ -1788,7 +1788,12 @@ function Invoke-CorpusStep {
             Add-Result corpus (Format-AirTotals $voice $totals)
             Add-Result corpus (Format-CommandComparison $voice $direct $air)
             if (-not $DryRun) {
-                Measure-RecordedLines -Voice $voice -Rows @($lines | Where-Object { $direct.Verdicts[$_.Id] -eq '1' -and $air.Verdicts[$_.Id] -eq '0' })
+                # A failure of one voice's recorded pass must not cost the other voice's passes.
+                try {
+                    Measure-RecordedLines -Voice $voice -Rows @($lines | Where-Object { $direct.Verdicts[$_.Id] -eq '1' -and $air.Verdicts[$_.Id] -eq '0' })
+                } catch {
+                    Add-Result corpus "${voice}: the recorded pass failed: $($_.Exception.Message)"
+                }
             }
         }
     } finally {
