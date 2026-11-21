@@ -48,7 +48,9 @@ object SafetyCheck {
         }
         val atPoint = point?.let { ContextRules.atPoint(screen, it) }.orEmpty()
         val reached = listOfNotNull(index) + atPoint
-        val window = windowOf(screen, index ?: atPoint.lastOrNull())
+        // The element that the press lands on: a tap's target, or the topmost clickable element under a TapAt's point.
+        val pressed = index ?: point?.let { ContextRules.underPoint(screen, it) }
+        val window = if (index == null && point != null) ContextRules.windowAt(screen, point) else windowOf(screen, index)
 
         // 1. The declared category, or the tool's fixed one.
         if (proposal.kind in DECLARING) raise(proposal.declared ?: Category.READING, Source.DECLARED) else raise(fixed(proposal.kind), Source.FIXED)
@@ -80,7 +82,9 @@ object SafetyCheck {
             if (proposal.kind in PRESSING && ContextRules.isPayment(screen, window) && reached.any { screen.elements[it].clickable }) {
                 raise(Category.PAYMENTS, Source.PAYMENTS)
             }
-            if (proposal.kind in PRESSING && reached.any { ContextRules.nearCompose(screen, it) }) raise(Category.SENDING, Source.COMPOSE)
+            if (proposal.kind in PRESSING && pressed != null && ContextRules.nearCompose(screen, pressed, point.takeIf { index == null })) {
+                raise(Category.SENDING, Source.COMPOSE)
+            }
             val flow = task.shareFlow
             val inFlow = flow != null && (window.packageName == flow.receivingPackage || ContextRules.isShareSheet(screen, window))
             if (proposal.kind in PRESSING && (inFlow || ContextRules.shareSheetInFront(screen))) {
@@ -109,8 +113,9 @@ object SafetyCheck {
 
     /**
      * Updates the task's state after an action ran (design D13): a typed text is remembered (pass the proposal with the
-     * text that was typed, the vault's values revealed), a share flow starts with the next serial number, grows by the
-     * name of every row that a tap reached in its list of rows (never by a target of Android's share sheet, which is an
+     * text that was typed, the vault's values revealed), a share flow starts with the next serial number (also at a press
+     * on an element inside a Share or Forward button, or at a point on one), grows by the name of every row that a tap or
+     * a tap at a point reached in its list of rows (never by a target of Android's share sheet, which is an
      * app), and ends at a chat titled as a selected row, after `open_*` or `home`, or outside its apps, and a protected
      * trail starts and ends.
      */
@@ -136,13 +141,13 @@ object SafetyCheck {
         }
         // Opening something else or going home leaves the flow, so that its selection never names another chat (review 2 C1).
         if (proposal.kind in LEAVING) current = null
-        val sheet = index?.let { before.windows.firstOrNull { w -> w.id == before.elements[it].windowId } }?.let { ContextRules.isShareSheet(before, it) } == true
-        if (current != null && proposal.kind in PRESSING && index != null && !sheet) {
-            val row = ContextRules.row(before, index)?.let { ContextRules.rowName(before, it) }
+        val pressed = index ?: proposal.point?.let { ContextRules.underPoint(before, it) }
+        val sheet = pressed?.let { before.windows.firstOrNull { w -> w.id == before.elements[it].windowId } }?.let { ContextRules.isShareSheet(before, it) } == true
+        if (current != null && proposal.kind in PRESSING && pressed != null && !sheet) {
+            val row = ContextRules.row(before, pressed)?.let { ContextRules.rowName(before, it) }
             if (row != null && row !in current.selected) current = current.copy(selected = current.selected + row)
         }
-        val name = index?.let { ScreenTree.name(before.elements[it]) }
-        if (current == null && proposal.kind in PRESSING && LabelWords.holdsWord(name, LabelWords.SHARE_START_WORDS)) {
+        if (current == null && proposal.kind in PRESSING && ContextRules.startsShare(before, pressed, proposal.pointText)) {
             current = ShareFlow(front, emptyList(), null, serial)
         }
         if (current == null && ContextRules.shareSheetInFront(after)) current = ShareFlow(front, emptyList(), null, serial)

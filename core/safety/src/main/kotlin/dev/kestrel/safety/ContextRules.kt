@@ -1,6 +1,7 @@
 package dev.kestrel.safety
 
 import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTitle
@@ -112,13 +113,18 @@ internal object ContextRules {
         listOf(ScreenTree.idName(element.viewId), element.hint, element.label, element.contentDescription)
             .any { LabelWords.holdsWord(it?.replace('_', ' '), NOT_MESSAGE_WORDS) }
 
-    /** Whether the unlabelled element [index] lies in the compose field's row or in the bar right above or below it. */
-    fun nearCompose(snapshot: ScreenSnapshot, index: Int): Boolean {
+    /**
+     * Whether the unlabelled element [index] lies in the compose field's row or in the bar right above or below it. For a
+     * `TapAt`, the [point] must lie there, so that a container that holds the point and spans the window never sends.
+     */
+    fun nearCompose(snapshot: ScreenSnapshot, index: Int, point: Point? = null): Boolean {
         val element = snapshot.elements[index]
         if (ScreenTree.name(element) != null || element.editable) return false
         val field = composeField(snapshot, element.windowId) ?: return false
         val band = field.bounds.height
-        return element.bounds.bottom > field.bounds.top - band && element.bounds.top < field.bounds.bottom + band
+        val top = point?.y ?: element.bounds.top
+        val bottom = point?.y?.plus(1) ?: element.bounds.bottom
+        return bottom > field.bounds.top - band && top < field.bounds.bottom + band
     }
 
     fun isPhoneApp(packageName: String?, phonePackages: Set<String>): Boolean =
@@ -175,24 +181,43 @@ internal object ContextRules {
         return rest.isEmpty() || rest.all { it in CLEAR_COMPANIONS } || (fieldName.isNotEmpty() && rest == fieldName)
     }
 
-    /** Whether a window above the front app's window covers the point (design D13, review B I3). */
-    fun covered(snapshot: ScreenSnapshot, point: Point): Boolean {
-        val front = ScreenTree.frontWindow(snapshot) ?: return true
-        return snapshot.windows.any { window ->
-            window.id != front.id && window.layer > front.layer &&
-                point.x >= window.bounds.left && point.x < window.bounds.right && point.y >= window.bounds.top && point.y < window.bounds.bottom
+    /**
+     * The window that holds the point: the highest window whose bounds hold it, so that a point in the other half of a
+     * split screen is judged by that app's window; the front window when no window holds it.
+     */
+    fun windowAt(snapshot: ScreenSnapshot, point: Point): WindowSummary? =
+        snapshot.windows.filter { holds(it.bounds, point) }.maxByOrNull { it.layer } ?: ScreenTree.frontWindow(snapshot)
+
+    /** Whether a window that is no app's window, such as the keyboard or a popup, covers the point (design D13, review B I3). */
+    fun covered(snapshot: ScreenSnapshot, point: Point): Boolean = windowAt(snapshot, point)?.kind != WindowKind.APPLICATION
+
+    /** The indices of the elements of the window that holds the point ([windowAt]) that hold the point, innermost last. */
+    fun atPoint(snapshot: ScreenSnapshot, point: Point): List<Int> {
+        val window = windowAt(snapshot, point) ?: return emptyList()
+        return snapshot.elements.indices.filter { index ->
+            val element = snapshot.elements[index]
+            element.windowId == window.id && holds(element.bounds, point)
         }
     }
 
-    /** The indices of the front window's elements that hold the point, innermost last. */
-    fun atPoint(snapshot: ScreenSnapshot, point: Point): List<Int> {
-        val front = ScreenTree.frontWindow(snapshot) ?: return emptyList()
-        return snapshot.elements.indices.filter { index ->
-            val element = snapshot.elements[index]
-            element.windowId == front.id && point.x >= element.bounds.left && point.x < element.bounds.right &&
-                point.y >= element.bounds.top && point.y < element.bounds.bottom
-        }
+    /** The element that a tap at the point presses: the topmost clickable element that holds it, else the innermost one. */
+    fun underPoint(snapshot: ScreenSnapshot, point: Point): Int? {
+        val held = atPoint(snapshot, point)
+        return held.lastOrNull { snapshot.elements[it].clickable } ?: held.lastOrNull()
     }
+
+    /**
+     * Whether a press on element [pressed] (a tap's target, or the element under a `TapAt`'s point) or on one of its
+     * clickable ancestors, or the OCR line [pointText] at the point, is named Share or Forward, so that it starts a share
+     * flow (design D13).
+     */
+    fun startsShare(snapshot: ScreenSnapshot, pressed: Int?, pointText: String?): Boolean {
+        val lineage = pressed?.let { listOf(it) + ScreenTree.ancestors(snapshot, it).filter { up -> snapshot.elements[up].clickable } }.orEmpty()
+        return (lineage.map { ScreenTree.name(snapshot.elements[it]) } + pointText).any { LabelWords.holdsWord(it, LabelWords.SHARE_START_WORDS) }
+    }
+
+    private fun holds(bounds: IntRect, point: Point): Boolean =
+        point.x >= bounds.left && point.x < bounds.right && point.y >= bounds.top && point.y < bounds.bottom
 
     /**
      * Whether [window] is Android's share sheet: the intent resolver's window, or an app window of the `android` package

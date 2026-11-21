@@ -9,12 +9,12 @@ import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
 
 /**
- * Builds the safety tests' snapshots: an app window of 1000 × 2000 pixels (ID 1, layer 1, active) and its elements in the
- * order of [add], each 100 pixels high and as wide as the window unless the test says otherwise. [add] returns the
- * element's key, and [index] its position, for proposals and the tree's questions.
+ * Builds the safety tests' snapshots: an app window of 1000 × 2000 pixels unless the test gives other [bounds] (ID 1,
+ * layer 1, active) and its elements in the order of [add], each 100 pixels high and as wide as the screen unless the test
+ * says otherwise. [add] returns the element's key, and [index] its position, for proposals and the tree's questions.
  */
-internal class TestScreen(val packageName: String = "com.example.chat", title: String? = null) {
-    private val windows = mutableListOf(WindowSummary(1, WindowKind.APPLICATION, packageName, title, IntRect(0, 0, 1000, 2000), layer = 1, active = true))
+internal class TestScreen(val packageName: String = "com.example.chat", title: String? = null, bounds: IntRect = IntRect(0, 0, 1000, 2000)) {
+    private val windows = mutableListOf(WindowSummary(1, WindowKind.APPLICATION, packageName, title, bounds, layer = 1, active = true))
     private val elements = mutableListOf<ScreenElement>()
 
     fun add(

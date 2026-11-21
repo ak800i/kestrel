@@ -17,7 +17,9 @@ object ConfirmationBuilder {
     fun build(proposal: Proposal, screen: ScreenSnapshot, category: Category, task: TaskSafety, why: String? = null): Decision {
         val index = proposal.targetKey?.let { key -> screen.elements.indexOfFirst { it.key == key }.takeIf { it >= 0 } }
         val element = index?.let { screen.elements[it] }
-        val window = screen.windows.firstOrNull { it.id == element?.windowId } ?: ScreenTree.frontWindow(screen)
+        val point = proposal.point.takeIf { element == null }
+        val window = screen.windows.firstOrNull { it.id == element?.windowId }
+            ?: point?.let { ContextRules.windowAt(screen, it) } ?: ScreenTree.frontWindow(screen)
         val app = appName(proposal.frontAppLabel, window?.packageName)
         val prefix = why?.let { "$it " }.orEmpty()
         fun ask(body: String, content: String?, recipients: List<String> = emptyList()): Decision {
@@ -40,7 +42,8 @@ object ConfirmationBuilder {
             else -> Unit
         }
         val name = element?.let { ScreenTree.name(it) }
-        if (task.shareFlow == null && LabelWords.holdsWord(name, LabelWords.SHARE_START_WORDS)) {
+        val pressed = index ?: point?.let { ContextRules.underPoint(screen, it) }
+        if (task.shareFlow == null && ContextRules.startsShare(screen, pressed, proposal.pointText)) {
             return ask("Share this from $app? You'll choose the chat next.", null)
         }
         if (category == Category.DELETING) {

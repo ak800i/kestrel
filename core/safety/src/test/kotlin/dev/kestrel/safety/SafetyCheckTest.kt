@@ -262,6 +262,60 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun aShareFlowStartsAtAChildOfAForwardButtonAndAtAPointOnItAndATapAtOnARowIsSelected() {
+        val chat = TestScreen()
+        val forward = chat.add(100, "Forward", left = 800, className = "android.widget.ImageButton")
+        val icon = chat.add(120, null, parent = forward, left = 850, right = 950, height = 60, clickable = false, className = "android.widget.ImageView")
+        val share = "Share this from Chat? You'll choose the chat next. Say confirm or cancel."
+        fun at(x: Int, y: Int, text: String? = null) = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(x, y), pointText = text, frontAppLabel = "Chat")
+
+        assertEquals(ShareFlow("com.example.chat", emptyList(), null, serial = 1), SafetyCheck.afterAction(tap(icon), chat.snapshot(), chat.snapshot(), everything).shareFlow)
+        assertEquals(share, (SafetyCheck.decide(tap(icon), chat.snapshot(), everything, standard) as Decision.Confirm).confirmation.question)
+        val started = SafetyCheck.afterAction(at(900, 150), chat.snapshot(), chat.snapshot(), everything)
+        assertEquals(1, started.shareFlow?.serial)
+        assertEquals(share, (SafetyCheck.decide(at(900, 150), chat.snapshot(), everything, standard) as Decision.Confirm).confirmation.question)
+        // A point that the tree does not hold, on an OCR line that reads "Forward".
+        val web = TestScreen()
+        assertEquals(1, SafetyCheck.afterAction(at(500, 500, "Forward"), web.snapshot(), web.snapshot(), everything).shareFlow?.serial)
+
+        // The app's own picker: its rows send, and a row that a TapAt reaches is selected.
+        val picker = TestScreen()
+        val list = picker.add(300, null, className = "androidx.recyclerview.widget.RecyclerView", height = 600, clickable = false)
+        val friends = picker.add(300, "Close friends", parent = list)
+        picker.add(400, "Ana", parent = list)
+        assertEquals("confirm", decide(tap(friends), picker, started, Mode.RELAXED))
+        assertEquals(Category.SENDING, SafetyCheck.assess(at(500, 450), picker.snapshot(), started, standard).category)
+        assertEquals(listOf("Ana"), SafetyCheck.afterAction(at(500, 450), picker.snapshot(), picker.snapshot(), started).shareFlow?.selected)
+    }
+
+    @Test
+    fun aTapAtOnAPlainPartOfAComposingScreenDoesNotSendBecauseOfTheWindowsRoot() {
+        val chat = TestScreen(title = "Ana")
+        val root = chat.add(0, null, className = "android.widget.FrameLayout", height = 2000, clickable = false)
+        chat.add(300, "See you at 5", parent = root, clickable = false)
+        chat.add(1800, null, parent = root, editable = true, focused = true, hint = "Message", text = "I'm late", right = 850)
+        chat.add(1800, null, parent = root, className = "android.widget.ImageButton", left = 850)
+        fun at(x: Int, y: Int) = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(x, y), frontAppLabel = "Chat")
+
+        assertEquals("run", decide(at(500, 350), chat, nothing))
+        assertEquals("run", decide(at(500, 1000), chat, nothing))
+        val arrow = SafetyCheck.assess(at(900, 1850), chat.snapshot(), everything, standard)
+        assertEquals(Category.SENDING, arrow.category)
+        assertTrue(Source.COMPOSE in arrow.sources)
+    }
+
+    @Test
+    fun aTapAtIsJudgedByTheAppWindowThatHoldsItsPoint() {
+        val split = TestScreen("com.example.notes", bounds = IntRect(0, 0, 500, 2000))
+        split.add(1000, "Notes", right = 500)
+        split.window(2, "com.google.android.dialer", IntRect(500, 0, 1000, 2000), layer = 1)
+        split.add(1200, null, left = 600, right = 900, className = "android.widget.ImageButton", window = 2)
+
+        assertEquals("handover:CALL", decide(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(750, 1250)), split, everything, Mode.FULL_AUTO))
+        assertEquals("run", decide(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(250, 1050)), split, nothing))
+    }
+
+    @Test
     fun aTargetThatIsGoneIsRefused() {
         assertEquals("block", decide(tap("com.example.chat|9|Gone"), TestScreen()))
     }
