@@ -70,6 +70,35 @@ class RequestsTest {
     }
 
     @Test
+    fun wakeUpAfterTheNameMayHaveOneWrongWord() {
+        // One word misheard, missing or extra, as the A71 heard "Kestrel, wake up" through the air (plan 4E).
+        assertEquals(Request.WakeUp, Requests.read("Kestrel, make up.", spotted = true))
+        assertEquals(Request.WakeUp, Requests.read("Kestrel, wake op.", spotted = true))
+        assertEquals(Request.WakeUp, Requests.read("Kestrel, wake.", spotted = false))
+        assertEquals(Request.WakeUp, Requests.read("Kestrel, wake me up, please.", spotted = true))
+        assertEquals(Request.WakeUp, Requests.read("Woke up.", spotted = false, afterName = true))
+        // Two words away is a near miss: a task that Kestrel does not start while it is paused (RulesTest).
+        assertEquals(Request.Task("sign up.", nearWakeUp = true), Requests.read("Kestrel, sign up.", spotted = true))
+        assertEquals(Request.Task("wake up the phone", nearWakeUp = true), Requests.read("Kestrel, wake up the phone", spotted = false))
+        // Anything further away stays a plain task.
+        assertEquals(Request.Task("make up a story."), Requests.read("Kestrel, make up a story.", spotted = true))
+        assertEquals(Request.Task("call Mom."), Requests.read("Kestrel, call Mom.", spotted = true))
+        assertEquals(Request.Task("No."), Requests.read("No.", spotted = false, afterName = true))
+    }
+
+    @Test
+    fun stopKestrelAllowsOneMisheardWordWhenTheSpotterHeardStop() {
+        // "Castral" is three letters away from "kestrel", and "stops" one letter away from "stop" (plan 4E).
+        assertEquals(Request.TurnOff, Requests.read("Stop Castral.", spotted = false, stopSpotted = true))
+        assertEquals(Request.TurnOff, Requests.read("Stops Kestrel.", spotted = false, stopSpotted = true))
+        assertEquals(Request.Other("Stop Castral."), Requests.read("Stop Castral.", spotted = false))
+        assertEquals(Request.Other("Stops Kestrel."), Requests.read("Stops Kestrel.", spotted = false))
+        // A false "stop" of the spotter turns nothing off without a word like "stop" and the name.
+        assertEquals(Request.Other("Hey Kestrel."), Requests.read("Hey Kestrel.", spotted = false, stopSpotted = true))
+        assertEquals(Request.Stop(named = false), Requests.read("Stop.", spotted = false, stopSpotted = true))
+    }
+
+    @Test
     fun stopAndCancelCountWithFillerWords() {
         assertEquals(Request.Stop(named = false), Requests.read("Stop, stop!", spotted = false))
         assertEquals(Request.Stop(named = false), Requests.read("Cancel that.", spotted = false))

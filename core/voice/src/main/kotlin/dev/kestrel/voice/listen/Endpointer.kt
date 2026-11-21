@@ -6,10 +6,18 @@ import kotlin.math.roundToLong
 
 /**
  * An utterance that is ready to transcribe. [startSample] counts samples since the audio started, and [named] is true
- * when the keyword spotter heard "Kestrel" at its start. Its speech starts at [startSample] and ends at [endSample]; its
- * [samples] also hold [lead] samples of the audio before the speech and [trail] after it, which only the recogniser hears.
+ * when the keyword spotter heard "Kestrel" at its start, [stopSpotted] when it heard "stop" there (plan 4E). Its speech
+ * starts at [startSample] and ends at [endSample]; its [samples] also hold [lead] samples of the audio before the speech
+ * and [trail] after it, which only the recogniser hears.
  */
-class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean, val lead: Int = 0, val trail: Int = 0) {
+class Speech(
+    val startSample: Long,
+    val samples: FloatArray,
+    val named: Boolean,
+    val lead: Int = 0,
+    val trail: Int = 0,
+    val stopSpotted: Boolean = false,
+) {
     val endSample: Long get() = startSample + samples.size - lead - trail
     val seconds: Float get() = samples.size / SAMPLE_RATE.toFloat()
 }
@@ -26,6 +34,7 @@ class Speech(val startSample: Long, val samples: FloatArray, val named: Boolean,
  */
 class Endpointer {
     private val names = ArrayDeque<Long>()
+    private val stops = ArrayDeque<Long>()
     private var held: Speech? = null
 
     /**
@@ -35,7 +44,8 @@ class Endpointer {
      * utterance is held as one that starts with the name is; an utterance that is already held waits for its pause
      * either way. An utterance that starts before [holdFrom] is never held and nothing is joined to it: it goes out at
      * once, also when it is held already. The pipeline passes the start of its cut after an interruption, because it
-     * drops such an utterance, so that the request that follows it is not dropped with it (section 8.4).
+     * drops such an utterance, so that the request that follows it is not dropped with it (section 8.4). [stopHits] are
+     * the positions at which the spotter heard "stop", which marks an utterance that starts with it (plan 4E).
      */
     fun accept(
         utterances: List<Utterance>,
@@ -44,15 +54,24 @@ class Endpointer {
         position: Long,
         holdAll: Boolean = false,
         holdFrom: Long = Long.MIN_VALUE,
+        stopHits: List<Long> = emptyList(),
     ): List<Speech> {
         names.addAll(nameHits)
+        stops.addAll(stopHits)
         val ready = mutableListOf<Speech>()
         held?.takeIf { it.startSample < holdFrom }?.let {
             ready += it
             held = null
         }
         for (utterance in utterances) {
-            val speech = Speech(utterance.startSample, utterance.samples, startsWithName(utterance), utterance.lead, utterance.trail)
+            val speech = Speech(
+                utterance.startSample,
+                utterance.samples,
+                startsWithName(utterance),
+                utterance.lead,
+                utterance.trail,
+                stopSpotted = startsWithStop(utterance),
+            )
             val joined = held?.takeIf { speech.startSample >= holdFrom }?.let { join(it, speech) }
             if (joined != null) {
                 held = joined
@@ -73,6 +92,7 @@ class Endpointer {
             }
         }
         while (names.isNotEmpty() && names.first() < position - KEEP_NAMES) names.removeFirst()
+        while (stops.isNotEmpty() && stops.first() < position - KEEP_NAMES) stops.removeFirst()
         return ready
     }
 
@@ -84,11 +104,15 @@ class Endpointer {
         val last = listOfNotNull(held)
         held = null
         names.clear()
+        stops.clear()
         return last
     }
 
     private fun startsWithName(utterance: Utterance): Boolean =
         names.any { it >= utterance.startSample && it <= utterance.startSample + NAME_WINDOW }
+
+    private fun startsWithStop(utterance: Utterance): Boolean =
+        stops.any { it >= utterance.startSample && it <= utterance.startSample + STOP_WINDOW }
 
     /**
      * [earlier], silence for the pause and [later] in one utterance, named when [earlier] is, or null when the pause or
@@ -103,7 +127,14 @@ class Endpointer {
         val samples = FloatArray(size.toInt())
         earlier.samples.copyInto(samples)
         later.samples.copyInto(samples, (earlier.samples.size + gap).toInt())
-        return Speech(earlier.startSample, samples, named = earlier.named, lead = earlier.lead, trail = later.trail)
+        return Speech(
+            earlier.startSample,
+            samples,
+            named = earlier.named,
+            lead = earlier.lead,
+            trail = later.trail,
+            stopSpotted = earlier.stopSpotted,
+        )
     }
 
     private companion object {
@@ -119,6 +150,9 @@ class Endpointer {
         // The name may follow a word and a short pause ("Hey, Kestrel, ..."). "Kestrel" takes about half a second, and
         // the spotter reports it 0.3-0.55 s after the word ends, so its hit comes up to about 1.8 s after the start.
         val NAME_WINDOW = samples(2f)
+
+        // "Stop" is the utterance's first word, and the spotter reports it 0.3-0.55 s after the word ends (plan 4E).
+        val STOP_WINDOW = samples(1.5f)
 
         // An utterance arrives at most 30 s and the detector's 0.7 s of silence (plus the window that ends it) after its
         // start, so a hit more than 31 s old can no longer name one.

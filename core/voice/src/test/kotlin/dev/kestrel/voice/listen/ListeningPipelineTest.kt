@@ -87,6 +87,25 @@ class ListeningPipelineTest {
     }
 
     @Test
+    fun aTranscriptSaysWhetherTheSpotterHeardStopAtItsStart() = runTest {
+        val pipeline = pipeline()
+        // "Stop ..." from 0.2 s, whose "stop" the spotter reports at 0.8 s, and another utterance from 2.2 s.
+        pipeline.feedUntil(0.78f)
+        spotter.next.addLast(listOf(KeywordHit(Keyword.STOP, 0.8f)))
+        pipeline.feed()
+        pipeline.feedUntil(1.4f)
+        detector.next.addLast(listOf(utterance(0.2f, 0.8f)))
+        pipeline.feed()
+        pipeline.feedUntil(2.98f)
+        detector.next.addLast(listOf(utterance(2.2f, 0.5f)))
+        pipeline.feed()
+
+        val heard = events.filterIsInstance<VoiceEvent.Heard>()
+        assertEquals(listOf(true, false), heard.map { it.stopSpotted })
+        assertEquals(listOf(false, false), heard.map { it.named })
+    }
+
+    @Test
     fun pausedTranscribesOnlyUtterancesThatStartWithTheName() = runTest {
         val pipeline = pipeline()
         pipeline.recognition = Recognition.NAMED

@@ -48,7 +48,8 @@ sealed interface VoiceEvent {
      * when the microphone's thread handles the newest frame, so when that thread falls behind the recording, the end
      * looks later than it was, by as much; on the A71 the pipeline runs faster than real time. [closedAt] is when the
      * end-of-speech pause ended and the endpointer let the utterance go to the recogniser, on the same clock, or 0 without
-     * one; spec 5.3's transcription time counts from it (plan 4D, H5).
+     * one; spec 5.3's transcription time counts from it (plan 4D, H5). [stopSpotted] is true when the keyword spotter heard
+     * "stop" at its start, and, like [named], never for such a part (plan 4E).
      */
     data class Heard(
         val text: String,
@@ -57,6 +58,7 @@ sealed interface VoiceEvent {
         val millis: Long,
         val endedAt: Long = 0L,
         val closedAt: Long = 0L,
+        val stopSpotted: Boolean = false,
     ) : VoiceEvent {
         override fun toString() = "Heard(${text.length} characters, named=$named, seconds=$seconds, millis=$millis)"
     }
@@ -149,18 +151,28 @@ class ListeningPipeline(
         val hits = spotter.accept(frame).filterNot { isOwnVoice(it.keyword) }
         position += frame.size
         val names = mutableListOf<Long>()
+        val stops = mutableListOf<Long>()
         for (hit in hits) {
             if (hit.keyword == Keyword.KESTREL) {
                 names += position
                 // Section 8.4: "Kestrel" while Kestrel speaks interrupts it.
                 if (wanted == Recognition.NONE) interruption = position
             }
+            if (hit.keyword == Keyword.STOP) stops += position
             output.trySend(VoiceEvent.Spotted(hit.keyword))
         }
         val hears = detector.hearsSpeech
         // An event for an earlier utterance went out since the last frame: the worker's, or a drop below.
         var answered = sent.getAndSet(false)
-        val ready = endpointer.accept(utterances, names, hears, position, holdAll = wanted == Recognition.ANSWER, holdFrom = holdFrom())
+        val ready = endpointer.accept(
+            utterances,
+            names,
+            hears,
+            position,
+            holdAll = wanted == Recognition.ANSWER,
+            holdFrom = holdFrom(),
+            stopHits = stops,
+        )
         for (speech in ready) {
             val kept = afterResume(speech)
             if (kept == null) {
@@ -241,6 +253,7 @@ class ListeningPipeline(
                 speech.named,
                 lead = speech.lead - cut.toInt(),
                 trail = speech.trail,
+                stopSpotted = speech.stopSpotted,
             )
             interrupted || speech.endSample - resumeFrom < SHORTEST -> null
             else -> Speech(resumeFrom, speech.samples.copyOfRange(cut.toInt(), speech.samples.size), named = false, trail = speech.trail)
@@ -267,7 +280,7 @@ class ListeningPipeline(
             val started = System.nanoTime()
             val transcript = recognizer.transcribe(speech.samples, words)
             val millis = (System.nanoTime() - started) / 1_000_000
-            VoiceEvent.Heard(transcript.text, speech.named, speech.seconds, millis, endedAt, closedAt)
+            VoiceEvent.Heard(transcript.text, speech.named, speech.seconds, millis, endedAt, closedAt, speech.stopSpotted)
         } catch (e: Exception) {
             // A cancellation that is not the worker's own, such as a timeout inside boostWords, is a failure like any
             // other.

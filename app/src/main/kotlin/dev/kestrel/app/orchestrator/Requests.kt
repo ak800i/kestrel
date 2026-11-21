@@ -5,8 +5,10 @@ sealed interface Request {
     /**
      * "Kestrel, [task]". [text] is the task as the owner said it, without the name. [stopFirst]: the owner said "stop" or
      * "cancel" before the task, as in "Stop. Kestrel, open Viber.", so a running task should be cancelled first.
+     * [nearWakeUp]: the words are two words away from "wake up", as in "Kestrel, sign up", so that Kestrel starts no task
+     * with them while it is paused (plan 4E).
      */
-    data class Task(val text: String, val stopFirst: Boolean = false) : Request {
+    data class Task(val text: String, val stopFirst: Boolean = false, val nearWakeUp: Boolean = false) : Request {
         override fun toString() = "Task(${text.length} characters)"
     }
 
@@ -62,7 +64,8 @@ sealed interface Request {
  * the name at the start of the utterance, three letters are allowed.
  *
  * The checks run in this order:
- * 1. "Stop Kestrel", maybe followed by "please" or "now", turns Kestrel off.
+ * 1. "Stop Kestrel", maybe followed by "please" or "now", turns Kestrel off. When the spotter heard "stop" at the start
+ *    of the utterance, the first word may be one letter away from "stop", and the name three letters away (plan 4E).
  * 2. "Stop" or "cancel" with only filler words, such as "No, stop!" or "Cancel the task", is a stop. The name may come
  *    anywhere among them, as in "Stop it, Kestrel"; then the stop is named.
  * 3. The name starts the utterance, or, when the spotter heard it, comes after one short word such as "hey", "okay" or
@@ -81,7 +84,10 @@ sealed interface Request {
  *
  * Kestrel's own phrases are compared without "please", "now", "ok" and "okay", and "wakeup" reads as "wake up". The
  * answers that end the wait may also come with "no", "oh", "ah", "thanks" or "thank you", as in "No, never mind" or
- * "Nothing, thanks".
+ * "Nothing, thanks". After the name, "wake up" also counts with one word misheard, missing or extra, as in "Kestrel, make
+ * up" or "Kestrel, wake", where a word counts as misheard when at most half of its letters differ; words two such words
+ * away, as in "Kestrel, sign up", are a task that Kestrel does not start while it is paused ([Request.Task.nearWakeUp],
+ * plan 4E).
  */
 object Requests {
     private const val NAME = "kestrel"
@@ -105,6 +111,9 @@ object Requests {
     // Kestrel's own phrases after the name, as phrase() gives them (Appendix A).
     private val TURN_OFF = setOf("turn off", "switch off")
     private val OPEN_SETTINGS = setOf("open settings", "open your settings", "settings")
+
+    // "Wake up" word by word, for the misheard words of wakeUpDistance().
+    private val WAKE_UP = listOf("wake", "up")
 
     // Answers to "Yes?" that end the wait (section 8.3).
     private val NEVER_MIND = setOf("never mind", "nevermind", "forget it", "nothing")
@@ -131,13 +140,14 @@ object Requests {
      * [afterName]: the transcript answers "Yes?", so words without the name are read as the words after it: "Wake up."
      * is [Request.WakeUp], "Stop." is a named stop, and "Open the settings." is a task. "Turn off." is a task too,
      * because a pause of more than 1.5 s still splits the answer and the owner may not have finished, while "Stop
-     * Kestrel" and "Turn off, Kestrel" still turn Kestrel off.
+     * Kestrel" and "Turn off, Kestrel" still turn Kestrel off. [stopSpotted]: the keyword spotter heard "stop" at its
+     * start, so that "Stop Kestrel" allows a first word one letter away from "stop" and a name three letters away.
      */
-    fun read(transcript: String, spotted: Boolean, afterName: Boolean = false): Request? {
+    fun read(transcript: String, spotted: Boolean, afterName: Boolean = false, stopSpotted: Boolean = false): Request? {
         val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
         if (words.isEmpty()) return null
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
-        if (isStopKestrel(words, limit)) return Request.TurnOff
+        if (isStopKestrel(words, limit, stopSpotted)) return Request.TurnOff
         readStop(words, limit)?.let { return if (afterName) Request.Stop(named = true) else it }
         val start = when {
             nameAt(words, 0, limit) > 0 -> 0
@@ -192,10 +202,13 @@ object Requests {
 
     private class Word(val text: String, val range: IntRange)
 
-    // "Stop Kestrel" is checked before the name, because the spotter also fires at its start.
-    private fun isStopKestrel(words: List<Word>, limit: Int): Boolean {
-        if (words.size < 2 || words[0].text != "stop") return false
-        val end = nameAt(words, 1, limit)
+    // "Stop Kestrel" is checked before the name, because the spotter also fires at its start. After the spotter's "stop"
+    // at the start, the first word may be one letter away from "stop", and the name as far away as after its "Kestrel".
+    private fun isStopKestrel(words: List<Word>, limit: Int, stopSpotted: Boolean): Boolean {
+        if (words.size < 2) return false
+        val first = words[0].text
+        if (first != "stop" && !(stopSpotted && editDistance(first, "stop") <= 1)) return false
+        val end = nameAt(words, 1, if (stopSpotted) SPOTTED_LIMIT else limit)
         return end > 0 && words.drop(1 + end).all { it.text == "please" || it.text == "now" }
     }
 
@@ -233,15 +246,41 @@ object Requests {
         if (rest.isEmpty()) return Request.Name
         if (readStop(rest, limit) != null) return Request.Stop(named = true)
         val said = phrase(rest)
+        val fromWakeUp = wakeUpDistance(said)
         return when {
-            said == "wake up" -> Request.WakeUp
             said == "stop listening" -> Request.PauseListening
             nameSaid && said in TURN_OFF -> Request.TurnOff
             said in OPEN_SETTINGS -> Request.OpenSettings(stopFirst)
+            fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
-            else -> Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst)
+            else -> Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst, nearWakeUp = fromWakeUp == 2)
         }
+    }
+
+    /**
+     * How many words [said] is away from "wake up": a missing, an extra or a misheard word counts 1, and a word counts as
+     * misheard when it is at most half its letters away from the word that it replaces, as "make" for "wake" or "op" for
+     * "up"; any other word counts as one missing and one extra.
+     */
+    private fun wakeUpDistance(said: String): Int {
+        val words = said.split(" ").filter { it.isNotEmpty() }
+        var previous = IntArray(WAKE_UP.size + 1) { it }
+        for (word in words) {
+            val current = IntArray(WAKE_UP.size + 1)
+            current[0] = previous[0] + 1
+            for (j in WAKE_UP.indices) {
+                val target = WAKE_UP[j]
+                val swap = when {
+                    word == target -> 0
+                    editDistance(word, target) <= target.length / 2 -> 1
+                    else -> 2
+                }
+                current[j + 1] = minOf(previous[j + 1] + 1, current[j] + 1, previous[j] + swap)
+            }
+            previous = current
+        }
+        return previous[WAKE_UP.size]
     }
 
     /** [words] without the polite words, with "wakeup" read as "wake up". */

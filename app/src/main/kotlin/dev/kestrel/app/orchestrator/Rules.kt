@@ -160,7 +160,7 @@ sealed interface Event {
      * ends when the numbers changed after it (section 9.4). [seconds] is the length of its audio, and [endedAt] the end
      * of its speech on the phone's clock (SystemClock.elapsedRealtime), or 0 when it is not known; only the A71 session's
      * counts and times read them (plan 2E). [closedAt] is when its end-of-speech pause ended, on the same clock, or 0
-     * (plan 4D).
+     * (plan 4D). [stopSpotted] is true when the keyword spotter heard "stop" at its start (plan 4E).
      */
     data class Heard(
         val text: String,
@@ -169,6 +169,7 @@ sealed interface Event {
         val seconds: Float = 0f,
         val endedAt: Long = 0L,
         val closedAt: Long = 0L,
+        val stopSpotted: Boolean = false,
     ) : Event {
         override fun toString() = "Heard(${text.length} characters, named=$named)"
     }
@@ -478,7 +479,7 @@ object Rules {
         val awaiting = state.work == Work.AWAITING_TASK
         // An empty transcript that finishes after the screen turned off does not count: nobody could see its hint.
         // Waiting for a task ends when the screen turns off.
-        val request = Requests.read(event.text, event.named, afterName = awaiting)
+        val request = Requests.read(event.text, event.named, afterName = awaiting, stopSpotted = event.stopSpotted)
             ?: return if (state.screenOn) withoutWords(state, awaiting) else Step(state)
         // Words start the count of empty transcripts again.
         val counted = state.copy(emptyTranscripts = 0)
@@ -513,7 +514,12 @@ object Rules {
     // and opens the settings.
     private fun whileTaskRuns(state: State, request: Request, shown: Effect): Step = when (request) {
         is Request.Stop -> cancelTask(state, shown)
-        is Request.Task -> if (request.stopFirst) cancelTask(state, shown).then { runTask(it, request.text) } else Step(state)
+        is Request.Task -> when {
+            !request.stopFirst -> Step(state)
+            // Plan 4E: after "Stop.", a near miss of "wake up" while Kestrel is paused cancels the task and starts none.
+            request.nearWakeUp && state.mode == Mode.PAUSED -> cancelTask(state, shown)
+            else -> cancelTask(state, shown).then { runTask(it, request.text) }
+        }
         Request.PauseListening -> cancelTask(state, shown).then { changeMode(it, Mode.PAUSED) }
         Request.TurnOff -> turnOff(state, shown)
         is Request.OpenSettings ->
@@ -521,9 +527,11 @@ object Rules {
         else -> Step(state)
     }
 
-    // The answer to "Yes?" is read as the words after the name, so it is never Other.
+    // The answer to "Yes?" is read as the words after the name, so it is never Other. While Kestrel is paused, a near miss
+    // of "wake up" ends the wait and starts nothing (plan 4E).
     private fun whileAwaitingTask(state: State, request: Request, shown: Effect): Step = when (request) {
-        is Request.Task -> runTask(state, request.text, shown)
+        is Request.Task ->
+            if (request.nearWakeUp && state.mode == Mode.PAUSED) Step(state.copy(work = Work.IDLE), listOf(shown)) else runTask(state, request.text, shown)
         is Request.Other -> runTask(state, request.text, shown)
         Request.Name -> askForTask(state, shown)
         Request.WakeUp -> changeMode(state.copy(work = Work.IDLE), Mode.LISTENING, shown)
@@ -535,8 +543,9 @@ object Rules {
         is Request.Call -> Step(state)
     }
 
+    // A near miss of "Kestrel, wake up" while Kestrel is paused starts nothing: the owner meant to wake Kestrel up (plan 4E).
     private fun whileIdle(state: State, request: Request, text: String, shown: Effect, spokeAt: Long? = null): Step = when (request) {
-        is Request.Task -> runTask(state, request.text, shown)
+        is Request.Task -> if (request.nearWakeUp && state.mode == Mode.PAUSED) Step(state, listOf(shown)) else runTask(state, request.text, shown)
         Request.Name -> askForTask(state, shown)
         Request.WakeUp -> changeMode(state, Mode.LISTENING, shown)
         Request.PauseListening -> changeMode(state, Mode.PAUSED, shown)
@@ -713,7 +722,7 @@ object Rules {
     // command asks, the transcript is the answer; otherwise the new command is dropped.
     private fun heardDuringCommand(state: State, event: Event.Heard): Step {
         if (state.inCall) return callCommand(state, event)
-        val request = Requests.read(event.text, event.named)
+        val request = Requests.read(event.text, event.named, stopSpotted = event.stopSpotted)
             ?: return if (state.screenOn) withoutWordsDuringCommand(state) else Step(state)
         val counted = state.copy(emptyTranscripts = 0)
         if (!counted.screenOn && !stopsSomething(request)) return Step(counted)

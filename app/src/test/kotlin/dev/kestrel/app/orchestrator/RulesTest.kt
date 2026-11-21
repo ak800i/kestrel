@@ -236,6 +236,29 @@ class RulesTest {
     }
 
     @Test
+    fun aNearMissOfWakeUpWhilePausedStartsNothing() {
+        // Plan 4E: one wrong word still wakes Kestrel up; two start nothing while it is paused, and a task while it listens.
+        assertEquals(Mode.LISTENING, Rules.next(paused, Event.Heard("Kestrel, make up.", named = true)).state.mode)
+        assertEquals(
+            Step(paused, listOf(Effect.Show(Feedback.Heard("Kestrel, sign up.")))),
+            Rules.next(paused, Event.Heard("Kestrel, sign up.", named = true)),
+        )
+        assertEquals(Work.RUNNING_TASK, Rules.next(listening, Event.Heard("Kestrel, sign up.", named = true)).state.work)
+        // The same in an answer to "Yes?" while paused: the wait ends, and no task starts.
+        assertEquals(
+            Step(paused.copy(wait = 1), listOf(Effect.Show(Feedback.Heard("Sign up.")))),
+            Rules.next(paused.copy(work = Work.AWAITING_TASK, wait = 1), Event.Heard("Sign up.", named = false)),
+        )
+        // After "Stop." while a task runs, the task stops and no new one starts.
+        val stopped = Rules.next(paused.copy(work = Work.RUNNING_TASK, task = 1), Event.Heard("Stop. Kestrel, sign up.", named = true))
+        assertEquals(Work.IDLE, stopped.state.work)
+        assertEquals(1, stopped.state.task)
+        // "Stop Kestrel" with a name further away turns Kestrel off when the spotter heard "stop" at its start.
+        assertEquals(Mode.OFF, Rules.next(listening, Event.Heard("Stop Castral.", named = false, stopSpotted = true)).state.mode)
+        assertEquals(Mode.LISTENING, Rules.next(listening, Event.Heard("Stop Castral.", named = false)).state.mode)
+    }
+
+    @Test
     fun stopListeningPausesAndStopKestrelTurnsOff() {
         assertEquals(Mode.PAUSED, Rules.next(listening, Event.Heard("Stop listening.", named = false)).state.mode)
 

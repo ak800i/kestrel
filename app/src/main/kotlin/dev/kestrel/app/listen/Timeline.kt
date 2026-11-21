@@ -162,7 +162,7 @@ internal class VoiceCounts {
         add("utterances", 1)
         if (event.named) add("named", 1)
         add("audioMillis", (event.seconds * 1_000).roundToLong())
-        val read = Requests.read(event.text, event.named)
+        val read = Requests.read(event.text, event.named, stopSpotted = event.stopSpotted)
         add("read-${read?.javaClass?.simpleName?.lowercase() ?: "empty"}", 1)
     }
 
