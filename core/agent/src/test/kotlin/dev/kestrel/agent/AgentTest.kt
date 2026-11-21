@@ -281,6 +281,32 @@ class AgentTest {
         assertEquals(1, harness.eyes.captures)
     }
 
+    // A floating "New note" button over the list, at the height of the second row's "Delete": its text stays in place
+    // when a row arrives above, whether the tree holds it or only OCR reads it.
+    @Test
+    fun aFloatingButtonOverTheListDoesNotMakeRowsThatLookAlikeDiffer() = runTest {
+        val rows = rowsWithControls()
+        val alike = rowLines("Plans", "Plans", "Plans", "Plans")
+        val drawn = OcrLine("New note", IntRect(540, 480, 760, 540), 0.95)
+        for (label in listOf("New note", null)) {
+            val fab = ScreenBuilder.screen("com.example.notes", "Notes") { button(label, 470, viewId = "fab", left = 520, right = 780) }
+            val floating = rows.copy(elements = rows.elements + fab.elements)
+            val shown = if (label == null) alike + drawn else alike
+
+            val still = deleteInRows(shown, floating)
+            assertEquals(EndReason.CANCELLED, still.run("Delete the note Plans").end)
+            assertEquals(listOf(HandOverKind.RECIPIENT), still.owner.handOvers.map { it.kind })
+            assertTrue(still.screen.actions.none { it is ScreenAction.TapAt })
+            assertEquals(1, still.eyes.captures)
+
+            val arrived = deleteInRows(shown, floating) {
+                eyes.lines = rowLines("New", "Plans", "Plans", "Plans") + listOfNotNull(drawn.takeIf { label == null })
+            }
+            arrived.run("Delete the note Plans")
+            assertTrue(arrived.screen.actions.none { it is ScreenAction.TapAt })
+        }
+    }
+
     @Test
     fun aTapAtAPointIsHandedToTheOwnerWithoutAScreenshotWhenAnAgentFreeAppOrPlayServicesIsOnScreen() = runTest {
         val rows = rowsWithControls()

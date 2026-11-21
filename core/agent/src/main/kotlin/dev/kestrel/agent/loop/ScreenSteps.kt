@@ -132,7 +132,9 @@ internal class ScreenSteps(private val run: TaskRun) {
 
     // A point has no key of its own, and list rows share their view IDs, so a list that moved under the point can keep
     // the key and bounds of the element there, also of a row's own "Delete" control (D14, D20). So the press needs its whole
-    // row: the band of the tapped line, as wide as the point's window and one line's height above and below it. Rows that
+    // row: the band of the tapped line, as wide as the point's window and one line's height above and below it. When the
+    // line lies in a scrollable list, the band keeps only the list's part and the lines that move with its rows, because a
+    // line that stays in place, such as a floating button's, can neither tell rows apart nor show that they moved. Rows that
     // look alike, a front app that is agent-free and a Play services window hand the press to the owner, because no
     // screenshot may or can tell the rows apart (D15, D16, D20). Otherwise OCR reads the band again, and every line that
     // the observation showed in it must still be there, with the same text at the same place; then the screen is read
@@ -147,9 +149,13 @@ internal class ScreenSteps(private val run: TaskRun) {
             return PointCheck.Owner(if (playServices) HandOver.of(HandOverKind.PLAY_SERVICES) else HandOver(HandOverKind.RECIPIENT, PRESS_YOURSELF))
         }
         val margin = entry.bounds.height
+        val list = rowsList(entry)
         val band = IntRect(window.bounds.left, entry.bounds.top - margin, window.bounds.right, entry.bounds.bottom + margin)
-            .intersect(window.bounds) ?: return PointCheck.Changed(before)
-        val lines = run.observation.table.entries.filter { it.windowId == entry.windowId && !it.label.isNullOrBlank() && holdsCentre(band, it.bounds) }
+            .intersect(window.bounds)?.let { if (list == null) it else it.intersect(run.snapshot.elements[list].bounds) }
+            ?: return PointCheck.Changed(before)
+        val lines = run.observation.table.entries.filter {
+            it.windowId == entry.windowId && !it.label.isNullOrBlank() && holdsCentre(band, it.bounds) && (list == null || movesWith(it, list))
+        }
         if (looksAlike(entry, lines)) return PointCheck.Owner(HandOver(HandOverKind.RECIPIENT, PRESS_YOURSELF))
         if (!lines.filter { !it.ocr }.all { stillShown(it, before) }) return PointCheck.Changed(before)
         val capture = run.ports.eyes.capture() as? Capture.Captured ?: return PointCheck.Changed(before)
@@ -180,6 +186,39 @@ internal class ScreenSteps(private val run: TaskRun) {
         val element = line.key?.let(screen::element) ?: return false
         return fits(line, screen) && near(element.bounds, line.bounds, 0, 0)
     }
+
+    // The index, in the observation's snapshot, of the list whose rows hold the tapped line: of the scrollable elements of
+    // the point's window that hold the point, the innermost vertical list, else the innermost one. Null when there is none
+    // or when the line does not move with its rows, such as a floating button's text over the list.
+    private fun rowsList(entry: TableEntry): Int? {
+        val elements = run.snapshot.elements
+        val point = IntRect(entry.bounds.centerX, entry.bounds.centerY, entry.bounds.centerX + 1, entry.bounds.centerY + 1)
+        val lists = elements.indices.filter { elements[it].scrollable && elements[it].windowId == entry.windowId && holdsCentre(elements[it].bounds, point) }
+        val list = lists.filter { ScreenTree.isVerticalList(elements[it]) }.ifEmpty { lists }.minByOrNull { area(elements[it].bounds) } ?: return null
+        return list.takeIf { movesWith(entry, it) }
+    }
+
+    // Whether [line] moves with the rows of [list]. A tree line must be the list or lie inside it in the tree. An OCR line
+    // must lie inside the list's bounds, and the smallest element that holds it must not be one outside the list, such as
+    // a floating button or a toolbar drawn over it.
+    private fun movesWith(line: TableEntry, list: Int): Boolean {
+        val snapshot = run.snapshot
+        val elements = snapshot.elements
+        fun inList(index: Int) = index == list || list in ScreenTree.ancestors(snapshot, index)
+        if (!line.ocr) {
+            val index = line.key?.let { key -> elements.indexOfFirst { it.key == key } }?.takeIf { it >= 0 } ?: return true
+            return inList(index)
+        }
+        if (!holdsCentre(elements[list].bounds, line.bounds)) return false
+        val above = ScreenTree.ancestors(snapshot, list).toSet()
+        val (inside, outside) = elements.indices
+            .filter { elements[it].windowId == line.windowId && it !in above && holdsCentre(elements[it].bounds, line.bounds) }
+            .partition(::inList)
+        val own = inside.minOfOrNull { area(elements[it].bounds) } ?: return false
+        return outside.none { area(elements[it].bounds) < own }
+    }
+
+    private fun area(bounds: IntRect): Long = bounds.width.toLong() * bounds.height
 
     // [bounds] lies at [shown] moved by ([dx], [dy]), within half of [shown]'s height.
     private fun near(bounds: IntRect, shown: IntRect, dx: Int, dy: Int): Boolean {
