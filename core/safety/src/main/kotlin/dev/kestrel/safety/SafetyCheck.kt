@@ -107,9 +107,45 @@ object SafetyCheck {
             }
         }
 
-        val decision = decision(proposal, screen, category, task, settings.mode, sends)
-        return Assessment(category, sources.also { if (Placeholders.holdsOne(proposal.text)) it += Source.PLACEHOLDER }, decision, decision, sends)
+        val before = decision(proposal, screen, category, task, settings.mode, sends)
+        if (Placeholders.holdsOne(proposal.text)) sources += Source.PLACEHOLDER
+        // Test mode turns a send to anyone but the owner, every call and a text message into Block, before any question.
+        val reason = if (settings.testMode) testModeBlock(proposal, screen, category, sends, task, settings, env) else null
+        if (reason != null) sources += Source.TEST_MODE
+        return Assessment(category, sources, before, reason?.let { Decision.Block(it) } ?: before, sends)
     }
+
+    /**
+     * Test mode's check alone, on the fresh snapshot after the owner's yes (design D14 and D18): true when test mode is off
+     * or allows the action. A target that is gone is not test mode's to judge: the loop's check that the confirmation is
+     * still the same refuses the press and asks again (review 2-2 New 4).
+     */
+    fun testModeAllows(proposal: Proposal, screen: ScreenSnapshot, task: TaskSafety, settings: SafetySettings, env: SafetyEnvironment = SafetyEnvironment()): Boolean {
+        if (!settings.testMode) return true
+        val assessment = assess(proposal, screen, task, settings.copy(testMode = false), env)
+        return testModeBlock(proposal, screen, assessment.category, assessment.sends, task, settings, env) == null
+    }
+
+    /**
+     * Test mode's block: every call, every text message, and every action that any source rates as sending, whatever its
+     * final category ("Send and delete"), unless it sends to the owner's own chat (review 2 I2).
+     */
+    private fun testModeBlock(
+        proposal: Proposal,
+        screen: ScreenSnapshot,
+        category: Category,
+        sends: Boolean,
+        task: TaskSafety,
+        settings: SafetySettings,
+        env: SafetyEnvironment,
+    ): String? =
+        when {
+            category == Category.CALLS -> "Test mode: Kestrel makes no calls."
+            proposal.kind == ActionKind.COMPOSE_SMS -> "Test mode: Kestrel sends no text messages."
+            (sends || category == Category.SENDING) && !SelfChats.recognise(screen, proposal.targetKey, settings, task.shareFlow, env.selfChatAliases) ->
+                "Test mode: Kestrel only sends to your own chats."
+            else -> null
+        }
 
     /**
      * Updates the task's state after an action ran (design D13): a typed text is remembered (pass the proposal with the

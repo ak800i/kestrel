@@ -632,7 +632,8 @@ Before the agent reads any screen text, Kestrel derives from the owner's own wor
 
 ### 12.4 Confirmations and hand-overs
 
-- Kestrel's code builds each confirmation from the real target and the exact text that will be sent, never from the model's words. For example: "Send to Ana Petrović on Viber: 'I'm 10 minutes late'? Say confirm or cancel."
+- Kestrel's code builds each confirmation from the real target and the exact text that will be sent, never from the model's words. For example: "Send to Ana Petrović on Viber: 'I'm 10 minutes late'? Say confirm or cancel." The recipient is the chat's title by the title's own rules, never the first text of the screen, which a message could be; in a share flow, the rows, the chat or the app's own dialog that the screen shows at the moment of the send, never only the rows that the flow selected earlier; in an e-mail, every address and name of To, Cc and Bcc, also text that has not become an address chip yet, with the subject and any attachments. A delete names the open item or the number of selected items, never the button's label. A typed placeholder is named by its kind ("your one-time code"), never by its value. When the code cannot read the recipient or the content, it does not ask: it hands over ("I can't see who this goes to. Please check it and send it yourself, then say 'Kestrel, continue'.").
+- After the owner's yes, Kestrel reads the screen again and builds the confirmation once more; it presses only when the recipient, the app, the content and the target are still those that the owner confirmed, and only once. In a share flow, one yes covers the following taps of the same flow that send to the same selection. Before a tap on a send, save, done, apply or OK control, Kestrel checks that every text that the task typed is still in its field; when it is not, nothing is pressed.
 - Kestrel speaks the question and shows it on a confirmation card. "Confirm", "yes", "send it" or the card's Confirm button go ahead. "Cancel", "no", the Cancel button or 15 s of silence cancel. A touch anywhere else on the screen also cancels (section 14.1).
 - A hand-over stops Kestrel's actions and explains what the owner must do, for example "Please enter your password, then say 'Kestrel, continue'". The owner can act by touch or with instant commands, and touches do not cancel the task during a hand-over. "Kestrel, continue" resumes the task, "cancel" ends it, and the task also ends after 3 minutes without either.
 
@@ -643,6 +644,8 @@ Before the agent reads any screen text, Kestrel derives from the owner's own wor
 - Kestrel's own app is always agent-free and is not on the editable list, so that the agent cannot change Kestrel's settings, such as test mode or this list.
 - When an agent-free app is in front, the agent stops and explains why. `open_app` refuses to open such an app, Kestrel never takes a screenshot of it, and `list_notifications` hides its notifications. Observations do not show them either (section 11.3).
 - Instant commands still work in these apps.
+- Google Password Manager lives inside Google Play services, which cannot be agent-free as a whole without breaking every Play services dialog: every window of Play services is left out of observations, screenshots and OCR, and when one is in front or covers more than half of the screen, Kestrel hands over. Chrome's own password pages are caught by the credentials rule (section 12.2).
+- Secure Folder runs apps under the same package names as outside it, and the accessibility API does not say which user a window belongs to, so an app on the list is agent-free in both places, and an app that is not on the list is not agent-free inside Secure Folder either.
 
 ### 12.6 Redaction
 
@@ -658,11 +661,15 @@ Phone numbers and email addresses are not redacted, because tasks need them.
 
 The real values stay in an in-memory vault for the duration of the task, and Kestrel clears the vault when the task ends. A value is typed back only through an action that the safety check confirms or hands over.
 
+Each placeholder names its kind and its number in the task: `[OTP_n]`, `[CARD_n]`, `[IBAN_n]`, `[JMBG_n]` and `[TOKEN_n]`. Every text that goes into a request is redacted once, when it enters the conversation, with the texts beside it in the same window, so that "Your verification code" in one element and "483920" in the next count as a code; the same value keeps its placeholder, and a value that the vault already holds is replaced wherever it appears later in the task. A literal placeholder in screen text becomes `(OTP_1)`, so that only Kestrel's own placeholders reach the vault. A placeholder is replaced by its value only in `type_text`'s text and only after the owner's yes, in every mode; in a password or code field Kestrel hands over and never types the value. In `say`'s text, `finish`'s summary and `fail`'s reason, a placeholder that the vault holds is spoken and shown as its kind ("a one-time code"), never as its value; in any other tool argument, and anywhere for a placeholder that the vault does not hold, a placeholder makes the call fail. A question that Kestrel asks after it typed a vault's value names the value by its kind too.
+
 ### 12.7 Test mode
 
 - Test mode is a development setting, and it is on during all testing (D25).
-- While it is on, the safety check allows sending and sharing only to Telegram's "Saved Messages", WhatsApp's "Message yourself", Viber's "My Notes" and the owner's own email address. It compares the chat title or recipient that is actually shown on screen. Everything else is blocked.
-- Calls are blocked in test mode.
+- While it is on, the safety check allows sending and sharing only to Telegram's "Saved Messages", WhatsApp's "Message yourself", Viber's "My Notes" and the owner's own email address. It compares the chat title or recipient that is actually shown on screen together with signs that a stranger cannot set: Telegram's subtitle "forward here to save" and no other header text, or the share picker's first row with "Forward here to save."; WhatsApp's "<owner's name> (You)" with "Message yourself"; Viber's chat name, which the owner can rename, with a sign of the notes chat; and only the owner's addresses in an e-mail's To, Cc and Bcc. The owner's names and addresses are set on the Safety page. Everything else is blocked, before any question and again on the screen after the owner's yes.
+- An app's self-chat counts only after its rule has been checked on a tree of the real app, recorded on a device, in a reviewed change; until then every send in that app is blocked in test mode. So Viber's "My Notes" stays blocked in test mode until a real Viber tree is recorded. The look-alikes (a contact, a group or a bot named "Saved Messages", a contact named "<owner's name> (You)", a chat called "My Notes" without the notes' signs) are fixtures of the test app, never real chats.
+- Calls are blocked in test mode, also the agent's call hand-over, and so is `compose_sms`.
+- Test mode stays on in every test run, so the runs judge Standard mode by the decision that the safety check made before test mode's block, which the activity log records beside the final decision: every send, call and delete must have been confirmed, handed over or blocked before test mode, never run.
 
 ## 13. Privacy and network
 

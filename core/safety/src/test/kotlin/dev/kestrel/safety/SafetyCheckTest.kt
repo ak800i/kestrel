@@ -406,4 +406,71 @@ class SafetyCheckTest {
         val typed = SafetyCheck.afterAction(Proposal("type_text", ActionKind.TYPE, targetKey = field, text = "I'm late"), compose.snapshot(), compose.snapshot(), everything)
         assertEquals(listOf(TypedText(field, "Message", "com.example.chat", "I'm late")), typed.typed)
     }
+
+    /** A Telegram-like chat of [packageName] with [title] and [subtitle] in its header and a Send button. */
+    private fun telegramChat(packageName: String, title: String, subtitle: String): Pair<TestScreen, String> {
+        val screen = TestScreen(packageName)
+        screen.add(80, title, id = "chat_title", left = 150, height = 50, clickable = false)
+        screen.add(140, subtitle, left = 150, height = 40, clickable = false)
+        screen.add(1800, null, editable = true, focused = true, hint = "Message", text = "Test", right = 850)
+        return screen to screen.add(1800, "Send", left = 850)
+    }
+
+    @Test
+    fun testModeBlocksASendToAnyoneButTheOwnerBeforeAnyQuestion() {
+        val testMode = SafetySettings()
+        val (ana, send) = telegramChat("org.telegram.messenger", "Ana", "online")
+        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", "forward here to save")
+        val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
+
+        val blocked = SafetyCheck.assess(tap(send), ana.snapshot(), everything, testMode)
+        assertEquals("block", kind(blocked.decision))
+        assertEquals("confirm", kind(blocked.beforeTestMode))
+        assertTrue(Source.TEST_MODE in blocked.sources)
+        assertEquals("Test mode: Kestrel only sends to your own chats.", (blocked.decision as Decision.Block).reason)
+        assertEquals("confirm", kind(SafetyCheck.decide(tap(fixtureSend), fixture.snapshot(), everything, testMode, aliases)))
+        assertEquals("block", kind(SafetyCheck.decide(tap(fixtureSend), fixture.snapshot(), everything, testMode)))
+    }
+
+    @Test
+    fun testModeBlocksTheAgentsCallsAndTextMessages() {
+        val testMode = SafetySettings(mode = Mode.FULL_AUTO)
+        val dialer = TestScreen("com.google.android.dialer")
+        val call = dialer.add(1800, "Call")
+        val sms = Proposal("compose_sms", ActionKind.COMPOSE_SMS, receivingPackage = "com.google.android.apps.messaging")
+
+        val assessed = SafetyCheck.assess(tap(call), dialer.snapshot(), everything, testMode)
+        assertEquals("handover:CALL", kind(assessed.beforeTestMode))
+        assertEquals("block", kind(assessed.decision))
+        assertEquals("block", kind(SafetyCheck.decide(sms, TestScreen().snapshot(), everything, testMode)))
+    }
+
+    @Test
+    fun theCheckAfterTheYesRepeatsTestMode() {
+        val (ana, send) = telegramChat("org.telegram.messenger", "Ana", "online")
+        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", "forward here to save")
+        val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
+
+        assertEquals(false, SafetyCheck.testModeAllows(tap(send), ana.snapshot(), everything, SafetySettings()))
+        assertEquals(true, SafetyCheck.testModeAllows(tap(send), ana.snapshot(), everything, standard))
+        assertEquals(true, SafetyCheck.testModeAllows(tap(fixtureSend), fixture.snapshot(), everything, SafetySettings(), aliases))
+        // A target that is gone is left to the loop's check of the confirmation, which asks again (review 2-2 New 4).
+        assertEquals(true, SafetyCheck.testModeAllows(tap("org.telegram.messenger|9|Gone"), ana.snapshot(), everything, SafetySettings()))
+    }
+
+    @Test
+    fun testModeChecksEverySendWhateverItsCategoryAndTheChatOnTheScreenNotTheFlow() {
+        val testMode = SafetySettings()
+        val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
+        val (ana, _) = telegramChat("dev.kestrel.testapp", "Ana", "online")
+        val both = ana.add(1000, "Send and delete")
+        val (marko, markoSend) = telegramChat("dev.kestrel.testapp", "Marko", "online")
+        val inFlow = everything.copy(shareFlow = ShareFlow("dev.kestrel.testapp", listOf("Saved Messages"), ShareCount(1, 0), serial = 1))
+
+        val sendAndDelete = SafetyCheck.assess(tap(both), ana.snapshot(), everything, testMode, aliases)
+        assertEquals(Category.DELETING, sendAndDelete.category)
+        assertEquals("block", kind(sendAndDelete.decision))
+        assertEquals("block", kind(SafetyCheck.decide(tap(markoSend), marko.snapshot(), inFlow, testMode, aliases)))
+        assertEquals(false, SafetyCheck.testModeAllows(tap(markoSend), marko.snapshot(), inFlow, testMode, aliases))
+    }
 }
