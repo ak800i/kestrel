@@ -21,26 +21,32 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 /**
- * Replays a routine without a model (design D23; spec 11.9 and 14.4). Each step reads a fresh snapshot and checks that the
- * screen's signature before the step matches the recorded one (the signature has no labels, so a chat with John matches a
- * chat recorded with Ana); it finds its element by key, or a slot-dependent target by the slot's value among elements of
- * the recorded class; then the step runs through the agent's own path, with the element check, the safety check, its
- * questions and test mode; and the signature after it, and a slot-dependent title, are checked. A signature leaves out
- * the window's ID, which Android gives each new window, so a routine replays in a later session of the app. A recorded
- * target without a key or a slot (an OCR line) never replays by its old number: the step fails. Each step that ran gets
- * its `ACTION` entry and its ledger line (D24, D25). A mismatch, or a pause that withdrew a step, returns the note for
- * the agent, which goes on from the screen as it is. A touch cancels a replay as it cancels a task.
+ * Replays a routine without a model (design D23; spec 11.9 and 14.4). Each step reads a fresh snapshot; a step that acts
+ * on the screen (a tap, a long press, typing, a scroll, a swipe or back) checks that the screen's signature before it
+ * matches the recorded one (the signature has no labels, so a chat with John matches a chat recorded with Ana), while a
+ * step that opens an app, a link or a settings page, goes home, waits or calls a data tool runs from any screen, so that
+ * a routine that starts by opening its app replays wherever the owner is. A contact or place slot that names an alias
+ * takes the alias's saved value. A step finds its element by key, or a slot-dependent target by the slot's value among
+ * elements of the recorded class; then the step runs through the agent's own path, with the element check, the safety
+ * check, its questions and test mode; and the signature after it, and a slot-dependent title, are checked. A signature
+ * leaves out the window's ID, which Android gives each new window, so a routine replays in a later session of the app. A
+ * recorded target without a key or a slot (an OCR line) never replays by its old number: the step fails. Each step that
+ * ran gets its `ACTION` entry and its ledger line (D24, D25). A mismatch, or a pause that withdrew a step, returns the
+ * note for the agent, which goes on from the screen as it is. A touch cancels a replay as it cancels a task.
  */
 internal class RoutineReplayer(private val run: TaskRun) {
     /** Null when every step ran; else "Routine '<name>' failed at step <n> of <m>: <what differed>." */
     suspend fun replay(match: RoutineMatch): String? {
         val routine = match.routine
         val total = routine.steps.size
+        val values = values(match)
         for ((index, step) in routine.steps.withIndex()) {
             fun failed(what: String) = "Routine '${run.redactor.redact(routine.name)}' failed at step ${index + 1} of $total: $what."
             val observation = run.observe(run.fresh(), last = null, targetKey = null)
-            if (step.before != null && !step.before.sameScreen(observation.signature)) return failed("the screen before it was not the recorded one")
-            val arguments = arguments(step, match, observation.table) ?: return failed("its element was not on the screen")
+            if (step.tool in ON_SCREEN && step.before != null && !step.before.sameScreen(observation.signature)) {
+                return failed("the screen before it was not the recorded one")
+            }
+            val arguments = arguments(step, routine, values, observation.table) ?: return failed("its element was not on the screen")
             val call = (ToolArguments.parse(step.tool, arguments, observation.table, run.vault) as? ParsedCall.Valid)?.call
                 ?: return failed("its arguments did not fit the screen")
             val started = run.ports.clock.elapsedMillis()
@@ -57,7 +63,7 @@ internal class RoutineReplayer(private val run: TaskRun) {
             if (titleSlot != null) {
                 val window = ScreenTree.frontWindow(after) ?: return failed("no app was in front")
                 val title = ScreenTitle.of(after, window, run.label(window.packageName), withRule3 = false)
-                if (title == null || !names(routine, titleSlot, match.values[titleSlot].orEmpty(), listOf(title))) {
+                if (title == null || !names(routine, titleSlot, values[titleSlot].orEmpty(), listOf(title))) {
                     return failed("the screen's title was not the one asked for")
                 }
             }
@@ -65,9 +71,15 @@ internal class RoutineReplayer(private val run: TaskRun) {
         return null
     }
 
+    // A contact or place slot that names an alias takes the alias's saved value ("my brother = contact John Smith" gives
+    // "John Smith", "the office = …" its address), as `find_contact` and `navigate` resolve aliases (D22, D23).
+    private fun values(match: RoutineMatch): Map<String, String> = match.values.mapValues { (slot, value) ->
+        val type = match.routine.slots.firstOrNull { it.name == slot }?.type
+        if (type == SlotType.CONTACT || type == SlotType.PLACE) run.memory.alias(value)?.takeIf { it.isNotBlank() } ?: value else value
+    }
+
     // The recorded arguments with each slot's value, and the target's number in the newest observation.
-    private fun arguments(step: RoutineStep, match: RoutineMatch, table: ObservationTable): JsonObject? {
-        val values = match.values
+    private fun arguments(step: RoutineStep, routine: Routine, values: Map<String, String>, table: ObservationTable): JsonObject? {
         val filled = (step.arguments ?: JsonObject(emptyMap())).mapValues { (_, value) ->
             val text = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: return@mapValues value
             JsonPrimitive(fill(text, values))
@@ -77,7 +89,7 @@ internal class RoutineReplayer(private val run: TaskRun) {
         val entry = when {
             slot != null -> {
                 val candidates = table.entries.filter { it.className == step.className && !it.label.isNullOrBlank() }
-                candidates.singleOrNull { names(match.routine, slot, values[slot].orEmpty(), listOfNotNull(it.label)) } ?: return null
+                candidates.singleOrNull { names(routine, slot, values[slot].orEmpty(), listOfNotNull(it.label)) } ?: return null
             }
             step.key != null -> table.byKey(step.key) ?: return null
             "target" in filled -> return null
@@ -100,4 +112,10 @@ internal class RoutineReplayer(private val run: TaskRun) {
         values.entries.fold(text) { acc, (slot, value) -> acc.replace("{$slot}", value) }
 
     override fun toString(): String = "RoutineReplayer"
+
+    private companion object {
+        // The steps that act on an element or the content of the screen before them; the others (opening an app, a link
+        // or a settings page, going home, waiting, the data tools) run from any screen.
+        val ON_SCREEN = Tools.WITH_CATEGORY + Tools.BACK
+    }
 }

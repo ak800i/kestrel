@@ -18,8 +18,9 @@ data class RoutineMatch(val routine: Routine, val values: Map<String, String>) {
  * Matches the owner's request against every routine's phrasings on the phone, without a model (design D23; spec 11.1 and
  * 16.2): after `Normalizer`, the fixed words must match in order, each by `LabelMatcher` in strict mode, and the slots take
  * the words between them. A `contact` slot must name one contact, through an alias of memory or one of the contact names
- * that `:app` read; a `place` slot is an alias or an address; a `time` slot must read as a time; a `text` slot takes the
- * words as the owner said them. A routine runs only when all its slots are filled and no other routine matches.
+ * that `:app` read; a `place` slot takes the words, an alias or an address; a `time` slot must read as a time; a `text`
+ * slot takes the words as the owner said them. The values are the spoken words; the replay puts in an alias's saved value
+ * for a `contact` or `place` slot. A routine runs only when all its slots are filled and no other routine matches.
  */
 object RoutineMatcher {
     private val TIME = Regex("""^(\d{1,2})([:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$""", RegexOption.IGNORE_CASE)

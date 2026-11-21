@@ -87,6 +87,60 @@ class RoutineReplayTest {
         assertTrue(harness.model.requests.isEmpty())
     }
 
+    // A step that does not act on the screen before it (opening an app) replays from any screen; the steps after it still
+    // check theirs.
+    @Test
+    fun aRoutineThatOpensItsAppReplaysFromAnyScreen() = runTest {
+        val open = RoutineStep(Tools.OPEN_APP, category = "reading", before = ScreenSignature.of(Screens.app("org.telegram.messenger", "Chats")),
+            after = ScreenSignature.of(chats), arguments = buildJsonObject { put("name", "Kestrel fixtures"); put("reason", "open the app") })
+        val harness = harness().apply {
+            memory.routines[0] = routine.copy(steps = listOf(open) + routine.steps)
+            screen.current = Screens.app(Screens.MAIL, "Inbox")
+            screen.onOpen(chats)
+        }
+
+        val report = harness.run("Send John a fixtures message that I'm on my way", knownNames = setOf("Ana Petrović", "John Smith"))
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertTrue(harness.model.requests.isEmpty())
+        assertTrue(harness.screen.actions.first() is ScreenAction.OpenApp)
+        assertEquals(listOf("John Smith"), harness.owner.confirmations.single().recipients)
+    }
+
+    @Test
+    fun aContactAliasReplaysByTheContactThatItNames() = runTest {
+        val harness = harness().apply { memory.facts += Fact("my brother", "contact John Smith", FactKind.ALIAS) }
+
+        val report = harness.run("Send my brother a fixtures message that I'm on my way", knownNames = setOf("Ana Petrović", "John Smith"))
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertTrue(harness.model.requests.isEmpty())
+        assertEquals(listOf("John Smith"), harness.owner.confirmations.single().recipients)
+    }
+
+    @Test
+    fun aPlaceAliasReplaysByItsSavedAddress() = runTest {
+        val search = ScreenBuilder.screen(Screens.MESSENGER, "Kestrel fixtures") { field("Search places", "", 300, viewId = "search") }
+        val field = search.elements.first { it.editable }
+        val places = Routine(
+            name = "Fixtures places",
+            phrasings = listOf("find {place} in fixtures search", "fixtures search for {place}", "look up {place} in fixtures"),
+            slots = listOf(Slot("place", SlotType.PLACE)),
+            steps = listOf(RoutineStep(Tools.TYPE_TEXT, key = field.key, label = field.label, className = field.className, category = "typing_request",
+                before = ScreenSignature.of(search), text = "{place}",
+                arguments = buildJsonObject { put("target", 1); put("text", "Main Street 1"); put("reason", "search it"); put("category", "typing_request") })),
+        )
+        val harness = Harness(search, listOf(call("fail", null, null, null, "reason" to "The agent took over."))).apply {
+            memory.routines += places
+            memory.facts += Fact("the office", "Fixture Street 12", FactKind.ALIAS)
+        }
+
+        val report = harness.run("Find the office in fixtures search")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertEquals("Fixture Street 12", harness.screen.actions.filterIsInstance<ScreenAction.SetText>().single().text)
+    }
+
     @Test
     fun aRecordedTargetWithoutAKeyNeverReplaysByItsOldNumber() = runTest {
         val screen = ScreenBuilder.screen(Screens.MESSENGER, "Kestrel fixtures") {
