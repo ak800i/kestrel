@@ -3,15 +3,21 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.tools.ActionMapper
 import dev.kestrel.agent.tools.AgentCall
+import dev.kestrel.agent.tools.Browser
 import dev.kestrel.commands.text.NamePick
+import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Pick
+import dev.kestrel.safety.ActionKind
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
 import dev.kestrel.safety.ConfirmationBuilder
 import dev.kestrel.safety.Decision
+import dev.kestrel.safety.LinkCheck
+import dev.kestrel.safety.LinkVerdict
 import dev.kestrel.safety.Placeholders
 import dev.kestrel.safety.Proposal
 import dev.kestrel.safety.SafetyCheck
@@ -21,9 +27,10 @@ import dev.kestrel.safety.Vault
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.delay
+import java.net.URI
 
 /**
- * The screen tools (design D3, D10, D11, D13 and D14; D32 items 27 and 29): every action on an element reads a fresh
+ * The screen tools (design D3, D10, D11, D13 and D14; D32 items 12, 27 and 29): every action on an element reads a fresh
  * snapshot, checks the element against what the observation showed, passes the safety check, and after the owner's yes
  * reads the screen again and presses only when the confirmation and test mode's check still hold.
  */
@@ -52,20 +59,21 @@ internal class ScreenSteps(private val run: TaskRun) {
                 is Clearance.Stop -> return clearance.done
                 is Clearance.Go -> {
                     val yes = clearance.confirmation ?: return perform(call, entry, proposal, before, clearance.category, confirmed = false)
-                    return afterYes(call, entry, proposal, yes, clearance.category)
+                    return afterYes(call, entry, proposal, yes, clearance.category, clearance.covered)
                 }
             }
         }
     }
 
     // After the yes (D14): the card has gone; the screen is read again and the confirmation built again on it.
-    private suspend fun afterYes(call: AgentCall, entry: TableEntry?, proposal: Proposal, yes: Confirmation, category: Category): Done {
+    private suspend fun afterYes(call: AgentCall, entry: TableEntry?, proposal: Proposal, yes: Confirmation, category: Category, covered: Boolean): Done {
         val fresh = run.fresh()
         if (!SafetyCheck.testModeAllows(proposal, fresh, run.safety, run.settings.safety, run.settings.environment)) {
             throw Ended(EndReason.TEST_MODE, detail = TaskRun.TEST_MODE_BLOCK)
         }
         val again = ConfirmationBuilder.build(proposal, fresh, category, run.safety)
         if (again !is Decision.Confirm || !again.confirmation.sameAs(yes) || (entry != null && !entry.ocr && !fits(entry, fresh))) {
+            run.forgetConfirmedFlow()
             return Done(call.tool, Outcome.CheckFailed(CHANGED_AFTER), entry, after = fresh)
         }
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
@@ -76,7 +84,7 @@ internal class ScreenSteps(private val run: TaskRun) {
             run.unsure(yes, share = flow != null)
         } else if (done.outcome !is Outcome.Failed) {
             val items = flow?.count?.let { it.photos + it.videos } ?: 0
-            run.sent(yes, share = flow != null, items = items)
+            run.sent(yes, share = flow != null, items = items, covered = covered)
         }
         return done
     }
@@ -143,12 +151,68 @@ internal class ScreenSteps(private val run: TaskRun) {
         return open(call, ScreenAction.OpenApp(app.packageName), app.packageName, app.label)
     }
 
+    suspend fun openLink(call: AgentCall): Done {
+        val link = when (call) {
+            is AgentCall.OpenUrl -> call.url
+            is AgentCall.OpenDeepLink -> call.uri
+            else -> throw IllegalArgumentException("Not a link")
+        }
+        val kind = if (call is AgentCall.OpenUrl) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK
+        val browser = (call as? AgentCall.OpenUrl)?.browser ?: Browser.DEFAULT
+        val installed = run.ports.apps.launcherApps().map { it.packageName }.toSet()
+        val browserPackage = browser.packages.firstOrNull { it in installed }
+        if (browser != Browser.DEFAULT && browserPackage == null) return Done(call.tool, Outcome.Failed(if (browser == Browser.FIREFOX) "Firefox is not installed" else "Chrome is not installed"))
+        val target = run.ports.screen.resolve(IntentSpec(VIEW, link, browserPackage, browsable = true))
+        val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency)
+        if (verdict is LinkVerdict.Refused) return Done(call.tool, Outcome.Refused(verdict.reason))
+        val done = open(call, ScreenAction.OpenUri(link, browserPackage, browsable = true), target, null, linkTarget = target)
+        if (browser != Browser.FIREFOX || browserPackage == null || done.after == null) return done
+        return firefox(call, done, link, browserPackage)
+    }
+
+    // Firefox's web area can stay empty (r57's bug 2023734): wait for it, send the intent once more, then say so (D11).
+    private suspend fun firefox(call: AgentCall, done: Done, link: String, browserPackage: String): Done {
+        for (attempt in 0..1) {
+            repeat(WAIT_POLLS) {
+                val now = run.fresh()
+                if (webAreaFilled(now, browserPackage)) return Done(call.tool, done.outcome, after = now, detail = done.detail)
+                delay(POLL_MILLIS)
+            }
+            if (attempt == 0) run.ports.screen.act(ScreenAction.OpenUri(link, browserPackage, browsable = true))
+        }
+        return Done(call.tool, Outcome.Failed(EMPTY_PAGE), after = run.fresh())
+    }
+
+    private fun webAreaFilled(snapshot: ScreenSnapshot, browserPackage: String): Boolean {
+        val areas = snapshot.elements.indices.filter {
+            snapshot.elements[it].className == WEB_VIEW && snapshot.elements[it].packageName == browserPackage
+        }
+        return areas.any { area -> snapshot.elements.any { it.parent == area } }
+    }
+
+    suspend fun openSettings(call: AgentCall.OpenSettings): Done {
+        for (action in call.page.actions) {
+            val spec = IntentSpec(action)
+            val target = run.ports.screen.resolve(spec) ?: continue
+            // The result names the page that opened, which can be a fallback of the page asked for (D11).
+            val page = if (action == call.page.actions.first()) call.page.wire else pageName(action)
+            return open(call, ScreenAction.OpenIntent(spec), target, page)
+        }
+        return Done(call.tool, Outcome.Failed("this phone has no such settings page"))
+    }
+
     // Opens something, then waits up to 5 s until its app is in front (D11; review A M15, A2-N7).
-    private suspend fun open(call: AgentCall, action: ScreenAction, target: String?, detail: String?): Done {
+    private suspend fun open(call: AgentCall, action: ScreenAction, target: String?, detail: String?, linkTarget: String? = null): Done {
         while (true) {
             if (run.gate()) return paused(call.tool, null)
             val before = run.fresh()
-            val proposal = ActionMapper.proposal(call, run.observation.table, run.observation.appLabel)
+            // A link's question names the app that opens it by its launcher label (D32 item 12).
+            val proposal = ActionMapper.proposal(
+                call, run.observation.table, run.observation.appLabel,
+                receivingAppLabel = linkTarget?.let { run.label(it) },
+                linkFromOwner = linkOf(call)?.let(::fromOwner) ?: false,
+                linkTargetPackage = linkTarget,
+            )
             when (val clearance = run.decide(proposal, before, call.tool, null)) {
                 Clearance.Again -> continue
                 is Clearance.Stop -> return clearance.done
@@ -185,6 +249,31 @@ internal class ScreenSteps(private val run: TaskRun) {
             element.editable == entry.editable && element.password == entry.password && element.checkable == entry.checkable
     }
 
+    private fun linkOf(call: AgentCall): String? = when (call) {
+        is AgentCall.OpenUrl -> call.url
+        is AgentCall.OpenDeepLink -> call.uri
+        else -> null
+    }
+
+    // A link came from the owner when its host (or for a deep link, the whole link) is in his request (D32 item 12): its
+    // words as a whole run of the request's words, or the host as one spoken word ("wikipedia.org" said "wikipedia org").
+    private fun fromOwner(link: String): Boolean {
+        val host = try {
+            URI(link).host
+        } catch (e: Exception) {
+            null
+        } ?: link
+        val words = Normalizer.words(host)
+        val request = Normalizer.words(run.task.text)
+        if (words.isEmpty()) return false
+        val joined = words.joinToString("")
+        return request.windowed(words.size).any { it == words } || request.any { it == joined }
+    }
+
+    // "android.settings.WIRELESS_SETTINGS" is the page "wireless".
+    private fun pageName(action: String): String =
+        action.substringAfterLast('.').removeSuffix("_SETTINGS").lowercase().replace('_', ' ')
+
     private fun quoted(text: String): String = ScreenText.quote(run.redactor.redact(text), ScreenText.LABEL_LIMIT)
 
     override fun toString(): String = "ScreenSteps"
@@ -194,10 +283,14 @@ internal class ScreenSteps(private val run: TaskRun) {
         const val CHANGED_AFTER = "the screen changed after the confirmation; nothing was sent"
         const val UNCERTAIN = "The tap may not have worked; check the screen before trying again."
         const val PAUSED = "The task was paused before this action, so nothing was done."
+        const val EMPTY_PAGE = "the page shows no content to Kestrel"
         const val ACTION_FAILED = "the action failed"
         const val NOTHING_TO_ACT_ON = "there is nothing to act on"
         const val FRONT_WAIT_MILLIS = 5_000L
         const val POLL_MILLIS = 500L
+        private const val WAIT_POLLS = 10
+        private const val VIEW = "android.intent.action.VIEW"
+        private const val WEB_VIEW = "android.webkit.WebView"
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
     }
 }

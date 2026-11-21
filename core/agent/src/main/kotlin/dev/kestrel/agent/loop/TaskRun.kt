@@ -11,6 +11,7 @@ import dev.kestrel.agent.memory.FactKind
 import dev.kestrel.agent.observe.Observation
 import dev.kestrel.agent.observe.ObservationBuilder
 import dev.kestrel.agent.observe.ObservationInput
+import dev.kestrel.agent.observe.ObservationTable
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
 import dev.kestrel.agent.port.Answer
@@ -90,8 +91,11 @@ internal data class ConfirmedSend(val recipients: List<String>, val content: Str
 }
 /** What the safety check lets a step do (design D13 and D14). */
 internal sealed interface Clearance {
-    /** Go ahead; [confirmation] is the owner's yes when one was asked. */
-    data class Go(val category: Category, val confirmation: Confirmation?) : Clearance
+    /**
+     * Go ahead; [confirmation] is the owner's yes when one was asked, or the earlier yes that [covered] this tap of the
+     * same share flow (D14).
+     */
+    data class Go(val category: Category, val confirmation: Confirmation?, val covered: Boolean = false) : Clearance
 
     /** The step ends with [done] (a refusal or a hand-over that the owner finished). */
     data class Stop(val done: Done) : Clearance
@@ -112,6 +116,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private val builder = ObservationBuilder(redactor, settings.agentFree)
     private val choices = ToolChoices()
     private val screenSteps = ScreenSteps(this)
+    private val dataSteps = DataSteps(this)
+    private val looks = LookCloser(this)
 
     var safety = TaskSafety(TaskAllowance.NONE)
     lateinit var conversation: Conversation
@@ -236,14 +242,17 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         is AgentCall.Tap, is AgentCall.LongPress, is AgentCall.TypeText, is AgentCall.Scroll, is AgentCall.Swipe,
         is AgentCall.Back, is AgentCall.Home -> screenSteps.element(call)
         is AgentCall.OpenApp -> screenSteps.openApp(call)
+        is AgentCall.OpenUrl, is AgentCall.OpenDeepLink -> screenSteps.openLink(call)
+        is AgentCall.OpenSettings -> screenSteps.openSettings(call)
         is AgentCall.Wait -> screenSteps.wait(call)
+        is AgentCall.LookCloser -> looks.step(call)
         is AgentCall.AskUser -> askUser(call)
         is AgentCall.Say -> say(call)
         is AgentCall.Finish -> finish(call)
         is AgentCall.Fail -> throw Ended(EndReason.FAILED_BY_MODEL, detail = spoken(call.reason))
         is AgentCall.Remember -> remember(call)
         is AgentCall.Forget -> forget(call)
-        else -> Done(call.tool, Outcome.Refused(NOT_YET))
+        else -> dataSteps.run(call)
     }
 
     // --- The model ---
@@ -288,7 +297,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     /** The front app's launcher label, which the observation and the safety check name (D8, D13). */
     suspend fun label(packageName: String?): String? = packageName?.let { ports.apps.label(it) }
 
-    /** The model that the task uses. */
+    /** The model that the task uses, whose `takesImages` decides `look_closer`'s screenshot (D20). */
     val currentModel: RoleModel get() = ports.model.model.lightweight
 
     /**
@@ -334,6 +343,12 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         observation = next
         resumePending = false
         return next
+    }
+
+    /** The table of an observation of [snapshot] that the model never sees, for `look_closer`'s masks (D20). */
+    suspend fun table(snapshot: ScreenSnapshot, ocr: List<OcrLine>): ObservationTable {
+        val front = ScreenTree.frontWindow(snapshot)?.packageName
+        return builder.build(ObservationInput(replies + 1, snapshot, label(front), ocr = ocr)).table
     }
 
     /** After a resume (D2): the agent observes the screen again before it acts, because the owner may have changed it. */
@@ -420,6 +435,11 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         return assessment
     }
 
+    // The share flow at the owner's last yes, by its serial, and the recipients that the yes named: one yes covers the
+    // following taps of that flow while they name the same recipients; a new flow asks again (D14).
+    private var confirmedSerial: Int? = null
+    private var confirmedRecipients: List<String> = emptyList()
+
     // The Cc and Bcc expanders that the task tapped, each only once (D14).
     private val expanded = mutableSetOf<String>()
 
@@ -432,6 +452,10 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             is Decision.HandOver -> Clearance.Stop(handOver(decision.handOver, tool))
             is Decision.Confirm -> {
                 if (decision.confirmation.category == Category.SENDING && expandCopies(screen)) return Clearance.Again
+                val flow = safety.shareFlow
+                if (flow != null && flow.serial == confirmedSerial && decision.confirmation.recipients == confirmedRecipients) {
+                    return Clearance.Go(assessment.category, decision.confirmation, covered = true)
+                }
                 if (gate()) return Clearance.Again
                 if (confirm(decision.confirmation) != ConfirmEnd.YES) {
                     if (!interrupted()) return Clearance.Again
@@ -440,6 +464,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
                 }
                 interruptions = 0
                 confirmed++
+                confirmedSerial = flow?.serial
+                confirmedRecipients = decision.confirmation.recipients
                 Clearance.Go(assessment.category, decision.confirmation)
             }
         }
@@ -457,14 +483,23 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         return outcome.done
     }
 
+    /** The screen changed after a yes, so a later send of the share flow needs a new yes (D14). */
+    fun forgetConfirmedFlow() {
+        confirmedSerial = null
+    }
+
     /** A blocked action: test mode's block ends the task (D18); any other block is the model's to read. */
     fun blocked(assessment: Assessment, reason: String, tool: String, target: TableEntry?, after: ScreenSnapshot): Done {
         if (assessment.beforeTestMode !is Decision.Block) throw Ended(EndReason.TEST_MODE, detail = reason)
         return Done(tool, Outcome.Refused(reason), target, after = after)
     }
 
-    /** A send that the owner confirmed and Kestrel pressed (D14, D24). */
-    fun sent(confirmation: Confirmation, share: Boolean, items: Int) {
+    /**
+     * A send that the owner confirmed and Kestrel pressed (D14, D24). A tap that an earlier yes [covered] is the same send
+     * (a row and then the app's own Send), so it is counted once.
+     */
+    fun sent(confirmation: Confirmation, share: Boolean, items: Int, covered: Boolean) {
+        if (covered) return
         if (confirmation.category == Category.DELETING) ledger.add("deleted ${deleted(confirmation.content)}")
         if (confirmation.category != Category.SENDING) return
         confirmedSends += ConfirmedSend(confirmation.recipients, confirmation.content, share)
@@ -559,6 +594,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         val label = done.target?.shownLabel
         val line = when {
             done.tool == Tools.OPEN_APP && outcome !is Outcome.Failed && outcome !is Outcome.Refused && done.detail != null -> "opened ${done.detail}"
+            done.tool == Tools.OPEN_URL && done.after != null && outcome !is Outcome.Failed && outcome !is Outcome.Refused -> "opened a web page"
+            done.tool == Tools.OPEN_SETTINGS && done.after != null && outcome !is Outcome.Failed -> "opened the settings page ${done.detail.orEmpty()}".trim()
             outcome == Outcome.TargetChanged && done.target?.checkable == true -> {
                 val checked = done.target.key?.let { snapshot.element(it)?.checked }
                 checked?.let { now ->
@@ -568,7 +605,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             }
             outcome == Outcome.TargetChanged && done.tool == Tools.TYPE_TEXT -> "typed into $label"
             outcome is Outcome.AnotherScreen && done.tool == Tools.TAP -> outcome.title?.let { "opened ${ScreenText.quote(it, 40)}" } ?: "opened another screen"
-            else -> null
+            else -> dataSteps.ledgerLine(done)
         }
         line?.let(ledger::add)
     }
@@ -638,9 +675,6 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         const val OWNER_DID_IT = "the owner did this step by hand"
         const val OWNER_DID_IT_RESULT = "Result: The owner did this step by hand."
         const val CALL_PLACED = "You placed the call."
-
-        // The data tools, links, settings pages and look_closer come with the next task.
-        private const val NOT_YET = "Kestrel cannot run this tool yet"
         private const val ANDROID = "android"
         private const val FRONT_CHECKS = 3
         private const val MAX_INTERRUPTIONS = 3

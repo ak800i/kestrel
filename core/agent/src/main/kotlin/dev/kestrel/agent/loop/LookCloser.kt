@@ -1,0 +1,209 @@
+package dev.kestrel.agent.loop
+
+import dev.kestrel.agent.observe.TableEntry
+import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.AnswerKind
+import dev.kestrel.agent.port.Badge
+import dev.kestrel.agent.port.Capture
+import dev.kestrel.agent.port.OcrLine
+import dev.kestrel.agent.tools.AgentCall
+import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.safety.AgentFreeApps
+import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenSignature
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.ScreenTree
+import dev.kestrel.screen.model.Signature
+
+/**
+ * `look_closer`'s three steps (design D20; spec 11.6), one per call on the same screen: OCR where the tree has no text,
+ * then a screenshot for the model after the owner's yes, then the numbers for the owner to pick from. A call with a
+ * target limits OCR and the screenshot to that element. When a step cannot run here (no OCR files, a model without
+ * images, the owner's no), the next one runs in the same call. Captures stay in memory and are closed at once.
+ */
+internal class LookCloser(private val run: TaskRun) {
+    private val calls = mutableMapOf<Signature, Int>()
+    private var ocrMissing = false
+
+    /** Why a capture gave no picture: a secure window, or Kestrel's fixed sentence of `Capture.NotNow`. */
+    private class NoCapture(val secure: Boolean, val reason: String) : Exception(null, null, false, false)
+
+    suspend fun step(call: AgentCall.LookCloser): Done {
+        val target = call.target?.let(run.observation.table::entry)
+        val signature = run.observation.signature
+        val count = calls.getOrDefault(signature, 0)
+        calls[signature] = count + 1
+        return try {
+            when (count) {
+                0 -> ocr(call, target) ?: screenshot(call, target) ?: numbers(call)
+                1 -> screenshot(call, target) ?: numbers(call)
+                else -> numbers(call)
+            }
+        } catch (e: NoCapture) {
+            // A secure screen goes on with the numbers next time; anything else may be tried again.
+            calls[signature] = if (e.secure) 2 else count
+            Done(call.tool, text = "Result: ${e.reason}", summary = "Step ${run.replies}: look_closer could not capture the screen.",
+                last = "look_closer could not capture the screen", after = run.fresh(), progress = false)
+        }
+    }
+
+    // Step 1 (D20; r61): OCR on the regions without tree text, never on password or data-sensitive elements; lines that
+    // overlap tree text are dropped, and only lines with a mean score of at least 0.8 are kept. Null: no OCR files.
+    private suspend fun ocr(call: AgentCall.LookCloser, target: TableEntry?): Done? {
+        val snapshot = run.fresh()
+        if (!capturable(snapshot)) return null
+        val lines = withCapture { capture -> read(capture, snapshot, target) } ?: return null
+        val kept = lines.filter { it.score >= MIN_SCORE && !overlapsText(it, snapshot) }
+        return Done(
+            call.tool, target = target, after = snapshot, ocr = kept, progress = kept.isNotEmpty(),
+            text = "Result: look_closer read ${kept.size} lines of text.",
+            summary = "Step ${run.replies}: look_closer read ${kept.size} lines.",
+            last = "look_closer read ${kept.size} lines",
+        )
+    }
+
+    // Step 2 (D20): a screenshot for a model that takes images, after the owner's yes, with every secret masked. The
+    // observation with step 1's OCR lines stays the newest, because the picture's numbers are its numbers.
+    private suspend fun screenshot(call: AgentCall.LookCloser, target: TableEntry?): Done? {
+        val asked = run.fresh()
+        val front = ScreenTree.frontWindow(asked)?.packageName ?: return null
+        if (!run.currentModel.takesImages || !capturable(asked)) return null
+        val provider = run.ports.model.model
+        if (!run.ports.memory.screenshotApproved(front, provider.providerId)) {
+            val app = run.label(front) ?: front.substringAfterLast('.')
+            val warning = if (ocrMissing) " I can't hide numbers that only the picture shows." else ""
+            run.gate()
+            val answer = run.limits.waiting { run.ports.owner.ask("May I send a screenshot of $app to ${provider.providerName}?$warning", AnswerKind.SCREENSHOT) }
+            when (approval(answer)) {
+                Approval.ALWAYS -> run.ports.memory.approveScreenshots(front, provider.providerId)
+                Approval.ONCE -> Unit
+                Approval.NO -> return null
+            }
+        }
+        // The owner may take a while to answer: a screen that changed since the question is never captured (spec 12.5).
+        run.gate()
+        val now = run.fresh()
+        val same = ScreenTree.frontWindow(now)?.packageName == front && ScreenSignature.of(now).sameScreen(ScreenSignature.of(asked))
+        if (!same || !capturable(now)) {
+            return Done(call.tool, text = "Result: $CHANGED", summary = "Step ${run.replies}: look_closer took no screenshot; the screen changed.",
+                last = "look_closer took no screenshot; the screen changed", after = now, progress = false)
+        }
+        val image = withCapture { capture ->
+            val lines = read(capture, now, target).orEmpty()
+            run.ports.eyes.encode(capture, masks(now, lines), badges())
+        } ?: return Done(call.tool, Outcome.Failed(NO_SCREENSHOT), target)
+        return Done(
+            call.tool, target = target, screenshot = image, progress = false,
+            text = "Result: the screenshot follows.",
+            summary = "Step ${run.replies}: look_closer sent a screenshot.",
+            last = "look_closer sent a screenshot",
+        )
+    }
+
+    // Step 3 (D20): the owner picks a number on the screen.
+    private suspend fun numbers(call: AgentCall.LookCloser): Done {
+        run.ports.screen.showBadges(badges())
+        try {
+            run.gate()
+            val answer = run.limits.waiting { run.ports.owner.ask(WHICH, AnswerKind.PICK_NUMBER) }
+            val picked = (answer as? Answer.Number)?.n?.takeIf { run.observation.table.entry(it) != null }
+                ?: return Done(call.tool, Outcome.NoAnswer)
+            return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner picked [$picked]."))
+        } finally {
+            run.ports.screen.hideBadges()
+        }
+    }
+
+    private suspend fun <T> withCapture(block: suspend (Capture.Captured) -> T?): T? =
+        when (val capture = run.ports.eyes.capture()) {
+            is Capture.Captured -> capture.image.use { block(capture) }
+            Capture.Secure -> throw NoCapture(secure = true, reason = SECURE)
+            is Capture.NotNow -> throw NoCapture(secure = false, reason = capture.reason)
+        }
+
+    private suspend fun read(capture: Capture.Captured, snapshot: ScreenSnapshot, target: TableEntry?): List<OcrLine>? {
+        val window = ScreenTree.frontWindow(snapshot) ?: return emptyList()
+        val regions = if (target != null) listOf(target.bounds) else textless(snapshot, window.id, window.bounds)
+        val exclude = snapshot.elements.filter { it.password || it.dataSensitive }.map { it.bounds }
+        val lines = run.ports.eyes.read(capture, regions, exclude)
+        if (lines == null) ocrMissing = true
+        return lines
+    }
+
+    // Actionable elements without a label, and large elements (1/16 of the window) whose subtree has no text (D20).
+    private fun textless(snapshot: ScreenSnapshot, windowId: Int, area: IntRect): List<IntRect> {
+        val elements = snapshot.elements
+        val large = area.width.toLong() * area.height / LARGE_SHARE
+        return elements.indices.filter { index ->
+            val element = elements[index]
+            if (element.windowId != windowId || element.password || element.dataSensitive) return@filter false
+            val subtreeText = elements.indices.any { other ->
+                !elements[other].label.isNullOrBlank() && (other == index || index in ScreenTree.ancestors(snapshot, other))
+            }
+            (element.isActionable && element.label.isNullOrBlank()) || (element.bounds.width.toLong() * element.bounds.height >= large && !subtreeText)
+        }.map { elements[it].bounds }
+    }
+
+    // A line whose centre lies in an element with text, or that covers more than half of its area with it, is dropped.
+    private fun overlapsText(line: OcrLine, snapshot: ScreenSnapshot): Boolean = snapshot.elements.any { element ->
+        if (element.label.isNullOrBlank()) return@any false
+        val overlap = element.bounds.intersect(line.bounds) ?: return@any false
+        val centre = IntRect(line.bounds.centerX, line.bounds.centerY, line.bounds.centerX + 1, line.bounds.centerY + 1)
+        element.bounds.contains(centre) || overlap.width.toLong() * overlap.height * 2 > line.bounds.width.toLong() * line.bounds.height
+    }
+
+    // Password fields, data-sensitive elements, every line of the screen's observation whose text the redactor changed
+    // (merged rows and the lines that the cap left out included), and OCR boxes whose text it changes with the other boxes as neighbours, whatever their
+    // score (D20; review B I12, B2-M8).
+    private suspend fun masks(snapshot: ScreenSnapshot, lines: List<OcrLine>): List<IntRect> {
+        val secret = snapshot.elements.filter { it.password || it.dataSensitive }.map { it.bounds }
+        val kept = lines.filter { it.score >= MIN_SCORE && !overlapsText(it, snapshot) }
+        val redacted = run.table(snapshot, kept).redactedBounds
+        val texts = lines.map { it.text }
+        val ocr = lines.filterIndexed { index, line ->
+            run.redactor.redact(line.text, texts.filterIndexed { other, _ -> other != index }) != line.text
+        }.map { it.bounds }
+        return secret + redacted + ocr
+    }
+
+    private enum class Approval { ALWAYS, ONCE, NO }
+
+    // D20: only "always" and "always for this app" approve for good, and only the yes words send once; an answer with a
+    // word of refusal is a no ("No, always ask me first.").
+    private fun approval(answer: Answer): Approval {
+        val text = when (answer) {
+            is Answer.Text -> Normalizer.normalize(answer.text)
+            Answer.Yes -> "yes"
+            else -> return Approval.NO
+        }
+        return when {
+            Normalizer.words(text).any { it in REFUSALS } -> Approval.NO
+            text in ALWAYS -> Approval.ALWAYS
+            text in YES -> Approval.ONCE
+            else -> Approval.NO
+        }
+    }
+
+    private fun badges(): List<Badge> = run.observation.table.entries.map { Badge(it.number, it.bounds) }
+
+    // Never an agent-free app or a Play services window (D16, D20); the eyes refuse the recent-apps and home screens.
+    private fun capturable(snapshot: ScreenSnapshot): Boolean {
+        if (snapshot.windows.any { it.packageName == AgentFreeApps.PLAY_SERVICES }) return false
+        val front = ScreenTree.frontWindow(snapshot)?.packageName ?: return false
+        return !run.settings.agentFree.isAgentFree(front)
+    }
+
+    override fun toString(): String = "LookCloser(screens=${calls.size})"
+
+    companion object {
+        const val MIN_SCORE = 0.8
+        const val WHICH = "Which number should I use?"
+        const val SECURE = "This screen cannot be captured (the app blocks screenshots)."
+        const val NO_SCREENSHOT = "the screenshot failed"
+        const val CHANGED = "The screen changed while the owner answered, so Kestrel took no screenshot."
+        private const val LARGE_SHARE = 16
+        private val YES = setOf("yes", "yes send it", "ok", "yes please", "sure")
+        private val ALWAYS = setOf("always", "always for this app", "yes always")
+        private val REFUSALS = setOf("no", "not", "never", "dont", "ne")
+    }
+}
