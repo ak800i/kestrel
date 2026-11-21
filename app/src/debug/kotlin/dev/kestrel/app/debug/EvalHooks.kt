@@ -11,10 +11,7 @@ import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.Requests
-import dev.kestrel.commands.Command
-import dev.kestrel.commands.CommandParser
 import dev.kestrel.commands.CommandVocabulary
-import dev.kestrel.commands.Commands
 import dev.kestrel.commands.text.WordErrors
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.Recognizer
@@ -344,28 +341,8 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         val answer = "words=${errors.words} substitutions=${errors.substitutions} deletions=${errors.deletions} " +
             "insertions=${errors.insertions} request=$request read=$read millis=$millis seconds=${seconds(speech.size)} " +
             "pss=${Debug.getPss() / 1024} parts=${parts.size} twice=$twice" +
-            group?.let { " command=${command(it, expected, heard, labels, contacts)}" }.orEmpty()
+            group?.let { " command=${CorpusVerdict.command(it, expected, heard, labels, contacts)}" }.orEmpty()
         return if (reveal) "$answer heard=$heard" else answer
-    }
-
-    /**
-     * Whether what Kestrel heard leads to the action that the line's text leads to (design spec, section 16.4): 1 or 0,
-     * and - for a group without instant commands. A conversation line must stay bare speech, which acts on nothing; a
-     * dictation line must stay bare and type the same words and punctuation as the text; any other line must be the
-     * same command, with the same labels of its scene and the same of its [contacts].
-     */
-    private fun command(group: String, expected: String, heard: String, labels: List<String>, contacts: List<String>): String {
-        val said = CommandParser.parse(heard)
-        val right = when (group) {
-            CONVERSATION -> said == null || said is Command.Bare
-            DICTATION -> said is Command.Bare && Commands.sameDictation(expected, heard)
-            APPENDIX -> {
-                val wanted = CommandParser.parse(expected)
-                wanted != null && said != null && Commands.sameAction(wanted, said, labels, contacts)
-            }
-            else -> return "-"
-        }
-        return if (right) "1" else "0"
     }
 
     /** The name of a request's kind, as corpus\commands.txt writes it. */
@@ -442,10 +419,5 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         private const val EXTRA_CONTACTS = "contacts"
         private const val EXTRA_NO_LABELS = "noLabels"
         private const val EXTRA_SCREEN_LABELS = "screenLabels"
-
-        // The groups of corpus\commands.txt whose lines are instant commands, speech that must stay bare, and dictation.
-        private const val APPENDIX = "appendix"
-        private const val CONVERSATION = "conversation"
-        private const val DICTATION = "dictation"
     }
 }

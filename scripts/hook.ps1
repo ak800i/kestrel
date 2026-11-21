@@ -95,11 +95,13 @@
 #                                           from the screen in front, which never leave the device
 #   voice-eval -Close                       closes that recogniser
 # Speech through the air (plan 4D; the PC plays a clip through its speakers):
-#   voice-expect -Text 'text' -Tag k [-Seconds n] [-NoRun]
+#   voice-expect -Text 'text' -Tag k [-Seconds n] [-NoRun] [-Group group [-Labels 'label;label'] [-Contacts 'name;name']]
 #                                           for n seconds (15 by default, at most 60) compares each transcript of
 #                                           Kestrel's voice session with the text on the phone: the first with at most
 #                                           half its words wrong runs with the tag k (with -NoRun it is only resolved and
-#                                           never runs); the others are dropped and counted; needs an open voice session
+#                                           never runs); the others are dropped and counted; needs an open voice session.
+#                                           With -Group, -Result's right= judges a corpus line of that group as voice-eval's
+#                                           command= does, with the labels and contacts given (plan 4E)
 #   voice-expect -Result -Tag k             answers waiting, then whether it matched, the word errors, the strays and
 #                                           split parts, the phone's times of the end of the speech, of its pause and of
 #                                           its text, and the command's number, kind and outcome, or with -NoRun its
