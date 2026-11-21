@@ -229,12 +229,13 @@ internal object Wire {
     }
 
     /**
-     * Counts tokens when a reply has no usage (design D6): a quarter of the request's characters plus 1,000 per image as
+     * Counts tokens when a reply has no usage (design D6): a quarter of the request's characters (the per-task context
+     * included) plus 1,000 per image as
      * input, and a quarter of the reply's and of the streamed reasoning's characters as output, doubled for a reasoning
      * model whose stream showed no reasoning, because hidden reasoning is billed as output.
      */
     fun estimate(request: ChatRequest, replyChars: Int, reasoningChars: Int, reasoningModel: Boolean): Usage {
-        var chars = request.system.length.toLong()
+        var chars = request.system.length.toLong() + (request.context?.length ?: 0)
         var images = 0L
         for (tool in request.tools) chars += tool.name.length + tool.description.length + tool.parameters.toString().length
         for (message in request.messages) {

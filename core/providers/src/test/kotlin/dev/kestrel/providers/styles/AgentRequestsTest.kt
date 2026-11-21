@@ -267,4 +267,14 @@ class AgentRequestsTest {
         assertEquals(ProviderError.BadRequest(400, "invalid_request_error", toolChoice = false), errorOf(adapter, request(user("Hi")), openAi))
         assertEquals("BadRequest(status=400, code=null, toolChoice=true)", ProviderError.BadRequest(400, null, toolChoice = true).toString())
     }
+
+    @Test
+    fun theEstimateWithoutUsageCountsTheContext() {
+        val plain = request(user("Hi"))
+        val withContext = request(user("Hi")) { copy(context = "x".repeat(400)) }
+
+        val difference = Wire.estimate(withContext, 0, 0, false).input - Wire.estimate(plain, 0, 0, false).input
+
+        assertEquals(100L, difference)
+    }
 }
