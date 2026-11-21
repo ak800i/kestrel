@@ -252,14 +252,24 @@ function ConvertFrom-VoiceState([string]$Text) {
 
 # Returns whether the output of 'dumpsys accessibility' names a service of the package as a target of the accessibility
 # shortcut, in its line 'shortcut key:{...}'. Android reads the setting a moment after it changes, and this line shows
-# what it has read.
+# what it has read. One UI puts the list in brackets: 'shortcut key:{[a/b, c/d]}'.
 function Test-ShortcutTarget([string[]]$Dump, [string]$Package) {
     foreach ($line in $Dump) {
         if ($line -match 'shortcut key:\{([^}]*)\}') {
-            return [bool](@($Matches[1] -split ',\s*') | Where-Object { $_ -like "$Package/*" })
+            return [bool](@($Matches[1].Trim('[', ']', ' ') -split ',\s*') | Where-Object { $_ -like "$Package/*" })
         }
     }
     $false
+}
+
+# Returns the kinds of the package's entries in the output of 'dumpsys deviceidle whitelist', whose lines are
+# '<kind>,<package>,<uid>': 'user' for the owner's choice of unrestricted battery use, which the shell can take away, and
+# 'system' or 'system-excidle' for the system's own, which it cannot. Each kind lets the app start a foreground service
+# from the background.
+function Get-IdleAllowlistKind([string[]]$Dump, [string]$Package) {
+    @(foreach ($line in $Dump) {
+            if ($line.Trim() -match '^([a-z-]+),([^,]+),\d+$' -and $Matches[2] -eq $Package) { $Matches[1] }
+        })
 }
 
 # Reads the package's lines 'rec start riid:<riid> ... silenced pack:<package>' and 'rec update ...' from the output of

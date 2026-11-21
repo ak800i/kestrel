@@ -346,6 +346,12 @@ Describe 'Test-ShortcutTarget' {
         Test-ShortcutTarget -Dump $dump -Package dev.kestrel | Should -BeExactly $true
     }
 
+    It 'reads One UI''s line, which puts the list in brackets' {
+        Test-ShortcutTarget -Dump @('     shortcut key:{[com.example.reader/com.example.reader.ReaderService, dev.kestrel/dev.kestrel.app.KestrelAccessibilityService]}') -Package dev.kestrel | Should -BeExactly $true
+        Test-ShortcutTarget -Dump @('     shortcut key:{[dev.kestrel/dev.kestrel.app.KestrelAccessibilityService]}') -Package dev.kestrel | Should -BeExactly $true
+        Test-ShortcutTarget -Dump @('     shortcut key:{[]}') -Package dev.kestrel | Should -BeExactly $false
+    }
+
     It 'returns $false when <Name>' -ForEach @(
         @{ Name = 'the line names another package'; Dump = @('     shortcut key:{com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService}') }
         @{ Name = 'the line names a package that only starts like it'; Dump = @('     shortcut key:{dev.kestrel.testapp/dev.kestrel.testapp.Service}') }
@@ -353,6 +359,25 @@ Describe 'Test-ShortcutTarget' {
         @{ Name = 'there is no such line'; Dump = @('     button:{}') }
     ) {
         Test-ShortcutTarget -Dump $Dump -Package dev.kestrel | Should -BeExactly $false
+    }
+}
+
+Describe 'Get-IdleAllowlistKind' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'returns the kinds of the package''s entries on the power-save allowlist, and none for a package that is not on it' {
+        $dump = @(
+            'system-excidle,com.android.providers.downloads,10045'
+            'system,com.google.android.gms,10120'
+            'user,dev.kestrel,10334'
+            'user,dev.kestrel.testapp,10335'
+        )
+
+        @(Get-IdleAllowlistKind -Dump $dump -Package dev.kestrel) | Should -Be @('user')
+        @(Get-IdleAllowlistKind -Dump $dump -Package com.google.android.gms) | Should -Be @('system')
+        @(Get-IdleAllowlistKind -Dump @('system,com.google.android.gms,10120') -Package dev.kestrel).Count | Should -Be 0
     }
 }
 

@@ -14,7 +14,8 @@ BeforeAll {
     $helpers = @('Get-SessionSteps', 'Test-SimAbsent', 'Get-UserSummary', 'Test-SecureFolder', 'Get-NewScreenshotIds', 'Get-Percentile',
         'Get-GridCells', 'ConvertFrom-Magnification', 'Get-VolumeRange', 'Select-InstalledApp', 'New-AirTotals', 'Add-AirResult',
         'Format-AirTotals', 'Request-OwnerItem', 'Complete-Restore', 'Invoke-Restore', 'Get-PassClip', 'Add-PassCount', 'Test-Command',
-        'New-Verdict', 'Get-Screen', 'Get-ListRow', 'Test-ScrolledDown', 'Test-ScrolledToTop')
+        'New-Verdict', 'Get-Screen', 'Get-ListRow', 'Test-ScrolledDown', 'Test-ScrolledToTop', 'Get-SettingsRowNumber', 'Get-TemporaryBrightness',
+        'ConvertTo-Brightness', 'Get-ContactClash')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -160,10 +161,10 @@ Describe 'The helpers of the A71 session of the instant commands' {
     }
 
     It 'reads the rows of Settings'' own list, and checks "scroll to top" only after "scroll down" moved that list' {
-        $device = @{ Row = 'r1' }
+        $device = @{ Row = 'r1'; Bounds = '0,976,1080,2361' }
         # Settings' list, and SystemUI's floating accessibility menu, which comes first on the screen and never moves.
         Mock Invoke-Hook {
-            if ($With.Package -eq 'com.android.settings' -and $With.State -eq 'scrollable') { "count=1 first=$($device.Row)" } else { 'count=2 first=menu' }
+            if ($With.Package -eq 'com.android.settings' -and $With.State -eq 'scrollable') { "count=1 bounds=$($device.Bounds) first=$($device.Row)" } else { 'count=2 bounds=0,0,9,9 first=menu' }
         } -ParameterFilter { $Command -eq 'screen-has' }
         $marks = @{ ListTop = $null; ListMoved = $false }
 
@@ -173,11 +174,59 @@ Describe 'The helpers of the A71 session of the instant commands' {
         $device.Row = 'r1'
         (Test-ScrolledToTop).Passed | Should -BeTrue
 
+        # One UI's first scroll only collapses the large title: the list moves up and keeps its first row.
+        $device.Bounds = '0,301,1080,2361'
+        (Test-ScrolledDown).Passed | Should -BeTrue
+        (Test-ScrolledToTop).Passed | Should -BeFalse
+        $device.Bounds = '0,976,1080,2361'
+        (Test-ScrolledToTop).Passed | Should -BeTrue
+
         # A "scroll down" that moved nothing, after which "scroll to top" proves nothing.
         (Test-ScrolledDown).Passed | Should -BeFalse
         $top = Test-ScrolledToTop
         $top.Passed | Should -BeFalse
         $top.Detail | Should -BeExactly 'not checked, because "scroll down" did not move the list'
+
+        # No list on the screen is no reading.
+        $device.Row = 'none'
+        Get-ListRow | Should -BeExactly 'none'
+        (Test-ScrolledDown).Passed | Should -BeFalse
+    }
+
+    It 'takes the number of the first row of Settings that it knows, and none when no such row has one' {
+        $numbers = @{ 'Display' = '9' }
+        Mock Invoke-Hook {
+            $number = if ($numbers.ContainsKey($With.Contains)) { $numbers[$With.Contains] } else { 'none' }
+            "count=1 number=$number bounds=0,0,9,9 first=none"
+        } -ParameterFilter { $Command -eq 'screen-has' }
+
+        Get-SettingsRowNumber | Should -BeExactly '9'
+        $numbers['Connections'] = '4'
+        Get-SettingsRowNumber | Should -BeExactly '4'
+        $numbers.Clear()
+        Get-SettingsRowNumber | Should -BeNullOrEmpty
+    }
+
+    It 'reads One UI''s temporary brightness, and else the saved setting' {
+        $oneUi = @('  mPendingScreenBrightnessSetting=NaN', '  mTemporaryScreenBrightness=0.22745097', '  mAppliedTemporaryBrightness=true')
+        $none = @('  mTemporaryScreenBrightness=NaN')
+
+        Get-TemporaryBrightness $oneUi | Should -Be 0.22745097
+        Get-TemporaryBrightness $none | Should -BeNullOrEmpty
+        Get-TemporaryBrightness @('  mBrightnessState=0.4') | Should -BeNullOrEmpty
+        # A step of One UI's slider from the setting 7 rises above it, although the setting stays.
+        ConvertTo-Brightness $oneUi '7' | Should -BeGreaterThan (ConvertTo-Brightness $none '7')
+        ConvertTo-Brightness $none '58' | Should -BeGreaterThan (ConvertTo-Brightness @() '45')
+        { ConvertTo-Brightness $none 'null' } | Should -Throw 'Android did not give the brightness.'
+    }
+
+    It 'skips the test contacts when another contact''s name starts with their first name, and counts only the session''s own as fine' {
+        $testFirstName = 'Kestreltest'
+
+        Get-ContactClash @('No result found.') | Should -BeNullOrEmpty
+        Get-ContactClash @('Row: 0 account_name=kestrel-test', 'Row: 1 account_name=kestrel-test') | Should -BeNullOrEmpty
+        Get-ContactClash @('Row: 0 account_name=kestrel-test', 'Row: 1 account_name=vnd.sec.contact.phone', 'Row: 2 account_name=NULL') |
+            Should -BeExactly '2 of the phone''s other contacts have a name that starts with "Kestreltest"'
     }
 
     It 'asks the owner for his item only when he is there' {

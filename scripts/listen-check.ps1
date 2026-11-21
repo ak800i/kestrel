@@ -2,11 +2,17 @@
 # 14.4), on a test device with Kestrel's debug build (scripts\install.ps1) and its speech models (scripts\push-models.ps1):
 #   notification  while Kestrel's accessibility service is off, Android refuses a start through the hook with Kestrel
 #             in the background; Kestrel's problems notification then offers "Start listening", and a tap on it in the
-#             notification shade starts listening (design spec, section 14.6; spike S1). The script finds the button
-#             with 'uiautomator dump', whose file it deletes and never prints, because on a phone it holds the text of
-#             the owner's notifications. When the shade shows Kestrel's notification collapsed, without its button,
-#             the script first expands it with a swipe down on it. If this check fails, the problems notification stays
-#             until Kestrel next listens, which the later checks bring about, or until you swipe it away
+#             notification shade starts listening (design spec, section 14.6; spike S1). Android lets an app on the
+#             power-save allowlist start in the background, so when the owner's "Unrestricted" battery use put Kestrel
+#             on it, the check takes Kestrel off for its own run and puts it back at its end; an entry of the system's
+#             own, which the shell cannot take away, skips the check. SystemUI's binding of Kestrel's tile lets Kestrel
+#             start in the background too, and One UI keeps the tile bound for minutes after an unlock, so while it is
+#             bound, the check takes the tile out of Quick Settings; the tile check puts it in again. The script finds
+#             the button with 'uiautomator dump', whose file it deletes and never prints, because on a phone it holds the
+#             text of the owner's notifications. When the shade shows Kestrel's notification collapsed, without its
+#             button, the script first expands it with a swipe down on it. If this check fails, the problems
+#             notification stays until Kestrel next listens, which the later checks bring about, or until you swipe it
+#             away
 #   tile      a tap on Kestrel's Quick Settings tile starts listening while Kestrel's accessibility service is off, and a
 #             second tap pauses it
 #   shortcut  the accessibility shortcut ('cmd accessibility call-system-action 13') starts listening, and a second press
@@ -56,14 +62,16 @@
 # ran: an error of a check becomes that check's line, 'failed: <message>', and the later checks still run.
 # While it runs, it grants Kestrel the microphone and notification permissions, replaces the list of enabled
 # accessibility services, sets the target of the accessibility shortcut, opens the notification shade for the
-# notification check, puts Kestrel's tile first in Quick Settings and opens the panel for the tile check, and makes
+# notification check, takes Kestrel off the power-save allowlist during the notification check, puts Kestrel's tile first
+# in Quick Settings and opens the panel for the tile check, and makes
 # Kestrel the assistant for the role check. On an emulator, it also grants Kestrel the permission to read the phone
 # state, takes away its permission to answer calls until the call check needs it, turns on "Commands during a call"
 # during the call, and turns the swipe lock screen on during the call check.
 # Afterwards, also when it fails or is interrupted, it turns Kestrel off, closes the panel and puts back the tiles, the
-# assistant role, "Commands during a call", the accessibility settings, the lock screen and the permissions, deletes the
-# calls that it made from the call log, and deletes the dump of the screen. When Kestrel's accessibility service was off
-# before the run, Kestrel's notification that the service is off stays afterwards, because the shell cannot remove
+# assistant role, "Commands during a call", the accessibility settings, the power-save allowlist, the lock screen and the
+# permissions, deletes the calls that it made from the call log, and deletes the dump of the screen. When Kestrel's
+# accessibility service was off before the run, Kestrel's notification that the service is off stays afterwards, because
+# the shell cannot remove
 # another app's notification; swipe it away. If it cannot put something back, also because Ctrl+C interrupted it while
 # it put things back, it says at the end what is left and how to put it back by hand. Then, after Ctrl+C, and when a
 # check failed, it ends with exit code 1. With -Verbose, it names each thing that it puts back. With
@@ -399,6 +407,41 @@ function Get-UiDump {
 }
 
 function Invoke-NotificationCheck {
+    # Android lets an app on the power-save allowlist start a foreground service from the background, so the start below
+    # would not be refused. The owner's "Unrestricted" battery use puts Kestrel on the list as a 'user' entry, which the
+    # check takes away until its end; the shell cannot take away the system's own entries.
+    $kinds = @(Get-IdleAllowlistKind -Dump (Invoke-Checked 'dumpsys deviceidle whitelist') -Package dev.kestrel)
+    $system = @($kinds | Where-Object { $_ -ne 'user' })
+    if ($system) {
+        return "skipped: Kestrel is on Android's own power-save allowlist ($($system -join ', ')), which lets it start in the background, and the shell cannot take it off"
+    }
+    $removed = $false
+    try {
+        if ($kinds -contains 'user') {
+            $removed = $true
+            Invoke-Checked 'dumpsys deviceidle whitelist -dev.kestrel' | Out-Null
+        }
+        # SystemUI binds a tile's service with the right to start activities from the background, which lets the app
+        # start a foreground service from the background too; One UI binds Kestrel's tile at an unlock and keeps it bound
+        # for minutes. Out of Quick Settings, the tile is no longer bound. The tile check sets the tiles itself, and the
+        # restore at the end puts the owner's tiles back.
+        if (Test-TileBound) {
+            Invoke-Checked "cmd statusbar remove-tile $tile" | Out-Null
+            if (-not (Wait-Condition -TimeoutSeconds 15 { -not (Test-TileBound) })) {
+                return 'failed: SystemUI kept Kestrel''s tile service bound, which lets Kestrel start in the background, for 15 s after the tile left Quick Settings'
+            }
+        }
+        Invoke-RefusedStartCheck
+    } finally {
+        # The later checks run with Kestrel on the list as before; the restore at the end also covers a Ctrl+C here.
+        if ($removed) { Invoke-Checked 'dumpsys deviceidle whitelist +dev.kestrel' | Out-Null }
+    }
+}
+
+# Whether Kestrel's tile service runs, which on a phone means that SystemUI binds it.
+function Test-TileBound { ((Invoke-Checked "dumpsys activity services $tile") -join "`n") -match 'ServiceRecord\{[^}]*KestrelTileService' }
+
+function Invoke-RefusedStartCheck {
     Stop-Kestrel
     # Without the accessibility service, and with Kestrel in the background, Android refuses a start through the hook.
     Set-KestrelService $false
@@ -413,8 +456,10 @@ function Invoke-NotificationCheck {
     Start-Sleep -Seconds 2
     $state = Get-VoiceState
     if ($state -and $state.mode -ne 'off') {
+        # Android's reason for the start, such as SYSTEM_ALLOW_LISTED or ACTIVITY_STARTER.
+        $reason = if (((Invoke-Checked 'dumpsys activity services dev.kestrel/.app.listen.ListeningService') -join "`n") -match 'allowStartForeground=(\S+)') { $Matches[1] } else { 'not printed' }
         return ('failed: Android let the hook start listening in the background without the accessibility service, ' +
-            'so the check could not reach the notification')
+            "so the check could not reach the notification (Android's reason: $reason)")
     }
     $tapped = $null
     try {
@@ -894,6 +939,8 @@ $tilesByHand = if ($tilesBefore -in 'null', '') {
 }
 $microphoneBefore = Test-KestrelPermission $microphonePermission
 $notificationsBefore = Test-KestrelPermission $notificationPermission
+# The notification check takes Kestrel off the power-save allowlist for a while when the owner's choice put it there.
+$idleAllowlisted = @(Get-IdleAllowlistKind -Dump (Invoke-Checked 'dumpsys deviceidle whitelist') -Package dev.kestrel) -contains 'user'
 # The call check runs only on an emulator; on a phone none of these is read or changed.
 $phoneStateBefore = $isEmulator -and (Test-KestrelPermission $phoneStatePermission)
 $answerCallsBefore = $isEmulator -and (Test-KestrelPermission $answerCallsPermission)
@@ -985,6 +1032,15 @@ $restoresAtEnd = @(
     Register-Restore 'the accessibility settings' (Format-DeviceCommand $accessibilityByHand) {
         Assert-TestDevice -Serial $Serial
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $savedAccessibility)) { throw 'see the warning above' }
+    }
+    if ($idleAllowlisted) {
+        Register-Restore 'Kestrel on the power-save allowlist ("Unrestricted" battery use)' (Format-DeviceCommand 'dumpsys deviceidle whitelist +dev.kestrel') {
+            Assert-TestDevice -Serial $Serial
+            if (@(Get-IdleAllowlistKind -Dump (Invoke-Checked 'dumpsys deviceidle whitelist') -Package dev.kestrel) -notcontains 'user') {
+                Invoke-Checked 'dumpsys deviceidle whitelist +dev.kestrel' | Out-Null
+            }
+            if (@(Get-IdleAllowlistKind -Dump (Invoke-Checked 'dumpsys deviceidle whitelist') -Package dev.kestrel) -notcontains 'user') { throw 'Kestrel is not on it' }
+        }
     }
     # Get-UiDump deletes its file after each read; this also covers a Ctrl+C that came in between. On a phone the file
     # holds the text of the owner's notifications.

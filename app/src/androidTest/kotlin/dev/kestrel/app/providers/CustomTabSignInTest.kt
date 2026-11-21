@@ -95,7 +95,7 @@ class CustomTabSignInTest {
     /** The component of the top resumed activity, as `package/.Class`, without anything that the screen shows. */
     private fun topActivity(): String =
         shell("dumpsys activity activities").lines().firstOrNull { "topResumedActivity" in it }
-            ?.let { Regex("""ActivityRecord\{\S+ u\d+ (\S+/\S+)""").find(it)?.groupValues?.get(1) } ?: "none"
+            ?.let { ACTIVITY_RECORD.find(it)?.groupValues?.get(1) } ?: "none"
 
     /**
      * The loopback callback's parameters, waited for [seconds]: a cold Chrome, as on the first run after a boot, can take
@@ -111,7 +111,7 @@ class CustomTabSignInTest {
 
     /** The task of each activity record in `dumpsys activity activities`, by its component. */
     private fun tasks(): Map<String, String> =
-        Regex("""ActivityRecord\{\S+ u\d+ (\S+/\S+) t(\d+)""").findAll(shell("dumpsys activity activities"))
+        ACTIVITY_RECORD.findAll(shell("dumpsys activity activities"))
             .associate { it.groupValues[1] to it.groupValues[2] }
 
     private fun waitFor(what: String, condition: () -> Boolean) {
@@ -217,5 +217,9 @@ class CustomTabSignInTest {
         const val MAIN = "dev.kestrel/.app.MainActivity"
         const val CUSTOM_TAB = "com.android.chrome/org.chromium.chrome.browser.customtabs.CustomTabActivity"
         const val REDIRECT_TEST = "aRedirectFromAPublicPageReachesTheLoopbackServerWithoutAPrompt"
+
+        // An activity record's component and task: `ActivityRecord{2f1c3c7 u0 pkg/.Cls t763}`, which Android 13 prints as
+        // `ActivityRecord{2f1c3c7 u0 pkg/.Cls} t763}`, so the component ends at a space or a brace.
+        val ACTIVITY_RECORD = Regex("""ActivityRecord\{\S+ u\d+ ([^\s}]+/[^\s}]+)\}? t(\d+)""")
     }
 }

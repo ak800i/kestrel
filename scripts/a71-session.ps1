@@ -664,7 +664,7 @@ function Invoke-BatteryRulesStep {
     # role, the step takes it away for its measure and gives it back at its end, as the step assistant does.
     $roleHeld = @(Get-AssistantHolders) -contains 'dev.kestrel'
     $roleRestore = if ($roleHeld) { Register-AssistantRestore }
-    $roleText = if ($roleHeld) { 'Kestrel held the assistant role, and the step took it away for its measure' } else { 'Kestrel did not hold the assistant role' }
+    $roleText = if ($roleHeld) { 'Kestrel held the assistant role, and the step took it away for its measure' } else { 'Kestrel did not hold the assistant role, as the measure needs' }
     # 'allow', also for an op that has no entry ('No operations.'), or 'ignore'; never 'default', which Android counts as
     # restricted (prototype P2).
     $before = Get-BackgroundOpRestore -Answer @(Invoke-Checked 'cmd appops get dev.kestrel RUN_ANY_IN_BACKGROUND')
@@ -1348,8 +1348,8 @@ function Invoke-MemoryStep {
     }
     Invoke-Checked 'input keyevent KEYCODE_HOME' | Out-Null
     # A cold start: the tile starts the service in a new process, which must reach startForeground() in time. The script
-    # ends Kestrel's process itself, which the debug build allows, so that a kill that Android refuses cannot look like
-    # a new process (analysis, item 7).
+    # ends Kestrel's process itself with a plain kill (SIGTERM) through run-as, so that a kill that Android refuses cannot
+    # look like a new process (analysis, item 7); the A71's Android 13 refuses SIGKILL from run-as, but not SIGTERM.
     $restore = Register-AccessibilityRestore
     try {
         # The restore of Kokoro above forgets its measure, and the cold start below is timed.
@@ -1360,11 +1360,19 @@ function Invoke-MemoryStep {
         if (-not (Wait-KestrelService off)) { throw 'Kestrel''s accessibility service did not turn off within 30 s.' }
         $old = Get-KestrelProcess
         $state = Get-ProcessState -Dump @(Invoke-Checked 'dumpsys activity processes dev.kestrel')
-        if ($old) { Invoke-Checked "run-as dev.kestrel kill -9 $old" | Out-Null }
+        if ($old) {
+            try {
+                Invoke-Checked "run-as dev.kestrel kill $old" | Out-Null
+            } catch {
+                # toybox's kill says "unknown pid" for every refusal; the message names only the command and the process ID.
+                Add-Result memory "a cold start through the tile: not tried, because 'run-as dev.kestrel kill' could not end Kestrel's process ($state)"
+                return
+            }
+        }
         Start-Sleep -Seconds 2
         $now = Get-KestrelProcess
         $ended = if (-not $old) { 'no process ran' } elseif (-not $now) { 'it ended' } elseif ($now -ne $old) { 'a new process started at once' } else { 'it did not end' }
-        Add-Result memory "a cold start through the tile: Kestrel's process before the kill: $state; after 'run-as dev.kestrel kill -9': $ended"
+        Add-Result memory "a cold start through the tile: Kestrel's process before the kill: $state; after 'run-as dev.kestrel kill': $ended"
         # A process that Android started at once is seconds old and has loaded no model, so the tap still checks a young
         # process; only a process that did not end makes the tap pointless.
         if ($now -and $now -eq $old) {

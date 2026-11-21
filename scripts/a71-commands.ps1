@@ -38,8 +38,9 @@
 #                  fields, "show password" and "search for" (4 minutes)
 #   calls          only without a SIM card: the question "yes, call" with 1234 and with letters in the number field, answered
 #                  "no"; and, with the owner's consent in corpus\owner\a71-config.json, the contacts permission at first
-#                  use, in a dry run the calls to the test contacts "Ana Test" cancelled by voice and by a tap (on the A71
-#                  they ran in the step owner), "Which one?" for "Ana Test" and "Ana Other", and "copy this phone number"
+#                  use, in a dry run the calls to the test contact "Kestreltest One" cancelled by voice and by a tap (on the
+#                  A71 they ran in the step owner), "Which one?" for "Kestreltest One" and "Kestreltest Two", and "copy
+#                  this phone number"; a contact of the owner's whose name starts with "Kestreltest" skips them
 #                  (6 minutes)
 #   timing         the snapshots that Kestrel builds during 20 commands in Settings, and the transcription time with the
 #                  screen's labels as boost words (design spec, section 8.3) (6 minutes)
@@ -587,6 +588,27 @@ function Set-FixtureField([string]$ViewId, [string]$Text) {
 
 function Get-Volume([int]$Stream) { Get-VolumeRange @(Invoke-Checked "cmd media_session volume --stream $Stream --get") }
 
+# One UI's temporary brightness from 0 to 1 in the output of 'dumpsys display' (mTemporaryScreenBrightness), which its
+# brightness slider sets for an accessibility step and does not save, or $null when the screen has none (NaN, or no
+# such line, as on AOSP, whose slider saves each step).
+function Get-TemporaryBrightness([string[]]$Dump) {
+    foreach ($line in $Dump) {
+        if ($line -match '^\s*mTemporaryScreenBrightness=(\d+(?:\.\d+)?)\s*$') { return [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) }
+    }
+    $null
+}
+
+# The brightness that the screen shows, from 0 to 1: One UI's temporary brightness when it has one, else the saved
+# setting screen_brightness (0 to 255), which One UI's temporary brightness starts from.
+function ConvertTo-Brightness([string[]]$Dump, [string]$Setting) {
+    $temporary = Get-TemporaryBrightness $Dump
+    if ($null -ne $temporary) { return $temporary }
+    if ($Setting -notmatch '^\d+$') { throw 'Android did not give the brightness.' }
+    [int]$Setting / 255
+}
+
+function Get-Brightness { ConvertTo-Brightness @(Invoke-Checked 'dumpsys display') (Read-DeviceValue 'settings get system screen_brightness') }
+
 # Moves a stream's volume one step away from the end that a command up ($Up) or down would hit, so that the command can
 # change it; the ring volume stays above its lowest step, which would change the sound mode.
 function Set-VolumeRoom([int]$Stream, [bool]$Up) {
@@ -608,25 +630,40 @@ function Test-NewSettingsPage {
 
 function Test-FirstSettingsPage { New-Verdict ((Get-Screen)['appTitle'] -eq $marks.FirstTitle) 'the first page of Settings' }
 
-# The first visible row (its hash) of Settings' own list, which the scroll checks compare, or 'none'. Only Settings'
-# elements count: an install of Kestrel while its accessibility service is on makes Android add it to the accessibility
-# button's targets, and kestrel-api37 then shows SystemUI's floating accessibility menu on the right edge, whose list came
-# first on the screen, and which a scroll of Settings does not move.
-function Get-ListRow { "$((Get-Screen @{ Package = 'com.android.settings'; State = 'scrollable' })['first'])" }
+# While the numbers show, the number of a row on Settings' first page that opens a page of Settings itself: One UI's
+# "Connections", AOSP's "Network & internet", or else "Display"; $null when none has one.
+function Get-SettingsRowNumber {
+    foreach ($label in 'Connections', 'Network & internet', 'Display') {
+        $number = (Get-Screen @{ Package = 'com.android.settings'; Contains = $label; State = 'clickable' })['number']
+        if ("$number" -match '^\d+$') { return $number }
+    }
+    $null
+}
 
-# "scroll down": Settings' list shows another first row than before ($marks.ListTop); $marks.ListMoved says so for
-# "scroll to top".
+# The first visible row (its hash) of Settings' own list and the list's bounds, which the scroll checks compare, or
+# 'none'. Only Settings' elements count: an install of Kestrel while its accessibility service is on makes Android add it
+# to the accessibility button's targets, and kestrel-api37 then shows SystemUI's floating accessibility menu on the right
+# edge, whose list came first on the screen, and which a scroll of Settings does not move. On One UI, the first scroll
+# only collapses the large title above the list, which moves the list's top and keeps its first row.
+function Get-ListRow {
+    $list = Get-Screen @{ Package = 'com.android.settings'; State = 'scrollable' }
+    if ("$($list['first'])" -in '', 'none') { return 'none' }
+    "$($list['first'])|$($list['bounds'])"
+}
+
+# "scroll down": Settings' list shows another first row, or has moved, since before ($marks.ListTop); $marks.ListMoved
+# says so for "scroll to top".
 function Test-ScrolledDown {
     $row = Get-ListRow
     $marks.ListMoved = $row -notin '', 'none' -and $marks.ListTop -notin '', 'none' -and $row -ne $marks.ListTop
-    New-Verdict $marks.ListMoved 'another first row'
+    New-Verdict $marks.ListMoved 'another first row, or the list moved'
 }
 
-# "scroll to top": the first row of before "scroll down" again, which proves the scroll back only when "scroll down"
-# moved the list; otherwise the check counts as failed and says that it was not checked.
+# "scroll to top": the first row and the list's bounds of before "scroll down" again, which proves the scroll back only
+# when "scroll down" moved the list; otherwise the check counts as failed and says that it was not checked.
 function Test-ScrolledToTop {
     if (-not $marks.ListMoved) { return New-Verdict $false 'not checked, because "scroll down" did not move the list' }
-    New-Verdict ((Get-ListRow) -eq $marks.ListTop) 'the first row again'
+    New-Verdict ((Get-ListRow) -eq $marks.ListTop) 'the first row and the list where they were'
 }
 
 function Test-NoCall { -not (Test-CallActive -Registry (Invoke-Checked 'dumpsys telephony.registry')) }
@@ -833,9 +870,27 @@ function Wait-Unlocked([int]$Seconds) {
     $false
 }
 
-# Adds the test contacts "Ana Test" and "Ana Other", both with the owner's number, to the local account kestrel-test, which
-# has no sync adapter, so that they never leave the phone, and registers their deletion; command-test.ps1 deletes the same
-# account on the emulator. Returns the contact ID of "Ana Test". The owner's own contacts are never used.
+# The first name of the test contacts, which no contact of the owner's should have: "call Kestreltest" must find only the
+# two test contacts and ask "Which one?". A contact whose name a check says exactly wins over first names, and the A71 has
+# a contact named "Ana", which made Kestrel count down to it instead of asking.
+$testFirstName = 'Kestreltest'
+
+# Why the checks with the test contacts cannot run, from the rows of the phone's raw contacts whose name starts with the
+# test contacts' first name (projection account_name): a contact that is not the session's own would answer "call
+# Kestreltest" itself, or be offered with them. $null when no such contact is there. It never reads a contact's name.
+function Get-ContactClash([string[]]$Rows) {
+    $others = @($Rows | Where-Object { $_ -match '^Row: \d+ ' -and $_ -notmatch '\baccount_name=kestrel-test(,|\s*$)' })
+    if ($others.Count -gt 0) { "$($others.Count) of the phone's other contacts have a name that starts with ""$testFirstName""" }
+}
+
+function Read-ContactClash {
+    Get-ContactClash @(Invoke-Checked "content query --uri content://com.android.contacts/raw_contacts --projection account_name --where deleted=0\ AND\ display_name\ LIKE\ \'$testFirstName%\'")
+}
+
+# Adds the test contacts "Kestreltest One" and "Kestreltest Two", both with the owner's number, to the local account
+# kestrel-test, which has no sync adapter, so that they never leave the phone, and registers their deletion;
+# command-test.ps1 deletes the same account on the emulator. Returns the contact ID of "Kestreltest One". The owner's own
+# contacts are never used.
 function Add-TestContacts {
     if ($script:contactsRestore -and $pending.Contains($script:contactsRestore)) { return $script:testContact }
     $where = "account_name=\'kestrel-test\'"
@@ -847,7 +902,7 @@ function Add-TestContacts {
         Invoke-Checked "content delete --uri 'content://com.android.contacts/raw_contacts?caller_is_syncadapter=true' --where $Data" | Out-Null
     }
     try {
-        foreach ($name in 'Ana Test', 'Ana Other') {
+        foreach ($name in "$testFirstName One", "$testFirstName Two") {
             Invoke-Checked 'content insert --uri content://com.android.contacts/raw_contacts --bind account_type:s:kestrel-test --bind account_name:s:kestrel-test' | Out-Null
             $id = Get-LargestRowId -Rows (Invoke-Checked "content query --uri content://com.android.contacts/raw_contacts --projection _id --where $where")
             Invoke-Checked "content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:$id --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:'$name'" | Out-Null
@@ -893,13 +948,13 @@ function Invoke-InstallStep {
 # the clock through Android's input system. A countdown that none of them ends ends with Kestrel pressing Call, so on the
 # A71 they run only in the step owner, while the owner is there. Needs the test contacts and Kestrel's contacts permission.
 function Invoke-CountdownChecks([string]$StepName) {
-    Test-Command $StepName 'call Ana Test' '' -Name 'call Ana Test, then "cancel" as soon as the countdown shows' -Answer 'cancel' -RespondAt countdown -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
+    Test-Command $StepName 'call Kestreltest One' '' -Name 'call Kestreltest One, then "cancel" as soon as the countdown shows' -Answer 'cancel' -RespondAt countdown -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
     Invoke-Home
-    Test-Command $StepName 'call Ana Test' '' -Name 'call Ana Test, then "stop" as the countdown starts' -Answer 'stop' -RespondAt countdown -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
+    Test-Command $StepName 'call Kestreltest One' '' -Name 'call Kestreltest One, then "stop" as the countdown starts' -Answer 'stop' -RespondAt countdown -TimeoutSeconds 20 { param($State) Test-Cancelled $State }
     Invoke-Home
     # A tap through Android's input system; the owner's finger is the step owner's first check.
     $script:clockTarget = $null
-    Test-Command $StepName 'call Ana Test' '' -Name 'call Ana Test, then a tap on the clock during the countdown' -RespondAt countdown -Respond { Invoke-ClockTap } -TimeoutSeconds 20 { param($State) Add-ClockTarget (Test-Cancelled $State) }
+    Test-Command $StepName 'call Kestreltest One' '' -Name 'call Kestreltest One, then a tap on the clock during the countdown' -RespondAt countdown -Respond { Invoke-ClockTap } -TimeoutSeconds 20 { param($State) Add-ClockTarget (Test-Cancelled $State) }
     Invoke-Home
 }
 
@@ -911,9 +966,10 @@ function Invoke-OwnerStep {
     Start-Kestrel
     $block = Get-CallBlock
     if (-not $block -and -not $config.TestContacts) { $block = 'corpus\owner\a71-config.json does not give the owner''s consent to the test contacts' }
+    if (-not $block) { $block = Read-ContactClash }
     if ($block) {
         Add-Result owner "the checks during a call's countdown: skipped: $block"
-    } elseif ((Request-OwnerItem 'Item 1 of 1, about 3 minutes, of which 1 with your hands: come to the A71, which shows its home screen. When you press Enter, Kestrel calls the test contact "Ana Test", opens the phone app and counts down 4 seconds on its bar. As soon as the countdown shows on Kestrel''s bar, touch the clock at the top of the A71''s screen with one finger, never a button of the phone app; this computer beeps about half a second after the countdown shows. Touch it at once, within about 2 seconds of when it shows; if you are later, the session cancels the countdown itself, and Kestrel does not call. The countdown should stop, and Kestrel''s bar should say "Cancelled". Then stay next to the A71 for about 2 minutes without touching it: Kestrel calls "Ana Test" three more times, and the session ends each countdown itself, by voice and with a tap. The A71 has no SIM card, so no call can start. (Later checks copy test text; the session saves your clipboard first and puts it back afterwards.) Press Enter to start, or s to skip.') -eq 'skip') {
+    } elseif ((Request-OwnerItem 'Item 1 of 1, about 3 minutes, of which 1 with your hands: come to the A71, which shows its home screen. When you press Enter, Kestrel calls the test contact "Kestreltest One", opens the phone app and counts down 4 seconds on its bar. As soon as the countdown shows on Kestrel''s bar, touch the clock at the top of the A71''s screen with one finger, never a button of the phone app; this computer beeps about half a second after the countdown shows. Touch it at once, within about 2 seconds of when it shows; if you are later, the session cancels the countdown itself, and Kestrel does not call. The countdown should stop, and Kestrel''s bar should say "Cancelled". Then stay next to the A71 for about 2 minutes without touching it: Kestrel calls "Kestreltest One" three more times, and the session ends each countdown itself, by voice and with a tap. The A71 has no SIM card, so no call can start. (Later checks copy test text; the session saves your clipboard first and puts it back afterwards.) Press Enter to start, or s to skip.') -eq 'skip') {
         Add-Result owner 'the checks during a call''s countdown: skipped'
     } else {
         Add-TestContacts | Out-Null
@@ -942,7 +998,7 @@ function Invoke-OwnerStep {
             }
         }
         $script:clockTarget = $null
-        Test-Command owner 'call Ana Test' '' -Name 'call Ana Test, then the owner''s finger on the clock' -RespondAt countdown -Respond $touch -TimeoutSeconds 20 { param($State) $verdict = Test-Cancelled $State; if ($DryRun) { Add-ClockTarget $verdict } else { $verdict } }
+        Test-Command owner 'call Kestreltest One' '' -Name 'call Kestreltest One, then the owner''s finger on the clock' -RespondAt countdown -Respond $touch -TimeoutSeconds 20 { param($State) $verdict = Test-Cancelled $State; if ($DryRun) { Add-ClockTarget $verdict } else { $verdict } }
         Invoke-Home
         # The dry run has these in the step calls.
         if (-not $DryRun) { Invoke-CountdownChecks owner }
@@ -966,8 +1022,16 @@ function Invoke-ScreenStep {
     Open-Settings
     $marks.FirstTitle = (Get-Screen)['appTitle']
     Test-Command screen 'show numbers' c014 { New-Verdict ([int](Get-LayerState)['numbers'] -gt 0) 'numbers on the screen' }
-    Test-Command screen 'tap 3' k001 { Test-NewSettingsPage }
-    Test-Command screen 'go back' c003 { Test-FirstSettingsPage }
+    # The number of a row that opens a page of Settings itself: One UI's first numbers belong to its edge panel, the
+    # search button and the row of the Samsung account, whose page is another app's and belongs to the owner's account.
+    # The clip k001 says a fixed number, so the air pass says this one through voice-synth.
+    $row = Get-SettingsRowNumber
+    if ($row) {
+        Test-Command screen "tap $row" synth -Name 'tap the number of a row of Settings' { Test-NewSettingsPage }
+        Test-Command screen 'go back' c003 { Test-FirstSettingsPage }
+    } else {
+        Add-Result screen 'tap the number of a row of Settings: skipped, because no row of Settings that the check knows had a number'
+    }
     Test-Command screen 'hide numbers' c015 { New-Verdict ([int](Get-LayerState)['numbers'] -eq 0) 'no numbers' }
     Test-Command screen 'show labels' c016 { New-Verdict ((Get-LayerState)['labels'] -eq 'on') 'labels on' }
     Test-Command screen 'hide labels' c141 { New-Verdict ((Get-LayerState)['labels'] -eq 'off') 'labels off' }
@@ -1055,20 +1119,31 @@ function Invoke-SwipeStep {
         New-Verdict ($marks.Slider -match '^\d+$') 'a number on the brightness slider'
     }
     if ($marks.Slider -match '^\d+$') {
-        # Registered before the change, so that a failure or a stop between the two checks still puts it back.
+        # Registered before the change, so that a failure or a stop between the two checks still puts it back. One UI
+        # applies the slider's accessibility steps as a temporary brightness, which it does not save and which stays after
+        # the page closes; a write of the setting ends it, so the restore always writes another value and then the saved
+        # one.
         $light = Register-Restore 'the brightness' 'Set the brightness back with the slider in Quick Settings.' (Read-DeviceValue 'settings get system screen_brightness') {
             param($Data)
             Assert-TestDevice -Serial $Serial
             if ($Data -notmatch '^\d+$') { throw 'Android did not give the brightness before the step' }
-            if ((Read-DeviceValue 'settings get system screen_brightness') -ne $Data) { Invoke-Checked "settings put system screen_brightness $Data" | Out-Null }
+            Invoke-Checked "settings put system screen_brightness $(if ([int]$Data -ge 255) { [int]$Data - 1 } else { [int]$Data + 1 })" | Out-Null
+            Invoke-Checked "settings put system screen_brightness $Data" | Out-Null
+            if ((Read-DeviceValue 'settings get system screen_brightness') -ne $Data) { throw 'the setting differs from before' }
+            # The display takes the setting a moment after it changes.
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            while ($null -ne (Get-TemporaryBrightness @(Invoke-Checked 'dumpsys display'))) {
+                if ($watch.Elapsed.TotalSeconds -ge 3) { throw 'the screen keeps a temporary brightness' }
+                Start-Sleep -Milliseconds 250
+            }
         }
-        Test-Command swipes "increment $($marks.Slider)" synth -Name 'increment and the slider''s number' -Before { [int](Read-DeviceValue 'settings get system screen_brightness') } -Verify {
+        Test-Command swipes "increment $($marks.Slider)" synth -Name 'increment and the slider''s number' -Before { Get-Brightness } -Verify {
             $Before = $args[1]
-            New-Verdict ([int](Read-DeviceValue 'settings get system screen_brightness') -gt $Before) 'the brightness rose'
+            New-Verdict ((Get-Brightness) -gt $Before) 'the brightness rose'
         }
-        Test-Command swipes "decrement $($marks.Slider)" synth -Name 'decrement and the slider''s number' -Before { [int](Read-DeviceValue 'settings get system screen_brightness') } -Verify {
+        Test-Command swipes "decrement $($marks.Slider)" synth -Name 'decrement and the slider''s number' -Before { Get-Brightness } -Verify {
             $Before = $args[1]
-            New-Verdict ([int](Read-DeviceValue 'settings get system screen_brightness') -lt $Before) 'the brightness fell'
+            New-Verdict ((Get-Brightness) -lt $Before) 'the brightness fell'
         }
         Complete-Restore $light
     }
@@ -1101,7 +1176,10 @@ function Invoke-GlobalStep {
     Test-Command global 'tap Display' k002 { Test-NewSettingsPage }
     Test-Command global 'go back' c003 { Test-FirstSettingsPage }
     Test-Command global 'go home' c004 { Test-Home }
-    Test-Command global 'show quick settings' c006 { New-Verdict ((Get-Count @{ Package = 'com.android.systemui'; ViewId = 'qs_tile' }) -gt 0) 'Quick Settings'' tiles' }
+    # AOSP's tiles have view IDs with qs_tile; One UI's have none, but their labels have tile_label.
+    Test-Command global 'show quick settings' c006 {
+        New-Verdict ((Get-Count @{ Package = 'com.android.systemui'; ViewId = 'qs_tile' }) -gt 0 -or (Get-Count @{ Package = 'com.android.systemui'; ViewId = 'tile_label' }) -gt 0) 'Quick Settings'' tiles'
+    }
     Test-Command global 'home' c119 { Test-Home }
     # The recent apps are part of the home app on Android 13 and One UI, and hide the home screen's pages.
     Test-Command global 'show recent apps' c007 { New-Verdict ((Get-Front) -eq $marks.Home -and (Get-Count @{ Package = $marks.Home; ViewId = 'workspace' }) -eq 0) 'the recent apps, without the home screen''s pages' }
@@ -1363,6 +1441,11 @@ function Invoke-CallStep {
         Add-Result calls 'the checks with the test contacts: skipped, because corpus\owner\a71-config.json does not give the owner''s consent'
         return
     }
+    $clash = Read-ContactClash
+    if ($clash) {
+        Add-Result calls "the checks with the test contacts: skipped, because $clash"
+        return
+    }
     $contact = Add-TestContacts
     # Revoking the permission ends Kestrel's process, and with it the silent microphone, so Kestrel starts again after
     # Android has brought it back for its accessibility service.
@@ -1371,7 +1454,7 @@ function Invoke-CallStep {
     Wait-State { param($State) $State['mode'] -ne 'off' } 10 | Out-Null
     $script:microphone = $null
     Start-Kestrel
-    Test-Command calls 'call Ana Test' '' -Name 'call Ana Test, the contacts permission at first use' -TimeoutSeconds 20 {
+    Test-Command calls 'call Kestreltest One' '' -Name 'call Kestreltest One, the contacts permission at first use' -TimeoutSeconds 20 {
         # Kestrel opens its settings, which ask Android for the permission; the script allows it in Android's dialog.
         $dialog = $null
         # In any package: the permission controller's package on One UI is not known yet.
@@ -1398,7 +1481,7 @@ function Invoke-CallStep {
         Add-Result calls 'the countdowns that "cancel", "stop" and a tap end: in the step owner, while the owner was at the A71'
     }
     $script:clockTarget = $null
-    Test-Command calls 'call Ana' '' -Name '"Which one?" for the two test contacts, ended by a tap on the clock' -Respond { Invoke-ClockTap } -TimeoutSeconds 20 {
+    Test-Command calls "call $testFirstName" '' -Name '"Which one?" for the two test contacts, ended by a tap on the clock' -Respond { Invoke-ClockTap } -TimeoutSeconds 20 {
         param($State)
         Add-ClockTarget (New-Verdict ($State['outcome'] -eq 'cancelled' -and (Test-NoCall)) 'the question ended, and no call')
     }
