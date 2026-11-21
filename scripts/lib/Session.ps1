@@ -380,19 +380,98 @@ function Get-ProcessState([string[]]$Dump) {
     "procState=$(if ($null -ne $procState) { $procState } else { 'unknown' }) adj=$(if ($null -ne $adj) { $adj } else { 'unknown' })"
 }
 
-# The keyword spotter's setting that the A71 session keeps (plan 2E), from the rounds of its step spotter: each has
-# Setting (such as 'boost=2.0 threshold=0.15'), Default ($true for Kestrel's own), Hits (how many of the owner's tries
-# of "Hey Kestrel" Kestrel reacted to) and FalseHits (the hits of all three keywords in the played speech without a
-# keyword, the same speech for every setting). The rule: among the settings whose false hits are at most twice the
-# default's plus 2, the one with the most hits; a tie goes to fewer false hits, and then to the default. Returns $null
-# when the default was not measured.
+# The keyword spotter's setting that the A71 session keeps (plan 2E; plan 4E), from the rounds of its step spotter: each
+# has Setting (such as 'boost=2.0 threshold=0.15'), Default ($true for Kestrel's own), Tries and Hits (tables from each
+# phrase, "Kestrel", "Hey Kestrel" and "Kestrel, wake up", to its tries and to the tries to which Kestrel reacted),
+# Minutes (of played speech without a keyword, the same speech for every setting) and FalseHits (a table from each
+# keyword, kestrel, stop and cancel, to its hits in that speech). The default stays unless every round has at least 20
+# tries of each phrase and at least 10 minutes of speech (the owner's decision of 2026-11-21); otherwise the rule takes,
+# among the settings whose false hits of each keyword are at most twice the default's plus 2, the one with the most
+# reactions in all; a tie goes to fewer false hits, and then to the default. Returns the setting that it keeps (Setting,
+# $null when the default was not measured) and why (Reason).
 function Select-SpotterWinner([object[]]$Rounds) {
     $default = @($Rounds | Where-Object { $_.Default }) | Select-Object -First 1
-    if (-not $default) { return $null }
-    $limit = 2 * $default.FalseHits + 2
-    @($Rounds | Where-Object { $_.FalseHits -le $limit }) |
-        Sort-Object @{ Expression = { $_.Hits }; Descending = $true }, @{ Expression = { $_.FalseHits }; Descending = $false }, @{ Expression = { -not $_.Default }; Descending = $false } |
+    if (-not $default) { return [pscustomobject]@{ Setting = $null; Reason = 'no setting chosen, because the default setting was not measured whole' } }
+    $phrases = @('Kestrel', 'Hey Kestrel', 'Kestrel, wake up')
+    $keywords = @('kestrel', 'stop', 'cancel')
+    $fewest = ($Rounds | ForEach-Object { $round = $_; $phrases | ForEach-Object { Get-TableCount $round.Tries $_ } } | Measure-Object -Minimum).Minimum
+    $minutes = ($Rounds | ForEach-Object { [double]$_.Minutes } | Measure-Object -Minimum).Minimum
+    if ($fewest -lt 20 -or $minutes -lt 10) {
+        return [pscustomobject]@{
+            Setting = $default.Setting
+            Reason = "the default stays, because each setting needs at least 20 tries of each of ""Kestrel"", ""Hey Kestrel"" and " +
+                """Kestrel, wake up"" and 10 minutes of speech without a keyword, and this run had at least $fewest tries of each and " +
+                "$([math]::Round($minutes, 1)) minutes"
+        }
+    }
+    $eligible = @($Rounds | Where-Object {
+            $round = $_
+            @($keywords | Where-Object { (Get-TableCount $round.FalseHits $_) -gt 2 * (Get-TableCount $default.FalseHits $_) + 2 }).Count -eq 0
+        })
+    $reactions = { $round = $_; ($phrases | ForEach-Object { Get-TableCount $round.Hits $_ } | Measure-Object -Sum).Sum }
+    $falseHits = { $round = $_; ($keywords | ForEach-Object { Get-TableCount $round.FalseHits $_ } | Measure-Object -Sum).Sum }
+    $winner = $eligible |
+        Sort-Object @{ Expression = $reactions; Descending = $true }, @{ Expression = $falseHits; Descending = $false }, @{ Expression = { -not $_.Default }; Descending = $false } |
         Select-Object -First 1
+    [pscustomobject]@{
+        Setting = $winner.Setting
+        Reason = 'the most reactions to the three phrases among the settings with at most twice the default''s false hits of each keyword plus 2; a tie goes to fewer false hits, then to the default'
+    }
+}
+
+# The number under $Key in the table $Table, or 0 when the table or the key is missing.
+function Get-TableCount($Table, [string]$Key) {
+    if ($Table -and $Table.Contains($Key)) { [int]$Table[$Key] } else { 0 }
+}
+
+# The decision of plan 4E's fix of barge-in, which its Task 5 follows, from the rows of the A71 session's step barge-in:
+# each has Volume and Max (the media volume's step and its top), ClipDb (the level at which the phone heard this
+# computer's "Kestrel", the loudest 20 ms frame), EchoDb (the median level of Kestrel's own reply at the microphone, the
+# same measure), Tries and Interrupted. A row succeeded when at least 3 of 4 of its tries interrupted Kestrel, and its
+# margin is ClipDb minus EchoDb. The normal row is the one at the top volume with the quietest "Kestrel", as the owner
+# speaks in a quiet room. The rule, written down before the measure:
+# - no row with a level and a try: 'unmeasured';
+# - the normal row succeeded: 'none', and nothing changes;
+# - otherwise the margin that is needed is the smallest margin of a row that succeeded while the rows with that margin
+#   or more succeeded in at least 3 of 4 of their tries together; without one, 'blocked': no level of the echo made the
+#   interruption work, so its cause is not the echo;
+# - the reduction R is the needed margin minus the normal row's margin, in whole dB, rounded up, at least 1: 'volume' when
+#   R is at most 15 dB, so that Kestrel speaks R dB quieter on the phone's own loudspeaker, and 'limit' when it is more,
+#   because the replies would then be too quiet to hear in a room.
+# Returns Branch, ReductionDb, NameDb (the normal row's "Kestrel"), EchoDb (the normal row's echo), WorkingEchoDb (the echo
+# below which the A71 was interrupted at the normal "Kestrel": NameDb minus the needed margin, or EchoDb for 'none') and
+# MarginDb; the levels are in dBFS with one decimal.
+function Get-BargeInDecision([object[]]$Rows) {
+    $measured = @($Rows | Where-Object { $_.Tries -gt 0 -and $null -ne $_.ClipDb -and $null -ne $_.EchoDb })
+    $none = [pscustomobject]@{ Branch = 'unmeasured'; ReductionDb = 0; NameDb = $null; EchoDb = $null; WorkingEchoDb = $null; MarginDb = $null }
+    if ($measured.Count -eq 0) { return $none }
+    $top = ($measured | Measure-Object -Property Volume -Maximum).Maximum
+    $normal = @($measured | Where-Object { $_.Volume -eq $top } | Sort-Object ClipDb)[0]
+    $round = { param($Value) [math]::Round([double]$Value, 1, [MidpointRounding]::AwayFromZero) }
+    $decision = [pscustomobject]@{
+        Branch = 'none'; ReductionDb = 0; NameDb = & $round $normal.ClipDb; EchoDb = & $round $normal.EchoDb
+        WorkingEchoDb = & $round $normal.EchoDb; MarginDb = & $round ($normal.ClipDb - $normal.EchoDb)
+    }
+    if (4 * $normal.Interrupted -ge 3 * $normal.Tries) { return $decision }
+    $needed = $null
+    $triesAbove = 0
+    $interruptedAbove = 0
+    foreach ($row in @($measured | Sort-Object { $_.ClipDb - $_.EchoDb } -Descending)) {
+        $triesAbove += $row.Tries
+        $interruptedAbove += $row.Interrupted
+        # One unlucky row of 4 tries neither ends the walk nor hides a row that worked below it.
+        if (4 * $row.Interrupted -ge 3 * $row.Tries -and 4 * $interruptedAbove -ge 3 * $triesAbove) { $needed = $row.ClipDb - $row.EchoDb }
+    }
+    if ($null -eq $needed) {
+        $decision.Branch = 'blocked'
+        return $decision
+    }
+    $reduction = [int][math]::Max(1, [math]::Ceiling($needed - ($normal.ClipDb - $normal.EchoDb)))
+    $decision.Branch = if ($reduction -le 15) { 'volume' } else { 'limit' }
+    $decision.ReductionDb = $reduction
+    $decision.WorkingEchoDb = & $round ($normal.ClipDb - $needed)
+    $decision.MarginDb = & $round $needed
+    $decision
 }
 
 # Turns the host audio input of the emulator kestrel-api37 on or off through its console ('avd hostmicon' and 'avd

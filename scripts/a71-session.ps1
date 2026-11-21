@@ -10,7 +10,7 @@
 # he does and what the phone shows, and the script then says that he may leave. After listen-check's restart,
 # listen-check.ps1 unlocks the A71 with the owner's test PIN, which he allows the sessions to use; this script checks at
 # its start, on the A71 only, that corpus\owner\a71-config.json has it (the key "pin"), and stops with a clear message
-# otherwise. The steps' estimates add up to 3 hours 58 minutes, of which about 2 minutes need the owner's hands, and he
+# otherwise. The steps' estimates add up to 4 hours 14 minutes, of which about 2 minutes need the owner's hands, and he
 # waits near the phone for about 5 more while the step earbuds runs. The steps:
 #   install       installs Kestrel's debug build, copies the speech models with the Kokoro voice and Kokoro's int8 model,
 #                 which only a voice device test loads, installs the fixture app dev.kestrel.testapp, and grants Kestrel
@@ -47,6 +47,13 @@
 #                 which this computer times after each clip has ended, and "Stop Kestrel", all from the speaker: per try,
 #                 the spotter's hits by keyword, the transcribed and named utterances, how each was read, and the time from
 #                 the end of the speech to Kestrel's reaction, all from the phone (20 minutes)
+#   barge-in      Kestrel's own voice at its microphone against this computer's "Kestrel" (plan 4E): the spotter's
+#                 default setting again; the gains for "Kestrel" at -24, -18 and -12 dBFS at the phone, measured with
+#                 voice-record while Kestrel is off; then at its top, at two thirds and at a third of it, for each level, 4
+#                 tries in which Kestrel reads a long reply, the phone reads the level of Kestrel's own voice (voice-route's
+#                 frameRms) and the speaker plays "Kestrel"; then 3 replies to their end and the commands that started
+#                 after them; and the decision that plan 4E's Task 5 follows (Get-BargeInDecision); the media volume comes
+#                 back at the end (16 minutes)
 #   memory        three starts and closes with the chosen voice and with Kokoro, with the peak PSS and the memory
 #                 categories, and a cold start through the tile, which the script taps itself (12 minutes)
 #   battery       three measures of 30 minutes, each timed by batterystats: a quiet room, the quiet room with one generated
@@ -88,7 +95,7 @@ $ErrorActionPreference = 'Stop'
 Use-KestrelToolchain
 
 $stepNames = @('install', 'earbuds', 'voice-tests', 'failures', 'listen-check', 'battery-rules', 'activation', 'assistant',
-    'spotter', 'voice', 'memory', 'battery', 'failures-late')
+    'spotter', 'voice', 'barge-in', 'memory', 'battery', 'failures-late')
 # pwsh -File passes '-Step voice,battery' as one text, so the names are split at commas.
 $Step = @($Step | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 if ($Step) {
@@ -1099,6 +1106,7 @@ function Measure-Tries(
     $hits = 0
     $done = 0
     $script:triesReacted = $null
+    $script:triesDone = 0
     try {
         for ($try = 1; $try -le $Tries; $try++) {
             & $Prepare
@@ -1126,7 +1134,10 @@ function Measure-Tries(
         return
     }
     Add-Result $StepName "${Name}: $(if ($done -eq 0) { 'skipped' } else { "$hits of $done tries" })"
-    if ($done -gt 0) { $script:triesReacted = $hits }
+    if ($done -gt 0) {
+        $script:triesReacted = $hits
+        $script:triesDone = $done
+    }
 }
 
 # Generated clips without any of Kestrel's keywords, from the corpus's conversation and confusable lines, up to 2 minutes
@@ -1150,12 +1161,13 @@ function Get-PlainSpeechClips {
 
 
 # Plays $Clips through this computer's speaker while Kestrel is paused, so that nothing that the clips say runs, and
-# returns the rise of the spotter's hits of all three keywords: false hits, because no clip holds a keyword (analysis,
-# item 8). A dry run plays nothing and returns 0.
+# returns the minutes of speech played (Minutes) and the rise of the spotter's hits by keyword (ByKeyword: kestrel, stop
+# and cancel): false hits, because no clip holds a keyword (analysis, item 8; plan 4E). A dry run plays nothing and
+# returns 0 minutes and no hits.
 function Measure-FalseHits([string]$Setting, [object[]]$Clips) {
     if ($DryRun) {
         Add-Result spotter "${Setting}: no speech played in a dry run"
-        return 0
+        return [pscustomobject]@{ Minutes = 0; ByKeyword = @{ kestrel = 0; stop = 0; cancel = 0 } }
     }
     if ($Clips.Count -eq 0) {
         Add-Result spotter "${Setting}: no false hits measured, because corpus\generated\piper has no clips of conversation or confusable lines; run scripts\make-corpus.ps1 first"
@@ -1175,12 +1187,13 @@ function Measure-FalseHits([string]$Setting, [object[]]$Clips) {
     }
     Start-Sleep -Seconds 2
     $after = Get-Counts
-    $rise = 0
-    foreach ($name in 'hit-kestrel', 'hit-stop', 'hit-cancel') {
-        $rise += [long]$(if ($after.Contains($name)) { $after[$name] } else { 0 }) - [long]$(if ($before.Contains($name)) { $before[$name] } else { 0 })
+    $byKeyword = @{}
+    foreach ($keyword in 'kestrel', 'stop', 'cancel') {
+        $byKeyword[$keyword] = (Get-TableCount $after "hit-$keyword") - (Get-TableCount $before "hit-$keyword")
     }
-    Add-Result spotter "${Setting}: $rise false hits in $([math]::Round($seconds / 60, 1)) minutes of played speech without a keyword, with Kestrel paused; counts: $(Get-CountRise $before $after)"
-    $rise
+    Add-Result spotter ("${Setting}: false hits in $([math]::Round($seconds / 60, 1)) minutes of played speech without a keyword, with " +
+        "Kestrel paused: kestrel $($byKeyword.kestrel), stop $($byKeyword.stop), cancel $($byKeyword.cancel); counts: $(Get-CountRise $before $after)")
+    [pscustomobject]@{ Minutes = $seconds / 60; ByKeyword = $byKeyword }
 }
 
 # "Hey Kestrel" with three settings of the keyword spotter (analysis, item 8): Kestrel's settings since plan 2A, and two
@@ -1210,16 +1223,22 @@ function Invoke-SpotterStep {
             $quiet = { Wait-Quiet }
             Measure-Tries spotter "$set, ""Hey Kestrel""" c042 5 $quiet { param($Counts, $State) $State -and [int](Get-Counts)['waits'] -gt [int]$Counts['waits'] } 8
             $reacted = $script:triesReacted
+            $tries = $script:triesDone
             $falseHits = Measure-FalseHits $set $clips
-            $rounds.Add([pscustomobject]@{ Setting = $set; Default = $tuning.Boost -eq 2 -and $tuning.Threshold -eq 0.15; Hits = $reacted; FalseHits = $falseHits })
+            if ($null -eq $reacted -or $null -eq $falseHits) { continue }
+            $rounds.Add([pscustomobject]@{
+                    Setting = $set; Default = $tuning.Boost -eq 2 -and $tuning.Threshold -eq 0.15
+                    Tries = @{ 'Hey Kestrel' = $tries }; Hits = @{ 'Hey Kestrel' = $reacted }
+                    Minutes = $falseHits.Minutes; FalseHits = $falseHits.ByKeyword
+                })
         }
     } finally {
         Complete-Restore $tuningRestore
         Stop-Kestrel
     }
     Add-Result spotter "the setting before the step: $default"
-    $winner = Select-SpotterWinner @($rounds | Where-Object { $null -ne $_.Hits -and $null -ne $_.FalseHits })
-    Add-Result spotter $(if ($winner) { "the setting that the rule keeps: $($winner.Setting) (the most reactions to your ""Hey Kestrel"" among the settings with at most twice the default's false hits plus 2; a tie goes to fewer false hits, then to the default)" } else { 'no setting chosen, because the default setting was not measured whole' })
+    $winner = Select-SpotterWinner @($rounds)
+    Add-Result spotter $(if ($winner.Setting) { "the setting that the rule keeps: $($winner.Setting) ($($winner.Reason))" } else { $winner.Reason })
 }
 
 # An interruption (analysis, item 8; map S34): Kestrel reads a long reply, the speaker plays "Kestrel", and after a pause
@@ -1288,6 +1307,164 @@ function Invoke-VoiceStep {
         Invoke-Hook voice-task @{ Clear = $true } | Out-Null
     }
     Measure-Tries voice '"Stop Kestrel"' c053 3 $quiet { param($Counts, $State) $Counts -and $State.mode -eq 'off' } 10
+}
+
+# The media volume, which Kestrel's replies use (stream 3), and its top, from 'cmd media_session volume --stream 3 --get'.
+function Get-MediaVolume {
+    $answer = (Invoke-Checked 'cmd media_session volume --stream 3 --get') -join ' '
+    if ($answer -notmatch 'volume is (\d+) in range \[(\d+)\.\.(\d+)\]') { throw "Not an answer of cmd media_session volume: '$answer'" }
+    [pscustomobject]@{ Index = [int]$Matches[1]; Max = [int]$Matches[3] }
+}
+
+# The level at which the phone hears this computer's "Kestrel" (c041 in the Kokoro voice) with $Gain: Kestrel is off and
+# its settings are in front, and the hook voice-record records with Kestrel's own microphone and answers the loudest
+# 20 ms frame (frameRms), the measure of voice-route. Returns the level in dBFS, or $null.
+function Measure-NameLevel([double]$Gain) {
+    Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+    Invoke-Hook voice-record @{ File = 'level'; Seconds = 4 } | Out-Null
+    Invoke-Clip -Path (Join-Path $generatedRoot 'kokoro\c041.wav') -Gain $Gain | Out-Null
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Milliseconds 500
+        $recorded = Invoke-Hook voice-record @{ Result = $true }
+    } while ($recorded -eq 'recording' -and $watch.Elapsed.TotalSeconds -lt 15)
+    if ($recorded -match 'silenced=false.*frameRms=(-?\d+(\.\d+)?)') { [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) } else { $null }
+}
+
+# One try of the step barge-in: "Kestrel, read me the news" (k022) makes Kestrel read the long reply of voice-task, the
+# phone reads the level of Kestrel's own voice at its microphone for 3 s (voice-route's frameRms), and this computer plays
+# "Kestrel" (c041) with $Gain, or a dry run sends it. Kestrel was interrupted when it stopped speaking and waits for a task
+# within 5 s. Returns the echo's level in dBFS ($null when Kestrel did not speak), whether Kestrel was interrupted, and
+# what the counts of voice-counts rose by.
+function Measure-BargeInTry([double]$Gain) {
+    Wait-Quiet
+    $counts = Get-Counts
+    Invoke-CorpusClip k022 kokoro
+    if ((Wait-State { param($State) $State.speaking -eq 'true' } 30) -lt 0) {
+        return [pscustomobject]@{ EchoDb = $null; Interrupted = $false; Rise = Get-CountRise $counts (Get-Counts) }
+    }
+    Invoke-Hook voice-route | Out-Null
+    Start-Sleep -Seconds 3
+    $level = (ConvertFrom-HookPairs (Invoke-Hook voice-route))['frameRms']
+    $echo = if ($level -match '^-?\d+(\.\d+)?$') { [double]::Parse($level, [Globalization.CultureInfo]::InvariantCulture) } else { $null }
+    if ($DryRun) { Invoke-CorpusClip c041 kokoro } else { Invoke-Clip -Path (Join-Path $generatedRoot 'kokoro\c041.wav') -Gain $Gain | Out-Null }
+    $stopped = (Wait-State { param($State) $State.speaking -eq 'false' -and $State.work -eq 'awaiting_task' } 5) -ge 0
+    [pscustomobject]@{ EchoDb = $echo; Interrupted = $stopped; Rise = Get-CountRise $counts (Get-Counts) }
+}
+
+# What came after Kestrel's own reply when nobody interrupted it (inv-a71-speech, section 3, "A side issue"): k022 makes
+# Kestrel read the long reply of voice-task to its end, no clip plays meanwhile, and the 5 s after it show which commands
+# started (voice-state -Number: kind and outcome), how long after the end of the latest transcribed speech Kestrel's
+# latest reaction came, and what the pipeline heard (voice-counts). Returns whether a command started.
+function Measure-ReplyTail([int]$Try) {
+    Wait-Quiet
+    Invoke-CorpusClip k022 kokoro
+    if ((Wait-State { param($State) $State.speaking -eq 'true' } 30) -lt 0) {
+        Add-Result barge-in "the reply's end, try ${Try}: Kestrel did not begin its reply within 30 s"
+        return $false
+    }
+    $counts = Get-Counts
+    $since = [long](Get-Times)['now']
+    $before = [int](Get-VoiceState).command
+    $ended = Wait-State { param($State) $State.speaking -eq 'false' } 90
+    Start-Sleep -Seconds 5
+    $latest = [int](Get-VoiceState).command
+    $commands = @(for ($number = $before + 1; $number -le $latest; $number++) {
+            $state = ConvertFrom-VoiceState (Invoke-Hook voice-state @{ Number = $number })
+            "$($state.kind) ($($state.outcome))"
+        })
+    $reaction = Get-Reaction $since 'command'
+    Add-Result barge-in ("the reply's end, try ${Try}: the reply $(if ($ended -ge 0) { 'ended' } else { 'did not end within 90 s' }); " +
+        "$($commands.Count) commands started after it$(if ($commands.Count -gt 0) { ': ' + ($commands -join ', ') }); Kestrel's latest " +
+        "command: $(if ($reaction) { $reaction } else { 'none' }); counts: $(Get-CountRise $counts (Get-Counts))")
+    $commands.Count -gt 0
+}
+
+# The step barge-in (plan 4E; the owner's decision 6): see the script's header. A failed try costs only its own line.
+function Invoke-BargeInStep {
+    if (-not (Initialize-Air barge-in)) { return }
+    # The A71 run of plan 4D may have left another setting in Kestrel's process; it counts from the next start.
+    Add-Result barge-in "the keyword spotter's setting: $(Invoke-Hook voice-spotter @{ Boost = 2; Threshold = 0.15 })"
+    $volume = Get-MediaVolume
+    $volumeRestore = Register-Restore 'the media volume' "Run: & '$adb' -s $Serial shell cmd media_session volume --stream 3 --set $($volume.Index)" $volume.Index {
+        param($Data)
+        Assert-TestDevice -Serial $Serial
+        Invoke-Checked "cmd media_session volume --stream 3 --set $Data" | Out-Null
+    }
+    $story = 'Here is a long reply, so that you can interrupt it. ' + ('The news of the day comes one sentence after another, at an even pace. ' * 6)
+    Invoke-Hook voice-task @{ Seconds = 1; Reply = $story } | Out-Null
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $tries = if ($DryRun) { 1 } else { 4 }
+    try {
+        $levels = [System.Collections.Generic.List[object]]::new()
+        Stop-Kestrel
+        try {
+            foreach ($target in -24, -18, -12) {
+                if ($DryRun) {
+                    $levels.Add([pscustomobject]@{ Target = $target; Gain = 1.0; LevelDb = $null })
+                    continue
+                }
+                $level = Set-SpeakerLevel -TargetDb $target -Measure { param($Gain) Measure-NameLevel $Gain }
+                $levels.Add([pscustomobject]@{ Target = $target; Gain = $level.Gain; LevelDb = $level.LevelDb })
+                Add-Result barge-in ("""Kestrel"" for $target dBFS reaches the phone at $(if ($null -eq $level.LevelDb) { 'nothing' } else { "$($level.LevelDb) dBFS" }) with a gain of $([math]::Round($level.Gain, 2))" +
+                    $(if ($level.InBand) { '' } else { '; not reached: this computer plays too quietly' }))
+            }
+        } finally {
+            Invoke-Checked "rm -f $(Get-EvalFolder)/level.wav" | Out-Null
+        }
+        Start-Kestrel
+        # Two thirds of the top lowers Kestrel's echo by about as much as the branch volume may (15 dB), so the row there
+        # with the owner's level tests that branch directly.
+        foreach ($index in @($volume.Max, [int][math]::Round($volume.Max * 2 / 3), [math]::Max(1, [int][math]::Round($volume.Max / 3)))) {
+            Invoke-Checked "cmd media_session volume --stream 3 --set $index" | Out-Null
+            foreach ($level in $levels) {
+                $name = "volume $index of $($volume.Max), ""Kestrel"" for $($level.Target) dBFS"
+                $echoes = [System.Collections.Generic.List[double]]::new()
+                $done = 0
+                $interrupted = 0
+                for ($try = 1; $try -le $tries; $try++) {
+                    try {
+                        $result = Measure-BargeInTry -Gain $level.Gain
+                    } catch {
+                        if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
+                        Add-Result barge-in "${name}, try ${try}: failed: $($_.Exception.Message)"
+                        continue
+                    }
+                    # Without a reply there was nothing to interrupt, so the try does not count.
+                    if ($null -eq $result.EchoDb) {
+                        Add-Result barge-in "${name}, try ${try}: Kestrel did not begin its reply; counts: $($result.Rise)"
+                        continue
+                    }
+                    $done++
+                    $echoes.Add($result.EchoDb)
+                    if ($result.Interrupted) { $interrupted++ }
+                    Add-Result barge-in "${name}, try ${try}: Kestrel's own voice at $(if ($null -ne $result.EchoDb) { "$($result.EchoDb) dBFS" } else { 'nothing' }); $(if ($result.Interrupted) { 'interrupted' } else { 'not interrupted' }); counts: $($result.Rise)"
+                }
+                $sorted = @($echoes | Sort-Object)
+                $echo = if ($sorted.Count -gt 0) { [math]::Round($sorted[[int][math]::Floor(($sorted.Count - 1) / 2)], 1) } else { $null }
+                $rows.Add([pscustomobject]@{ Volume = $index; Max = $volume.Max; ClipDb = $level.LevelDb; EchoDb = $echo; Tries = $done; Interrupted = $interrupted })
+                Add-Result barge-in "${name}: Kestrel's own voice at a median $(if ($null -ne $echo) { "$echo dBFS" } else { 'nothing' }); interrupted in $interrupted of $done tries"
+            }
+        }
+        Invoke-Checked "cmd media_session volume --stream 3 --set $($volume.Max)" | Out-Null
+        $tails = 0
+        $tailTries = if ($DryRun) { 1 } else { 3 }
+        for ($try = 1; $try -le $tailTries; $try++) {
+            try {
+                if (Measure-ReplyTail $try) { $tails++ }
+            } catch {
+                if ($_.Exception.Message -eq 'The owner stopped the session.') { throw }
+                Add-Result barge-in "the reply's end, try ${try}: failed: $($_.Exception.Message)"
+            }
+        }
+        Add-Result barge-in "a command started after $tails of $tailTries replies that nobody interrupted"
+    } finally {
+        Invoke-Hook voice-task @{ Clear = $true } | Out-Null
+        Complete-Restore $volumeRestore
+    }
+    $decision = Get-BargeInDecision @($rows)
+    Add-Result barge-in ("decision: branch=$($decision.Branch) reductionDb=$($decision.ReductionDb) nameDb=$($decision.NameDb) " +
+        "echoDb=$($decision.EchoDb) workingEchoDb=$($decision.WorkingEchoDb) marginDb=$($decision.MarginDb)")
 }
 
 # Three starts and closes from the front with the stored voice: the peak PSS while each session opens, from samples of
@@ -1562,6 +1739,7 @@ $plan = @(
     @{ Name = 'assistant'; Minutes = 5; Title = 'Kestrel as the assistant without its accessibility service'; Run = 'Invoke-AssistantStep' }
     @{ Name = 'spotter'; Minutes = 16; Title = '"Hey Kestrel" and played speech with three settings of the keyword spotter'; Run = 'Invoke-SpotterStep' }
     @{ Name = 'voice'; Minutes = 20; Title = 'Kestrel''s keywords, interruptions and "Stop Kestrel" from the speaker'; Run = 'Invoke-VoiceStep' }
+    @{ Name = 'barge-in'; Minutes = 16; Title = 'Kestrel''s own voice at its microphone against "Kestrel" from the speaker'; Run = 'Invoke-BargeInStep' }
     @{ Name = 'memory'; Minutes = 12; Title = 'memory with Piper and Kokoro, and a cold start through the tile'; Run = 'Invoke-MemoryStep' }
     @{ Name = 'battery'; Minutes = 95; Title = 'three battery measures of 30 minutes'; Run = 'Invoke-BatteryStep' }
     @{ Name = 'failures-late'; Minutes = 1; Title = 'Kestrel''s logged failures since listen-check'; Run = 'Invoke-LateFailuresStep' }

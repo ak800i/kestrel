@@ -375,17 +375,52 @@ Describe 'The helpers of the re-checks of plan 2E' {
         Get-ProcessState -Dump @('  (nothing)') | Should -BeExactly 'not listed'
     }
 
-    It 'keeps the spotter''s setting with the most hits among those with few false hits' {
-        $rounds = @(
-            [pscustomobject]@{ Setting = 'boost=2.0 threshold=0.15'; Default = $true; Hits = 1; FalseHits = 2 }
-            [pscustomobject]@{ Setting = 'boost=3.0 threshold=0.1'; Default = $false; Hits = 4; FalseHits = 5 }
-            [pscustomobject]@{ Setting = 'boost=4.0 threshold=0.05'; Default = $false; Hits = 5; FalseHits = 9 }
-        )
-        $tie = @($rounds[0], [pscustomobject]@{ Setting = 'boost=3.0 threshold=0.1'; Default = $false; Hits = 1; FalseHits = 2 })
+    It 'keeps the default without 20 tries of each phrase and 10 minutes of speech, and says why' {
+        $default = [pscustomobject]@{ Setting = 'boost=2.0 threshold=0.15'; Default = $true; Tries = @{ 'Hey Kestrel' = 5 }; Hits = @{ 'Hey Kestrel' = 5 }; Minutes = 1.6; FalseHits = @{ stop = 2 } }
+        $other = [pscustomobject]@{ Setting = 'boost=3.0 threshold=0.1'; Default = $false; Tries = @{ 'Hey Kestrel' = 5 }; Hits = @{ 'Hey Kestrel' = 5 }; Minutes = 1.6; FalseHits = @{} }
 
-        (Select-SpotterWinner $rounds).Setting | Should -BeExactly 'boost=3.0 threshold=0.1'
-        (Select-SpotterWinner $tie).Setting | Should -BeExactly 'boost=2.0 threshold=0.15'
-        Select-SpotterWinner @($rounds[1]) | Should -BeNullOrEmpty
+        $kept = Select-SpotterWinner @($default, $other)
+
+        $kept.Setting | Should -BeExactly 'boost=2.0 threshold=0.15'
+        $kept.Reason | Should -BeLike '*at least 20 tries of each of "Kestrel", "Hey Kestrel" and "Kestrel, wake up" and 10 minutes*this run had at least 0 tries of each and 1.6 minutes'
+        (Select-SpotterWinner @($other)).Setting | Should -BeNullOrEmpty
+    }
+
+    It 'keeps the setting with the most reactions among those with few false hits of each keyword, once it has the data' {
+        function New-Round([string]$Setting, [bool]$Default, [int[]]$Hits, [hashtable]$FalseHits) {
+            [pscustomobject]@{
+                Setting = $Setting; Default = $Default; Minutes = 10.5; FalseHits = $FalseHits
+                Tries = @{ 'Kestrel' = 20; 'Hey Kestrel' = 20; 'Kestrel, wake up' = 20 }
+                Hits = @{ 'Kestrel' = $Hits[0]; 'Hey Kestrel' = $Hits[1]; 'Kestrel, wake up' = $Hits[2] }
+            }
+        }
+        $default = New-Round 'boost=2.0 threshold=0.15' $true @(15, 20, 14) @{ kestrel = 0; stop = 1 }
+        $more = New-Round 'boost=3.0 threshold=0.1' $false @(18, 20, 17) @{ kestrel = 2; stop = 4 }
+        $most = New-Round 'boost=4.0 threshold=0.05' $false @(20, 20, 20) @{ kestrel = 3; stop = 1 }
+        $tie = New-Round 'boost=3.0 threshold=0.1' $false @(15, 20, 14) @{ kestrel = 0; stop = 1 }
+
+        (Select-SpotterWinner @($default, $more, $most)).Setting | Should -BeExactly 'boost=3.0 threshold=0.1'
+        (Select-SpotterWinner @($default, $tie)).Setting | Should -BeExactly 'boost=2.0 threshold=0.15'
+    }
+
+    It 'decides the fix of barge-in from the levels and the interruptions, as plan 4E wrote down' {
+        function New-Row([int]$Volume, [double]$ClipDb, [double]$EchoDb, [int]$Interrupted) {
+            [pscustomobject]@{ Volume = $Volume; Max = 15; ClipDb = $ClipDb; EchoDb = $EchoDb; Tries = 4; Interrupted = $Interrupted }
+        }
+        $loud = @((New-Row 15 -24.2 -14.2 0), (New-Row 15 -18.1 -14.3 0), (New-Row 15 -12.3 -14.0 1), (New-Row 5 -24.2 -27.9 3), (New-Row 5 -18.1 -28.0 4), (New-Row 5 -12.3 -27.8 4))
+
+        $volume = Get-BargeInDecision $loud
+        $volume.Branch | Should -BeExactly 'volume'
+        $volume.ReductionDb | Should -Be 14
+        $volume.NameDb | Should -Be -24.2
+        $volume.EchoDb | Should -Be -14.2
+        $volume.WorkingEchoDb | Should -Be -27.9
+        $volume.MarginDb | Should -Be 3.7
+
+        (Get-BargeInDecision @((New-Row 15 -24.2 -30.0 3), (New-Row 5 -24.2 -40.0 4))).Branch | Should -BeExactly 'none'
+        (Get-BargeInDecision @((New-Row 15 -24.2 -2.0 0), (New-Row 5 -12.0 -30.0 4))).Branch | Should -BeExactly 'limit'
+        (Get-BargeInDecision @((New-Row 15 -24.2 -12.0 0), (New-Row 5 -12.0 -30.0 2))).Branch | Should -BeExactly 'blocked'
+        (Get-BargeInDecision @([pscustomobject]@{ Volume = 15; Max = 15; ClipDb = $null; EchoDb = -12.0; Tries = 1; Interrupted = 0 })).Branch | Should -BeExactly 'unmeasured'
     }
 }
 
