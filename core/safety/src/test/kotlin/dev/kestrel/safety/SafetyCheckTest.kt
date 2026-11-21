@@ -316,6 +316,50 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun aTapAtOnAnAppWindowThatFloatsAboveTheFrontAppIsRefused() {
+        fun at(x: Int, y: Int) = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(x, y), frontAppLabel = "Chat")
+        // Play services' autofill suggestion over the front app's window, which the observation leaves out.
+        val autofill = TestScreen()
+        autofill.add(1500, "Notes", clickable = false)
+        autofill.window(2, "com.google.android.gms", IntRect(0, 1400, 1000, 1600))
+        autofill.add(1450, "ana@example.com", window = 2)
+        assertEquals("block", decide(at(500, 1500), autofill))
+        assertEquals("run", decide(at(500, 300), autofill, nothing))
+        // Another app's floating window, such as an agent-free app's.
+        val floating = TestScreen()
+        floating.window(2, "com.example.bank", IntRect(600, 200, 1000, 600))
+        floating.add(300, "Balance", left = 600, window = 2)
+        assertEquals("block", decide(at(800, 350), floating))
+        // Over the activity beneath the front app's dialog, outside the dialog.
+        val dialog = TestScreen()
+        dialog.window(2, "com.example.chat", IntRect(100, 800, 900, 1200), active = true)
+        dialog.window(3, "com.google.android.gms", IntRect(0, 1500, 1000, 1700), layer = 3)
+        dialog.add(1550, "ana@example.com", window = 3)
+        assertEquals("block", decide(at(500, 1600), dialog))
+        assertEquals("run", decide(at(500, 300), dialog, nothing))
+    }
+
+    @Test
+    fun onlyTheElementThatReceivesTheClickStartsAShareFlow() {
+        val chat = TestScreen()
+        val container = chat.add(100, "Share options", height = 300)
+        val delete = chat.add(150, "Delete", parent = container, left = 800)
+        fun at(x: Int, y: Int) = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(x, y), frontAppLabel = "Chat")
+
+        assertNull(SafetyCheck.afterAction(tap(delete), chat.snapshot(), chat.snapshot(), everything).shareFlow)
+        assertNull(SafetyCheck.afterAction(at(900, 200), chat.snapshot(), chat.snapshot(), everything).shareFlow)
+        for (proposal in listOf(tap(delete), at(900, 200))) {
+            val decision = SafetyCheck.decide(proposal, chat.snapshot(), everything, standard)
+            assertTrue(decision !is Decision.Confirm || !decision.confirmation.question.startsWith("Share"))
+        }
+        // A text that names the button that receives the click still starts a flow.
+        val button = TestScreen()
+        val unnamed = button.add(100, null, text = null, left = 800)
+        val text = button.add(120, "Share", parent = unnamed, left = 820, height = 60, clickable = false)
+        assertEquals(1, SafetyCheck.afterAction(tap(text), button.snapshot(), button.snapshot(), everything).shareFlow?.serial)
+    }
+
+    @Test
     fun aTargetThatIsGoneIsRefused() {
         assertEquals("block", decide(tap("com.example.chat|9|Gone"), TestScreen()))
     }
@@ -472,5 +516,24 @@ class SafetyCheckTest {
         assertEquals("block", kind(sendAndDelete.decision))
         assertEquals("block", kind(SafetyCheck.decide(tap(markoSend), marko.snapshot(), inFlow, testMode, aliases)))
         assertEquals(false, SafetyCheck.testModeAllows(tap(markoSend), marko.snapshot(), inFlow, testMode, aliases))
+    }
+
+    @Test
+    fun testModeJudgesATapAtByTheRowUnderItsPoint() {
+        val testMode = SafetySettings()
+        val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
+        val picker = TestScreen("dev.kestrel.testapp")
+        val list = picker.add(300, null, className = "androidx.recyclerview.widget.RecyclerView", height = 600, clickable = false)
+        val saved = picker.add(300, null, parent = list, text = null)
+        picker.add(300, "Saved Messages", parent = saved, clickable = false, right = 800, height = 50)
+        picker.add(350, "Forward here to save.", parent = saved, clickable = false, right = 800, height = 50)
+        picker.add(300, null, parent = saved, className = "android.widget.CheckBox", checkable = true, checked = true, left = 900, height = 50)
+        val ana = picker.add(400, "Ana", parent = list)
+        val inFlow = everything.copy(shareFlow = ShareFlow("dev.kestrel.testapp", emptyList(), ShareCount(1, 0), serial = 1))
+        val atAna = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(500, 450), frontAppLabel = "Chat")
+
+        assertEquals("block", kind(SafetyCheck.decide(tap(ana), picker.snapshot(), inFlow, testMode, aliases)))
+        assertEquals("block", kind(SafetyCheck.decide(atAna, picker.snapshot(), inFlow, testMode, aliases)))
+        assertEquals(false, SafetyCheck.testModeAllows(atAna, picker.snapshot(), inFlow, testMode, aliases))
     }
 }

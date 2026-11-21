@@ -25,14 +25,16 @@ object SendCheck {
 
     /**
      * Whether [proposal] presses a control whose label holds a send word or save, done, apply or OK, or the unlabelled
-     * button beside a message field, the most common send arrow (review 2 M2).
+     * button beside a message field, the most common send arrow (review 2 M2); for a `TapAt`, the element under its point.
      */
     fun applies(proposal: Proposal, screen: ScreenSnapshot): Boolean {
         if (proposal.kind !in PRESSING) return false
         val index = proposal.targetKey?.let { key -> screen.elements.indexOfFirst { it.key == key }.takeIf { it >= 0 } }
-        if (index != null && ContextRules.nearCompose(screen, index)) return true
-        val name = index?.let { ScreenTree.name(screen.elements[it]) } ?: proposal.pointText
-        return LabelWords.holds(name, Category.SENDING) || LabelWords.holdsWord(name, LabelWords.SAVE_WORDS)
+        val point = proposal.point.takeIf { proposal.targetKey == null }
+        val pressed = ContextRules.pressed(screen, index, point)
+        if (pressed != null && ContextRules.nearCompose(screen, pressed, point)) return true
+        val names = pressed?.let { ContextRules.clickedNames(screen, it) }.orEmpty() + proposal.pointText
+        return names.any { LabelWords.holds(it, Category.SENDING) || LabelWords.holdsWord(it, LabelWords.SAVE_WORDS) }
     }
 
     fun check(proposal: Proposal, screen: ScreenSnapshot, task: TaskSafety): SendCheckResult {

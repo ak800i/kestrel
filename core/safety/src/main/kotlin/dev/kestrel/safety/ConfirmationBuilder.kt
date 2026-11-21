@@ -58,7 +58,7 @@ object ConfirmationBuilder {
             else -> Unit
         }
         val name = element?.let { ScreenTree.name(it) }
-        val pressed = index ?: point?.let { ContextRules.underPoint(screen, it) }
+        val pressed = ContextRules.pressed(screen, index, point)
         val flow = task.shareFlow
         if (flow == null && ContextRules.startsShare(screen, pressed, proposal.pointText)) {
             // In a chat, some such buttons share with that chat at once (review 2 M7).
@@ -71,7 +71,7 @@ object ConfirmationBuilder {
         if (category == Category.SENDING && window != null) {
             val handOver = Decision.HandOver(HandOver.of(HandOverKind.RECIPIENT))
             if (flow != null) {
-                val recipients = flowRecipients(screen, index, window, flow, proposal.receivingAppLabel ?: proposal.frontAppLabel) ?: return handOver
+                val recipients = flowRecipients(screen, pressed, window, flow, proposal.receivingAppLabel ?: proposal.frontAppLabel) ?: return handOver
                 val what = flow.count?.let { items(it) } ?: "this"
                 // A target of Android's share sheet is an app or a direct-share chat (review 2 M9).
                 if (ContextRules.isShareSheet(screen, window)) return ask("Share $what with ${recipients.joinToString(" and ")}?", what, recipients)
@@ -141,9 +141,9 @@ object ConfirmationBuilder {
      * rows when the dialog shows each of their names as whole words outside every list of rows. Null when the screen does
      * not show whom it sends to, or a row has no name.
      */
-    private fun flowRecipients(screen: ScreenSnapshot, index: Int?, window: WindowSummary, flow: ShareFlow, appLabel: String?): List<String>? {
+    private fun flowRecipients(screen: ScreenSnapshot, pressed: Int?, window: WindowSummary, flow: ShareFlow, appLabel: String?): List<String>? {
         // Rows that the screen shows as tapped or checked name the recipients, also beside a comment field.
-        val rows = (listOfNotNull(index?.let { ContextRules.row(screen, it) }) + ContextRules.checkedRows(screen, window.id)).distinct()
+        val rows = (listOfNotNull(pressed?.let { ContextRules.row(screen, it) }) + ContextRules.checkedRows(screen, window.id)).distinct()
         if (rows.isNotEmpty()) return rows.map { ContextRules.rowName(screen, it) ?: return null }.distinct()
         // A chat counts by its message field, also an empty one, so that a chat is never read as a dialog (review 2-2 New 1).
         if (ContextRules.messageField(screen, window.id) == null) {

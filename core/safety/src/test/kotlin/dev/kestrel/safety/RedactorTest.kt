@@ -73,6 +73,30 @@ class RedactorTest {
     }
 
     @Test
+    fun anIbanOutsideTheTableIsFoundBeforeAShortGroup() {
+        val redactor = redactor()
+
+        assertEquals("IBAN [IBAN_1] EUR", redactor.redact("IBAN LT12 1000 0111 0100 1000 EUR"))
+        assertEquals("[IBAN_2] SAR", redactor.redact("SA03 8000 0000 6080 1016 7519 SAR"))
+        assertEquals("[IBAN_2] 2027", redactor.redact("SA03 8000 0000 6080 1016 7519 2027"))
+        // A run that only starts like an IBAN does not hide the IBAN after it.
+        assertEquals("ab12 cdef [IBAN_3]", redactor.redact("ab12 cdef DE89 3704 0044 0532 0130 00"))
+    }
+
+    @Test
+    fun anIbanInSmallLettersOfATableCountryIsRedacted() {
+        val redactor = redactor()
+
+        assertEquals("Pay to [IBAN_1] today", redactor.redact("Pay to rs35 2600 0560 1001 6113 79 today"))
+        assertEquals("[IBAN_1]", redactor.redact("Rs35 2600 0560 1001 6113 79"))
+        assertEquals("[IBAN_2].", redactor.redact("de89370400440532013000."))
+        assertEquals("RS35260005601001611379", redactor.vault.valueOf("[IBAN_1]"))
+        // Small letters count only for a country of the table, at its exact length.
+        assertEquals("lt12 1000 0111 0100 1000", redactor.redact("lt12 1000 0111 0100 1000"))
+        assertEquals("flight ah38 departs from gate b at noon", redactor.redact("flight ah38 departs from gate b at noon"))
+    }
+
+    @Test
     fun noBreakNarrowAndThinSpacesSplitGroupsLikeSpaces() {
         val redactor = redactor()
 

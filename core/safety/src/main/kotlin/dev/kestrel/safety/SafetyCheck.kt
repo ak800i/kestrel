@@ -49,7 +49,7 @@ object SafetyCheck {
         val atPoint = point?.let { ContextRules.atPoint(screen, it) }.orEmpty()
         val reached = listOfNotNull(index) + atPoint
         // The element that the press lands on: a tap's target, or the topmost clickable element under a TapAt's point.
-        val pressed = index ?: point?.let { ContextRules.underPoint(screen, it) }
+        val pressed = ContextRules.pressed(screen, index, point)
         val window = if (index == null && point != null) ContextRules.windowAt(screen, point) else windowOf(screen, index)
 
         // 1. The declared category, or the tool's fixed one.
@@ -142,10 +142,14 @@ object SafetyCheck {
         when {
             category == Category.CALLS -> "Test mode: Kestrel makes no calls."
             proposal.kind == ActionKind.COMPOSE_SMS -> "Test mode: Kestrel sends no text messages."
-            (sends || category == Category.SENDING) && !SelfChats.recognise(screen, proposal.targetKey, settings, task.shareFlow, env.selfChatAliases) ->
+            (sends || category == Category.SENDING) && !SelfChats.recognise(screen, pressedKey(proposal, screen), settings, task.shareFlow, env.selfChatAliases) ->
                 "Test mode: Kestrel only sends to your own chats."
             else -> null
         }
+
+    /** The key of the element that a press lands on, so that test mode reads the row under a `TapAt`'s point too. */
+    private fun pressedKey(proposal: Proposal, screen: ScreenSnapshot): String? =
+        proposal.targetKey ?: proposal.point?.let { ContextRules.underPoint(screen, it) }?.let { screen.elements[it].key }
 
     /**
      * Updates the task's state after an action ran (design D13): a typed text is remembered (pass the proposal with the
@@ -177,7 +181,7 @@ object SafetyCheck {
         }
         // Opening something else or going home leaves the flow, so that its selection never names another chat (review 2 C1).
         if (proposal.kind in LEAVING) current = null
-        val pressed = index ?: proposal.point?.let { ContextRules.underPoint(before, it) }
+        val pressed = ContextRules.pressed(before, index, proposal.point)
         val sheet = pressed?.let { before.windows.firstOrNull { w -> w.id == before.elements[it].windowId } }?.let { ContextRules.isShareSheet(before, it) } == true
         if (current != null && proposal.kind in PRESSING && pressed != null && !sheet) {
             val row = ContextRules.row(before, pressed)?.let { ContextRules.rowName(before, it) }

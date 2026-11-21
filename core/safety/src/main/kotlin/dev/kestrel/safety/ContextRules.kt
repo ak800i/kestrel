@@ -188,8 +188,21 @@ internal object ContextRules {
     fun windowAt(snapshot: ScreenSnapshot, point: Point): WindowSummary? =
         snapshot.windows.filter { holds(it.bounds, point) }.maxByOrNull { it.layer } ?: ScreenTree.frontWindow(snapshot)
 
-    /** Whether a window that is no app's window, such as the keyboard or a popup, covers the point (design D13, review B I3). */
-    fun covered(snapshot: ScreenSnapshot, point: Point): Boolean = windowAt(snapshot, point)?.kind != WindowKind.APPLICATION
+    /**
+     * Whether another window covers the point (design D13, review B I3): a window that is no app's window, such as the
+     * keyboard, or an app window that floats above the front app, such as a Play services suggestion or an agent-free
+     * app's window, which the observation leaves out. It floats when it lies above the front window and overlaps it, or
+     * above another app window that holds the point. The other half of a split screen does neither.
+     */
+    fun covered(snapshot: ScreenSnapshot, point: Point): Boolean {
+        val window = windowAt(snapshot, point) ?: return true
+        if (window.kind != WindowKind.APPLICATION) return true
+        val front = ScreenTree.frontWindow(snapshot) ?: return false
+        if (window.id == front.id) return false
+        val overFront = window.layer > front.layer && overlaps(window.bounds, front.bounds)
+        val overApp = ScreenTree.appWindows(snapshot).any { it.id != window.id && it.layer < window.layer && holds(it.bounds, point) }
+        return overFront || overApp
+    }
 
     /** The indices of the elements of the window that holds the point ([windowAt]) that hold the point, innermost last. */
     fun atPoint(snapshot: ScreenSnapshot, point: Point): List<Int> {
@@ -206,18 +219,37 @@ internal object ContextRules {
         return held.lastOrNull { snapshot.elements[it].clickable } ?: held.lastOrNull()
     }
 
+    /** The element that a press lands on: a tap's target [index], else the element under a `TapAt`'s [point]. */
+    fun pressed(snapshot: ScreenSnapshot, index: Int?, point: Point?): Int? = index ?: point?.let { underPoint(snapshot, it) }
+
     /**
-     * Whether a press on element [pressed] (a tap's target, or the element under a `TapAt`'s point) or on one of its
-     * clickable ancestors, or the OCR line [pointText] at the point, is named Share or Forward, so that it starts a share
-     * flow (design D13).
+     * The names of the element that receives a press on element [pressed], as Android delivers it: the pressed element
+     * when it is clickable, else the pressed element and its ancestors up to the nearest clickable one, whose texts name
+     * it. A clickable container around a clickable element never counts.
      */
-    fun startsShare(snapshot: ScreenSnapshot, pressed: Int?, pointText: String?): Boolean {
-        val lineage = pressed?.let { listOf(it) + ScreenTree.ancestors(snapshot, it).filter { up -> snapshot.elements[up].clickable } }.orEmpty()
-        return (lineage.map { ScreenTree.name(snapshot.elements[it]) } + pointText).any { LabelWords.holdsWord(it, LabelWords.SHARE_START_WORDS) }
+    fun clickedNames(snapshot: ScreenSnapshot, pressed: Int): List<String?> {
+        val lineage = mutableListOf(pressed)
+        if (!snapshot.elements[pressed].clickable) {
+            for (up in ScreenTree.ancestors(snapshot, pressed)) {
+                lineage += up
+                if (snapshot.elements[up].clickable) break
+            }
+        }
+        return lineage.map { ScreenTree.name(snapshot.elements[it]) }
     }
+
+    /**
+     * Whether the element that receives a press on element [pressed] (a tap's target, or the element under a `TapAt`'s
+     * point), or the OCR line [pointText] at the point, is named Share or Forward, so that it starts a share flow (design
+     * D13; review 5A-34 Minor 1).
+     */
+    fun startsShare(snapshot: ScreenSnapshot, pressed: Int?, pointText: String?): Boolean =
+        (pressed?.let { clickedNames(snapshot, it) }.orEmpty() + pointText).any { LabelWords.holdsWord(it, LabelWords.SHARE_START_WORDS) }
 
     private fun holds(bounds: IntRect, point: Point): Boolean =
         point.x >= bounds.left && point.x < bounds.right && point.y >= bounds.top && point.y < bounds.bottom
+
+    private fun overlaps(a: IntRect, b: IntRect): Boolean = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 
     /**
      * Whether [window] is Android's share sheet: the intent resolver's window, or an app window of the `android` package

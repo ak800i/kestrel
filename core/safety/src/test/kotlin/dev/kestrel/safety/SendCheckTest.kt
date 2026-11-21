@@ -61,4 +61,16 @@ class SendCheckTest {
         assertTrue(SendCheck.applies(tap(arrow), screen.snapshot()))
         assertEquals(SendCheckResult.Passed, SendCheck.check(tap(arrow), screen.snapshot(), task))
     }
+
+    @Test
+    fun aTapAtOnTheUnlabelledArrowBesideAMessageFieldIsChecked() {
+        val screen = TestScreen()
+        screen.add(1800, null, editable = true, hint = "Message", text = "I'm late", right = 850)
+        screen.add(1800, null, className = "android.widget.ImageButton", left = 850)
+        val near = screen.add(1000, null, className = "android.widget.ImageButton", left = 850)
+
+        assertTrue(SendCheck.applies(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(900, 1850)), screen.snapshot()))
+        assertFalse(SendCheck.applies(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(900, 1050)), screen.snapshot()))
+        assertFalse(SendCheck.applies(tap(near), screen.snapshot()))
+    }
 }

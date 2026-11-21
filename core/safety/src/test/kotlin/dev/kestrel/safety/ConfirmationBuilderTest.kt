@@ -74,6 +74,21 @@ class ConfirmationBuilderTest {
     }
 
     @Test
+    fun aTapAtOnARowNamesThatRowAsATapOnItDoes() {
+        val screen = TestScreen(SelfChats.TELEGRAM)
+        val list = screen.add(300, null, className = "androidx.recyclerview.widget.RecyclerView", height = 600, clickable = false)
+        val friends = screen.add(300, "Close friends", parent = list, height = 140)
+        screen.add(310, null, parent = friends, className = "android.widget.CheckBox", checkable = true, checked = true, left = 900, height = 40)
+        screen.add(450, "Marko", parent = list, height = 140)
+        val atMarko = Proposal("tap", ActionKind.TAP_AT, Category.SENDING, point = Point(500, 500), frontAppLabel = "Telegram")
+
+        val asked = confirmation(ConfirmationBuilder.build(atMarko, screen.snapshot(), Category.SENDING, flow))
+
+        assertEquals("Send 3 photos to Marko and Close friends on Telegram? Say confirm or cancel.", asked.question)
+        assertEquals(listOf("Marko", "Close friends"), asked.recipients)
+    }
+
+    @Test
     fun aShareFlowAsksAboutTheChatOrTheDialogOnTheScreen() {
         val (marko, markoSend) = chat("Marko", "Hi")
         val (ana, anaSend) = chat("Ana", "Hi")

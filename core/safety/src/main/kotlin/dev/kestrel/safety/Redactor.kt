@@ -61,19 +61,33 @@ class Redactor(val vault: Vault) {
     }
 
     /**
-     * IBANs: a run in capitals that is written without spaces or in groups of four (the last one shorter). A country of
-     * the table takes its own length from the run's start, which must end where a group ends; any other country takes
-     * the whole run. Either passes mod 97 (review 5A-4 Minor 1).
+     * IBANs: a run that is written without spaces or in groups of four (the last one shorter). A country of the table
+     * takes its own length from the run's start, which must end where a group ends; any other country takes the longest
+     * run of whole groups that passes mod 97, so that a currency code or a year after it does not hide it (review 5A-34
+     * Minor 2). A run in small letters counts only for a country of the table (Minor 3). A run that is no IBAN leaves the
+     * search at its next character, so that it never hides an IBAN that starts inside it.
      */
-    private fun ibans(text: String): List<Hit> = IBAN.findAll(text).mapNotNull { match ->
+    private fun ibans(text: String): List<Hit> {
+        val hits = mutableListOf<Hit>()
+        var from = 0
+        while (true) {
+            val match = IBAN.find(text, from) ?: return hits
+            val hit = iban(text, match)
+            if (hit != null) hits += hit
+            from = (hit?.range?.last ?: match.range.first) + 1
+        }
+    }
+
+    private fun iban(text: String, match: MatchResult): Hit? {
         val positions = match.value.indices.filter { match.value[it].isLetterOrDigit() }.map { match.range.first + it }
-        val compact = positions.joinToString("") { text[it].toString() }
-        val length = Checksums.IBAN_LENGTHS[compact.substring(0, 2)] ?: compact.length
-        if (length > compact.length) return@mapNotNull null
-        val end = positions[length - 1]
-        if (text.getOrNull(end + 1)?.isLetterOrDigit() == true || !Checksums.iban(compact.substring(0, length))) return@mapNotNull null
-        Hit(match.range.first..end, SecretKind.IBAN)
-    }.toList()
+        val compact = positions.joinToString("") { text[it].uppercaseChar().toString() }
+        val length = Checksums.IBAN_LENGTHS[compact.substring(0, 2)]
+        // The lengths at which a group ends, longest first; outside the table, only those without small letters.
+        val ends = positions.indices.filter { it == positions.lastIndex || positions[it + 1] != positions[it] + 1 }.map { it + 1 }.reversed()
+        val tries = if (length != null) listOf(length).filter { it in ends } else ends.filter { end -> positions.take(end).none { text[it].isLowerCase() } }
+        val found = tries.firstOrNull { Checksums.iban(compact.substring(0, it)) }
+        return found?.let { Hit(match.range.first..positions[it - 1], SecretKind.IBAN) }
+    }
 
     private fun jmbgs(text: String): List<Hit> =
         THIRTEEN.findAll(text).filter { Checksums.jmbg(it.value) }.map { Hit(it.range, SecretKind.JMBG) }.toList()
@@ -154,7 +168,7 @@ class Redactor(val vault: Vault) {
         val CODE = Regex("(?<![0-9A-Za-z])[0-9]{1,8}(?:$GAP[0-9]{1,8}){0,2}(?![0-9A-Za-z])")
         val DIGIT_RUN = Regex("[0-9](?:$GAP?[0-9]){12,}")
         val THIRTEEN = Regex("(?<![0-9])[0-9]{13}(?![0-9])")
-        val IBAN = Regex("(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?:$SPACE[A-Z0-9]{4}){2,8}(?:$SPACE[A-Z0-9]{1,3})?)(?![A-Za-z0-9])")
+        val IBAN = Regex("(?<![A-Za-z0-9])[A-Za-z]{2}[0-9]{2}(?:[A-Za-z0-9]{11,30}|(?:$SPACE[A-Za-z0-9]{4}){2,8}(?:$SPACE[A-Za-z0-9]{1,3})?)(?![A-Za-z0-9])")
         val LONG_RUN = Regex("(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])")
         val TOKEN_PATTERNS = listOf(
             Regex("eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"),
