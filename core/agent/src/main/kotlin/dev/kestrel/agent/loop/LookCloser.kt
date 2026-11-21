@@ -8,7 +8,6 @@ import dev.kestrel.agent.port.Capture
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.commands.text.Normalizer
-import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSignature
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -51,7 +50,7 @@ internal class LookCloser(private val run: TaskRun) {
     // overlap tree text are dropped, and only lines with a mean score of at least 0.8 are kept. Null: no OCR files.
     private suspend fun ocr(call: AgentCall.LookCloser, target: TableEntry?): Done? {
         val snapshot = run.fresh()
-        if (!capturable(snapshot)) return null
+        if (!run.capturable(snapshot)) return null
         val lines = withCapture { capture -> read(capture, snapshot, target) } ?: return null
         val kept = lines.filter { it.score >= MIN_SCORE && !overlapsText(it, snapshot) }
         return Done(
@@ -67,7 +66,7 @@ internal class LookCloser(private val run: TaskRun) {
     private suspend fun screenshot(call: AgentCall.LookCloser, target: TableEntry?): Done? {
         val asked = run.fresh()
         val front = ScreenTree.frontWindow(asked)?.packageName ?: return null
-        if (!run.currentModel.takesImages || !capturable(asked)) return null
+        if (!run.currentModel.takesImages || !run.capturable(asked)) return null
         val provider = run.ports.model.model
         if (!run.recalled(false) { run.ports.memory.screenshotApproved(front, provider.providerId) }) {
             val app = run.label(front) ?: front.substringAfterLast('.')
@@ -84,7 +83,7 @@ internal class LookCloser(private val run: TaskRun) {
         run.gate()
         val now = run.fresh()
         val same = ScreenTree.frontWindow(now)?.packageName == front && ScreenSignature.of(now).sameScreen(ScreenSignature.of(asked))
-        if (!same || !capturable(now)) {
+        if (!same || !run.capturable(now)) {
             return Done(call.tool, text = "Result: $CHANGED", summary = "Step ${run.replies}: look_closer took no screenshot; the screen changed.",
                 last = "look_closer took no screenshot; the screen changed", after = now, progress = false)
         }
@@ -185,13 +184,6 @@ internal class LookCloser(private val run: TaskRun) {
     }
 
     private fun badges(): List<Badge> = run.observation.table.entries.map { Badge(it.number, it.bounds) }
-
-    // Never an agent-free app or a Play services window (D16, D20); the eyes refuse the recent-apps and home screens.
-    private fun capturable(snapshot: ScreenSnapshot): Boolean {
-        if (snapshot.windows.any { it.packageName == AgentFreeApps.PLAY_SERVICES }) return false
-        val front = ScreenTree.frontWindow(snapshot)?.packageName ?: return false
-        return !run.settings.agentFree.isAgentFree(front)
-    }
 
     override fun toString(): String = "LookCloser(screens=${calls.size})"
 

@@ -13,9 +13,12 @@ import dev.kestrel.commands.text.NamePick
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Pick
 import dev.kestrel.safety.ActionKind
+import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
 import dev.kestrel.safety.Decision
+import dev.kestrel.safety.HandOver
+import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.LinkCheck
 import dev.kestrel.safety.LinkVerdict
 import dev.kestrel.safety.Placeholders
@@ -72,17 +75,20 @@ internal class ScreenSteps(private val run: TaskRun) {
 
     // After the yes (D14): the card has gone; the screen is read again, and the whole safety check runs on it again. Only
     // the same question on the fresh screen (the same recipients, app, content and target, also the element under a
-    // point and the OCR lines in it) lets the press run; a block that only test mode made ends the task.
+    // point) lets the press run; a block that only test mode made ends the task. A tap on an OCR line also needs its row
+    // to be the confirmed one ([pointChecked]).
     private suspend fun afterYes(call: AgentCall, entry: TableEntry?, proposal: Proposal, yes: Confirmation, category: Category, covered: Boolean): Done {
-        val fresh = run.fresh()
-        val again = SafetyCheck.assess(proposal, fresh, run.safety, run.settings.safety, run.settings.environment)
-        val decision = again.decision
-        if (decision is Decision.Block && again.beforeTestMode !is Decision.Block) throw Ended(EndReason.TEST_MODE, detail = decision.reason)
-        if (decision !is Decision.Confirm || !decision.confirmation.sameAs(yes) || (entry != null && !entry.ocr && !fits(entry, fresh)) ||
-            (entry != null && entry.ocr && !sameLines(entry, yes, fresh))
-        ) {
-            run.forgetConfirmedFlow()
-            return Done(call.tool, Outcome.CheckFailed(CHANGED_AFTER), entry, after = fresh)
+        var fresh = run.fresh()
+        if (!confirmedOn(fresh, proposal, yes, entry)) return changedAfter(call, entry, fresh)
+        if (entry != null && entry.ocr) {
+            when (val point = pointChecked(entry, proposal, yes, fresh)) {
+                is PointCheck.Press -> fresh = point.screen
+                is PointCheck.Changed -> return changedAfter(call, entry, point.screen)
+                is PointCheck.Owner -> {
+                    run.forgetConfirmedFlow()
+                    return run.handOver(point.handOver, call.tool)
+                }
+            }
         }
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
         val flow = run.safety.shareFlow
@@ -105,24 +111,85 @@ internal class ScreenSteps(private val run: TaskRun) {
         return done
     }
 
-    // A point has no key of its own, and rows without text share their view ID, so a list that moved under the point can
-    // keep the key and bounds of the element there (D14, D20). OCR reads that element again after the yes, and every OCR
-    // line that the observation showed in it must still be there, with the same text at the same place. A capture or an
-    // OCR pass that fails counts as a change.
-    private suspend fun sameLines(entry: TableEntry, yes: Confirmation, fresh: ScreenSnapshot): Boolean {
-        val area = yes.targetBounds ?: fresh.windows.firstOrNull { it.id == entry.windowId }?.bounds ?: return false
-        val shown = run.observation.table.entries.filter { it.ocr && holdsCentre(area, it.bounds) }
-        val capture = run.ports.eyes.capture() as? Capture.Captured ?: return false
-        val exclude = fresh.elements.filter { it.password || it.dataSensitive }.map { it.bounds }
-        val read = capture.image.use { run.ports.eyes.read(capture, listOf(area), exclude) } ?: return false
-        return shown.all { line ->
-            val slack = maxOf(1, line.bounds.height / 2)
-            read.any {
-                it.text.trim() == line.label?.trim() &&
-                    abs(it.bounds.centerX - line.bounds.centerX) <= slack && abs(it.bounds.centerY - line.bounds.centerY) <= slack
-            }
+    // The whole safety check asks the same question on [screen], and a tree element still shows what the observation showed.
+    private fun confirmedOn(screen: ScreenSnapshot, proposal: Proposal, yes: Confirmation, entry: TableEntry?): Boolean {
+        val again = SafetyCheck.assess(proposal, screen, run.safety, run.settings.safety, run.settings.environment)
+        val decision = again.decision
+        if (decision is Decision.Block && again.beforeTestMode !is Decision.Block) throw Ended(EndReason.TEST_MODE, detail = decision.reason)
+        return decision is Decision.Confirm && decision.confirmation.sameAs(yes) && (entry == null || entry.ocr || fits(entry, screen))
+    }
+
+    private fun changedAfter(call: AgentCall, entry: TableEntry?, screen: ScreenSnapshot): Done {
+        run.forgetConfirmedFlow()
+        return Done(call.tool, Outcome.CheckFailed(CHANGED_AFTER), entry, after = screen)
+    }
+
+    private sealed interface PointCheck {
+        class Press(val screen: ScreenSnapshot) : PointCheck
+        class Changed(val screen: ScreenSnapshot) : PointCheck
+        class Owner(val handOver: HandOver) : PointCheck
+    }
+
+    // A point has no key of its own, and list rows share their view IDs, so a list that moved under the point can keep
+    // the key and bounds of the element there, also of a row's own "Delete" control (D14, D20). So the press needs its whole
+    // row: the band of the tapped line, as wide as the point's window and one line's height above and below it. Rows that
+    // look alike, a front app that is agent-free and a Play services window hand the press to the owner, because no
+    // screenshot may or can tell the rows apart (D15, D16, D20). Otherwise OCR reads the band again, and every line that
+    // the observation showed in it must still be there, with the same text at the same place; then the screen is read
+    // once more, and the window and the element under the point must be as before, so that nothing came over the point
+    // during the OCR. A capture or an OCR pass that fails counts as a change.
+    private suspend fun pointChecked(entry: TableEntry, proposal: Proposal, yes: Confirmation, before: ScreenSnapshot): PointCheck {
+        val x = entry.bounds.centerX
+        val y = entry.bounds.centerY
+        val window = windowAt(before, x, y) ?: return PointCheck.Changed(before)
+        if (!run.capturable(before)) {
+            val playServices = before.windows.any { it.packageName == AgentFreeApps.PLAY_SERVICES }
+            return PointCheck.Owner(if (playServices) HandOver.of(HandOverKind.PLAY_SERVICES) else HandOver(HandOverKind.RECIPIENT, PRESS_YOURSELF))
+        }
+        val margin = entry.bounds.height
+        val band = IntRect(window.bounds.left, entry.bounds.top - margin, window.bounds.right, entry.bounds.bottom + margin)
+            .intersect(window.bounds) ?: return PointCheck.Changed(before)
+        val lines = run.observation.table.entries.filter { it.windowId == entry.windowId && !it.label.isNullOrBlank() && holdsCentre(band, it.bounds) }
+        if (looksAlike(entry, lines)) return PointCheck.Owner(HandOver(HandOverKind.RECIPIENT, PRESS_YOURSELF))
+        if (!lines.filter { !it.ocr }.all { stillShown(it, before) }) return PointCheck.Changed(before)
+        val capture = run.ports.eyes.capture() as? Capture.Captured ?: return PointCheck.Changed(before)
+        val exclude = before.elements.filter { it.password || it.dataSensitive }.map { it.bounds }
+        val read = capture.image.use { run.ports.eyes.read(capture, listOf(band), exclude) } ?: return PointCheck.Changed(before)
+        val same = lines.filter { it.ocr }.all { line -> read.any { it.text.trim() == line.label?.trim() && near(it.bounds, line.bounds, 0, 0) } }
+        val now = run.fresh()
+        if (!same) return PointCheck.Changed(now)
+        val sameWindow = windowAt(now, x, y)?.let { it.id == window.id && it.bounds == window.bounds } == true
+        if (!sameWindow || !confirmedOn(now, proposal, yes, entry) || !lines.filter { !it.ocr }.all { stillShown(it, now) }) return PointCheck.Changed(now)
+        return PointCheck.Press(now)
+    }
+
+    // Another line with the tapped line's text whose row, moved onto the tapped one, shows every line of the band with the
+    // same text at the same place, such as a "Delete" in every row of identical rows: no OCR pass can tell them apart.
+    private fun looksAlike(entry: TableEntry, lines: List<TableEntry>): Boolean {
+        val entries = run.observation.table.entries
+        return entries.any { other ->
+            val dx = other.bounds.centerX - entry.bounds.centerX
+            val dy = other.bounds.centerY - entry.bounds.centerY
+            other !== entry && other.windowId == entry.windowId && other.label?.trim() == entry.label?.trim() && !near(other.bounds, entry.bounds, 0, 0) &&
+                lines.all { line -> entries.any { it.label?.trim() == line.label?.trim() && near(it.bounds, line.bounds, dx, dy) } }
         }
     }
+
+    // A tree line of the band: the same element at the same place.
+    private fun stillShown(line: TableEntry, screen: ScreenSnapshot): Boolean {
+        val element = line.key?.let(screen::element) ?: return false
+        return fits(line, screen) && near(element.bounds, line.bounds, 0, 0)
+    }
+
+    // [bounds] lies at [shown] moved by ([dx], [dy]), within half of [shown]'s height.
+    private fun near(bounds: IntRect, shown: IntRect, dx: Int, dy: Int): Boolean {
+        val slack = maxOf(1, shown.height / 2)
+        return abs(bounds.centerX - shown.centerX - dx) <= slack && abs(bounds.centerY - shown.centerY - dy) <= slack
+    }
+
+    // The highest window that holds the point, as Android delivers a tap there.
+    private fun windowAt(screen: ScreenSnapshot, x: Int, y: Int) =
+        screen.windows.filter { holdsCentre(it.bounds, IntRect(x, y, x + 1, y + 1)) }.maxByOrNull { it.layer }
 
     private fun holdsCentre(area: IntRect, bounds: IntRect): Boolean =
         bounds.centerX >= area.left && bounds.centerX < area.right && bounds.centerY >= area.top && bounds.centerY < area.bottom
@@ -340,6 +407,7 @@ internal class ScreenSteps(private val run: TaskRun) {
     companion object {
         const val CHANGED_BEFORE = "the screen changed before the action; nothing was done"
         const val CHANGED_AFTER = "the screen changed after the confirmation; nothing was sent"
+        const val PRESS_YOURSELF = "I can't check which row this press lands on. Please check it and press it yourself, then say 'Kestrel, continue'."
         const val UNCERTAIN = "The tap may not have worked; check the screen before trying again."
         const val PAUSED = "The task was paused before this action, so nothing was done."
         const val EMPTY_PAGE = "the page shows no content to Kestrel"

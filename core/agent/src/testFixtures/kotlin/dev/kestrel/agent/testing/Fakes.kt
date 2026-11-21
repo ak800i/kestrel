@@ -297,12 +297,17 @@ class FakeClock(var step: Long = 0) : AgentClock {
     override fun toString(): String = "FakeClock(elapsed=$elapsed)"
 }
 
-/** Kestrel's eyes in the tests: a capture of [width] × [height], the given OCR lines, and a fixed JPEG. */
+/**
+ * Kestrel's eyes in the tests: a capture of [width] × [height], the given OCR lines, and a fixed JPEG. [captures] counts
+ * the captures; [onRead] runs on every OCR pass, before its lines: a test may change the screen here.
+ */
 class FakeEyes(var lines: List<OcrLine>? = emptyList(), var capture: Capture? = null) : EyesPort {
     var closed = 0
+    var captures = 0
+    var onRead: suspend () -> Unit = {}
     val encoded = mutableListOf<Pair<List<IntRect>, List<Badge>>>()
 
-    override suspend fun capture(): Capture = capture ?: Capture.Captured(
+    override suspend fun capture(): Capture = (capture ?: Capture.Captured(
         image = object : Capture.Image {
             override val width = 1080
             override val height = 2400
@@ -315,9 +320,12 @@ class FakeEyes(var lines: List<OcrLine>? = emptyList(), var capture: Capture? = 
         originY = 0,
         appPixels = listOf(IntRect(0, 0, 1080, 2400)),
         blocked = emptyList(),
-    )
+    )).also { captures++ }
 
-    override suspend fun read(capture: Capture.Captured, regions: List<IntRect>, exclude: List<IntRect>): List<OcrLine>? = lines
+    override suspend fun read(capture: Capture.Captured, regions: List<IntRect>, exclude: List<IntRect>): List<OcrLine>? {
+        onRead()
+        return lines
+    }
 
     override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>): Part.Image {
         encoded += masks to marks

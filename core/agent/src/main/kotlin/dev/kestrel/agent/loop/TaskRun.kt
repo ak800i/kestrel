@@ -42,6 +42,7 @@ import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.safety.ActionKind
+import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Assessment
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
@@ -426,6 +427,16 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     /** The front app's launcher label, which the observation and the safety check name (D8, D13). */
     suspend fun label(packageName: String?): String? = packageName?.let { ports.apps.label(it) }
+
+    /**
+     * Whether Kestrel may capture [snapshot] (D16, D20): never while a Play services window is on screen or an agent-free
+     * app is in front. The eyes refuse the recent-apps and home screens themselves.
+     */
+    fun capturable(snapshot: ScreenSnapshot): Boolean {
+        if (snapshot.windows.any { it.packageName == AgentFreeApps.PLAY_SERVICES }) return false
+        val front = ScreenTree.frontWindow(snapshot)?.packageName ?: return false
+        return !settings.agentFree.isAgentFree(front)
+    }
 
     /** The model that the task uses now (D7), whose `takesImages` decides `look_closer`'s screenshot (D20). */
     val currentModel: RoleModel get() = escalation.current

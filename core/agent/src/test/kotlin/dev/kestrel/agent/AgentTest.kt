@@ -18,6 +18,9 @@ import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowKind
+import dev.kestrel.screen.model.WindowSummary
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -222,6 +225,103 @@ class AgentTest {
         val still = deleteInSharedRows(arrives = false)
         still.run("Delete the note Plans")
         assertEquals(listOf(ScreenAction.TapAt(900, 510)), still.screen.actions.filterIsInstance<ScreenAction.TapAt>())
+    }
+
+    // Rows that share one view ID, each with a clickable "delete" control whose "Delete" only OCR reads, as rows with
+    // action buttons show them: the point lands on the control, and the row's title lies outside it.
+    private fun rowsWithControls() = ScreenBuilder.screen("com.example.notes", "Notes") {
+        text("Inbox", 100, viewId = "toolbar_title")
+        val list = list(null, 300, 880, viewId = "notes")
+        for (row in 0..3) {
+            val top = 320 + row * 140
+            val note = button(null, top, viewId = "note", parent = list, className = "android.view.ViewGroup")
+            button(null, top, viewId = "delete", parent = note, className = "android.widget.ImageButton", left = 800, right = 1000)
+        }
+    }
+
+    // The script taps the second row's "Delete" at (900, 510) after look_closer; [question] runs while the owner is asked.
+    private fun deleteInRows(lines: List<OcrLine>, screen: ScreenSnapshot = rowsWithControls(), question: Harness.() -> Unit = {}): Harness =
+        Harness(screen, listOf(
+            call("look_closer", null, null, null, "reason" to "the rows have no text"),
+            call("tap", "Delete", "OCR", null, "reason" to "delete the note", "category" to "deleting"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        )).apply {
+            eyes.lines = lines
+            owner.confirms += ConfirmEnd.YES
+            owner.onConfirm = { question() }
+        }
+
+    @Test
+    fun aTapAtAPointOnARowsControlIsRefusedAfterTheYesWhenARowArrivesAbove() = runTest {
+        val arrived = deleteInRows(rowLines("Groceries", "Plans", "Trip", "Gifts")) {
+            eyes.lines = rowLines("New note", "Groceries", "Plans", "Trip")
+        }
+
+        arrived.run("Delete the note Plans")
+
+        assertEquals(1, arrived.owner.confirmations.size)
+        assertTrue(arrived.screen.actions.none { it is ScreenAction.TapAt })
+        assertTrue(arrived.lastRequestText().contains(ScreenSteps.CHANGED_AFTER))
+
+        val still = deleteInRows(rowLines("Groceries", "Plans", "Trip", "Gifts"))
+        still.run("Delete the note Plans")
+        assertEquals(listOf(ScreenAction.TapAt(900, 510)), still.screen.actions.filterIsInstance<ScreenAction.TapAt>())
+        assertEquals(2, still.eyes.captures)
+    }
+
+    @Test
+    fun aTapAtAPointInRowsThatLookAlikeIsHandedToTheOwner() = runTest {
+        val harness = deleteInRows(rowLines("Plans", "Plans", "Plans", "Plans"))
+
+        val report = harness.run("Delete the note Plans")
+
+        assertEquals(EndReason.CANCELLED, report.end)
+        assertEquals(listOf(HandOverKind.RECIPIENT), harness.owner.handOvers.map { it.kind })
+        assertTrue(harness.screen.actions.none { it is ScreenAction.TapAt })
+        assertEquals(1, harness.eyes.captures)
+    }
+
+    @Test
+    fun aTapAtAPointIsHandedToTheOwnerWithoutAScreenshotWhenAnAgentFreeAppOrPlayServicesIsOnScreen() = runTest {
+        val rows = rowsWithControls()
+        val notes = rows.windows.single()
+        val split = rows.copy(windows = listOf(
+            notes.copy(bounds = IntRect(0, 0, 1080, 1400), active = false, focused = false),
+            WindowSummary(2, WindowKind.APPLICATION, "com.x8bit.bitwarden", null, IntRect(0, 1400, 1080, 2400), active = true, focused = true),
+        ))
+        val autofill = rows.copy(windows = rows.windows + WindowSummary(3, WindowKind.APPLICATION, AgentFreeApps.PLAY_SERVICES, null, IntRect(0, 2000, 1080, 2300), layer = 1))
+
+        for ((shown, kind) in listOf(split to HandOverKind.RECIPIENT, autofill to HandOverKind.PLAY_SERVICES)) {
+            val harness = deleteInRows(rowLines("Groceries", "Plans", "Trip", "Gifts")) { screen.current = shown }
+
+            assertEquals(EndReason.CANCELLED, harness.run("Delete the note Plans").end)
+
+            assertEquals(listOf(kind), harness.owner.handOvers.map { it.kind })
+            assertTrue(harness.screen.actions.none { it is ScreenAction.TapAt })
+            assertEquals(1, harness.eyes.captures)
+        }
+    }
+
+    @Test
+    fun aDialogThatComesOverThePointDuringTheOcrStopsThePress() = runTest {
+        val rows = rowsWithControls()
+        val dialog = ScreenBuilder("com.example.notes", "Delete all?", windowId = 5).apply {
+            text("Delete all notes?", 400)
+            button("Delete all", 700, left = 600, right = 980)
+        }.build()
+        val covered = rows.copy(
+            windows = rows.windows + dialog.windows.single().copy(bounds = IntRect(100, 300, 980, 900), layer = 1),
+            elements = rows.elements + dialog.elements,
+        )
+        val harness = deleteInRows(rowLines("Groceries", "Plans", "Trip", "Gifts")) {
+            eyes.onRead = { screen.current = covered }
+        }
+
+        harness.run("Delete the note Plans")
+
+        assertEquals(1, harness.owner.confirmations.size)
+        assertTrue(harness.screen.actions.none { it is ScreenAction.TapAt })
+        assertTrue(harness.lastRequestText().contains(ScreenSteps.CHANGED_AFTER))
     }
 
     @Test
