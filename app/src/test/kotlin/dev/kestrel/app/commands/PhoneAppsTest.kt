@@ -6,38 +6,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/** "Which one?" after "open <app>"; the matcher itself is `NamePick` of `:core:commands`, tested in `NamePickTest`. */
 class PhoneAppsTest {
-    private class App(val label: String, val work: Boolean)
-
-    private val chrome = App("Chrome", work = false)
-    private val workChrome = App("Chrome", work = true)
-    private val gmail = App("Gmail", work = false)
-    private val clock = App("Clock", work = false)
-    private val photos = App("Photos", work = false)
-    private val editor = App("Photo Editor", work = false)
-    private val apps = listOf(workChrome, chrome, gmail, clock, photos, editor, App("Phone", work = false))
-
-    private fun pick(spoken: String, items: List<App> = apps) = pick(spoken, items, { it.label }, { !it.work })
-
     @Test
-    fun theOwnersAppStandsForTheSameAppInTheWorkProfile() {
-        assertEquals(Pick.One(gmail), pick("Gmail"))
-        assertEquals(Pick.One(chrome), pick("chrome"))
-        assertEquals(Pick.One(workChrome), pick("Chrome", listOf(workChrome, gmail)))
-        assertEquals(Pick.None, pick("Quorbex Zyntal"))
-    }
-
-    @Test
-    fun twoAppsOfTheOwnerWithTheSameNameAreBothOffered() {
-        val otherPhone = App("Phone", work = false)
-        val phone = App("Phone", work = false)
-
-        assertEquals(Pick.Several(listOf(phone, otherPhone)), pick("Phone", listOf(phone, otherPhone, gmail)))
-    }
-
-    @Test
-    fun closeNamesAreOfferedAndAnAnswerIsANumberOrOneOfTheNames() = runTest {
-        assertEquals(Pick.Several(listOf(photos, editor)), pick("Photo"))
+    fun anAnswerIsANumberOrOneOfTheNames() = runTest {
         val names = listOf("Photos", "Photo Editor")
 
         assertEquals(Answer.Chosen(1), askAmong(Answers("2"), PhoneCommandTexts.whichOne(names), names))

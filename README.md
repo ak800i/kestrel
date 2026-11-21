@@ -117,6 +117,8 @@ The session's measurements, with the targets of the design spec (section 5.3):
 | The keyword spotter's hits and Kestrel's reactions in an hour of ordinary room audio | none yet | on 2026-11-17: 127 hits of the three keywords, and 0 tasks, 0 waits, 0 replies and 0 changes of mode |
 | Piper's and Kokoro's speed (real-time factor) | below 1, so that Kestrel speaks without gaps | on 2026-11-17: Piper 0.17; Kokoro's fp32 model 1.81, too slow |
 
+<!-- sub-project 5C: measurements (a table of its own below this line, because a Markdown table ends at this comment) -->
+
 ### The automatic A71 run
 
 Since plan 4D, the three A71 scripts check the device by themselves and need you for about 8 minutes with your hands: one touch of your finger, after which you stay by the A71 while Kestrel counts down to a call three more times (`a71-commands.ps1`), your Galaxy Buds next to the speaker (`a71-session.ps1`), and your two Copilot approvals with your GitHub account (`a71-providers.ps1`). `docs\a71-owner-guide.md` says on one page what you do and in which order. The scripts read your settings from `corpus\owner\a71-config.json`, which git ignores: `callNumber`, a number that is fine to call; `testContacts`, `true` when you allow the two test contacts "Ana Test" and "Ana Other" in the local account `kestrel-test`, which the session deletes again; `speakerTargetDb`, the level at which the phone should hear this computer's clips (-26 when it is missing); and `pin`, the A71's test PIN in quotes, which the scripts type only when Android says clearly that the A71's PIN pad shows, never again in a run after it did not unlock the A71, and never write anywhere. On the A71 Kestrel never presses Call while you are away. They need the clips of `scripts\make-corpus.ps1`, also with `-List checks`, and the track of `scripts\make-room-sound.ps1`. The A71 keeps its Copilot profile afterwards.
@@ -150,6 +152,9 @@ The settings app also has these pages:
 - **Voice and speech:** the voice, Piper or Kokoro (when `push-models.ps1 -Kokoro` copied it), and the speed from 0.8 to 1.4. *Try it* speaks a sentence with the choice on the page; while Kestrel listens with that voice and speed, its voice session speaks the sentence, so that no second copy of the voice is loaded. A new voice or speed counts from the next time that Kestrel turns on; when Kokoro does not load, for example because its files are missing, Piper speaks, and the page says so.
 - **Instant commands:** "Require verbs", which makes a name alone, such as "Save", do nothing, so that only "tap Save" taps it, and whether numbers go on all elements or only on those without a name; below them, the list of what you can say, which "What can I say?" opens. Each choice counts from the next command.
 - **About:** Kestrel's version, the Android version, whether each speech model is ready (the optional Kokoro voice may be "not on the phone"), and the licence texts.
+
+<!-- sub-project 5B -->
+<!-- sub-project 5C -->
 
 ## Instant commands
 

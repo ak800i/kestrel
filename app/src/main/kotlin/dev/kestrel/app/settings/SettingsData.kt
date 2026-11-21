@@ -83,6 +83,10 @@ interface SettingsData {
 
     /** What the page "Providers and profiles" reads and changes, or null for a fake without providers. */
     val providers: ProviderData? get() = null
+
+    // sub-project 5B: safety and memory
+
+    // sub-project 5C: screenshot approvals
 }
 
 /**
@@ -144,6 +148,10 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override val providerReady: Flow<Boolean> get() = graph.providers.providerReady
 
     override val providers: ProviderData by lazy { StoredProviderData(graph.providers) }
+
+    // sub-project 5B: stored safety and memory
+
+    // sub-project 5C: stored screenshot approvals
 
     // installedAt's first read is a binder call, so the page's collector does not make it on the main thread.
     override val kokoroSlow: Flow<Float?> =

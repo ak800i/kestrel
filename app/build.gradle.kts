@@ -25,6 +25,8 @@ dependencies {
     implementation(project(":core:safety"))
     implementation(project(":core:screen"))
     implementation(project(":core:voice"))
+    // sub-project 5B: dependencies
+    // sub-project 5C: dependencies
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)

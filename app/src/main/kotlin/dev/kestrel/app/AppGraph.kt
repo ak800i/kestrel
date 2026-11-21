@@ -111,6 +111,10 @@ object SettingKeys {
 
     /** Each profile's credits and tokens of this month and the one before (design spec, section 10.6). */
     val SPENDING = SettingKey("spending", Spending.serializer(), Spending())
+
+    // sub-project 5B: keys
+
+    // sub-project 5C: keys
 }
 
 /**
@@ -222,6 +226,10 @@ class AppGraph(context: Context) {
     }
 
     // Plan 4C: provider graph
+
+    // sub-project 5B: agent
+
+    // sub-project 5C: eyes
 
     /**
      * Kestrel's speech model files, which scripts\push-models.ps1 copies into Kestrel's external files folder (design

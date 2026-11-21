@@ -538,6 +538,10 @@ class SettingsAppTest {
         override val commandOptions = MutableStateFlow(CommandOptions())
         override val version = "9.9.9 (99)"
         override var providers: ProviderData? = null
+
+        // sub-project 5B: fake safety and memory
+
+        // sub-project 5C: fake screenshot approvals
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
         var deletions = 0

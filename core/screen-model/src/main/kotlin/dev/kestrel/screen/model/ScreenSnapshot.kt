@@ -16,7 +16,11 @@ data class WindowSummary(
     val layer: Int = 0,
     val active: Boolean = false,
     val focused: Boolean = false,
-)
+) {
+    /** Counts and lengths only: a window's title can name a chat (spec 13.5). */
+    override fun toString(): String =
+        "WindowSummary(id=$id, kind=$kind, packageLength=${packageName?.length ?: 0}, titleLength=${title?.length ?: 0}, layer=$layer, active=$active)"
+}
 
 /** The standard accessibility actions that an element offers (design spec, sections 9.2 and 9.3). */
 @Serializable
@@ -35,6 +39,10 @@ enum class ElementAction {
     COLLAPSE,
     DISMISS,
 }
+
+/** The axis along which a scrollable element scrolls, when Kestrel knows it (design D1 and D8 of sub-project 5). */
+@Serializable
+enum class ScrollAxis { VERTICAL, HORIZONTAL }
 
 /**
  * One element of a [ScreenSnapshot] (design spec, section 9.2). Its [key] is built from the element's package, view
@@ -83,7 +91,16 @@ data class ScreenElement(
     val dataSensitive: Boolean = false,
     /** A slider, which "increment" and "decrement" move (see `NodeData.slider`). */
     val slider: Boolean = false,
+    /** The element's tooltip, the last of the label's sources (design D8 of sub-project 5). */
+    val tooltip: String? = null,
+    /** The axis of a scrollable element, or null when Kestrel cannot tell it (design D1 and D8 of sub-project 5). */
+    val scrollAxis: ScrollAxis? = null,
 ) {
+    /** Counts and lengths only, never screen text (spec 13.5): an element can carry a code or a message. */
+    override fun toString(): String =
+        "ScreenElement(window=$windowId, keyLength=${key.length}, classLength=${className?.length ?: 0}, textLength=${text?.length ?: 0}, " +
+            "labelLength=${label?.length ?: 0}, actionable=$isActionable)"
+
     /** Whether the owner can act on the element directly. Numbers go on these elements (design spec, section 9.4). */
     val isActionable: Boolean get() = enabled && (clickable || longClickable || editable || checkable || slider)
 }
@@ -95,6 +112,9 @@ data class ScreenSnapshot(
     val windows: List<WindowSummary>,
     val elements: List<ScreenElement>,
 ) {
+    /** Counts only (spec 13.5). */
+    override fun toString(): String = "ScreenSnapshot(windows=${windows.size}, elements=${elements.size})"
+
     fun element(key: String): ScreenElement? = elements.firstOrNull { it.key == key }
 
     /**

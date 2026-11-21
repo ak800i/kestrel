@@ -216,6 +216,8 @@
 #                                           never empties the clipboard
 #   clipboard -Clear                        empties the clipboard, only on the emulator kestrel-api37: it is refused on
 #                                           every other device, so that it never empties the owner's clipboard
+# sub-project 5B: agent hooks
+# sub-project 5C: live hooks
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -228,7 +230,10 @@ param(
         'voice-state', 'voice-clip', 'voice-call-commands', 'voice-choice', 'voice-synth', 'voice-record', 'voice-eval',
         'voice-counts', 'voice-times', 'voice-route', 'voice-spotter', 'voice-task', 'voice-echo', 'location',
         'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
-        'owner-options', 'notices', 'check-notice', 'voice-expect', 'screen-has', 'field', 'clipboard')][string]$Command,
+        'owner-options', 'notices', 'check-notice', 'voice-expect', 'screen-has', 'field',
+        # sub-project 5B: agent hook names
+        # sub-project 5C: live hook names
+        'clipboard')][string]$Command,
     [string]$Key,
     [int]$Number,
     [int]$X = -1,
@@ -284,6 +289,8 @@ param(
     [string]$State,
     [string]$Template,
     [switch]$Save,
+    # sub-project 5B: agent parameters
+    # sub-project 5C: live parameters
     [switch]$Restore
 )
 $ErrorActionPreference = 'Stop'
@@ -378,6 +385,8 @@ if ($State) { $extras += "--es state $(ConvertTo-ShellText $State)" }
 if ($Template) { $extras += "--es template $(ConvertTo-ShellText $Template)" }
 if ($Save) { $extras += '--ez save true' }
 if ($Restore) { $extras += '--ez restore true' }
+# sub-project 5B: agent extras
+# sub-project 5C: live extras
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

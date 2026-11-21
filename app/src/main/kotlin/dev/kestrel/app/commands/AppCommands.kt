@@ -14,7 +14,8 @@ import dev.kestrel.commands.SpokenNumbers
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.MatchCandidate
 import dev.kestrel.commands.text.MatchDecision
-import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.commands.text.NamePick
+import dev.kestrel.commands.text.Pick
 import dev.kestrel.commands.text.Strictness
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
@@ -48,7 +49,7 @@ internal class AppCommands(environment: CommandEnvironment) {
             work == null -> apps(launcher, owner, isWork = false)
             else -> apps(launcher, owner, isWork = false) + apps(launcher, work, isWork = true)
         }
-        val app = when (val picked = pick(command.name, apps, { it.label }, { !it.work })) {
+        val app = when (val picked = NamePick.pick(command.name, apps, { it.label }, { !it.work })) {
             is Pick.One -> picked.item
             is Pick.Several -> {
                 val names = picked.items.map { it.label }
@@ -91,37 +92,6 @@ internal class AppCommands(environment: CommandEnvironment) {
         // LauncherApps.getLauncherUserInfo and its user types arrived with Android 15.
         const val WORK_PROFILE_API = 35
         const val MANAGED_PROFILE = "android.os.usertype.profile.MANAGED"
-    }
-}
-
-/** What the owner named: one item, several close ones for "Which one?", or none. */
-internal sealed interface Pick<out T> {
-    data class One<T>(val item: T) : Pick<T>
-
-    data class Several<T>(val items: List<T>) : Pick<T>
-
-    data object None : Pick<Nothing>
-}
-
-/** How many names "Which one?" says aloud at most. */
-internal const val MAX_SPOKEN_CHOICES = 4
-
-/**
- * The item whose [name] the owner said in [spoken], with the matcher's normal limits (design spec, section 9.6). Among
- * items with the same name, the [preferred] ones stand for the others, as an app of the owner's profile does for the same
- * app in the work profile; two preferred items with the same name both stay, for "Which one?". A single near miss gets
- * "Which one?" too, with its one name, and only its number or its name chooses it; any other answer, "yes" among them,
- * ends the command and is passed on as a new utterance.
- */
-internal fun <T> pick(spoken: String, items: List<T>, name: (T) -> String, preferred: (T) -> Boolean): Pick<T> {
-    val distinct = items.filter { Normalizer.normalize(name(it)).isNotEmpty() }
-        .groupBy { Normalizer.normalize(name(it)) }
-        .values.flatMap { same -> same.filter(preferred).ifEmpty { same } }
-    val candidates = distinct.mapIndexed { index, item -> MatchCandidate(index.toString(), listOf(name(item))) }
-    return when (val decision = LabelMatcher.decide(spoken, candidates, Strictness.NORMAL)) {
-        is MatchDecision.Found -> Pick.One(distinct[decision.id.toInt()])
-        is MatchDecision.Ambiguous -> Pick.Several(decision.ids.take(MAX_SPOKEN_CHOICES).map { distinct[it.toInt()] })
-        MatchDecision.NotFound -> Pick.None
     }
 }
 

@@ -44,6 +44,7 @@
         </intent>
     </queries>
     <!-- Plan 3C: permissions -->
+    <!-- sub-project 5B: permissions -->
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android
          11 an app sees the other apps' launcher activities only when it declares their intent here. -->
@@ -53,6 +54,8 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
+    <!-- sub-project 5B: queries -->
+    <!-- sub-project 5C: queries -->
 
     <application
         android:name=".KestrelApplication"
@@ -180,5 +183,6 @@
                 android:name="androidx.emoji2.text.EmojiCompatInitializer"
                 tools:node="remove" />
         </provider>
+        <!-- sub-project 5B: components -->
     </application>
 </manifest>

@@ -165,10 +165,11 @@ Each Gradle module has one job. Most of them are plain Kotlin, so their tests ru
 |---|---|---|
 | `:app` | Wiring, Android services and the Compose settings UI | No |
 | `:core:screen` | Screen snapshots, actions and the overlays (numbers, labels, grid, feedback bar, touch watcher) | No |
+| `:core:screen-model` | The snapshot model (`ScreenSnapshot`, its elements and windows, `ScreenJson`) and the plain rules over it that the agent and the safety check share: a screen's title and its signature | Yes |
 | `:core:voice` | Audio capture, voice activity detection, keyword spotting, speech recognition and voice output, through sherpa-onnx | No |
-| `:core:commands` | The instant-command grammar, the parser, the matching of spoken words to screen elements, apps and contacts, the editing model and dictation, and the phone-number rules. The contacts themselves are read in `:app` until `:core:datatools` exists (sub-project 5) | Yes |
+| `:core:commands` | The instant-command grammar, the parser, the matching of spoken words to screen elements, apps and contacts, the editing model and dictation, and the phone-number rules. The contacts themselves are read in `:core:datatools` | Yes |
 | `:core:providers` | The generated catalog, the internal request format, the request adapters, the sign-in methods, model discovery, profiles, credentials as data and cost estimation; it uses OkHttp only through the network gateway's `Call.Factory` | Yes |
-| `:core:agent` | The agent loop, its tools, memory and routines | Yes |
+| `:core:agent` | The agent loop, its observation, its tools, memory and routines. It reaches the rest of Kestrel only through its ports (`ScreenPort`, `EyesPort`, `DataPort`, `OwnerPort`, `ModelPort`, `AppsPort`, `MemoryStore`, `TaskLog`, `AgentClock`), which `:app` and `:core:datatools` implement, so that the whole loop runs in JVM tests with a scripted model | Yes |
 | `:core:safety` | The safety check, agent-free apps, redaction and test mode | Yes |
 | `:core:privacy` | The network gateway and its allowlist, the network log, the activity log and encrypted storage, including the credential store and the loopback server for browser sign-in | No |
 | `:core:perception` | On-device OCR through ONNX Runtime | No |
@@ -192,6 +193,7 @@ flowchart TD
     SAF -->|allowed| SCR
     SAF -->|allowed| DATA[":core:datatools"]
     AGT -->|LLM request| PROV[":core:providers"]
+    AGT -->|look closer| PER[":core:perception"]
     PROV --> NET["Network gateway (:core:privacy)"] --> LLM[(LLM provider)]
     SCR -->|screen events and touches| ORC
     ORC --> TTS[Voice output]

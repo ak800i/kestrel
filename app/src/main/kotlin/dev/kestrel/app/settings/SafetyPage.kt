@@ -42,4 +42,6 @@ internal fun SafetyPage(data: SettingsData, onBack: () -> Unit) {
     }
     Text(stringResource(R.string.safety_test_mode_detail), style = MaterialTheme.typography.bodyMedium)
     Text(stringResource(R.string.safety_later), Modifier.padding(top = 16.dp), style = MaterialTheme.typography.bodyMedium)
+    // sub-project 5B: mode, test mode, agent-free apps
+    // sub-project 5C: screenshot approvals
 }

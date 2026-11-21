@@ -342,4 +342,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** What the overlays depend on: the actionable elements and where they are. Kestrel's own overlays are not part of it. */
     private fun contentOf(snapshot: ScreenSnapshot) = snapshot.elements.filter { it.isActionable }.map { it.key to it.bounds }
+
+    // sub-project 5B
+
+    // sub-project 5C
 }
