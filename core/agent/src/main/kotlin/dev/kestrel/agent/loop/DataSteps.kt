@@ -73,7 +73,7 @@ internal class DataSteps(private val run: TaskRun) {
                 null
             }
             val outcome = if (ok.lines.isEmpty()) Outcome.DataEmpty else Outcome.DataOk(ok.lines.size)
-            val notes = sharePackage?.let { run.memory.notesFor(it) }?.let { Redacted.kestrel(it) }
+            val notes = sharePackage?.let { run.recalled(null) { run.memory.notesFor(it) } }?.let { Redacted.kestrel(it) }
             return Done(call.tool, outcome, detail = detail(call), data = DataResultText.of(ok, run.redactor), after = after, extra = notes)
         }
     }

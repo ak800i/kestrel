@@ -14,7 +14,6 @@ import dev.kestrel.commands.text.Pick
 import dev.kestrel.safety.ActionKind
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
-import dev.kestrel.safety.ConfirmationBuilder
 import dev.kestrel.safety.Decision
 import dev.kestrel.safety.LinkCheck
 import dev.kestrel.safety.LinkVerdict
@@ -32,7 +31,7 @@ import java.net.URI
 /**
  * The screen tools (design D3, D10, D11, D13 and D14; D32 items 12, 27 and 29): every action on an element reads a fresh
  * snapshot, checks the element against what the observation showed, passes the safety check, and after the owner's yes
- * reads the screen again and presses only when the confirmation and test mode's check still hold.
+ * reads the screen again and presses only when the whole safety check, run again on it, asks the same question.
  */
 internal class ScreenSteps(private val run: TaskRun) {
     // Whether the last open() sent its link, which the Firefox retry needs (a pause, a refusal or a hand-over sends none).
@@ -68,14 +67,15 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
     }
 
-    // After the yes (D14): the card has gone; the screen is read again and the confirmation built again on it.
+    // After the yes (D14): the card has gone; the screen is read again, and the whole safety check runs on it again. Only
+    // the same question on the fresh screen (the same recipients, app, content and target, also the element under a
+    // point) lets the press run; a block that only test mode made ends the task.
     private suspend fun afterYes(call: AgentCall, entry: TableEntry?, proposal: Proposal, yes: Confirmation, category: Category, covered: Boolean): Done {
         val fresh = run.fresh()
-        if (!SafetyCheck.testModeAllows(proposal, fresh, run.safety, run.settings.safety, run.settings.environment)) {
-            throw Ended(EndReason.TEST_MODE, detail = TaskRun.TEST_MODE_BLOCK)
-        }
-        val again = ConfirmationBuilder.build(proposal, fresh, category, run.safety)
-        if (again !is Decision.Confirm || !again.confirmation.sameAs(yes) || (entry != null && !entry.ocr && !fits(entry, fresh))) {
+        val again = SafetyCheck.assess(proposal, fresh, run.safety, run.settings.safety, run.settings.environment)
+        val decision = again.decision
+        if (decision is Decision.Block && again.beforeTestMode !is Decision.Block) throw Ended(EndReason.TEST_MODE, detail = decision.reason)
+        if (decision !is Decision.Confirm || !decision.confirmation.sameAs(yes) || (entry != null && !entry.ocr && !fits(entry, fresh))) {
             run.forgetConfirmedFlow()
             return Done(call.tool, Outcome.CheckFailed(CHANGED_AFTER), entry, after = fresh)
         }
@@ -162,7 +162,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         val opened = done.executed && done.text == null && done.outcome !is Outcome.Failed && done.outcome !is Outcome.Refused &&
             done.after?.let { ScreenTree.frontWindow(it)?.packageName } == app.packageName
         if (!opened) return done
-        val notes = run.memory.notesFor(app.packageName) ?: return done
+        val notes = run.recalled(null) { run.memory.notesFor(app.packageName) } ?: return done
         return Done(done.tool, done.outcome, detail = done.detail, after = done.after, extra = Redacted.kestrel(notes), text = done.text, summary = done.summary, last = done.last, progress = done.progress)
     }
 

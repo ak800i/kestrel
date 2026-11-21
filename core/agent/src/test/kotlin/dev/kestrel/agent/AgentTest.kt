@@ -7,6 +7,7 @@ import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.port.Press
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
@@ -16,6 +17,7 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.SafetySettings
+import dev.kestrel.screen.model.IntRect
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -130,6 +132,104 @@ class AgentTest {
         assertFalse(send.question, send.question.contains("483920"))
         assertFalse(send.spoken, send.spoken.contains("483920"))
         assertTrue(send.question, send.question.contains("one-time code"))
+    }
+
+    @Test
+    fun aSentVaultValuePassesTheCompletionCheckByItsKind() = runTest {
+        val harness = Harness(Screens.chat("Ana Petrović", "Your verification code: 483920"), listOf(
+            call("type_text", "Type a message…", null, null, "text" to "[OTP_1]", "reason" to "send her the code", "category" to "typing_screen_text"),
+            call("tap", "Send", "Button", null, "reason" to "send it", "category" to "sending"),
+            finish("I sent Ana the code.", "[OTP_1]"),
+        ))
+        harness.screen.onTap("Send", Screens.chat("Ana Petrović", "Your verification code: 483920", "483 920"))
+        harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.YES)
+
+        val report = harness.run("Send Ana the code")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertEquals(3, harness.model.requests.size)
+        assertFalse(harness.log.entries.any { it.second.contains("483920") || it.second.contains("483 920") })
+    }
+
+    // A list without text, whose "Delete" only OCR reads (D20), at the rows' places after [shift] pixels.
+    private fun notes(shift: Int) = ScreenBuilder.screen("com.example.notes", "Notes") {
+        text("Inbox", 100, viewId = "toolbar_title")
+        val list = list(null, 300, 2200, viewId = "notes")
+        if (shift > 0) button(null, 320, viewId = "note_new", parent = list, className = "android.view.ViewGroup")
+        for (row in 0..3) button(null, 320 + shift + row * 140, viewId = "note_$row", parent = list, className = "android.view.ViewGroup")
+    }
+
+    private fun deleteByOcr(moved: Boolean): Harness = Harness(notes(0), listOf(
+        call("look_closer", null, null, null, "reason" to "the rows have no text"),
+        call("tap", "Delete", "OCR", null, "reason" to "delete the note", "category" to "deleting"),
+        call("fail", null, null, null, "reason" to "Stop."),
+    )).apply {
+        eyes.lines = listOf(OcrLine("Delete", IntRect(800, 480, 1000, 540), 0.95))
+        owner.confirms += ConfirmEnd.YES
+        if (moved) owner.onConfirm = { screen.current = notes(140) }
+    }
+
+    @Test
+    fun aTapAtAPointIsPressedAfterTheYesOnlyWhenThePointStillLandsOnTheConfirmedElement() = runTest {
+        val moved = deleteByOcr(moved = true)
+
+        moved.run("Delete the second note")
+
+        assertEquals(1, moved.owner.confirmations.size)
+        assertTrue(moved.screen.actions.none { it is ScreenAction.TapAt })
+        assertTrue(moved.lastRequestText().contains(ScreenSteps.CHANGED_AFTER))
+
+        val still = deleteByOcr(moved = false)
+        still.run("Delete the second note")
+        assertEquals(listOf(ScreenAction.TapAt(900, 510)), still.screen.actions.filterIsInstance<ScreenAction.TapAt>())
+    }
+
+    @Test
+    fun aPressThatSendsAndDeletesIsPressedOnceAfterItsYes() = runTest {
+        val chat = ScreenBuilder.screen(Screens.MESSENGER, "Kestrel fixtures") {
+            text("Ana Petrović", 100, viewId = "chat_title")
+            field("Type a message…", "I'm late", 2100, viewId = "compose")
+            button("Send and delete", 2250, viewId = "send_once", left = 700)
+        }
+        val harness = Harness(chat, listOf(
+            call("tap", "Send and delete", null, null, "reason" to "send it", "category" to "sending"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        harness.owner.confirms += ConfirmEnd.YES
+
+        harness.run("Send Ana a message that I'm late")
+
+        assertEquals(listOf("Ana Petrović"), harness.owner.confirmations.single().recipients)
+        assertEquals(1, harness.screen.actions.filterIsInstance<ScreenAction.Tap>().size)
+    }
+
+    @Test
+    fun aForwardedEmailIsAskedAsAnEmailWithTheForwardedMessage() = runTest {
+        val message = ScreenBuilder.screen(Screens.MAIL, "Gmail") {
+            text("Plan", 300)
+            text("See you at five.", 500)
+            button("Forward", 2200, viewId = "forward")
+        }
+        val compose = ScreenBuilder.screen(Screens.MAIL, "Gmail") {
+            icon("Send", 100, viewId = "send", left = 900, right = 1040)
+            field("To", "", 300, viewId = "to")
+            field("Subject", "Fwd: Plan", 700, viewId = "subject")
+            field("Compose email", "", 850, viewId = "body")
+            text("---------- Forwarded message ---------", 1100)
+        }
+        val harness = Harness(message, listOf(
+            call("tap", "Forward", null, null, "reason" to "forward it", "category" to "sending"),
+            call("type_text", "To", null, null, "text" to "marko@example.com", "reason" to "address it", "category" to "typing_request"),
+            call("tap", "Send", null, null, "reason" to "send it", "category" to "sending"),
+        ))
+        harness.screen.onTap("Forward", compose)
+        harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.NO)
+
+        assertEquals(EndReason.DECLINED, harness.run("Forward this e-mail to marko@example.com").end)
+
+        val send = harness.owner.confirmations[1]
+        assertTrue(send.question, send.question.startsWith("Send an e-mail to marko@example.com, subject 'Fwd: Plan' with the forwarded message"))
+        assertEquals(listOf("marko@example.com"), send.recipients)
     }
 
     @Test

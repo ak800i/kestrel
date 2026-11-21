@@ -41,6 +41,7 @@ internal object CompletionCheck {
         steps: Set<Int>,
         sends: List<ConfirmedSend>,
         lastChecked: Map<String, Boolean>,
+        hide: (String) -> String = { it },
     ): Verdict {
         if (finish.evidence.isEmpty()) return Verdict.Missing("no evidence was cited")
         val cited = mutableListOf<String>()
@@ -80,7 +81,7 @@ internal object CompletionCheck {
                 title != null && send.recipients.any { Normalizer.normalize(it) == Normalizer.normalize(title) } && (media || !send.share && cited.isNotEmpty())
             } else {
                 val content = Normalizer.normalize(send.content)
-                shown.any { holdsSent(fresh, it, content) }
+                shown.any { holdsSent(fresh, it, content, hide) }
             }
             if (!shown) return Verdict.Missing(if (send.share) "the chat it was shared to, with the shared items, is not on the screen" else "no cited element shows the sent message")
         }
@@ -90,9 +91,11 @@ internal object CompletionCheck {
     /**
      * Whether the element at [index] shows the sent [content] (folded): a text that is still in an input field is not sent
      * (a failed or doubted Send leaves it there), so an editable element is no evidence, and a container counts only
-     * by the text that remains when its editable descendants' texts are taken out of its label (D21).
+     * by the text that remains when its editable descendants' texts are taken out of its label (D21). The confirmation
+     * named a vault value that the task typed by its kind ("your IBAN"), so the element's text is compared in the same
+     * form, with each such value replaced by [hide], never the other way round.
      */
-    private fun holdsSent(screen: ScreenSnapshot, index: Int, content: String): Boolean {
+    private fun holdsSent(screen: ScreenSnapshot, index: Int, content: String, hide: (String) -> String): Boolean {
         val element = screen.elements[index]
         if (element.editable) return false
         val fields = screen.elements.indices
@@ -101,7 +104,7 @@ internal object CompletionCheck {
             .filter { it.isNotBlank() }
         val label = fields.fold(element.label.orEmpty()) { rest, field -> rest.replace(field, " ") }
         val own = listOfNotNull(element.text?.takeIf { fields.isEmpty() }, element.contentDescription, label).joinToString(" ")
-        return Normalizer.normalize(own).contains(content)
+        return Normalizer.normalize(hide(own)).contains(content)
     }
 
     private val MEDIA_CLASSES = listOf("ImageView", "VideoView")

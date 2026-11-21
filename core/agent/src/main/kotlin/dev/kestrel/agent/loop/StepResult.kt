@@ -163,8 +163,11 @@ data class StepResult(
     val appLabel: String? = null,
     val detail: String? = null,
 ) {
-    /** "Result: tapped "Send" (Button) → another screen: "Ana Petrović"." */
-    fun resultLine(): String = "Result: ${action()} → ${outcome.words}."
+    /**
+     * "Result: tapped "Send" (Button) → another screen: "Ana Petrović"."; a data tool's result names its step, which
+     * `finish` cites as evidence (D21): "Result (step 5): list_events … → ok (2 items)."
+     */
+    fun resultLine(): String = (if (outcome is Outcome.DataOk) "Result (step $step): " else "Result: ") + "${action()} → ${outcome.words}."
 
     /** "Step 3: tapped "Send" (Button) in Viber → another screen: "Ana Petrović"."; at most 160 characters. */
     fun summary(): String {

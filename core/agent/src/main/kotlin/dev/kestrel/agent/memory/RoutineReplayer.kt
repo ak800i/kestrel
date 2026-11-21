@@ -28,7 +28,8 @@ import kotlinx.serialization.json.contentOrNull
  * a routine that starts by opening its app replays wherever the owner is. A contact or place slot that names an alias
  * takes the alias's saved value. A step finds its element by key, or a slot-dependent target by the slot's value among
  * elements of the recorded class; then the step runs through the agent's own path, with the element check, the safety
- * check, its questions and test mode; and the signature after it, and a slot-dependent title, are checked. A signature
+ * check, its questions and test mode; and the signature after a step that acts on the screen or opened one, and a
+ * slot-dependent title, are checked. A signature
  * leaves out the window's ID, which Android gives each new window, so a routine replays in a later session of the app. A
  * recorded target without a key or a slot (an OCR line) never replays by its old number: the step fails. Each step that
  * ran gets its `ACTION` entry and its ledger line (D24, D25). A mismatch, or a pause that withdrew a step, returns the
@@ -57,8 +58,12 @@ internal class RoutineReplayer(private val run: TaskRun) {
                 is Outcome.Failed, is Outcome.Refused, is Outcome.CheckFailed, Outcome.PermissionRefused -> return failed(outcome.words)
                 else -> Unit
             }
+            // A step that brought up no screen (a wait, or a data tool that opened nothing) recorded the screen that the owner
+            // happened to be on, so only a step that acts on the screen or opened one checks the screen after it; the next
+            // step that acts on the screen checks its own screen before it.
             val after = done.after ?: run.fresh()
-            if (step.after != null && !step.after.sameScreen(ScreenSignature.of(after))) return failed("the screen after it was not the recorded one")
+            val brought = step.tool in ON_SCREEN || (step.tool != Tools.WAIT && done.after != null)
+            if (brought && step.after != null && !step.after.sameScreen(ScreenSignature.of(after))) return failed("the screen after it was not the recorded one")
             val titleSlot = step.titleSlot
             if (titleSlot != null) {
                 val window = ScreenTree.frontWindow(after) ?: return failed("no app was in front")

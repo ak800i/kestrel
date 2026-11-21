@@ -223,6 +223,32 @@ class MemoryTest {
         for (harness in listOf(finished, struck, found)) {
             assertEquals(listOf("memory: java.io.IOException"), harness.log.texts(TaskLog.Kind.ERROR))
         }
+
+        // A store that cannot be read: the offer's count after a finish, and the notes of an app that open_app opened.
+        val counted = Harness(Screens.chats(), listOf(
+            call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+            call("finish", null, null, null, "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Hi"))),
+                "signature" to "messaging.open.fixtures"),
+        )).apply { screen.onTap("Ana Petrović", Screens.chat("Ana Petrović", "Hi")) }
+        val countedReport = counted.runWith(UnreadableMemory(counted.memory), "Open Ana's chat")
+        assertEquals(EndReason.FINISHED, countedReport.end)
+        assertFalse(countedReport.offerRoutine)
+
+        val opened = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
+            call("open_app", null, null, null, "name" to "Telegram", "reason" to "open it"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        )).apply { screen.onOpen(Screens.app("org.telegram.messenger", "Chats")) }
+        assertEquals(EndReason.FAILED_BY_MODEL, opened.runWith(UnreadableMemory(opened.memory), "Send a note to myself").end)
+
+        for (harness in listOf(counted, opened)) {
+            assertEquals(listOf("memory: java.io.IOException"), harness.log.texts(TaskLog.Kind.ERROR))
+        }
+    }
+
+    private class UnreadableMemory(store: FakeMemory) : MemoryStore by store {
+        override suspend fun notes(packageName: String): List<RouteNote> = throw IOException("the store cannot be read")
+
+        override suspend fun countSignature(signature: String): Int = throw IOException("the store cannot be read")
     }
 
     private class BrokenMemory(store: FakeMemory) : MemoryStore by store {

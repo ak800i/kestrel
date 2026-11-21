@@ -1,12 +1,16 @@
 package dev.kestrel.agent.tools
 
+import dev.kestrel.agent.memory.RouteNote
+import dev.kestrel.agent.prompt.SystemPrompt
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Design D10 of sub-project 5: the tools, their order and their schemas, fixed by a golden file (r51). */
@@ -36,6 +40,16 @@ class ToolsTest {
             assertEquals(tool.name, tool.name in Tools.WITH_CATEGORY, "category" in required)
             assertEquals(tool.name, tool.name in screenTools || tool.name == Tools.FAIL, "reason" in required)
         }
+    }
+
+    @Test
+    fun theFinishNotesShowARouteNoteThatKestrelKeepsAndThePromptGivesTheSame() {
+        val properties = Tools.spec(Tools.FINISH)!!.parameters["properties"] as JsonObject
+        val notes = ((properties["notes"] as JsonObject)["description"] as JsonPrimitive).content
+        val example = notes.substringAfter("such as: ").substringBefore(". ")
+
+        assertNotNull(example, RouteNote.parse(example))
+        assertTrue(SystemPrompt.TEXT.contains(example))
     }
 
     @Test

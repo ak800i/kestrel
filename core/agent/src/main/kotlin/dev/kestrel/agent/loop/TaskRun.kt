@@ -182,15 +182,15 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private suspend fun start() {
         log(TaskLog.Kind.START, "request: ${redactor.redact(task.text)}")
         val first = checkFront(fresh())
-        memory.load()
-        val context = memory.context(task.text)
+        remembering { memory.load() }
+        val context = recalled(null) { memory.context(task.text) }
         safety = TaskSafety(
             allowance = TaskAllowance.from(task.text, task.knownNames + memory.aliasKeys),
             ownerWords = Normalizer.words(task.text).toSet(),
             memoryValues = memory.usedValues,
         )
         observation = observe(first, last = null, targetKey = null)
-        RoutineMatcher.match(task.text, ports.memory.routines(), memory.aliasKeys, task.knownNames)?.let { match ->
+        RoutineMatcher.match(task.text, recalled(emptyList()) { ports.memory.routines() }, memory.aliasKeys, task.knownNames)?.let { match ->
             log(TaskLog.Kind.START, "routine matched")
             routineNote = RoutineReplayer(this).replay(match)
                 ?: throw Ended(EndReason.FINISHED, summary = "I ran the routine '${match.routine.name}'.")
@@ -314,7 +314,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         recorded += RoutineStep(
             tool = reply.name,
             key = target?.key,
-            label = target?.label,
+            // As the observation showed it, redacted with its neighbours and the task's vault, which is gone when the
+            // owner saves the routine (D17, D23).
+            label = target?.shownLabel,
             className = target?.className,
             packageName = target?.packageName,
             category = (arguments?.get("category") as? JsonPrimitive)?.content,
@@ -754,7 +756,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
             throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
         }
-        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends + pendingSends(), lastChecked)) {
+        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends + pendingSends(), lastChecked, safety::hide)) {
             Verdict.Passed -> Unit
             Verdict.Unverifiable -> throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
             is Verdict.Missing -> {
@@ -766,8 +768,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         val signature = call.signature
         val recording = recording(signature)
         finished = recording
-        // `:app` offers to save the task after it has spoken the report (D23).
-        offerRoutine = recording != null && signature != null && ports.memory.countSignature(signature) == OFFER_AT
+        // `:app` offers to save the task after it has spoken the report (D23); a store that cannot count makes no offer.
+        offerRoutine = recording != null && signature != null && recalled(0) { ports.memory.countSignature(signature) } == OFFER_AT
         throw Ended(EndReason.FINISHED, summary = spoken(call.summary))
     }
 
@@ -776,19 +778,26 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         if (typedSecret || recorded.isEmpty()) null
         else Recording(redactor.redact(task.text), recorded.toList(), signature, ports.clock.elapsedMillis())
 
-    // The `remember` and `forget` tools always ask the owner first (spec 11.4; D22).
+    // The `remember` and `forget` tools always ask the owner first (spec 11.4; D22); a store that fails changes nothing.
     private suspend fun remember(call: AgentCall.Remember): Done {
         val stored = askYesNo("Remember that ${spoken(call.key)} is ${spoken(call.value)}?")
-        if (stored) ports.memory.saveFact(Fact(call.key.trim(), call.value.trim(), FactKind.FACT, ports.clock.now().toInstant().toEpochMilli()))
-        val words = if (stored) "stored" else "the owner said no"
-        return Done(call.tool, text = "Result: $words.", summary = "Step $replies: remember → $words.", last = "remember → $words", progress = stored)
+        val saved = stored && recalled(false) {
+            ports.memory.saveFact(Fact(call.key.trim(), call.value.trim(), FactKind.FACT, ports.clock.now().toInstant().toEpochMilli()))
+            true
+        }
+        val words = when {
+            saved -> "stored"
+            stored -> "Kestrel could not store it"
+            else -> "the owner said no"
+        }
+        return Done(call.tool, text = "Result: $words.", summary = "Step $replies: remember → $words.", last = "remember → $words", progress = saved)
     }
 
     private suspend fun forget(call: AgentCall.Forget): Done {
-        val fact = ports.memory.facts().firstOrNull { Normalizer.normalize(it.key) == Normalizer.normalize(call.key) }
+        val fact = recalled(emptyList()) { ports.memory.facts() }.firstOrNull { Normalizer.normalize(it.key) == Normalizer.normalize(call.key) }
         val words = when {
             fact == null -> "no such fact"
-            askYesNo("Forget ${spoken(fact.key)}?") -> if (ports.memory.deleteFact(fact.key)) "deleted" else "no such fact"
+            askYesNo("Forget ${spoken(fact.key)}?") -> if (recalled(false) { ports.memory.deleteFact(fact.key) }) "deleted" else "no such fact"
             else -> "the owner said no"
         }
         return Done(call.tool, text = "Result: $words.", summary = "Step $replies: forget → $words.", last = "forget → $words", progress = words == "deleted")
@@ -856,14 +865,19 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     /** Writes to memory, which is only advice (D22): a failure of its store is logged by class and never ends the task. */
     suspend fun remembering(write: suspend () -> Unit) {
+        recalled(Unit, write)
+    }
+
+    /** Reads memory, which is only advice (D22): a failure of its store is logged by class, and the task goes on with [fallback]. */
+    suspend fun <T> recalled(fallback: T, read: suspend () -> T): T =
         try {
-            write()
+            read()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             log(TaskLog.Kind.ERROR, "memory: ${e.javaClass.name}")
+            fallback
         }
-    }
 
     suspend fun logEnd(report: TaskReport) {
         log(

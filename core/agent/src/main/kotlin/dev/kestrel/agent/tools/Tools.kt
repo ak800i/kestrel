@@ -1,5 +1,6 @@
 package dev.kestrel.agent.tools
 
+import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.providers.chat.ToolSpec
 import dev.kestrel.safety.Category
 import kotlinx.serialization.json.JsonArray
@@ -257,7 +258,7 @@ object Tools {
                     objectOf(
                         listOf(
                             "target" to integer("The number of an element in the newest observation."),
-                            "step" to integer("The step of a data tool's result."),
+                            "step" to integer("The step of a data tool's result, which its result line names: Result (step 5) is step 5."),
                             "checked" to boolean("For a checkable element: whether it should be checked."),
                         ),
                         emptyList(),
@@ -265,8 +266,11 @@ object Tools {
                 ),
                 "signature" to string("The kind of task, such as messaging.send_text.viber."),
                 "notes" to array(
-                    "Notes for the next time in an app: at most $NOTES_PER_APP per app.",
-                    objectOf(listOf("app" to string("The app's name."), "note" to string("The note; at most $NOTE_LIMIT characters.")), listOf("app", "note")),
+                    "Notes for the next time in an app, at most $NOTES_PER_APP per app. A note is a path of fixed verbs and quoted labels " +
+                        "joined by arrows, such as: open \"Chats\" → tap \"New chat\". The verbs are open, tap, long press, type into and " +
+                        "scroll, each with the label of the element that it acts on, and back; at most ${RouteNote.MAX_STEPS} steps. Kestrel " +
+                        "keeps only a path whose labels your own steps acted on.",
+                    objectOf(listOf("app" to string("The app's name."), "note" to string("The path; at most $NOTE_LIMIT characters.")), listOf("app", "note")),
                 ),
             ),
             listOf("summary", "evidence"),

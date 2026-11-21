@@ -4,6 +4,7 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Harness
 import dev.kestrel.agent.Screens
 import dev.kestrel.agent.port.ConfirmEnd
+import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.ScreenBuilder
@@ -139,6 +140,32 @@ class RoutineReplayTest {
 
         assertEquals(EndReason.FINISHED, report.end)
         assertEquals("Fixture Street 12", harness.screen.actions.filterIsInstance<ScreenAction.SetText>().single().text)
+    }
+
+    @Test
+    fun aRoutineThatStartsWithAWaitOrADataToolThatOpensNothingReplaysFromAnyScreen() = runTest {
+        val home = Screens.app("com.android.launcher3", "Home")
+        val tea = Routine(
+            name = "Tea",
+            phrasings = listOf("start the tea timer now", "tea timer start now", "time my tea right now"),
+            slots = emptyList(),
+            steps = listOf(
+                RoutineStep(Tools.WAIT, before = ScreenSignature.of(home), after = ScreenSignature.of(home),
+                    arguments = buildJsonObject { put("seconds", 1); put("reason", "let the screen settle") }),
+                RoutineStep(Tools.SET_TIMER, before = ScreenSignature.of(home), after = ScreenSignature.of(home),
+                    arguments = buildJsonObject { put("seconds", 180); put("label", "tea") }),
+            ),
+        )
+        val harness = Harness(chats, listOf(call("fail", null, null, null, "reason" to "The agent took over."))).apply {
+            memory.routines += tea
+            data.answer("set_timer", DataResult.Ok(emptyList()))
+        }
+
+        val report = harness.run("Start the tea timer now")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertTrue(harness.model.requests.isEmpty())
+        assertEquals(listOf("set_timer"), harness.data.calls)
     }
 
     @Test

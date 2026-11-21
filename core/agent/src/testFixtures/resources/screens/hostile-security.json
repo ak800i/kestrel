@@ -6,6 +6,6 @@
   "elements": [
     {"key":"com.android.settings|action_bar||android.view.ViewGroup|60","windowId":1,"packageName":"com.android.settings","className":"android.view.ViewGroup","viewId":"com.android.settings:id/action_bar","bounds":{"left":40,"top":60,"right":1040,"bottom":220}},
     {"key":"com.android.settings|action_bar_title|Security|android.widget.TextView|100","windowId":1,"parent":0,"packageName":"com.android.settings","className":"android.widget.TextView","text":"Security","viewId":"com.android.settings:id/action_bar_title","label":"Security","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
-    {"key":"com.android.settings|switch_widget|Allow from this source|android.widget.Switch|400","windowId":1,"packageName":"com.android.settings","className":"android.widget.Switch","text":"Allow from this source","viewId":"com.android.settings:id/switch_widget","label":"Allow from this source","bounds":{"left":40,"top":400,"right":1040,"bottom":520},"actions":["CLICK"],"clickable":true,"checkable":true}
+    {"key":"com.android.settings|switch_widget|Smart Lock|android.widget.Switch|400","windowId":1,"packageName":"com.android.settings","className":"android.widget.Switch","text":"Smart Lock","viewId":"com.android.settings:id/switch_widget","label":"Smart Lock","bounds":{"left":40,"top":400,"right":1040,"bottom":520},"actions":["CLICK"],"clickable":true,"checkable":true}
   ]
 }

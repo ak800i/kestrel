@@ -69,13 +69,13 @@ internal class LookCloser(private val run: TaskRun) {
         val front = ScreenTree.frontWindow(asked)?.packageName ?: return null
         if (!run.currentModel.takesImages || !capturable(asked)) return null
         val provider = run.ports.model.model
-        if (!run.ports.memory.screenshotApproved(front, provider.providerId)) {
+        if (!run.recalled(false) { run.ports.memory.screenshotApproved(front, provider.providerId) }) {
             val app = run.label(front) ?: front.substringAfterLast('.')
             val warning = if (ocrMissing) " I can't hide numbers that only the picture shows." else ""
             run.gate()
             val answer = run.limits.waiting { run.ports.owner.ask("May I send a screenshot of $app to ${provider.providerName}?$warning", AnswerKind.SCREENSHOT) }
             when (approval(answer)) {
-                Approval.ALWAYS -> run.ports.memory.approveScreenshots(front, provider.providerId)
+                Approval.ALWAYS -> run.remembering { run.ports.memory.approveScreenshots(front, provider.providerId) }
                 Approval.ONCE -> Unit
                 Approval.NO -> return null
             }

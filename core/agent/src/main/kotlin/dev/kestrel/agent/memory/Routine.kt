@@ -12,7 +12,8 @@ enum class SlotType { CONTACT, TEXT, PLACE, TIME }
 data class Slot(val name: String, val type: SlotType)
 
 /**
- * One step of a recorded task or a routine (design D23): the tool, its target's key, label and class, the screen
+ * One step of a recorded task or a routine (design D23): the tool, its target's key, label (as the task's observation
+ * showed it: redacted, quoted and cut, which only the routine's request to the model reads) and class, the screen
  * signatures before and after it, the typed text (with placeholders, never a vault value), and the arguments of an
  * `open_*` or data tool. In a routine, `{slot}` markers stand in [text] and in the arguments' strings; [labelSlot] names
  * the slot whose value finds the target (a contact's row) and [titleSlot] the slot that the screen's title after the step

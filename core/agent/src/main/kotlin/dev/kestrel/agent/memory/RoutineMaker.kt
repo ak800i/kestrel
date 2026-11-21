@@ -94,13 +94,14 @@ class RoutineMaker(
         return save(name, recording, taskId)
     }
 
-    // The steps as the model sees them: numbered, with labels and texts redacted once here; the title after a step comes
-    // from the observation, which redacted it already.
+    // The steps as the model sees them: numbered, with each label as the task's observation showed it (redacted there with
+    // its neighbours and the task's vault, which is gone by now, so it is never redacted again here) and the texts and
+    // arguments redacted once here; the title after a step comes from the observation, which redacted it already.
     private fun describe(recording: Recording): String = buildString {
         append("The owner's request: ").append(recording.request).append("\nThe recorded steps:\n")
         recording.steps.forEachIndexed { index, step ->
             append(index + 1).append(". ").append(step.tool)
-            step.label?.let { append(" \"").append(redactor.redact(it)).append('"') }
+            step.label?.let { append(' ').append(it) }
             step.className?.let { append(" (").append(it.substringAfterLast('.')).append(')') }
             step.text?.let { append(" text \"").append(redactor.redact(it)).append('"') }
             step.arguments?.let { append(" arguments ").append(redactor.redact(it.toString())) }

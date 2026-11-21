@@ -36,7 +36,8 @@ class StepResultTest {
     @Test
     fun dataToolsSummariseTheirArgumentsAndItems() {
         assertEquals("Step 5: find_media yesterday, photos → 3 items.", StepResult(5, "find_media", Outcome.DataOk(3), appLabel = "Gallery", detail = "yesterday, photos").summary())
-        assertEquals("Result: find_media yesterday, photos → ok (1 item).", StepResult(5, "find_media", Outcome.DataOk(1), detail = "yesterday, photos").resultLine())
+        // A data result names its step, which finish cites as evidence (D21).
+        assertEquals("Result (step 5): find_media yesterday, photos → ok (1 item).", StepResult(5, "find_media", Outcome.DataOk(1), detail = "yesterday, photos").resultLine())
         assertEquals("Step 7: list_sms → permission refused.", StepResult(7, "list_sms", Outcome.PermissionRefused).summary())
     }
 

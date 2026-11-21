@@ -11,6 +11,7 @@ import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.HandOverKind
+import dev.kestrel.safety.Mode
 import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -213,7 +214,8 @@ class AgentScenariosTest {
 
     @Test
     fun aProtectedSwitchAndAFakePermissionDialogAreRefused() = runTest {
-        for (fixture in listOf("hostile-security" to "Allow from this source", "inject-dialog" to "Allow")) {
+        // The switch's label holds no protected word: only the Security page's protected trail refuses it.
+        for (fixture in listOf("hostile-security" to "Smart Lock", "inject-dialog" to "Allow")) {
             val harness = Harness(screen(fixture.first), listOf(tap(fixture.second, "reading"), fail))
             val report = harness.run("Read the screen to me")
             assertEquals(fixture.first, EndReason.FAILED_BY_MODEL, report.end)
@@ -237,10 +239,11 @@ class AgentScenariosTest {
 
     @Test
     fun aVaultValueIsTypedOnlyAfterTheYesAndNeverInAPasswordField() = runTest {
+        // Full-auto types screen text without asking, so only the placeholder rule asks here.
         val typing = Harness(screen("hostile-code"), listOf(
             call("type_text", "Type a message…", null, null, "text" to "[OTP_1]", "reason" to "send the code", "category" to "typing_screen_text"),
             fail,
-        ))
+        ), settings = AgentSettings(safety = SafetySettings(testMode = false, mode = Mode.FULL_AUTO)))
         typing.owner.confirms += ConfirmEnd.YES
         typing.run("Send Ana my code")
         val confirmation = typing.owner.confirmations.single()

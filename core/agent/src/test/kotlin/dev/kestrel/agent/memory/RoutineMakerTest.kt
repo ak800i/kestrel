@@ -7,6 +7,7 @@ import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.testing.FakeMemory
 import dev.kestrel.agent.testing.FakeOwner
+import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.agent.tools.Tools
@@ -32,11 +33,11 @@ class RoutineMakerTest {
     private val recording = Recording(
         request = "Send Ana a fixtures message that I'm late",
         steps = listOf(
-            RoutineStep(Tools.TAP, key = "row", label = "Ana Petrović", className = "android.view.ViewGroup", title = "Ana Petrović",
+            RoutineStep(Tools.TAP, key = "row", label = "\"Ana Petrović\"", className = "android.view.ViewGroup", title = "Ana Petrović",
                 arguments = buildJsonObject { put("target", 3); put("reason", "open"); put("category", "reading") }),
-            RoutineStep(Tools.TYPE_TEXT, key = "compose", label = "Your code 483920", className = "android.widget.EditText", text = "I'm late",
+            RoutineStep(Tools.TYPE_TEXT, key = "compose", label = "\"Your code [OTP_1]\"", className = "android.widget.EditText", text = "I'm late",
                 arguments = buildJsonObject { put("target", 5); put("text", "I'm late"); put("reason", "write"); put("category", "typing_request") }),
-            RoutineStep(Tools.TAP, key = "send", label = "Send", className = "android.widget.Button",
+            RoutineStep(Tools.TAP, key = "send", label = "\"Send\"", className = "android.widget.Button",
                 arguments = buildJsonObject { put("target", 6); put("reason", "send"); put("category", "sending") }),
         ),
         signature = "messaging.send_text.fixtures",
@@ -109,6 +110,27 @@ class RoutineMakerTest {
         assertTrue(text.contains("[OTP_1]"))
         assertFalse(text.contains("483920"))
         assertEquals(listOf(true), calls)
+    }
+
+    @Test
+    fun aRecordedLabelGoesToTheModelAsTheObservationShowedItRedactedWithItsNeighbours() = runTest {
+        val sms = ScreenBuilder.screen("com.google.android.apps.messaging", "Messages") {
+            text("Your verification code is 483920", 400)
+            button("Copy 483920", 560)
+        }
+        val harness = Harness(sms, listOf(
+            call("tap", "Copy [OTP_1]", null, null, "reason" to "copy the code", "category" to "reading"),
+            call("finish", null, null, null, "summary" to "Copied.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Copy [OTP_1]")))),
+        ))
+        val report = harness.run("Copy the login code from Messages")
+        assertEquals(EndReason.FINISHED, report.end)
+
+        // The task's vault is gone by now, and "Copy 483920" alone holds no keyword.
+        RoutineMaker(harness.model, harness.owner, harness.memory, Redactor(Vault())) { 0 }.save("copy code", report.recording!!, "task-1-0a1b2c3d")
+
+        val text = ((harness.model.requests.last().messages.single() as ChatMessage.User).parts.single() as Part.Text).text
+        assertFalse(text, text.contains("483920"))
+        assertTrue(text, text.contains("1. tap \"Copy [OTP_1]\" (Button)"))
     }
 
     @Test
