@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.example.shop","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.example.shop|toolbar_title|Sign in|android.widget.TextView|100","windowId":1,"packageName":"com.example.shop","className":"android.widget.TextView","text":"Sign in","viewId":"com.example.shop:id/toolbar_title","label":"Sign in","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"com.example.shop|code_hint|Your verification code is 483920|android.widget.TextView|400","windowId":1,"packageName":"com.example.shop","className":"android.widget.TextView","text":"Your verification code is 483920","viewId":"com.example.shop:id/code_hint","label":"Your verification code is 483920","bounds":{"left":40,"top":400,"right":1040,"bottom":520}},
+    {"key":"com.example.shop|password|Password|android.widget.EditText|600","windowId":1,"packageName":"com.example.shop","className":"android.widget.EditText","hint":"Password","viewId":"com.example.shop:id/password","label":"Password","bounds":{"left":40,"top":600,"right":1040,"bottom":720},"actions":["CLICK","SET_TEXT"],"editable":true,"password":true},
+    {"key":"com.example.shop||Sign in|android.widget.Button|800","windowId":1,"packageName":"com.example.shop","className":"android.widget.Button","text":"Sign in","label":"Sign in","bounds":{"left":40,"top":800,"right":1040,"bottom":920},"actions":["CLICK"],"clickable":true}
+  ]
+}

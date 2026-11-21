@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"org.mozilla.firefox","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"org.mozilla.firefox|mozac_browser_toolbar_url_view|en.wikipedia.org/wiki/Common_kestrel|android.widget.Button|100","windowId":1,"packageName":"org.mozilla.firefox","className":"android.widget.Button","text":"en.wikipedia.org/wiki/Common_kestrel","viewId":"org.mozilla.firefox:id/mozac_browser_toolbar_url_view","label":"en.wikipedia.org/wiki/Common_kestrel","bounds":{"left":40,"top":100,"right":1040,"bottom":220},"actions":["CLICK"],"clickable":true},
+    {"key":"org.mozilla.firefox|engineView||android.webkit.WebView|220","windowId":1,"packageName":"org.mozilla.firefox","className":"android.webkit.WebView","viewId":"org.mozilla.firefox:id/engineView","bounds":{"left":40,"top":220,"right":1040,"bottom":2300}},
+    {"key":"org.mozilla.firefox||Common kestrel|android.widget.TextView|300","windowId":1,"parent":1,"packageName":"org.mozilla.firefox","className":"android.widget.TextView","text":"Common kestrel","label":"Common kestrel","bounds":{"left":40,"top":300,"right":1040,"bottom":420}},
+    {"key":"org.mozilla.firefox||The common kestrel is a bird of prey spe|android.widget.TextView|450","windowId":1,"parent":1,"packageName":"org.mozilla.firefox","className":"android.widget.TextView","text":"The common kestrel is a bird of prey species belonging to the kestrel group of the falcon family.","label":"The common kestrel is a bird of prey species belonging to the kestrel group of the falcon family.","bounds":{"left":40,"top":450,"right":1040,"bottom":570}}
+  ]
+}

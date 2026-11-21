@@ -1,0 +1,14 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.android.launcher3","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.android.launcher3|icon|Viber|android.widget.Button|1600","windowId":1,"packageName":"com.android.launcher3","className":"android.widget.Button","text":"Viber","viewId":"com.android.launcher3:id/icon","label":"Viber","bounds":{"left":40,"top":1600,"right":280,"bottom":1720},"actions":["CLICK"],"clickable":true},
+    {"key":"com.android.launcher3|icon|Telegram|android.widget.Button|1600","windowId":1,"packageName":"com.android.launcher3","className":"android.widget.Button","text":"Telegram","viewId":"com.android.launcher3:id/icon","label":"Telegram","bounds":{"left":300,"top":1600,"right":540,"bottom":1720},"actions":["CLICK"],"clickable":true},
+    {"key":"com.android.launcher3|icon|Gmail|android.widget.Button|1600","windowId":1,"packageName":"com.android.launcher3","className":"android.widget.Button","text":"Gmail","viewId":"com.android.launcher3:id/icon","label":"Gmail","bounds":{"left":560,"top":1600,"right":800,"bottom":1720},"actions":["CLICK"],"clickable":true},
+    {"key":"com.android.launcher3|icon|Waze|android.widget.Button|1600","windowId":1,"packageName":"com.android.launcher3","className":"android.widget.Button","text":"Waze","viewId":"com.android.launcher3:id/icon","label":"Waze","bounds":{"left":820,"top":1600,"right":1060,"bottom":1720},"actions":["CLICK"],"clickable":true},
+    {"key":"com.android.launcher3|icon|Firefox|android.widget.Button|1900","windowId":1,"packageName":"com.android.launcher3","className":"android.widget.Button","text":"Firefox","viewId":"com.android.launcher3:id/icon","label":"Firefox","bounds":{"left":40,"top":1900,"right":280,"bottom":2020},"actions":["CLICK"],"clickable":true},
+    {"key":"com.android.launcher3|icon|Settings|android.widget.Button|1900","windowId":1,"packageName":"com.android.launcher3","className":"android.widget.Button","text":"Settings","viewId":"com.android.launcher3:id/icon","label":"Settings","bounds":{"left":300,"top":1900,"right":540,"bottom":2020},"actions":["CLICK"],"clickable":true}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.viber.voip","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.viber.voip|toolbar||android.view.ViewGroup|60","windowId":1,"packageName":"com.viber.voip","className":"android.view.ViewGroup","viewId":"com.viber.voip:id/toolbar","bounds":{"left":40,"top":60,"right":1040,"bottom":220}},
+    {"key":"com.viber.voip|toolbar_title|Chats|android.widget.TextView|100","windowId":1,"parent":0,"packageName":"com.viber.voip","className":"android.widget.TextView","text":"Chats","viewId":"com.viber.voip:id/toolbar_title","label":"Chats","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"com.viber.voip|chat_list|Chats|androidx.recyclerview.widget.RecyclerView|300","windowId":1,"packageName":"com.viber.voip","className":"androidx.recyclerview.widget.RecyclerView","text":"Chats","viewId":"com.viber.voip:id/chat_list","label":"Chats","bounds":{"left":40,"top":300,"right":1040,"bottom":2200},"actions":["SCROLL_FORWARD","SCROLL_BACKWARD"],"scrollable":true,"scrollAxis":"VERTICAL"},
+    {"key":"com.viber.voip|chat_row|Ana Petrović|android.view.ViewGroup|320","windowId":1,"parent":2,"packageName":"com.viber.voip","className":"android.view.ViewGroup","text":"Ana Petrović","viewId":"com.viber.voip:id/chat_row","label":"Ana Petrović","bounds":{"left":40,"top":320,"right":1040,"bottom":440},"actions":["CLICK"],"clickable":true},
+    {"key":"com.viber.voip|chat_row|Marko Marković|android.view.ViewGroup|460","windowId":1,"parent":2,"packageName":"com.viber.voip","className":"android.view.ViewGroup","text":"Marko Marković","viewId":"com.viber.voip:id/chat_row","label":"Marko Marković","bounds":{"left":40,"top":460,"right":1040,"bottom":580},"actions":["CLICK"],"clickable":true}
+  ]
+}

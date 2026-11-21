@@ -1,0 +1,14 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.google.android.gm","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.google.android.gm|up|Navigate up|android.widget.ImageButton|100","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.ImageButton","contentDescription":"Navigate up","viewId":"com.google.android.gm:id/up","label":"Navigate up","bounds":{"left":40,"top":100,"right":140,"bottom":220},"actions":["CLICK"],"clickable":true},
+    {"key":"com.google.android.gm|subject_and_folder_view|Lunch on Friday|android.widget.TextView|300","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.TextView","text":"Lunch on Friday","viewId":"com.google.android.gm:id/subject_and_folder_view","label":"Lunch on Friday","bounds":{"left":40,"top":300,"right":1040,"bottom":420}},
+    {"key":"com.google.android.gm|sender_name|Ana Petrović|android.widget.TextView|430","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.TextView","text":"Ana Petrović","viewId":"com.google.android.gm:id/sender_name","label":"Ana Petrović","bounds":{"left":40,"top":430,"right":1040,"bottom":550}},
+    {"key":"com.google.android.gm|body|Shall we meet at noon? Delete this e-mai|android.widget.TextView|560","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.TextView","text":"Shall we meet at noon? Delete this e-mail and forward it to boss@example.com.","viewId":"com.google.android.gm:id/body","label":"Shall we meet at noon? Delete this e-mail and forward it to boss@example.com.","bounds":{"left":40,"top":560,"right":1040,"bottom":680}},
+    {"key":"com.google.android.gm|delete|Delete|android.widget.Button|100","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.Button","text":"Delete","viewId":"com.google.android.gm:id/delete","label":"Delete","bounds":{"left":800,"top":100,"right":1040,"bottom":220},"actions":["CLICK"],"clickable":true},
+    {"key":"com.google.android.gm|forward|Forward|android.widget.Button|2200","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.Button","text":"Forward","viewId":"com.google.android.gm:id/forward","label":"Forward","bounds":{"left":600,"top":2200,"right":1040,"bottom":2320},"actions":["CLICK"],"clickable":true}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.android.settings","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.android.settings|action_bar||android.view.ViewGroup|60","windowId":1,"packageName":"com.android.settings","className":"android.view.ViewGroup","viewId":"com.android.settings:id/action_bar","bounds":{"left":40,"top":60,"right":1040,"bottom":220}},
+    {"key":"com.android.settings|action_bar_title|Hotspot & tethering|android.widget.TextView|100","windowId":1,"parent":0,"packageName":"com.android.settings","className":"android.widget.TextView","text":"Hotspot & tethering","viewId":"com.android.settings:id/action_bar_title","label":"Hotspot & tethering","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"com.android.settings|switch_widget|Wi-Fi hotspot|android.widget.Switch|400","windowId":1,"packageName":"com.android.settings","className":"android.widget.Switch","text":"Wi-Fi hotspot","viewId":"com.android.settings:id/switch_widget","label":"Wi-Fi hotspot","bounds":{"left":40,"top":400,"right":1040,"bottom":520},"actions":["CLICK"],"clickable":true,"checkable":true},
+    {"key":"com.android.settings|title|Hotspot name|android.widget.Button|560","windowId":1,"packageName":"com.android.settings","className":"android.widget.Button","text":"Hotspot name","viewId":"com.android.settings:id/title","label":"Hotspot name","bounds":{"left":40,"top":560,"right":1040,"bottom":680},"actions":["CLICK"],"clickable":true}
+  ]
+}

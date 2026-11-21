@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.waze","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.waze|route_title|Home|android.widget.TextView|300","windowId":1,"packageName":"com.waze","className":"android.widget.TextView","text":"Home","viewId":"com.waze:id/route_title","label":"Home","bounds":{"left":40,"top":300,"right":1040,"bottom":420}},
+    {"key":"com.waze|route_summary|12 min · 6.4 km|android.widget.TextView|430","windowId":1,"packageName":"com.waze","className":"android.widget.TextView","text":"12 min · 6.4 km","viewId":"com.waze:id/route_summary","label":"12 min · 6.4 km","bounds":{"left":40,"top":430,"right":1040,"bottom":550}},
+    {"key":"com.waze|go_button|Go|android.widget.Button|2100","windowId":1,"packageName":"com.waze","className":"android.widget.Button","text":"Go","viewId":"com.waze:id/go_button","label":"Go","bounds":{"left":600,"top":2100,"right":1040,"bottom":2220},"actions":["CLICK"],"clickable":true},
+    {"key":"com.waze|later_button|Leave later|android.widget.Button|2100","windowId":1,"packageName":"com.waze","className":"android.widget.Button","text":"Leave later","viewId":"com.waze:id/later_button","label":"Leave later","bounds":{"left":40,"top":2100,"right":500,"bottom":2220},"actions":["CLICK"],"clickable":true}
+  ]
+}

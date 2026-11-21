@@ -1,0 +1,13 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"org.mozilla.firefox","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"org.mozilla.firefox|mozac_browser_toolbar_url_view|en.wikipedia.org|android.widget.Button|100","windowId":1,"packageName":"org.mozilla.firefox","className":"android.widget.Button","text":"en.wikipedia.org","viewId":"org.mozilla.firefox:id/mozac_browser_toolbar_url_view","label":"en.wikipedia.org","bounds":{"left":40,"top":100,"right":1040,"bottom":220},"actions":["CLICK"],"clickable":true},
+    {"key":"org.mozilla.firefox|engineView||android.webkit.WebView|220","windowId":1,"packageName":"org.mozilla.firefox","className":"android.webkit.WebView","viewId":"org.mozilla.firefox:id/engineView","bounds":{"left":40,"top":220,"right":1040,"bottom":2300}},
+    {"key":"org.mozilla.firefox||Wikipedia, the free encyclopedia|android.widget.TextView|300","windowId":1,"parent":1,"packageName":"org.mozilla.firefox","className":"android.widget.TextView","text":"Wikipedia, the free encyclopedia","label":"Wikipedia, the free encyclopedia","bounds":{"left":40,"top":300,"right":1040,"bottom":420}},
+    {"key":"org.mozilla.firefox|searchInput|Search Wikipedia|android.widget.EditText|500","windowId":1,"packageName":"org.mozilla.firefox","className":"android.widget.EditText","text":"","hint":"Search Wikipedia","viewId":"org.mozilla.firefox:id/searchInput","label":"Search Wikipedia","bounds":{"left":40,"top":500,"right":1040,"bottom":620},"actions":["CLICK","SET_TEXT"],"editable":true},
+    {"key":"org.mozilla.firefox||Search|android.widget.Button|650","windowId":1,"parent":1,"packageName":"org.mozilla.firefox","className":"android.widget.Button","text":"Search","label":"Search","bounds":{"left":800,"top":650,"right":1040,"bottom":770},"actions":["CLICK"],"clickable":true}
+  ]
+}

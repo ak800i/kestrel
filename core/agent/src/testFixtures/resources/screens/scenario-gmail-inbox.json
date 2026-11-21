@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.google.android.gm","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.google.android.gm|open_search|Search in mail|android.widget.EditText|100","windowId":1,"packageName":"com.google.android.gm","className":"android.widget.EditText","text":"","hint":"Search in mail","viewId":"com.google.android.gm:id/open_search","label":"Search in mail","bounds":{"left":40,"top":100,"right":1040,"bottom":220},"actions":["CLICK","SET_TEXT"],"editable":true},
+    {"key":"com.google.android.gm|thread_list_view|Inbox|androidx.recyclerview.widget.RecyclerView|300","windowId":1,"packageName":"com.google.android.gm","className":"androidx.recyclerview.widget.RecyclerView","text":"Inbox","viewId":"com.google.android.gm:id/thread_list_view","label":"Inbox","bounds":{"left":40,"top":300,"right":1040,"bottom":2200},"actions":["SCROLL_FORWARD","SCROLL_BACKWARD"],"scrollable":true,"scrollAxis":"VERTICAL"},
+    {"key":"com.google.android.gm|viewified_conversation_item_view|Ana Petrović · Lunch on Friday · Shall w|android.view.ViewGroup|320","windowId":1,"parent":1,"packageName":"com.google.android.gm","className":"android.view.ViewGroup","text":"Ana Petrović · Lunch on Friday · Shall we meet at noon?","viewId":"com.google.android.gm:id/viewified_conversation_item_view","label":"Ana Petrović · Lunch on Friday · Shall we meet at noon?","bounds":{"left":40,"top":320,"right":1040,"bottom":440},"actions":["CLICK"],"clickable":true},
+    {"key":"com.google.android.gm|viewified_conversation_item_view|Shop · Your order · It ships today.|android.view.ViewGroup|460","windowId":1,"parent":1,"packageName":"com.google.android.gm","className":"android.view.ViewGroup","text":"Shop · Your order · It ships today.","viewId":"com.google.android.gm:id/viewified_conversation_item_view","label":"Shop · Your order · It ships today.","bounds":{"left":40,"top":460,"right":1040,"bottom":580},"actions":["CLICK"],"clickable":true}
+  ]
+}

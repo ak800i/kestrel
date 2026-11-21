@@ -1,0 +1,11 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"dev.kestrel.testapp","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"dev.kestrel.testapp|chat_title|Chats|android.widget.TextView|100","windowId":1,"packageName":"dev.kestrel.testapp","className":"android.widget.TextView","text":"Chats","viewId":"dev.kestrel.testapp:id/chat_title","label":"Chats","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"dev.kestrel.testapp|chat_list|Chats|androidx.recyclerview.widget.RecyclerView|300","windowId":1,"packageName":"dev.kestrel.testapp","className":"androidx.recyclerview.widget.RecyclerView","text":"Chats","viewId":"dev.kestrel.testapp:id/chat_list","label":"Chats","bounds":{"left":40,"top":300,"right":1040,"bottom":2200},"actions":["SCROLL_FORWARD","SCROLL_BACKWARD"],"scrollable":true,"scrollAxis":"VERTICAL"},
+    {"key":"dev.kestrel.testapp|chat_row|Ana Petrović|android.view.ViewGroup|320","windowId":1,"parent":1,"packageName":"dev.kestrel.testapp","className":"android.view.ViewGroup","text":"Ana Petrović","viewId":"dev.kestrel.testapp:id/chat_row","label":"Ana Petrović","bounds":{"left":40,"top":320,"right":1040,"bottom":440},"actions":["CLICK"],"clickable":true}
+  ]
+}

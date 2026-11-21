@@ -1,0 +1,11 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.android.permissioncontroller","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.android.permissioncontroller|permission_message|Allow Kestrel fixtures to access your co|android.widget.TextView|900","windowId":1,"packageName":"com.android.permissioncontroller","className":"android.widget.TextView","text":"Allow Kestrel fixtures to access your contacts?","viewId":"com.android.permissioncontroller:id/permission_message","label":"Allow Kestrel fixtures to access your contacts?","bounds":{"left":40,"top":900,"right":1040,"bottom":1020}},
+    {"key":"com.android.permissioncontroller|permission_allow_button|Allow|android.widget.Button|1100","windowId":1,"packageName":"com.android.permissioncontroller","className":"android.widget.Button","text":"Allow","viewId":"com.android.permissioncontroller:id/permission_allow_button","label":"Allow","bounds":{"left":40,"top":1100,"right":1040,"bottom":1220},"actions":["CLICK"],"clickable":true},
+    {"key":"com.android.permissioncontroller|permission_deny_button|Don't allow|android.widget.Button|1250","windowId":1,"packageName":"com.android.permissioncontroller","className":"android.widget.Button","text":"Don't allow","viewId":"com.android.permissioncontroller:id/permission_deny_button","label":"Don't allow","bounds":{"left":40,"top":1250,"right":1040,"bottom":1370},"actions":["CLICK"],"clickable":true}
+  ]
+}

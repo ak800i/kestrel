@@ -1,0 +1,11 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"com.waze","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"com.waze|instruction|Head north on Kralja Petra|android.widget.TextView|100","windowId":1,"packageName":"com.waze","className":"android.widget.TextView","text":"Head north on Kralja Petra","viewId":"com.waze:id/instruction","label":"Head north on Kralja Petra","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"com.waze|eta|12 min to Home|android.widget.TextView|2200","windowId":1,"packageName":"com.waze","className":"android.widget.TextView","text":"12 min to Home","viewId":"com.waze:id/eta","label":"12 min to Home","bounds":{"left":40,"top":2200,"right":1040,"bottom":2320}},
+    {"key":"com.waze|stop_button|Stop|android.widget.Button|2300","windowId":1,"packageName":"com.waze","className":"android.widget.Button","text":"Stop","viewId":"com.waze:id/stop_button","label":"Stop","bounds":{"left":800,"top":2300,"right":1040,"bottom":2420},"actions":["CLICK"],"clickable":true}
+  ]
+}

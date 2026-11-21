@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"dev.kestrel.testapp","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"dev.kestrel.testapp|chat_title|Share with|android.widget.TextView|100","windowId":1,"packageName":"dev.kestrel.testapp","className":"android.widget.TextView","text":"Share with","viewId":"dev.kestrel.testapp:id/chat_title","label":"Share with","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"dev.kestrel.testapp|picker_rows||androidx.recyclerview.widget.RecyclerView|300","windowId":1,"packageName":"dev.kestrel.testapp","className":"androidx.recyclerview.widget.RecyclerView","viewId":"dev.kestrel.testapp:id/picker_rows","bounds":{"left":40,"top":300,"right":1040,"bottom":2200},"actions":["SCROLL_FORWARD","SCROLL_BACKWARD"],"scrollable":true,"scrollAxis":"VERTICAL"},
+    {"key":"dev.kestrel.testapp|picker_row|Close friends|android.view.ViewGroup|320","windowId":1,"parent":1,"packageName":"dev.kestrel.testapp","className":"android.view.ViewGroup","text":"Close friends","viewId":"dev.kestrel.testapp:id/picker_row","label":"Close friends","bounds":{"left":40,"top":320,"right":1040,"bottom":440},"actions":["CLICK"],"clickable":true},
+    {"key":"dev.kestrel.testapp|picker_row|Back to school|android.view.ViewGroup|460","windowId":1,"parent":1,"packageName":"dev.kestrel.testapp","className":"android.view.ViewGroup","text":"Back to school","viewId":"dev.kestrel.testapp:id/picker_row","label":"Back to school","bounds":{"left":40,"top":460,"right":1040,"bottom":580},"actions":["CLICK"],"clickable":true}
+  ]
+}

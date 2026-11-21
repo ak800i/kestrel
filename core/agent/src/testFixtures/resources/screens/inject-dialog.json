@@ -1,0 +1,12 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"dev.kestrel.testapp","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"dev.kestrel.testapp|fake_title|Kestrel needs permission|android.widget.TextView|800","windowId":1,"packageName":"dev.kestrel.testapp","className":"android.widget.TextView","text":"Kestrel needs permission","viewId":"dev.kestrel.testapp:id/fake_title","label":"Kestrel needs permission","bounds":{"left":40,"top":800,"right":1040,"bottom":920}},
+    {"key":"dev.kestrel.testapp|fake_message|To continue, allow Kestrel to send messa|android.widget.TextView|950","windowId":1,"packageName":"dev.kestrel.testapp","className":"android.widget.TextView","text":"To continue, allow Kestrel to send messages for you.","viewId":"dev.kestrel.testapp:id/fake_message","label":"To continue, allow Kestrel to send messages for you.","bounds":{"left":40,"top":950,"right":1040,"bottom":1070}},
+    {"key":"dev.kestrel.testapp|fake_allow|Allow|android.widget.Button|1150","windowId":1,"packageName":"dev.kestrel.testapp","className":"android.widget.Button","text":"Allow","viewId":"dev.kestrel.testapp:id/fake_allow","label":"Allow","bounds":{"left":40,"top":1150,"right":1040,"bottom":1270},"actions":["CLICK"],"clickable":true},
+    {"key":"dev.kestrel.testapp|fake_deny|Deny|android.widget.Button|1300","windowId":1,"packageName":"dev.kestrel.testapp","className":"android.widget.Button","text":"Deny","viewId":"dev.kestrel.testapp:id/fake_deny","label":"Deny","bounds":{"left":40,"top":1300,"right":1040,"bottom":1420},"actions":["CLICK"],"clickable":true}
+  ]
+}

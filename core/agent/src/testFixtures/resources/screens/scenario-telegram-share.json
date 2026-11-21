@@ -1,0 +1,13 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"org.telegram.messenger","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"org.telegram.messenger||Send to…|android.widget.TextView|100","windowId":1,"packageName":"org.telegram.messenger","className":"android.widget.TextView","text":"Send to…","label":"Send to…","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"org.telegram.messenger|dialogs_list||androidx.recyclerview.widget.RecyclerView|300","windowId":1,"packageName":"org.telegram.messenger","className":"androidx.recyclerview.widget.RecyclerView","viewId":"org.telegram.messenger:id/dialogs_list","bounds":{"left":40,"top":300,"right":1040,"bottom":2200},"actions":["SCROLL_FORWARD","SCROLL_BACKWARD"],"scrollable":true,"scrollAxis":"VERTICAL"},
+    {"key":"org.telegram.messenger||Saved Messages|android.view.ViewGroup|320","windowId":1,"parent":1,"packageName":"org.telegram.messenger","className":"android.view.ViewGroup","text":"Saved Messages","label":"Saved Messages","bounds":{"left":40,"top":320,"right":1040,"bottom":440},"actions":["CLICK"],"clickable":true},
+    {"key":"org.telegram.messenger||John Smith|android.view.ViewGroup|460","windowId":1,"parent":1,"packageName":"org.telegram.messenger","className":"android.view.ViewGroup","text":"John Smith","label":"John Smith","bounds":{"left":40,"top":460,"right":1040,"bottom":580},"actions":["CLICK"],"clickable":true},
+    {"key":"org.telegram.messenger||Close friends|android.view.ViewGroup|600","windowId":1,"parent":1,"packageName":"org.telegram.messenger","className":"android.view.ViewGroup","text":"Close friends","label":"Close friends","bounds":{"left":40,"top":600,"right":1040,"bottom":720},"actions":["CLICK"],"clickable":true}
+  ]
+}

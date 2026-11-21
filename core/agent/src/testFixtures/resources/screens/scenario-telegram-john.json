@@ -1,0 +1,16 @@
+{
+  "takenAtMillis": 0,
+  "windows": [
+    {"id":1,"kind":"APPLICATION","packageName":"org.telegram.messenger","bounds":{"left":0,"top":0,"right":1080,"bottom":2400},"active":true,"focused":true}
+  ],
+  "elements": [
+    {"key":"org.telegram.messenger||John Smith|android.widget.TextView|100","windowId":1,"packageName":"org.telegram.messenger","className":"android.widget.TextView","text":"John Smith","label":"John Smith","bounds":{"left":40,"top":100,"right":1040,"bottom":220}},
+    {"key":"org.telegram.messenger||last seen recently|android.widget.TextView|170","windowId":1,"packageName":"org.telegram.messenger","className":"android.widget.TextView","text":"last seen recently","label":"last seen recently","bounds":{"left":40,"top":170,"right":1040,"bottom":290}},
+    {"key":"org.telegram.messenger|chat_list||androidx.recyclerview.widget.RecyclerView|300","windowId":1,"packageName":"org.telegram.messenger","className":"androidx.recyclerview.widget.RecyclerView","viewId":"org.telegram.messenger:id/chat_list","bounds":{"left":40,"top":300,"right":1040,"bottom":2000},"actions":["SCROLL_FORWARD","SCROLL_BACKWARD"],"scrollable":true,"scrollAxis":"VERTICAL"},
+    {"key":"org.telegram.messenger|||android.widget.ImageView|320","windowId":1,"parent":2,"packageName":"org.telegram.messenger","className":"android.widget.ImageView","bounds":{"left":40,"top":320,"right":1040,"bottom":440}},
+    {"key":"org.telegram.messenger|||android.widget.ImageView|620","windowId":1,"parent":2,"packageName":"org.telegram.messenger","className":"android.widget.ImageView","bounds":{"left":40,"top":620,"right":1040,"bottom":740}},
+    {"key":"org.telegram.messenger|||android.widget.ImageView|920","windowId":1,"parent":2,"packageName":"org.telegram.messenger","className":"android.widget.ImageView","bounds":{"left":40,"top":920,"right":1040,"bottom":1040}},
+    {"key":"org.telegram.messenger||3 photos|android.widget.TextView|1220","windowId":1,"parent":2,"packageName":"org.telegram.messenger","className":"android.widget.TextView","text":"3 photos","label":"3 photos","bounds":{"left":40,"top":1220,"right":1040,"bottom":1340}},
+    {"key":"org.telegram.messenger||Message|android.widget.EditText|2100","windowId":1,"packageName":"org.telegram.messenger","className":"android.widget.EditText","text":"","hint":"Message","label":"Message","bounds":{"left":40,"top":2100,"right":1040,"bottom":2220},"actions":["CLICK","SET_TEXT"],"editable":true}
+  ]
+}
