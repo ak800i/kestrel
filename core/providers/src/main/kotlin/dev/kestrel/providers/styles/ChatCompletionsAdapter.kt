@@ -1,5 +1,6 @@
 package dev.kestrel.providers.styles
 
+import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.CompatFlags
 import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatAdapter
@@ -77,10 +78,7 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
      * Chat Completions refuses tools while GPT-5.6 reasons, as OpenClaw sends it.
      */
     private fun openAiToolReasoning(target: ModelTarget, tools: Boolean): String? {
-        val host = target.baseUrl.host
-        val ownEndpoint = CompatDefaults.endpointClass(target.baseUrl) in setOf("openai-public", "azure-openai") ||
-            host.endsWith(".services.ai.azure.com") || host.endsWith(".cognitiveservices.azure.com")
-        if (!tools || !ownEndpoint) return null
+        if (!tools || !ownEndpoint(target)) return null
         val date = Regex("-\\d{4}-\\d{2}-\\d{2}$")
         val id = target.sentModelId.lowercase().replace(date, "")
         val name = target.model.name.lowercase().replace(date, "")
@@ -168,48 +166,80 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
         }
     }
 
+    /**
+     * One system message holds the system prompt and the per-task context, because some servers and Copilot's route to
+     * Gemini keep only one (design D5 of sub-project 5), and adjacent user messages go as one ([Wire.mergeUsers]). On
+     * Copilot, the system message and the message that holds message `cacheAfter` carry `copilot_cache_control`, as VS
+     * Code's client sends it (research r51). On OpenAI's and Azure's own hosts, tool-call IDs keep at most 40 characters.
+     */
     private fun messages(request: ChatRequest, target: ModelTarget, compat: CompatFlags, tools: Boolean): JsonArray = buildJsonArray {
-        if (request.system.isNotEmpty()) addJsonObject {
+        val copilotMarks = target.providerId == CatalogLoader.COPILOT && request.cacheFields.chatCopilotMarks
+        val own = ownEndpoint(target)
+        val system = Wire.systemAndContext(request)
+        if (system.isNotEmpty()) add(withMark(buildJsonObject {
             put("role", if (compat.supportsDeveloperRole == true && target.model.reasoning) "developer" else "system")
             if (compat.cacheControlFormat == "anthropic") {
+                // Two blocks, each with its own mark, so that the system prompt's cache entry does not change with the
+                // task's context; still one system message.
                 putJsonArray("content") {
-                    addJsonObject {
-                        put("type", "text")
-                        put("text", request.system)
-                        putJsonObject("cache_control") { put("type", "ephemeral") }
+                    for (text in listOf(request.system, request.context.orEmpty()).filter { it.isNotBlank() }) {
+                        addJsonObject {
+                            put("type", "text")
+                            put("text", text)
+                            putJsonObject("cache_control") { put("type", "ephemeral") }
+                        }
                     }
                 }
             } else {
-                put("content", request.system)
+                put("content", system)
             }
-        }
-        val list = request.messages
-        for ((index, message) in list.withIndex()) {
+        }, copilotMarks))
+        val list = Wire.mergeUsers(request.messages)
+        val cacheAfter = request.cacheAfter
+        for ((position, entry) in list.withIndex()) {
+            val (message, indices) = entry
+            val mark = copilotMarks && cacheAfter != null && cacheAfter in indices
             when (message) {
-                is ChatMessage.User -> add(user(message, compat))
-                is ChatMessage.Assistant -> add(assistant(message, target, compat, tools))
+                is ChatMessage.User -> add(withMark(user(message, compat), mark))
+                is ChatMessage.Assistant -> add(withMark(assistant(message, target, compat, tools, own), mark))
                 is ChatMessage.ToolResult -> {
                     if (tools) {
-                        addJsonObject {
+                        add(withMark(buildJsonObject {
                             put("role", "tool")
-                            put("tool_call_id", message.callId)
+                            put("tool_call_id", wireId(message.callId, own))
                             if (compat.requiresToolResultName == true) put("name", message.name)
                             put("content", message.text)
-                        }
-                        if (compat.requiresAssistantAfterToolResult == true && list.getOrNull(index + 1) is ChatMessage.User) addJsonObject {
+                        }, mark))
+                        if (compat.requiresAssistantAfterToolResult == true && list.getOrNull(position + 1)?.first is ChatMessage.User) addJsonObject {
                             put("role", "assistant")
                             put("content", "OK.")
                         }
                     } else {
-                        addJsonObject {
+                        add(withMark(buildJsonObject {
                             put("role", "user")
                             put("content", Wire.resultText(message))
-                        }
+                        }, mark))
                     }
                 }
             }
         }
     }
+
+    private fun withMark(message: JsonObject, mark: Boolean): JsonObject =
+        if (mark) JsonObject(message + ("copilot_cache_control" to buildJsonObject { put("type", "ephemeral") })) else message
+
+    /** OpenAI's and Azure's own endpoints, where OpenClaw applies its OpenAI rules. */
+    private fun ownEndpoint(target: ModelTarget): Boolean {
+        val host = target.baseUrl.host
+        return CompatDefaults.endpointClass(target.baseUrl) in setOf("openai-public", "azure-openai") ||
+            host.endsWith(".services.ai.azure.com") || host.endsWith(".cognitiveservices.azure.com")
+    }
+
+    /**
+     * A call's ID as OpenAI's and Azure's own Chat Completions take it: at most 40 characters, as OpenClaw cuts them
+     * (design D32 item 38 of sub-project 5), rewritten by [Wire.toolUseId], so that a call and its result keep one ID.
+     */
+    private fun wireId(id: String, own: Boolean): String = if (!own || id.length <= MAX_OPENAI_ID) id else Wire.toolUseId(id, Wire.OPENAI_ID_CHARS, MAX_OPENAI_ID)
 
     private fun user(message: ChatMessage.User, compat: CompatFlags): JsonObject = buildJsonObject {
         put("role", "user")
@@ -235,7 +265,7 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
         }
     }
 
-    private fun assistant(message: ChatMessage.Assistant, target: ModelTarget, compat: CompatFlags, tools: Boolean): JsonObject = buildJsonObject {
+    private fun assistant(message: ChatMessage.Assistant, target: ModelTarget, compat: CompatFlags, tools: Boolean, own: Boolean): JsonObject = buildJsonObject {
         put("role", "assistant")
         val text = Wire.assistantText(message, callsAsText = !tools)
         val calls = if (tools) message.toolCalls else emptyList()
@@ -251,7 +281,7 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
         }
         if (calls.isNotEmpty()) putJsonArray("tool_calls") {
             for (call in calls) addJsonObject {
-                put("id", call.id)
+                put("id", wireId(call.id, own))
                 put("type", "function")
                 putJsonObject("function") {
                     put("name", call.name)
@@ -417,6 +447,8 @@ internal class ChatCompletionsAdapter(private val http: ProviderHttp) : ChatAdap
 
     companion object {
         private val REASONING_FIELDS = listOf("reasoning_content", "reasoning", "reasoning_text")
+
+        private const val MAX_OPENAI_ID = 40
 
         /**
          * OpenClaw's list of models that need their reasoning text back (`openai-completions-reasoning-replay.ts` at the

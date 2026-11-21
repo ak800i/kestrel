@@ -71,8 +71,13 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
     private fun body(request: ChatRequest, target: ModelTarget): JsonObject = buildJsonObject {
         val compat = target.model.compat
         val tools = request.tools.isNotEmpty() && compat.supportsTools != false
-        if (request.system.isNotBlank()) putJsonObject("systemInstruction") {
-            putJsonArray("parts") { addJsonObject { put("text", request.system) } }
+        val context = request.context?.takeIf { it.isNotBlank() }
+        if (request.system.isNotBlank() || context != null) putJsonObject("systemInstruction") {
+            putJsonArray("parts") {
+                if (request.system.isNotBlank()) addJsonObject { put("text", request.system) }
+                // The per-task context as a second part (design D5 of sub-project 5).
+                if (context != null) addJsonObject { put("text", context) }
+            }
         }
         put("contents", contents(request, target, tools))
         if (tools) {
@@ -128,7 +133,7 @@ internal class GeminiAdapter(private val http: ProviderHttp) : ChatAdapter {
                             }
                         }
                     }
-                    flush()
+                    // Adjacent user messages stay in one turn until the model speaks (design D5 of sub-project 5).
                 }
                 is ChatMessage.ToolResult -> pending += if (tools) buildJsonObject {
                     putJsonObject("functionResponse") {

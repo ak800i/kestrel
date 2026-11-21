@@ -74,9 +74,17 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
             target.sentModelId !in REFUSE_TEMPERATURE
         val cache = cachesPrompt(target)
         put("messages", messages(request, target, tools))
-        if (request.system.isNotBlank()) putJsonArray("system") {
-            addJsonObject { put("text", request.system) }
-            if (cache) add(CACHE_POINT)
+        val context = request.context?.takeIf { it.isNotBlank() }
+        if (request.system.isNotBlank() || context != null) putJsonArray("system") {
+            if (request.system.isNotBlank()) {
+                addJsonObject { put("text", request.system) }
+                if (cache) add(CACHE_POINT)
+            }
+            // The per-task context as a second block, with its own cache point for Claude (design D5 of sub-project 5).
+            if (context != null) {
+                addJsonObject { put("text", context) }
+                if (cache && request.cacheFields.anthropicMarks) add(CACHE_POINT)
+            }
         }
         putJsonObject("inferenceConfig") {
             put("maxTokens", request.maxOutputTokens)
@@ -107,7 +115,8 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
             if (last != null && last.first == role) last.second += blocks else turns += role to blocks.toMutableList()
         }
         val statusAllowed = Regex("anthropic|claude|nova").containsMatchIn(target.sentModelId.lowercase())
-        for (message in request.messages) {
+        val markAt = request.cacheAfter.takeIf { request.cacheFields.anthropicMarks && cachesPrompt(target) }
+        for ((index, message) in request.messages.withIndex()) {
             when (message) {
                 is ChatMessage.User -> add("user", message.parts.mapNotNull { part ->
                     when (part) {
@@ -145,6 +154,8 @@ internal class BedrockAdapter(private val http: ProviderHttp, private val skew: 
                     }
                 } else text(Wire.resultText(message))))
             }
+            // The end of the part of the conversation that never changes again gets a cache point (design D5 of sub-project 5).
+            if (index == markAt) turns.lastOrNull()?.second?.add(CACHE_POINT)
         }
         return buildJsonArray {
             for ((role, blocks) in turns) addJsonObject {

@@ -207,7 +207,7 @@ class ProviderHttp(
             402, 403 -> ProviderError.QuotaOrPolicy(reply.status, code)
             429 -> ProviderError.RateLimited(retryAfterMillis(reply.headers["Retry-After"]), code)
             in 500..599 -> ProviderError.ServerError(reply.status)
-            in 400..499 -> ProviderError.BadRequest(reply.status, code)
+            in 400..499 -> ProviderError.BadRequest(reply.status, code, ErrorCodes.namesToolChoice(reply))
             else -> ProviderError.Malformed
         }
     }

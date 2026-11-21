@@ -1,0 +1,76 @@
+{
+  "model": "gemini-3.1-pro",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are Kestrel.\n\n----\n\nFacts the owner saved: home is Main Street 1.",
+      "copilot_cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Task: open the camera."
+        },
+        {
+          "type": "text",
+          "text": "First screen: Launcher."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "open_app",
+            "arguments": "{\"name\":\"Camera\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "Step 1: opened Camera.",
+      "copilot_cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "role": "user",
+      "content": "Observation 2: Camera"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "open_app",
+        "description": "Opens an app by its name.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The app's name."
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "max_tokens": 256,
+  "stream": true
+}

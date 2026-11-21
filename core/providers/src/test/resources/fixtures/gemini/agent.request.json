@@ -1,0 +1,87 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are Kestrel."
+      },
+      {
+        "text": "Facts the owner saved: home is Main Street 1."
+      }
+    ]
+  },
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Task: open the camera."
+        },
+        {
+          "text": "First screen: Launcher."
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "functionCall": {
+            "id": "call_1",
+            "name": "open_app",
+            "args": {
+              "name": "Camera"
+            }
+          },
+          "thoughtSignature": "skip_thought_signature_validator"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "functionResponse": {
+            "id": "call_1",
+            "name": "open_app",
+            "response": {
+              "output": "Step 1: opened Camera."
+            }
+          }
+        },
+        {
+          "text": "Observation 2: Camera"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "open_app",
+          "description": "Opens an app by its name.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The app's name."
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "toolConfig": {
+    "functionCallingConfig": {
+      "mode": "AUTO"
+    }
+  },
+  "generationConfig": {
+    "maxOutputTokens": 256
+  }
+}

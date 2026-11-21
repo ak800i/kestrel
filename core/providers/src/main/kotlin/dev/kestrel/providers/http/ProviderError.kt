@@ -38,7 +38,11 @@ sealed interface ProviderError {
     /** 402, or a 403 that is not a sign-in problem: credits exhausted, or a policy blocks the model. */
     data class QuotaOrPolicy(val status: Int, val code: String? = null) : ProviderError
 
-    data class BadRequest(val status: Int, val code: String?) : ProviderError
+    /**
+     * Any other 4xx. [toolChoice] says that the error named the tool choice, so that the agent may send the request once
+     * more with `auto` (design D4 of sub-project 5); no part of the error's message is kept.
+     */
+    data class BadRequest(val status: Int, val code: String?, val toolChoice: Boolean = false) : ProviderError
 
     /** A key that OkHttp cannot send as a header. */
     data object BadCredential : ProviderError

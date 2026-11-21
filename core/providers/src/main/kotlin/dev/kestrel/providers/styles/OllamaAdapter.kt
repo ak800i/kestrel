@@ -116,9 +116,11 @@ internal class OllamaAdapter(private val http: ProviderHttp) : ChatAdapter {
     }
 
     private fun messages(request: ChatRequest, tools: Boolean): JsonArray = buildJsonArray {
-        if (request.system.isNotBlank()) addJsonObject {
+        // One system message with the per-task context after the separator line (design D5 of sub-project 5).
+        val system = Wire.systemAndContext(request)
+        if (system.isNotBlank()) addJsonObject {
             put("role", "system")
-            put("content", request.system)
+            put("content", system)
         }
         for (message in request.messages) {
             when (message) {

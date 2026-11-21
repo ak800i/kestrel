@@ -79,11 +79,19 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
         val thinking = thinks || AnthropicModels.thinksByDefault(target.sentModelId)
         if (vertex) put("anthropic_version", VERTEX_VERSION) else put("model", target.sentModelId)
         put("max_tokens", request.maxOutputTokens)
-        if (request.system.isNotBlank()) putJsonArray("system") {
-            addJsonObject {
+        val context = request.context?.takeIf { it.isNotBlank() }
+        if (request.system.isNotBlank() || context != null) putJsonArray("system") {
+            if (request.system.isNotBlank()) addJsonObject {
                 put("type", "text")
                 put("text", request.system)
                 putJsonObject("cache_control") { put("type", "ephemeral") }
+            }
+            // The per-task context with its own mark, so that the system prompt's cache serves every task (design D5 of
+            // sub-project 5).
+            if (context != null) addJsonObject {
+                put("type", "text")
+                put("text", context)
+                if (request.cacheFields.anthropicMarks) put("cache_control", EPHEMERAL)
             }
         }
         put("messages", messages(request, target, tools))
@@ -118,9 +126,13 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
         put("stream", stream)
     }
 
-    /** Consecutive tool results and the user message after them become one user turn, results first. */
+    /**
+     * Consecutive tool results and the user message after them become one user turn, results first. The last block of
+     * message `cacheAfter` gets a cache mark, never a thinking block (design D5 of sub-project 5).
+     */
     private fun messages(request: ChatRequest, target: ModelTarget, tools: Boolean): JsonArray = buildJsonArray {
         val pending = mutableListOf<JsonObject>()
+        val markAt = request.cacheAfter.takeIf { request.cacheFields.anthropicMarks }
         fun flush() {
             if (pending.isEmpty()) return
             addJsonObject {
@@ -129,15 +141,20 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
             }
             pending.clear()
         }
-        for (message in request.messages) {
+        for ((index, message) in request.messages.withIndex()) {
+            val mark = index == markAt
             when (message) {
-                is ChatMessage.ToolResult -> pending += if (tools) buildJsonObject {
-                    put("type", "tool_result")
-                    put("tool_use_id", Wire.toolUseId(message.callId))
-                    put("content", message.text)
-                    if (message.failed) put("is_error", true)
-                } else text(Wire.resultText(message))
+                is ChatMessage.ToolResult -> {
+                    val block = if (tools) buildJsonObject {
+                        put("type", "tool_result")
+                        put("tool_use_id", Wire.toolUseId(message.callId))
+                        put("content", message.text)
+                        if (message.failed) put("is_error", true)
+                    } else text(Wire.resultText(message))
+                    pending += if (mark) marked(block) else block
+                }
                 is ChatMessage.User -> {
+                    val before = pending.size
                     for (part in message.parts) pending += when (part) {
                         is Part.Text -> if (part.text.isBlank()) continue else text(part.text)
                         is Part.Image -> buildJsonObject {
@@ -149,18 +166,19 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
                             }
                         }
                     }
+                    if (mark && pending.size > before) pending[pending.lastIndex] = marked(pending.last())
                     flush()
                 }
                 is ChatMessage.Assistant -> {
                     flush()
-                    assistant(message, target, tools)
+                    assistant(message, target, tools, mark)
                 }
             }
         }
         flush()
     }
 
-    private fun JsonArrayBuilder.assistant(message: ChatMessage.Assistant, target: ModelTarget, tools: Boolean) {
+    private fun JsonArrayBuilder.assistant(message: ChatMessage.Assistant, target: ModelTarget, tools: Boolean, mark: Boolean) {
         val keep = keepsThinking(target)
         val blocks = buildJsonArray {
             for (part in message.parts) {
@@ -187,8 +205,17 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
         if (blocks.all { (it as? JsonObject)?.str("type") in THINKING_BLOCKS }) return
         addJsonObject {
             put("role", "assistant")
-            put("content", blocks)
+            put("content", if (mark) markLast(blocks) else blocks)
         }
+    }
+
+    private fun marked(block: JsonObject): JsonObject = JsonObject(block + ("cache_control" to EPHEMERAL))
+
+    /** [blocks] with a cache mark on the last block that is no thinking block. */
+    private fun markLast(blocks: JsonArray): JsonArray {
+        val last = blocks.indexOfLast { (it as? JsonObject)?.str("type") !in THINKING_BLOCKS }
+        if (last < 0) return blocks
+        return JsonArray(blocks.mapIndexed { index, block -> if (index == last) marked(block as JsonObject) else block })
     }
 
     private fun text(value: String): JsonObject = buildJsonObject {
@@ -349,6 +376,8 @@ internal class AnthropicAdapter(private val http: ProviderHttp) : ChatAdapter {
 
     companion object {
         private val THINKING_BLOCKS = setOf("thinking", "redacted_thinking")
+
+        private val EPHEMERAL = buildJsonObject { put("type", "ephemeral") }
 
         /** Whether thinking blocks are kept and replayed: never on a route that strips thinking (Copilot's, design D12). */
         private fun keepsThinking(target: ModelTarget): Boolean = !target.options.stripThinking

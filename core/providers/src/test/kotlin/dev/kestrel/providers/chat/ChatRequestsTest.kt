@@ -70,6 +70,8 @@ class ChatRequestsTest {
             cacheKey = "secret key",
             temperature = 0.2,
             reasoning = ReasoningLevel.LOW,
+            context = "secret context",
+            cacheAfter = 0,
         )
 
         val printed = request.toString()
@@ -77,8 +79,37 @@ class ChatRequestsTest {
         assertFalse(printed, printed.contains("secret"))
         assertEquals(
             "ChatRequest(systemLength=20, messages=1, tools=0, toolChoice=AUTO, reasoning=LOW, maxOutputTokens=100, " +
-                "temperature=set, cacheKey=set, jsonSchema=none)",
+                "temperature=set, cacheKey=set, jsonSchema=none, context=14 chars, cacheAfter=0, cacheFields=$CACHE_ALL)",
             printed,
         )
+    }
+
+    @Test
+    fun aToolResultWithoutAnEarlierCallFails() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ChatRequests.check(
+                request(
+                    ChatMessage.User(listOf(Part.Text("Open the mail."))),
+                    ChatMessage.Assistant(listOf(call)),
+                    ChatMessage.ToolResult("call-1", "tap", "Tapped."),
+                    ChatMessage.ToolResult("call-9", "tap", "A result whose call was removed."),
+                ),
+            )
+        }
+
+        assertEquals("Message 3 is a tool result without its call", error.message)
+    }
+
+    @Test
+    fun cacheAfterMustNameAMessage() {
+        val one = request(ChatMessage.User(listOf(Part.Text("Hi."))))
+
+        ChatRequests.check(one.copy(cacheAfter = 0))
+        assertThrows(IllegalArgumentException::class.java) { ChatRequests.check(one.copy(cacheAfter = 1)) }
+        assertThrows(IllegalArgumentException::class.java) { ChatRequests.check(one.copy(cacheAfter = -1)) }
+    }
+
+    private companion object {
+        const val CACHE_ALL = "CacheFields(anthropicMarks=true, responsesExplicit=true, chatCopilotMarks=true)"
     }
 }

@@ -36,6 +36,24 @@ object ErrorCodes {
         return candidates.firstNotNullOfOrNull { it?.takeIf(CODE::matches) }
     }
 
+    /**
+     * Whether an error reply's JSON names the tool choice (design D4 of sub-project 5): OpenAI's `error.param` is
+     * `tool_choice`, or the body holds `tool_choice`, `tool choice`, `toolChoice`, `function_calling_config` or
+     * `disable_parallel_tool_use` in any case. Only the answer is kept, never the words.
+     */
+    fun namesToolChoice(reply: HttpReply): Boolean {
+        val body = try {
+            json.parseToJsonElement(reply.text()) as? JsonObject
+        } catch (e: IllegalArgumentException) {
+            null
+        } ?: return false
+        if ((body["error"] as? JsonObject)?.string("param") == "tool_choice") return true
+        val text = body.toString().lowercase()
+        return TOOL_CHOICE_WORDS.any { it in text }
+    }
+
+    private val TOOL_CHOICE_WORDS = listOf("tool_choice", "tool choice", "toolchoice", "function_calling_config", "disable_parallel_tool_use")
+
     private fun aws(value: String): String? = value.substringAfter('#').substringBefore(':').trim().takeIf(CODE::matches)
 
     /** Google's `error.details[]` ErrorInfo reason `API_KEY_INVALID`, which says that the API key was refused. */

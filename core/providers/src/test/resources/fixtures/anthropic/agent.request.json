@@ -1,0 +1,96 @@
+{
+  "model": "claude-sonnet-5",
+  "max_tokens": 256,
+  "system": [
+    {
+      "type": "text",
+      "text": "You are Kestrel.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Facts the owner saved: home is Main Street 1.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Task: open the camera."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "First screen: Launcher."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_1",
+          "name": "open_app",
+          "input": {
+            "name": "Camera"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_1",
+          "content": "Step 1: opened Camera.",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Observation 2: Camera"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "open_app",
+      "description": "Opens an app by its name.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The app's name."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto",
+    "disable_parallel_tool_use": true
+  },
+  "stream": true
+}

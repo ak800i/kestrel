@@ -1,5 +1,6 @@
 package dev.kestrel.providers.styles
 
+import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatAdapter
 import dev.kestrel.providers.chat.ChatMessage
@@ -139,32 +140,50 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
             if (cacheKey != null && target.providerId == "openai" && compat.supportsPromptCacheKey != false) put("prompt_cache_key", cacheKey)
         }
         put("store", false)
+        if (explicit(request, target)) putJsonObject("prompt_cache_options") { put("mode", "explicit") }
         // OpenAI refuses this include for a model that does not reason ("Encrypted content is not supported with this model").
         if (target.model.reasoning || plan) putJsonArray("include") { add(JsonPrimitive("reasoning.encrypted_content")) }
         put("stream", stream)
     }
 
+    /**
+     * The system prompt, the per-task context and the messages (design D5 of sub-project 5). OpenAI's own models take
+     * the context as a `developer` item, and from GPT-5.6 on the system prompt too, because their top-level
+     * `instructions` are billed uncached (research r51); the ChatGPT plan keeps `instructions` for the system prompt, and
+     * the other targets get `system` items. In Copilot's explicit mode the system prompt, the context and message
+     * `cacheAfter` carry `prompt_cache_breakpoint`, in the shape that VS Code's client sends: OpenAI writes cache entries
+     * only at breakpoints, so the one on the system prompt lets every task read the tools and the system prompt from the
+     * cache, whatever its context.
+     */
     private fun input(request: ChatRequest, target: ModelTarget, tools: Boolean): JsonArray = buildJsonArray {
         val plan = target.options.chatgptPlan
-        if (!plan && request.system.isNotEmpty()) addJsonObject {
-            put("role", "system")
-            put("content", request.system)
+        val own = ownModel(target)
+        val explicit = explicit(request, target)
+        val context = request.context?.takeIf { it.isNotBlank() }
+        if (!plan && request.system.isNotEmpty()) {
+            add(instruction(if (own && newer(target)) "developer" else "system", request.system, explicit))
         }
-        for (message in request.messages) {
+        if (context != null) add(instruction(if (own) "developer" else "system", context, explicit))
+        val markAt = request.cacheAfter.takeIf { explicit }
+        for ((index, message) in request.messages.withIndex()) {
+            val mark = index == markAt
             when (message) {
                 is ChatMessage.User -> addJsonObject {
                     put("role", "user")
                     putJsonArray("content") {
-                        for (part in message.parts) addJsonObject {
-                            when (part) {
-                                is Part.Text -> {
-                                    put("type", "input_text")
-                                    put("text", part.text)
+                        message.parts.forEachIndexed { position, part ->
+                            addJsonObject {
+                                when (part) {
+                                    is Part.Text -> {
+                                        put("type", "input_text")
+                                        put("text", part.text)
+                                    }
+                                    is Part.Image -> {
+                                        put("type", "input_image")
+                                        put("image_url", "data:${part.type.mime};base64,${Wire.base64(part.bytes)}")
+                                    }
                                 }
-                                is Part.Image -> {
-                                    put("type", "input_image")
-                                    put("image_url", "data:${part.type.mime};base64,${Wire.base64(part.bytes)}")
-                                }
+                                if (mark && position == message.parts.lastIndex) put("prompt_cache_breakpoint", BREAKPOINT)
                             }
                         }
                     }
@@ -174,22 +193,55 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
                     addJsonObject {
                         put("type", "function_call_output")
                         put("call_id", callId(message.callId))
-                        put("output", message.text)
+                        if (mark) put("output", breakpointText(message.text)) else put("output", message.text)
                     }
                 } else {
                     addJsonObject {
                         put("role", "user")
-                        putJsonArray("content") {
-                            addJsonObject {
-                                put("type", "input_text")
-                                put("text", Wire.resultText(message))
-                            }
-                        }
+                        put("content", if (mark) breakpointText(Wire.resultText(message)) else plainText(Wire.resultText(message)))
                     }
                 }
             }
         }
     }
+
+    /** A system or developer item; with [breakpoint], its text is a content block that carries the breakpoint. */
+    private fun instruction(role: String, text: String, breakpoint: Boolean): JsonObject = buildJsonObject {
+        put("role", role)
+        if (breakpoint) put("content", breakpointText(text)) else put("content", text)
+    }
+
+    private fun plainText(text: String): JsonArray = buildJsonArray {
+        addJsonObject {
+            put("type", "input_text")
+            put("text", text)
+        }
+    }
+
+    private fun breakpointText(text: String): JsonArray = buildJsonArray {
+        addJsonObject {
+            put("type", "input_text")
+            put("text", text)
+            put("prompt_cache_breakpoint", BREAKPOINT)
+        }
+    }
+
+    /** OpenAI's own models, which take `developer` items: the ChatGPT plan, OpenAI's API, Azure OpenAI and Copilot. */
+    private fun ownModel(target: ModelTarget): Boolean =
+        target.options.chatgptPlan || azure || target.providerId == "openai" || target.providerId == CatalogLoader.COPILOT
+
+    /** GPT-5.6 and later, by the sent ID or the catalog's ID (an Azure deployment's name can differ). */
+    private fun newer(target: ModelTarget): Boolean = listOf(target.sentModelId, target.model.id).any { id ->
+        val match = GPT_VERSION.find(id.lowercase()) ?: return@any false
+        val major = match.groupValues[1].toInt()
+        val minor = match.groupValues[2].toIntOrNull() ?: 0
+        major > 5 || (major == 5 && minor >= 6)
+    }
+
+    /** Copilot's explicit cache mode, for the models that VS Code's client gives it (research r51) and while switched on. */
+    private fun explicit(request: ChatRequest, target: ModelTarget): Boolean =
+        request.cacheFields.responsesExplicit && target.providerId == CatalogLoader.COPILOT &&
+            EXPLICIT_MODELS.containsMatchIn(target.sentModelId.lowercase())
 
     /**
      * The assistant's items in their order: its reasoning items, its text as one message, and its function calls. The
@@ -344,6 +396,13 @@ internal class ResponsesAdapter(private val http: ProviderHttp, private val azur
         const val NAMESPACE = "kestrel"
 
         private val STALE_REASONING = setOf("invalid_encrypted_content", "thinking_signature_invalid")
+
+        private val GPT_VERSION = Regex("^gpt-(\\d+)(?:\\.(\\d+))?")
+
+        /** VS Code's `modelSupportCacheBreakPoints`: GPT-5.6 and the GPT-6 family (research r51, source R11). */
+        private val EXPLICIT_MODELS = Regex("^(?:gpt-5\\.6(?:-|$)|gpt-6)")
+
+        private val BREAKPOINT = buildJsonObject { put("mode", "explicit") }
 
         /**
          * A call ID as OpenAI's Responses API accepts it (at most 64 characters, as OpenClaw's

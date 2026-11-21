@@ -1,0 +1,106 @@
+{
+  "model": "gpt-6.1-terra",
+  "input": [
+    {
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "You are Kestrel.",
+          "prompt_cache_breakpoint": {
+            "mode": "explicit"
+          }
+        }
+      ]
+    },
+    {
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Facts the owner saved: home is Main Street 1.",
+          "prompt_cache_breakpoint": {
+            "mode": "explicit"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Task: open the camera."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "First screen: Launcher."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_1",
+      "name": "open_app",
+      "arguments": "{\"name\":\"Camera\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_1",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "Step 1: opened Camera.",
+          "prompt_cache_breakpoint": {
+            "mode": "explicit"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Observation 2: Camera"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "open_app",
+      "description": "Opens an app by its name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The app's name."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "strict": false
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "max_output_tokens": 256,
+  "store": false,
+  "prompt_cache_options": {
+    "mode": "explicit"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "stream": true
+}
