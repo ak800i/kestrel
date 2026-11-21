@@ -60,9 +60,14 @@ data class TableEntry(
 /**
  * The numbers of one observation; they are valid only while it is the newest. [redactedBounds] holds the bounds of every
  * element and OCR line whose text the redactor changed, also of those that the cap left out, so that a screenshot's
- * masks cover every one of them (design D20; review 3-2 N1, review 4-2 I4).
+ * masks cover every one of them (design D20; review 3-2 N1, review 4-2 I4). [frontWindowId] is the ID of the window that
+ * the observation treats as in front, such as a dialog or a picker, or null when it shows none.
  */
-class ObservationTable(val entries: List<TableEntry>, val redactedBounds: List<IntRect> = entries.filter { it.redacted }.map { it.bounds }) {
+class ObservationTable(
+    val entries: List<TableEntry>,
+    val redactedBounds: List<IntRect> = entries.filter { it.redacted }.map { it.bounds },
+    val frontWindowId: Int? = null,
+) {
     private val byNumber = entries.associateBy { it.number }
     private val byKeys = entries.filter { it.key != null }.associateBy { it.key!! }
 

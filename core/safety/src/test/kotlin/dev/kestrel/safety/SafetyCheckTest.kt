@@ -316,6 +316,25 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun aTapAtOnTheOtherHalfOfASplitScreenIsRefusedForAnAgentFreeAppOrPlayServices() {
+        val env = SafetyEnvironment(isAgentFree = { it == "dev.kestrel" || it == "com.example.bank" })
+        fun split(other: String) = TestScreen("com.example.notes", bounds = IntRect(0, 0, 500, 2000)).apply {
+            add(1000, "Notes", right = 500)
+            window(2, other, IntRect(500, 0, 1000, 2000), layer = 1)
+            add(1200, "Details", left = 600, right = 900, window = 2)
+        }
+        val at = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(750, 1250))
+
+        for (other in listOf("com.example.bank", AgentFreeApps.PLAY_SERVICES)) {
+            val assessment = SafetyCheck.assess(at, split(other).snapshot(), nothing, standard, env)
+            assertEquals(other, "block", kind(assessment.decision))
+            assertTrue(other, Source.COVERED in assessment.sources)
+        }
+        assertEquals("run", decide(at, split("com.example.shop"), nothing, env = env))
+        assertEquals("run", decide(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(250, 1050)), split("com.example.bank"), nothing, env = env))
+    }
+
+    @Test
     fun aTapAtOnAnAppWindowThatFloatsAboveTheFrontAppIsRefused() {
         fun at(x: Int, y: Int) = Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(x, y), frontAppLabel = "Chat")
         // Play services' autofill suggestion over the front app's window, which the observation leaves out.

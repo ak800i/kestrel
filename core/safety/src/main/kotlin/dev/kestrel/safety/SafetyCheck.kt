@@ -21,6 +21,7 @@ object SafetyCheck {
     private val LEAVING = setOf(ActionKind.OPEN_APP, ActionKind.OPEN_URL, ActionKind.OPEN_DEEP_LINK, ActionKind.OPEN_SETTINGS, ActionKind.HOME)
     private const val CHANGED = "The screen changed before the action; nothing was done."
     private const val COVERED = "Another window covers that point."
+    private const val CLOSED_APP = "That point is in an app that the agent may not use."
 
     fun decide(proposal: Proposal, screen: ScreenSnapshot, task: TaskSafety, settings: SafetySettings, env: SafetyEnvironment = SafetyEnvironment()): Decision =
         assess(proposal, screen, task, settings, env).decision
@@ -45,6 +46,12 @@ object SafetyCheck {
         if (point != null && ContextRules.covered(screen, point)) {
             sources += Source.COVERED
             return ending(Decision.Block(COVERED))
+        }
+        // A point in an agent-free app's window or in Play services', such as the other half of a split screen, which the
+        // observation leaves out (design D13 and D16).
+        if (point != null && ContextRules.windowAt(screen, point)?.packageName.let { env.isAgentFree(it) || it == AgentFreeApps.PLAY_SERVICES }) {
+            sources += Source.COVERED
+            return ending(Decision.Block(CLOSED_APP))
         }
         val atPoint = point?.let { ContextRules.atPoint(screen, it) }.orEmpty()
         val reached = listOfNotNull(index) + atPoint

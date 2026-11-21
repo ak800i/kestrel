@@ -259,7 +259,7 @@ class ObservationBuilder(
         return Observation(
             step = input.step,
             text = text,
-            table = ObservationTable(entries, redactedBounds),
+            table = ObservationTable(entries, redactedBounds, front?.id),
             packageName = front?.packageName,
             appLabel = input.appLabel,
             title = title,

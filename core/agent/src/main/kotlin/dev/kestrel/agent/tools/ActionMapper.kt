@@ -80,7 +80,7 @@ object ActionMapper {
      * The screen action of [call], or null for a call that is none (the data, dialogue and memory tools, `open_*`, `wait`
      * and `look_closer`, which the loop runs itself). [text] replaces `type_text`'s text: the revealed text after the
      * owner's yes. An OCR line is tapped at its centre. A `scroll` without a target scrolls the largest scrollable
-     * element of the observation, or the screen when there is none.
+     * element of the front window, else of the observation, or the screen when there is none.
      */
     fun screenAction(call: AgentCall, table: ObservationTable, text: String? = null, press: Press): ScreenAction? = when (call) {
         is AgentCall.Tap -> table.entry(call.target)?.let { entry ->
@@ -156,6 +156,13 @@ object ActionMapper {
 
     private const val BAD_DATE = "The date is not valid."
 
-    private fun largestScrollable(table: ObservationTable): TableEntry? =
-        table.entries.filter { it.scrollable && !it.ocr }.maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+    /**
+     * The largest scrollable entry of the front window (design D10), so that a dialog's or a picker's list wins over the
+     * bigger list behind it; the largest of the whole observation when the front window has none.
+     */
+    private fun largestScrollable(table: ObservationTable): TableEntry? {
+        val lists = table.entries.filter { it.scrollable && !it.ocr }
+        val front = lists.filter { it.windowId == table.frontWindowId }
+        return front.ifEmpty { lists }.maxByOrNull { it.bounds.width.toLong() * it.bounds.height }
+    }
 }

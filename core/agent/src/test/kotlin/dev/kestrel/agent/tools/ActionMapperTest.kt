@@ -77,6 +77,28 @@ class ActionMapperTest {
     }
 
     @Test
+    fun aScrollWithoutATargetTakesTheLargestListOfTheFrontWindow() {
+        val scroll = AgentCall.Scroll(Direction.DOWN, null, "more", Category.READING)
+        val dialog = TestTree().apply {
+            add(200, description = "Chats", scrollable = true, actions = setOf(ElementAction.SCROLL_FORWARD), axis = ScrollAxis.VERTICAL, height = 2000)
+            window(2, "com.example.chat", IntRect(100, 800, 980, 1600), active = true)
+            add(900, description = "Ringtones", scrollable = true, actions = setOf(ElementAction.SCROLL_FORWARD), axis = ScrollAxis.VERTICAL, height = 500, left = 100, right = 980, window = 2)
+        }
+        val inFront = builder.build(ObservationInput(1, dialog.snapshot(), "Chat")).table
+        assertEquals(dialog.key(1), (ActionMapper.screenAction(scroll, inFront, press = Press.VERIFIED) as ScreenAction.Scroll).key)
+        assertEquals(dialog.key(1), ActionMapper.proposal(scroll, inFront, "Chat").targetKey)
+
+        // A front dialog without a list: the largest list of the observation.
+        val plain = TestTree().apply {
+            add(200, description = "Chats", scrollable = true, actions = setOf(ElementAction.SCROLL_FORWARD), axis = ScrollAxis.VERTICAL, height = 2000)
+            window(2, "com.example.chat", IntRect(100, 800, 980, 1600), active = true)
+            add(900, "Delete this chat?", left = 100, right = 980, window = 2)
+        }
+        val noList = builder.build(ObservationInput(1, plain.snapshot(), "Chat")).table
+        assertEquals(plain.key(0), (ActionMapper.screenAction(scroll, noList, press = Press.VERIFIED) as ScreenAction.Scroll).key)
+    }
+
+    @Test
     fun aPressIsOnceFromTypingScreenTextAndAfterAConfirmation() {
         assertEquals(
             listOf(Press.VERIFIED, Press.VERIFIED, Press.VERIFIED, Press.ONCE, Press.ONCE, Press.ONCE),
