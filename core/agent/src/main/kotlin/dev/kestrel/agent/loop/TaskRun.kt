@@ -185,7 +185,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private fun contextText(): Redacted? = TEST_MODE_NOTE.takeIf { settings.safety.testMode }?.let { Redacted.of(redactor, it) }
 
     private suspend fun turn() {
-        if (gate()) resumed()
+        if (gate() || resumePending) resumed()
         val priced = callModel()
         replies++
         account(priced)
@@ -332,6 +332,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         val next = builder.build(ObservationInput(replies + 1, checked, label(front), last, previous, targetKey, ocr))
         snapshot = checked
         observation = next
+        resumePending = false
         return next
     }
 
@@ -345,8 +346,19 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     // --- The owner ---
 
-    /** The pause gate before a model call, an action or a question (D2); true when the task was paused and resumed. */
-    suspend fun gate(): Boolean = (limits.waiting { ports.owner.gate() } == Gate.RESUMED).also { if (it) interruptions = 0 }
+    /**
+     * The pause gate before a model call, an action or a question (D2); true when the task was paused and resumed. A
+     * resume that no observation has shown yet makes the next turn observe the screen again before its model call.
+     */
+    suspend fun gate(): Boolean = (limits.waiting { ports.owner.gate() } == Gate.RESUMED).also {
+        if (it) {
+            interruptions = 0
+            resumePending = true
+        }
+    }
+
+    // A resume that a gate inside a step saw (in `say`, `ask_user` or a yes/no question), until an observation shows it.
+    private var resumePending = false
 
     // A question that a touch or the wake word interrupted is asked again after the pause gate; the third interruption in
     // a row without a pause counts as no answer, so that the loop never asks forever.
@@ -466,6 +478,21 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         } else {
             ledger.add("sent the message to $to")
         }
+    }
+
+    /**
+     * A confirmed press that may not have worked (D32 item 29): it does not count as done, so it adds no "Sent to …" line,
+     * no recipient and no confirmed send; the ledger says that the tap may not have worked (D24).
+     */
+    fun unsure(confirmation: Confirmation, share: Boolean) {
+        val to = confirmation.recipients.joinToString(" and ")
+        val what = when {
+            confirmation.category == Category.DELETING -> "delete ${deleted(confirmation.content)}"
+            confirmation.category != Category.SENDING -> return
+            share -> "share the items with $to"
+            else -> "send the message to $to"
+        }
+        ledger.add("tried to $what, but the tap may not have worked")
     }
 
     // A delete's content is a count for a selection ("3") or the title of what it deletes.

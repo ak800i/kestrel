@@ -46,7 +46,10 @@ class Harness(
     }
 
     /** Every text that went to the model in the newest request: the context and the messages' texts. */
-    fun lastRequestText(): String = model.requests.last().let { request ->
+    fun lastRequestText(): String = requestText(model.requests.lastIndex)
+
+    /** Every text that went to the model in request number [index] (0 for the first). */
+    fun requestText(index: Int): String = model.requests[index].let { request ->
         (listOf(request.context.orEmpty()) + request.messages.mapNotNull { message ->
             when (message) {
                 is ChatMessage.ToolResult -> message.text

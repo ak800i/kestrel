@@ -2,6 +2,7 @@ package dev.kestrel.agent
 
 import dev.kestrel.agent.loop.ScreenSteps
 import dev.kestrel.agent.loop.TaskRun
+import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
@@ -205,16 +206,97 @@ class AgentTest {
 
     @Test
     fun aResumedTaskObservesTheScreenAgainBeforeItActs() = runTest {
-        val harness = Harness(Screens.chats(), listOf(
+        val paused = Harness(Screens.chats(), listOf(
             call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
             call("fail", null, null, null, "reason" to "Stop."),
         ))
-        harness.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+        paused.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+
+        paused.run("Open Ana's chat")
+
+        assertTrue(paused.screen.actions.isEmpty())
+        assertTrue(paused.lastRequestText().contains(ScreenSteps.PAUSED))
+
+        // A resume at the gate of `say`: the owner changed the screen during the pause, and the next request shows it.
+        val said = Harness(Screens.chats(), listOf(
+            call("say", null, null, null, "text" to "One moment."),
+            call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        said.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+        said.owner.onSay = { said.screen.current = Screens.chats("Ana Petrović", "Jovan Jovanović") }
+
+        said.run("Open Ana's chat")
+
+        val second = said.requestText(1)
+        assertTrue(second.contains(TaskRun.RESUMED))
+        assertTrue(second.contains("Jovan Jovanović"))
+        assertEquals(1, said.screen.actions.filterIsInstance<ScreenAction.Tap>().size)
+    }
+
+    @Test
+    fun aResumeAtTheGateOfAQuestionOrAMemoryToolIsObservedBeforeTheNextRequest() = runTest {
+        val asked = Harness(Screens.chats(), listOf(
+            call("ask_user", null, null, null, "question" to "Which Ana?"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        asked.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+        asked.owner.answers += Answer.Text("Petrović")
+        asked.run("Open Ana's chat")
+        assertTrue(asked.lastRequestText().contains(TaskRun.RESUMED))
+
+        val remembered = Harness(Screens.chats(), listOf(
+            call("remember", null, null, null, "key" to "gate code", "value" to "blue"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        remembered.owner.gates += listOf(Gate.GO, Gate.RESUMED)
+        remembered.owner.answers += Answer.Yes
+        remembered.run("Remember that the gate code is blue")
+        assertTrue(remembered.lastRequestText().contains(TaskRun.RESUMED))
+    }
+
+    @Test
+    fun aResumeAtTheStartOfATurnIsObservedBeforeTheModelIsAsked() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("fail", null, null, null, "reason" to "Stop.")))
+        harness.owner.gates += Gate.RESUMED
 
         harness.run("Open Ana's chat")
 
-        assertTrue(harness.screen.actions.isEmpty())
-        assertTrue(harness.lastRequestText().contains(ScreenSteps.PAUSED))
+        assertEquals(1, harness.model.requests.size)
+        assertTrue(harness.requestText(0).contains(TaskRun.RESUMED))
+    }
+
+    @Test
+    fun anUnexpectedFailureReportsOnceAsKestrelsErrorAndIsRethrown() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+        ))
+        harness.screen.outcome = { throw IllegalStateException("broken screen") }
+
+        val thrown = runCatching { harness.run("Open Ana's chat") }.exceptionOrNull()
+
+        assertTrue(thrown is IllegalStateException)
+        assertEquals(EndReason.KESTREL_ERROR, harness.reports.single().end)
+        assertEquals(TaskLog.Kind.END, harness.log.entries.last().first)
+        assertTrue(harness.data.forgotten)
+    }
+
+    @Test
+    fun aSendWhosePressMayNotHaveWorkedIsNotReportedAsSent() = runTest {
+        val harness = Harness(Screens.chat("Ana Petrović", "Hi"), sendSteps().take(2) + call("fail", null, null, null, "reason" to "Stop."))
+        harness.owner.confirms += ConfirmEnd.YES
+        harness.screen.outcome = { action ->
+            ActionOutcome(done = true, uncertain = action is ScreenAction.Tap, method = "fake")
+        }
+
+        val report = harness.run("Send Ana a message that I'm late")
+
+        assertEquals(1, harness.screen.actions.filterIsInstance<ScreenAction.Tap>().size)
+        assertTrue(harness.lastRequestText().contains(ScreenSteps.UNCERTAIN))
+        assertTrue(report.sends.isEmpty())
+        assertTrue(report.recipients.isEmpty())
+        assertTrue(report.ledger.none { it.startsWith("sent") })
+        assertEquals("tried to send the message to Ana Petrović, but the tap may not have worked", report.ledger.last())
     }
 
     @Test

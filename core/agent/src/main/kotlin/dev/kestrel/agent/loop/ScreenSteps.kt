@@ -71,7 +71,10 @@ internal class ScreenSteps(private val run: TaskRun) {
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
         val flow = run.safety.shareFlow
         val done = perform(call, entry, proposal, fresh, category, confirmed = true)
-        if (done.outcome !is Outcome.Failed) {
+        // A press that may not have worked is not a send (D32 item 29): the report never claims it.
+        if (done.outcome == Outcome.Uncertain) {
+            run.unsure(yes, share = flow != null)
+        } else if (done.outcome !is Outcome.Failed) {
             val items = flow?.count?.let { it.photos + it.videos } ?: 0
             run.sent(yes, share = flow != null, items = items)
         }
