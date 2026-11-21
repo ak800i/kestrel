@@ -585,23 +585,29 @@ Secure windows (`FLAG_SECURE`) cannot be captured, so only the tree and the numb
 
 The safety check in `:core:safety` applies to every action that the agent or a routine proposes. It does not apply to instant commands, which are the owner's direct control (section 9.5).
 
+Every link is checked before Kestrel opens it: `open_url` opens only `https`, `open_deep_link` only the schemes of section 11.4, never `intent:`, `file:`, `content:`, `javascript:` or `android-app:`, and never a link whose activity belongs to Kestrel, an agent-free app or Google Play services. A `tel:` link opens only the dial screen, and only for a number that the emergency guard lets Kestrel dial. A link that came from the screen or a data tool and carries data in its query or its fragment sends that data, so it counts as sending. Data in a link's path (such as `https://example.com/c/0601234567`) is not recognised; such a link opens as reading.
+
+Any app in front can start Kestrel's assistant and play speech, so it can speak a task and even say "confirm". What limits it: the phone must be unlocked with the app in front; the task's allowance (section 12.3) asks again for every category that the spoken task did not name; test mode blocks every send that does not go to the owner's own chats; a confirmation names the real recipient and text from the screen, and the card shows them; and while another app plays media or game audio, a confirmation of sending or deleting counts only by the card's button, or by voice after Kestrel has paused that audio.
+
 ### 12.2 Action categories
 
 The safety check puts every proposed action into one of the categories that form the rows of the table in section 12.3. The rows are ordered from least to most restrictive, and this order holds in every mode. Three sources suggest a category, and when they disagree, the category that is lower in the table wins:
 
 1. **The category that the model declares** for the action (section 11.4).
-2. **Words in the label of the element that will be pressed,** in English and Serbian:
-   - send, post, share, confirm and submit (pošalji, objavi, podeli, potvrdi) suggest sending;
-   - call (pozovi) suggests a call;
-   - delete and remove (obriši, izbriši, ukloni) suggest deleting;
-   - pay, buy, order and checkout (plati, kupi, naruči) suggest a payment;
-   - install and allow (instaliraj, dozvoli) suggest the protected category.
+2. **Words in the label of the element that will be pressed and of its clickable parents** (for an element without a label, the name that Kestrel derived from its view ID; for a tap on a line that OCR read, that line and the elements under the point), in English and Serbian, in both Serbian scripts (the matcher's normaliser writes Cyrillic in Latin letters), as whole words:
+   - send, post, share, confirm, submit, reply, forward, record and voice message (pošalji, pošaljite, objavi, podeli, podijeli, podelite, potvrdi, potvrdite, odgovori, odgovorite, prosledi, prosledite, snimi) suggest sending;
+   - call, dial and video call (pozovi, pozovite, nazovi) suggest a call;
+   - delete, remove, erase, clear, discard, trash and bin (obriši, obrišite, izbriši, izbrišite, ukloni, uklonite) suggest deleting, except a "Clear" inside a text field or its row, alone or with text, search, query or the field's name, which only empties the field;
+   - pay, buy, order, checkout, place order, subscribe and purchase (plati, platite, kupi, kupite, naruči, naručite, pretplati) suggest a payment;
+   - install, allow, grant, permit, uninstall and "activate this device admin app" (instaliraj, instalirajte, dozvoli, dozvolite) suggest the protected category.
 3. **Context rules:**
-   - compose screens and the dialer suggest sending or a call;
-   - the permission dialog, package installers, app-store install buttons, and the Settings pages for security, accessibility, device admin apps, unknown sources, biometrics and the lock screen suggest the protected category;
-   - password fields, one-time-code fields, card fields and biometric prompts suggest the credentials category;
-   - checkout screens suggest a payment;
-   - data tools that share media or compose messages suggest sending.
+   - a compose screen, one with a text field that is focused or holds text and is no search, URL or address field, makes a tap on an unlabelled button in the field's row or in the bar right above or below it sending;
+   - in a phone app or a contacts app, every action except scrolling, back, home and waiting is a call;
+   - a share flow, which starts when `share_media` or `compose_sms` opens an app, when the agent taps a share or forward button, or when Android's share sheet is in front, makes every tap in the receiving app's list of chats sending, whatever its label, until the app shows the chat of a selected row or the task leaves the app; only the picker's own search, back, close and tabs outside that list just read;
+   - the permission controller, the package installers, Google Play's install, update and purchase pages, Settings' device-admin activation screen, and a protected trail in Settings, from a page whose heading names security, accessibility, device admin, unknown or install apps, special app access, biometrics, fingerprint, face, the screen lock or passwords until the task leaves Settings or goes back past that page, make every tap, long press, typing and swipe protected;
+   - password fields, fields named for a code, PIN, password, card number, CVV or CVC, biometric prompts, autofill pickers, Android's Credential Manager and a page titled "Password Manager" or "Passwords" make typing and taps there the credentials category;
+   - a screen whose heading or buttons name checkout, payment, plaćanje or kasa makes its buttons a payment;
+   - `share_media` and `compose_sms` only open a screen, but they need sending in the task's allowance.
 
 ### 12.3 Modes and the security floor
 
@@ -612,13 +618,17 @@ The safety check puts every proposed action into one of the categories that form
 | Ordinary settings, such as Wi-Fi, hotspot, volume, starting navigation and alarms | run | run | run |
 | Typing screen text: typing text taken from the screen into another app | confirm | run | run |
 | Sending: sending or posting messages and email, and sharing photos or files | confirm | confirm | run |
-| Calls | confirm | confirm | run |
+| Calls placed by the agent | hand over | hand over | hand over |
 | Deleting anything | confirm | confirm | run |
 | Payments and checkout | hand over | hand over | hand over |
 | Credentials: passwords, one-time codes, card data and biometric prompts | hand over | hand over | hand over |
 | Protected: installing apps, granting permissions, and changing accessibility, device-admin or security settings | block | block | block |
 
 The last three rows form the security floor, which applies in every mode. Test mode (section 12.7) adds a restriction on recipients.
+
+Every call of the agent is handed over in every mode, with "Tap Call yourself if you want this call.", so that no emergency number, service code or number that Kestrel cannot read is ever called on "confirm"; the instant commands keep their countdown and their "yes, call" (section 8.7). A permission dialog that an app shows during a task is handed over, not blocked, so that the owner can answer it (section 14.3).
+
+Before the agent reads any screen text, Kestrel derives from the owner's own words which of sending, calls and deleting the task asks for: verbs at the start of the request or after "and", "then", "please", "also" or "Kestrel", such as "send", "share", "reply to", "message Ana that …", "call", "dial", "delete" and their Serbian forms, never nouns such as "message" or "call" in "Read my latest message" or "Who was my last call?". A name after "message", "text", "e-mail", "answer", "tell" or "call" counts only when a message follows it or when memory or the contacts know it. An action whose category the task did not ask for needs a confirmation in every mode, also in full-auto, and its question says so: "You didn't ask me to send anything. …".
 
 ### 12.4 Confirmations and hand-overs
 

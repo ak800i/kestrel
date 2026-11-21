@@ -1,0 +1,355 @@
+package dev.kestrel.safety
+
+import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScrollAxis
+import dev.kestrel.screen.model.WindowKind
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** Spec 16.2's decision table (design D13 of sub-project 5), with a hostile model that declares `reading` for every tap. */
+class SafetyCheckTest {
+    private val everything = TaskSafety(TaskAllowance(setOf(Category.SENDING, Category.CALLS, Category.DELETING)))
+    private val nothing = TaskSafety(TaskAllowance.NONE)
+    private val standard = SafetySettings(testMode = false)
+
+    private fun tap(key: String, declared: Category = Category.READING) = Proposal("tap", ActionKind.TAP, declared, targetKey = key, frontAppLabel = "Chat")
+
+    private fun kind(decision: Decision): String = when (decision) {
+        Decision.Run -> "run"
+        is Decision.Confirm -> "confirm"
+        is Decision.HandOver -> "handover:${decision.handOver.kind}"
+        is Decision.Block -> "block"
+    }
+
+    private fun decide(proposal: Proposal, screen: TestScreen, task: TaskSafety = everything, mode: Mode = Mode.STANDARD, env: SafetyEnvironment = SafetyEnvironment()) =
+        kind(SafetyCheck.decide(proposal, screen.snapshot(), task, standard.copy(mode = mode), env))
+
+    /**
+     * A chat whose toolbar names it and whose message field holds text, so that a question can name what a delete
+     * removes and where a send goes.
+     */
+    private fun titled(): TestScreen = TestScreen().apply {
+        val bar = add(80, null, id = "toolbar", clickable = false)
+        add(90, "Shopping list", parent = bar, clickable = false)
+        add(1800, null, editable = true, hint = "Message", text = "Hello", right = 850)
+    }
+
+    @Test
+    fun everyRowRunsConfirmsHandsOverOrBlocksAsItsModeSays() {
+        val screen = titled()
+        val next = screen.add(1000, "Next")
+        val expected = mapOf(
+            Category.READING to listOf("run", "run", "run"),
+            Category.TYPING_REQUEST to listOf("run", "run", "run"),
+            Category.ORDINARY_SETTINGS to listOf("run", "run", "run"),
+            Category.TYPING_SCREEN_TEXT to listOf("confirm", "run", "run"),
+            Category.SENDING to listOf("confirm", "confirm", "run"),
+            Category.CALLS to listOf("handover:CALL", "handover:CALL", "handover:CALL"),
+            Category.DELETING to listOf("confirm", "confirm", "run"),
+            Category.PAYMENTS to listOf("handover:PAYMENT", "handover:PAYMENT", "handover:PAYMENT"),
+            Category.CREDENTIALS to listOf("handover:CREDENTIALS", "handover:CREDENTIALS", "handover:CREDENTIALS"),
+            Category.PROTECTED to listOf("block", "block", "block"),
+        )
+        for ((category, decisions) in expected) {
+            assertEquals(category.name, decisions, Mode.entries.map { decide(tap(next, category), screen, mode = it) })
+        }
+    }
+
+    @Test
+    fun aHostileModelThatDeclaresReadingStillMeetsTheLabelsWords() {
+        val screen = titled()
+        val keys = listOf("Send", "Delete chat", "Pay now", "Install", "Pošalji", "Пошаљи", "Video call").map { screen.add(100 + it.length * 50, it) }
+
+        assertEquals(
+            listOf("confirm", "confirm", "handover:PAYMENT", "block", "confirm", "confirm", "handover:CALL"),
+            keys.map { decide(tap(it), screen) },
+        )
+        val assessment = SafetyCheck.assess(tap(keys[0]), screen.snapshot(), everything, standard)
+        assertEquals(Category.SENDING, assessment.category)
+        assertEquals(setOf(Source.DECLARED, Source.LABEL_WORDS), assessment.sources)
+        assertEquals(assessment.decision, assessment.beforeTestMode)
+        val deleted = SafetyCheck.decide(tap(keys[1]), screen.snapshot(), everything, standard) as Decision.Confirm
+        assertEquals("Delete 'Shopping list' in Chat? Say confirm or cancel.", deleted.confirmation.question)
+        // Without a title or a selection, Kestrel cannot say what a delete removes, so it hands over.
+        val untitled = TestScreen()
+        assertEquals("handover:RECIPIENT", decide(tap(untitled.add(500, "Delete")), untitled))
+    }
+
+    @Test
+    fun clearBesideAFieldOnlyEmptiesItAndClearChatDeletes() {
+        val screen = TestScreen()
+        val field = screen.add(100, null, editable = true, hint = "Search", text = "Ana")
+        val clear = screen.add(100, "Clear", parent = field, left = 900, className = "android.widget.ImageButton")
+        val clearSearch = screen.add(100, "Clear search", left = 800, right = 900)
+        val clearChat = screen.add(1500, "Clear chat")
+
+        assertEquals(Category.TYPING_REQUEST, SafetyCheck.assess(tap(clear), screen.snapshot(), nothing, standard).category)
+        assertEquals("run", decide(tap(clearSearch), screen, nothing))
+        assertEquals(Category.DELETING, SafetyCheck.assess(tap(clearChat), screen.snapshot(), everything, standard).category)
+    }
+
+    @Test
+    fun anUnlabelledButtonBesideAComposedMessageSends() {
+        val chat = TestScreen(title = "Ana")
+        chat.add(1800, null, editable = true, focused = true, hint = "Message", text = "I'm late", right = 850)
+        val arrow = chat.add(1800, null, className = "android.widget.ImageButton", left = 850)
+        val search = TestScreen()
+        search.add(100, null, editable = true, focused = true, hint = "Search", text = "Ana", right = 850)
+        val lens = search.add(100, null, className = "android.widget.ImageButton", left = 850)
+        val browser = TestScreen("com.android.chrome")
+        browser.add(100, null, id = "url_bar", editable = true, focused = true, text = "example.com", right = 850)
+        val menu = browser.add(100, null, className = "android.widget.ImageButton", left = 850)
+
+        assertEquals("confirm", decide(tap(arrow), chat, nothing))
+        assertEquals(Category.SENDING, SafetyCheck.assess(tap(arrow), chat.snapshot(), everything, standard).category)
+        assertEquals("run", decide(tap(lens), search, nothing))
+        assertEquals("run", decide(tap(menu), browser, nothing))
+    }
+
+    @Test
+    fun everyActionInAPhoneOrContactsAppIsACallThatIsHandedOver() {
+        val dialer = TestScreen("com.google.android.dialer")
+        val one = dialer.add(1200, "1")
+        val list = dialer.add(200, null, scrollable = true, height = 800, clickable = false)
+        val contacts = TestScreen("com.google.android.contacts")
+        val row = contacts.add(300, "Ana Petrović")
+        val other = TestScreen("com.example.phone")
+        val key = other.add(1200, "5")
+
+        assertEquals("handover:CALL", decide(tap(one), dialer, nothing))
+        assertEquals("run", decide(Proposal("scroll", ActionKind.SCROLL, Category.READING, targetKey = list), dialer, nothing))
+        assertEquals("handover:CALL", decide(tap(row), contacts, nothing))
+        assertEquals("run", decide(tap(key), other, nothing))
+        val withDefault = SafetyEnvironment(phonePackages = EmergencyGuard.PHONE_PACKAGES + "com.example.phone")
+        assertEquals("handover:CALL", decide(tap(key), other, nothing, Mode.FULL_AUTO, withDefault))
+    }
+
+    @Test
+    fun anEmergencyButtonAnywhereIsACall() {
+        val lock = TestScreen("com.android.systemui")
+        val sos = lock.add(1800, "Emergency call")
+
+        assertEquals("handover:CALL", decide(tap(sos), lock, everything, Mode.FULL_AUTO))
+    }
+
+    @Test
+    fun everyRowOfASharePickerSendsWhateverItsLabelAndItsControlsOnlyRead() {
+        val picker = TestScreen("org.telegram.messenger")
+        val bar = picker.add(0, null, id = "toolbar", clickable = false, height = 150)
+        val search = picker.add(20, "Search", parent = bar, left = 850, className = "android.widget.ImageButton")
+        val tab = picker.add(160, "Chats", className = "com.google.android.material.tabs.TabLayout\$TabView", right = 300)
+        val list = picker.add(300, null, scrollable = true, axis = ScrollAxis.VERTICAL, height = 1600, clickable = false)
+        val rows = listOf("Close friends", "Back to school", "Search party", "Ana").mapIndexed { i, name -> picker.add(300 + i * 120, name, parent = list) }
+        val flow = everything.copy(shareFlow = ShareFlow("org.telegram.messenger", emptyList(), ShareCount(3, 0)))
+
+        assertEquals("run", decide(tap(search), picker, flow))
+        assertEquals("run", decide(tap(tab), picker, flow))
+        for (row in rows) {
+            assertEquals(Category.SENDING, SafetyCheck.assess(tap(row), picker.snapshot(), flow, standard).category)
+            assertEquals("confirm", decide(tap(row), picker, flow, Mode.RELAXED))
+        }
+        // Without a flow, a row named "Ana" only opens her chat.
+        assertEquals("run", decide(tap(rows[3]), picker, everything))
+    }
+
+    @Test
+    fun shareMediaAndComposeSmsNeedTheAllowanceToSend() {
+        val screen = TestScreen()
+        val share = Proposal(
+            "share_media", ActionKind.SHARE_MEDIA, receivingPackage = "org.telegram.messenger", shareCount = ShareCount(3, 0),
+            frontAppLabel = "Gallery", receivingAppLabel = "Telegram",
+        )
+        val sms = Proposal("compose_sms", ActionKind.COMPOSE_SMS, receivingPackage = "com.google.android.apps.messaging")
+
+        val asked = SafetyCheck.decide(share, screen.snapshot(), nothing, standard) as Decision.Confirm
+        assertEquals("You didn't ask me to share anything. Open Telegram's share screen with 3 photos? Say confirm or cancel.", asked.confirmation.question)
+        assertEquals("confirm", decide(sms, screen, nothing))
+        assertEquals("run", decide(share, screen, everything))
+    }
+
+    @Test
+    fun protectedScreensBlockAndAnAppsPermissionDialogIsHandedOver() {
+        val controller = TestScreen("com.google.android.permissioncontroller")
+        val allow = controller.add(1500, "Allow")
+        val dialog = TestScreen()
+        dialog.window(2, "com.google.android.permissioncontroller", IntRect(50, 700, 950, 1300), active = true)
+        val dialogAllow = dialog.add(1200, "While using the app", window = 2)
+        val settings = TestScreen("com.android.settings")
+        val bar = settings.add(80, null, id = "action_bar", clickable = false)
+        settings.add(90, "Accessibility", parent = bar, clickable = false)
+        val service = settings.add(400, "Kestrel")
+        val list = settings.add(300, null, scrollable = true, height = 1500, clickable = false)
+        val page = TestScreen("com.android.settings")
+        val toggle = page.add(400, "Use Kestrel")
+
+        assertEquals("block", decide(tap(allow), controller, everything, Mode.FULL_AUTO))
+        assertEquals("handover:PERMISSION_DIALOG", decide(tap(dialogAllow), dialog))
+        assertEquals("block", decide(tap(service), settings))
+        assertEquals("run", decide(Proposal("scroll", ActionKind.SCROLL, Category.READING, targetKey = list), settings))
+        assertEquals("block", decide(tap(toggle), page, everything.copy(trail = ProtectedTrail("Accessibility"))))
+        assertEquals("run", decide(tap(toggle), page))
+    }
+
+    @Test
+    fun credentialsAndPaymentsAreHandedOver() {
+        val login = TestScreen()
+        val password = login.add(600, null, editable = true, password = true, hint = "Password")
+        val code = login.add(800, null, editable = true, hint = "Verification code")
+        val manager = TestScreen("com.android.credentialmanager")
+        val account = manager.add(1500, "ana@example.com")
+        val shop = TestScreen(title = "Shop")
+        val bar = shop.add(80, null, id = "toolbar", clickable = false)
+        shop.add(90, "Checkout", parent = bar, clickable = false)
+        val next = shop.add(1800, "Continue")
+
+        assertEquals("handover:CREDENTIALS", decide(Proposal("type_text", ActionKind.TYPE, Category.TYPING_REQUEST, targetKey = password, text = "secret"), login))
+        assertEquals("handover:CREDENTIALS", decide(Proposal("type_text", ActionKind.TYPE, Category.TYPING_REQUEST, targetKey = code, text = "1234"), login))
+        assertEquals("handover:CREDENTIALS", decide(tap(account), manager))
+        assertEquals("handover:PAYMENT", decide(tap(next), shop, everything, Mode.FULL_AUTO))
+    }
+
+    @Test
+    fun typingTheRequestRunsAndTypingScreenTextOrAPlaceholderAsks() {
+        val screen = TestScreen()
+        val field = screen.add(1800, null, editable = true, focused = true, hint = "Message")
+        val password = screen.add(600, null, editable = true, password = true, hint = "PIN")
+        val task = TaskSafety.start("Send Ana a message that I'm 10 minutes late")
+        fun type(text: String, key: String = field) = Proposal("type_text", ActionKind.TYPE, Category.TYPING_REQUEST, targetKey = key, text = text, frontAppLabel = "Chat")
+
+        assertEquals("run", decide(type("I'm 10 minutes late"), screen, task))
+        val screenText = SafetyCheck.decide(type("Meet at 5"), screen.snapshot(), task, standard) as Decision.Confirm
+        assertEquals("Type 'Meet at 5' into 'Message' in Chat? Say confirm or cancel.", screenText.confirmation.question)
+        val code = SafetyCheck.decide(type("[OTP_1]"), screen.snapshot(), task, standard.copy(mode = Mode.FULL_AUTO)) as Decision.Confirm
+        assertEquals("Type 'your one-time code' into 'Message' in Chat? Say confirm or cancel.", code.confirmation.question)
+        assertEquals("handover:CREDENTIALS", decide(type("[OTP_1]", password), screen, task, Mode.FULL_AUTO))
+    }
+
+    @Test
+    fun anActionOutsideTheAllowanceAsksAlsoInFullAuto() {
+        val screen = titled()
+        val send = screen.add(1800, "Send", left = 850)
+
+        val asked = SafetyCheck.decide(tap(send), screen.snapshot(), nothing, standard.copy(mode = Mode.FULL_AUTO)) as Decision.Confirm
+        assertTrue(asked.confirmation.question.startsWith("You didn't ask me to send anything. "))
+        assertEquals("run", decide(tap(send), screen, everything, Mode.FULL_AUTO))
+    }
+
+    @Test
+    fun linksAreCheckedBeforeTheyOpen() {
+        val screen = TestScreen("org.mozilla.firefox")
+        fun link(url: String, kind: ActionKind = ActionKind.OPEN_URL, fromOwner: Boolean = false) =
+            Proposal("open_url", kind, link = url, linkFromOwner = fromOwner, linkTargetPackage = "org.mozilla.firefox")
+
+        assertEquals("block", decide(link("http://example.com"), screen))
+        assertEquals("run", decide(link("https://en.wikipedia.org/wiki/Kestrel", fromOwner = true), screen))
+        assertEquals(Category.SENDING, SafetyCheck.assess(link("https://evil.example/?d=483920"), screen.snapshot(), everything, standard).category)
+        assertEquals("block", decide(link("tel:112", ActionKind.OPEN_DEEP_LINK), screen, everything, Mode.FULL_AUTO, SafetyEnvironment(emergency = { it == "112" })))
+    }
+
+    @Test
+    fun aPointThatAnotherWindowCoversIsRefused() {
+        val screen = TestScreen()
+        screen.add(1500, null, clickable = false)
+        screen.window(2, "com.example.keyboard", IntRect(0, 1400, 1000, 2000), WindowKind.INPUT_METHOD)
+
+        assertEquals("block", decide(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(500, 1550), pointText = "Next"), screen))
+        assertEquals(
+            Category.SENDING,
+            SafetyCheck.assess(Proposal("tap", ActionKind.TAP_AT, Category.READING, point = Point(500, 300), pointText = "Send"), screen.snapshot(), everything, standard).category,
+        )
+    }
+
+    @Test
+    fun aTargetThatIsGoneIsRefused() {
+        assertEquals("block", decide(tap("com.example.chat|9|Gone"), TestScreen()))
+    }
+
+    @Test
+    fun aPickerRowInAListThatDoesNotScrollSendsAndItsNameComesFromTheRow() {
+        val picker = TestScreen("org.telegram.messenger")
+        val list = picker.add(200, null, className = "androidx.recyclerview.widget.RecyclerView", height = 600, clickable = false)
+        val top = picker.add(200, "Close friends", parent = list)
+        val ana = picker.add(400, "Ana See you 12:30", parent = list, text = null)
+        picker.add(410, "Ana", parent = ana, clickable = false, height = 40)
+        val flow = everything.copy(shareFlow = ShareFlow("org.telegram.messenger", emptyList(), ShareCount(1, 0), serial = 1))
+
+        // "Close friends" lies in the toolbar band and holds "close", but a row is never a picker's control (review 2 I1).
+        assertEquals(Category.SENDING, SafetyCheck.assess(tap(top), picker.snapshot(), flow, standard).category)
+        assertEquals(Category.SENDING, SafetyCheck.assess(tap(ana), picker.snapshot(), flow, standard).category)
+        val selected = SafetyCheck.afterAction(tap(ana), picker.snapshot(), picker.snapshot(), flow)
+        assertEquals(listOf("Ana"), selected.shareFlow?.selected)
+        val chat = TestScreen("org.telegram.messenger")
+        chat.add(100, "Ana", clickable = false)
+        assertNull(SafetyCheck.afterAction(tap(ana), picker.snapshot(), chat.snapshot(), selected).shareFlow)
+    }
+
+    @Test
+    fun anActionThatSendsAndDeletesIsAskedAsASendAndNeedsTheAllowanceToSend() {
+        val screen = titled()
+        val both = screen.add(1000, "Send and delete")
+        val deleteOnly = TaskSafety(TaskAllowance(setOf(Category.DELETING)))
+
+        val assessment = SafetyCheck.assess(tap(both), screen.snapshot(), deleteOnly, standard)
+
+        assertEquals(Category.DELETING, assessment.category)
+        assertTrue(assessment.sends)
+        val asked = (assessment.decision as Decision.Confirm).confirmation
+        assertEquals(Category.SENDING, asked.category)
+        assertTrue(asked.question, asked.question.startsWith("You didn't ask me to send anything."))
+    }
+
+    @Test
+    fun aClearedFieldAnAnrDialogAndAFullHeightPermissionDialog() {
+        val search = TestScreen()
+        val field = search.add(100, null, editable = true, hint = "Search", text = "Ana")
+        assertEquals("run", decide(Proposal("type_text", ActionKind.TYPE, Category.TYPING_REQUEST, targetKey = field, text = ""), search, nothing))
+
+        val anr = TestScreen()
+        val wait = anr.add(1500, "Wait")
+        anr.window(2, "android", IntRect(100, 800, 900, 1400), kind = WindowKind.SYSTEM, active = true)
+        val after = SafetyCheck.afterAction(tap(wait), anr.snapshot(), anr.snapshot(), everything)
+        assertNull(after.shareFlow)
+
+        val permission = TestScreen("com.google.android.permissioncontroller")
+        val allow = permission.add(1500, "While using the app", id = "permission_allow_button")
+        assertEquals("handover:PERMISSION_DIALOG", decide(tap(allow), permission))
+    }
+
+    @Test
+    fun afterActionKeepsTheFlowTheTrailAndTheTypedTexts() {
+        val gallery = TestScreen("com.example.gallery")
+        val picker = TestScreen("org.telegram.messenger")
+        val list = picker.add(300, null, scrollable = true, axis = ScrollAxis.VERTICAL, height = 1600, clickable = false)
+        val row = picker.add(300, "Close friends", parent = list)
+        val chat = TestScreen("org.telegram.messenger")
+        chat.add(100, "Close friends", clickable = false)
+        val share = Proposal("share_media", ActionKind.SHARE_MEDIA, receivingPackage = "org.telegram.messenger", shareCount = ShareCount(3, 0))
+
+        val opened = SafetyCheck.afterAction(share, gallery.snapshot(), picker.snapshot(), everything)
+        assertEquals(ShareFlow("org.telegram.messenger", emptyList(), ShareCount(3, 0), serial = 1), opened.shareFlow)
+        val selected = SafetyCheck.afterAction(tap(row), picker.snapshot(), picker.snapshot(), opened)
+        assertEquals(listOf("Close friends"), selected.shareFlow?.selected)
+        assertNull(SafetyCheck.afterAction(tap(row), picker.snapshot(), chat.snapshot(), selected).shareFlow)
+        // A second share is another flow (review 4 C2), and opening a link leaves the flow (review 2 C1).
+        assertEquals(2, SafetyCheck.afterAction(share, gallery.snapshot(), picker.snapshot(), selected).shareFlow?.serial)
+        val link = Proposal("open_url", ActionKind.OPEN_URL, link = "https://wa.me/381600000000")
+        assertNull(SafetyCheck.afterAction(link, picker.snapshot(), picker.snapshot(), selected).shareFlow)
+
+        val security = TestScreen("com.android.settings")
+        val bar = security.add(80, null, id = "action_bar", clickable = false)
+        security.add(90, "Security", parent = bar, clickable = false)
+        val entry = security.add(500, "Device admin apps")
+        val sub = TestScreen("com.android.settings")
+        val inSettings = SafetyCheck.afterAction(tap(entry), TestScreen("com.android.settings").snapshot(), security.snapshot(), everything)
+        assertEquals(ProtectedTrail("Security"), inSettings.trail)
+        assertEquals(ProtectedTrail("Security"), SafetyCheck.afterAction(tap(entry), security.snapshot(), sub.snapshot(), inSettings).trail)
+        assertNull(SafetyCheck.afterAction(Proposal("back", ActionKind.BACK), security.snapshot(), sub.snapshot(), inSettings).trail)
+
+        val compose = TestScreen()
+        val field = compose.add(1800, null, editable = true, hint = "Message")
+        val typed = SafetyCheck.afterAction(Proposal("type_text", ActionKind.TYPE, targetKey = field, text = "I'm late"), compose.snapshot(), compose.snapshot(), everything)
+        assertEquals(listOf(TypedText(field, "Message", "com.example.chat", "I'm late")), typed.typed)
+    }
+}

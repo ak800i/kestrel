@@ -31,6 +31,7 @@ import dev.kestrel.commands.phone.PhoneEntry
 import dev.kestrel.commands.phone.PhoneNumbers
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Strictness
+import dev.kestrel.safety.EmergencyGuard as SafetyGuard
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GesturePaths
@@ -335,7 +336,6 @@ internal class AndroidDialer(private val context: Context, private val screen: (
         // Presses of the delete key beyond the field's length, for a phone app that removes a separator with its own press.
         private const val EXTRA_DELETES = 2
         private const val GOOGLE_CALL_BUTTON = ":id/dialpad_voice_call_button"
-        private const val DIGITS = ":id/digits"
         private const val TELECOM = "com.android.server.telecom"
         private val CALL_NAMES = setOf("call", "dial", "voice call")
 
@@ -463,8 +463,7 @@ internal class AndroidDialer(private val context: Context, private val screen: (
          * Whether [element] is a phone app's number field: a text field, or a field with the view ID `digits`, which
          * Android's emergency dialer does not make editable.
          */
-        fun isNumberField(element: ScreenElement): Boolean =
-            element.editable && !element.password || element.viewId?.endsWith(DIGITS) == true
+        fun isNumberField(element: ScreenElement): Boolean = SafetyGuard.isNumberField(element)
 
         /** The number fields of the [phoneApps] in [snapshot], also those that show nothing yet. */
         fun numberFields(snapshot: ScreenSnapshot, phoneApps: Set<String>): List<ScreenElement> =
@@ -485,10 +484,7 @@ internal class AndroidDialer(private val context: Context, private val screen: (
          * Whether the number field [element] shows [text] as a number: the field with the view ID `digits` with any text,
          * and another text field only with a digit, `*` or `#`, so that a name in the phone app's search box counts as none.
          */
-        fun showsNumber(element: ScreenElement, text: String?): Boolean {
-            if (text.isNullOrBlank() || !isNumberField(element)) return false
-            return element.viewId?.endsWith(DIGITS) == true || text.any { it.isDigit() || it == '*' || it == '#' }
-        }
+        fun showsNumber(element: ScreenElement, text: String?): Boolean = SafetyGuard.showsNumber(element, text)
 
         /** The texts of [phoneApp]'s number fields that are not empty; the number field is the first. */
         fun fieldTexts(snapshot: ScreenSnapshot, phoneApp: String): List<String> = snapshot.elements
@@ -509,7 +505,7 @@ internal class AndroidDialer(private val context: Context, private val screen: (
          * Whether Kestrel may press Call for [digits] itself (design D11): a long number without "*" or "#" that Android
          * reports as no emergency number; when Kestrel cannot tell ([emergency] null), it does not.
          */
-        fun mayCall(digits: String, emergency: Boolean?): Boolean = PhoneNumbers.mayAutoDial(digits) && emergency == false
+        fun mayCall(digits: String, emergency: Boolean?): Boolean = SafetyGuard.mayCall(digits, emergency)
 
         /**
          * What "call X" does with [digits]; [emergency] is Android's check of the main number, null when it cannot tell.
@@ -657,19 +653,14 @@ internal class EmergencyGuard(
     data class Swipe(val direction: ScrollDirection, val screen: IntRect)
 
     companion object {
-        /** The phone apps and Android's call services; the default phone app counts too. */
-        val PHONE_PACKAGES = setOf(
-            "com.android.phone", "com.android.dialer", "com.google.android.dialer", "com.samsung.android.dialer",
-            "com.samsung.android.incallui", "com.android.server.telecom",
-            // One UI's emergency dialer.
-            "com.samsung.android.app.telephonyui",
-        )
+        /**
+         * The phone apps and Android's call services; the default phone app counts too. They live in `:core:safety`,
+         * whose agent check uses them as well (design D13 of sub-project 5).
+         */
+        val PHONE_PACKAGES: Set<String> = SafetyGuard.PHONE_PACKAGES
         private val EMERGENCY_WORDS = setOf("emergency", "sos")
         private val KEY_IDS = setOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "star", "pound")
-        private val DELETE_IDS = setOf("deletebutton", "delete_button", "backspace")
-        private val DELETE_NAMES = setOf("delete", "backspace", "erase")
         private val KEY_NAMES = setOf("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "+")
-        private const val KESTREL = "dev.kestrel"
         private const val NAME = "kestrel"
 
         // Right before the decision, and while a phone app is on the screen once more right before the guard lets the command
@@ -808,14 +799,7 @@ internal class EmergencyGuard(
         }
 
         /** R1: whether the name of element [index] holds "emergency" or "sos"; never Kestrel's own windows, such as its bar. */
-        fun emergencyNamed(snapshot: ScreenSnapshot, index: Int): Boolean {
-            val element = snapshot.elements[index]
-            if (element.packageName == KESTREL) return false
-            // A view ID such as "emergencyButton" or "sos_call" splits into words.
-            val id = element.viewId?.substringAfter(":id/")?.replace(Regex("([a-z])([A-Z])"), "$1 $2")
-            val names = listOfNotNull(element.text, element.contentDescription, id, element.label.takeIf { element.isActionable })
-            return names.any { name -> Normalizer.words(name).any { it in EMERGENCY_WORDS } }
-        }
+        fun emergencyNamed(snapshot: ScreenSnapshot, index: Int): Boolean = SafetyGuard.emergencyNamed(snapshot, index)
 
         /**
          * R2: the IDs of the windows of the phone packages, among [phoneApps], that show an element or a title that R1
@@ -856,10 +840,7 @@ internal class EmergencyGuard(
          * in it. A date of digits alone whose digits make an emergency number, such as "9/11", counts, which only asks more.
          */
         fun showsEmergencyNumber(element: ScreenElement, emergency: (String) -> Boolean?): Boolean =
-            listOfNotNull(element.text, element.contentDescription).any { text ->
-                val digits = PhoneNumbers.dialable(text.trim()) ?: return@any false
-                emergency(PhoneNumbers.mainNumber(digits)) != false
-            }
+            SafetyGuard.showsEmergencyNumber(element, emergency)
 
         /**
          * The IDs of the windows of [phoneApps] in which Kestrel finds no number field to read (the controller's decision on
@@ -924,11 +905,7 @@ internal class EmergencyGuard(
          * Whether [element] is a phone app's delete key: by its view ID, or, when it takes a touch, by a whole name such as
          * "Delete" or "Backspace".
          */
-        fun isDeleteKey(element: ScreenElement): Boolean {
-            if (element.viewId?.substringAfter(":id/")?.lowercase() in DELETE_IDS) return true
-            if (!element.clickable && !element.longClickable) return false
-            return listOfNotNull(element.text, element.contentDescription).any { Normalizer.normalize(it) in DELETE_NAMES }
-        }
+        fun isDeleteKey(element: ScreenElement): Boolean = SafetyGuard.isDeleteKey(element)
 
         private fun IntRect.holds(x: Int, y: Int) = x in left until right && y in top until bottom
 
