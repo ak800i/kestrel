@@ -184,6 +184,82 @@ class AgentTest {
         assertEquals(listOf(ScreenAction.TapAt(900, 510)), still.screen.actions.filterIsInstance<ScreenAction.TapAt>())
     }
 
+    // A full list whose rows share one view ID and have no text, as real lists show them: a row that arrives at the top
+    // leaves the tree as it was, and only the texts that OCR reads in the rows move.
+    private fun sharedRows() = ScreenBuilder.screen("com.example.notes", "Notes") {
+        text("Inbox", 100, viewId = "toolbar_title")
+        val list = list(null, 300, 880, viewId = "notes")
+        for (row in 0..3) button(null, 320 + row * 140, viewId = "note", parent = list, className = "android.view.ViewGroup")
+    }
+
+    // OCR's lines of the rows named [titles], each with its own "Delete"; the second row's "Delete" comes first, so that
+    // the script's "Delete" is that one, at (900, 510).
+    private fun rowLines(vararg titles: String): List<OcrLine> = titles.flatMapIndexed { row, title ->
+        val top = 340 + row * 140
+        listOf(OcrLine(title, IntRect(80, top, 500, top + 60), 0.95), OcrLine("Delete", IntRect(800, top, 1000, top + 60), 0.95))
+    }.sortedBy { if (it.text == "Delete" && it.bounds.top == 480) 0 else 1 }
+
+    private fun deleteInSharedRows(arrives: Boolean): Harness = Harness(sharedRows(), listOf(
+        call("look_closer", null, null, null, "reason" to "the rows have no text"),
+        call("tap", "Delete", "OCR", null, "reason" to "delete the note", "category" to "deleting"),
+        call("fail", null, null, null, "reason" to "Stop."),
+    )).apply {
+        eyes.lines = rowLines("Groceries", "Plans", "Trip", "Gifts")
+        owner.confirms += ConfirmEnd.YES
+        if (arrives) owner.onConfirm = { eyes.lines = rowLines("New note", "Groceries", "Plans", "Trip") }
+    }
+
+    @Test
+    fun aTapAtAPointIsRefusedAfterTheYesWhenARowArrivesAboveInAListWhoseRowsShareOneViewIdAndHaveNoText() = runTest {
+        val arrived = deleteInSharedRows(arrives = true)
+
+        arrived.run("Delete the note Plans")
+
+        assertEquals(1, arrived.owner.confirmations.size)
+        assertTrue(arrived.screen.actions.none { it is ScreenAction.TapAt })
+        assertTrue(arrived.lastRequestText().contains(ScreenSteps.CHANGED_AFTER))
+
+        val still = deleteInSharedRows(arrives = false)
+        still.run("Delete the note Plans")
+        assertEquals(listOf(ScreenAction.TapAt(900, 510)), still.screen.actions.filterIsInstance<ScreenAction.TapAt>())
+    }
+
+    @Test
+    fun aShareThatOpensAnEmailsComposeScreenIsNotSentUntilTheEmailIs() = runTest {
+        val gallery = ScreenBuilder.screen("com.example.gallery", "Gallery") {
+            text("Beach", 300)
+            button("Share", 2200, viewId = "share")
+        }
+        val sheet = ScreenBuilder.screen("com.android.intentresolver", "Share") {
+            val apps = list(null, 1200, 1800, viewId = "apps")
+            button("Gmail", 1220, parent = apps, className = "android.view.ViewGroup", right = 300)
+            button("Telegram", 1220, parent = apps, className = "android.view.ViewGroup", left = 340, right = 600)
+        }
+        val compose = ScreenBuilder.screen(Screens.MAIL, "Gmail") {
+            icon("Send", 100, viewId = "send", left = 900, right = 1040)
+            field("To", "", 300, viewId = "to")
+            field("Subject", "", 700, viewId = "subject")
+            field("Compose email", "", 850, viewId = "body")
+        }
+        val harness = Harness(gallery, listOf(
+            call("tap", "Share", null, null, "reason" to "share the photo", "category" to "sending"),
+            call("tap", "Gmail", null, null, "reason" to "share it by e-mail", "category" to "sending"),
+            call("type_text", "To", null, null, "text" to "marko@example.com", "reason" to "address it", "category" to "typing_request"),
+            call("tap", "Send", null, null, "reason" to "send it", "category" to "sending"),
+        ))
+        harness.screen.onTap("Share", sheet)
+        harness.screen.onTap("Gmail", compose)
+        harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.YES, ConfirmEnd.NO)
+
+        val report = harness.run("Share this photo with marko@example.com by e-mail")
+
+        assertEquals(EndReason.DECLINED, report.end)
+        assertEquals(3, harness.owner.confirmations.size)
+        assertEquals(listOf("marko@example.com"), harness.owner.confirmations[2].recipients)
+        assertTrue(report.sends.toString(), report.sends.isEmpty())
+        assertTrue(report.ledger.toString(), report.ledger.none { it.startsWith("shared") || it.startsWith("sent") })
+    }
+
     @Test
     fun aPressThatSendsAndDeletesIsPressedOnceAfterItsYes() = runTest {
         val chat = ScreenBuilder.screen(Screens.MESSENGER, "Kestrel fixtures") {

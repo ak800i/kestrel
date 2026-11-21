@@ -3,6 +3,7 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
+import dev.kestrel.agent.port.Capture
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.tools.ActionMapper
@@ -23,10 +24,12 @@ import dev.kestrel.safety.SafetyCheck
 import dev.kestrel.safety.SendCheck
 import dev.kestrel.safety.SendCheckResult
 import dev.kestrel.safety.Vault
+import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.delay
 import java.net.URI
+import kotlin.math.abs
 
 /**
  * The screen tools (design D3, D10, D11, D13 and D14; D32 items 12, 27 and 29): every action on an element reads a fresh
@@ -69,13 +72,15 @@ internal class ScreenSteps(private val run: TaskRun) {
 
     // After the yes (D14): the card has gone; the screen is read again, and the whole safety check runs on it again. Only
     // the same question on the fresh screen (the same recipients, app, content and target, also the element under a
-    // point) lets the press run; a block that only test mode made ends the task.
+    // point and the OCR lines in it) lets the press run; a block that only test mode made ends the task.
     private suspend fun afterYes(call: AgentCall, entry: TableEntry?, proposal: Proposal, yes: Confirmation, category: Category, covered: Boolean): Done {
         val fresh = run.fresh()
         val again = SafetyCheck.assess(proposal, fresh, run.safety, run.settings.safety, run.settings.environment)
         val decision = again.decision
         if (decision is Decision.Block && again.beforeTestMode !is Decision.Block) throw Ended(EndReason.TEST_MODE, detail = decision.reason)
-        if (decision !is Decision.Confirm || !decision.confirmation.sameAs(yes) || (entry != null && !entry.ocr && !fits(entry, fresh))) {
+        if (decision !is Decision.Confirm || !decision.confirmation.sameAs(yes) || (entry != null && !entry.ocr && !fits(entry, fresh)) ||
+            (entry != null && entry.ocr && !sameLines(entry, yes, fresh))
+        ) {
             run.forgetConfirmedFlow()
             return Done(call.tool, Outcome.CheckFailed(CHANGED_AFTER), entry, after = fresh)
         }
@@ -90,12 +95,37 @@ internal class ScreenSteps(private val run: TaskRun) {
                 run.forgetConfirmedFlow()
             }
             done.outcome is Outcome.Failed -> Unit
+            // A tap that opened an e-mail's compose screen (a share sheet's mail app) sent nothing yet: the e-mail's own
+            // Send is asked and counted (D14, D24).
+            yes.category == Category.SENDING && !SafetyCheck.showsEmailCompose(fresh) && done.after?.let(SafetyCheck::showsEmailCompose) == true -> Unit
             // A share is sent by the tap after which its flow ends, not by a tap that only picks a chat (D14, D24).
             flow != null && yes.category == Category.SENDING -> run.shareTapped(flow, yes, ended = run.safety.shareFlow?.serial != flow.serial)
             else -> run.sent(yes, share = false, items = 0, covered = covered)
         }
         return done
     }
+
+    // A point has no key of its own, and rows without text share their view ID, so a list that moved under the point can
+    // keep the key and bounds of the element there (D14, D20). OCR reads that element again after the yes, and every OCR
+    // line that the observation showed in it must still be there, with the same text at the same place. A capture or an
+    // OCR pass that fails counts as a change.
+    private suspend fun sameLines(entry: TableEntry, yes: Confirmation, fresh: ScreenSnapshot): Boolean {
+        val area = yes.targetBounds ?: fresh.windows.firstOrNull { it.id == entry.windowId }?.bounds ?: return false
+        val shown = run.observation.table.entries.filter { it.ocr && holdsCentre(area, it.bounds) }
+        val capture = run.ports.eyes.capture() as? Capture.Captured ?: return false
+        val exclude = fresh.elements.filter { it.password || it.dataSensitive }.map { it.bounds }
+        val read = capture.image.use { run.ports.eyes.read(capture, listOf(area), exclude) } ?: return false
+        return shown.all { line ->
+            val slack = maxOf(1, line.bounds.height / 2)
+            read.any {
+                it.text.trim() == line.label?.trim() &&
+                    abs(it.bounds.centerX - line.bounds.centerX) <= slack && abs(it.bounds.centerY - line.bounds.centerY) <= slack
+            }
+        }
+    }
+
+    private fun holdsCentre(area: IntRect, bounds: IntRect): Boolean =
+        bounds.centerX >= area.left && bounds.centerX < area.right && bounds.centerY >= area.top && bounds.centerY < area.bottom
 
     // The check before a send, save, submit or confirm (D14; r61): the typed values must still be in their fields.
     private fun sendCheck(proposal: Proposal, screen: ScreenSnapshot, tool: String, entry: TableEntry?): Done? {

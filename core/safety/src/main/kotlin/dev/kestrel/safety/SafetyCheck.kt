@@ -136,6 +136,13 @@ object SafetyCheck {
     }
 
     /**
+     * Whether the front window is an e-mail's compose screen, which shows To, Cc or Bcc fields (design D14): its recipients
+     * are those fields, and only its own Send sends it.
+     */
+    fun showsEmailCompose(screen: ScreenSnapshot): Boolean =
+        ScreenTree.frontWindow(screen)?.let { ContextRules.recipientFields(screen, it.id).isNotEmpty() } == true
+
+    /**
      * Test mode's block: every call, every text message, and every action that any source rates as sending, whatever its
      * final category ("Send and delete"), unless it sends to the owner's own chat (review 2 I2).
      */
@@ -203,7 +210,7 @@ object SafetyCheck {
         current ?: return null
         // An e-mail's compose screen (after Gmail's Forward, or a share into a mail app) is judged by the e-mail's own rules:
         // its To, Cc and Bcc name the recipients, and its other taps send nothing (design D14).
-        ScreenTree.frontWindow(after)?.let { if (ContextRules.recipientFields(after, it.id).isNotEmpty()) return null }
+        if (showsEmailCompose(after)) return null
         // From a share sheet into the app that the owner's task shares with.
         if (current.receivingPackage in ContextRules.SHARE_SHEETS && front !in ContextRules.SHARE_SHEETS) current = current.copy(receivingPackage = front)
         if (front != current.receivingPackage && front !in ContextRules.SHARE_SHEETS) return null
