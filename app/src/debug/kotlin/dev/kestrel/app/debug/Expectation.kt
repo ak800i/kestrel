@@ -34,8 +34,18 @@ internal class Expectation(val tag: String, val expected: String, val noRun: Boo
     // The fewest errors of a stray, for an expectation without a match.
     private var best = words
 
+    // The errors and the judge's verdict of the closest stray, the first of those with the fewest errors; null before any.
+    private var closestErrors: Int? = null
+    private var closestRight: String? = null
+
     /** The errors of the match, or of the closest stray, or [words] when nothing came. */
     val errors: Int get() = match?.errors ?: best
+
+    /**
+     * Whether the line is right, as voice-eval judges the transcript that the recogniser made (plan 4E): the match's verdict,
+     * or without a match the closest stray's, or [silence], the verdict of an empty transcript, when nothing came.
+     */
+    fun right(silence: String): String = match?.right ?: closestRight ?: silence
 
     /** Whether it still waits for its match at [now]. */
     fun waiting(now: Long): Boolean = match == null && now < until
@@ -45,7 +55,8 @@ internal class Expectation(val tag: String, val expected: String, val noRun: Boo
 
     /**
      * Compares [heard], whose speech ended at [speechEnded] and whose pause ended at [closed], and which came at [now]:
-     * true when it is the match, false when it is a stray. [judge] gives the match's kind and whether it is right.
+     * true when it is the match, false when it is a stray. [judge] gives the kind and whether it is right of the match,
+     * and of each stray that comes closer than the earlier ones while there is no match.
      */
     fun offer(
         heard: String,
@@ -62,6 +73,10 @@ internal class Expectation(val tag: String, val expected: String, val noRun: Boo
         }
         stray++
         best = minOf(best, errors)
+        if (match == null && closestErrors.let { it == null || errors < it }) {
+            closestErrors = errors
+            closestRight = judge(heard).second
+        }
         if (isRun(Normalizer.words(heard), Normalizer.words(expected))) split++
         return false
     }

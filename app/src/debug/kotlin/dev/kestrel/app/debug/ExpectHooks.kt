@@ -17,8 +17,8 @@ import dev.kestrel.commands.Commands
  * (2026-11-20-a71-checks-4d-interfaces.md, section 4). The match runs with its tag, as a tagged `voice -Send heard` does, or with `noRun`
  * is only resolved; every other transcript while the expectation holds is dropped. With a corpus line's group (`group`),
  * its scene's labels (`labels`) and the corpus's contacts (`contacts`), a match with `noRun` is judged as voice-eval
- * judges the line, with CorpusVerdict (plan 4E). The answers hold counts, times on the phone's clock and kinds, never what
- * Kestrel heard.
+ * judges the line, with CorpusVerdict (plan 4E), and without a match the closest stray is. The answers hold counts, times
+ * on the phone's clock and kinds, never what Kestrel heard.
  */
 internal class ExpectHooks(private val graph: AppGraph) {
     fun run(command: String, intent: Intent): String = when (command) {
@@ -73,9 +73,10 @@ internal class ExpectHooks(private val graph: AppGraph) {
             val corpus = line
             val right = when {
                 run -> "-"
+                // As voice-eval judges the transcript that the recogniser made: the match, else the closest stray, else
+                // nothing heard (plan 4E).
+                corpus != null -> current.right(CorpusVerdict.command(corpus.group, current.expected, "", corpus.labels, corpus.contacts))
                 match != null -> match.right
-                // As voice-eval answers for a clip in which the recogniser heard nothing (plan 4E).
-                corpus != null -> CorpusVerdict.command(corpus.group, current.expected, "", corpus.labels, corpus.contacts)
                 isCommand(current.expected) -> "0"
                 else -> "-"
             }

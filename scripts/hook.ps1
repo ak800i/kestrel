@@ -101,7 +101,8 @@
 #                                           half its words wrong runs with the tag k (with -NoRun it is only resolved and
 #                                           never runs); the others are dropped and counted; needs an open voice session.
 #                                           With -Group, -Result's right= judges a corpus line of that group as voice-eval's
-#                                           command= does, with the labels and contacts given (plan 4E)
+#                                           command= does, with the labels and contacts given, and without a match judges
+#                                           the closest of the other transcripts (plan 4E)
 #   voice-expect -Result -Tag k             answers waiting, then whether it matched, the word errors, the strays and
 #                                           split parts, the phone's times of the end of the speech, of its pause and of
 #                                           its text, and the command's number, kind and outcome, or with -NoRun its

@@ -47,4 +47,26 @@ class ExpectationTest {
         assertEquals(2, late.stray)
         assertEquals(1, late.split)
     }
+
+    @Test
+    fun aCorpusLineWithoutAMatchIsJudgedByItsClosestStrayAsVoiceEvalJudgesTheTranscript() {
+        val text = "Tell her I said hello."
+        val judge = { heard: String -> "none" to CorpusVerdict.command("conversation", text, heard, emptyList(), emptyList()) }
+        val silence = CorpusVerdict.command("conversation", text, "", emptyList(), emptyList())
+
+        // The air turned the line into a command: voice-eval says 0 for that transcript, not 1 as for silence.
+        val command = Expectation("a", text, noRun = true, until = 5_000L)
+        assertFalse(command.offer("Go back.", speechEnded = 100, closed = 200, now = 300, judge = judge))
+        assertNull(command.match)
+        assertEquals("0", command.right(silence))
+
+        // A farther stray after the closest one does not change the verdict.
+        val bare = Expectation("b", text, noRun = true, until = 5_000L)
+        assertFalse(bare.offer("Tell her.", speechEnded = 100, closed = 200, now = 300, judge = judge))
+        assertFalse(bare.offer("Go back.", speechEnded = 400, closed = 500, now = 600, judge = judge))
+        assertEquals("1", bare.right(silence))
+
+        // Only when nothing came is the line judged as an empty transcript.
+        assertEquals("1", Expectation("c", text, noRun = true, until = 5_000L).right(silence))
+    }
 }
