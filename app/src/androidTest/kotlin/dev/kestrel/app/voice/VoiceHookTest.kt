@@ -20,6 +20,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -104,24 +105,33 @@ class VoiceHookTest {
                     "detail=none said=\\S+ shown=\\S+ read=other latest=\\d+",
             )
             assertTrue(own, line.matches(own))
-            assertEquals(
-                HookReply(HookReply.FAILED, "error: the tag $tag is in use; give each transcript a new tag"),
-                hook("VOICE", "event" to "heard", "text" to "Scroll up.", "tag" to tag),
-            )
-            assertEquals(HookReply(HookReply.FAILED, "error: no transcript has the tag never-sent"), hook("VOICE_STATE", "tag" to "never-sent"))
-            assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
+            // AgentRunner takes a task's options when the task starts, so the test records what each take handed over.
+            val take = listening.taskOptions ?: error("The tag did not set Listening.taskOptions")
+            val handed = CopyOnWriteArrayList<Pair<Int, Map<String, String>>>()
+            listening.taskOptions = { number -> take(number).also { handed += number to it } }
+            try {
+                assertEquals(
+                    HookReply(HookReply.FAILED, "error: the tag $tag is in use; give each transcript a new tag"),
+                    hook("VOICE", "event" to "heard", "text" to "Scroll up.", "tag" to tag),
+                )
+                assertEquals(HookReply(HookReply.FAILED, "error: no transcript has the tag never-sent"), hook("VOICE_STATE", "tag" to "never-sent"))
+                assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
 
-            // A tagged transcript that starts a task gets the task's number, and its extras wait for the task's runner.
-            val taskTag = "task-${System.nanoTime()}"
-            val sent = hook("VOICE", "event" to "heard", "text" to "Kestrel, open the settings.", "tag" to taskTag, "model" to "test-model", named = true)
-            assertEquals("sent heard tag=$taskTag", sent.text)
-            assertTrue("The tagged task did not start", VoiceTests.waitUntil(10_000) { hook("VOICE_STATE", "tag" to taskTag).text.contains(" role=task ") })
-            val taskLine = hook("VOICE_STATE", "tag" to taskTag).text
-            val task = Regex(" task=(\\d+) ").find(taskLine)?.groupValues?.get(1)?.toInt() ?: 0
-            assertTrue(taskLine, task > 0 && taskLine.contains(" command=0 ") && taskLine.contains(" read=task "))
-            assertEquals(mapOf("model" to "test-model"), listening.taskOptions?.invoke(task))
-            assertEquals(emptyMap<String, String>(), listening.taskOptions?.invoke(task))
-            assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
+                // A tagged transcript that starts a task gets the task's number, and its extras reach the task's runner once.
+                val taskTag = "task-${System.nanoTime()}"
+                val sent = hook("VOICE", "event" to "heard", "text" to "Kestrel, open the settings.", "tag" to taskTag, "model" to "test-model", named = true)
+                assertEquals("sent heard tag=$taskTag", sent.text)
+                assertTrue("The tagged task did not start", VoiceTests.waitUntil(10_000) { hook("VOICE_STATE", "tag" to taskTag).text.contains(" role=task ") })
+                val taskLine = hook("VOICE_STATE", "tag" to taskTag).text
+                val task = Regex(" task=(\\d+) ").find(taskLine)?.groupValues?.get(1)?.toInt() ?: 0
+                assertTrue(taskLine, task > 0 && taskLine.contains(" command=0 ") && taskLine.contains(" read=task "))
+                assertTrue("The task's runner did not take its options", VoiceTests.waitUntil(10_000) { handed.any { it.first == task } })
+                assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
+                assertEquals(listOf(mapOf("model" to "test-model")), handed.filter { it.first == task }.map { it.second })
+                assertEquals(emptyMap<String, String>(), take(task))
+            } finally {
+                listening.taskOptions = take
+            }
 
             assertEquals("sent off", hook("VOICE", "event" to "off").text)
             assertTrue("The voice session did not close", VoiceTests.waitUntil(30_000) { !listening.sessionOpen.value })

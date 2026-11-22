@@ -119,6 +119,8 @@ internal enum class SettingsOpening {
 internal object ListeningTexts {
     const val YES = "Yes?"
     const val TASK_FAILED = "I couldn't start the task."
+    // The same text as AgentTexts.CANCELLED, for a task that was cancelled before AgentRunner had it.
+    const val TASK_CANCELLED = "Cancelled."
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
@@ -1243,11 +1245,13 @@ class Listening internal constructor(
      */
     // Design D2 of sub-project 5: a task whose start waited for a cancelled command starts only while the Orchestrator
     // still has it, and a pause that came during the wait reaches it at once (AgentRunner keeps a pause that comes before
-    // the task can take it). A task that was cancelled or replaced in the meantime ends without a reply.
+    // the task can take it). A task that the owner cancelled in the meantime ends with "Cancelled.", as AgentRunner's
+    // early cancels do; one that a newer task replaced ends without a reply.
     private fun startTask(task: Int, start: () -> Unit) {
         val now = state.value
         if (now.task != task || !now.taskExists || now.cancelled) {
-            send(Event.TaskEnded(task, reply = null))
+            val cancelled = now.task == task && now.cancelled
+            send(Event.TaskEnded(task, reply = if (cancelled) ListeningTexts.TASK_CANCELLED else null))
             return
         }
         start()

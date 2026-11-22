@@ -1,5 +1,6 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.agent.AgentTexts
 import dev.kestrel.app.commands.CommandConversation
 import dev.kestrel.app.commands.CommandReport
 import dev.kestrel.app.commands.CommandRunner
@@ -490,7 +491,8 @@ class ListeningTest {
         runCurrent()
 
         assertEquals(emptyList<Int>(), tasks)
-        // The task that never started ended for the Orchestrator, without a reply.
+        // The task that never started ended for the Orchestrator, with the "Cancelled." of every other early cancel.
+        assertEquals(listOf(AgentTexts.CANCELLED), sessions.opened.single().said)
         assertFalse(listening.state.value.cancelled)
         assertEquals(Work.IDLE, listening.state.value.work)
     }
