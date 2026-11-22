@@ -24,7 +24,7 @@ data class RoutineMatch(val routine: Routine, val values: Map<String, String>) {
  */
 object RoutineMatcher {
     private val TIME = Regex("""^(\d{1,2})([:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$""", RegexOption.IGNORE_CASE)
-    private val MARKER = Regex("""\{([a-z][a-z0-9_]*)}""")
+    private val MARKER = Regex("""\{([a-z][a-z0-9_]*)\}""")
 
     fun match(request: String, routines: List<Routine>, aliases: Set<String>, contactNames: Set<String>): RoutineMatch? {
         val matches = routines.mapNotNull { routine ->

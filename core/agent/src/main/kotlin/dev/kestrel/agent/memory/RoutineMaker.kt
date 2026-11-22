@@ -79,7 +79,7 @@ class RoutineMaker(
         val call = reply.response.message.toolCalls.firstOrNull { it.name == TOOL_NAME } ?: return SaveResult.NotSaved(FAILED)
         val others = store.routines().filter { it.name != name }
         val routine = build(name.trim(), recording, call.arguments, others) ?: return SaveResult.NotSaved(FAILED)
-        val phrasings = routine.phrasings.joinToString(" or ") { "'" + it.replace(Regex("""\{([a-z_]+)}"""), "$1") + "'" }
+        val phrasings = routine.phrasings.joinToString(" or ") { "'" + it.replace(Regex("""\{([a-z_]+)\}"""), "$1") + "'" }
         val answer = owner.ask("I'll run this when you say: $phrasings. Save it?", AnswerKind.YES_NO)
         if (answer != Answer.Yes) return SaveResult.NotSaved(DECLINED)
         store.saveRoutine(routine)
@@ -147,13 +147,13 @@ class RoutineMaker(
         for (phrasing in phrasings) {
             // Kestrel reads the phrasings to the owner, so each is short and holds no placeholder (D24).
             if (phrasing.length > MAX_PHRASING || Vault.PLACEHOLDER.containsMatchIn(phrasing)) return null
-            val markers = Regex("""\{([a-z_][a-z0-9_]*)}""").findAll(phrasing).map { it.groupValues[1] }.toSet()
+            val markers = Regex("""\{([a-z_][a-z0-9_]*)\}""").findAll(phrasing).map { it.groupValues[1] }.toSet()
             if (markers != slots.map { it.name }.toSet()) return null
-            val fixed = Normalizer.words(phrasing.replace(Regex("""\{[a-z0-9_]+}"""), " "))
+            val fixed = Normalizer.words(phrasing.replace(Regex("""\{[a-z0-9_]+\}"""), " "))
             if (fixed.size < MIN_FIXED_WORDS) return null
             if (opened.isNotEmpty() && opened.none { app -> Normalizer.words(app).all { it in fixed } }) return null
             if (OWN_PHRASES.any { RoutineMatcher.overlaps(it, phrasing) }) return null
-            val sample = { text: String -> text.replace(Regex("""\{[a-z0-9_]+}"""), "x") }
+            val sample = { text: String -> text.replace(Regex("""\{[a-z0-9_]+\}"""), "x") }
             if (others.any { other -> other.phrasings.any { RoutineMatcher.overlaps(sample(it), phrasing) || RoutineMatcher.overlaps(sample(phrasing), it) } }) return null
         }
         return Routine(name, phrasings, slots, steps, nowMillis())

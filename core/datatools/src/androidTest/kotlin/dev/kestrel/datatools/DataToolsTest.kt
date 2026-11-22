@@ -9,6 +9,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.location.Location
+import android.location.LocationManager
+import android.location.provider.ProviderProperties
 import android.media.ExifInterface
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -31,9 +34,16 @@ import dev.kestrel.datatools.calendar.CalendarTool
 import dev.kestrel.datatools.clock.ClockIntents
 import dev.kestrel.datatools.contacts.AndroidContacts
 import dev.kestrel.datatools.contacts.FindContact
+import dev.kestrel.datatools.location.GpsLocation
 import dev.kestrel.datatools.media.MediaTool
 import dev.kestrel.datatools.navigation.NavigationIntents
 import dev.kestrel.datatools.sms.SmsTool
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -80,9 +90,11 @@ class DataToolsTest {
         }
     }
 
-    private fun avdName(): String =
-        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand("getprop ro.boot.qemu.avd_name"))
-            .use { it.readBytes().decodeToString().trim() }
+    private fun avdName(): String = shell("getprop ro.boot.qemu.avd_name").trim()
+
+    private fun shell(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
+            .use { it.readBytes().decodeToString() }
 
     @Before
     fun grant() {
@@ -241,6 +253,57 @@ class DataToolsTest {
         assertEquals(DataResult.NeedsAccess(AccessKind.NOTIFICATIONS), port.listNotifications())
     }
 
+    /**
+     * GpsLocation's rule that a quick null is Android's refusal (design D12 of sub-project 5): this test package has no
+     * window and no accessibility service that keeps it in the foreground, so with Settings in front Android answers its
+     * request for the current location at once with nothing, although a test provider for `gps` has a fresh fix, and the
+     * tool says so in place of the phone's last fix. :app's GpsLocationTest checks the fixes themselves, in Kestrel's
+     * process. It puts back the app-op, the provider and the location switch, also after a failure.
+     */
+    @Test
+    fun gpsLocationSaysThatAndroidRefusedItInTheBackground() = runBlocking {
+        for (permission in listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            instrumentation.uiAutomation.grantRuntimePermission(context.packageName, permission)
+        }
+        val manager = context.getSystemService(LocationManager::class.java)
+        val locationWasOn = manager.isLocationEnabled
+        var fixes: Job? = null
+        try {
+            if (!locationWasOn) shell("cmd location set-location-enabled true")
+            shell("appops set ${context.packageName} android:mock_location allow")
+            manager.addTestProvider(GPS, ProviderProperties.Builder().setAccuracy(ProviderProperties.ACCURACY_FINE).build())
+            manager.setTestProviderEnabled(GPS, true)
+            // Off the test's own thread, which GpsLocation's wait blocks.
+            fixes = launch(Dispatchers.Default) {
+                while (isActive) {
+                    manager.setTestProviderLocation(GPS, Location(GPS).apply {
+                        latitude = TEST_LATITUDE
+                        longitude = TEST_LONGITUDE
+                        accuracy = 5f
+                        time = System.currentTimeMillis()
+                        elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                    })
+                    delay(500)
+                }
+            }
+            shell("am start -W -a android.settings.SETTINGS")
+            val started = SystemClock.elapsedRealtime()
+
+            val result = GpsLocation(manager, ::held).current()
+
+            assertEquals(DataResult.Failed(GpsLocation.BACKGROUND), result)
+            assertTrue(SystemClock.elapsedRealtime() - started < GpsLocation.QUICK_NULL_MILLIS)
+        } finally {
+            fixes?.cancelAndJoin()
+            runCatching { manager.removeTestProvider(GPS) }
+            shell("appops set ${context.packageName} android:mock_location default")
+            if (!locationWasOn) shell("cmd location set-location-enabled false")
+            shell("am force-stop com.android.settings")
+        }
+    }
+
+    private fun held(permission: String): Boolean = context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
     /** Adds a local calendar of the test account, as a sync adapter may, and returns its ID. */
     private fun addTestCalendar(name: String = TEST_CALENDAR, visible: Boolean = true): Long {
         val values = ContentValues().apply {
@@ -332,5 +395,10 @@ class DataToolsTest {
         // The fictional number of design D28.
         const val NUMBER = "+1 202 555 0143"
         const val TELEGRAM = "vnd.android.cursor.item/vnd.org.telegram.messenger.android.profile"
+
+        // A public place in Belgrade (Slavija), as in :app's AgentLocationTest.
+        const val GPS = LocationManager.GPS_PROVIDER
+        const val TEST_LATITUDE = 44.8027
+        const val TEST_LONGITUDE = 20.4664
     }
 }
