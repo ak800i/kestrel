@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The view IDs of sub-project 5B's agent fixtures (design D28), which plan 5A's fixture screens and Kestrel's device tests use. -->
+<resources>
+    <item name="toolbar" type="id" />
+    <item name="up" type="id" />
+    <item name="chat_title" type="id" />
+    <item name="chat_subtitle" type="id" />
+    <item name="reminders" type="id" />
+    <item name="call" type="id" />
+    <item name="delete_chat" type="id" />
+    <item name="messages" type="id" />
+    <item name="bubble" type="id" />
+    <item name="shared_item" type="id" />
+    <item name="note_done" type="id" />
+    <item name="enter_sends" type="id" />
+    <item name="compose" type="id" />
+    <item name="send" type="id" />
+    <item name="chat_list" type="id" />
+    <item name="chat_row" type="id" />
+    <item name="row_name" type="id" />
+    <item name="row_detail" type="id" />
+    <item name="picker_rows" type="id" />
+    <item name="picker_row" type="id" />
+    <item name="picker_search" type="id" />
+    <item name="picker_check" type="id" />
+    <item name="picker_send" type="id" />
+    <item name="to" type="id" />
+    <item name="cc" type="id" />
+    <item name="bcc" type="id" />
+    <item name="subject" type="id" />
+    <item name="body" type="id" />
+    <item name="hotspot_switch" type="id" />
+    <item name="search_field" type="id" />
+    <item name="search_button" type="id" />
+</resources>

@@ -3,6 +3,8 @@
 
     <!-- For NotificationActivity's notification: the command tests grant it, and command-test.ps1 takes it back. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- For the cross-app overlay of injection fixture 6: scripts\task-check.ps1 allows it with appops and puts it back. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Lets the hook probe see Kestrel, so that only Kestrel's permission check can refuse it. -->
     <queries>
@@ -80,6 +82,33 @@
             android:exported="true" />
         <!-- Plan 3C: phone fixtures -->
         <!-- sub-project 5B: fixtures -->
+        <!-- The fixture messenger of sub-project 5's agent (design D28). It has no launcher entry of its own, so that the
+             agent's app list names this package once, as "Kestrel fixtures"; the tests and scripts open it with am start. -->
+        <activity
+            android:name=".MessengerActivity"
+            android:exported="true"
+            android:label="Messenger fixture" />
+        <!-- The messenger's share picker, which share_media opens with setPackage. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:label="Messenger fixture">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".InjectionActivity"
+            android:exported="true" />
+        <activity
+            android:name=".FakeDialogActivity"
+            android:exported="true" />
+        <activity
+            android:name=".StandInActivity"
+            android:exported="true" />
         <activity
             android:name=".PressActivity"
             android:exported="true" />
