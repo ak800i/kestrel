@@ -189,6 +189,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** Shows numbers on the actionable elements. They follow the screen until [hideNumbers] (design spec, section 9.4). */
     suspend fun showNumbers(mode: NumbersMode = NumbersMode.ALL) = withContext(Dispatchers.Main) {
+        forgetAgentBadges()
         whichOneShownOn = null
         whichOne.value = false
         numbersMode = mode
@@ -201,6 +202,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
      * then the numbers of "show numbers" come back if it is on.
      */
     suspend fun showWhichOne(keys: Collection<String>) = withContext(Dispatchers.Main) {
+        forgetAgentBadges()
         val snapshot = snapshots.current().snapshot
         whichOneShownOn = contentOf(snapshot)
         changing { numbers.show(Numbering.forCandidates(snapshot.elements.filter { it.key in keys })) }
@@ -227,6 +229,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     }
 
     suspend fun hideNumbers() = withContext(Dispatchers.Main) {
+        forgetAgentBadges()
         numbersMode = null
         whichOneShownOn = null
         whichOne.value = false
@@ -257,6 +260,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
      * (design spec, section 9.4). The feedback bar stays.
      */
     suspend fun hideOverlays() = withContext(Dispatchers.Main) {
+        forgetAgentBadges()
         numbersMode = null
         whichOneShownOn = null
         whichOne.value = false
@@ -419,7 +423,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /**
      * Shows the agent's [badges] instead of Numbering's own until [hideBadges] (design D20 of sub-project 5); "show
-     * numbers" pauses meanwhile and comes back afterwards.
+     * numbers" pauses meanwhile and comes back afterwards, unless the owner's numbers changed meanwhile or Kestrel stopped
+     * listening.
      */
     suspend fun showBadges(badges: List<Badge>) = withContext(Dispatchers.Main) {
         if (!agentBadges) {
@@ -430,6 +435,12 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
         whichOneShownOn = null
         whichOne.value = false
         changing { numbers.show(badges) }
+    }
+
+    // The owner's or Listening's newer choice of numbers replaces the agent's numbers, so hideBadges must not undo it.
+    private fun forgetAgentBadges() {
+        agentBadges = false
+        modeBeforeBadges = null
     }
 
     /** Removes the agent's numbers; the numbers of "show numbers" come back when it was on. Nothing else changes. */

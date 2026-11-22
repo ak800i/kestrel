@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
+import dev.kestrel.screen.overlay.Badge
 import dev.kestrel.screen.overlay.NumbersMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -152,6 +153,23 @@ class OverlayTest {
         // "Which one?" belonged to the old screen; "show numbers" is still on, so numbers follow the new screen.
         val keep = keyOf("KEEP")
         eventually { session.numberBadges.any { it.key == keep } }
+    }
+
+    @Test
+    fun theAgentsNumbersDoNotBringBackShowNumbersThatEndedMeanwhile() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val send = screen.awaitElement { it.label == "SEND" }
+
+        // Kestrel stops listening, and then the owner says "hide numbers", while the agent's numbers show.
+        for (end in listOf<suspend () -> Unit>({ session.hideOverlays() }, { session.hideNumbers() })) {
+            session.showNumbers()
+            eventually { session.numberBadges.isNotEmpty() }
+            session.showBadges(listOf(Badge(1, "", send.bounds)))
+            end()
+            session.hideBadges()
+            assertTrue(session.numberBadges.isEmpty())
+        }
+        eventually { !screen.showsWindow("Kestrel numbers") }
     }
 
     @Test

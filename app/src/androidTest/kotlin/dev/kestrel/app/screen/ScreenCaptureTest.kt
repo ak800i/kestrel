@@ -13,7 +13,12 @@ import dev.kestrel.screen.capture.CaptureResult
 import dev.kestrel.screen.capture.ScreenCapture
 import dev.kestrel.screen.model.ScreenTree
 import dev.kestrel.screen.model.WindowSummary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -95,6 +100,58 @@ class ScreenCaptureTest {
             }
         } finally {
             session.hideNumbers()
+            plain.bitmap.recycle()
+            hidden.bitmap.recycle()
+        }
+    }
+
+    @Test
+    fun aFeedbackBarThatShowsDuringTheDisplayCaptureIsNotInIt() = runBlocking {
+        screen.open("GesturesActivity", "Gestures fixture")
+        session.hideFeedback()
+        val window = front()
+        val plain = session.capture.capture(window.id, wholeDisplay = true) as CaptureResult.Image
+        // The bar is on the screen when the next capture hides the overlays, with one line, so that the capture paints that
+        // line black; Android needs a moment to draw a new window the first time.
+        session.showFeedback("Heard")
+        withTimeout(5_000) { while (!screen.showsWindow("Kestrel feedback bar")) delay(100) }
+        delay(ScreenCapture.INTERVAL_MILLIS + 100)
+        val shot = async(Dispatchers.Default) { session.capture.capture(window.id, wholeDisplay = true) }
+        // From another coroutine, while the capture waits, the bar shows again and again with a text that grows by a line
+        // every other time.
+        val texts = launch {
+            var words = 4
+            while (isActive) {
+                session.showFeedback("Heard" + " words".repeat(words))
+                words = minOf(words + 4, 200)
+                delay(5)
+            }
+        }
+        val result = try {
+            shot.await()
+        } finally {
+            texts.cancelAndJoin()
+            session.hideFeedback()
+        }
+        val hidden = result as CaptureResult.Image
+        try {
+            assertEquals(plain.originX to plain.originY, hidden.originX to hidden.originY)
+            // None of the bar's pixels, its white text or its dark background, is in the image: outside the parts that the
+            // capture painted black, it equals the capture without the bar. The test names only a count, never a pixel.
+            var changed = 0
+            for (y in 0 until minOf(plain.bitmap.height, hidden.bitmap.height) step 2) {
+                for (x in 0 until minOf(plain.bitmap.width, hidden.bitmap.width) step 2) {
+                    val sx = x + hidden.originX
+                    val sy = y + hidden.originY
+                    if (hidden.blocked.any { sx >= it.left && sx < it.right && sy >= it.top && sy < it.bottom }) continue
+                    val a = plain.bitmap.getPixel(x, y)
+                    val b = hidden.bitmap.getPixel(x, y)
+                    val difference = abs(Color.red(a) - Color.red(b)) + abs(Color.green(a) - Color.green(b)) + abs(Color.blue(a) - Color.blue(b))
+                    if (difference > 96) changed++
+                }
+            }
+            assertEquals(0, changed)
+        } finally {
             plain.bitmap.recycle()
             hidden.bitmap.recycle()
         }

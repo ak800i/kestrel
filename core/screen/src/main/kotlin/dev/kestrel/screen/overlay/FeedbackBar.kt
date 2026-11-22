@@ -37,6 +37,7 @@ internal class FeedbackBar(private val host: OverlayHost) {
     fun show(text: String, keep: Boolean = false) {
         handler.removeCallbacks(fade)
         view.animate().cancel()
+        // While a screenshot of the display runs, host.show makes the bar transparent again until it is taken.
         view.alpha = 1f
         view.text = text
         if (host.show(view, params())) {

@@ -47,8 +47,9 @@ sealed interface CaptureResult {
  * secure window gives error 6. On API 33 (the A71) only the whole display can be captured: Kestrel's overlays are made
  * transparent first, the image is cropped to the window, and every part that a window above it or a visible overlay of
  * Kestrel's covers is painted black. On every level a window whose own pixels are at least 99 % pure black counts as
- * secure. Android's window list is read before and after each capture; when it changed, the capture is dropped and tried
- * once more. At most one capture runs per 400 ms. Bitmaps live only in memory and are never written anywhere.
+ * secure. Android's window list is read before and after each capture; when it changed, or when an overlay of Kestrel's
+ * may be in a display capture without its black, the capture is dropped and tried once more. At most one capture runs per
+ * 400 ms. Bitmaps live only in memory and are never written anywhere.
  */
 class ScreenCapture internal constructor(
     private val service: AccessibilityService,
@@ -77,6 +78,7 @@ class ScreenCapture internal constructor(
                     } else {
                         windowShot(target)
                     }
+                    if (shot === CHANGED) return@repeat
                     if (shot !is CaptureResult.Image) return@withContext shot
                     // A window that came, went or moved during the capture, such as a notification, may be in it.
                     if (shapes() == before) return@withContext shot
@@ -99,7 +101,12 @@ class ScreenCapture internal constructor(
             is Shot.Taken -> shot.result
             is Shot.Refused -> return shot.result
         }
-        val bitmap = toBitmap(result) ?: return CaptureResult.NotNow(FAILED)
+        val bitmap = try {
+            toBitmap(result)
+        } finally {
+            // A cancellation before the copy leaves the buffer to this close.
+            result.hardwareBuffer.close()
+        } ?: return CaptureResult.NotNow(FAILED)
         // A window with a shadow, such as a dialog, has the same margin around its bounds on each side of its image.
         val originX = target.bounds.left - maxOf(0, bitmap.width - target.bounds.width) / 2
         val originY = target.bounds.top - maxOf(0, bitmap.height - target.bounds.height) / 2
@@ -109,7 +116,14 @@ class ScreenCapture internal constructor(
     private suspend fun displayShot(target: Shape, windows: List<Shape>): CaptureResult {
         val hidden = hideOverlays() ?: return CaptureResult.NotNow(FAILED)
         val shot = try {
-            shoot { executor, callback -> service.takeScreenshot(Display.DEFAULT_DISPLAY, executor, callback) }
+            val shot = shoot { executor, callback -> service.takeScreenshot(Display.DEFAULT_DISPLAY, executor, callback) }
+            // An overlay that showed, grew or became visible again meanwhile may be in the image unmasked.
+            if (shot is Shot.Taken && !hidden.intact()) {
+                shot.result.hardwareBuffer.close()
+                Shot.Refused(CHANGED)
+            } else {
+                shot
+            }
         } finally {
             hidden.close()
         }
@@ -117,7 +131,12 @@ class ScreenCapture internal constructor(
             is Shot.Taken -> shot.result
             is Shot.Refused -> return shot.result
         }
-        val display = toBitmap(result) ?: return CaptureResult.NotNow(FAILED)
+        val display = try {
+            toBitmap(result)
+        } finally {
+            // A cancellation before the copy leaves the buffer to this close.
+            result.hardwareBuffer.close()
+        } ?: return CaptureResult.NotNow(FAILED)
         val area = target.bounds.intersect(IntRect(0, 0, display.width, display.height))
         if (area == null) {
             display.recycle()
@@ -175,7 +194,12 @@ class ScreenCapture internal constructor(
         return suspendCancellableCoroutine { continuation ->
             take(service.mainExecutor, object : TakeScreenshotCallback {
                 override fun onSuccess(result: ScreenshotResult) {
-                    if (continuation.isActive) continuation.resume(Shot.Taken(result)) else result.hardwareBuffer.close()
+                    // A cancellation between this callback and the resumed caller closes the buffer.
+                    if (continuation.isActive) {
+                        continuation.resume(Shot.Taken(result)) { _, _, _ -> result.hardwareBuffer.close() }
+                    } else {
+                        result.hardwareBuffer.close()
+                    }
                 }
 
                 override fun onFailure(errorCode: Int) {
@@ -212,6 +236,7 @@ class ScreenCapture internal constructor(
         const val IN_THE_WAY = "A notification is in the way; try again in a moment."
         const val GONE = "The app's window is gone."
         private val TOO_SOON = CaptureResult.NotNow("too soon")
+        private val CHANGED = CaptureResult.NotNow("changed")
         private const val BLACK = 0xFF000000.toInt()
 
         /** [area] without [holes], as rectangles that do not overlap. */
