@@ -203,11 +203,15 @@ class ShareActivity : Activity() {
         }
     }
 
+    // One chat opens in this activity, as Telegram opens it in its single activity: the screen changes at once, so the
+    // agent's snapshot after the tap shows the chat, which ends the share flow, also on a slow emulator.
     private fun sendTo(chats: List<FixtureChat>) {
         PressLog.record(this, PressLog.Kind.SHARE)
-        val next = Intent(this, MessengerActivity::class.java)
-        if (chats.size == 1) next.putExtra(MessengerActivity.EXTRA_CHAT, chats.single().id).putExtra(MessengerActivity.EXTRA_SHARED, items)
-        startActivity(next)
+        if (chats.size == 1) {
+            ChatScreen(this, chats.single(), shared = items).show()
+            return
+        }
+        startActivity(Intent(this, MessengerActivity::class.java))
         finish()
     }
 
