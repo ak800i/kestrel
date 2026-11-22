@@ -80,6 +80,9 @@
             android:exported="true" />
         <!-- Plan 3C: phone fixtures -->
         <!-- sub-project 5B: fixtures -->
+        <activity
+            android:name=".PressActivity"
+            android:exported="true" />
         <!-- sub-project 5C: fixtures -->
     </application>
 </manifest>

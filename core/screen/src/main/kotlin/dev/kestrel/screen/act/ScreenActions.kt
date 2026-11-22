@@ -39,6 +39,7 @@ class ScreenActions internal constructor(
     private val snapshots: SnapshotCache<LiveSnapshot>,
     private val gestures: GestureRunner,
     private val tracker: ScreenChangeTracker,
+    private val own: OwnActions,
 ) {
     /** Apps that refused the set-text action or did not show the text afterwards (design spec, section 9.7). */
     private val inputMethodApps = ConcurrentHashMap.newKeySet<String>()
@@ -87,7 +88,7 @@ class ScreenActions internal constructor(
             val arguments = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
-            if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
+            if (node.perform(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) && node.shows(text, element.password)) {
                 return settled(ActionMethod.ACTION)
             }
             if (!node.refresh()) {
@@ -120,7 +121,7 @@ class ScreenActions internal constructor(
         val node = element?.let { live.node(it.key) ?: return NOT_ON_SCREEN }
         val target = node?.selfOrParent { it.scrollAction(direction) != null }
         val action = target?.node?.scrollAction(direction)
-        if (target != null && action != null && target.node.performAction(action)) {
+        if (target != null && action != null && target.node.perform(action, kind = OwnActions.Kind.SCROLL)) {
             return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
         }
         val window = live.snapshot.windows.firstOrNull { it.id == element?.windowId }
@@ -174,7 +175,7 @@ class ScreenActions internal constructor(
         // A number can name an element that is no slider, such as a list, whose scroll action would move it instead.
         val range = node.rangeInfo ?: return ActionResult.Failed("It isn't a slider.")
         val step = if (increase) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
-        if (node.offers(step) && node.performAction(step)) return settled(ActionMethod.ACTION)
+        if (node.offers(step) && node.perform(step)) return settled(ActionMethod.ACTION)
         if (node.offers(SET_PROGRESS)) {
             // A range of whole numbers that has fewer than 20 steps would round a twentieth back to the same value.
             val change = ((range.max - range.min) / SLIDER_STEPS).let {
@@ -183,7 +184,7 @@ class ScreenActions internal constructor(
             val value = (range.current + if (increase) change else -change).coerceIn(range.min, range.max)
             if (value != range.current) {
                 val arguments = Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value) }
-                return if (node.performAction(SET_PROGRESS, arguments)) {
+                return if (node.perform(SET_PROGRESS, arguments)) {
                     settled(ActionMethod.ACTION)
                 } else {
                     ActionResult.Failed("The slider didn't move.")
@@ -212,7 +213,7 @@ class ScreenActions internal constructor(
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
         val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!node.isEnabled) return DISABLED
-        if (node.offers(action) && node.performAction(action)) return settled(ActionMethod.ACTION)
+        if (node.offers(action) && node.perform(action)) return settled(ActionMethod.ACTION)
         val expanding = action == AccessibilityNodeInfo.ACTION_EXPAND
         // An element that offers only the other action is already as the owner wants it: a tap would toggle it back.
         val other = if (expanding) AccessibilityNodeInfo.ACTION_COLLAPSE else AccessibilityNodeInfo.ACTION_EXPAND
@@ -233,7 +234,7 @@ class ScreenActions internal constructor(
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
         val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!node.isEnabled) return DISABLED
-        if (node.offers(AccessibilityNodeInfo.ACTION_DISMISS) && node.performAction(AccessibilityNodeInfo.ACTION_DISMISS)) {
+        if (node.offers(AccessibilityNodeInfo.ACTION_DISMISS) && node.perform(AccessibilityNodeInfo.ACTION_DISMISS)) {
             return settled(ActionMethod.ACTION)
         }
         return if (element.notificationRow) swipeAway(key, expected) else NOT_DISMISSIBLE
@@ -364,7 +365,7 @@ class ScreenActions internal constructor(
             val node = labelled(root, label) ?: continue
             val target = node.touchTarget(AccessibilityNodeInfo.ACTION_CLICK) ?: continue
             if (ifOff && (node.isOn() || target.node.isOn())) return true
-            if (target.node.isEnabled && target.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            if (target.node.isEnabled && target.node.perform(AccessibilityNodeInfo.ACTION_CLICK)) return true
         }
         return false
     }
@@ -415,7 +416,7 @@ class ScreenActions internal constructor(
         val target = node.touchTarget(action)
         if (target != null && !target.node.isEnabled) return DISABLED
         if (target != null && target.node.offers(action)) {
-            if (target.node.performAction(action)) {
+            if (target.node.perform(action)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
         } else if (node.refresh() && node.isVisibleToUser) {
@@ -433,7 +434,7 @@ class ScreenActions internal constructor(
         if (expected != null && !expected(element)) return ActionResult.CHANGED
         val freshTarget = fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
-        if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.performAction(action)) {
+        if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.perform(action)) {
             return settled(ActionMethod.RETRY_ACTION)
         }
         return fallbackAt(element.bounds, fresh.snapshot.windowsAbove(element.windowId), fallback)
@@ -450,7 +451,7 @@ class ScreenActions internal constructor(
         val inputMethod = service.inputMethod ?: return ActionResult.Failed("Kestrel's input method is not available.")
         val before = withContext(Dispatchers.Main) { inputMethod.currentInputEditorInfo }
         val wasFocused = node.isFocused
-        if (!wasFocused && !node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (!wasFocused && !node.perform(AccessibilityNodeInfo.ACTION_FOCUS)) node.perform(AccessibilityNodeInfo.ACTION_CLICK)
         val connection = withContext(Dispatchers.Main) {
             withTimeoutOrNull(INPUT_START_MILLIS) {
                 var ready: InputMethod.AccessibilityInputConnection? = null
@@ -466,14 +467,20 @@ class ScreenActions internal constructor(
         } ?: return ActionResult.Failed("The text field did not connect to Kestrel's input method.")
         // If the app has moved the focus to another field, the input would replace that field's text instead.
         if (!(node.refresh() && node.isFocused)) return ActionResult.Failed("The text field lost the focus.")
-        withContext(Dispatchers.Main) {
-            connection.performContextMenuAction(android.R.id.selectAll)
-            connection.commitText(text, 1, null)
-        }
-        return if (node.shows(text, element.password)) {
-            settled(ActionMethod.INPUT_METHOD)
-        } else {
-            ActionResult.Failed("The text field did not take the text.")
+        // The input method's typing is Kestrel's own action, so its text change never counts as the owner's (design D19 of sub-project 5).
+        own.begin()
+        try {
+            withContext(Dispatchers.Main) {
+                connection.performContextMenuAction(android.R.id.selectAll)
+                connection.commitText(text, 1, null)
+            }
+            return if (node.shows(text, element.password)) {
+                settled(ActionMethod.INPUT_METHOD)
+            } else {
+                ActionResult.Failed("The text field did not take the text.")
+            }
+        } finally {
+            own.end()
         }
     }
 
@@ -489,9 +496,19 @@ class ScreenActions internal constructor(
         if (points.any { it.x < screen.left || it.x >= screen.right || it.y < screen.top || it.y >= screen.bottom }) {
             return OFF_SCREEN
         }
-        return when (gestures.perform(*build())) {
+        own.begin()
+        val outcome = try {
+            gestures.perform(*build())
+        } finally {
+            own.end()
+        }
+        return when (outcome) {
             GestureOutcome.COMPLETED -> settled(ActionMethod.GESTURE)
-            GestureOutcome.CANCELLED -> ActionResult.Failed("A touch on the screen cancelled the gesture.")
+            GestureOutcome.CANCELLED -> {
+                // On Android 13 to 15 only a touch on the screen cancels Kestrel's gesture: the owner's (design D19 of sub-project 5).
+                own.gestureCancelled()
+                ActionResult.Failed("A touch on the screen cancelled the gesture.")
+            }
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture.")
             GestureOutcome.TIMED_OUT -> ActionResult.Failed("Android did not report the end of the gesture.")
         }
@@ -503,7 +520,13 @@ class ScreenActions internal constructor(
      * has reacted. Gestures call it once the finger has been lifted.
      */
     private suspend fun settled(method: ActionMethod): ActionResult {
-        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
+        // The settle wait belongs to the action, so that no event of it counts as the owner's (design D19 of sub-project 5).
+        own.begin()
+        try {
+            tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
+        } finally {
+            own.end()
+        }
         return ActionResult.Done(method)
     }
 
@@ -542,6 +565,13 @@ class ScreenActions internal constructor(
         selfOrParent { it.isClickable || it.isLongClickable || it.offers(action) }
 
     private fun AccessibilityNodeInfo.offers(action: Int): Boolean = actionList.any { it.id == action }
+
+    /**
+     * Performs [action] on this node as one of Kestrel's own actions, so that the touch watcher can tell its echo from the
+     * owner's finger (design D19 of sub-project 5), and gives Android's answer.
+     */
+    private fun AccessibilityNodeInfo.perform(action: Int, arguments: Bundle? = null, kind: OwnActions.Kind = OwnActions.kindOf(action)): Boolean =
+        own.node(kind) { performAction(action, arguments) }
 
     /** The first action that scrolls this node in [direction], if the node offers one and is enabled. */
     private fun AccessibilityNodeInfo.scrollAction(direction: ScrollDirection): Int? {

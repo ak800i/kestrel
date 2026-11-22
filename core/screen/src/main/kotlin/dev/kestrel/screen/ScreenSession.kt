@@ -1,12 +1,18 @@
 package dev.kestrel.screen
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Build
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import dev.kestrel.screen.act.GestureRunner
+import dev.kestrel.screen.act.OwnActions
+import dev.kestrel.screen.act.OwnerSignal
 import dev.kestrel.screen.act.ScreenActions
 import dev.kestrel.screen.act.SystemControls
 import dev.kestrel.screen.act.TextEditor
+import dev.kestrel.screen.act.Touch
+import dev.kestrel.screen.act.TouchBranch
+import dev.kestrel.screen.act.TouchSource
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.overlay.Badge
@@ -61,7 +67,9 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     private val card = ConfirmationCard(overlays)
     internal val tracker = ScreenChangeTracker(SystemClock::uptimeMillis)
     internal val gestures = GestureRunner(service)
-    private val watcher = TouchWatcher(overlays, gestures)
+    /** Kestrel's own actions, which the touch watcher tells from the owner's finger (design D19 of sub-project 5). */
+    private val ownActions = OwnActions(SystemClock::uptimeMillis, Build.VERSION.SDK_INT)
+    private val watcher = TouchWatcher(overlays, gestures, ownActions)
 
     private val builds = AtomicInteger()
     private val buildMillis = AtomicLong()
@@ -93,7 +101,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     val snapshotBuilds: Int get() = builds.get()
     val snapshotMillis: Long get() = buildMillis.get()
 
-    val actions = ScreenActions(service, snapshots, gestures, tracker)
+    val actions = ScreenActions(service, snapshots, gestures, tracker, ownActions)
 
     /** Edits text fields through Kestrel's input method (design spec, section 9.7). */
     val text = TextEditor(service, snapshots, tracker)
@@ -283,8 +291,12 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
      */
     suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) { card.ask(question) }
 
-    /** Starts reporting the owner's touches in [ownerTouches], for example while a task runs. */
-    suspend fun startTouchWatcher() = withContext(Dispatchers.Main) { watcher.start() }
+    /**
+     * Starts reporting the owner's touches in [ownerTouches], for example while a task runs, and returns whether the
+     * watcher's window is on the screen; a task does not run without it (design D19 of sub-project 5). Starting it
+     * forgets Kestrel's earlier actions.
+     */
+    suspend fun startTouchWatcher(): Boolean = withContext(Dispatchers.Main) { watcher.start() }
 
     suspend fun stopTouchWatcher() = withContext(Dispatchers.Main) { watcher.stop() }
 
@@ -292,6 +304,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     fun onAccessibilityEvent(event: AccessibilityEvent) {
         val window = windowEvents.movesWindow(event.eventType, event.packageName, event.className, event.windowId, event.windowChanges)
         if (window || ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged(if (window) event.windowId else null)
+        signalOwner(event)
     }
 
     /**
@@ -344,6 +357,34 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     private fun contentOf(snapshot: ScreenSnapshot) = snapshot.elements.filter { it.isActionable }.map { it.key to it.bounds }
 
     // sub-project 5B
+
+    /**
+     * How the touch watcher tells an echo of Kestrel's own actions from the owner's finger on this device (design D19 of
+     * sub-project 5): the rule, and branch B, on which a click or a text change that Kestrel did not cause also counts as
+     * the owner's touch. Any thread may set it; the debug hook `agent-touch-source` stores it per device.
+     */
+    var touchSource: TouchSource
+        get() = ownActions.source
+        set(value) {
+            ownActions.source = value
+        }
+
+    /** Every touch that the watcher classified, Kestrel's own and the owner's, for D19's probe and the activity log. */
+    val touches: SharedFlow<Touch> get() = watcher.all
+
+    /** Forgets Kestrel's earlier actions, so that none of them hides the owner's touch that answers a question (D19). */
+    fun forgetOwnActions() = ownActions.clear()
+
+    private val ownPackage: String = service.packageName
+
+    /** Branch B of D19: a click or a text change in another app's window that Kestrel did not cause is the owner's touch. */
+    private fun signalOwner(event: AccessibilityEvent) {
+        if (ownActions.source.branch != TouchBranch.B || !watcher.running) return
+        val focused = event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && event.source?.isFocused == true
+        if (OwnerSignal.counts(event.eventType, event.packageName?.toString(), ownPackage, focused, ownActions.busy())) {
+            watcher.report(OwnActions.signal())
+        }
+    }
 
     // sub-project 5C
 }
