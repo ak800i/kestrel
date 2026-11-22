@@ -338,5 +338,14 @@ class FakeEyes(var lines: List<OcrLine>? = emptyList(), var capture: Capture? = 
         return Part.Image(ImageType.JPEG, byteArrayOf(1, 2, 3))
     }
 
+    /** The lines that each call of [once] got; [merge] gives its result. */
+    val merged = mutableListOf<List<OcrLine>>()
+    var merge: (List<OcrLine>) -> List<OcrLine> = { it }
+
+    override fun once(lines: List<OcrLine>): List<OcrLine> {
+        merged += lines
+        return merge(lines)
+    }
+
     override fun toString(): String = "FakeEyes"
 }

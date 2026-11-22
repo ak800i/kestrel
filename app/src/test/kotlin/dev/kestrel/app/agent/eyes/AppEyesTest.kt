@@ -1,5 +1,6 @@
 package dev.kestrel.app.agent.eyes
 
+import dev.kestrel.agent.port.EyesPort
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.screen.model.IntRect
 import org.junit.Assert.assertEquals
@@ -22,6 +23,15 @@ class AppEyesTest {
         val cut = OcrLine("Pay", IntRect(100, 200, 150, 240), 0.99)
 
         assertEquals(listOf(whole), AppEyes.once(listOf(cut, whole)))
+    }
+
+    @Test
+    fun theAgentMergesTheLinesThatItKeepsThroughAppEyes() {
+        val eyes: EyesPort = AppEyes({ null }, { error("No models in this test") }, { emptySet() }) { _, _ -> }
+        val whole = OcrLine("Pay now", IntRect(100, 200, 260, 240), 0.9)
+        val cut = OcrLine("Pay", IntRect(100, 200, 150, 240), 0.99)
+
+        assertEquals(listOf(whole), eyes.once(listOf(cut, whole)))
     }
 
     @Test

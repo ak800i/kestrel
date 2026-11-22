@@ -116,6 +116,25 @@ class AgentToolsTest {
     }
 
     @Test
+    fun onlyTheKeptOcrLinesAreMergedAndTheMasksUseEveryLine() = runTest {
+        val screen = ScreenBuilder.screen("com.example.map") { button(null, 900, viewId = "pay", suggestedName = "pay") }
+        val harness = Harness(screen, listOf(look, look, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        // A whole line read below 0.8 must not hide the part that another region read well.
+        val unsure = OcrLine("Pay now to Ana", IntRect(40, 900, 1040, 1020), 0.6)
+        val part = OcrLine("Pay now", IntRect(40, 900, 600, 1020), 0.95)
+        val pin = OcrLine("PIN 4821", IntRect(40, 1100, 600, 1200), 0.9)
+        harness.eyes.lines = listOf(unsure, part, pin)
+        harness.eyes.merge = { lines -> lines - pin }
+        harness.owner.answers += Answer.Text("Yes.")
+
+        harness.run("Pay the bill")
+
+        assertEquals(listOf(listOf(part, pin)), harness.eyes.merged)
+        assertTrue(harness.model.requests[1].messages.filterIsInstance<ChatMessage.ToolResult>().last().text.contains("OCR \"Pay now\""))
+        assertTrue(harness.eyes.encoded.single().first.contains(pin.bounds))
+    }
+
+    @Test
     fun oneYesCoversTheChatAndTheAppsOwnSendOfOneShare() = runTest {
         val harness = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
             call("find_media", null, null, null, "day" to "yesterday", "kinds" to "photos"),

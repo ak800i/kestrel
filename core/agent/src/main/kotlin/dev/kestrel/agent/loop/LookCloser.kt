@@ -47,12 +47,13 @@ internal class LookCloser(private val run: TaskRun) {
     }
 
     // Step 1 (D20; r61): OCR on the regions without tree text, never on password or data-sensitive elements; lines that
-    // overlap tree text are dropped, and only lines with a mean score of at least 0.8 are kept. Null: no OCR files.
+    // overlap tree text are dropped, and only lines with a mean score of at least 0.8 are kept, each of them once.
+    // Null: no OCR files.
     private suspend fun ocr(call: AgentCall.LookCloser, target: TableEntry?): Done? {
         val snapshot = run.fresh()
         if (!run.capturable(snapshot)) return null
         val lines = withCapture { capture -> read(capture, snapshot, target) } ?: return null
-        val kept = lines.filter { it.score >= MIN_SCORE && !overlapsText(it, snapshot) }
+        val kept = run.ports.eyes.once(lines.filter { it.score >= MIN_SCORE && !overlapsText(it, snapshot) })
         return Done(
             call.tool, target = target, after = snapshot, ocr = kept, progress = kept.isNotEmpty(),
             text = "Result: look_closer read ${kept.size} lines of text.",

@@ -84,12 +84,10 @@ internal class AppEyes(
                 // Password fields and data-sensitive elements are black before OCR sees the image (review B I12).
                 val image = image(pixels.bitmap).blackedOut(exclude.map { it.inside(capture) })
                 OcrEngine.open(files).use { engine ->
-                    once(
-                        engine.read(image, regions.map { it.inside(capture) }, pixels.cyrillic).map { line ->
-                            val b = line.bounds
-                            OcrLine(line.text, IntRect(b.left + capture.originX, b.top + capture.originY, b.right + capture.originX, b.bottom + capture.originY), line.score)
-                        },
-                    )
+                    engine.read(image, regions.map { it.inside(capture) }, pixels.cyrillic).map { line ->
+                        val b = line.bounds
+                        OcrLine(line.text, IntRect(b.left + capture.originX, b.top + capture.originY, b.right + capture.originX, b.bottom + capture.originY), line.score)
+                    }
                 }
             }
         } catch (e: CancellationException) {
@@ -153,6 +151,9 @@ internal class AppEyes(
         if (ocr.isEmpty() || !ocr.all { it.ready }) return null
         return withContext(Dispatchers.IO) { OcrFiles.under(files.root) }
     }
+
+    // Called by look_closer with the lines that it keeps, after it has chosen the masks from all of read's lines.
+    override fun once(lines: List<OcrLine>): List<OcrLine> = Companion.once(lines)
 
     private fun IntRect.inside(capture: Capture.Captured) =
         IntRect(left - capture.originX, top - capture.originY, right - capture.originX, bottom - capture.originY)

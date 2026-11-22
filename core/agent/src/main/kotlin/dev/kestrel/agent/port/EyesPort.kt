@@ -15,6 +15,12 @@ interface EyesPort {
 
     /** The capture as a JPEG for the model, with [masks] blacked out and the [marks] drawn on it. */
     suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>): Part.Image
+
+    /**
+     * The OCR lines that `look_closer` keeps for the observation, with each line that overlapping regions both read given
+     * once. The masks use every line of [read], so a line left out here is still masked.
+     */
+    fun once(lines: List<OcrLine>): List<OcrLine> = lines
 }
 
 /** No screenshots and no OCR: what `:app` uses until plan 5C. */

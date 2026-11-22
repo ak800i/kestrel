@@ -30,6 +30,18 @@ class RecogniserChoiceTest {
     }
 
     @Test
+    fun withCyrillicNearbyASureLatinReadingGivesWayOnlyToAReadingWithCyrillicLetters() {
+        // The Cyrillic dictionary lacks č, ć, š, ž and đ, so it reads Serbian Latin text as plain ASCII with a high score.
+        val serbian = Reading("Đorđe šalje poruku", 0.983)
+        assertSame(serbian, OcrEngine.choose(serbian, true) { Reading("Dorde salje poruku", 0.995) })
+        val city = Reading("Нови Сад", 0.97)
+        assertSame(city, OcrEngine.choose(Reading("Hobn Cag", 0.85), true) { city })
+        // Below 0.8, the higher score wins whatever its letters.
+        val plain = Reading("Dorde", 0.9)
+        assertSame(plain, OcrEngine.choose(Reading("Dorde", 0.6), true) { plain })
+    }
+
+    @Test
     fun aLatinReadingOfOnlySpacesCountsAsNone() {
         // The Latin recogniser reads Cyrillic text as spaces with a score of about 0.99.
         assertEquals(cyrillic to true, choose(Reading("  ", 0.99)))

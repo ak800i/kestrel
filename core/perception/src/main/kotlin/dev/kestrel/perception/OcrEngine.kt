@@ -13,8 +13,8 @@ data class OcrText(val text: String, val bounds: IntRect, val score: Double) {
  * Kestrel's OCR (design D20 of sub-project 5; r48): PP-OCRv5's mobile detector and its `latin` and `cyrillic`
  * recognisers through ONNX Runtime, on the CPU with [open]'s threads. Each box is read by the Latin recogniser first;
  * when its mean score is below 0.8, or when the screen's text holds Cyrillic letters, the Cyrillic recogniser reads it
- * too, and the higher mean score wins. The work is blocking and CPU-bound, so callers run it off the main thread, one
- * call at a time.
+ * too, and the higher mean score wins; a Latin reading of at least 0.8 gives way only to a reading with a Cyrillic letter.
+ * The work is blocking and CPU-bound, so callers run it off the main thread, one call at a time.
  */
 class OcrEngine private constructor(
     private val detector: Detector,
@@ -88,13 +88,16 @@ class OcrEngine private constructor(
 
         /**
          * The reading that counts for a box: [latin]'s, unless its score is below [CYRILLIC_BELOW] or [cyrillicNearby]
-         * is true; then [cyrillic] reads the box too and the higher score wins, the Latin reading on a tie. A reading of
+         * is true; then [cyrillic] reads the box too and the higher score wins, the Latin reading on a tie. A Latin
+         * reading of at least [CYRILLIC_BELOW] gives way only to a reading with a Cyrillic letter, because the Cyrillic
+         * dictionary lacks č, ć, š, ž and đ and reads Serbian Latin text without them, with a higher score. A reading of
          * only spaces counts as none, because the Latin recogniser reads Cyrillic text as spaces with a high score.
          */
         internal fun choose(latin: Reading, cyrillicNearby: Boolean, cyrillic: () -> Reading): Reading {
             val first = latin.counted()
             if (first.score >= CYRILLIC_BELOW && !cyrillicNearby) return first
             val second = cyrillic().counted()
+            if (first.score >= CYRILLIC_BELOW && second.text.none { Character.UnicodeBlock.of(it) == Character.UnicodeBlock.CYRILLIC }) return first
             return if (second.score > first.score) second else first
         }
 
