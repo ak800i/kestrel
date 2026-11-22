@@ -97,22 +97,22 @@ class OwnActionsTest {
         }
         val sdk = Build.VERSION.SDK_INT
         for (probe in probes) Log.i(TAG, probe.line(sdk))
-        if (sdk >= 34) {
-            // The credits are made for clicks and long clicks only, and live twice the longest echo's delay (D19).
-            for (case in listOf("set-text", "ime-focus", "scroll")) {
-                assertEquals("$case reached the watcher: ${probes.single { it.case == case }.line(sdk)}", 0, probes.single { it.case == case }.touches.size)
-            }
-            // Android 17 echoes a click before the app answers, so a refused click keeps its credit like an accepted one,
-            // and its one echo must come as soon as a click's does.
-            val refused = probes.single { it.case == "refused-click" }
-            assertTrue("refused-click reached the watcher more than once: ${refused.line(sdk)}", refused.touches.size <= 1)
-            refused.touches.firstOrNull()?.let { (touch, delayMillis) ->
-                assertTrue("refused-click's touch is not a click's echo in time: ${refused.line(sdk)}", touch.deviceId == 0 && delayMillis <= OwnActions.CREDIT_MILLIS / 2)
-            }
-            for (case in listOf("click", "long-click")) {
-                for ((_, delayMillis) in probes.single { it.case == case }.touches) {
-                    assertTrue(String.format(Locale.ROOT, "%s echoed after %d ms", case, delayMillis), delayMillis <= OwnActions.CREDIT_MILLIS / 2)
-                }
+        // On every API level, so that the probe fails on a device whose echoes the credit rule does not fit, such as a scroll
+        // that echoes or a click that echoes late, before plan 5C stores the rule from its lines (final review of plan 5B, M2).
+        // The credits are made for clicks and long clicks only, and live twice the longest echo's delay (D19).
+        for (case in listOf("set-text", "ime-focus", "scroll")) {
+            assertEquals("$case reached the watcher: ${probes.single { it.case == case }.line(sdk)}", 0, probes.single { it.case == case }.touches.size)
+        }
+        // Android 17 echoes a click before the app answers, so a refused click keeps its credit like an accepted one,
+        // and its one echo must come as soon as a click's does.
+        val refused = probes.single { it.case == "refused-click" }
+        assertTrue("refused-click reached the watcher more than once: ${refused.line(sdk)}", refused.touches.size <= 1)
+        refused.touches.firstOrNull()?.let { (touch, delayMillis) ->
+            assertTrue("refused-click's touch is not a click's echo in time: ${refused.line(sdk)}", touch.deviceId == 0 && delayMillis <= OwnActions.CREDIT_MILLIS / 2)
+        }
+        for (case in listOf("click", "long-click")) {
+            for ((_, delayMillis) in probes.single { it.case == case }.touches) {
+                assertTrue(String.format(Locale.ROOT, "%s echoed after %d ms", case, delayMillis), delayMillis <= OwnActions.CREDIT_MILLIS / 2)
             }
         }
     }
