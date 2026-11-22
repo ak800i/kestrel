@@ -23,7 +23,8 @@ BeforeAll {
         'Format-Failure', 'Invoke-TelegramRecording', 'Get-GmailDraftCount', 'Invoke-GmailCompose', 'Restore-Hotspot', 'Register-HotspotRestore',
         'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
         'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText',
-        'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore')
+        'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
+        'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -354,6 +355,10 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         $script:credits = 0.0
         $creditCeiling = 150
         $ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
+        $unknownMessage = 'A run''s AI Credits are unknown, because the script did not read its end, so the sitting stops as at its ceiling of 150 AI Credits.'
+        $resultsGoneMessage = 'A results file of an earlier call of this sitting 2, which the record lists, is gone, so the sitting''s AI Credits are unknown and no run starts.'
+        $noRecordMessage = 'The record lists no results of an earlier call of this sitting 2, so the sitting''s AI Credits are unknown and no run starts; a new sitting 2 is a call without -Step.'
+        $script:sittingRecordMissing = $false
         $results = [System.Collections.Generic.List[string]]::new()
         Mock Add-Result { $results.Add("${StepName}: $Text") }
         Mock Start-Sleep { }
@@ -488,6 +493,91 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
 
         Should -Invoke Invoke-DeviceHook -Times 0 -Exactly -ParameterFilter { $Command -eq 'voice' }
     }
+
+    It 'starts no run when a results file that the record lists is gone, instead of counting it as 0 (fix-5c-ceiling-review M1)' {
+        Set-AgentRecord $recordFile 'sitting2Results' @('agent-sitting2-gone.txt')
+        Set-AgentRecord $recordFile 'sitting2Credits' 10.0
+        $Step = @('prepare', 'emulator-runs')
+        Add-SittingResults
+        Mock Invoke-TaskCheck { }
+
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' } | Should -Throw $resultsGoneMessage
+
+        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+    }
+
+    It 'starts no run in a call with -Step whose record lists no earlier call, and starts at 0 in a call without -Step (fix-5c-ceiling-review M1)' {
+        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
+        $Step = @('prepare', 'emulator-runs')
+        Add-SittingResults
+
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $noRecordMessage
+
+        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+        # The record does not start a list from this call, so a later call with -Step stops too.
+        (Read-AgentRecord $recordFile).PSObject.Properties['sitting2Results'] | Should -BeNullOrEmpty
+
+        $Step = @()
+        Add-SittingResults
+        Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 | Out-Null
+        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 1
+    }
+
+    It 'stops at a run whose AI Credits are unknown as at the ceiling, and starts no run after it, also on a resume (fix-5c-ceiling-review M2)' {
+        $Step = @()
+        Add-SittingResults
+        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped" }
+
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 3 } | Should -Throw $unknownMessage
+        $Step = @('prepare', 'firefox-wiki')
+        Add-SittingResults
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'firefox-wiki' 3 } | Should -Throw $unknownMessage
+
+        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        $results | Should -Contain 'emulator-runs: hotspot on kestrel-api37: 0 of 1 runs passed; the sitting''s AI Credits so far: 0, and 1 runs'' AI Credits are unknown'
+        @(Get-RunSummary @(Get-SittingRuns)) | Should -Be @('task=hotspot model=none passed=0 of 1 steps=0 seconds=0 credits=0 creditsUnknown=1')
+    }
+
+    It 'stops look_closer after a live task whose AI Credits it could not read, as at the ceiling (fix-5c-ceiling-review M2)' {
+        $Serial = $A71
+        $Step = @()
+        Add-SittingResults
+        Mock Unlock-Device { $true }
+        Mock Invoke-Device { }
+        Mock Invoke-DeviceHook { 'approvals=0' }
+        Mock Register-Restore { [pscustomobject]@{ What = $What } }
+        Mock Complete-Restore { }
+        Mock New-CheckTag { 'k1' }
+        Mock Wait-LiveTask { [pscustomobject]@{ Result = $null; Asked = 0; Other = 0; Stopped = $null } }
+        Mock Get-ScreenCount { 0 }
+        Mock Add-Result { $results.Add("${StepName}: $Text"); Add-SessionResult -Path $resultsFile -Step $StepName -Text $Text }
+
+        { Invoke-LookCloserStep } | Should -Throw $unknownMessage
+
+        Should -Invoke Invoke-DeviceHook -Times 1 -Exactly -ParameterFilter { $Command -eq 'voice' }
+        @($results | Where-Object { $_ -like 'look-closer: *' })[-1] | Should -BeLike '*; spent=unknown'
+        { Assert-CreditsLeft } | Should -Throw $unknownMessage
+    }
+
+    It 'writes look_closer''s spending as unknown when an error or Ctrl+C ends the wait for its live task (fix-5c-ceiling-review M2)' {
+        $Serial = $A71
+        $Step = @()
+        Add-SittingResults
+        Mock Unlock-Device { $true }
+        Mock Invoke-Device { }
+        Mock Invoke-DeviceHook { 'approvals=0' }
+        Mock Register-Restore { [pscustomobject]@{ What = $What } }
+        Mock Complete-Restore { }
+        Mock New-CheckTag { 'k1' }
+        Mock Wait-LiveTask { throw 'The pipeline has been stopped.' }
+        Mock Add-Result { $results.Add("${StepName}: $Text"); Add-SessionResult -Path $resultsFile -Step $StepName -Text $Text }
+
+        { Invoke-LookCloserStep } | Should -Throw 'The pipeline has been stopped.'
+
+        @($results) | Should -Contain 'look-closer: kestrel-api37, the answer yes: the step stopped before it read the task''s end; spent=unknown'
+        { Assert-CreditsLeft } | Should -Throw $unknownMessage
+    }
 }
 
 Describe 'The restores and checks of every call of a sitting (the fix round before the sittings)' {
@@ -558,6 +648,27 @@ Describe 'The restores and checks of every call of a sitting (the fix round befo
         $Step = @('a71-runs', 'cache')
         { Invoke-SittingSteps $entries } | Should -Throw $ceilingMessage
         @($ran) | Should -Be @('a71-runs')
+    }
+
+    It 'runs only the step end also after a run whose AI Credits are unknown or a record that lost a call, as after the ceiling (fix-5c-ceiling-review M1, M2)' {
+        $unknownMessage = 'A run''s AI Credits are unknown, because the script did not read its end, so the sitting stops as at its ceiling of 150 AI Credits.'
+        $resultsGoneMessage = 'A results file of an earlier call of this sitting 2, which the record lists, is gone, so the sitting''s AI Credits are unknown and no run starts.'
+        $ran = [System.Collections.Generic.List[string]]::new()
+        Mock Test-StepCalls { $false }
+        Mock Write-Host { }
+        foreach ($message in $unknownMessage, $resultsGoneMessage) {
+            $ran.Clear()
+            $entries = @(
+                @{ Name = 'a71-runs'; Run = { $ran.Add('a71-runs'); throw $message } }
+                @{ Name = 'cache'; Run = { $ran.Add('cache') } }
+                @{ Name = 'end'; Run = { $ran.Add('end') } }
+            )
+
+            { Invoke-SittingSteps $entries } | Should -Throw $message
+
+            @($ran) | Should -Be @('a71-runs', 'end')
+            $results | Should -Contain "a71-runs: stopped: $message"
+        }
     }
 
     It 'checks Gmail''s account on the A71 only when sitting 1 saw its discard work there, with Drafts counted around it (final-5c-review-b M4)' {

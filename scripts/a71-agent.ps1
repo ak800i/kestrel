@@ -11,10 +11,12 @@
 # scripts\task-check.ps1 -Live for the six tasks of design D3 on the A71 and the emulator's tasks on kestrel-api37, 3 runs
 # each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
 # it stops when the sitting's AI Credits reach 150, checked before and after each task's runs, and then runs only the
-# step end. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
+# step end. A run whose credits are unknown (task-check.ps1's credits=unknown, when it could not read the end of a live
+# task) stops the sitting in the same way. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
 # named steps, also as one text separated by commas. A sitting 2 that stopped goes on with a call with -Step and the
 # steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
-# Credits of the earlier calls and reads their results too. Only the step end deletes the emulator's Copilot profile
+# Credits of the earlier calls and reads their results too, and starts no run when the record lists no earlier call or
+# a results file that it lists is gone. Only the step end deletes the emulator's Copilot profile
 # and removes its test account, so that after a stop by q, Ctrl+C or an error, also of a call without -Step, the next
 # call needs no new sign-in; -Step end alone ends a sitting 2 that will not go on. A new sitting 2
 # is a call without -Step. Before and after each step the script reads both devices' call state, and ends a call with
@@ -164,13 +166,20 @@ function ConvertFrom-TaskLine([string]$Line) {
     ConvertFrom-HookPairs $text
 }
 
-# The AI Credits of the runs' lines, in the invariant culture.
+# The AI Credits of the runs' lines, in the invariant culture. A run whose credits are unknown adds nothing here; see
+# Get-UnknownCreditCount.
 function Get-CreditTotal([object[]]$Runs) {
     $total = 0.0
     foreach ($run in $Runs) {
         if ($run -and "$($run['credits'])" -match '^\d+(\.\d+)?$') { $total += [double]::Parse($run['credits'], [Globalization.CultureInfo]::InvariantCulture) }
     }
     $total
+}
+
+# The number of runs whose AI Credits are not a number, such as credits=unknown, which task-check.ps1 writes for a live
+# run whose end it did not read (fix-5c-ceiling-review M2).
+function Get-UnknownCreditCount([object[]]$Runs) {
+    @($Runs | Where-Object { $_ -and "$($_['credits'])" -notmatch '^\d+(\.\d+)?$' }).Count
 }
 
 # The first name for a test variant (design D30 step 16; review C3-M5): $Default when the owner's Telegram chat list has
@@ -224,7 +233,7 @@ function Get-StandInTask([string]$Task) {
 function Format-Number([double]$Value, [int]$Digits = 1) { [math]::Round($Value, $Digits).ToString([Globalization.CultureInfo]::InvariantCulture) }
 
 # One line per task and model of the runs, for design D32 item 35's comparison: the runs that passed of those that ran,
-# the mean steps and working time, and the AI Credits in all.
+# the mean steps and working time, and the AI Credits in all, with creditsUnknown=<n> when n runs' credits are unknown.
 function Get-RunSummary([object[]]$Runs) {
     $groups = [ordered]@{}
     foreach ($run in $Runs) {
@@ -238,7 +247,8 @@ function Get-RunSummary([object[]]$Runs) {
         $passed = @($list | Where-Object { $_['result'] -eq 'pass' }).Count
         $steps = if ($ran) { (@($ran | ForEach-Object { [double]$_['steps'] }) | Measure-Object -Average).Average } else { 0 }
         $seconds = if ($ran) { (@($ran | ForEach-Object { [double]$_['workMs'] / 1000 }) | Measure-Object -Average).Average } else { 0 }
-        "task=$($list[0]['task']) model=$($list[0]['model']) passed=$passed of $($ran.Count) steps=$(Format-Number $steps) seconds=$(Format-Number $seconds) credits=$(Format-Number (Get-CreditTotal $list) 2)"
+        $unknown = Get-UnknownCreditCount $list
+        "task=$($list[0]['task']) model=$($list[0]['model']) passed=$passed of $($ran.Count) steps=$(Format-Number $steps) seconds=$(Format-Number $seconds) credits=$(Format-Number (Get-CreditTotal $list) 2)$(if ($unknown) { " creditsUnknown=$unknown" })"
     }
 }
 
@@ -273,6 +283,13 @@ $stayOn = [ordered]@{}
 $credits = 0.0
 $creditCeiling = 150
 $ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
+# The stops that, as the ceiling does, leave only the step end (fix-5c-ceiling-review M1 and M2): a run whose AI Credits
+# are unknown, and a call with -Step whose earlier calls' credits cannot be read, which are never counted as 0.
+$unknownMessage = 'A run''s AI Credits are unknown, because the script did not read its end, so the sitting stops as at its ceiling of 150 AI Credits.'
+$resultsGoneMessage = 'A results file of an earlier call of this sitting 2, which the record lists, is gone, so the sitting''s AI Credits are unknown and no run starts.'
+$noRecordMessage = 'The record lists no results of an earlier call of this sitting 2, so the sitting''s AI Credits are unknown and no run starts; a new sitting 2 is a call without -Step.'
+# Whether this call has -Step but the record lists no results of an earlier call of sitting 2 (Add-SittingResults).
+$sittingRecordMissing = $false
 $testNames = @{ Ana = 'Ana'; John = 'John' }
 $gmailChecked = $false
 # A call with -Step after a stop counts on from the AI Credits that the earlier calls of this sitting 2 kept in the
@@ -1334,30 +1351,46 @@ function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int
     $lines = @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | ForEach-Object { ConvertFrom-TaskLine $_ } | Where-Object { $_ })
     $script:credits += Get-CreditTotal $lines
     Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
-    Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): $(@($lines | Where-Object { $_['result'] -eq 'pass' }).Count) of $($lines.Count) runs passed; the sitting's AI Credits so far: $(Format-Number $script:credits 2)"
+    $unknown = Get-UnknownCreditCount $lines
+    Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): $(@($lines | Where-Object { $_['result'] -eq 'pass' }).Count) of $($lines.Count) runs passed; the sitting's AI Credits so far: $(Format-Number $script:credits 2)$(if ($unknown) { ", and $unknown runs' AI Credits are unknown" })"
+    if ($unknown) { throw $unknownMessage }
     if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
     $lines
 }
 
 # A sitting 2 can take more than one call: a call without -Step starts it, and a call with -Step goes on after a stop
 # (task-5c-10-review M3; final-5c-review-b M3). A new sitting 2 counts its AI Credits from 0 (Q5) and its results from
-# this call's file; a call with -Step adds its file to the record's list and counts on from the record's credits.
+# this call's file; a call with -Step adds its file to the record's list and counts on from the record's credits. A
+# call with -Step whose record lists no earlier call cannot know the sitting's credits: it marks that, so that no run
+# starts (Get-SittingResultFiles), and leaves the list out, so that a later call with -Step stops too
+# (fix-5c-ceiling-review M1).
 function Add-SittingResults {
     $file = Split-Path -Leaf $resultsFile
     if (-not $Step) {
+        $script:sittingRecordMissing = $false
         $script:credits = 0.0
         Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
         Set-AgentRecord $recordFile 'sitting2Results' @($file)
         return
     }
-    $files = @(@((Read-AgentRecord $recordFile).sitting2Results | Where-Object { $_ }) + $file | Select-Object -Unique)
+    $earlier = @((Read-AgentRecord $recordFile).sitting2Results | Where-Object { $_ })
+    if (-not $earlier) {
+        $script:sittingRecordMissing = $true
+        return
+    }
+    $files = @(@($earlier) + $file | Select-Object -Unique)
     Set-AgentRecord $recordFile 'sitting2Results' $files
 }
 
-# The results files of this sitting 2 that exist: those of its earlier calls, which the record lists, and this call's.
+# The results files of this sitting 2: those of its earlier calls, which the record lists, and this call's, when it
+# exists. A listed file that is gone, or a call with -Step whose record lists no earlier call, stops the step, because
+# the runs that only those files hold would count as 0 (fix-5c-ceiling-review M1).
 function Get-SittingResultFiles {
+    if ($script:sittingRecordMissing) { throw $noRecordMessage }
     $names = @((Read-AgentRecord $recordFile).sitting2Results | Where-Object { $_ })
-    @(@($names | ForEach-Object { Join-Path $owner $_ }) + $resultsFile | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ })
+    $earlier = @($names | ForEach-Object { Join-Path $owner $_ } | Where-Object { $_ -ne $resultsFile })
+    if (@($earlier | Where-Object { -not (Test-Path -LiteralPath $_) })) { throw $resultsGoneMessage }
+    @(@($earlier) + $resultsFile | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ })
 }
 
 # The runs' lines of this sitting 2 so far, read from the results files of all its calls, each with the device of the line
@@ -1392,16 +1425,30 @@ function Get-SpentCredits {
     [math]::Max($total, [double]$script:credits)
 }
 
+# Whether a run of this sitting 2 so far has AI Credits that are unknown: a task-check.ps1 run's credits=unknown, or
+# look-closer's "spent=unknown", in the results files of all its calls (fix-5c-ceiling-review M2).
+function Test-SittingCreditsUnknown {
+    if (Get-UnknownCreditCount (Get-SittingRuns)) { return $true }
+    foreach ($file in Get-SittingResultFiles) {
+        foreach ($line in Get-Content -LiteralPath $file) {
+            if ("$line" -match "`tlook-closer`t.*; spent=unknown$") { return $true }
+        }
+    }
+    $false
+}
+
 # Stops the step with the ceiling's sentence before a live run when the sitting's AI Credits have reached the ceiling of
 # Q5, also in a call with -Step that goes on after the stop (fix-5c-scripts-review I1). The rule is the plan's: the
 # sitting stops when its credits reach 150. A run's cost is known only after it, so a run starts while the credits are
-# below 150, and the sitting can pass 150 by at most that task's runs.
+# below 150, and the sitting can pass 150 by at most that task's runs. A run whose credits are unknown counts as the
+# ceiling, so that no run starts after it (fix-5c-ceiling-review M2).
 function Assert-CreditsLeft {
     $spent = Get-SpentCredits
     if ($spent -gt $script:credits) {
         $script:credits = $spent
         Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
     }
+    if (Test-SittingCreditsUnknown) { throw $unknownMessage }
     if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
 }
 
@@ -1728,15 +1775,25 @@ function Invoke-LookCloserStep {
                 $with.Live = $true
             }
             Invoke-DeviceHook $device voice $with | Out-Null
-            $end = Wait-LiveTask -Serial $device -Tag $tag -Answer $answer -App 'dev.kestrel.testapp'
+            $end = $null
+            try {
+                $end = Wait-LiveTask -Serial $device -Tag $tag -Answer $answer -App 'dev.kestrel.testapp'
+            } finally {
+                # An error or Ctrl+C during the wait ends the task (Wait-LiveTask), whose credits are then unknown.
+                if (-not $end -and -not $DryRun) { Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): the step stopped before it read the task's end; spent=unknown" }
+            }
             $paid = Get-ScreenCount $device @{ Package = 'dev.kestrel.testapp'; Contains = 'Details shown' }
-            $spent = 0.0
-            foreach ($counted in @($end.Result, $end.Stopped)) { if ($counted) { $spent += Get-CreditTotal @($counted) } }
+            $read = @(@($end.Result, $end.Stopped) | Where-Object { $_ })
+            $spent = Get-CreditTotal $read
+            # A live task whose end the step did not read, even after its stop, spent credits that are unknown
+            # (fix-5c-ceiling-review M2); the scripted model of a dry run spends none.
+            $unknown = -not $DryRun -and (-not $read -or (Get-UnknownCreditCount $read))
             $script:credits += $spent
             Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
             $result = if ($end.Result) { "end=$($end.Result['end']) steps=$($end.Result['steps']) credits=$($end.Result['credits']) model=$($end.Result['model'])" } else { 'did not end within 10 minutes' }
-            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times, another app's free question $($end.Other) times (answered no); ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' })); spent=$(Format-Number $spent 2)"
+            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times, another app's free question $($end.Other) times (answered no); ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' })); spent=$(if ($unknown) { 'unknown' } else { Format-Number $spent 2 })"
             if ($DryRun) { Invoke-DeviceHook $device agent-script @{ Clear = $true } | Out-Null }
+            if ($unknown) { throw $unknownMessage }
             if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
         }
         Complete-Restore $restore
@@ -1836,21 +1893,22 @@ function Test-StepCalls([string]$StepName, [string]$When) {
 # Runs the call's steps of the sitting in order. A step that fails is recorded, and the next step runs. The owner's q
 # stops the sitting at once. The ceiling of AI Credits stops the step, and of the steps that remain only end runs, so
 # that the sitting's real end removes the emulator's Copilot profile and test account; then the sitting stops with the
-# ceiling's sentence.
+# ceiling's sentence. A run whose credits are unknown, and credits of earlier calls that cannot be read, stop the
+# sitting in the same way, with their own sentences (fix-5c-ceiling-review M1 and M2).
 function Invoke-SittingSteps([object[]]$Entries) {
-    $ceilingReached = $false
+    $creditStop = $null
     foreach ($entry in $Entries) {
         if ($Step -and $entry.Name -notin $Step) { continue }
-        if ($ceilingReached -and $entry.Name -ne 'end') { continue }
+        if ($creditStop -and $entry.Name -ne 'end') { continue }
         Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title)."
         if (Test-StepCalls $entry.Name 'before') { continue }
         try {
             & $entry.Run
         } catch {
             if ($_.Exception.Message -eq 'The owner stopped the sitting.') { throw }
-            if ($_.Exception.Message -eq $ceilingMessage) {
-                $ceilingReached = $true
-                Add-Result $entry.Name "stopped: $ceilingMessage"
+            if ($_.Exception.Message -in @($ceilingMessage, $unknownMessage, $resultsGoneMessage, $noRecordMessage | Where-Object { $_ })) {
+                if (-not $creditStop) { $creditStop = $_.Exception.Message }
+                Add-Result $entry.Name "stopped: $($_.Exception.Message)"
             } else {
                 # Format-Failure leaves out the owner's values and any address that a failed command named.
                 Add-Result $entry.Name "failed: $(Format-Failure $_)"
@@ -1859,7 +1917,7 @@ function Invoke-SittingSteps([object[]]$Entries) {
             Test-StepCalls $entry.Name 'after' | Out-Null
         }
     }
-    if ($ceilingReached) { throw $ceilingMessage }
+    if ($creditStop) { throw $creditStop }
 }
 
 $completed = $false

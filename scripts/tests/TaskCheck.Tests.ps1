@@ -15,7 +15,7 @@ BeforeAll {
     $helpers = @('Get-TaskTable', 'New-RunMarker', 'Format-TaskText', 'Get-TaskReply', 'Test-TaskPassed', 'Format-TaskLine',
         'Test-WazeNavigating', 'Test-HotspotOn', 'Test-WifiValidated', 'Get-PressKinds', 'Get-TreeImageCount', 'Get-AnswerArguments',
         'Test-SetupUntestable', 'Get-RunVerdict', 'Stop-GivenTask', 'Complete-TaskRun', 'New-HookTag', 'Invoke-TaskHook', 'Invoke-TaskStep',
-        'Invoke-Device', 'Test-RunCall')
+        'Invoke-Device', 'Test-RunCall', 'Get-RunCredits', 'Close-TaskRun', 'Write-RunLine')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -94,6 +94,59 @@ Describe 'The helpers of the agent''s task check' {
             'end=FINISHED check=pass steps=5 workMs=41000 credits=0.50 model=scripted-light in=5000 out=250 cacheRead=2500 cacheWrite=0 reason=ok')
         Format-TaskLine 'read-email' 1 'skipped' $null 'skipped' 'untestable' | Should -BeExactly ('task=read-email run=1 result=skipped end=none ' +
             'check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=untestable')
+        Format-TaskLine 'hotspot' 3 'fail' $null 'skipped' 'stopped' 'unknown' | Should -BeExactly ('task=hotspot run=3 result=fail end=none ' +
+            'check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped')
+    }
+
+    It 'gives a live run whose end it did not read the credits of the stopped task, or unknown, never 0 (fix-5c-ceiling-review M2)' {
+        $Serial = 'R58N66RVD7Z'
+        $done = ConvertFrom-HookPairs 'state=done end=FINISHED steps=5 workMs=41000 credits=0.50'
+        Mock Invoke-TaskHook { 'state=done end=STOPPED steps=12 workMs=600000 credits=3.25' } -ParameterFilter { $Command -eq 'agent-task' }
+
+        Get-RunCredits -Live $true -Tag 'k1' -Answer $done | Should -BeExactly '0.50'
+        Get-RunCredits -Live $true -Tag 'k1' -Answer $null | Should -BeExactly '3.25'
+        Should -Invoke Invoke-TaskHook -Times 1 -Exactly -ParameterFilter { $With.Tag -eq 'k1' -and $With.Result }
+        Get-RunCredits -Live $false -Tag 'k1' -Answer $null | Should -BeExactly '0.00'
+        Get-RunCredits -Live $true -Tag '' -Answer $null | Should -BeExactly '0.00'
+        Should -Invoke Invoke-TaskHook -Times 1 -Exactly
+
+        Mock Invoke-TaskHook { 'state=running' } -ParameterFilter { $Command -eq 'agent-task' }
+        Get-RunCredits -Live $true -Tag 'k1' -Answer $null | Should -BeExactly 'unknown'
+        Mock Invoke-TaskHook { throw 'The hook did not answer within 30 s.' } -ParameterFilter { $Command -eq 'agent-task' }
+        Get-RunCredits -Live $true -Tag 'k1' -Answer $null | Should -BeExactly 'unknown'
+    }
+
+    It 'writes the line of a run that an error or Ctrl+C ended, with its credits, also when its restore fails (fix-5c-ceiling-review M2)' {
+        $Serial = 'R58N66RVD7Z'
+        $Task = 'hotspot'
+        $live = $true
+        $entry = @{ Restore = 'hotspot-off' }
+        $Results = Join-Path $TestDrive 'results.txt'
+        $written = [System.Collections.Generic.List[string]]::new()
+        Mock Test-RunCall { $false }
+        Mock Complete-TaskRun { }
+        Mock Write-Host { }
+        Mock Add-SessionResult { $written.Add($Text) }
+        Mock Invoke-TaskHook { 'state=done end=STOPPED steps=12 workMs=90000 credits=2.40' } -ParameterFilter { $Command -eq 'agent-task' }
+        $state = [pscustomobject]@{ Marker = 'maple heron' }
+
+        # Ctrl+C before the task's end was read: the task is stopped, and its credits are read once more.
+        $end = Close-TaskRun -Run $state -Tag 'k1' -Answer $null -Verdict $null -Call $false -Number 2
+        $end.Credits | Should -BeExactly '2.40'
+        @($written) | Should -Be @('task=hotspot run=2 result=fail end=none check=skipped steps=0 workMs=0 credits=2.40 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped')
+        Should -Invoke Complete-TaskRun -Times 1 -Exactly -ParameterFilter { $Tag -eq 'k1' -and -not $Ended -and $Live }
+
+        # A run that ended normally writes its line after this, with the call state that this returns.
+        $written.Clear()
+        $done = ConvertFrom-HookPairs 'state=done end=FINISHED steps=5 workMs=41000 credits=0.50 model=gpt-6-luna'
+        $verdict = @{ Result = 'pass'; Check = 'pass'; Reason = 'ok' }
+        (Close-TaskRun -Run $state -Tag 'k2' -Answer $done -Verdict $verdict -Call $false -Number 1).Credits | Should -BeExactly '0.50'
+        $written.Count | Should -Be 0
+
+        # A restore that fails after the run's end still writes the run's line, with the answer's credits.
+        Mock Complete-TaskRun { throw 'The restore failed.' }
+        { Close-TaskRun -Run $state -Tag 'k2' -Answer $done -Verdict $verdict -Call $false -Number 1 } | Should -Throw 'The restore failed.'
+        @($written) | Should -Be @('task=hotspot run=1 result=pass end=FINISHED check=pass steps=5 workMs=41000 credits=0.50 model=gpt-6-luna in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok')
     }
 
     It 'reads Waze''s ongoing notification, the hotspot, a validated Wi-Fi, the presses and the images from their dumps' {

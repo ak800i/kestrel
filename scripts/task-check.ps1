@@ -1,13 +1,15 @@
 # Runs a named task of sub-project 5's table (design D28 and D29) on a test device, -Runs times, and prints one line per
-# run: task=<name> run=<i> result=<pass|fail|skipped> end=<EndReason|none> check=<pass|fail|skipped> steps= workMs= credits=
-# model= in= out= cacheRead= cacheWrite= reason=<ok|timeout|check|end|untestable|limit|confirm|call>, which -Results also appends to a
+# run: task=<name> run=<i> result=<pass|fail|skipped> end=<EndReason|none> check=<pass|fail|skipped> steps= workMs= credits=<n|unknown>
+# model= in= out= cacheRead= cacheWrite= reason=<ok|timeout|check|end|untestable|limit|confirm|call|stopped>, which -Results also appends to a
 # file. Each run prepares the device as the table says, installs the scripted model from -Script (a JSON array of plan 5A's
 # ScriptedModel replies, whose {marker} and {name} the run fills in), gives the task as text through hook H1 with a tag of
 # its own, answers the task's questions through agent-answer as the table says ('cancel' and 'no' for the injection
 # fixtures; 'confirm' only to a confirmation of the category that the task names, in test mode), polls agent-task -Result
 # for that tag for up to 10 minutes, runs the table's check on the device, stops a task that has not ended, and puts
 # the device back, also after a failure or Ctrl+C. Before and after each run it reads the call state, and a call fails
-# the run (reason=call) and is ended with the end-call key. Checks read only counts, flags and the hooks' answers, never screen text, a
+# the run (reason=call) and is ended with the end-call key. A run that an error or Ctrl+C ends after its task was given
+# still writes its line (result=fail reason=stopped). A live run whose end the script did not read has the credits of
+# the stopped task, or credits=unknown when agent-task gives none. Checks read only counts, flags and the hooks' answers, never screen text, a
 # message or a prompt. Without -Live (plan 5C, only inside a sitting of scripts\a71-agent.ps1) it needs -Script, so that
 # no run calls a provider. It never creates, waits for or deletes the emulator lock: it runs inside the controller's or
 # the sitting's lock. The tasks: telegram-late, hotspot, waze-home, firefox-wiki, telegram-photos, read-email (the live
@@ -196,12 +198,60 @@ function Test-TaskPassed([string]$Kind, $Answer, [bool]$Checked) {
     $Answer['end'] -eq 'FINISHED' -and $Answer['unconfirmed'] -eq '0'
 }
 
-# The run's line, with only what the hooks answered.
-function Format-TaskLine([string]$Name, [int]$Run, [string]$Result, $Answer, [string]$Check, [string]$Reason) {
+# The run's line, with only what the hooks answered. $Spent, when given, replaces the answer's credits (Get-RunCredits).
+function Format-TaskLine([string]$Name, [int]$Run, [string]$Result, $Answer, [string]$Check, [string]$Reason, [string]$Spent) {
     $field = { param($Key, $Default) if ($Answer -and $Answer.Contains($Key)) { $Answer[$Key] } else { $Default } }
+    $credits = if ($Spent) { $Spent } else { & $field 'credits' '0.00' }
     "task=$Name run=$Run result=$Result end=$(& $field 'end' 'none') check=$Check steps=$(& $field 'steps' 0) " +
-        "workMs=$(& $field 'workMs' 0) credits=$(& $field 'credits' '0.00') model=$(& $field 'model' 'none') in=$(& $field 'in' 0) " +
+        "workMs=$(& $field 'workMs' 0) credits=$credits model=$(& $field 'model' 'none') in=$(& $field 'in' 0) " +
         "out=$(& $field 'out' 0) cacheRead=$(& $field 'cacheRead' 0) cacheWrite=$(& $field 'cacheWrite' 0) reason=$Reason"
+}
+
+# The AI Credits of a run's line (Q5): agent-task's when the run read the task's end. A live task whose end the run did
+# not read (the 600 s, a hook that stopped answering, an error or Ctrl+C) still sent requests to the provider, so after
+# its stop agent-task is read once more, and its credits are "unknown" when that gives none, never 0, so that
+# a71-agent.ps1's ceiling does not miss them (fix-5c-ceiling-review M2). A run that gave no task, or that ran the
+# scripted model, which calls no provider, spent 0.00.
+function Get-RunCredits([bool]$Live, [string]$Tag, $Answer) {
+    if ($Answer -and $Answer.Contains('credits')) { return $Answer['credits'] }
+    if (-not $Live -or -not $Tag) { return '0.00' }
+    $last = try { ConvertFrom-HookPairs (Invoke-TaskHook agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+    if ($last -and $last['state'] -eq 'done' -and "$($last['credits'])" -match '^\d+(\.\d+)?$') { return $last['credits'] }
+    'unknown'
+}
+
+# Prints a run's line, and appends it to -Results.
+function Write-RunLine([string]$Line) {
+    Write-Host $Line
+    if ($Results) { Add-SessionResult -Path $Results -Step 'task' -Text $Line }
+}
+
+# The end of run $Number however it ends: the call state read before and after the task's stop and the table's restore
+# (Complete-TaskRun), and the run's credits (Get-RunCredits). $Verdict is the run's Result, Check and Reason, or $null
+# when an error or Ctrl+C ended the run before its verdict. Such a run, and one whose restore failed, writes its line
+# here (result=fail reason=stopped without a verdict), so that its credits reach the results also when the script
+# stops (fix-5c-ceiling-review M2); a run that ends normally writes its line afterwards. Returns whether a call showed
+# after the run (After) and the run's credits (Credits).
+function Close-TaskRun($Run, [string]$Tag, $Answer, $Verdict, [bool]$Call, [int]$Number) {
+    # A call that the run started is ended first, and again after the task's stop and the restore.
+    $after = Test-RunCall
+    $restored = $false
+    $spent = '0.00'
+    try {
+        Complete-TaskRun -Tag $Tag -Ended ([bool]$Answer) -Live $live -Restore $entry.Restore -Run $Run -Name $Task -Number $Number
+        $restored = $true
+    } finally {
+        if (Test-RunCall) { $after = $true }
+        if (-not $restored) { Write-Warning "Task $Task, run ${Number}: the restore did not finish; check the device by hand." }
+        $spent = Get-RunCredits $live $Tag $Answer
+        if ($Tag -and -not ($Verdict -and $restored)) {
+            $line = if ($Verdict) { $Verdict } else { @{ Result = 'fail'; Check = 'skipped'; Reason = 'stopped' } }
+            $reason = if ($Call -or $after) { 'call' } else { $line.Reason }
+            $result = if ($Call -or $after) { 'fail' } else { $line.Result }
+            Write-RunLine (Format-TaskLine -Name $Task -Run $Number -Result $result -Answer $Answer -Check $line.Check -Reason $reason -Spent $spent)
+        }
+    }
+    [pscustomobject]@{ After = $after; Credits = $spent }
 }
 
 # Whether 'dumpsys notification' lists a notification of Waze whose flags hold FLAG_ONGOING_EVENT (0x2), as Waze's
@@ -535,7 +585,7 @@ for ($run = 1; $run -le $Runs; $run++) {
     $check = 'skipped'
     $result = 'fail'
     $reason = 'end'
-    $restored = $false
+    $verdict = $null
     $tag = ''
     $call = $false
     try {
@@ -598,25 +648,17 @@ for ($run = 1; $run -le $Runs; $run++) {
                 Write-Warning "Task $Task, run ${run}: Kestrel asked to confirm an action of the category $($state.Refused), which this task does not name; the script said cancel."
             }
         }
+        $verdict = @{ Result = $result; Check = $check; Reason = $reason }
     } finally {
-        # A call that the run started is ended first, and again after the task's stop and the restore.
-        $after = Test-RunCall
-        try {
-            Complete-TaskRun -Tag $tag -Ended ([bool]$answer) -Live $live -Restore $entry.Restore -Run $state -Name $Task -Number $run
-            $restored = $true
-        } finally {
-            if (Test-RunCall) { $after = $true }
-            if (-not $restored) { Write-Warning "Task $Task, run ${run}: the restore did not finish; check the device by hand." }
-        }
+        $end = Close-TaskRun -Run $state -Tag $tag -Answer $answer -Verdict $verdict -Call $call -Number $run
     }
+    $after = $end.After
     if ($after) { Write-Warning "Task $Task, run ${run}: a call showed after the run; the script ended it with the end-call key." }
     if ($call -or $after) {
         $result = 'fail'
         $reason = 'call'
     }
     if ($result -eq 'fail') { $failed++ }
-    $line = Format-TaskLine -Name $Task -Run $run -Result $result -Answer $answer -Check $check -Reason $reason
-    Write-Host $line
-    if ($Results) { Add-SessionResult -Path $Results -Step 'task' -Text $line }
+    Write-RunLine (Format-TaskLine -Name $Task -Run $run -Result $result -Answer $answer -Check $check -Reason $reason -Spent $end.Credits)
 }
 if ($failed -gt 0) { exit 1 }
