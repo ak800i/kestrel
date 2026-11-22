@@ -273,33 +273,34 @@ Describe 'The steps of the sittings on the owner''s A71 (the fix round before th
         Mock Invoke-ScreenTap { $true }
         Mock Get-ScreenCount { 0 }
 
-        $kept = Invoke-GmailCompose -Device $A71 -Owner -Inside { param($Device) "inside on $Device" }
+        $kept = Invoke-GmailCompose -Device $A71 -OwnerAccount -Inside { param($Device) "inside on $Device, trees in $owner" }
         $kept.Opened | Should -BeTrue
         $kept.Discarded | Should -BeTrue
-        $kept.Inside | Should -Be "inside on $A71"
+        # The block reads the script's own $owner, the folder of the results, as Save-AgentTree does.
+        $kept.Inside | Should -Be "inside on $A71, trees in $TestDrive"
         $kept.Note | Should -Be 'Gmail''s compose screen on the A71: discarded; Drafts shows 2 as before'
         Should -Invoke Invoke-ScreenTap -Times 1 -Exactly -ParameterFilter { $Label -eq 'Discard' }
 
-        $grew = Invoke-GmailCompose -Device $A71 -Owner -Inside { }
+        $grew = Invoke-GmailCompose -Device $A71 -OwnerAccount -Inside { }
         $grew.Discarded | Should -BeFalse
         $grew.Note | Should -Be 'Gmail''s draft on the A71 may stay in Drafts (Drafts grew from 2 to 3); delete it by hand'
 
         Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Discard' }
-        (Invoke-GmailCompose -Device $A71 -Owner -Inside { }).Note | Should -Be 'Gmail''s draft on the A71 may stay in Drafts (the taps on "More options" and "Discard" missed); delete it by hand'
+        (Invoke-GmailCompose -Device $A71 -OwnerAccount -Inside { }).Note | Should -Be 'Gmail''s draft on the A71 may stay in Drafts (the taps on "More options" and "Discard" missed); delete it by hand'
     }
 
     It 'opens no compose screen on the A71 when Drafts cannot be counted, and writes a fixed text when the mailto: command fails (task-5c-9-review M3, M5)' {
         Mock Get-GmailDraftCount { $null }
         Mock Invoke-Device { }
 
-        $skipped = Invoke-GmailCompose -Device $A71 -Owner -Inside { }
+        $skipped = Invoke-GmailCompose -Device $A71 -OwnerAccount -Inside { }
         $skipped.Opened | Should -BeFalse
         $skipped.Note | Should -Be 'Gmail''s compose screen on the A71: not opened, because its Drafts could not be counted'
         Should -Invoke Invoke-Device -Times 0 -Exactly -ParameterFilter { $Command -like '*mailto:*' }
 
         Mock Get-GmailDraftCount { 1 }
         Mock Invoke-Device { throw "Could not run 'am start -a android.intent.action.SENDTO -d mailto:pera.test@example.com' on R58N66RVD7Z: error" } -ParameterFilter { $Command -like '*mailto:*' }
-        $message = try { Invoke-GmailCompose -Device $A71 -Owner -Inside { } | Out-Null; '' } catch { $_.Exception.Message }
+        $message = try { Invoke-GmailCompose -Device $A71 -OwnerAccount -Inside { } | Out-Null; '' } catch { $_.Exception.Message }
         $message | Should -BeExactly 'Gmail''s compose screen did not open on the A71.'
     }
 
@@ -496,7 +497,7 @@ Describe 'The restores and checks of every call of a sitting (the fix round befo
         $results | Should -Contain 'prepare: Gmail''s account on the A71: not checked, because sitting 1 did not see Gmail''s discard work there'
 
         Test-GmailAccount $A71 ([pscustomobject]@{ gmailDiscardA71 = 'ok' }) | Should -BeTrue
-        Should -Invoke Invoke-GmailCompose -Times 1 -Exactly -ParameterFilter { $Device -eq $A71 -and $Owner }
+        Should -Invoke Invoke-GmailCompose -Times 1 -Exactly -ParameterFilter { $Device -eq $A71 -and $OwnerAccount }
         Should -Invoke Get-ScreenCount -Times 1 -Exactly -ParameterFilter { $With.Contains -eq 'pera.test@example.com' }
     }
 

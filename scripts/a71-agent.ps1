@@ -1095,15 +1095,17 @@ function Get-GmailDraftCount([string]$Device) {
 
 # Gmail's compose screen with a mailto: to the owner's address (design D30 steps 11 and 16): $Inside runs with the device
 # while it shows, and the screen's own "More options" and "Discard" close it (and "Discard" once more when Gmail asks).
-# Drafts is counted before and after; on the A71 (-Owner) the screen opens only when Drafts could be counted first
-# (task-5c-9-review M3). A failed mailto: command throws a fixed text, because its own text holds the address (M5).
+# Drafts is counted before and after; in the owner's account on the A71 (-OwnerAccount) the screen opens only when
+# Drafts could be counted first (task-5c-9-review M3). A failed mailto: command throws a fixed text, because its own text
+# holds the address (M5). The switch is not called -Owner, because PowerShell's names ignore case, and $Inside's
+# Save-AgentTree reads the script's $owner, the folder of the results.
 # Returns Opened, Discarded (both taps worked, and Drafts was counted before and after and did not grow), Inside (what
 # $Inside returned) and Note, a line for the results with counts only.
-function Invoke-GmailCompose([string]$Device, [scriptblock]$Inside, [switch]$Owner) {
+function Invoke-GmailCompose([string]$Device, [scriptblock]$Inside, [switch]$OwnerAccount) {
     $gmail = 'com.google.android.gm'
     $name = Get-DeviceName $Device
     $before = Get-GmailDraftCount $Device
-    if ($Owner -and $null -eq $before) {
+    if ($OwnerAccount -and $null -eq $before) {
         return [pscustomobject]@{ Opened = $false; Discarded = $false; Inside = $null; Note = "Gmail's compose screen on ${name}: not opened, because its Drafts could not be counted" }
     }
     $tapped = $false
@@ -1161,7 +1163,7 @@ function Invoke-RecordingsStep {
                 $notes += "Gmail's compose screen on $(Get-DeviceName $device): skipped, because its discard did not work on kestrel-api37"
                 Set-AgentRecord $recordFile 'gmailDiscardA71' 'not opened'
             } else {
-                $compose = Invoke-GmailCompose -Device $device -Owner:($device -ne $EmulatorSerial) -Inside { param($Device) Save-AgentTree $Device 'gmail-compose' }
+                $compose = Invoke-GmailCompose -Device $device -OwnerAccount:($device -ne $EmulatorSerial) -Inside { param($Device) Save-AgentTree $Device 'gmail-compose' }
                 if ($compose.Inside) { $notes += $compose.Inside }
                 $notes += $compose.Note
                 if ($device -eq $EmulatorSerial) {
@@ -1565,7 +1567,7 @@ function Test-GmailAccount([string]$Device, $Record) {
         Add-Result prepare 'Gmail''s account on the A71: not checked, because sitting 1 did not see Gmail''s discard work there'
         return $false
     }
-    $compose = Invoke-GmailCompose -Device $Device -Owner:$isA71 -Inside { param($Device) Get-ScreenCount $Device @{ Package = 'com.google.android.gm'; Contains = "$($config.gmailAddress)" } }
+    $compose = Invoke-GmailCompose -Device $Device -OwnerAccount:$isA71 -Inside { param($Device) Get-ScreenCount $Device @{ Package = 'com.google.android.gm'; Contains = "$($config.gmailAddress)" } }
     if (-not $compose.Discarded) { Add-Result prepare $compose.Note }
     [int]$compose.Inside -gt 1
 }
