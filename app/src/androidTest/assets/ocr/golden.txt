@@ -1,0 +1,36 @@
+en 46 41 182 90 Settings
+en 48 153 209 185 Battery saver
+en 48 199 260 229 Turn off when charged
+en 49 324 220 352 Wi-Fi network
+en 48 369 237 396 Connected to Home
+en 50 493 270 525 Display brightness
+en 46 609 205 646 Notifications
+en 50 733 304 765 Order 48213 shipped
+en 46 1101 165 1140 Pay now
+sr-latin 47 41 249 87 Podešavanja
+sr-latin 46 145 219 186 Čačak i Šabac
+sr-latin 49 272 277 304 Đorđe šalje poruku
+sr-latin 46 386 265 428 Žuta kuća na uglu
+sr-latin 47 506 240 547 Ćevapi za ručak
+sr-latin 46 629 192 667 Pošalji sliku
+sr-latin 43 1095 155 1143 Sačuvaj
+sr-cyrillic 49 47 268 85 Подешавања
+sr-cyrillic 48 153 226 185 Љубав и њега
+sr-cyrillic 47 269 306 311 Ђорђе шаље поруку
+sr-cyrillic 48 392 248 428 Ћуприја је лепа
+sr-cyrillic 48 513 197 547 Џеп и јакна
+sr-cyrillic 46 629 239 670 Пошаљи слику
+sr-cyrillic 43 1095 161 1145 Сачувај
+small 46 37 254 64 Last updated 5 minutes ago
+small 48 100 163 119 Tap to see details
+small 46 157 134 180 Version 2.4.1
+small 45 216 133 242 Privacy policy
+small 49 281 147 296 Terms of service
+small 48 340 177 359 Open source licences
+small 48 1200 171 1219 Help and feedback
+dark 49 46 208 88 Messages
+dark 49 152 241 183 Mark all as read
+dark 49 272 226 303 Archived chats
+dark 44 390 188 430 New group
+dark 49 513 261 546 Starred messages
+dark 48 1103 140 1136 Search
