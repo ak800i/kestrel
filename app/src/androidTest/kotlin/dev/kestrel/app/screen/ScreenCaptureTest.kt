@@ -313,6 +313,32 @@ class ScreenCaptureTest {
         }
     }
 
+    @Test
+    fun theDisplayCaptureWithTheTouchWatcherOnIsTakenInTimeAndHidesEveryOverlay() = runBlocking {
+        // Every task starts the touch watcher, whose 1x1 window the hide waits for too, and the A71 captures the display.
+        screen.open("ViewsActivity", "Views fixture")
+        val window = front()
+        assertTrue(session.startTouchWatcher())
+        try {
+            session.showNumbers()
+            withTimeout(5_000) { while (session.numberBadges.isEmpty()) delay(100) }
+            val started = SystemClock.uptimeMillis()
+            val result = session.capture.capture(window.id, wholeDisplay = true)
+            val took = SystemClock.uptimeMillis() - started
+            val image = result as? CaptureResult.Image
+            assertTrue("the capture gave $result", image != null)
+            try {
+                assertTrue("the capture took $took ms", took < CAPTURE_MILLIS)
+                assertEquals(0, blue(image!!.bitmap))
+            } finally {
+                image?.bitmap?.recycle()
+            }
+        } finally {
+            session.hideNumbers()
+            session.stopTouchWatcher()
+        }
+    }
+
     // The pixels in the numbers' blue (NumbersOverlay's 0xE61565C0 over the fixture), counted in every fourth row and column.
     private fun blue(bitmap: Bitmap): Int {
         var count = 0
@@ -328,5 +354,8 @@ class ScreenCaptureTest {
     private companion object {
         // HiddenOverlays.MIN_MILLIS: with no overlay to wait for, the hide's last wait ends this long after it began.
         const val HIDE_MILLIS = 50L
+
+        // The hide's limit of 500 ms for the overlays' frames, Android's screenshot and the crop, with room for a slow emulator.
+        const val CAPTURE_MILLIS = 2_000L
     }
 }
