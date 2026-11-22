@@ -366,4 +366,8 @@
     <string name="log_kind_reply">Reply</string>
     <string name="log_kind_safety">Safety decision</string>
     <!-- sub-project 5C -->
+    <string name="safety_screenshots_title">Screenshot approvals</string>
+    <string name="safety_screenshots_none">No app may send screenshots without asking.</string>
+    <string name="safety_screenshots_row">%1$s to %2$s</string>
+    <string name="safety_screenshots_revoke">Revoke</string>
 </resources>

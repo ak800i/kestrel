@@ -173,6 +173,13 @@ object SettingKeys {
     val AGENT_CACHE_FIELDS = SettingKey("agent-cache-fields", CacheFields.serializer(), CacheFields.ALL)
 
     // sub-project 5C: keys
+
+    /** The apps whose screenshots may go to a provider without the question, per app and provider (design D20 of sub-project 5). */
+    val SCREENSHOT_APPROVALS = SettingKey(
+        "screenshot-approvals",
+        dev.kestrel.app.agent.eyes.ScreenshotApprovalList.serializer(),
+        dev.kestrel.app.agent.eyes.ScreenshotApprovalList(),
+    )
 }
 
 /**
@@ -369,8 +376,18 @@ class AppGraph(context: Context) {
         dev.kestrel.app.agent.eyes.AppEyes({ screen.value }, { models }, { dev.kestrel.app.agent.eyes.AppEyes.closedScreens(appContext) }, ::report)
     }
 
+    /** The approvals of the screenshot question, which the agent's memory and the Safety page share (design D20 and D26). */
+    internal val screenshotApprovals: dev.kestrel.app.agent.eyes.ScreenshotApprovals by lazy {
+        dev.kestrel.app.agent.eyes.ScreenshotApprovals(settings)
+    }
+
     init {
         agentEyes = eyes
+        // look_closer's numbers (D20's third step) instead of Numbering's own; an agent's badge names no element's key.
+        showAgentBadges = { session, badges -> session.showBadges(badges.map { dev.kestrel.screen.overlay.Badge(it.number, "", it.bounds) }) }
+        hideAgentBadges = { session -> session.hideBadges() }
+        screenshotApproved = { packageName, providerId -> screenshotApprovals.approved(packageName, providerId) }
+        approveScreenshots = { packageName, providerId -> screenshotApprovals.approve(packageName, providerId) }
     }
 
     /**

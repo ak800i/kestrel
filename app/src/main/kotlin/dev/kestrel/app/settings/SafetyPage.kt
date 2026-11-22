@@ -48,4 +48,27 @@ internal fun SafetyPage(data: SettingsData, onBack: () -> Unit) {
     // sub-project 5B: mode, test mode, agent-free apps
     AgentSafetySettings(data)
     // sub-project 5C: screenshot approvals
+    ScreenshotApprovalsSection(data)
+}
+
+/** The approvals of the screenshot question, each with its "Revoke" button (design D20 and D26 of sub-project 5). */
+@Composable
+private fun ScreenshotApprovalsSection(data: SettingsData) {
+    val approvals by data.screenshotApprovals.collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+    Text(stringResource(R.string.safety_screenshots_title), Modifier.padding(top = 24.dp), style = MaterialTheme.typography.titleMedium)
+    if (approvals.isEmpty()) {
+        Text(stringResource(R.string.safety_screenshots_none), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium)
+    }
+    for (row in approvals) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.safety_screenshots_row, row.app, row.provider), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            androidx.compose.material3.TextButton(onClick = {
+                // At once, so that the write is queued also when the owner leaves the page right after the tap.
+                scope.launch(start = CoroutineStart.UNDISPATCHED) { data.revokeScreenshots(row) }
+            }) {
+                Text(stringResource(R.string.safety_screenshots_revoke))
+            }
+        }
+    }
 }

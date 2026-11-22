@@ -147,6 +147,12 @@ interface SettingsData {
     val agentFreeReviewed: Flow<Boolean> get() = flowOf(false)
 
     // sub-project 5C: screenshot approvals
+
+    /** The apps that may send screenshots to a provider without asking (design D20 and D26 of sub-project 5), with names. */
+    val screenshotApprovals: Flow<List<dev.kestrel.app.agent.eyes.ScreenshotApprovalRow>> get() = flowOf(emptyList())
+
+    /** Takes back one approval: the screenshot question comes again for that app and provider. */
+    suspend fun revokeScreenshots(row: dev.kestrel.app.agent.eyes.ScreenshotApprovalRow) {}
 }
 
 /**
@@ -262,6 +268,26 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override suspend fun deleteAllMemory() = write { graph.memory.deleteAll() }
 
     // sub-project 5C: stored screenshot approvals
+
+    override val screenshotApprovals: Flow<List<dev.kestrel.app.agent.eyes.ScreenshotApprovalRow>> =
+        graph.screenshotApprovals.all.map { approvals -> approvals.map(::approvalRow) }.flowOn(Dispatchers.IO)
+
+    override suspend fun revokeScreenshots(row: dev.kestrel.app.agent.eyes.ScreenshotApprovalRow) =
+        write { graph.screenshotApprovals.revoke(row.approval) }
+
+    // The app's label and the provider's name from the catalog, each falling back to its ID.
+    private fun approvalRow(approval: dev.kestrel.app.agent.eyes.ScreenshotApproval): dev.kestrel.app.agent.eyes.ScreenshotApprovalRow {
+        val packages = context.packageManager
+        val app = try {
+            packages.getApplicationLabel(
+                packages.getApplicationInfo(approval.packageName, android.content.pm.PackageManager.ApplicationInfoFlags.of(0)),
+            ).toString()
+        } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+            approval.packageName
+        }
+        val provider = graph.catalog.provider(approval.providerId)?.label ?: approval.providerId
+        return dev.kestrel.app.agent.eyes.ScreenshotApprovalRow(approval, app, provider)
+    }
 
     // installedAt's first read is a binder call, so the page's collector does not make it on the main thread.
     override val kokoroSlow: Flow<Float?> =

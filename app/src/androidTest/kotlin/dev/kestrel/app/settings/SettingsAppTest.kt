@@ -645,6 +645,20 @@ class SettingsAppTest {
         compose.onNodeWithText("send-photos: 2 times").performScrollTo().assertIsDisplayed()
     }
 
+    @Test
+    fun theSafetyPageListsTheScreenshotApprovalsAndRevokesOne() {
+        val approval = dev.kestrel.app.agent.eyes.ScreenshotApproval("com.example.maps", "github-copilot")
+        data.approvals.value = listOf(dev.kestrel.app.agent.eyes.ScreenshotApprovalRow(approval, "Maps", "GitHub Copilot"))
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_safety)).performClick()
+        compose.onNodeWithText(text(R.string.safety_screenshots_row, "Maps", "GitHub Copilot")).performScrollTo().assertIsDisplayed()
+
+        compose.onNodeWithText(text(R.string.safety_screenshots_revoke)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.safety_screenshots_none)).performScrollTo().assertIsDisplayed()
+        assertEquals(0, data.approvals.value.size)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
@@ -683,6 +697,14 @@ class SettingsAppTest {
         }
 
         // sub-project 5C: fake screenshot approvals
+        val approvals = MutableStateFlow<List<dev.kestrel.app.agent.eyes.ScreenshotApprovalRow>>(emptyList())
+
+        override val screenshotApprovals: kotlinx.coroutines.flow.Flow<List<dev.kestrel.app.agent.eyes.ScreenshotApprovalRow>>
+            get() = approvals
+
+        override suspend fun revokeScreenshots(row: dev.kestrel.app.agent.eyes.ScreenshotApprovalRow) {
+            approvals.value = approvals.value - row
+        }
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
         var deletions = 0
