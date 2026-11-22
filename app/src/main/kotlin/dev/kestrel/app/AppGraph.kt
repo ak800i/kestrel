@@ -19,7 +19,6 @@ import dev.kestrel.app.agent.AppModels
 import dev.kestrel.app.agent.CacheState
 import dev.kestrel.app.agent.CallBackstop
 import dev.kestrel.app.agent.PermissionActivity
-import dev.kestrel.app.agent.Permissions
 import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.assist.KestrelAssistantService
 import dev.kestrel.app.commands.CommandEnvironment

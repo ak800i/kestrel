@@ -14,21 +14,31 @@ import dev.kestrel.agent.port.PermissionEnd
  * finishAndRemoveTask(), so that the task's app comes back. It has no noHistory, because such an activity never gets the
  * result of what it starts (review A2-I5). It ends its request in [PermissionRequests] when Android's answer comes and
  * when it is destroyed for any other reason, except a configuration change, after which Android gives the pending answer
- * to the new instance (review A3-N4). The task reads the permissions again itself, so the answer's content is not passed.
+ * to the new instance (review A3-N4). When its request ends without an answer ("Kestrel, continue", the hand-over's 3
+ * minutes, "stop"), it finishes the same way, so that Android's dialog does not stay open in a hidden task. The task reads
+ * the permissions again itself, so the answer's content is not passed.
  */
 class PermissionActivity : ComponentActivity() {
     private var request = 0L
 
     private val dialog = registerForActivityResult(RequestMultiplePermissions()) { end() }
 
+    private val finish: () -> Unit = { runOnUiThread { finishAndRemoveTask() } }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         request = intent.getLongExtra(EXTRA_REQUEST, 0L)
+        // Before the check below, so that a request that stops waiting in between still finishes this activity.
+        PermissionRequests.register(request, finish)
+        // An intent from an earlier task or process, as when the recent apps restore it, shows no dialog.
+        if (!PermissionRequests.waits(request)) {
+            end()
+            return
+        }
         // After a configuration change, Android gives the dialog's answer to this instance; asking again would show it twice.
         if (savedInstanceState != null) return
         val permissions = intent.getStringArrayExtra(EXTRA_PERMISSIONS) ?: emptyArray()
-        // An intent from an earlier task, as when the recent apps restore it, shows no dialog.
-        if (permissions.isEmpty() || !PermissionRequests.waits(request)) {
+        if (permissions.isEmpty()) {
             end()
             return
         }
@@ -36,6 +46,7 @@ class PermissionActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        PermissionRequests.unregister(request, finish)
         if (!isChangingConfigurations) PermissionRequests.ended(request)
         super.onDestroy()
     }
@@ -68,10 +79,13 @@ class PermissionActivity : ComponentActivity() {
             granted = { Permissions.granted(context, permissions) },
         )
 
+        // The identifier makes each request's intent distinct, and FLAG_ACTIVITY_MULTIPLE_TASK gives it a task of its
+        // own, so that Android never brings an earlier request's task to the front in place of starting this one.
         fun intent(context: Context, permissions: List<String>, request: Long): Intent =
             Intent(context, PermissionActivity::class.java)
+                .setIdentifier("request-$request")
                 .putExtra(EXTRA_PERMISSIONS, permissions.toTypedArray())
                 .putExtra(EXTRA_REQUEST, request)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
     }
 }
