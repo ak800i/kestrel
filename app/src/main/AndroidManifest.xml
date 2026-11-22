@@ -188,6 +188,13 @@
         </intent>
     </queries>
     <!-- sub-project 5C: queries -->
+    <!-- The home screen, of which look_closer takes no screenshot (design D20 of sub-project 5). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
 
     <application
         android:name=".KestrelApplication"

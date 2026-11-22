@@ -1,10 +1,14 @@
 package dev.kestrel.app.screen
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.Build
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.agent.port.Capture
+import dev.kestrel.app.agent.eyes.AppEyes
+import dev.kestrel.app.voice.VoiceTests
 import dev.kestrel.screen.capture.CaptureResult
 import dev.kestrel.screen.capture.ScreenCapture
 import dev.kestrel.screen.model.ScreenTree
@@ -104,6 +108,36 @@ class ScreenCaptureTest {
         assertEquals(CaptureResult.Secure, session.capture.capture(window.id, wholeDisplay = true))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             assertEquals(CaptureResult.Secure, session.capture.capture(window.id, wholeDisplay = false))
+        }
+    }
+
+    @Test
+    fun theEyesMaskAnElementWhereItIsInADialogThatDoesNotStartAtTheCorner() = runBlocking {
+        val window = dialog()
+        val keep = screen.awaitElement { it.label.equals("Keep", ignoreCase = true) && it.windowId == window.id }
+        val title = screen.awaitElement { it.label == "Delete draft?" && it.windowId == window.id }
+        val eyes = AppEyes({ session }, { VoiceTests.graph.models }, { emptySet() }) { _, _ -> }
+        val capture = eyes.capture() as Capture.Captured
+        capture.image.use {
+            assertTrue(capture.originX > 0 || capture.originY > 0)
+            val jpeg = eyes.encode(capture, listOf(keep.bounds), emptyList())
+            val image = BitmapFactory.decodeByteArray(jpeg.bytes, 0, jpeg.bytes.size)
+            try {
+                val scale = image.width.toDouble() / capture.image.width
+                fun luminance(x: Int, y: Int): Int {
+                    val pixel = image.getPixel(((x - capture.originX) * scale).toInt(), ((y - capture.originY) * scale).toInt())
+                    return (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
+                }
+                // Inside the masked button everything is black, JPEG's few levels aside; the dialog's light background
+                // beside it is not.
+                val b = keep.bounds
+                for (x in listOf(b.left + b.width / 4, b.centerX, b.right - b.width / 4)) assertTrue(luminance(x, b.centerY) < 40)
+                // The window's frame has a transparent 16 dp border around the card (dialog_background_material), so the
+                // light background is read on the title's row, inside the card.
+                assertTrue((title.bounds.left until title.bounds.right step 4).any { luminance(it, title.bounds.centerY) > 150 })
+            } finally {
+                image.recycle()
+            }
         }
     }
 

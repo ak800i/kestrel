@@ -362,6 +362,18 @@ class AppGraph(context: Context) {
     // sub-project 5C: eyes
 
     /**
+     * The agent's screenshots and OCR for look_closer (design D20 of sub-project 5); the OCR models load only while it
+     * reads. Its parts are found at each use, because the screen session and the model folder change while Kestrel runs.
+     */
+    internal val eyes: dev.kestrel.app.agent.eyes.AppEyes by lazy {
+        dev.kestrel.app.agent.eyes.AppEyes({ screen.value }, { models }, { dev.kestrel.app.agent.eyes.AppEyes.closedScreens(appContext) }, ::report)
+    }
+
+    init {
+        agentEyes = eyes
+    }
+
+    /**
      * Kestrel's speech model files, which scripts\push-models.ps1 copies into Kestrel's external files folder (design
      * spec, section 8.10). Built on first use, because it reads the manifest from the assets. The folder is found again
      * at each check and each load of the engines: while shared storage is not available, a check or a load uses a folder
