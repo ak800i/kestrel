@@ -113,5 +113,8 @@
             android:name=".PressActivity"
             android:exported="true" />
         <!-- sub-project 5C: fixtures -->
+        <activity
+            android:name=".OcrCanvasActivity"
+            android:exported="true" />
     </application>
 </manifest>
