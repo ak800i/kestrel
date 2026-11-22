@@ -168,6 +168,13 @@ internal object ListeningTexts {
     // A task's hand-over (design D2 of sub-project 5).
     const val NO_TASK_TO_CONTINUE = "There's no task to continue."
     const val FINISH_HAND_OVER_FIRST = "Say 'Kestrel, continue' or 'cancel' first."
+
+    // A task's pause and Kestrel's history (design D2 of sub-project 5).
+    const val CONTINUE_TASK = "Continue the task?"
+    const val ANSWER_CONTINUE_FIRST = "Answer 'Continue the task?' first, or say 'cancel'."
+    const val DELETE_HISTORY_QUESTION = "Delete the activity log and the network log? Say yes or no."
+    const val HISTORY_DELETED = "I deleted the history."
+    const val HISTORY_NOT_DELETED = "I couldn't delete the history."
 }
 
 /**
@@ -306,6 +313,14 @@ class Listening internal constructor(
      */
     @Volatile
     internal var steerTask: (Effect) -> Unit = {}
+
+    /**
+     * Runs task number `task`, which is Kestrel's own memory request (design D2 of sub-project 5), and must send
+     * [Event.TaskEnded] for it once it ends. Sub-project 5's AgentRunner runs it; until then it ends at once, as a task
+     * does. Called on the controller's thread; it must not block.
+     */
+    @Volatile
+    internal var runMemory: (task: Int, request: Request.Memory) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.NO_TASKS)) }
 
     // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start(),
     // onStartAction() and shutdown() change it together with [serviceState], so it always equals
@@ -1049,8 +1064,14 @@ class Listening internal constructor(
                 }
             }
             // The Orchestrator runs the timers itself.
-            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, Effect.TimeHandOver -> Unit
-            is Effect.AnswerTask, is Effect.ContinueTask, is Effect.ExpireHandOver -> steerTask(effect)
+            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, Effect.TimeHandOver,
+            Effect.TimePause, Effect.ArmTouches -> Unit
+            is Effect.AnswerTask, is Effect.ContinueTask, is Effect.ExpireHandOver, is Effect.PauseTask, is Effect.ResumeTask,
+            is Effect.ExpirePause, Effect.DeleteHistory -> steerTask(effect)
+            is Effect.RunMemoryTask -> {
+                timeline.reacted("task")
+                afterStopping({ send(Event.TaskEnded(effect.task, reply = null)) }) { runMemory(effect.task, effect.request) }
+            }
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
             // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.
@@ -1121,6 +1142,9 @@ class Listening internal constructor(
             is Reply.Text -> reply.text
             is Reply.Command -> reply.text
             Reply.NoTaskToContinue -> ListeningTexts.NO_TASK_TO_CONTINUE
+            Reply.ContinueQuestion -> ListeningTexts.CONTINUE_TASK
+            Reply.DeleteHistoryQuestion -> ListeningTexts.DELETE_HISTORY_QUESTION
+            is Reply.HistoryDeleted -> if (reply.deleted) ListeningTexts.HISTORY_DELETED else ListeningTexts.HISTORY_NOT_DELETED
         }
         // A command's say() waits for this reply, and returns once it has ended in any way.
         val ended = (reply as? Reply.Command)?.let { conversation?.takeSpoken(it.command) }
@@ -1180,6 +1204,8 @@ class Listening internal constructor(
         Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
         is Feedback.TaskText -> feedback.text
         Feedback.FinishHandOverFirst -> ListeningTexts.FINISH_HAND_OVER_FIRST
+        Feedback.ContinueQuestion -> ListeningTexts.CONTINUE_TASK
+        Feedback.AnswerContinueFirst -> ListeningTexts.ANSWER_CONTINUE_FIRST
     }
 
     private fun privateInput(): Boolean = try {

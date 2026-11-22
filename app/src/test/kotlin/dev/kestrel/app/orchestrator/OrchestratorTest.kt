@@ -318,4 +318,30 @@ class OrchestratorTest {
         assertEquals(Effect.ExpireHandOver(1), performed.last())
         assertEquals(emptyList<Exception>(), errors)
     }
+
+
+    @Test
+    fun aPauseEndsAfterThirtyMinutesAndTouchesAnswerOneSecondAfterTheQuestion() = runTest {
+        val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.Screen(on = true))
+        orchestrator.send(Event.Heard("Kestrel, open Viber.", named = true))
+        orchestrator.send(Event.Screen(on = false))
+        orchestrator.send(Event.Screen(on = true))
+        runCurrent()
+        assertEquals(TaskAsk.CONTINUE, orchestrator.state.value.taskAsking)
+        advanceTimeBy(999)
+        runCurrent()
+        assertFalse(orchestrator.state.value.touchesArmed)
+        advanceTimeBy(2)
+        runCurrent()
+        assertTrue(orchestrator.state.value.touchesArmed)
+
+        orchestrator.send(Event.Screen(on = false))
+        runCurrent()
+        advanceTimeBy(1_800_001)
+        runCurrent()
+        assertEquals(Effect.ExpirePause(1), performed.last())
+        assertEquals(emptyList<Exception>(), errors)
+    }
 }

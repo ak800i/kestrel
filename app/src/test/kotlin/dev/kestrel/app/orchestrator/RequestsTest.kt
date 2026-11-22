@@ -215,8 +215,8 @@ class RequestsTest {
         assertEquals(Request.Stop(named = true), Requests.read("Nothing.", spotted = false, afterName = true))
         assertEquals(Request.Stop(named = true), Requests.read("Kestrel, never mind.", spotted = true, afterName = true))
         assertEquals(Request.Stop(named = true), Requests.read("Never mind, Kestrel.", spotted = false, afterName = true))
-        // "Kestrel, forget [fact]" is a command of its own (Appendix A).
-        assertEquals(Request.Task("Forget the milk."), Requests.read("Forget the milk.", spotted = false, afterName = true))
+        // "Kestrel, forget [fact]" is a command of its own (Appendix A; design D2 of sub-project 5).
+        assertEquals(Request.Forget("the milk"), Requests.read("Forget the milk.", spotted = false, afterName = true))
         // Only an answer to "Yes?" is called off this way.
         assertEquals(Request.Task("never mind."), Requests.read("Kestrel, never mind.", spotted = false))
         assertEquals(Request.Other("Never mind."), Requests.read("Never mind.", spotted = false))
@@ -231,7 +231,7 @@ class RequestsTest {
         assertEquals(Request.Stop(named = true), Requests.read("Oh no, nothing, thank you.", spotted = false, afterName = true))
         assertEquals(Request.Stop(named = true), Requests.read("No, never mind, Kestrel.", spotted = false, afterName = true))
         assertEquals(Request.Stop(named = true), Requests.read("Kestrel, no, forget it.", spotted = true, afterName = true))
-        assertEquals(Request.Task("Forget the milk, thanks."), Requests.read("Forget the milk, thanks.", spotted = false, afterName = true))
+        assertEquals(Request.Forget("the milk, thanks"), Requests.read("Forget the milk, thanks.", spotted = false, afterName = true))
         assertEquals(Request.Task("No."), Requests.read("No.", spotted = false, afterName = true))
         assertEquals(Request.Other("No, never mind."), Requests.read("No, never mind.", spotted = false))
     }
@@ -293,5 +293,22 @@ class RequestsTest {
         assertEquals(Request.Continue, Requests.read("Continue.", spotted = false, afterName = true))
         assertEquals(Request.Task("continue the video"), Requests.read("Kestrel, continue the video", spotted = false))
         assertEquals(Request.Other("Continue"), Requests.read("Continue", spotted = false))
+    }
+
+
+    @Test
+    fun kestrelsOwnRequestsForTheHistoryAndTheMemory() {
+        for (text in listOf("Kestrel, delete history", "Kestrel, delete the history.", "Kestrel, delete my history", "Kestrel, clear history")) {
+            assertEquals(text, Request.DeleteHistory, Requests.read(text, spotted = false))
+        }
+        assertEquals(Request.Remember("my locker", "number 12"), Requests.read("Kestrel, remember that my locker is number 12.", spotted = false))
+        assertEquals(Request.Forget("my locker"), Requests.read("Kestrel, forget my locker!", spotted = false))
+        assertEquals(Request.SaveRoutine("Morning news"), Requests.read("Kestrel, save that as Morning news", spotted = false))
+        assertEquals(Request.SaveRoutine("test routine"), Requests.read("Save this as test routine.", spotted = false, afterName = true))
+        // Forms that are no memory request stay tasks.
+        assertEquals(Request.Task("remember to buy milk"), Requests.read("Kestrel, remember to buy milk", spotted = false))
+        assertEquals(Request.Task("remember that is fine"), Requests.read("Kestrel, remember that is fine", spotted = false))
+        assertEquals(Request.Task("forget it"), Requests.read("Kestrel, forget it", spotted = false))
+        assertEquals(Request.Task("delete the history of Chrome"), Requests.read("Kestrel, delete the history of Chrome", spotted = false))
     }
 }

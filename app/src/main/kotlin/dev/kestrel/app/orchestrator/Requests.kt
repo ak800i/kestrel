@@ -39,6 +39,33 @@ sealed interface Request {
      */
     data object Continue : Request
 
+    /**
+     * "Kestrel, delete history" (or "delete the history", "delete my history", "clear history"): after a spoken yes,
+     * both logs are deleted (design D2 of sub-project 5; spec 13.5).
+     */
+    data object DeleteHistory : Request
+
+    /**
+     * A request about Kestrel's memory, which is read on the phone so that the owner's words go to no provider (design D2,
+     * D22 and D23 of sub-project 5). Kestrel asks the owner before it changes anything.
+     */
+    sealed interface Memory : Request
+
+    /** "Kestrel, remember that [key] is [value]". */
+    data class Remember(val key: String, val value: String) : Memory {
+        override fun toString() = "Remember(${key.length} and ${value.length} characters)"
+    }
+
+    /** "Kestrel, forget [key]". */
+    data class Forget(val key: String) : Memory {
+        override fun toString() = "Forget(${key.length} characters)"
+    }
+
+    /** "Kestrel, save that as [name]": the last finished task becomes a routine (design D23 of sub-project 5). */
+    data class SaveRoutine(val name: String) : Memory {
+        override fun toString() = "SaveRoutine(${name.length} characters)"
+    }
+
     /** A call command (section 8.7), which [Requests.readCall] reads while a call rings or lasts. */
     sealed interface Call : Request
 
@@ -77,8 +104,9 @@ sealed interface Request {
  * 3. The name starts the utterance, or, when the spotter heard it, comes after one short word such as "hey", "okay" or
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
  *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings",
- *    "continue", or a task. In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which
- *    ends the wait. A task or "open settings" after "stop" or "cancel" asks to cancel a running task first.
+ *    "continue", "delete history", "remember that <key> is <value>", "forget <key>", "save that as <name>", or a task.
+ *    In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. A task or
+ *    "open settings" after "stop" or "cancel" asks to cancel a running task first.
  * 4. Otherwise "stop listening" pauses, and "wake up", "stop listening", "turn off" or "switch off" followed by the
  *    name count too. In an answer to "Yes?", "never mind", "forget it" and "nothing" followed by the name are a named
  *    stop.
@@ -118,6 +146,10 @@ object Requests {
     private val TURN_OFF = setOf("turn off", "switch off")
     private val OPEN_SETTINGS = setOf("open settings", "open your settings", "settings")
     private const val CONTINUE = "continue"
+    private val DELETE_HISTORY = setOf("delete history", "delete the history", "delete my history", "clear history")
+
+    // Forms of "forget" that are no fact's name: "Kestrel, forget it" stays a task, as before (Appendix A).
+    private val NO_KEYS = setOf("it", "that", "this", "everything", "about it")
 
     // "Wake up" word by word, for the misheard words of wakeUpDistance().
     private val WAKE_UP = listOf("wake", "up")
@@ -259,10 +291,32 @@ object Requests {
             nameSaid && said in TURN_OFF -> Request.TurnOff
             said in OPEN_SETTINGS -> Request.OpenSettings(stopFirst)
             said == CONTINUE -> Request.Continue
+            said in DELETE_HISTORY -> Request.DeleteHistory
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
-            else -> Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst, nearWakeUp = fromWakeUp == 2)
+            else -> memory(transcript, rest)
+                ?: Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst, nearWakeUp = fromWakeUp == 2)
+        }
+    }
+
+    /**
+     * "remember that <key> is <value>", "forget <key>" or "save that as <name>" (design D2 of sub-project 5), with the
+     * owner's own words and letter case; any other form, such as "remember to buy milk", is no memory request and runs as
+     * a task.
+     */
+    private fun memory(transcript: String, rest: List<Word>): Request.Memory? {
+        val words = rest.map { it.text }
+        fun from(index: Int, until: Int = rest.size): String =
+            transcript.substring(rest[index].range.first, rest[until - 1].range.last + 1).trim().trimEnd('.', '!', '?', ',').trim()
+        return when {
+            words.size >= 5 && words[0] == "remember" && words[1] == "that" -> {
+                val split = (3 until words.size - 1).firstOrNull { words[it] == "is" } ?: return null
+                Request.Remember(from(2, split), from(split + 1))
+            }
+            words.size >= 2 && words[0] == "forget" && phrase(rest.drop(1)) !in NO_KEYS -> Request.Forget(from(1))
+            words.size >= 4 && words[0] == "save" && words[1] in setOf("that", "this") && words[2] == "as" -> Request.SaveRoutine(from(3))
+            else -> null
         }
     }
 

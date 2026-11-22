@@ -30,9 +30,14 @@ internal object TaskAnswers {
         }.takeIf { it.isNotEmpty() }
     }
 
+    /** Whether [text] is "yes", with the polite words and the name, and nothing else ("Delete the history?"). */
+    fun saysYes(text: String, named: Boolean): Boolean = phrase(text, named) == YES
+
+    private fun phrase(text: String, named: Boolean): String =
+        Normalizer.words(text).filter { it !in FILLERS && Requests.read(it, named) != Request.Name }.joinToString(" ")
+
     private fun yesOrNo(text: String, named: Boolean, yes: Set<String>): String? {
-        val phrase = Normalizer.words(text).filter { it !in FILLERS && Requests.read(it, named) != Request.Name }.joinToString(" ")
-        return when (phrase) {
+        return when (phrase(text, named)) {
             in yes -> YES
             NO -> NO
             else -> null
