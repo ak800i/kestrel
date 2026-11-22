@@ -204,7 +204,10 @@ private fun ProfileList(data: ProviderData, notice: String?, onAdd: () -> Unit, 
                 provider?.label ?: profile.providerId,
                 stringResource(R.string.providers_models, profile.lightweight.id, profile.versatile.id),
                 stringResource(R.string.providers_this_month, spendingText(data, profile, month)),
-            ).joinToString("\n"),
+                // Design D32 item 37 of sub-project 5: the agent refuses such a model, and the page says so on the profile.
+                stringResource(R.string.providers_bedrock_application_profile)
+                    .takeIf { bedrockApplicationProfile(profile.providerId, listOf(profile.lightweight.id, profile.versatile.id)) },
+            ).filterNotNull().joinToString("\n"),
         ) { onOpen(profile.id) }
     }
     Button(onClick = onAdd) { Text(stringResource(R.string.providers_add)) }

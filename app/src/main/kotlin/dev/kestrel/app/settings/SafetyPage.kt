@@ -20,7 +20,10 @@ import dev.kestrel.app.R
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 
-/** The safety page. In this version it has only test mode (design spec, section 12.7). */
+/**
+ * The safety page (design spec, sections 12.3, 12.5 and 12.7): test mode, and from sub-project 5 the mode, test mode's
+ * names and the agent-free apps (design D26 of sub-project 5), and plan 5C's screenshot approvals.
+ */
 @Composable
 internal fun SafetyPage(data: SettingsData, onBack: () -> Unit) {
     val testMode by data.testMode.collectAsState(initial = null)
@@ -43,5 +46,6 @@ internal fun SafetyPage(data: SettingsData, onBack: () -> Unit) {
     Text(stringResource(R.string.safety_test_mode_detail), style = MaterialTheme.typography.bodyMedium)
     Text(stringResource(R.string.safety_later), Modifier.padding(top = 16.dp), style = MaterialTheme.typography.bodyMedium)
     // sub-project 5B: mode, test mode, agent-free apps
+    AgentSafetySettings(data)
     // sub-project 5C: screenshot approvals
 }

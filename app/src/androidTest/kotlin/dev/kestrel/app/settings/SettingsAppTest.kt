@@ -18,6 +18,13 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
+import dev.kestrel.agent.memory.Fact
+import dev.kestrel.agent.memory.FactKind
+import dev.kestrel.agent.port.LauncherApp
+import dev.kestrel.safety.AgentFreeChanges
+import dev.kestrel.safety.Mode
+import dev.kestrel.safety.SafetySettings
 import dev.kestrel.app.R
 import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.listen.ListeningOptions
@@ -557,6 +564,61 @@ class SettingsAppTest {
         compose.onNodeWithText(text(R.string.safety_test_mode)).assertIsDisplayed()
     }
 
+    private fun openFromHome(@StringRes title: Int) {
+        compose.onNodeWithText(text(title)).performScrollTo().performClick()
+    }
+
+    @Test
+    fun theSafetyPageStoresTheModeAndTestModesNames() {
+        show(NOTHING_SET_UP)
+        openFromHome(R.string.settings_safety)
+
+        compose.onNodeWithText(text(R.string.safety_mode_relaxed)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.safety_whatsapp_name)).performScrollTo().performTextInput("Test Owner")
+        compose.onNodeWithText(text(R.string.safety_owner_emails)).performScrollTo().performTextInput("owner@example.com")
+        compose.waitForIdle()
+
+        assertEquals(Mode.RELAXED, data.safety.value.mode)
+        assertEquals("Test Owner", data.safety.value.whatsappOwnName)
+        assertEquals(listOf("owner@example.com"), data.safety.value.ownerEmails)
+        compose.onNodeWithText(text(R.string.safety_viber_unchecked)).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun aTickedSuggestionBecomesAgentFreeAndTheReviewIsStored() {
+        data.apps = listOf(LauncherApp("Moja Banka", "rs.example.mojabanka", null), LauncherApp("Recipes", "org.example.recipes", null))
+        show(NOTHING_SET_UP)
+        openFromHome(R.string.settings_safety)
+
+        compose.onNodeWithText(text(R.string.safety_suggestions)).performScrollTo().performClick()
+        compose.onAllNodesWithText("Recipes").assertCountEquals(0)
+        compose.onNodeWithText("Moja Banka").performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.safety_add_ticked)).performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("rs.example.mojabanka"), data.agentFree.value.added)
+        assertEquals(true, data.agentFreeReviewed.value)
+        compose.onNodeWithText("Moja Banka").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun theMemoryPageListsAFactAndDeletesAllMemoryOnlyAfterTheQuestion() {
+        data.memoryView = MemoryView(facts = listOf(Fact("home", "Main Street 1", FactKind.ALIAS)))
+        show(NOTHING_SET_UP)
+        openFromHome(R.string.settings_memory)
+        compose.onNodeWithText("home").assertIsDisplayed()
+
+        compose.onNodeWithText(text(R.string.memory_delete_all)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.memory_cancel)).performClick()
+        assertEquals(1, data.memoryView.facts.size)
+        compose.onNodeWithText(text(R.string.memory_delete_all)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.memory_delete_all_confirm)).performClick()
+        compose.waitForIdle()
+
+        assertEquals(0, data.memoryView.facts.size)
+        compose.onAllNodesWithText("home").assertCountEquals(0)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
@@ -566,6 +628,30 @@ class SettingsAppTest {
 
         // sub-project 5B: fake safety and memory
         override val agentFreeReviewed = MutableStateFlow(false)
+        override val safety = MutableStateFlow(SafetySettings())
+        override val agentFree = MutableStateFlow(AgentFreeChanges())
+        var apps = emptyList<LauncherApp>()
+        var memoryView = MemoryView()
+
+        override suspend fun setSafety(change: (SafetySettings) -> SafetySettings) {
+            safety.value = change(safety.value)
+        }
+
+        override suspend fun setAgentFree(changes: AgentFreeChanges) {
+            agentFree.value = changes
+        }
+
+        override suspend fun launcherApps(): List<LauncherApp> = apps
+
+        override suspend fun setAgentFreeReviewed() {
+            agentFreeReviewed.value = true
+        }
+
+        override suspend fun memory(): MemoryView = memoryView
+
+        override suspend fun deleteAllMemory() {
+            memoryView = MemoryView()
+        }
 
         // sub-project 5C: fake screenshot approvals
         var activity = emptyList<LogEntry<ActivityEvent>>()

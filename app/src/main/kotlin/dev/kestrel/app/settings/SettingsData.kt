@@ -1,6 +1,12 @@
 package dev.kestrel.app.settings
 
 import android.content.Context
+import android.content.pm.LauncherApps
+import android.os.Process
+import dev.kestrel.agent.memory.Fact
+import dev.kestrel.agent.memory.RouteNote
+import dev.kestrel.agent.memory.Routine
+import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.R
 import dev.kestrel.app.SettingKeys
@@ -12,6 +18,8 @@ import dev.kestrel.app.listen.forgetsKokoroSpeed
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
+import dev.kestrel.safety.AgentFreeChanges
+import dev.kestrel.safety.SafetySettings
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.speak.Spoke
 import dev.kestrel.voice.speak.VoicePlayer
@@ -86,6 +94,47 @@ interface SettingsData {
 
     // sub-project 5B: safety and memory
 
+    /** The safety settings: test mode, the mode and test mode's names (design D13, D18 and D26 of sub-project 5). */
+    val safety: Flow<SafetySettings> get() = flowOf(SafetySettings())
+
+    /** Stores the safety settings that [change] makes of the stored ones. */
+    suspend fun setSafety(change: (SafetySettings) -> SafetySettings) {}
+
+    /** The owner's changes to the shipped list of agent-free apps (design D16 of sub-project 5). */
+    val agentFree: Flow<AgentFreeChanges> get() = flowOf(AgentFreeChanges())
+
+    suspend fun setAgentFree(changes: AgentFreeChanges) {}
+
+    /** The launcher apps of the owner's profile, for "Add an app" and the suggestions (design D16). */
+    suspend fun launcherApps(): List<LauncherApp> = emptyList()
+
+    /** Notes that the owner has reviewed the suggested agent-free apps, which completes the checklist's step (design D26). */
+    suspend fun setAgentFreeReviewed() {}
+
+    /** What Kestrel's memory holds, for the Memory page (design D22, D23 and D26 of sub-project 5). */
+    suspend fun memory(): MemoryView = MemoryView()
+
+    /** Stores [fact], replacing the fact with the same key. */
+    suspend fun saveFact(fact: Fact) {}
+
+    suspend fun deleteFact(key: String) {}
+
+    /** Replaces route note [old] of its app with [new], which keeps the path form. */
+    suspend fun replaceNote(old: RouteNote, new: RouteNote) {}
+
+    suspend fun deleteNote(note: RouteNote) {}
+
+    /** Deletes every route note of the app [packageName]. */
+    suspend fun deleteNotes(packageName: String) {}
+
+    /** Replaces the routine called [oldName] with [routine], which may have another name and other phrasings. */
+    suspend fun replaceRoutine(oldName: String, routine: Routine) {}
+
+    suspend fun deleteRoutine(name: String) {}
+
+    /** Deletes the facts, route notes, routines, signatures and found contacts (design D22; spec 5.1 goal 4). */
+    suspend fun deleteAllMemory() {}
+
     /** Whether the owner has reviewed the suggested agent-free apps once, for the checklist (design D26 of sub-project 5). */
     val agentFreeReviewed: Flow<Boolean> get() = flowOf(false)
 
@@ -155,6 +204,57 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     // sub-project 5B: stored safety and memory
 
     override val agentFreeReviewed: Flow<Boolean> = graph.settings.observe(SettingKeys.AGENT_FREE_REVIEWED)
+
+    override val safety: Flow<SafetySettings> = graph.settings.observe(SettingKeys.SAFETY)
+
+    override suspend fun setSafety(change: (SafetySettings) -> SafetySettings) = write {
+        graph.settings.set(SettingKeys.SAFETY, change(graph.settings.get(SettingKeys.SAFETY)))
+    }
+
+    override val agentFree: Flow<AgentFreeChanges> = graph.settings.observe(SettingKeys.AGENT_FREE_APPS)
+
+    override suspend fun setAgentFree(changes: AgentFreeChanges) = write { graph.settings.set(SettingKeys.AGENT_FREE_APPS, changes) }
+
+    override suspend fun setAgentFreeReviewed() = write { graph.settings.set(SettingKeys.AGENT_FREE_REVIEWED, true) }
+
+    // The owner's own profile only, as open_app sees it (design D11), without Kestrel itself.
+    override suspend fun launcherApps(): List<LauncherApp> = withContext(Dispatchers.IO) {
+        val launcher = context.getSystemService(LauncherApps::class.java) ?: return@withContext emptyList()
+        launcher.getActivityList(null, Process.myUserHandle())
+            .map { LauncherApp(it.label.toString(), it.applicationInfo.packageName, null) }
+            .filter { it.packageName != context.packageName }
+            .distinctBy { it.packageName }
+    }
+
+    override suspend fun memory(): MemoryView = withContext(Dispatchers.IO) {
+        val memory = graph.memory
+        val notes = memory.allNotes()
+        val labels = launcherApps().associate { it.packageName to it.label }.filterKeys { it in notes }
+        MemoryView(memory.facts(), notes, memory.routines(), memory.signatures(), memory.foundContacts(), labels)
+    }
+
+    override suspend fun saveFact(fact: Fact) = write { graph.memory.saveFact(fact) }
+
+    override suspend fun deleteFact(key: String) = write { graph.memory.deleteFact(key) }
+
+    override suspend fun replaceNote(old: RouteNote, new: RouteNote) = write {
+        graph.memory.saveNotes(old.packageName, graph.memory.notes(old.packageName).map { if (it == old) new else it })
+    }
+
+    override suspend fun deleteNote(note: RouteNote) = write {
+        graph.memory.saveNotes(note.packageName, graph.memory.notes(note.packageName) - note)
+    }
+
+    override suspend fun deleteNotes(packageName: String) = write { graph.memory.deleteNotes(packageName) }
+
+    override suspend fun replaceRoutine(oldName: String, routine: Routine) = write {
+        if (oldName != routine.name) graph.memory.deleteRoutine(oldName)
+        graph.memory.saveRoutine(routine)
+    }
+
+    override suspend fun deleteRoutine(name: String) = write { graph.memory.deleteRoutine(name) }
+
+    override suspend fun deleteAllMemory() = write { graph.memory.deleteAll() }
 
     // sub-project 5C: stored screenshot approvals
 
