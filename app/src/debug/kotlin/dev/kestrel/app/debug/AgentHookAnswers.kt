@@ -1,0 +1,94 @@
+package dev.kestrel.app.debug
+
+import dev.kestrel.agent.TaskReport
+import dev.kestrel.commands.text.Normalizer
+import java.util.Locale
+
+/**
+ * The answers of the agent's debug hooks (design D28 of sub-project 5; plan-5b-interfaces.md, section 4), as plain
+ * functions: one line of `name=value` pairs with no spaces inside a value, and never screen text, a prompt, a reply, a
+ * name or a tool's arguments. The comparisons of a recipient and a marker run here, on the device, and answer only match
+ * or a count.
+ */
+internal object AgentHookAnswers {
+    /** agent-task -Result's answer for a task that ended. */
+    fun result(report: TaskReport, spoken: String, marker: String?, recipient: String?): String =
+        "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
+            "credits=${String.format(Locale.ROOT, "%.2f", report.credits)} confirmed=${report.confirmed} " +
+            "unconfirmed=${report.unconfirmed} shareItems=${report.shareItems} recipient=${recipient(report.recipients, recipient)} " +
+            "marker=${marker(spoken, marker)} beforeTestMode=${report.beforeTestMode} model=${word(report.modelId)} " +
+            "in=${report.inputTokens} out=${report.outputTokens} cacheRead=${report.cacheRead} cacheWrite=${report.cacheWrite}"
+
+    /** Whether one of the task's confirmed [recipients] is [wanted], compared folded: match, other, or none without either. */
+    fun recipient(recipients: List<String>, wanted: String?): String = when {
+        wanted.isNullOrBlank() || recipients.isEmpty() -> "none"
+        recipients.any { Normalizer.normalize(it) == Normalizer.normalize(wanted) } -> "match"
+        else -> "other"
+    }
+
+    /** 1 when the spoken reply holds the marker's words in order, else 0 (design D29). */
+    fun marker(spoken: String, marker: String?): Int {
+        val wanted = marker?.let { Normalizer.words(it) }.orEmpty()
+        if (wanted.isEmpty()) return 0
+        val words = Normalizer.words(spoken)
+        return if ((0..words.size - wanted.size).any { start -> wanted.indices.all { words[start + it] == wanted[it] } }) 1 else 0
+    }
+
+    /**
+     * The words that agent-answer says for [answer], as the owner's voice would: yes, no, confirm, cancel, continue, a
+     * number, or `text:<words>`; null for anything else.
+     */
+    fun words(answer: String): String? = when {
+        answer in SPOKEN -> answer
+        answer.matches(Regex("\\d{1,3}")) -> answer
+        answer.startsWith("text:") && answer.length > 5 -> answer.substring(5)
+        else -> null
+    }
+
+    /** The aliases of agent-settings' `pkg=pkg,pkg=pkg`, which map a fixture's package to an app's self-chat rule. */
+    fun aliases(text: String): Map<String, String> = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }.associate { pair ->
+        val parts = pair.split('=')
+        require(parts.size == 2 && parts.all { PACKAGE.matches(it.trim()) }) { "add --es selfChatAliases as pkg=pkg,pkg=pkg" }
+        parts[0].trim() to parts[1].trim()
+    }
+
+    /**
+     * What agent-tree keeps of an element's label (design D28; review C I10): the label only when it is one of the [safe]
+     * strings (the self-chats' fixed texts and the owner's configured names) or, in SystemUI, a Quick Settings tile's label
+     * of [TILES]; otherwise null, and the tree keeps only its length and [status].
+     */
+    fun safeLabel(label: String?, packageName: String?, safe: Set<String>): String? = when {
+        label == null -> null
+        packageName == SYSTEM_UI -> label.takeIf { it in TILES }
+        label in safe -> label
+        else -> null
+    }
+
+    /** Whether a label reads as a chat's status: last-seen, online, typing, members, or none. */
+    fun status(label: String?): String {
+        val text = label?.lowercase().orEmpty()
+        return when {
+            "last seen" in text -> "last-seen"
+            "online" in text -> "online"
+            "typing" in text -> "typing"
+            "member" in text -> "members"
+            else -> "none"
+        }
+    }
+
+    /** The self-chats' fixed texts that agent-tree may keep (design D28). */
+    val FIXED_SAFE = setOf("Saved Messages", "forward here to save", "Forward here to save.", "Message yourself", "My Notes")
+
+    /** The labels of Quick Settings tiles that agent-tree may keep in SystemUI's windows. */
+    val TILES = setOf(
+        "Internet", "Wi-Fi", "Bluetooth", "Hotspot", "Mobile data", "Airplane mode", "Flashlight", "Location",
+        "Do Not Disturb", "Auto-rotate", "Battery Saver", "Dark theme", "Mobile Hotspot", "Hotspot, Off", "Hotspot, On",
+    )
+
+    const val SYSTEM_UI = "com.android.systemui"
+
+    private val SPOKEN = setOf("yes", "no", "confirm", "cancel", "continue")
+    private val PACKAGE = Regex("[A-Za-z0-9_.]{1,128}")
+
+    private fun word(text: String?): String = text?.trim()?.replace(Regex("\\s+"), "_")?.ifEmpty { null } ?: "none"
+}

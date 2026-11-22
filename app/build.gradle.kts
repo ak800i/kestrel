@@ -26,6 +26,9 @@ dependencies {
     implementation(project(":core:screen"))
     implementation(project(":core:voice"))
     // sub-project 5B: dependencies
+    // The scripted model of the debug hook agent-script and of the agent's device tests (design D28 of sub-project 5).
+    debugImplementation(testFixtures(project(":core:agent")))
+    androidTestImplementation(testFixtures(project(":core:agent")))
     implementation(project(":core:datatools"))
     implementation(project(":core:agent"))
     testImplementation(testFixtures(project(":core:agent")))

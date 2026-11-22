@@ -217,6 +217,37 @@
 #   clipboard -Clear                        empties the clipboard, only on the emulator kestrel-api37: it is refused on
 #                                           every other device, so that it never empties the owner's clipboard
 # sub-project 5B: agent hooks
+# The agent's checks (sub-project 5's design D28; scripts\task-check.ps1 runs these). A tagged task is given with
+# voice -Send heard -Text 'Kestrel, <task>' -Tag k [-Model id] [-Live]; in a debug build it runs only with a script from
+# agent-script, or live in a sitting. No answer holds screen text, a prompt, a reply or a name:
+#   agent-task -Result -Tag k [-Marker 'words'] [-Recipient 'name']
+#                                           state=running, or state=done with the task's end, steps, time, credits, counts
+#                                           of confirmed and unconfirmed sends, calls and deletes, shared items, whether the
+#                                           confirmed recipient is the name (match, other, none) and whether the spoken
+#                                           reply holds the marker (1 or 0), the decisions that test mode changed from Run,
+#                                           the model and the tokens
+#   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words>
+#                                           answers the open question of that task as the owner's voice would, and ends its
+#                                           hand-over with continue or cancel; refused when that task asks nothing
+#   agent-script -File name.json | -Clear   installs plan 5A's scripted model from files/agent-scripts/name.json in
+#                                           Kestrel's files folder (scripts\task-check.ps1 copies it there), or removes it
+#   agent-state -Tag k                      the task's phase, its open question's kind, Kestrel's work, the hand-over and
+#                                           the category of the open confirmation
+#   agent-cache [-Field anthropicMarks|responsesExplicit|chatCopilotMarks -On true|false]
+#                                           the agent's cache fields, after storing the one given
+#   agent-touch-source [-Rule NONE|FIELD|CREDITS] [-Branch A|B]
+#                                           the touch watcher's rule and branch for this device, after storing them
+#   agent-settings [-OwnerEmails 'a,b'] [-ViberSelfChatName name] [-WhatsappOwnName name] [-SelfChatAliases 'pkg=pkg']
+#                                           test mode's names and the debug aliases of the fixtures; answers counts only
+#   agent-memory -Add -Key k -Text value | -Remove -Key k
+#                                           adds or removes a test alias; answers the count of facts and the key
+#   agent-data -Tool list_sms|list_calls|find_media|list_notifications [-Text argument]
+#                                           runs one data tool and answers its result's kind and number of items
+#   selfchat-check                          whether test mode's recogniser takes the chat on the screen for a self-chat
+#   agent-tree                              writes the screen's structure, with labels only where they are safe, to
+#                                           cache/agent-tree.json, which the script reads and removes with run-as
+#   screen-tap -Label text                  the script's own tap on the element with that label; never in Kestrel's own
+#                                           app or a phone app
 # sub-project 5C: live hooks
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
@@ -232,6 +263,8 @@ param(
         'spike-results', 'files', 'watch', 'profiles', 'snapshots', 'provider-live', 'provider-standin', 'provider-delete',
         'owner-options', 'notices', 'check-notice', 'voice-expect', 'screen-has', 'field',
         # sub-project 5B: agent hook names
+        'agent-task', 'agent-answer', 'agent-script', 'agent-state', 'agent-cache', 'agent-touch-source', 'agent-settings',
+        'agent-memory', 'agent-data', 'selfchat-check', 'agent-tree', 'screen-tap',
         # sub-project 5C: live hook names
         'clipboard')][string]$Command,
     [string]$Key,
@@ -290,6 +323,19 @@ param(
     [string]$Template,
     [switch]$Save,
     # sub-project 5B: agent parameters
+    [string]$Marker,
+    [string]$Recipient,
+    [string]$Answer,
+    [ValidateSet('anthropicMarks', 'responsesExplicit', 'chatCopilotMarks')][string]$Field,
+    [ValidateSet('NONE', 'FIELD', 'CREDITS')][string]$Rule,
+    [ValidateSet('A', 'B')][string]$Branch,
+    [string]$OwnerEmails,
+    [string]$ViberSelfChatName,
+    [string]$WhatsappOwnName,
+    [string]$SelfChatAliases,
+    [switch]$Add,
+    [switch]$Remove,
+    [ValidateSet('list_sms', 'list_calls', 'find_media', 'list_notifications')][string]$Tool,
     # sub-project 5C: live parameters
     [switch]$Restore
 )
@@ -386,6 +432,21 @@ if ($Template) { $extras += "--es template $(ConvertTo-ShellText $Template)" }
 if ($Save) { $extras += '--ez save true' }
 if ($Restore) { $extras += '--ez restore true' }
 # sub-project 5B: agent extras
+if ($PSBoundParameters.ContainsKey('Marker')) { $extras += "--es marker $(ConvertTo-ShellText $Marker)" }
+if ($PSBoundParameters.ContainsKey('Recipient')) { $extras += "--es recipient $(ConvertTo-ShellText $Recipient)" }
+if ($Answer) { $extras += "--es answer $(ConvertTo-ShellText $Answer)" }
+if ($Field) { $extras += "--es field $Field" }
+# ValidateSet accepts any letter case, and the hook takes the rule and the branch in capitals.
+if ($Rule) { $extras += "--es rule $($Rule.ToUpperInvariant())" }
+if ($Branch) { $extras += "--es branch $($Branch.ToUpperInvariant())" }
+# These four may be empty, which clears them, so they count whenever they are given.
+if ($PSBoundParameters.ContainsKey('OwnerEmails')) { $extras += "--es ownerEmails $(ConvertTo-ShellText $OwnerEmails)" }
+if ($PSBoundParameters.ContainsKey('ViberSelfChatName')) { $extras += "--es viberSelfChatName $(ConvertTo-ShellText $ViberSelfChatName)" }
+if ($PSBoundParameters.ContainsKey('WhatsappOwnName')) { $extras += "--es whatsappOwnName $(ConvertTo-ShellText $WhatsappOwnName)" }
+if ($PSBoundParameters.ContainsKey('SelfChatAliases')) { $extras += "--es selfChatAliases $(ConvertTo-ShellText $SelfChatAliases)" }
+if ($Add) { $extras += '--ez add true' }
+if ($Remove) { $extras += '--ez remove true' }
+if ($Tool) { $extras += "--es tool $($Tool.ToLowerInvariant())" }
 # sub-project 5C: live extras
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')

@@ -4,6 +4,7 @@ import android.app.role.RoleManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import dev.kestrel.agent.memory.Fact
@@ -78,6 +79,7 @@ import dev.kestrel.providers.profiles.ProvidersSetting
 import dev.kestrel.safety.AgentFreeChanges
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.act.TouchSource
 import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceEngines
 import dev.kestrel.voice.listen.MicCapture
@@ -136,6 +138,12 @@ object SettingKeys {
 
     /** Whether the owner has reviewed the suggested agent-free apps once, the checklist's step (design D26 of sub-project 5). */
     val AGENT_FREE_REVIEWED = SettingKey("agent-free-reviewed", Boolean.serializer(), false)
+
+    /**
+     * The touch watcher's rule and branch on this device (design D19 of sub-project 5), which the debug hook
+     * agent-touch-source stores from the probe's and the owner's sitting's results; each new screen session takes it.
+     */
+    val TOUCH_RULE = SettingKey("touch-rule", TouchSource.serializer(), TouchSource.defaultFor(Build.VERSION.SDK_INT))
 
     /**
      * Whether a live sitting is open (design D28 of sub-project 5): a debug build's task with the hook's extra `live` runs
@@ -619,6 +627,9 @@ class AppGraph(context: Context) {
     }
 
     internal fun attachScreen(session: ScreenSession) {
+        // Design D19 of sub-project 5: the stored touch rule of this device; until it is read, the session's default for
+        // its API level counts.
+        scope.launch { session.touchSource = settings.get(SettingKeys.TOUCH_RULE) }
         screens.value = session
     }
 

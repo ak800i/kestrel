@@ -66,6 +66,21 @@ Describe 'hook.ps1' {
         $none | Should -BeLike '*clipboard needs exactly one of -Save, -Restore and -Clear.*'
     }
 
+    It 'refuses an agent hook''s value outside its list before it reaches a device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $rule = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-touch-source -Rule SOMETIMES 2>&1) -join "`n"
+        $ruleExit = $LASTEXITCODE
+        $tool = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-data -Tool send_sms 2>&1) -join "`n"
+        $toolExit = $LASTEXITCODE
+
+        $ruleExit | Should -Not -Be 0
+        $rule | Should -BeLike "*Cannot validate argument on parameter 'Rule'*"
+        $toolExit | Should -Not -Be 0
+        $tool | Should -BeLike "*Cannot validate argument on parameter 'Tool'*"
+    }
+
     It 'refuses clipboard -Clear on a phone before it reaches the device' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
