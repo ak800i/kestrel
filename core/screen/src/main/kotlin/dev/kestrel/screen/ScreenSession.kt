@@ -2,6 +2,7 @@ package dev.kestrel.screen
 
 import android.accessibilityservice.AccessibilityService
 import android.os.Build
+import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import dev.kestrel.screen.act.GestureRunner
@@ -416,10 +417,15 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /**
      * Makes Kestrel's overlays transparent for a screenshot of the whole display and returns the handle that shows them
-     * again, or null when Android did not draw them hidden within 500 ms (design D20 of sub-project 5).
+     * again, or null when Android did not draw them hidden within 500 ms (design D20 of sub-project 5). Call it on the
+     * main thread, as its only caller [dev.kestrel.screen.capture.ScreenCapture.capture] does: a switch of dispatcher here
+     * would run the hide in a scope of its own, and a cancellation that came as that scope ended would drop the handle
+     * and leave every overlay shown later transparent.
      */
-    suspend fun hideAllForCapture(): dev.kestrel.screen.overlay.HiddenOverlays? =
-        withContext(Dispatchers.Main) { dev.kestrel.screen.overlay.HiddenOverlays.hide(overlays) }
+    suspend fun hideAllForCapture(): dev.kestrel.screen.overlay.HiddenOverlays? {
+        check(Looper.getMainLooper().isCurrentThread) { "hideAllForCapture runs on the main thread" }
+        return dev.kestrel.screen.overlay.HiddenOverlays.hide(overlays)
+    }
 
     /**
      * Shows the agent's [badges] instead of Numbering's own until [hideBadges] (design D20 of sub-project 5); "show

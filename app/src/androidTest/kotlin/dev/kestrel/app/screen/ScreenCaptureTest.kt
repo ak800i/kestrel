@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.agent.port.Capture
@@ -14,19 +16,28 @@ import dev.kestrel.screen.capture.ScreenCapture
 import dev.kestrel.screen.model.ScreenTree
 import dev.kestrel.screen.model.WindowSummary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ThreadContextElement
+import kotlinx.coroutines.android.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.coroutines.CoroutineContext
 import kotlin.math.abs
 
 /**
@@ -157,6 +168,102 @@ class ScreenCaptureTest {
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun aCancellationAsTheHideEndsLeavesTheOverlaysShownLaterVisible() = runBlocking {
+        screen.open("GesturesActivity", "Gestures fixture")
+        session.hideFeedback()
+        withTimeout(5_000) { while (screen.showsWindow("Kestrel feedback bar")) delay(100) }
+        val before = screen.automation.takeScreenshot()!!
+        // The app's Dispatchers.Main resumes the hide's last delay on the main thread without checking the job, so a
+        // cancellation from another thread can come while the hide returns. In the device tests, Dispatchers.Main is
+        // kotlinx-coroutines-test's wrapper, which brings the delay back through a dispatch that checks the job first; the
+        // main looper's immediate dispatcher, as Main, resumes on the main thread without the check, as the app's does.
+        Dispatchers.setMain(Handler(Looper.getMainLooper()).asCoroutineDispatcher().immediate)
+        try {
+            val cancel = CancelOnResume(HIDE_MILLIS)
+            // The capture's coroutine holds the handle as displayShot does, and is cancelled as the hide's last wait ends.
+            val capture = launch(Dispatchers.Main + cancel) {
+                cancel.arm(coroutineContext.job)
+                val hidden = session.hideAllForCapture() ?: return@launch
+                try {
+                    delay(5_000)
+                } finally {
+                    hidden.close()
+                }
+            }
+            capture.join()
+            assertTrue(cancel.fired && capture.isCancelled)
+        } finally {
+            Dispatchers.resetMain()
+        }
+
+        // The bar that Kestrel shows afterwards is drawn: its dark background changes the top of the screen.
+        session.showFeedback("Heard")
+        try {
+            val changed = withTimeoutOrNull(3_000) {
+                while (true) {
+                    val after = screen.automation.takeScreenshot()!!
+                    val count = try {
+                        changedAtTheTop(before, after)
+                    } finally {
+                        after.recycle()
+                    }
+                    if (count > 500) return@withTimeoutOrNull count
+                    delay(100)
+                }
+            }
+            assertTrue("the feedback bar stayed transparent", changed != null)
+        } finally {
+            session.hideFeedback()
+            before.recycle()
+        }
+    }
+
+    /**
+     * Cancels the job that [arm] names, on the main thread, as the first resumption of its coroutine that comes at least
+     * [afterMillis] after [arm] begins and before the resumed code runs on.
+     */
+    private class CancelOnResume(private val afterMillis: Long) : ThreadContextElement<Unit> {
+        companion object Key : CoroutineContext.Key<CancelOnResume>
+
+        override val key: CoroutineContext.Key<*> get() = Key
+
+        private var target: Job? = null
+        private var armedAt = 0L
+
+        var fired = false
+            private set
+
+        fun arm(job: Job) {
+            target = job
+            armedAt = SystemClock.uptimeMillis()
+        }
+
+        override fun updateThreadContext(context: CoroutineContext) {
+            val job = target ?: return
+            if (fired || SystemClock.uptimeMillis() - armedAt < afterMillis) return
+            fired = true
+            job.cancel()
+        }
+
+        override fun restoreThreadContext(context: CoroutineContext, oldState: Unit) = Unit
+    }
+
+    // The pixels in the top eighth of the screen that differ clearly between the two screenshots, in every other row and column.
+    private fun changedAtTheTop(a: Bitmap, b: Bitmap): Int {
+        var changed = 0
+        for (y in 0 until minOf(a.height, b.height) / 8 step 2) {
+            for (x in 0 until minOf(a.width, b.width) step 2) {
+                val p = a.getPixel(x, y)
+                val q = b.getPixel(x, y)
+                val difference = abs(Color.red(p) - Color.red(q)) + abs(Color.green(p) - Color.green(q)) + abs(Color.blue(p) - Color.blue(q))
+                if (difference > 96) changed++
+            }
+        }
+        return changed
+    }
+
     @Test
     fun aSecureWindowIsSecureOnBothPaths() = runBlocking {
         screen.open("SecureActivity", "Secure fixture")
@@ -210,4 +317,8 @@ class ScreenCaptureTest {
         return count
     }
 
+    private companion object {
+        // HiddenOverlays.MIN_MILLIS: with no overlay to wait for, the hide's last wait ends this long after it began.
+        const val HIDE_MILLIS = 50L
+    }
 }
