@@ -382,7 +382,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /**
      * Whether the confirmation card is on the screen (design D8 and D32 item 20 of sub-project 5): `AppScreenPort` waits
-     * until it is false, and one settle more, before it reads the snapshot of a confirmed action.
+     * until it is false before it reads the snapshot of a confirmed action. It stays true for one settle after the card
+     * ended, while Android may still deliver a touch to the card's window ([dev.kestrel.screen.overlay.CardPresence]).
      */
     val cardShowing: Boolean get() = card.isShowing
 

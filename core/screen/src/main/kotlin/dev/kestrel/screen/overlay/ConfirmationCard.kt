@@ -26,17 +26,16 @@ import kotlin.coroutines.resume
  */
 internal class ConfirmationCard(private val host: OverlayHost, private val clock: () -> Long = SystemClock::uptimeMillis) {
     private var pending: Question? = null
-    private var closedAt: Long? = null
+    private val presence = CardPresence(clock)
 
-    /** Whether a card is on the screen; `ScreenActions` acts on nothing while it is (design D32 item 20 of sub-project 5). */
-    @Volatile
-    var isShowing = false
-        private set
+    /**
+     * Whether a card is on the screen, or ended less than one settle ago ([CardPresence]); `ScreenActions` acts on nothing
+     * while it is (design D32 item 20 of sub-project 5).
+     */
+    val isShowing: Boolean get() = presence.isShowing
 
-    /** The card's bounds on the screen once Android has laid it out, or null while no card shows. */
-    @Volatile
-    var bounds: IntRect? = null
-        private set
+    /** The card's bounds on the screen once Android has laid it out, also while it closes, or null while no card counts as shown. */
+    val bounds: IntRect? get() = presence.bounds
 
     /**
      * Shows [question] and returns true when the owner taps Confirm, or false for Cancel. It also returns false when a
@@ -45,7 +44,7 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
      */
     suspend fun ask(question: String): Boolean {
         dismiss()
-        closedAt?.let { closed ->
+        presence.closedAt?.let { closed ->
             val wait = closed + ARMING_MILLIS - clock()
             if (wait > 0) delay(wait)
         }
@@ -54,7 +53,7 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
             // Cancellation can arrive on any thread, and the window must be removed on the main thread.
             continuation.invokeOnCancellation { open.card.post { open.end(false) } }
             pending = open
-            if (host.show(open.card, params())) isShowing = true else open.end(false)
+            if (host.show(open.card, params())) presence.shown() else open.end(false)
         }
     }
 
@@ -71,7 +70,7 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
                 if (pending === this@Question) {
                     val at = IntArray(2)
                     view.getLocationOnScreen(at)
-                    bounds = IntRect(at[0], at[1], at[0] + view.width, at[1] + view.height)
+                    presence.laidOut(IntRect(at[0], at[1], at[0] + view.width, at[1] + view.height))
                 }
             }
         }
@@ -87,9 +86,7 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
             // A late tap on this card, or its cancellation, may arrive after a newer question has replaced it.
             if (pending === this) {
                 pending = null
-                isShowing = false
-                bounds = null
-                closedAt = clock()
+                presence.closed()
             }
             if (continuation.isActive) continuation.resume(answer)
         }
