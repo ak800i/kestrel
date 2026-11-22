@@ -77,6 +77,26 @@ class ConfirmationCardTest {
     }
 
     @Test
+    fun aQuestionAskedDuringAnotherOnesArmingDelayReplacesIt() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val first = async { session.confirm("Send a test message?") }
+        awaitConfirm()
+        // The second question waits out the arming delay after the first card closed; the third comes during that wait.
+        val second = async { session.confirm("Delete the test draft?") }
+        assertFalse(withTimeout(5_000) { first.await() })
+        val third = async { session.confirm("Call the test number?") }
+        try {
+            assertFalse("The waiting question was not replaced", withTimeout(5_000) { second.await() })
+            withTimeout(5_000) { while (!screen.overlayShows("Call the test number?")) delay(20) }
+            assertFalse("The replaced question showed its card", screen.overlayShows("Delete the test draft?"))
+        } finally {
+            second.cancel()
+            third.cancel()
+        }
+        withTimeout(5_000) { while (session.cardShowing) delay(50) }
+    }
+
+    @Test
     fun noGestureAndNoNodeActionRunWhileTheCardShows() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
         val send = screen.awaitElement { it.viewId == "$FIXTURES:id/send_button" }

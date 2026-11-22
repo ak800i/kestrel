@@ -28,6 +28,10 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
     private var pending: Question? = null
     private val presence = CardPresence(clock)
 
+    // Every ask and dismiss increases it, so that a question that waits out the arming delay knows when a newer question
+    // or a dismiss came meanwhile.
+    private var questions = 0L
+
     /**
      * Whether a card is on the screen, or ended less than one settle ago ([CardPresence]); `ScreenActions` acts on nothing
      * while it is (design D32 item 20 of sub-project 5).
@@ -39,15 +43,18 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
 
     /**
      * Shows [question] and returns true when the owner taps Confirm, or false for Cancel. It also returns false when a
-     * newer question replaces this one or [dismiss] ends it, and its card then goes at once. Cancelling the call
-     * removes the card too. When the card cannot be shown, because the session has closed, it returns false at once.
+     * newer question replaces this one or [dismiss] ends it, also while it still waits out the arming delay, and its card
+     * then goes at once or never shows. Cancelling the call removes the card too. When the card cannot be shown, because
+     * the session has closed, it returns false at once.
      */
     suspend fun ask(question: String): Boolean {
         dismiss()
+        val number = questions
         presence.closedAt?.let { closed ->
             val wait = closed + ARMING_MILLIS - clock()
             if (wait > 0) delay(wait)
         }
+        if (questions != number) return false
         return suspendCancellableCoroutine { continuation ->
             val open = Question(question, continuation)
             // Cancellation can arrive on any thread, and the window must be removed on the main thread.
@@ -57,8 +64,12 @@ internal class ConfirmationCard(private val host: OverlayHost, private val clock
         }
     }
 
-    /** Ends an open question without the owner's answer: its card goes at once, and its [ask] returns false. */
+    /**
+     * Ends an open question, also one that still waits out the arming delay, without the owner's answer: its card goes at
+     * once or never shows, and its [ask] returns false.
+     */
     fun dismiss() {
+        questions++
         pending?.end(false)
     }
 
