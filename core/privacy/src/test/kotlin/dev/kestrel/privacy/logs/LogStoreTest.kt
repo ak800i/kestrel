@@ -138,6 +138,38 @@ class LogStoreTest {
         assertEquals(LogStore.DEFAULT_LIMIT + 1, exported().activity.size)
     }
 
+    @Test
+    fun exportReadsTheLogsAPageAtATimeAndKeepsTheirOrder() = runTest {
+        // Two pages and one entry more, and every second entry at the same time, as several entries of one step are.
+        repeat(LogStore.EXPORT_PAGE * 2 + 1) {
+            store.append(ActivityEvent(ActivityKind.NOTE, "note $it"))
+            if (it % 2 == 1) now += 1
+        }
+
+        val export = exported()
+
+        assertEquals((0..LogStore.EXPORT_PAGE * 2).map { "note $it" }, export.activity.map { it.event.text })
+        assertEquals(LogStore.EXPORT_PAGE, dao.largestExportRead)
+    }
+
+    @Test
+    fun exportLeavesOutAndDeletesAnUnreadableEntry() = runTest {
+        store.append(ActivityEvent(ActivityKind.NOTE, "good"))
+        dao.rows += LogEntryRow(id = 100L, log = "activity", timestampMillis = now, payload = byteArrayOf(1, 2, 3))
+
+        assertEquals(listOf("good"), exported().activity.map { it.event.text })
+        assertEquals(listOf("Deleted 1 unreadable activity log entries", "good"), store.activity().map { it.event.text })
+    }
+
+    @Test
+    fun theAgentsKindsOfEntriesAreStoredAndExported() = runTest {
+        val kinds = listOf(ActivityKind.PROMPT, ActivityKind.REPLY, ActivityKind.SAFETY)
+        kinds.forEach { store.append(ActivityEvent(it, "entry", taskId = "task-1-0a1b2c3d")) }
+
+        assertEquals(kinds.reversed(), store.activity().map { it.event.kind })
+        assertEquals(kinds, exported().activity.map { it.event.kind })
+    }
+
     private suspend fun exported(): LogExport {
         val output = ByteArrayOutputStream()
         store.export(output)
@@ -241,6 +273,16 @@ private class FakeLogDao : LogDao {
         rows.filter { it.log == log }
             .sortedWith(compareByDescending<LogEntryRow> { it.timestampMillis }.thenByDescending { it.id })
             .take(limit)
+
+    // The largest number of rows that one export query asked for.
+    var largestExportRead = 0
+
+    override suspend fun oldestAfter(log: String, afterMillis: Long, afterId: Long, limit: Int): List<LogEntryRow> {
+        largestExportRead = maxOf(largestExportRead, limit)
+        return rows.filter { it.log == log && (it.timestampMillis > afterMillis || (it.timestampMillis == afterMillis && it.id > afterId)) }
+            .sortedWith(compareBy<LogEntryRow> { it.timestampMillis }.thenBy { it.id })
+            .take(limit)
+    }
 
     override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int {
         purges++

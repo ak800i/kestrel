@@ -729,7 +729,8 @@ Native code can bypass the Kotlin gateway, so the evaluation suite also checks r
 | Network log | Time, host, path, request and response size, status, and the task it belongs to. The path is the request's path with the parts that name the owner's project or account replaced, such as Vertex's project or a Bedrock model; a failed request's detail is the error's class, except for a request that the allowlist refused, whose detail names the host and the rule | 7 days |
 
 - Both logs are encrypted and can be viewed in settings. A button in settings wipes both after a confirmation; "Kestrel, delete history" by voice, after a spoken confirmation, comes with the agent (sub-project 5).
-- The logs leave the phone only when the owner exports them to a file of their choice. The export is one JSON file with both logs and all their entries, oldest first, with times in UTC.
+- The logs leave the phone only when the owner exports them to a file of their choice. The export is one JSON file with both logs and all their entries, oldest first, with times in UTC. Kestrel writes it 100 entries at a time, so that a week of prompts never has to fit in memory, and leaves out an entry that it can no longer decrypt.
+- The activity log's entries have a kind: an action, a note, an error, a prompt (the new part of a model call's request), a reply (with its usage and cost) or a safety decision, and a task's entries carry the task's ID (sub-project 5's design D25). The log pages show the newest entries and say how many.
 - Screenshots, audio and credentials are never logged.
 - Kestrel writes no audio, transcript, reply, boost word, app name, screen text, exception message or exit record's description to Android's log. It logs a failure only by its classes and stack frames, and the text form (`toString`) of anything that carries the owner's words gives only lengths or counts.
 

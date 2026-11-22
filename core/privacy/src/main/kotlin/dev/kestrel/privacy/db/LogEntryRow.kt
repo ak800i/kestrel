@@ -28,6 +28,13 @@ interface LogDao {
     @Query("SELECT * FROM log_entries WHERE log = :log ORDER BY timestamp_millis DESC, id DESC LIMIT :limit")
     suspend fun newest(log: String, limit: Int): List<LogEntryRow>
 
+    /** Up to [limit] entries of [log] that come after the entry at ([afterMillis], [afterId]), oldest first, for the export. */
+    @Query(
+        "SELECT * FROM log_entries WHERE log = :log AND (timestamp_millis > :afterMillis OR " +
+            "(timestamp_millis = :afterMillis AND id > :afterId)) ORDER BY timestamp_millis ASC, id ASC LIMIT :limit",
+    )
+    suspend fun oldestAfter(log: String, afterMillis: Long, afterId: Long, limit: Int): List<LogEntryRow>
+
     /** Deletes the entries dated before [oldestMillis] or after [newestMillis]. */
     @Query("DELETE FROM log_entries WHERE timestamp_millis < :oldestMillis OR timestamp_millis > :newestMillis")
     suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int

@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
+import dev.kestrel.privacy.logs.LogStore
 import dev.kestrel.privacy.logs.NetworkOutcome
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -99,6 +100,8 @@ private fun <T> LogPage(
                 OutlinedButton(onClick = { confirmingDelete = true }) { Text(stringResource(R.string.logs_delete)) }
             }
         }
+        // The page reads only the newest entries; the export holds them all (design D32 item 47 of sub-project 5).
+        item { Text(stringResource(R.string.logs_newest, LogStore.DEFAULT_LIMIT)) }
         val shown = entries
         when {
             shown == null -> item { Text(stringResource(R.string.logs_loading)) }
@@ -146,6 +149,9 @@ private fun kindLabel(kind: ActivityKind): Int = when (kind) {
     ActivityKind.ACTION -> R.string.log_kind_action
     ActivityKind.NOTE -> R.string.log_kind_note
     ActivityKind.ERROR -> R.string.log_kind_error
+    ActivityKind.PROMPT -> R.string.log_kind_prompt
+    ActivityKind.REPLY -> R.string.log_kind_reply
+    ActivityKind.SAFETY -> R.string.log_kind_safety
 }
 
 @StringRes

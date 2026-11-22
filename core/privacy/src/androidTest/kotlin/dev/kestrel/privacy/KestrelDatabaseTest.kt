@@ -65,4 +65,19 @@ class KestrelDatabaseTest {
         assertArrayEquals(byteArrayOf(2), dao.get("volume")!!.payload)
         assertArrayEquals(byteArrayOf(2), dao.observe("volume").first()!!.payload)
     }
+
+
+    @Test
+    fun oldestAfterReturnsOneLogOldestFirstFromAPlace() = runBlocking {
+        val dao = db.logDao()
+        dao.insert(LogEntryRow(log = "activity", timestampMillis = 2, payload = byteArrayOf(2)))
+        dao.insert(LogEntryRow(log = "activity", timestampMillis = 1, payload = byteArrayOf(1)))
+        val sameTime = dao.insert(LogEntryRow(log = "activity", timestampMillis = 2, payload = byteArrayOf(3)))
+        dao.insert(LogEntryRow(log = "network", timestampMillis = 1, payload = byteArrayOf(4)))
+
+        val first = dao.oldestAfter("activity", Long.MIN_VALUE, Long.MIN_VALUE, 2)
+        assertEquals(listOf(1, 2), first.map { it.payload.single().toInt() })
+        val rest = dao.oldestAfter("activity", first.last().timestampMillis, first.last().id, 2)
+        assertEquals(listOf(sameTime), rest.map { it.id })
+    }
 }

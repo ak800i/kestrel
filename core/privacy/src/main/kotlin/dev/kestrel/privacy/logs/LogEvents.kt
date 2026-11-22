@@ -2,9 +2,13 @@ package dev.kestrel.privacy.logs
 
 import kotlinx.serialization.Serializable
 
-/** What kind of activity-log entry this is (design spec, section 13.5). Later sub-projects add more kinds. */
+/**
+ * What kind of activity-log entry this is (design spec, section 13.5). The agent writes a model call's new part of the
+ * request ([PROMPT]), its reply with the usage and the cost ([REPLY]) and each safety decision ([SAFETY]) beside its
+ * actions, notes and errors (design D25 and D32 item 46 of sub-project 5).
+ */
 @Serializable
-enum class ActivityKind { ACTION, NOTE, ERROR }
+enum class ActivityKind { ACTION, NOTE, ERROR, PROMPT, REPLY, SAFETY }
 
 @Serializable
 data class ActivityEvent(

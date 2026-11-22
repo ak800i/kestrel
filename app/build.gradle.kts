@@ -27,6 +27,8 @@ dependencies {
     implementation(project(":core:voice"))
     // sub-project 5B: dependencies
     implementation(project(":core:datatools"))
+    // LogExportFileTest exports a store of its own, in a database in memory (design D32 item 47 of sub-project 5).
+    androidTestImplementation(libs.androidx.room.runtime)
     // sub-project 5C: dependencies
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)

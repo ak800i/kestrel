@@ -302,5 +302,9 @@
     <!-- Plan 3B strings -->
     <!-- Plan 3C strings -->
     <!-- sub-project 5B -->
+    <string name="logs_newest" tools:ignore="PluralsCandidate">Showing the newest %1$d entries.</string>
+    <string name="log_kind_prompt">Prompt</string>
+    <string name="log_kind_reply">Reply</string>
+    <string name="log_kind_safety">Safety decision</string>
     <!-- sub-project 5C -->
 </resources>
