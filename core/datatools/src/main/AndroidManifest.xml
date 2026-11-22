@@ -4,4 +4,17 @@
          module's own manifest; the app declares both permissions too. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <application>
+        <!-- list_notifications (design D9 of sub-project 5): Android binds it only after the owner gives notification access. -->
+        <service
+            android:name=".notifications.KestrelNotificationListener"
+            android:exported="true"
+            android:label="Kestrel"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
 </manifest>

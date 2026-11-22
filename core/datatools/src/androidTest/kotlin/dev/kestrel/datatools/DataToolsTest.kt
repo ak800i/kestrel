@@ -23,6 +23,7 @@ import android.provider.ContactsContract.RawContacts
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.kestrel.agent.port.AccessKind
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.MediaKinds
@@ -231,6 +232,13 @@ class DataToolsTest {
         assertEquals("waze://?q=Main%20Street%201&navigate=yes", waze.dataString)
         assertEquals(NavigationIntents.WAZE, waze.`package`)
         assertFalse(waze.hasCategory(Intent.CATEGORY_BROWSABLE))
+    }
+
+    @Test
+    fun theDataPortAsksForNotificationAccessThatThisPackageLacks() = runBlocking {
+        val port = AndroidDataPort(context, open = { false }, isAgentFree = { false })
+
+        assertEquals(DataResult.NeedsAccess(AccessKind.NOTIFICATIONS), port.listNotifications())
     }
 
     /** Adds a local calendar of the test account, as a sync adapter may, and returns its ID. */
