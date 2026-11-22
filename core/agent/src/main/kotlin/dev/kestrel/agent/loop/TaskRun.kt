@@ -690,6 +690,11 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         sent(confirmation, share = true, items = flow.count?.let { it.photos + it.videos } ?: 0, covered = false)
     }
 
+    /** Takes back the pending share of [flow]: a tap that only opened an e-mail's compose screen sent nothing yet (D14). */
+    fun forgetPendingShare(flow: ShareFlow) {
+        pendingShares -= flow.serial
+    }
+
     /**
      * A confirmed press that may not have worked (D32 item 29): it does not count as done, so it adds no "Sent to …" line
      * and no recipient, and the ledger says that the tap may not have worked (D24). A send stays among the confirmed

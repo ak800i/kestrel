@@ -93,7 +93,12 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
         val flow = run.safety.shareFlow
-        val done = perform(call, entry, proposal, fresh, category, confirmed = true, shareFlow = flow?.takeIf { yes.category == Category.SENDING })
+        val sharing = flow?.takeIf { yes.category == Category.SENDING }
+        // The share counts as tried from the moment the tap worked, so that a cancel while Kestrel waits for its chat still
+        // reports it, never "I didn't change anything" (D24).
+        val done = perform(call, entry, proposal, fresh, category, confirmed = true, shareFlow = sharing) {
+            sharing?.let { run.shareTapped(it, yes, ended = false) }
+        }
         when {
             // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press
             // of the share flow needs a new yes.
@@ -104,7 +109,8 @@ internal class ScreenSteps(private val run: TaskRun) {
             done.outcome is Outcome.Failed -> Unit
             // A tap that opened an e-mail's compose screen (a share sheet's mail app) sent nothing yet: the e-mail's own
             // Send is asked and counted (D14, D24).
-            yes.category == Category.SENDING && !SafetyCheck.showsEmailCompose(fresh) && done.after?.let(SafetyCheck::showsEmailCompose) == true -> Unit
+            yes.category == Category.SENDING && !SafetyCheck.showsEmailCompose(fresh) && done.after?.let(SafetyCheck::showsEmailCompose) == true ->
+                sharing?.let(run::forgetPendingShare)
             // A share is sent by the tap after which its flow ends, not by a tap that only picks a chat (D14, D24).
             flow != null && yes.category == Category.SENDING -> run.shareTapped(flow, yes, ended = run.safety.shareFlow?.serial != flow.serial)
             else -> run.sent(yes, share = false, items = 0, covered = covered)
@@ -254,6 +260,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         category: Category,
         confirmed: Boolean,
         shareFlow: ShareFlow? = null,
+        pressed: () -> Unit = {},
     ): Done {
         val revealed = (call as? AgentCall.TypeText)?.let { typed ->
             // A value of the vault that Kestrel types is named by its kind in every later question (D14, D17).
@@ -267,6 +274,7 @@ internal class ScreenSteps(private val run: TaskRun) {
             ?: return Done(call.tool, Outcome.Failed(NOTHING_TO_ACT_ON), entry, after = before)
         val outcome = run.ports.screen.act(action)
         if (!confirmed && category in WATCHED) run.unconfirmed++
+        if (outcome.done) pressed()
         val key = entry?.key ?: (action as? ScreenAction.Scroll)?.key ?: (action as? ScreenAction.Swipe)?.key
         val acted = proposal.copy(text = revealed ?: proposal.text)
         var after = run.fresh()

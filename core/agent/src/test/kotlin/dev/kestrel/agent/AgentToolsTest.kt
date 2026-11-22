@@ -323,6 +323,27 @@ class AgentToolsTest {
     }
 
     @Test
+    fun aShareCancelledWhileKestrelWaitsForItsChatIsReportedAsTried() = runTest {
+        val harness = shareHarness(call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"), stop)
+        // The row sends at once, and the owner's touch or "stop" cancels the task on the first read after the tap, while
+        // Kestrel waits for the chat (re-check of plan 5B's final fix round, part 1, N1).
+        var tapped = false
+        harness.screen.outcome = {
+            if (it is ScreenAction.Tap) tapped = true
+            ActionOutcome(done = true, method = "fake")
+        }
+        harness.screen.onSnapshot = { if (tapped) throw TaskCancellation(EndReason.CANCELLED) }
+        harness.owner.confirms += ConfirmEnd.YES
+
+        assertTrue(runCatching { harness.run("Send yesterday's photos to John on Telegram") }.exceptionOrNull() is TaskCancellation)
+
+        val report = harness.reports.single()
+        assertEquals(EndReason.CANCELLED, report.end)
+        assertTrue(report.sends.isEmpty())
+        assertTrue(report.ledger.toString(), report.ledger.contains("tried to share the items with John Smith, but I couldn't see that they were sent"))
+    }
+
+    @Test
     fun aShareToTwoChatsIsAskedOnceForTheTwo() = runTest {
         val harness = shareHarness(
             call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"),
