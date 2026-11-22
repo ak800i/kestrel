@@ -20,7 +20,7 @@ enum class TouchRule {
      */
     FIELD,
 
-    /** Also one touch per accepted click or long click of Kestrel's, within [OwnActions.CREDIT_MILLIS] after the call. */
+    /** Also one touch per click or long click of Kestrel's, accepted or refused, within [OwnActions.CREDIT_MILLIS] after it. */
     CREDITS,
 }
 
@@ -59,11 +59,11 @@ data class Touch(
 /**
  * Kestrel's own actions while the touch watcher runs (design D19 of sub-project 5): `ScreenActions` reports each node
  * action, gesture and settle wait here, and the watcher asks [classify] about each touch. With [TouchRule.CREDITS], each
- * click or long click ([ECHOING]) while the watcher runs holds one credit while its call runs; the first touch in that
- * time uses it and is Kestrel's, also when the app refuses the click, because Android 17 sends the echo before the app
- * answers. An accepted call keeps its unused credit until [CREDIT_MILLIS] after it returned; a refused call that had no
- * echo leaves no credit behind. Starting the watcher and [clear] forget every credit, so that an action made before can
- * never hide the owner's touch. [busy] tells `OwnerSignal` that Kestrel is acting or settling. Any thread may call it.
+ * click or long click ([ECHOING]) while the watcher runs creates one credit, which lives from the call until
+ * [CREDIT_MILLIS] after it returned; the first touch inside that time uses it and is Kestrel's. A refused click keeps its
+ * credit like an accepted one, because Android 17 echoes the click before the app answers, and the credit covers that
+ * echo. Starting the watcher and [clear] forget every credit, so that an action made before can never hide the owner's
+ * touch. [busy] tells `OwnerSignal` that Kestrel is acting or settling. Any thread may call it.
  */
 class OwnActions internal constructor(private val clock: () -> Long, private val sdk: Int) {
     enum class Kind { CLICK, LONG_CLICK, SCROLL, SET_TEXT, FOCUS, OTHER }
@@ -97,16 +97,19 @@ class OwnActions internal constructor(private val clock: () -> Long, private val
     /** Forgets every credit, as when a card shows or a question is asked (design D19 rule 3). */
     fun clear() = synchronized(lock) { credits.clear() }
 
-    /** Runs [perform], a node action of [kind], as Kestrel's own, and returns its answer. */
+    /**
+     * Runs [perform], a node action of [kind], as Kestrel's own, and returns its answer. A click's credit stays whether the
+     * app accepts or refuses it, because Android 17 echoes the click before the app answers; only a call that throws
+     * takes back its unused credit.
+     */
     internal fun node(kind: Kind, perform: () -> Boolean): Boolean {
         val credit = synchronized(lock) {
             acting++
             if (watching && kind in ECHOING && credits()) Credit().also { credits += it } else null
         }
-        var accepted = false
+        var returned = false
         try {
-            accepted = perform()
-            return accepted
+            return perform().also { returned = true }
         } finally {
             synchronized(lock) {
                 val now = clock()
@@ -114,7 +117,7 @@ class OwnActions internal constructor(private val clock: () -> Long, private val
                 quietFrom = maxOf(quietFrom, now + OWN_WINDOW_TAIL_MILLIS)
                 if (watching) lastNodeAction = now
                 if (credit != null) {
-                    if (!accepted && !credit.used) credits.remove(credit) else credit.until = now + CREDIT_MILLIS
+                    if (!returned && !credit.used) credits.remove(credit) else credit.until = now + CREDIT_MILLIS
                 }
             }
         }

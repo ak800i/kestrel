@@ -75,10 +75,22 @@ class OwnActionsRulesTest {
     }
 
     @Test
-    fun aRefusedClickAndTheKindsThatDoNotEchoGiveNoCredit() {
+    fun aRefusedClicksEchoAfterTheCallReturnedIsKestrels() {
+        val own = own()
+        // Android 17 echoes the click before the app answers, so a refused click keeps its credit like an accepted one.
+        assertFalse(own.node(OwnActions.Kind.CLICK) { false })
+        now += 1
+
+        val echo = touch(own)
+        assertFalse(echo.owner)
+        assertTrue(echo.credited)
+        assertTrue(touch(own).owner)
+    }
+
+    @Test
+    fun theKindsThatDoNotEchoGiveNoCredit() {
         val own = own()
 
-        own.node(OwnActions.Kind.CLICK) { false }
         own.node(OwnActions.Kind.SCROLL) { true }
         own.node(OwnActions.Kind.SET_TEXT) { true }
         own.node(OwnActions.Kind.FOCUS) { true }
