@@ -1,6 +1,7 @@
 package dev.kestrel.screen.act
 
 import android.view.accessibility.AccessibilityNodeInfo
+import dev.kestrel.screen.model.ScrollAxis as ElementAxis
 
 /** Which way to scroll. "Down" shows what is further down, as in Voice Access. */
 enum class ScrollDirection { UP, DOWN, LEFT, RIGHT }
@@ -90,5 +91,35 @@ internal object ScrollActions {
         ScrollAxis.BOTH -> true
         ScrollAxis.HORIZONTAL -> !direction.isVertical
         ScrollAxis.VERTICAL, ScrollAxis.UNKNOWN -> direction.isVertical
+    }
+
+    /** The axis that a snapshot's element shows (design D1 and D8 of sub-project 5): none for both ways or an unknown one. */
+    fun elementAxis(axis: ScrollAxis): ElementAxis? = when (axis) {
+        ScrollAxis.VERTICAL -> ElementAxis.VERTICAL
+        ScrollAxis.HORIZONTAL -> ElementAxis.HORIZONTAL
+        ScrollAxis.BOTH, ScrollAxis.UNKNOWN -> null
+    }
+}
+
+/**
+ * Firefox's web pages (design D11 of sub-project 5; research r57, Appendix B62). Gecko lists no scroll action on the
+ * nodes inside a page; its page root, of the class [WEB_ROOT], scrolls the whole page by 0.8 of its height with the
+ * forward and backward actions, and a node's long click does nothing although it answers true.
+ */
+internal object FirefoxPages {
+    val PACKAGES = setOf("org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix")
+
+    /** The class of Gecko's page root, compared as a string: the audit flags the class itself (design D1). */
+    const val WEB_ROOT = "android.webkit.WebView"
+
+    /**
+     * The page root's action that scrolls a page's node in [direction], or null when only a swipe can: sideways, and
+     * inside a scrollable region of the page ([inRegion]), whose scroll the root's action would not do.
+     */
+    fun rootAction(direction: ScrollDirection, inRegion: Boolean): Int? = when {
+        inRegion -> null
+        direction == ScrollDirection.DOWN -> AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        direction == ScrollDirection.UP -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        else -> null
     }
 }

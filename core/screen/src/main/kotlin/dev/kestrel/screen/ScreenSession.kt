@@ -306,6 +306,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** Kestrel's accessibility service passes every event here. */
     fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (ScreenEvents.isNotification(event.eventType)) return
         val window = windowEvents.movesWindow(event.eventType, event.packageName, event.className, event.windowId, event.windowChanges)
         if (window || ScreenEvents.changesScreen(event.eventType)) tracker.onScreenChanged(if (window) event.windowId else null)
         signalOwner(event)

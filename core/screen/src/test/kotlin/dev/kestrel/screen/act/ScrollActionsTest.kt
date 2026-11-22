@@ -62,4 +62,20 @@ class ScrollActionsTest {
         assertFalse(ScrollActions.movesAlong(ScrollAxis.HORIZONTAL, ScrollDirection.DOWN))
         assertTrue(ScrollActions.movesAlong(ScrollAxis.BOTH, ScrollDirection.LEFT))
     }
+
+    @Test
+    fun anElementShowsOnlyAKnownSingleAxis() {
+        assertEquals(dev.kestrel.screen.model.ScrollAxis.VERTICAL, ScrollActions.elementAxis(ScrollAxis.VERTICAL))
+        assertEquals(dev.kestrel.screen.model.ScrollAxis.HORIZONTAL, ScrollActions.elementAxis(ScrollAxis.HORIZONTAL))
+        assertEquals(null, ScrollActions.elementAxis(ScrollAxis.BOTH))
+        assertEquals(null, ScrollActions.elementAxis(ScrollAxis.UNKNOWN))
+    }
+
+    @Test
+    fun aFirefoxPageScrollsWithItsRootAndARegionOfItWithASwipe() {
+        assertEquals(forward, FirefoxPages.rootAction(ScrollDirection.DOWN, inRegion = false))
+        assertEquals(backward, FirefoxPages.rootAction(ScrollDirection.UP, inRegion = false))
+        assertEquals(null, FirefoxPages.rootAction(ScrollDirection.DOWN, inRegion = true))
+        assertEquals(null, FirefoxPages.rootAction(ScrollDirection.RIGHT, inRegion = false))
+    }
 }

@@ -127,6 +127,8 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
             password = node.password,
             dataSensitive = node.dataSensitive,
             slider = node.slider,
+            tooltip = Labels.clean(node.tooltip),
+            scrollAxis = node.scrollAxis,
         )
     }
 

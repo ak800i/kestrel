@@ -210,4 +210,19 @@ class SnapshotBuilderTest {
         assertFalse(live.inPlace(setOf(5)) { if (it === banner) IntRect(0, 140, 1080, 440) else it.bounds })
         assertFalse("A node that is gone has moved", live.inPlace(setOf(5)) { null })
     }
+
+    @Test
+    fun anElementKeepsItsTooltipAndItsScrollAxis() {
+        val list = FakeNode(
+            className = "androidx.recyclerview.widget.RecyclerView",
+            scrollable = true,
+            scrollAxis = dev.kestrel.screen.model.ScrollAxis.HORIZONTAL,
+            children = listOf(FakeNode(contentDescription = "Share", tooltip = "Share with a friend", clickable = true)),
+        )
+
+        val elements = build(FakeWindow(list)).snapshot.elements
+
+        assertEquals(dev.kestrel.screen.model.ScrollAxis.HORIZONTAL, elements.single { it.scrollable }.scrollAxis)
+        assertEquals("Share with a friend", elements.single { it.clickable }.tooltip)
+    }
 }

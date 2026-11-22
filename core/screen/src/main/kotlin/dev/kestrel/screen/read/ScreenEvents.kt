@@ -21,4 +21,10 @@ object ScreenEvents {
             AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
 
     fun changesScreen(eventType: Int): Boolean = eventType and NOT_SCREEN_CHANGES == 0
+
+    /**
+     * A notification's event, which carries the whole notification unredacted on every Android version (r54): Kestrel
+     * reads nothing of it but its type (design D9 of sub-project 5; Appendix B61).
+     */
+    fun isNotification(eventType: Int): Boolean = eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
 }

@@ -2,6 +2,7 @@ package dev.kestrel.screen.read
 
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScrollAxis
 import dev.kestrel.screen.model.WindowKind
 
 /** A node for tests on the PC. Each property has the value of a plain, visible, enabled view. */
@@ -29,6 +30,8 @@ class FakeNode(
     override val dataSensitive: Boolean = false,
     override val slider: Boolean = false,
     override val actions: Set<ElementAction> = emptySet(),
+    override val tooltip: String? = null,
+    override val scrollAxis: ScrollAxis? = null,
     val children: List<FakeNode> = emptyList(),
 ) : NodeData {
     override val childCount: Int get() = children.size

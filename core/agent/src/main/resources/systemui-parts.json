@@ -8,9 +8,9 @@
       "notificationClasses": []
     },
     "kestrel-api37": {
-      "tileIds": [],
+      "tileIds": ["qs_tile_large", "qs_tile_toggle_target", "qs_tile_small"],
       "tileClasses": [],
-      "notificationIds": [],
+      "notificationIds": ["expandableNotificationRow"],
       "notificationClasses": []
     },
     "a71": {

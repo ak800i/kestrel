@@ -2,6 +2,7 @@ package dev.kestrel.screen.read
 
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScrollAxis
 import dev.kestrel.screen.model.WindowKind
 
 /** What a snapshot reads from one accessibility node. Android's nodes and the tests' fake nodes provide it. */
@@ -40,6 +41,12 @@ interface NodeData {
      */
     val slider: Boolean
     val actions: Set<ElementAction>
+
+    /** The node's tooltip, the last of a label's sources (design D8 of sub-project 5). */
+    val tooltip: String? get() = null
+
+    /** The axis of a scrollable node, or null when Kestrel cannot tell it (design D1 and D8 of sub-project 5). */
+    val scrollAxis: ScrollAxis? get() = null
     val childCount: Int
 
     fun child(index: Int): NodeData?

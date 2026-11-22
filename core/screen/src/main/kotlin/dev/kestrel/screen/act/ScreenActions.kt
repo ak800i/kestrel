@@ -135,6 +135,15 @@ class ScreenActions internal constructor(
         }
         if (key != null && element != null && expected?.invoke(element) == false) return ActionResult.CHANGED
         val node = element?.let { live.node(it.key) ?: return NOT_ON_SCREEN }
+        val page = node?.firefoxPage(element?.packageName)
+        if (node != null && page != null) {
+            // Inside a Firefox page, the root's action scrolls the whole page, and a region of the page needs a swipe (r57).
+            val region = node.selfOrParent { it.isScrollable }?.node.let { it != null && it != page }
+            val action = FirefoxPages.rootAction(direction, region)
+            if (action != null && page.perform(action, kind = OwnActions.Kind.SCROLL)) {
+                return settled(if (page == node) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
+            }
+        }
         val target = node?.selfOrParent { it.scrollAction(direction) != null }
         val action = target?.node?.scrollAction(direction)
         if (target != null && action != null && target.node.perform(action, kind = OwnActions.Kind.SCROLL)) {
@@ -460,6 +469,11 @@ class ScreenActions internal constructor(
         refused(live.snapshot, key, expected)?.let { return it }
         val node = live.node(key) ?: return NOT_ON_SCREEN
         val windowId = live.snapshot.element(key)?.windowId
+        // Gecko's long click does nothing and answers true (r57), so a long press on a Firefox page is a gesture.
+        if (action == AccessibilityNodeInfo.ACTION_LONG_CLICK && node.firefoxPage(live.snapshot.element(key)?.packageName) != null) {
+            val bounds = node.screenBounds()
+            if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback))
+        }
         val target = node.touchTarget(action)
         if (target != null && !target.node.isEnabled) return DISABLED
         if (target != null && target.node.offers(action)) {
@@ -673,6 +687,10 @@ class ScreenActions internal constructor(
         ScrollActions.movesAlong(scrollAxis(offeredActions()), direction)
 
     private fun AccessibilityNodeInfo.offeredActions(): Set<Int> = actionList.mapTo(HashSet()) { it.id }
+
+    /** The root of the Firefox page that holds this node of [packageName]'s window, or null outside Firefox's pages. */
+    private fun AccessibilityNodeInfo.firefoxPage(packageName: String?): AccessibilityNodeInfo? =
+        if (packageName in FirefoxPages.PACKAGES) selfOrParent { it.className?.toString() == FirefoxPages.WEB_ROOT }?.node else null
 
     private fun AccessibilityNodeInfo.scrollAxis(offered: Set<Int>): ScrollAxis =
         ScrollActions.axis(offered, className?.toString(), collectionInfo?.rowCount, collectionInfo?.columnCount)

@@ -5,8 +5,10 @@ import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import android.view.accessibility.AccessibilityWindowInfo
+import dev.kestrel.screen.act.ScrollActions
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScrollAxis
 import dev.kestrel.screen.model.WindowKind
 
 /** Reads a snapshot's data from one of Android's accessibility nodes. */
@@ -35,6 +37,14 @@ internal class AccessibilityNodeData(val info: AccessibilityNodeInfo) : NodeData
     override val slider: Boolean
         get() = info.isEnabled && info.rangeInfo != null && info.actionList.any { it.id in SLIDER_ACTIONS }
     override val actions: Set<ElementAction> get() = info.actionList.mapNotNullTo(mutableSetOf()) { STANDARD_ACTIONS[it.id] }
+    override val tooltip: String? get() = info.tooltipText?.toString()
+    override val scrollAxis: ScrollAxis?
+        get() = if (!info.isScrollable) {
+            null
+        } else {
+            val offered = info.actionList.mapTo(HashSet()) { it.id }
+            ScrollActions.elementAxis(ScrollActions.axis(offered, className, info.collectionInfo?.rowCount, info.collectionInfo?.columnCount))
+        }
     override val childCount: Int get() = info.childCount
 
     override fun child(index: Int): NodeData? = info.getChild(index)?.let(::AccessibilityNodeData)
