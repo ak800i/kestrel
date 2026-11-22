@@ -12,7 +12,8 @@ import org.junit.Test
 
 /**
  * The hook agent-live of plan 5C (design D28): it opens and closes the live session of sitting 2, in which a task sent
- * with live=true may call the owner's provider. The test puts back the setting that the device had.
+ * with live=true may call the owner's provider; and agent-approvals, with which sitting 2 revokes the screenshot approvals
+ * that it stored. The tests put back the settings that the device had.
  */
 class AgentLiveHookTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -33,6 +34,30 @@ class AgentLiveHookTest {
         } finally {
             graph.settings.set(SettingKeys.AGENT_LIVE_SESSION, before)
         }
+    }
+
+    @Test
+    fun agentApprovalsRevokesOnlyTheNamedAppsApprovals() = runBlocking {
+        val before = graph.settings.get(SettingKeys.SCREENSHOT_APPROVALS)
+        try {
+            graph.settings.set(SettingKeys.SCREENSHOT_APPROVALS, dev.kestrel.app.agent.eyes.ScreenshotApprovalList())
+            graph.screenshotApprovals.approve("dev.kestrel.testapp", "copilot")
+            graph.screenshotApprovals.approve("dev.kestrel.testapp", "other")
+            graph.screenshotApprovals.approve("org.example.kept", "copilot")
+            // Without a package it only counts.
+            assertEquals("approvals=3 revoked=0", approvals(null))
+            assertEquals("approvals=1 revoked=2", approvals("dev.kestrel.testapp"))
+            assertTrue(graph.screenshotApprovals.approved("org.example.kept", "copilot"))
+            assertEquals("approvals=1 revoked=0", approvals("dev.kestrel.testapp"))
+        } finally {
+            graph.settings.set(SettingKeys.SCREENSHOT_APPROVALS, before)
+        }
+    }
+
+    private suspend fun approvals(revoke: String?): String {
+        val intent = Intent(TestHooks.ACTION_PREFIX + "AGENT_APPROVALS")
+        if (revoke != null) intent.putExtra("revoke", revoke)
+        return TestHooks(graph, context).run(intent).text
     }
 
     private suspend fun hook(on: Boolean?, model: String? = null): String {

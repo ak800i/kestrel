@@ -259,6 +259,8 @@
 #                                           the owner's provider, and answers live=on|off; only a71-agent.ps1 opens it;
 #                                           with -Model it adds model=listed|unlisted: whether the default profile's own
 #                                           model list holds that ID
+#   agent-approvals [-Revoke package]       the number of stored screenshot approvals, after revoking every one of that
+#                                           app's (design D20); answers approvals=<n> revoked=<n>, never a name
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -276,7 +278,7 @@ param(
         'agent-task', 'agent-answer', 'agent-script', 'agent-state', 'agent-cache', 'agent-touch-source', 'agent-settings',
         'agent-memory', 'agent-data', 'selfchat-check', 'agent-tree', 'screen-tap',
         # sub-project 5C: live hook names
-        'agent-live',
+        'agent-live', 'agent-approvals',
         'clipboard')][string]$Command,
     [string]$Key,
     [int]$Number,
@@ -350,6 +352,7 @@ param(
     [switch]$Remove,
     [ValidateSet('list_sms', 'list_calls', 'find_media', 'list_notifications')][string]$Tool,
     # sub-project 5C: live parameters
+    [string]$Revoke,
     [switch]$Restore
 )
 $ErrorActionPreference = 'Stop'
@@ -463,6 +466,7 @@ if ($Add) { $extras += '--ez add true' }
 if ($Remove) { $extras += '--ez remove true' }
 if ($Tool) { $extras += "--es tool $($Tool.ToLowerInvariant())" }
 # sub-project 5C: live extras
+if ($Revoke) { $extras += "--es revoke $(ConvertTo-ShellText $Revoke)" }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"

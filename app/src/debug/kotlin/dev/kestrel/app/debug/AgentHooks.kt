@@ -44,6 +44,15 @@ internal class AgentHooks(private val graph: AppGraph, private val context: Cont
                 "$live model=${if (listed) "listed" else "unlisted"}"
             }
         }
+        // The screenshot approvals (design D20): with --es revoke, a71-agent.ps1 revokes those of one app, which its
+        // sitting 2 stored, and keeps the owner's others; the answer holds only counts.
+        "AGENT_APPROVALS" -> {
+            val revoke = intent.getStringExtra("revoke")
+            val stored = graph.settings.get(dev.kestrel.app.SettingKeys.SCREENSHOT_APPROVALS).approvals
+            val chosen = if (revoke == null) emptyList() else stored.filter { it.packageName == revoke }
+            chosen.forEach { graph.screenshotApprovals.revoke(it) }
+            "approvals=${graph.settings.get(dev.kestrel.app.SettingKeys.SCREENSHOT_APPROVALS).approvals.size} revoked=${chosen.size}"
+        }
         else -> throw HookError("unknown agent hook")
     }
 
@@ -53,7 +62,7 @@ internal class AgentHooks(private val graph: AppGraph, private val context: Cont
             "AGENT_TASK", "AGENT_ANSWER", "AGENT_SCRIPT", "AGENT_STATE", "AGENT_CACHE", "AGENT_TOUCH_SOURCE", "AGENT_SETTINGS",
             "AGENT_MEMORY", "AGENT_DATA", "SELFCHAT_CHECK", "AGENT_TREE", "SCREEN_TAP",
             // sub-project 5C: commands
-            "AGENT_LIVE",
+            "AGENT_LIVE", "AGENT_APPROVALS",
         )
     }
 }

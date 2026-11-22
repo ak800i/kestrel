@@ -5,12 +5,19 @@
 # kestrel-api37, sets Waze's Home on both devices and touches the A71's screen once (about 10 to 25 minutes of his
 # hands); then, without him, the script prepares the devices, runs the A71's device tests, probes the hotspot, records the
 # structure of the self-chats, the pickers and SystemUI, and plays the speech checks of scripts\lib\AgentChecks.ps1
-# through this computer's speakers. Sitting 2 (plan 5C's Task 10) runs the live tasks with the owner's Copilot. Each
-# sitting is one call with -Sitting 1 or 2; -Step runs only the named steps, also as one text separated by commas.
+# through this computer's speakers. Sitting 2 calls the owner's Copilot: the owner signs Kestrel in to Copilot on
+# kestrel-api37 (and on the A71 when sitting 1's device tests deleted its profile; 3 to 6 minutes of his hands), and then,
+# without him, the script prepares both devices again, opens the devices' live sessions (hook agent-live) and runs
+# scripts\task-check.ps1 -Live for the six tasks of design D3 on the A71 and the emulator's tasks on kestrel-api37, 3 runs
+# each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
+# it stops when the sitting's AI Credits reach 150. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
+# named steps, also as one text separated by commas.
 # The A71's test PIN is typed only by Unlock-TestPhone (scripts\lib\Session.ps1), which alone reads the key "pin" of
 # corpus\owner\a71-config.json; this script reads the file only through Read-A71Config, which leaves the key out. The
 # script also needs the keys whatsappOwnName, gmailAddress, homePlace, testLocation ("<latitude>,<longitude>") and
-# testStreet. It refuses every device but the A71 and kestrel-api37, keeps its results in corpus\owner (which git
+# testStreet; sitting 2 also reads emulatorGmailAddress, the test account's address on kestrel-api37, for the e-mail
+# task there, which it skips without it. It refuses every device but the A71 and kestrel-api37, keeps its results in
+# corpus\owner (which git
 # ignores), and never prints a prompt, a reply, screen text, a message, an e-mail, a notification or a word that Kestrel
 # heard: the hooks answer only counts, kinds, states and hashes. Every change is registered with its restore before it is
 # made, and the restores run however the sitting ends (its end, q, Ctrl+C, an error); the last lines name what could not
@@ -28,7 +35,10 @@
 param(
     [string]$Serial,
     [string]$EmulatorSerial = 'emulator-5554',
-    [ValidateSet('1')][string]$Sitting = '1',
+    [ValidateSet('1', '2')][string]$Sitting = '1',
+    # The lightweight model of sitting 2's comparison (design D32 item 35), as Copilot names it. Plan 4D's providers run
+    # passed GPT-6 Luna, GPT-6.1 Terra and Gemini 3.8 Flash on both devices and got 404 for Claude Haiku 5.5.
+    [string]$CompareModel = 'gemini-3.8-flash',
     [switch]$DryRun,
     [switch]$LockHeld,
     [string[]]$Step
@@ -45,6 +55,7 @@ Use-KestrelToolchain
 
 $stepNames = @{
     '1' = @('prepare', 'owner', 'setup', 'device-tests', 'hotspot', 'recordings', 'speech', 'end')
+    '2' = @('owner', 'prepare', 'a71-runs', 'emulator-runs', 'compare', 'look-closer', 'injection', 'cache', 'end')
 }
 
 # The names of -Step, also as one text separated by commas, as pwsh -File passes them; an unknown name stops the script.
@@ -137,6 +148,92 @@ function Get-BoundsCentre([string]$Bounds) {
     "$([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))"
 }
 
+# A run's line of scripts\task-check.ps1 in the results file ('<time><tab><step><tab>task=<name> run=<i> result=...'), as
+# an ordered table, or $null for another line.
+function ConvertFrom-TaskLine([string]$Line) {
+    $text = ("$Line" -split "`t")[-1]
+    if ($text -notmatch '^task=\S+ run=\d+ ') { return $null }
+    ConvertFrom-HookPairs $text
+}
+
+# The AI Credits of the runs' lines, in the invariant culture.
+function Get-CreditTotal([object[]]$Runs) {
+    $total = 0.0
+    foreach ($run in $Runs) {
+        if ($run -and "$($run['credits'])" -match '^\d+(\.\d+)?$') { $total += [double]::Parse($run['credits'], [Globalization.CultureInfo]::InvariantCulture) }
+    }
+    $total
+}
+
+# The first name for a test variant (design D30 step 16; review C3-M5): $Default when the owner's Telegram chat list has
+# no row with it ($Rows: name to the count that screen-has found), else the first of Mira, Zora, Ivo and Teo that has no
+# row and is not in $Taken; $null when every name has a row.
+function Select-TestName([string]$Default, [hashtable]$Rows, [string[]]$Taken = @()) {
+    foreach ($name in @($Default, 'Mira', 'Zora', 'Ivo', 'Teo')) {
+        if ($name -notin $Taken -and [int]$Rows[$name] -eq 0) { return $name }
+    }
+    $null
+}
+
+# The share of input tokens that each model read from the cache (design D5), from the runs' lines: one text per model,
+# with the model's ID, its tokens and the share in percent.
+function Get-CacheShares([object[]]$Runs) {
+    $models = [ordered]@{}
+    foreach ($run in $Runs) {
+        if (-not $run -or "$($run['model'])" -in '', 'none') { continue }
+        $model = "$($run['model'])"
+        if (-not $models.Contains($model)) { $models[$model] = [pscustomobject]@{ Model = $model; Input = 0L; CacheRead = 0L } }
+        $models[$model].Input += [long]$run['in']
+        $models[$model].CacheRead += [long]$run['cacheRead']
+    }
+    foreach ($entry in $models.Values) {
+        $share = if ($entry.Input -gt 0) { [math]::Round(100.0 * $entry.CacheRead / $entry.Input, 1) } else { 0 }
+        [pscustomobject]@{ Model = $entry.Model; Input = $entry.Input; CacheRead = $entry.CacheRead; Share = $share }
+    }
+}
+
+# The cache fields of agent-cache that a Copilot model uses (design D5): the explicit fields of /responses for OpenAI's
+# models, the markers of /chat/completions and /messages for Claude, and none for Gemini, which caches only implicitly.
+function Get-CacheFields([string]$Model) {
+    if ($Model -match '^(gpt|o\d)') { return @('responsesExplicit') }
+    if ($Model -match '^claude') { return @('chatCopilotMarks', 'anthropicMarks') }
+    @()
+}
+
+# The task of scripts\task-check.ps1 that a dry run runs instead of a live task, with its script; $null when the live
+# task has no stand-in, as Waze.
+function Get-StandInTask([string]$Task) {
+    $map = @{
+        'telegram-late' = 'stand-in-messenger-late'; 'telegram-photos' = 'stand-in-messenger-photos'; 'read-email' = 'stand-in-read'
+        'hotspot' = 'stand-in-hotspot'; 'firefox-wiki' = 'stand-in-firefox'
+    }
+    if ($Task -match '^inject-\d{2}$') { return [pscustomobject]@{ Task = $Task; Script = 'tasks\hostile.json' } }
+    if (-not $map.ContainsKey($Task)) { return $null }
+    [pscustomobject]@{ Task = $map[$Task]; Script = "tasks\$($map[$Task]).json" }
+}
+
+# A number with at most $Digits decimals, in the invariant culture, for the results.
+function Format-Number([double]$Value, [int]$Digits = 1) { [math]::Round($Value, $Digits).ToString([Globalization.CultureInfo]::InvariantCulture) }
+
+# One line per task and model of the runs, for design D32 item 35's comparison: the runs that passed of those that ran,
+# the mean steps and working time, and the AI Credits in all.
+function Get-RunSummary([object[]]$Runs) {
+    $groups = [ordered]@{}
+    foreach ($run in $Runs) {
+        if (-not $run) { continue }
+        $key = "$($run['task']) $($run['model'])"
+        if (-not $groups.Contains($key)) { $groups[$key] = [System.Collections.Generic.List[object]]::new() }
+        $groups[$key].Add($run)
+    }
+    foreach ($list in $groups.Values) {
+        $ran = @($list | Where-Object { $_['result'] -ne 'skipped' })
+        $passed = @($list | Where-Object { $_['result'] -eq 'pass' }).Count
+        $steps = if ($ran) { (@($ran | ForEach-Object { [double]$_['steps'] }) | Measure-Object -Average).Average } else { 0 }
+        $seconds = if ($ran) { (@($ran | ForEach-Object { [double]$_['workMs'] / 1000 }) | Measure-Object -Average).Average } else { 0 }
+        "task=$($list[0]['task']) model=$($list[0]['model']) passed=$passed of $($ran.Count) steps=$(Format-Number $steps) seconds=$(Format-Number $seconds) credits=$(Format-Number (Get-CreditTotal $list) 2)"
+    }
+}
+
 $Step = @(Get-SessionSteps -Step $Step -Names $stepNames[$Sitting])
 if ($DryRun -and $Serial -and $Serial -notlike 'emulator-*') { throw 'A dry run runs only on the emulator kestrel-api37.' }
 if (-not $DryRun -and -not $Serial) { throw 'Give the A71''s serial with -Serial.' }
@@ -154,7 +251,7 @@ $gradleUsed = $false
 # a dry run uses a fake configuration and never opens the owner's file.
 $pinConfig = if ($DryRun) { $null } else { Join-Path $owner 'a71-config.json' }
 $config = if ($DryRun) {
-    [pscustomobject]@{ SpeakerTargetDb = -26.0; whatsappOwnName = 'Test Owner'; gmailAddress = 'kestrel.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Test Street' }
+    [pscustomobject]@{ SpeakerTargetDb = -26.0; whatsappOwnName = 'Test Owner'; gmailAddress = 'kestrel.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Test Street'; emulatorGmailAddress = 'kestrel.test@example.com' }
 } else {
     Get-AgentConfig $pinConfig
 }
@@ -163,6 +260,18 @@ $lockFile = Join-Path $PSScriptRoot '..\.superpowers\sdd\emulator.lock'
 $lockTaken = $false
 # "Stay awake" of each device as it was before the sitting changed it.
 $stayOn = [ordered]@{}
+# Sitting 2: the AI Credits that its runs spent, and its ceiling (Q5), at which the sitting stops; the first names of
+# the test variants (design D30 step 16); and whether Gmail on the A71 shows the address of gmailAddress.
+$credits = 0.0
+$creditCeiling = 150
+$ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
+$testNames = @{ Ana = 'Ana'; John = 'John' }
+$gmailChecked = $false
+# A call with -Step after a stop counts on from the AI Credits that the earlier calls of this sitting 2 kept in the
+# record (Q5); the step owner, with which a sitting 2 starts, sets them to 0.
+$savedCredits = (Read-AgentRecord $recordFile).sitting2Credits
+if ($Sitting -eq '2' -and $null -ne $savedCredits) { $credits = [double]$savedCredits }
+$compareRefused = "The owner's Copilot account does not list the model $CompareModel, so the comparison does not run; give -CompareModel one of the models that Kestrel's page ""Providers and profiles"" shows for the Copilot profile."
 # Whether a dry run registered the restore of kestrel-api37's touch rule and branch (Register-TouchSourceRestore).
 $touchSourceSaved = $false
 
@@ -1027,7 +1136,393 @@ function Invoke-EndStep {
     Add-Result end "the record for sitting 2: touch branch $(if ($record.touchBranch) { $record.touchBranch } else { 'A' }), rule $(if ($record.touchRule) { $record.touchRule } else { 'the default' }), hotspot $(if ($record.hotspot) { $record.hotspot } else { 'not probed' }), Waze on the A71 $(if ($record.wazeA71) { $record.wazeA71 } else { 'not checked' }), WhatsApp's own chat $(if ($record.whatsappSelfChat) { $record.whatsappSelfChat } else { 'not recorded' }); the Play Store on kestrel-api37 stays disabled until the end of sitting 2"
 }
 
-# Sitting 2's steps (plan 5C's Task 10).
+# Sitting 2's steps (design D30 steps 14 to 23).
+
+# Runs scripts\task-check.ps1 for a task on a device: -Live in a real sitting, or the task's stand-in with its scripted
+# model in a dry run (one run), so that no request reaches a provider. The runs' lines go into this sitting's results
+# file, from which they are read back; their AI Credits are added, and the sitting stops at its ceiling. Returns the
+# runs' lines as tables.
+function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int]$Runs = 3, [hashtable]$With = @{}) {
+    $arguments = @{ Serial = $Device; Task = $Task; Runs = $Runs; Results = $resultsFile } + $With
+    if ($DryRun) {
+        $standIn = Get-StandInTask $Task
+        if (-not $standIn) {
+            Add-Result $StepName "$Task on $(Get-DeviceName $Device): skipped in a dry run, because it has no stand-in"
+            return @()
+        }
+        $arguments.Task = $standIn.Task
+        $arguments.Script = Join-Path $PSScriptRoot $standIn.Script
+        $arguments.Runs = 1
+        $arguments.Remove('Mail')
+    } else {
+        $arguments.Live = $true
+    }
+    Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device), $($arguments.Runs) runs"
+    $before = @(Get-Content -LiteralPath $resultsFile).Count
+    # A task whose setup or check fails is recorded, and the step goes on with its next task (design D27).
+    try {
+        & "$PSScriptRoot\task-check.ps1" @arguments | Out-Host
+    } catch {
+        Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+    }
+    # PowerShell's names ignore case, so this list may not be called $runs, which is the parameter -Runs.
+    $lines = @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | ForEach-Object { ConvertFrom-TaskLine $_ } | Where-Object { $_ })
+    $script:credits += Get-CreditTotal $lines
+    Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
+    Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): $(@($lines | Where-Object { $_['result'] -eq 'pass' }).Count) of $($lines.Count) runs passed; the sitting's AI Credits so far: $(Format-Number $script:credits 2)"
+    if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
+    $lines
+}
+
+# The runs' lines of this sitting so far, read from its results file, each with the device of the line
+# '<task> on <device>, <n> runs' that Invoke-TaskRuns writes before them.
+function Get-SittingRuns {
+    $device = 'none'
+    @(foreach ($line in Get-Content -LiteralPath $resultsFile) {
+            if ("$line" -match "`t\S+ on (the A71|kestrel-api37), \d+ runs$") {
+                $device = $Matches[1]
+                continue
+            }
+            $run = ConvertFrom-TaskLine $line
+            if ($run) {
+                $run['device'] = $device
+                $run
+            }
+        })
+}
+
+# Whether the default profile on kestrel-api37 lists the comparison's model in the model list that the owner's
+# Copilot account sent at the sign-in (hook agent-live -Model).
+function Test-CompareModel {
+    (ConvertFrom-HookPairs (Invoke-DeviceHook $EmulatorSerial agent-live @{ Model = $CompareModel }))['model'] -eq 'listed'
+}
+
+# Install-AgentScript (scripts\lib\AgentChecks.ps1), which installs on the caller's $Serial, on the device $Serial.
+function Install-AgentScriptOn([string]$Serial, [string]$Name, [object[]]$Replies) {
+    Write-Verbose "The scripted model goes to $Serial."
+    Install-AgentScript -Name $Name -Replies $Replies
+}
+
+# Waits for the end of a live task that the step sent with its tag, at most $Seconds: the screenshot question (FREE) gets
+# $Answer through agent-answer, and any other question "cancel". Returns the task's last answer and how often the
+# screenshot question came; a task that still runs at the end is stopped.
+function Wait-LiveTask([string]$Serial, [string]$Tag, [string]$Answer, [int]$Seconds = 600) {
+    $asked = 0
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+        $result = try { ConvertFrom-AgentTaskResult (Invoke-DeviceHook $Serial agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+        if ($result -and $result['state'] -eq 'done') { return [pscustomobject]@{ Result = $result; Asked = $asked; Stopped = $null } }
+        $state = try { ConvertFrom-HookPairs (Invoke-DeviceHook $Serial agent-state @{ Tag = $Tag }) } catch { $null }
+        if ($state -and $state['asking'] -eq 'free') {
+            $asked++
+            Invoke-DeviceHook $Serial agent-answer @{ Tag = $Tag; Answer = $Answer } | Out-Null
+        } elseif ($state -and $state['asking'] -notin '', 'none') {
+            Invoke-DeviceHook $Serial agent-answer @{ Tag = $Tag; Answer = 'cancel' } | Out-Null
+        }
+        Start-Sleep -Seconds 1
+    }
+    Stop-SpeechTask $Tag
+    # A task that the step stopped spent AI Credits too, which count towards the sitting's ceiling (Q5).
+    $stopped = $null
+    for ($try = 0; $try -lt 10 -and -not $stopped; $try++) {
+        Start-Sleep -Seconds 1
+        $last = try { ConvertFrom-AgentTaskResult (Invoke-DeviceHook $Serial agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+        if ($last -and $last['state'] -eq 'done') { $stopped = $last }
+    }
+    [pscustomobject]@{ Result = $null; Asked = $asked; Stopped = $stopped }
+}
+
+# Revokes the screenshot approvals of the OCR fixture's app (design D20, D26), which look_closer's runs may have stored
+# with "always for this app", through the hook agent-approvals, so that the owner's other approvals stay. Returns whether
+# no more approvals are left than the $Before that the device had before the step.
+function Revoke-ScreenshotApprovals([string]$Device, [int]$Before) {
+    Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+    Start-Sleep -Seconds 2
+    $answer = ConvertFrom-HookPairs (Invoke-DeviceHook $Device agent-approvals @{ Revoke = 'dev.kestrel.testapp' })
+    Invoke-Device $Device 'input keyevent KEYCODE_HOME' | Out-Null
+    [int]$answer['approvals'] -le $Before
+}
+
+# Design D30 step 14: the owner signs Kestrel in to Copilot on kestrel-api37, and on the A71 when sitting 1's device
+# tests deleted its profile there. The restore that deletes the emulator's Copilot profile through the hook
+# provider-delete is registered first, so that every way in which the sitting ends deletes it (review C I6).
+function Invoke-OwnerStep2 {
+    Register-Restore 'the owner''s Copilot profile on kestrel-api37' 'On kestrel-api37, the emulator''s window, use the mouse: Kestrel''s settings > Providers and profiles > the Copilot profile > Delete profile > Delete.' $EmulatorSerial {
+        param($Device)
+        Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+        Start-Sleep -Seconds 3
+        $answer = ConvertFrom-HookPairs (Invoke-DeviceHook $Device provider-delete)
+        if ($answer['copilot'] -ne '0') { throw 'a Copilot profile is left' }
+        Add-Result end 'the owner''s Copilot profile on kestrel-api37 is deleted'
+    } | Out-Null
+    # A new sitting 2 counts its AI Credits from 0 (Q5).
+    $script:credits = 0.0
+    Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
+    $a71 = Get-A71
+    $items = @(
+        [pscustomobject]@{ Device = $EmulatorSerial; Prompt = 'Item 1, about 3 minutes: in the emulator''s window on this computer, Kestrel''s page "Providers and profiles" is open. With the mouse, click "Add a profile", "GitHub Copilot" and "Sign in"; open github.com/login/device in this computer''s browser, enter the code that the page shows and approve; when the page shows the models, turn on "Make default" and click "Save". Press Enter when the page shows the profile (s skips).' }
+    )
+    # The A71's own answer, not sitting 1's record, which lacks it when that sitting's device tests stopped early; when
+    # Kestrel on the A71 does not answer, the owner is asked too.
+    $copilotA71 = if ($a71 -ne $EmulatorSerial) {
+        try {
+            Invoke-Device $a71 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+            Start-Sleep -Seconds 3
+            (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 provider-standin))['copilot']
+        } catch { $null }
+    }
+    if ($a71 -ne $EmulatorSerial -and $copilotA71 -in '0', $null) {
+        $items += [pscustomobject]@{ Device = $a71; Prompt = 'Item 2, about 3 minutes: on the A71, Kestrel''s page "Providers and profiles" is open. Tap "Add a profile", "GitHub Copilot", "Sign in", "Copy" and "Open the page"; in Chrome, sign in to GitHub if it asks, paste the code and approve; when Kestrel''s page shows the models, turn on "Make default" and tap "Save". Press Enter when the page shows the profile (s skips).' }
+    }
+    foreach ($item in $items) {
+        $name = Get-DeviceName $item.Device
+        if ($DryRun) {
+            Add-Result owner "${name}: no Copilot sign-in in a dry run, which runs the stand-in variants with the scripted model"
+            continue
+        }
+        if (-not (Unlock-Device $item.Device)) { throw "$name is locked, and the sitting could not unlock it" }
+        Invoke-Device $item.Device 'am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE PROVIDERS' | Out-Null
+        $prompt = $item.Prompt
+        $kind = $null
+        for ($try = 1; $try -le 3 -and $kind -ne 'copilot'; $try++) {
+            if ((Request-OwnerItem $prompt) -eq 'skip') { break }
+            $kind = (ConvertFrom-HookPairs (Invoke-DeviceHook $item.Device provider-standin))['profile']
+            $prompt = "The default profile of $name is $kind, not a Copilot profile. Finish the sign-in on Kestrel's page, turn on ""Make default"" and save, then press Enter (s skips)."
+        }
+        Add-Result owner "${name}: $(if ($kind -eq 'copilot') { 'the default profile is a Copilot profile' } elseif ($kind) { "the default profile is $kind, so its live runs fail" } else { 'the Copilot sign-in skipped, so its live runs fail' })"
+    }
+    # The comparison's model is checked while the owner is here, so that he can choose another one (design D32 item 35).
+    if (-not $DryRun -and -not (Test-CompareModel)) {
+        Add-Result owner $compareRefused
+        Request-OwnerItem "$compareRefused Press q to stop the sitting and start it again with another -CompareModel, or Enter to go on without the comparison." | Out-Null
+    }
+    if (-not $DryRun) {
+        try { [console]::Beep(880, 300) } catch { Write-Verbose 'This console cannot beep.' }
+        Write-Host 'You may leave now. The rest of sitting 2 runs without you for about 3 1/2 to 4 hours; please do not touch the A71 or the emulator.'
+    }
+}
+
+# Design D30 step 16: the reviewed fix installed on both devices, :testapp on the A71 again when it is missing, and
+# everything that sitting 1's restores or a device test put back set again and checked through the hooks; Gmail's
+# account on the A71 checked against gmailAddress (a count only), the test variants' first names chosen, and the live
+# sessions opened (agent-live on the devices, KESTREL_AGENT_SESSION in this process) until the sitting's end.
+function Invoke-PrepareStep2 {
+    $script:gradleUsed = $true
+    $a71 = Get-A71
+    $record = Read-AgentRecord $recordFile
+    if ($record.playDisabled) {
+        Register-Restore 'the Play Store on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm enable com.android.vending" $EmulatorSerial {
+            param($Device)
+            Invoke-Device $Device 'pm enable com.android.vending' | Out-Null
+        } | Out-Null
+    }
+    if (-not $DryRun -and ($record.emulatorAccount -or @($record.installedEmulator | Where-Object { $_ }).Count -gt 0)) {
+        # Registered after the Play Store's restore, so that it runs before it and before the accessibility settings come
+        # back, which screen-tap needs; it runs however the sitting ends (design D30 step 23).
+        Register-Restore 'the test Google account and the apps of sitting 1 on kestrel-api37' 'On kestrel-api37, the emulator''s window: Settings > Passwords and accounts > the test account > Remove account; then uninstall Waze and Gmail.' $record {
+            param($Record)
+            $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)" } else { '' }
+            if ($Record.emulatorAccount) {
+                Invoke-Device $EmulatorSerial 'am start -a android.settings.SYNC_SETTINGS' | Out-Null
+                Start-Sleep -Seconds 3
+                if ($address -and (Invoke-ScreenTap $EmulatorSerial $address) -and (Invoke-ScreenTap $EmulatorSerial 'Remove account') -and (Invoke-ScreenTap $EmulatorSerial 'Remove account')) { Start-Sleep -Seconds 5 }
+            }
+            foreach ($package in @($Record.installedEmulator | Where-Object { $_ })) {
+                if (Test-Installed $EmulatorSerial $package) { Invoke-Device $EmulatorSerial "pm uninstall $package" | Out-Null }
+            }
+            $left = Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')
+            Add-Result end "kestrel-api37 has $left Google accounts; the apps of sitting 1 are uninstalled"
+            if ($left -gt 0) { throw "$left Google accounts are left" }
+        } | Out-Null
+    }
+    if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
+    foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
+        & "$PSScriptRoot\install.ps1" -Serial $device
+        if ($LASTEXITCODE -ne 0) { throw "scripts\install.ps1 failed on $(Get-DeviceName $device)." }
+    }
+    if (-not $DryRun) {
+        if (-not (Test-Installed $a71 'dev.kestrel.testapp')) {
+            & "$PSScriptRoot\install.ps1" -Serial $a71 -TestApp
+            if ($LASTEXITCODE -ne 0) { throw 'scripts\install.ps1 -TestApp failed on the A71.' }
+        }
+        # :testapp goes from the A71 at the end of sitting 2 (review C3-M4).
+        Register-Restore 'the removal of :testapp from the A71' "Run: & '$adb' -s $a71 uninstall dev.kestrel.testapp" $a71 {
+            param($Device)
+            if (Test-Installed $Device 'dev.kestrel.testapp') { Invoke-Device $Device 'pm uninstall dev.kestrel.testapp' | Out-Null }
+        } | Out-Null
+    }
+    foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
+        Invoke-Device $device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+        Start-Sleep -Seconds 3
+        Enable-TestMode $device
+        Set-OwnerNames $device
+        Grant-AgentPermissions $device
+        Enable-NotificationAccess $device
+        Start-Listening $device 'quiet'
+        if (-not $DryRun) {
+            Register-Restore "the live session on $(Get-DeviceName $device)" "Run: scripts\hook.ps1 -Serial $device agent-live -On false" $device {
+                param($Device)
+                if ((Invoke-DeviceHook $Device agent-live @{ On = 'false' }) -notmatch '(^|\s)live=off(\s|$)') { throw 'the live session is still open' }
+            } | Out-Null
+            if ((Invoke-DeviceHook $device agent-live @{ On = 'true' }) -notmatch '(^|\s)live=on(\s|$)') { throw "The live session on $(Get-DeviceName $device) did not open." }
+        }
+    }
+    if (-not $DryRun) { $env:KESTREL_AGENT_SESSION = "sitting 2, $stamp" }
+    # A dry run sets the record's rule and branch on kestrel-api37 only for its own run, and puts back the emulator's.
+    Register-TouchSourceRestore $a71
+    $rule = if ($record.touchRule) { $record.touchRule } else { (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 agent-touch-source))['rule'] }
+    $branch = if ($record.touchBranch) { $record.touchBranch } else { 'A' }
+    Invoke-DeviceHook $a71 agent-touch-source @{ Rule = $rule; Branch = $branch } | Out-Null
+    if ($record.hotspot -eq 'ok' -and $record.wifiSharing) { Enable-WifiSharing $a71 | Out-Null }
+    if (Test-Installed $a71 'com.google.android.gm') {
+        Invoke-Device $a71 "am start -a android.intent.action.SENDTO -d mailto:$($config.gmailAddress) -p com.google.android.gm" | Out-Null
+        Start-Sleep -Seconds 5
+        # The compose screen shows the address in its To field, and once more as its sender when Gmail's account is that
+        # address; only the count leaves the phone.
+        $script:gmailChecked = (Get-ScreenCount $a71 @{ Package = 'com.google.android.gm'; Contains = "$($config.gmailAddress)" }) -gt 1
+        if (-not ((Invoke-ScreenTap $a71 'More options' 5) -and (Invoke-ScreenTap $a71 'Discard' 5))) { Add-Result prepare 'Gmail''s check left a draft on the A71; delete it by hand' }
+        Invoke-Device $a71 'am force-stop com.google.android.gm' | Out-Null
+    }
+    if (Test-Installed $a71 'org.telegram.messenger') {
+        Open-App $a71 'org.telegram.messenger'
+        Start-Sleep -Seconds 4
+        $rows = @{}
+        foreach ($name in 'Ana', 'John', 'Mira', 'Zora', 'Ivo', 'Teo') { $rows[$name] = Get-ScreenCount $a71 @{ Package = 'org.telegram.messenger'; Contains = $name } }
+        Invoke-Device $a71 'am force-stop org.telegram.messenger' | Out-Null
+        $testNames.Ana = Select-TestName 'Ana' $rows
+        $testNames.John = Select-TestName 'John' $rows @($testNames.Ana)
+    }
+    Add-Result prepare "both devices: the fix installed, test mode on, the owner's name, the permissions, notification access and the silent microphone set, the live sessions $(if ($DryRun) { 'not opened in a dry run' } else { 'open' }); the A71: touch rule $rule, branch $branch; Gmail $(if ($gmailChecked) { 'shows the address of gmailAddress' } else { 'does not show the address of gmailAddress, so the e-mail runs on the A71 are skipped' }); the test variants use the names $($testNames.Ana) and $($testNames.John)"
+}
+
+# Design D30 step 17: the live D3 runs on the A71 (D29), 3 runs each.
+function Invoke-A71RunsStep {
+    $a71 = Get-A71
+    if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
+    $record = Read-AgentRecord $recordFile
+    foreach ($task in @(@{ Task = 'telegram-late'; Name = $testNames.Ana }, @{ Task = 'telegram-photos'; Name = $testNames.John })) {
+        if ($task.Name) { Invoke-TaskRuns a71-runs $a71 $task.Task 3 @{ Name = $task.Name } | Out-Null } else { Add-Result a71-runs "$($task.Task): skipped, because every test name has a row in the owner's Telegram" }
+    }
+    if ($gmailChecked -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'read-email' 3 @{ Mail = "$($config.gmailAddress)" } | Out-Null } else { Add-Result a71-runs 'read-email: skipped, because Gmail on the A71 does not show the address of gmailAddress' }
+    if ($record.hotspot -eq 'ok' -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'hotspot' | Out-Null } else { Add-Result a71-runs 'hotspot: skipped, a limit of the device (sitting 1''s probe)' }
+    if ($record.wazeA71 -eq 'ok') {
+        $restore = Start-TestLocation $a71
+        try { Invoke-TaskRuns a71-runs $a71 'waze-home' | Out-Null } finally { Complete-Restore $restore }
+    } else {
+        Add-Result a71-runs 'waze-home: skipped, because Waze did not show the test location in sitting 1'
+    }
+    Invoke-TaskRuns a71-runs $a71 'firefox-wiki' | Out-Null
+}
+
+# The emulator's tasks (design D29): the hotspot, Waze when it is installed, Firefox, and the e-mail with the test
+# account; $With goes to each, as the comparison's model.
+function Invoke-EmulatorTasks([string]$StepName, [hashtable]$With = @{}, [switch]$WithMail) {
+    $record = Read-AgentRecord $recordFile
+    Invoke-TaskRuns $StepName $EmulatorSerial 'hotspot' 3 $With | Out-Null
+    if (Test-Installed $EmulatorSerial 'com.waze') { Invoke-TaskRuns $StepName $EmulatorSerial 'waze-home' 3 $With | Out-Null } else { Add-Result $StepName 'waze-home: skipped, because Waze is not installed on kestrel-api37' }
+    Invoke-TaskRuns $StepName $EmulatorSerial 'firefox-wiki' 3 $With | Out-Null
+    if ($WithMail) {
+        if ($record.emulatorAccount -and $config.PSObject.Properties['emulatorGmailAddress'] -and "$($config.emulatorGmailAddress)") {
+            Invoke-TaskRuns $StepName $EmulatorSerial 'read-email' 3 (@{ Mail = "$($config.emulatorGmailAddress)" } + $With) | Out-Null
+        } else {
+            Add-Result $StepName 'read-email: skipped, because kestrel-api37 has no test account with its address in emulatorGmailAddress'
+        }
+    }
+}
+
+# Design D30 step 18: the live D3 runs on kestrel-api37, 3 runs each.
+function Invoke-EmulatorRunsStep { Invoke-EmulatorTasks emulator-runs -WithMail }
+
+# Design D30 step 19 and D32 item 35: the emulator's three tasks again with -CompareModel as the lightweight model, and a
+# summary per task and model of both.
+function Invoke-CompareStep {
+    if (-not $DryRun -and -not (Test-CompareModel)) { throw $compareRefused }
+    Invoke-EmulatorTasks compare @{ Model = $CompareModel }
+    $runs = @(Get-SittingRuns | Where-Object { $_['device'] -eq 'kestrel-api37' -and $_['task'] -in 'hotspot', 'waze-home', 'firefox-wiki', 'stand-in-hotspot', 'stand-in-firefox' })
+    foreach ($line in Get-RunSummary $runs) { Add-Result compare $line }
+}
+
+# Design D30 step 20: look_closer live on the OCR fixture of both devices, the screenshot question answered "yes" once
+# and "always for this app" once, and the fixture's approvals revoked again.
+function Invoke-LookCloserStep {
+    foreach ($device in @($EmulatorSerial, (Get-A71)) | Select-Object -Unique) {
+        $name = Get-DeviceName $device
+        if (-not (Unlock-Device $device)) { throw "$name is locked, and the sitting could not unlock it" }
+        Invoke-Device $device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+        Start-Sleep -Seconds 2
+        $approvals = [int](ConvertFrom-HookPairs (Invoke-DeviceHook $device agent-approvals))['approvals']
+        $restore = Register-Restore "the screenshot approvals on $name" "Kestrel's settings > Safety > Screenshot approvals: tap Revoke on the row of Kestrel's test fixtures." @{ Device = $device; Before = $approvals } {
+            param($Data)
+            if (-not (Revoke-ScreenshotApprovals $Data.Device $Data.Before)) { throw 'an approval is left' }
+        }
+        foreach ($answer in 'yes', 'text:always for this app') {
+            Invoke-Device $device 'am start -W -S -n dev.kestrel.testapp/.OcrCanvasActivity' | Out-Null
+            Start-Sleep -Seconds 3
+            $tag = New-CheckTag
+            $with = @{ Send = 'heard'; Text = 'Kestrel, press Show details on the test canvas.'; Named = $true; Tag = $tag }
+            if ($DryRun) {
+                Install-AgentScriptOn $device 'look-closer.json' @(@{ tool = 'look_closer'; arguments = @{ reason = 'The dry run looks closer.' } }, @{ tool = 'fail'; arguments = @{ reason = 'The dry run ends here.' } })
+            } else {
+                $with.Live = $true
+            }
+            Invoke-DeviceHook $device voice $with | Out-Null
+            $end = Wait-LiveTask -Serial $device -Tag $tag -Answer $answer
+            $paid = Get-ScreenCount $device @{ Package = 'dev.kestrel.testapp'; Contains = 'Details shown' }
+            foreach ($counted in @($end.Result, $end.Stopped)) { if ($counted) { $script:credits += Get-CreditTotal @($counted) } }
+            Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
+            $result = if ($end.Result) { "end=$($end.Result['end']) steps=$($end.Result['steps']) credits=$($end.Result['credits']) model=$($end.Result['model'])" } else { 'did not end within 10 minutes' }
+            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times; ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' }))"
+            if ($DryRun) { Invoke-DeviceHook $device agent-script @{ Clear = $true } | Out-Null }
+            if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
+        }
+        Complete-Restore $restore
+    }
+}
+
+# Design D30 step 21 (spec 16.6): the 14 injection fixtures on kestrel-api37, 3 runs each, in Standard mode, with the
+# answers and the check (beforeTestMode=0, no press in presses.log) of task-check.ps1's table.
+function Invoke-InjectionStep {
+    foreach ($number in 1..14) { Invoke-TaskRuns injection $EmulatorSerial ('inject-{0:D2}' -f $number) | Out-Null }
+}
+
+# Design D30 step 22 (D5): the share of input tokens read from the cache per model; for a model with explicit cache
+# fields whose share is 0, two runs of the Firefox task with those fields switched off (agent-cache), then on again.
+function Invoke-CacheStep {
+    $shares = @(Get-CacheShares (Get-SittingRuns))
+    foreach ($share in $shares) { Add-Result cache "model=$($share.Model) in=$($share.Input) cacheRead=$($share.CacheRead) share=$(Format-Number $share.Share) %" }
+    foreach ($share in @($shares | Where-Object { $_.Share -eq 0 -and $_.Input -gt 0 })) {
+        $fields = @(Get-CacheFields $share.Model)
+        if (-not $fields) { continue }
+        $restores = foreach ($field in $fields) {
+            Register-Restore "the cache field $field on kestrel-api37" "Run: scripts\hook.ps1 -Serial $EmulatorSerial agent-cache -Field $field -On true" $field {
+                param($Field)
+                Invoke-DeviceHook $EmulatorSerial agent-cache @{ Field = $Field; On = 'true' } | Out-Null
+            }
+            Invoke-DeviceHook $EmulatorSerial agent-cache @{ Field = $field; On = 'false' } | Out-Null
+        }
+        try {
+            $runs = @(Invoke-TaskRuns cache $EmulatorSerial 'firefox-wiki' 2 @{ Model = $share.Model })
+        } finally {
+            foreach ($restore in $restores) { Complete-Restore $restore }
+        }
+        foreach ($again in Get-CacheShares $runs) { Add-Result cache "model=$($again.Model) with $($fields -join ' and ') off: share=$(Format-Number $again.Share) %" }
+    }
+}
+
+# Design D30 step 23: the restores now (among them the emulator's Copilot profile, the live sessions, the test Google
+# account and the apps that sitting 1 installed on kestrel-api37, the Play Store and :testapp on the A71); and the
+# browsers' versions compared with those that sitting 1 recorded. Telegram, WhatsApp and the apps of sitting 1's
+# step 2 stay on the A71 (Q6, Q8).
+function Invoke-EndStep2 {
+    $record = Read-AgentRecord $recordFile
+    $reversed = @($pending)
+    [array]::Reverse($reversed)
+    Invoke-Restore $reversed
+    $chrome = Get-VersionName @(Invoke-Device $EmulatorSerial 'dumpsys package com.android.chrome')
+    $webView = Get-VersionName @(Invoke-Device $EmulatorSerial 'dumpsys package com.google.android.webview')
+    $same = $chrome -eq $record.chromeVersion -and $webView -eq $record.webViewVersion
+    Add-Result end "kestrel-api37: Chrome $chrome, Android System WebView $webView ($(if ($same) { 'as before sitting 1' } else { "changed since sitting 1 ($($record.chromeVersion), $($record.webViewVersion)); a finding for the controller" })); the sitting's AI Credits: $(Format-Number $credits 2)"
+}
 
 $plans = @{
     '1' = @(
@@ -1039,6 +1534,17 @@ $plans = @{
         @{ Name = 'recordings'; Minutes = 20; Title = 'the structure of the self-chats, the pickers, Gmail''s compose screen and SystemUI'; Run = 'Invoke-RecordingsStep' }
         @{ Name = 'speech'; Minutes = 25; Title = 'the speech checks through this computer''s speakers on both devices'; Run = 'Invoke-SpeechStep' }
         @{ Name = 'end'; Minutes = 5; Title = 'the record for sitting 2, and the restores'; Run = 'Invoke-EndStep' }
+    )
+    '2' = @(
+        @{ Name = 'owner'; Minutes = 6; Title = 'the owner''s step: Kestrel''s Copilot sign-in on kestrel-api37, and on the A71 when its profile is gone'; Run = 'Invoke-OwnerStep2' }
+        @{ Name = 'prepare'; Minutes = 20; Title = 'the fix installed, everything set again, Gmail''s account and the test names checked, and the live sessions opened'; Run = 'Invoke-PrepareStep2' }
+        @{ Name = 'a71-runs'; Minutes = 60; Title = 'the live D3 runs on the A71, 3 each'; Run = 'Invoke-A71RunsStep' }
+        @{ Name = 'emulator-runs'; Minutes = 35; Title = 'the live D3 runs on kestrel-api37, 3 each'; Run = 'Invoke-EmulatorRunsStep' }
+        @{ Name = 'compare'; Minutes = 30; Title = 'the emulator''s tasks again with the comparison''s model'; Run = 'Invoke-CompareStep' }
+        @{ Name = 'look-closer'; Minutes = 10; Title = 'look_closer on the OCR fixture of both devices'; Run = 'Invoke-LookCloserStep' }
+        @{ Name = 'injection'; Minutes = 45; Title = 'the 14 injection fixtures on kestrel-api37, 3 runs each'; Run = 'Invoke-InjectionStep' }
+        @{ Name = 'cache'; Minutes = 10; Title = 'the cache record per model'; Run = 'Invoke-CacheStep' }
+        @{ Name = 'end'; Minutes = 10; Title = 'the restores, the emulator''s test account and apps, and the browsers'' versions'; Run = 'Invoke-EndStep2' }
     )
 }
 
@@ -1067,7 +1573,7 @@ try {
     }
     if ($KestrelTestDevices[$EmulatorSerial].Pattern -ne 'kestrel-api37') { throw "$EmulatorSerial is not kestrel-api37." }
     if (-not $DryRun -and $KestrelTestDevices[$Serial].Pattern -ne 'SM-A715F*') { throw "$Serial is not the Galaxy A71." }
-    Add-Result session "sitting $Sitting started$(if ($DryRun) { ' as a dry run on kestrel-api37' })"
+    Add-Result session "sitting $Sitting started$(if ($DryRun) { ' as a dry run on kestrel-api37' })$(if ($Sitting -eq '2') { "; the comparison's model is $CompareModel" })"
     foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
         Enable-StayAwake $device
         Enable-KestrelService $device
@@ -1090,7 +1596,8 @@ try {
         try {
             & $entry.Run
         } catch {
-            if ($_.Exception.Message -eq 'The owner stopped the sitting.') { throw }
+            # The owner's q, and the ceiling of AI Credits, stop the whole sitting.
+            if ($_.Exception.Message -in 'The owner stopped the sitting.', $ceilingMessage) { throw }
             # The scripts' and hooks' errors name only steps, files, keys and classes, never a value of the owner's.
             Add-Result $entry.Name "failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
         }
@@ -1108,16 +1615,28 @@ try {
     try {
         Invoke-Restore $reversed
     } finally {
-        foreach ($device in @($stayOn.Keys)) {
-            $command = if ($stayOn[$device] -in 'null', '') { 'settings delete global stay_on_while_plugged_in' } else { "settings put global stay_on_while_plugged_in $($stayOn[$device])" }
-            try { Invoke-Device $device $command | Out-Null } catch { Write-Warning "Could not put back ""Stay awake"" on $device. Run: & '$adb' -s $device shell $command" }
+        # The live sessions end with sitting 2 also when their restores could not run, such as after Ctrl+C during them
+        # (design D28): AGENT_LIVE_SESSION goes back to off, which each sitting set first.
+        try {
+            if ($Sitting -eq '2' -and -not $DryRun) {
+                foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
+                    try { Close-LiveSession $device } catch { Write-Warning "Could not close the live session on $device. Run: scripts\hook.ps1 -Serial $device agent-live -On false" }
+                }
+            }
+        } finally {
+            foreach ($device in @($stayOn.Keys)) {
+                $command = if ($stayOn[$device] -in 'null', '') { 'settings delete global stay_on_while_plugged_in' } else { "settings put global stay_on_while_plugged_in $($stayOn[$device])" }
+                try { Invoke-Device $device $command | Out-Null } catch { Write-Warning "Could not put back ""Stay awake"" on $device. Run: & '$adb' -s $device shell $command" }
+            }
+            # The owner's rule (process rule 15): the sitting leaves the A71 locked, so that its screen does not burn in.
+            if (-not $DryRun) {
+                try { Invoke-Device $Serial 'input keyevent KEYCODE_SLEEP' | Out-Null } catch { Write-Warning "Could not lock $Serial. Press its power button." }
+            }
+            if ($lockTaken) { Remove-Item -LiteralPath $lockFile -ErrorAction SilentlyContinue }
+            # The live session of this process ends with the sitting (design D28).
+            Remove-Item -Path Env:KESTREL_AGENT_SESSION -ErrorAction SilentlyContinue
+            foreach ($restore in $pending) { Write-Warning "Could not put back $($restore.What) ($($restore.Reason)). $($restore.ByHand)" }
         }
-        # The owner's rule (process rule 15): the sitting leaves the A71 locked, so that its screen does not burn in.
-        if (-not $DryRun) {
-            try { Invoke-Device $Serial 'input keyevent KEYCODE_SLEEP' | Out-Null } catch { Write-Warning "Could not lock $Serial. Press its power button." }
-        }
-        if ($lockTaken) { Remove-Item -LiteralPath $lockFile -ErrorAction SilentlyContinue }
-        foreach ($restore in $pending) { Write-Warning "Could not put back $($restore.What) ($($restore.Reason)). $($restore.ByHand)" }
     }
     if (-not ($completed -or $stopped)) { Add-SessionResult -Path $resultsFile -Step session -Text 'stopped, as by Ctrl+C' }
     if ($gradleUsed) { & "$PSScriptRoot\gradle.ps1" --stop | Out-Null }
