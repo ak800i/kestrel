@@ -442,7 +442,8 @@ if ($Restore) { $extras += '--ez restore true' }
 if ($PSBoundParameters.ContainsKey('Marker')) { $extras += "--es marker $(ConvertTo-ShellText $Marker)" }
 if ($PSBoundParameters.ContainsKey('Recipient')) { $extras += "--es recipient $(ConvertTo-ShellText $Recipient)" }
 if ($Answer) { $extras += "--es answer $(ConvertTo-ShellText $Answer)" }
-# ValidateSet accepts any letter case, and the hook compares the category's wire name in lower case. ($Confirming) { $extras += "--es confirming $($Confirming.ToLowerInvariant())" }
+# ValidateSet accepts any letter case, and the hook compares the category's wire name in lower case.
+if ($Confirming) { $extras += "--es confirming $($Confirming.ToLowerInvariant())" }
 if ($Field) { $extras += "--es field $Field" }
 # ValidateSet accepts any letter case, and the hook takes the rule and the branch in capitals.
 if ($Rule) { $extras += "--es rule $($Rule.ToUpperInvariant())" }
