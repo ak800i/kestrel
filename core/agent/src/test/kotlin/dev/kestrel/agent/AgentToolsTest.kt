@@ -291,6 +291,38 @@ class AgentToolsTest {
     }
 
     @Test
+    fun aShareWhoseChatShowsLateIsReportedAsSent() = runTest {
+        val harness = shareHarness(call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"), stop)
+        // The row sends at once, but the app shows John's chat only on the third read after the tap, after a screen that
+        // shows neither, as a chat that opens in a new activity on a slow phone does (final review of plan 5B, part A, M1).
+        val between = ScreenBuilder.screen(telegram) {
+            text("Chats", 100)
+            val list = list(null, 300, 2000, viewId = "dialogs_list")
+            row("Saved Messages", 320, list)
+        }
+        var reads = -1
+        harness.screen.outcome = {
+            if (it is ScreenAction.Tap) reads = 0
+            ActionOutcome(done = true, method = "fake")
+        }
+        harness.screen.onSnapshot = {
+            if (reads >= 0) {
+                reads++
+                if (reads == 2) harness.screen.current = between
+                if (reads == 3) harness.screen.current = john()
+            }
+        }
+        harness.owner.confirms += ConfirmEnd.YES
+
+        val report = harness.run("Send yesterday's photos to John on Telegram")
+
+        assertEquals(1, harness.owner.confirmations.size)
+        assertEquals(listOf("Sent to John Smith on Telegram."), report.sends)
+        assertEquals(3, report.shareItems)
+        assertTrue(report.ledger.toString(), report.ledger.none { it.startsWith("tried") })
+    }
+
+    @Test
     fun aShareToTwoChatsIsAskedOnceForTheTwo() = runTest {
         val harness = shareHarness(
             call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"),

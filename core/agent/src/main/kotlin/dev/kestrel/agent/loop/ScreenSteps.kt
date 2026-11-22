@@ -26,6 +26,7 @@ import dev.kestrel.safety.Proposal
 import dev.kestrel.safety.SafetyCheck
 import dev.kestrel.safety.SendCheck
 import dev.kestrel.safety.SendCheckResult
+import dev.kestrel.safety.ShareFlow
 import dev.kestrel.safety.Vault
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -92,7 +93,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
         sendCheck(proposal, fresh, call.tool, entry)?.let { return it }
         val flow = run.safety.shareFlow
-        val done = perform(call, entry, proposal, fresh, category, confirmed = true)
+        val done = perform(call, entry, proposal, fresh, category, confirmed = true, shareFlow = flow?.takeIf { yes.category == Category.SENDING })
         when {
             // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press
             // of the share flow needs a new yes.
@@ -252,6 +253,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         before: ScreenSnapshot,
         category: Category,
         confirmed: Boolean,
+        shareFlow: ShareFlow? = null,
     ): Done {
         val revealed = (call as? AgentCall.TypeText)?.let { typed ->
             // A value of the vault that Kestrel types is named by its kind in every later question (D14, D17).
@@ -265,10 +267,28 @@ internal class ScreenSteps(private val run: TaskRun) {
             ?: return Done(call.tool, Outcome.Failed(NOTHING_TO_ACT_ON), entry, after = before)
         val outcome = run.ports.screen.act(action)
         if (!confirmed && category in WATCHED) run.unconfirmed++
-        val after = run.fresh()
-        run.safety = SafetyCheck.afterAction(proposal.copy(text = revealed ?: proposal.text), before, after, run.safety)
         val key = entry?.key ?: (action as? ScreenAction.Scroll)?.key ?: (action as? ScreenAction.Swipe)?.key
-        val changed = Changes.outcome(before, after, key, run.settings::closed)
+        val acted = proposal.copy(text = revealed ?: proposal.text)
+        var after = run.fresh()
+        var changed = Changes.outcome(before, after, key, run.settings::closed)
+        var safety = SafetyCheck.afterAction(acted, before, after, run.safety)
+        // A share target can show the chat that a press sent to only after the press has settled, such as a chat that opens
+        // in a new activity on a slow phone, and the screens in between show neither (D14, D24). So a press of share flow
+        // [shareFlow] is judged on the first screen that ends the flow or changes within the same screen, as a row that only
+        // picks a chat does at once; after FRONT_WAIT_MILLIS, on the last screen.
+        if (shareFlow != null && outcome.done) {
+            var waited = 0L
+            while (safety.shareFlow?.serial == shareFlow.serial && (changed == Outcome.NothingChanged || changed is Outcome.AnotherScreen) &&
+                waited < FRONT_WAIT_MILLIS
+            ) {
+                delay(CHANGE_POLL_MILLIS)
+                waited += CHANGE_POLL_MILLIS
+                after = run.fresh()
+                changed = Changes.outcome(before, after, key, run.settings::closed)
+                safety = SafetyCheck.afterAction(acted, before, after, run.safety)
+            }
+        }
+        run.safety = safety
         val result = when {
             !outcome.done -> Outcome.Failed(outcome.reason ?: ACTION_FAILED)
             outcome.uncertain && changed == Outcome.NothingChanged -> Outcome.Uncertain
@@ -454,6 +474,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         const val NOTHING_TO_ACT_ON = "there is nothing to act on"
         const val FRONT_WAIT_MILLIS = 5_000L
         const val POLL_MILLIS = 500L
+        private const val CHANGE_POLL_MILLIS = 100L
         private const val WAIT_POLLS = 10
         private const val VIEW = "android.intent.action.VIEW"
         private const val HTTPS = "https"

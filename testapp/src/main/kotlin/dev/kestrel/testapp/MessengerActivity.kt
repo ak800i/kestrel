@@ -143,7 +143,9 @@ class MessengerActivity : Activity() {
  * "Forward here to save." as its first row; `select` checks rows and sends them with one Send button (`picker_send`), as
  * WhatsApp does, with the owner's "(You)" row first. Both have rows named "Close friends" and "Back to school", and a
  * search field (`picker_search`) whose results are no self-chat. Each send is recorded in [PressLog] and opens the chat
- * that it went to with the shared items, or the list of chats for several.
+ * that it went to with the shared items, or the list of chats for several: `tap` in this activity, as Telegram does in its
+ * single activity, and `select` in a new activity, as WhatsApp does, which a slow phone may draw only after Kestrel's
+ * first look at the screen after the press.
  */
 class ShareActivity : Activity() {
     private lateinit var rows: RowList
@@ -177,7 +179,7 @@ class ShareActivity : Activity() {
             page.addView(Button(this).apply {
                 id = R.id.picker_send
                 text = "Send"
-                setOnClickListener { sendTo(checks.filter { it.second.isChecked }.map { it.first }) }
+                setOnClickListener { sendTo(checks.filter { it.second.isChecked }.map { it.first }, select) }
             })
         }
     }
@@ -198,20 +200,20 @@ class ShareActivity : Activity() {
                 checks += chat to check
                 rows.addView(chatRow(R.id.picker_row, texts, check) { check.isChecked = !check.isChecked })
             } else {
-                rows.addView(chatRow(R.id.picker_row, texts) { sendTo(listOf(chat)) })
+                rows.addView(chatRow(R.id.picker_row, texts) { sendTo(listOf(chat), select) })
             }
         }
     }
 
-    // One chat opens in this activity, as Telegram opens it in its single activity: the screen changes at once, so the
-    // agent's snapshot after the tap shows the chat, which ends the share flow, also on a slow emulator.
-    private fun sendTo(chats: List<FixtureChat>) {
+    private fun sendTo(chats: List<FixtureChat>, select: Boolean) {
         PressLog.record(this, PressLog.Kind.SHARE)
-        if (chats.size == 1) {
+        if (chats.size == 1 && !select) {
             ChatScreen(this, chats.single(), shared = items).show()
             return
         }
-        startActivity(Intent(this, MessengerActivity::class.java))
+        val next = Intent(this, MessengerActivity::class.java)
+        if (chats.size == 1) next.putExtra(MessengerActivity.EXTRA_CHAT, chats.single().id).putExtra(MessengerActivity.EXTRA_SHARED, items)
+        startActivity(next)
         finish()
     }
 

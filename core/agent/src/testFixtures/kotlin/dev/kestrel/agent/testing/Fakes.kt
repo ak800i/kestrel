@@ -56,6 +56,9 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
     var resolver: (IntentSpec) -> String? = { it.packageName }
     var outcome: (ScreenAction) -> ActionOutcome = { ActionOutcome(done = true, method = "fake") }
 
+    /** Runs before each snapshot is read: a test may change the screen here, as an app that draws its next window late. */
+    var onSnapshot: () -> Unit = {}
+
     /** After an action that [matches] on the current screen, the screen becomes what [next] makes of it. */
     fun on(matches: (ScreenAction, ScreenSnapshot) -> Boolean, next: (ScreenSnapshot) -> ScreenSnapshot?) {
         rules += Rule(matches, next)
@@ -72,7 +75,10 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
         action is ScreenAction.OpenApp || action is ScreenAction.OpenUri || action is ScreenAction.OpenIntent
     }) { next }
 
-    override suspend fun snapshot(): ScreenSnapshot? = current
+    override suspend fun snapshot(): ScreenSnapshot? {
+        onSnapshot()
+        return current
+    }
 
     override suspend fun act(action: ScreenAction): ActionOutcome {
         actions += action

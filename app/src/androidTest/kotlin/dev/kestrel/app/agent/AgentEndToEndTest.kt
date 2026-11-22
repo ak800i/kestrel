@@ -1,19 +1,29 @@
 package dev.kestrel.app.agent
 
+import android.Manifest
+import android.content.ContentValues
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
+import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.app.voice.VoiceTests
+import dev.kestrel.safety.SelfChats
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -22,13 +32,16 @@ import org.junit.runner.RunWith
 /**
  * The agent end to end on kestrel-api37 with the scripted model (design D27 of sub-project 5; D32 items 16 and 50): a
  * delete that the owner confirms on the card's question runs once, a hostile script on an injection fixture never presses
- * a send, call or delete without the owner, and the agent stays out of Kestrel's own app. Test mode stays on; a delete is
- * no send, so test mode does not block it.
+ * a send, call or delete without the owner, a share whose chat opens in a new activity is reported as sent, and the agent
+ * stays out of Kestrel's own app. Test mode stays on; a delete is no send, so test mode does not block it, and the share
+ * goes to the owner's self-chat.
  */
 @RunWith(AndroidJUnit4::class)
 class AgentEndToEndTest {
     @get:Rule
     val screen = ScreenServiceRule()
+
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before
     fun start() {
@@ -92,6 +105,67 @@ class AgentEndToEndTest {
     }
 
     @Test
+    fun aShareWhoseChatOpensInANewActivityIsReportedAsSent() = runBlocking {
+        // It adds a photo and changes test mode's names, so it runs only on kestrel-api37; it needs the photos permission,
+        // which a test cannot take back without ending Kestrel's process (see PermissionFlowTest).
+        assumeTrue("Only on kestrel-api37", screen.shell("getprop ro.boot.qemu.avd_name").trim() == "kestrel-api37")
+        assumeTrue(
+            "Grant Kestrel READ_MEDIA_IMAGES before this test and revoke it afterwards",
+            context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED,
+        )
+        val graph = AgentTests.graph
+        val safety = graph.settings.get(SettingKeys.SAFETY)
+        val aliases = graph.agent.selfChatAliases
+        val photo = addPhoto()
+        try {
+            // Test mode lets the share go only to the owner's WhatsApp-like self-chat, which the select form opens in a new
+            // activity (final review of plan 5B, part A, M1).
+            graph.settings.set(SettingKeys.SAFETY, safety.copy(whatsappOwnName = OWNER))
+            graph.agent.selfChatAliases = mapOf(FIXTURES to SelfChats.WHATSAPP)
+            screen.open("MessengerActivity", "Chats", "--es shareForm select")
+            val model = ScriptedModel(listOf(
+                call("find_media", null, null, null, "day" to "today", "kinds" to "photos"),
+                call("share_media", null, null, null, "app" to "Kestrel fixtures", "items" to listOf("m1")),
+                call("wait", null, null, null, "seconds" to 3, "reason" to "let the share picker open"),
+                tap("$OWNER (You) · Message yourself", "sending"),
+                tap("SEND", "sending"),
+                call("finish", null, null, null, "summary" to "I shared the photo.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Photo 1")))),
+                fail,
+            ))
+
+            val task = AgentTests.run("share today's photo with my own WhatsApp chat", model)
+            check(VoiceTests.waitUntil(60_000) {
+                val state = AgentTests.graph.listening.state.value
+                if (state.task == task && state.taskAsking == TaskAsk.CONFIRM) AgentTests.say("confirm")
+                AgentTests.graph.agent.ended(task) != null && !AgentTests.graph.agent.running(task)
+            }) { "The task did not end" }
+            val ended = AgentTests.ended(task)
+
+            val steps = "end=${ended.report.end} requests=${model.requests.size} confirmed=${ended.report.confirmed}"
+            assertEquals(steps, listOf("share"), AgentTests.presses(screen))
+            assertEquals(steps, 1, ended.report.sends.size)
+            assertEquals(steps, 1, ended.report.shareItems)
+            assertEquals(EndReason.FINISHED, ended.report.end)
+        } finally {
+            graph.settings.set(SettingKeys.SAFETY, safety)
+            graph.agent.selfChatAliases = aliases
+            context.contentResolver.delete(photo, null, null)
+        }
+    }
+
+    // A test-only photo of today, which Kestrel itself adds and removes, as PermissionFlowTest's.
+    private fun addPhoto(): Uri {
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "kestrel_share_test.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/KestrelTest")
+        }
+        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: error("MediaStore refused the photo")
+        context.contentResolver.openOutputStream(uri)!!.use { Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.JPEG, 90, it) }
+        return uri
+    }
+
+    @Test
     fun theAgentStaysOutOfKestrelsOwnApp() = runBlocking {
         // Kestrel's settings in front: the task stops before any action (design D16; D32 item 16).
         screen.shell("am start -W -n $KESTREL/.app.MainActivity")
@@ -108,5 +182,10 @@ class AgentEndToEndTest {
         assertEquals(EndReason.FAILED_BY_MODEL, second.report.end)
         assertEquals(FIXTURES, ScreenTree.frontWindow(screen.session.snapshots.current().snapshot)?.packageName)
         assertTrue(open.requests.size >= 2)
+    }
+
+    private companion object {
+        // The owner's fictional name in the fixture's WhatsApp-like self-chat (FixtureChats.OWNER_NAME).
+        const val OWNER = "Test Owner"
     }
 }
