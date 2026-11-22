@@ -84,6 +84,8 @@ class GridBarAndCardTest {
         assertFalse(withTimeout(5_000) { first.await() })
         // Only the second card is left, so the tap reaches its Confirm button.
         eventually { screen.overlayShows("Delete the draft?") && !screen.overlayShows("Send a test message?") }
+        // A card ignores taps for its first 600 ms (design D32 item 21 of sub-project 5).
+        delay(ARMED_MILLIS)
         val confirm = screen.overlayButton("Confirm")!!
         screen.shell("input tap ${confirm.centerX()} ${confirm.centerY()}")
         assertTrue(withTimeout(5_000) { second.await() })
@@ -134,9 +136,15 @@ class GridBarAndCardTest {
             found
         }
 
+        delay(ARMED_MILLIS)
         screen.shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
 
         assertEquals(expected, withTimeout(5_000) { answer.await() })
         eventually { !screen.showsWindow("Kestrel confirmation") }
+    }
+
+    private companion object {
+        /** A little more than the 600 ms in which a card ignores taps. */
+        const val ARMED_MILLIS = 700L
     }
 }

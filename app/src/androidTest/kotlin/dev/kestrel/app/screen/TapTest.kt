@@ -3,6 +3,8 @@ package dev.kestrel.app.screen
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
+import dev.kestrel.screen.act.PressPolicy
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -88,6 +90,33 @@ class TapTest {
 
         assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.longPress(send.key))
         screen.awaitElement { it.label == "Long-pressed Send" }
+        Unit
+    }
+
+    @Test
+    fun aRefusedClickThatActedIsPressedOnceAndUncertain() = runBlocking {
+        for (policy in PressPolicy.entries) {
+            screen.open("PressActivity", "Press fixture")
+            val stubborn = screen.awaitElement { it.label == "STUBBORN" }
+
+            // The app clicked but answered no: a second press could send twice (design D32 item 29 of sub-project 5).
+            assertEquals(policy.name, ActionResult.UNCERTAIN, actions.tap(stubborn.key, policy = policy))
+            screen.awaitElement { it.label == "Pressed 1" }
+            delay(1_000)
+            assertTrue(policy.name, screen.session.snapshots.current().snapshot.elements.any { it.label == "Pressed 1" })
+        }
+    }
+
+    @Test
+    fun aRefusedClickThatDidNothingIsPressedOnceMoreByAGestureOnlyWhenVerified() = runBlocking {
+        screen.open("PressActivity", "Press fixture")
+
+        assertEquals(ActionResult.UNCERTAIN, actions.tap(screen.awaitElement { it.label == "DEAF" }.key, policy = PressPolicy.ONCE))
+        delay(500)
+        assertTrue(screen.session.snapshots.current().snapshot.elements.any { it.label == "Ready" })
+
+        assertEquals(ActionResult.Done(ActionMethod.GESTURE), actions.tap(screen.awaitElement { it.label == "DEAF" }.key))
+        screen.awaitElement { it.label == "Pressed 1" }
         Unit
     }
 

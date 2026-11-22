@@ -36,5 +36,15 @@ sealed interface ActionResult {
          * (design spec, section 9.2). The instant commands say "The screen changed. Say it again." for it.
          */
         val CHANGED = Failed("The element changed.")
+
+        /**
+         * A press that may or may not have worked: Android answered the node action with false, although apps sometimes
+         * act all the same, or did not report the end of a gesture (design D32 item 29 of sub-project 5). Kestrel did not
+         * press again; the caller looks at the screen before it tries again.
+         */
+        val UNCERTAIN = Failed("The press may not have worked.")
+
+        /** Kestrel performs no gesture and no node action while its confirmation card shows (design D32 item 20 of sub-project 5). */
+        val CARD_OPEN = Failed("A confirmation question is open.")
     }
 }

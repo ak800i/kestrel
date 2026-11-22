@@ -101,7 +101,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     val snapshotBuilds: Int get() = builds.get()
     val snapshotMillis: Long get() = buildMillis.get()
 
-    val actions = ScreenActions(service, snapshots, gestures, tracker, ownActions)
+    val actions = ScreenActions(service, snapshots, gestures, tracker, ownActions) { cardCover() }
 
     /** Edits text fields through Kestrel's input method (design spec, section 9.7). */
     val text = TextEditor(service, snapshots, tracker)
@@ -289,7 +289,11 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
      * once. A caller that also listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call, which
      * removes the card too (design spec, section 12.4).
      */
-    suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) { card.ask(question) }
+    suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) {
+        // An action that Kestrel made before the question can never hide the owner's touch (design D19 of sub-project 5).
+        ownActions.clear()
+        card.ask(question)
+    }
 
     /**
      * Starts reporting the owner's touches in [ownerTouches], for example while a task runs, and returns whether the
@@ -374,6 +378,15 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     /** Forgets Kestrel's earlier actions, so that none of them hides the owner's touch that answers a question (D19). */
     fun forgetOwnActions() = ownActions.clear()
+
+    /**
+     * Whether the confirmation card is on the screen (design D8 and D32 item 20 of sub-project 5): `AppScreenPort` waits
+     * until it is false, and one settle more, before it reads the snapshot of a confirmed action.
+     */
+    val cardShowing: Boolean get() = card.isShowing
+
+    // The card's bounds while it shows, or the whole screen while Android has not laid it out yet.
+    private fun cardCover(): IntRect? = if (card.isShowing) card.bounds ?: overlays.screenBounds() else null
 
     private val ownPackage: String = service.packageName
 

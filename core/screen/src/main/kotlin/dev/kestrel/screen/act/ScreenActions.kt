@@ -40,6 +40,8 @@ class ScreenActions internal constructor(
     private val gestures: GestureRunner,
     private val tracker: ScreenChangeTracker,
     private val own: OwnActions,
+    // The confirmation card's bounds while it shows, else null (design D32 item 20 of sub-project 5).
+    private val card: () -> IntRect?,
 ) {
     /** Apps that refused the set-text action or did not show the text afterwards (design spec, section 9.7). */
     private val inputMethodApps = ConcurrentHashMap.newKeySet<String>()
@@ -58,28 +60,35 @@ class ScreenActions internal constructor(
      * the one it saw (design spec, section 9.2). With [expected], Kestrel also checks the element of every snapshot that
      * it acts on, the fresh one too, and gives [ActionResult.CHANGED] when [expected] refuses it.
      */
-    suspend fun tap(key: String, expected: ((ScreenElement) -> Boolean)? = null): ActionResult =
-        press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap, expected)
+    suspend fun tap(key: String, expected: ((ScreenElement) -> Boolean)? = null, policy: PressPolicy = PressPolicy.VERIFIED): ActionResult =
+        press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap, expected, policy)
 
     /** Long-presses the element with [key], in the same way as [tap]. */
-    suspend fun longPress(key: String, expected: ((ScreenElement) -> Boolean)? = null): ActionResult =
-        press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress, expected)
+    suspend fun longPress(key: String, expected: ((ScreenElement) -> Boolean)? = null, policy: PressPolicy = PressPolicy.VERIFIED): ActionResult =
+        press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress, expected, policy)
 
-    suspend fun tapAt(x: Int, y: Int): ActionResult = gestureAt(ScreenPoint(x, y), Gestures::tap)
+    suspend fun tapAt(x: Int, y: Int): ActionResult = pressed(gestureAt(ScreenPoint(x, y), Gestures::tap))
 
-    suspend fun longPressAt(x: Int, y: Int): ActionResult = gestureAt(ScreenPoint(x, y), Gestures::longPress)
+    suspend fun longPressAt(x: Int, y: Int): ActionResult = pressed(gestureAt(ScreenPoint(x, y), Gestures::longPress))
 
     /**
      * Replaces the text of the field with [key] by [text]. Kestrel uses the set-text action and reads the text
      * back. If the app refuses the action or the field does not show the text, Kestrel types through its
      * accessibility input method instead, and from then on does so for the whole app (design spec, section 9.7).
-     * Kestrel does not type into a disabled field, and a field that has gone does not count as a refusal.
+     * Kestrel does not type into a disabled field, and a field that has gone does not count as a refusal. With
+     * [expected], Kestrel checks the field of every snapshot that it types into, before the set-text action and again
+     * right before its input method types, and gives [ActionResult.CHANGED] when [expected] refuses it, so that a key from
+     * an older snapshot never types into another field, such as one that became a password field (design D32 item 28 of
+     * sub-project 5).
      */
-    suspend fun setText(key: String, text: String): ActionResult = setText(key, text, retry = true)
+    suspend fun setText(key: String, text: String, expected: ((ScreenElement) -> Boolean)? = null): ActionResult =
+        typeInto(key, text, expected, retry = true)
 
-    private suspend fun setText(key: String, text: String, retry: Boolean): ActionResult {
+    private suspend fun typeInto(key: String, text: String, expected: ((ScreenElement) -> Boolean)?, retry: Boolean): ActionResult {
+        cardOpen()?.let { return it }
         val live = snapshots.current()
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
+        if (expected != null && !expected(element)) return ActionResult.CHANGED
         val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!element.editable) return ActionResult.Failed("It isn't a text field.")
         if (!element.enabled) return DISABLED
@@ -95,10 +104,16 @@ class ScreenActions internal constructor(
                 // The field has gone, so the app refused nothing: look for it again once (design spec, section 14.3).
                 if (!retry) return GONE
                 snapshots.invalidate()
-                return setText(key, text, retry = false)
+                return typeInto(key, text, expected, retry = false)
             }
             if (!node.isEnabled) return DISABLED
             if (app != null) inputMethodApps += app
+        }
+        // The input method types into the field that has the focus, so the field is checked once more right before.
+        if (expected != null) {
+            snapshots.invalidate()
+            val now = snapshots.current().snapshot.element(key)
+            if (now == null || !expected(now)) return ActionResult.CHANGED
         }
         return typeWithInputMethod(element, node, text)
     }
@@ -112,6 +127,7 @@ class ScreenActions internal constructor(
      * [tap] does.
      */
     suspend fun scroll(direction: ScrollDirection, key: String? = null, expected: ((ScreenElement) -> Boolean)? = null): ActionResult {
+        cardOpen()?.let { return it }
         val live = snapshots.current()
         val element = when (key) {
             null -> live.scrollableFor(direction)
@@ -133,7 +149,7 @@ class ScreenActions internal constructor(
         // A swipe that started on the keyboard or on a popup above the list would act on that instead, and a swipe
         // shorter than Android's touch slop would tap or long-press a row of the list.
         val shortest = SwipePaths.shortestScrollArea(ViewConfiguration.get(service).scaledTouchSlop)
-        val clear = Uncovered.area(area, live.snapshot.windowsAbove(window?.id), direction.isVertical, shortest)
+        val clear = Uncovered.area(area, live.snapshot.coversAbove(window?.id), direction.isVertical, shortest)
             ?: return ActionResult.Failed("Too little of the list is free for a swipe.")
         val (from, to) = SwipePaths.forScroll(clear, direction)
         return gesture(listOf(from, to)) { arrayOf(Gestures.swipe(from, to)) }
@@ -168,6 +184,7 @@ class ScreenActions internal constructor(
      * of its range. [expected] checks the element with [key] as [tap] does.
      */
     suspend fun adjust(key: String, increase: Boolean, expected: ((ScreenElement) -> Boolean)? = null): ActionResult {
+        cardOpen()?.let { return it }
         val live = snapshots.current()
         refused(live.snapshot, key, expected)?.let { return it }
         val node = live.node(key) ?: return NOT_ON_SCREEN
@@ -208,6 +225,7 @@ class ScreenActions internal constructor(
         expandOrCollapse(key, AccessibilityNodeInfo.ACTION_COLLAPSE, expected)
 
     private suspend fun expandOrCollapse(key: String, action: Int, expected: ((ScreenElement) -> Boolean)?): ActionResult {
+        cardOpen()?.let { return it }
         val live = snapshots.current()
         refused(live.snapshot, key, expected)?.let { return it }
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
@@ -229,6 +247,7 @@ class ScreenActions internal constructor(
      * the element with [key] as [tap] does.
      */
     suspend fun dismiss(key: String, expected: ((ScreenElement) -> Boolean)? = null): ActionResult {
+        cardOpen()?.let { return it }
         val live = snapshots.current()
         refused(live.snapshot, key, expected)?.let { return it }
         val element = live.snapshot.element(key) ?: return NOT_ON_SCREEN
@@ -254,7 +273,7 @@ class ScreenActions internal constructor(
         val bounds = element.bounds
         val fromX = bounds.left + bounds.width / 10
         val toX = bounds.right - 1 - bounds.width / 10
-        val y = Uncovered.line(bounds, snapshot.windowsAbove(element.windowId), fromX, toX) ?: return ActionResult.COVERED
+        val y = Uncovered.line(bounds, snapshot.coversAbove(element.windowId), fromX, toX) ?: return ActionResult.COVERED
         val from = ScreenPoint(fromX, y)
         val to = ScreenPoint(toX, y)
         return gesture(listOf(from, to)) { arrayOf(Gestures.swipe(from, to)) }
@@ -334,10 +353,17 @@ class ScreenActions internal constructor(
         }
     }
 
-    /** Opens a link or a deep link in the app that handles it. */
-    suspend fun openUri(uri: String): ActionResult {
+    /**
+     * Opens a link or a deep link in the app that handles it, or only in [packageName] when given. With [browsable], the
+     * intent carries `CATEGORY_BROWSABLE`, as a link on a web page does, so that only activities that accept links from
+     * the web open it (design D32 item 12 of sub-project 5).
+     */
+    suspend fun openUri(uri: String, packageName: String? = null, browsable: Boolean = false): ActionResult {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        packageName?.let { intent.setPackage(it) }
+        if (browsable) intent.addCategory(Intent.CATEGORY_BROWSABLE)
         return try {
-            service.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            service.startActivity(intent)
             settled(ActionMethod.INTENT)
         } catch (e: ActivityNotFoundException) {
             ActionResult.Failed("No app can open the link.")
@@ -346,6 +372,23 @@ class ScreenActions internal constructor(
             ActionResult.Failed("Android does not let Kestrel open the link.")
         } catch (e: SecurityException) {
             ActionResult.Failed("Android does not let Kestrel open the link.")
+        }
+    }
+
+    /**
+     * Starts [intent] from Kestrel's accessibility service, which Android allows while another app is in front, such as
+     * a settings page of `open_settings` or an app's screen that a data tool opens (design D11 and D12 of sub-project 5).
+     */
+    suspend fun openIntent(intent: Intent): ActionResult {
+        return try {
+            service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            settled(ActionMethod.INTENT)
+        } catch (e: ActivityNotFoundException) {
+            ActionResult.Failed("No app can open it.")
+        } catch (e: FileUriExposedException) {
+            ActionResult.Failed("Android does not let Kestrel open it.")
+        } catch (e: SecurityException) {
+            ActionResult.Failed("Android does not let Kestrel open it.")
         }
     }
 
@@ -359,6 +402,7 @@ class ScreenActions internal constructor(
      * [MAX_LABEL_NODES] elements in each window, and it keeps no text that it read.
      */
     fun clickLabelled(label: String, packages: Set<String>, ifOff: Boolean = false): Boolean {
+        if (card() != null) return false
         for (window in service.windows) {
             val root = window.root ?: continue
             if (root.packageName?.toString() !in packages) continue
@@ -409,36 +453,73 @@ class ScreenActions internal constructor(
         action: Int,
         fallback: (Int, Int) -> GestureDescription,
         expected: ((ScreenElement) -> Boolean)?,
+        policy: PressPolicy,
     ): ActionResult {
+        cardOpen()?.let { return it }
         val live = snapshots.current()
         refused(live.snapshot, key, expected)?.let { return it }
         val node = live.node(key) ?: return NOT_ON_SCREEN
+        val windowId = live.snapshot.element(key)?.windowId
         val target = node.touchTarget(action)
         if (target != null && !target.node.isEnabled) return DISABLED
         if (target != null && target.node.offers(action)) {
             if (target.node.perform(action)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
-        } else if (node.refresh() && node.isVisibleToUser) {
-            // The element is still there, but what a touch on it reaches does not offer the action.
-            val bounds = node.screenBounds()
-            if (!bounds.isEmpty) {
-                return fallbackAt(bounds, live.snapshot.windowsAbove(live.snapshot.element(key)?.windowId), fallback)
-            }
+            // Android answered no, but some apps act all the same, so a second press could send twice (D32 item 29).
+            if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
+            return pressAgain(key, action, fallback, expected, live.snapshot, windowId, target.node)
         }
-        // The node has gone, is hidden or refused the action, so look for the element again (design spec, section 14.3).
-        // The key may name another element in the fresh snapshot, so [expected] checks it again.
+        if (node.refresh() && node.isVisibleToUser) {
+            // The element is still there, but what a touch on it reaches does not offer the action: a gesture presses it.
+            val bounds = node.screenBounds()
+            if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback))
+        }
+        // The node has gone or is hidden, so nothing was pressed yet: look for the element again (design spec, section
+        // 14.3). The key may name another element in the fresh snapshot, so [expected] checks it again.
         snapshots.invalidate()
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return GONE
         if (expected != null && !expected(element)) return ActionResult.CHANGED
         val freshTarget = fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
-        if (freshTarget != null && freshTarget.node.offers(action) && freshTarget.node.perform(action)) {
-            return settled(ActionMethod.RETRY_ACTION)
+        if (freshTarget != null && freshTarget.node.offers(action)) {
+            if (freshTarget.node.perform(action)) return settled(ActionMethod.RETRY_ACTION)
+            if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
+            return pressAgain(key, action, fallback, expected, fresh.snapshot, element.windowId, freshTarget.node)
         }
-        return fallbackAt(element.bounds, fresh.snapshot.windowsAbove(element.windowId), fallback)
+        return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback))
     }
+
+    /**
+     * The second and last press of [PressPolicy.VERIFIED] after the node [refusedNode] answered no: only when a fresh
+     * snapshot, taken after the screen went quiet, shows the press's window exactly as [before] did. It taps with a gesture
+     * when the node is still the view that refused, and uses the fresh node's action when the app replaced the view.
+     */
+    private suspend fun pressAgain(
+        key: String,
+        action: Int,
+        fallback: (Int, Int) -> GestureDescription,
+        expected: ((ScreenElement) -> Boolean)?,
+        before: ScreenSnapshot,
+        windowId: Int?,
+        refusedNode: AccessibilityNodeInfo,
+    ): ActionResult {
+        tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
+        snapshots.invalidate()
+        val fresh = snapshots.current()
+        if (!Presses.unchanged(before, fresh.snapshot, windowId)) return ActionResult.UNCERTAIN
+        val element = fresh.snapshot.element(key) ?: return ActionResult.UNCERTAIN
+        if (expected != null && !expected(element)) return ActionResult.CHANGED
+        val freshTarget = fresh.node(key)?.touchTarget(action)
+        if (freshTarget != null && freshTarget.node.isEnabled && freshTarget.node.offers(action) && freshTarget.node != refusedNode) {
+            return if (freshTarget.node.perform(action)) settled(ActionMethod.RETRY_ACTION) else ActionResult.UNCERTAIN
+        }
+        return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback))
+    }
+
+    /** A pressing gesture whose end Android did not report may still have pressed (design D32 item 29 of sub-project 5). */
+    private fun pressed(result: ActionResult): ActionResult = if (result == GESTURE_TIMED_OUT) ActionResult.UNCERTAIN else result
 
     /** A fallback gesture on the part of [bounds] that the windows above leave uncovered. */
     private suspend fun fallbackAt(bounds: IntRect, covers: List<IntRect>, build: (Int, Int) -> GestureDescription): ActionResult {
@@ -492,6 +573,7 @@ class ScreenActions internal constructor(
      * throws for a negative point, and a gesture beyond the screen's edge reaches nothing.
      */
     private suspend fun gesture(points: List<ScreenPoint>, build: () -> Array<GestureDescription>): ActionResult {
+        cardOpen()?.let { return it }
         val screen = service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
         if (points.any { it.x < screen.left || it.x >= screen.right || it.y < screen.top || it.y >= screen.bottom }) {
             return OFF_SCREEN
@@ -510,7 +592,7 @@ class ScreenActions internal constructor(
                 ActionResult.Failed("A touch on the screen cancelled the gesture.")
             }
             GestureOutcome.REJECTED -> ActionResult.Failed("Android refused the gesture.")
-            GestureOutcome.TIMED_OUT -> ActionResult.Failed("Android did not report the end of the gesture.")
+            GestureOutcome.TIMED_OUT -> GESTURE_TIMED_OUT
         }
     }
 
@@ -573,6 +655,12 @@ class ScreenActions internal constructor(
     private fun AccessibilityNodeInfo.perform(action: Int, arguments: Bundle? = null, kind: OwnActions.Kind = OwnActions.kindOf(action)): Boolean =
         own.node(kind) { performAction(action, arguments) }
 
+    /** [ActionResult.CARD_OPEN] while Kestrel's confirmation card shows, so that no action of Kestrel's can reach it. */
+    private fun cardOpen(): ActionResult? = if (card() != null) ActionResult.CARD_OPEN else null
+
+    /** The windows above [windowId], and the confirmation card, which snapshots leave out but a gesture would reach. */
+    private fun ScreenSnapshot.coversAbove(windowId: Int?): List<IntRect> = windowsAbove(windowId) + listOfNotNull(card())
+
     /** The first action that scrolls this node in [direction], if the node offers one and is enabled. */
     private fun AccessibilityNodeInfo.scrollAction(direction: ScrollDirection): Int? {
         if (!isEnabled) return null
@@ -619,6 +707,7 @@ class ScreenActions internal constructor(
         val GONE = ActionResult.Failed("It's no longer on the screen.")
         val OFF_SCREEN = ActionResult.Failed("The point is outside the screen.")
         val NOT_DISMISSIBLE = ActionResult.Failed("I can't dismiss it.")
+        val GESTURE_TIMED_OUT = ActionResult.Failed("Android did not report the end of the gesture.")
         val SET_PROGRESS = AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id
         const val SLIDER_STEPS = 20f
         const val SYSTEM_UI = "com.android.systemui"

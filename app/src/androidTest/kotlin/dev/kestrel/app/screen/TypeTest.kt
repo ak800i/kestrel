@@ -71,6 +71,18 @@ class TypeTest {
     }
 
     @Test
+    fun setTextTypesNothingIntoAFieldThatIsNotTheOneTheCallerExpected() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val message = field("message_field")
+
+        // As when an older key now names another field, such as one that became a password field (design D32 item 28).
+        assertEquals(ActionResult.CHANGED, actions.setText(message.key, "Hello", expected = { it.password }))
+        screen.session.snapshots.invalidate()
+        assertNull(field("message_field").text)
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.setText(message.key, "Hello", expected = { it.editable && !it.password }))
+    }
+
+    @Test
     fun setTextRefusesAnElementThatIsNotATextField() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 

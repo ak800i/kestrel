@@ -1,5 +1,7 @@
 package dev.kestrel.app.screen
 
+import android.content.Intent
+import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.screen.act.ActionMethod
@@ -72,6 +74,23 @@ class SystemActionsTest {
 
         assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openUri("kestrel-fixtures://start"))
         launcherScreenIsShown()
+    }
+
+    @Test
+    fun aLinkKeptToOneAppOpensOnlyThereAndAnIntentStartsAsItIs() = runBlocking {
+        screen.shell("am force-stop $FIXTURES")
+        fixturesAreGone()
+
+        assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openUri("kestrel-fixtures://start", FIXTURES, browsable = true))
+        launcherScreenIsShown()
+        // A link kept to an app that cannot open it opens nothing, not the app that would otherwise take it (D32 item 12).
+        assertEquals(ActionResult.Failed("No app can open the link."), actions.openUri("kestrel-fixtures://start", "dev.kestrel.missing", browsable = true))
+
+        screen.shell("am force-stop $FIXTURES")
+        fixturesAreGone()
+        assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openIntent(Intent(Intent.ACTION_VIEW, Uri.parse("kestrel-fixtures://start")).setPackage(FIXTURES)))
+        launcherScreenIsShown()
+        assertEquals(ActionResult.Failed("No app can open it."), actions.openIntent(Intent("dev.kestrel.NO_SUCH_ACTION")))
     }
 
     @Test

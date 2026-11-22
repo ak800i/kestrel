@@ -3,6 +3,7 @@ package dev.kestrel.screen.overlay
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowInsets
@@ -11,29 +12,50 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import dev.kestrel.screen.R
+import dev.kestrel.screen.model.IntRect
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 /**
  * A card at the bottom of the screen with a question and Confirm and Cancel buttons (design spec, section 12.4).
- * Unlike the other overlays it takes touches, but only on itself. Use it on the main thread.
+ * Unlike the other overlays it takes touches, but only on itself. A card ignores taps for its first [ARMING_MILLIS], and
+ * a new card appears no sooner than [ARMING_MILLIS] after the previous one closed, so that a tap aimed at an old card's
+ * button never answers a new one (design D32 item 21 of sub-project 5). Use it on the main thread.
  */
-internal class ConfirmationCard(private val host: OverlayHost) {
+internal class ConfirmationCard(private val host: OverlayHost, private val clock: () -> Long = SystemClock::uptimeMillis) {
     private var pending: Question? = null
+    private var closedAt: Long? = null
+
+    /** Whether a card is on the screen; `ScreenActions` acts on nothing while it is (design D32 item 20 of sub-project 5). */
+    @Volatile
+    var isShowing = false
+        private set
+
+    /** The card's bounds on the screen once Android has laid it out, or null while no card shows. */
+    @Volatile
+    var bounds: IntRect? = null
+        private set
 
     /**
      * Shows [question] and returns true when the owner taps Confirm, or false for Cancel. It also returns false when a
      * newer question replaces this one or [dismiss] ends it, and its card then goes at once. Cancelling the call
      * removes the card too. When the card cannot be shown, because the session has closed, it returns false at once.
      */
-    suspend fun ask(question: String): Boolean = suspendCancellableCoroutine { continuation ->
+    suspend fun ask(question: String): Boolean {
         dismiss()
-        val open = Question(question, continuation)
-        // Cancellation can arrive on any thread, and the window must be removed on the main thread.
-        continuation.invokeOnCancellation { open.card.post { open.end(false) } }
-        pending = open
-        if (!host.show(open.card, params())) open.end(false)
+        closedAt?.let { closed ->
+            val wait = closed + ARMING_MILLIS - clock()
+            if (wait > 0) delay(wait)
+        }
+        return suspendCancellableCoroutine { continuation ->
+            val open = Question(question, continuation)
+            // Cancellation can arrive on any thread, and the window must be removed on the main thread.
+            continuation.invokeOnCancellation { open.card.post { open.end(false) } }
+            pending = open
+            if (host.show(open.card, params())) isShowing = true else open.end(false)
+        }
     }
 
     /** Ends an open question without the owner's answer: its card goes at once, and its [ask] returns false. */
@@ -42,13 +64,33 @@ internal class ConfirmationCard(private val host: OverlayHost) {
     }
 
     private inner class Question(question: String, private val continuation: CancellableContinuation<Boolean>) {
-        val card = build(question, onConfirm = { end(true) }, onCancel = { end(false) })
+        private val shownAt = clock()
+
+        val card = build(question, onConfirm = { tapped(true) }, onCancel = { tapped(false) }).apply {
+            addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+                if (pending === this@Question) {
+                    val at = IntArray(2)
+                    view.getLocationOnScreen(at)
+                    bounds = IntRect(at[0], at[1], at[0] + view.width, at[1] + view.height)
+                }
+            }
+        }
+
+        // A tap in the card's first ARMING_MILLIS may have been aimed at the card before it.
+        private fun tapped(answer: Boolean) {
+            if (clock() - shownAt >= ARMING_MILLIS) end(answer)
+        }
 
         /** Removes the card and returns [answer] to the caller, unless the caller already has an answer or has cancelled. */
         fun end(answer: Boolean) {
             host.hide(card)
             // A late tap on this card, or its cancellation, may arrive after a newer question has replaced it.
-            if (pending === this) pending = null
+            if (pending === this) {
+                pending = null
+                isShowing = false
+                bounds = null
+                closedAt = clock()
+            }
             if (continuation.isActive) continuation.resume(answer)
         }
     }
@@ -98,4 +140,9 @@ internal class ConfirmationCard(private val host: OverlayHost) {
     }
 
     private fun dp(value: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, host.context.resources.displayMetrics)
+
+    companion object {
+        /** How long a new card ignores taps, and how long after a card closed the next one may appear. */
+        const val ARMING_MILLIS = 600L
+    }
 }
