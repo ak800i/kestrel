@@ -53,8 +53,8 @@ class OwnerHooksTest {
         ProblemNotifications(context).accessibilityServiceOff()
 
         // Android lists a new notification a moment after it was posted.
-        assertTrue("the notice did not show", VoiceTests.waitUntil(5_000) { hook("NOTICES") == "notices=1" })
-        assertEquals("notices=0", hook("NOTICES", "clear" to true))
+        assertTrue("the notice did not show", VoiceTests.waitUntil(5_000) { hook("NOTICES") == "notices=1 kinds=accessibility" })
+        assertEquals("notices=0 kinds=none", hook("NOTICES", "clear" to true))
     }
 
     @Test
