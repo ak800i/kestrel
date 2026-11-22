@@ -11,7 +11,12 @@
 # scripts\task-check.ps1 -Live for the six tasks of design D3 on the A71 and the emulator's tasks on kestrel-api37, 3 runs
 # each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
 # it stops when the sitting's AI Credits reach 150. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
-# named steps, also as one text separated by commas.
+# named steps, also as one text separated by commas. A sitting 2 that stopped goes on with a call with -Step and the
+# steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
+# Credits of the earlier calls and reads their results too, and only a call that runs the step end deletes the
+# emulator's Copilot profile and removes its test account, so that the next call needs no new sign-in. A new sitting 2
+# is a call without -Step. Before and after each step the script reads both devices' call state, and ends a call with
+# the end-call key.
 # The A71's test PIN is typed only by Unlock-TestPhone (scripts\lib\Session.ps1), which alone reads the key "pin" of
 # corpus\owner\a71-config.json; this script reads the file only through Read-A71Config, which leaves the key out. The
 # script also needs the keys whatsappOwnName, gmailAddress, homePlace, testLocation ("<latitude>,<longitude>") and
@@ -394,36 +399,47 @@ function Wait-Mode([string]$Device, [string]$Mode, [double]$Seconds) {
     $false
 }
 
+# The restores of Kestrel's mode as it was and of its own microphone on the device, registered once per device. Every
+# call registers them at its start, before any step that can start Kestrel listening, such as device-tests in a call
+# with -Step (final-5c-review-b M1), and Start-Listening registers them too when they are missing. Kestrel's answer is
+# awaited up to 10 s, because Android binds its accessibility service a moment after the setting.
+$listening = @{}
+function Register-ListeningRestore([string]$Device) {
+    if ($listening.ContainsKey($Device)) { return }
+    $before = $null
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while (-not $before -and $watch.Elapsed.TotalSeconds -lt 10) {
+        $before = Get-VoiceState $Device
+        if (-not $before) { Start-Sleep -Seconds 1 }
+    }
+    $listening[$Device] = $null
+    Register-Restore "Kestrel's own microphone on $(Get-DeviceName $Device)" "Run: scripts\hook.ps1 -Serial $Device voice-clip -Clear, then turn Kestrel off and on." @{ Device = $Device; Listened = [bool]($before -and $before.mode -ne 'off') } {
+        param($Data)
+        Invoke-DeviceHook $Data.Device voice-clip @{ Clear = $true } | Out-Null
+        # The microphone comes back from Kestrel's next start, so a Kestrel that listened before the sitting starts again.
+        if ($Data.Listened) {
+            Invoke-DeviceHook $Data.Device voice @{ Send = 'off' } | Out-Null
+            if (-not (Wait-Mode $Data.Device off 30)) { throw 'Kestrel did not turn off within 30 s' }
+            Invoke-Device $Data.Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+            Invoke-DeviceHook $Data.Device voice @{ Send = 'toggle' } | Out-Null
+            Start-Sleep -Seconds 1
+            $after = Get-VoiceState $Data.Device
+            if ($after -and $after.mode -eq 'paused') { Invoke-DeviceHook $Data.Device voice @{ Send = 'resume' } | Out-Null }
+        }
+    } | Out-Null
+    if (-not $before -or $before.mode -eq 'off') {
+        Register-Restore "Kestrel's mode Off on $(Get-DeviceName $Device)" "Run: scripts\hook.ps1 -Serial $Device voice -Send off" $Device {
+            param($Device)
+            Invoke-DeviceHook $Device voice @{ Send = 'off' } | Out-Null
+        } | Out-Null
+    }
+}
+
 # Kestrel listening on the device, from the front, with the silent stand-in microphone ('quiet', so that no sound of the
 # room reaches it during text-driven runs) or its own microphone ('own', for the speech checks). A change of the
-# microphone counts from Kestrel's next start, so Kestrel turns off first. The first call per device registers the
-# restores of Kestrel's mode as it was and of its own microphone.
-$listening = @{}
+# microphone counts from Kestrel's next start, so Kestrel turns off first.
 function Start-Listening([string]$Device, [ValidateSet('quiet', 'own')][string]$Microphone) {
-    if (-not $listening.ContainsKey($Device)) {
-        $before = Get-VoiceState $Device
-        $listening[$Device] = $null
-        Register-Restore "Kestrel's own microphone on $(Get-DeviceName $Device)" "Run: scripts\hook.ps1 -Serial $Device voice-clip -Clear, then turn Kestrel off and on." @{ Device = $Device; Listened = [bool]($before -and $before.mode -ne 'off') } {
-            param($Data)
-            Invoke-DeviceHook $Data.Device voice-clip @{ Clear = $true } | Out-Null
-            # The microphone comes back from Kestrel's next start, so a Kestrel that listened before the sitting starts again.
-            if ($Data.Listened) {
-                Invoke-DeviceHook $Data.Device voice @{ Send = 'off' } | Out-Null
-                if (-not (Wait-Mode $Data.Device off 30)) { throw 'Kestrel did not turn off within 30 s' }
-                Invoke-Device $Data.Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-                Invoke-DeviceHook $Data.Device voice @{ Send = 'toggle' } | Out-Null
-                Start-Sleep -Seconds 1
-                $after = Get-VoiceState $Data.Device
-                if ($after -and $after.mode -eq 'paused') { Invoke-DeviceHook $Data.Device voice @{ Send = 'resume' } | Out-Null }
-            }
-        } | Out-Null
-        if (-not $before -or $before.mode -eq 'off') {
-            Register-Restore "Kestrel's mode Off on $(Get-DeviceName $Device)" "Run: scripts\hook.ps1 -Serial $Device voice -Send off" $Device {
-                param($Device)
-                Invoke-DeviceHook $Device voice @{ Send = 'off' } | Out-Null
-            } | Out-Null
-        }
-    }
+    Register-ListeningRestore $Device
     if ($listening[$Device] -eq $Microphone -and (Wait-Mode $Device listening 1)) { return }
     $state = Get-VoiceState $Device
     if ($state -and $state.mode -ne 'off') {
@@ -1436,10 +1452,18 @@ function Revoke-ScreenshotApprovals([string]$Device, [int]$Before) {
     [int]$answer['approvals'] -le $Before
 }
 
-# Design D30 step 14: the owner signs Kestrel in to Copilot on kestrel-api37, and on the A71 when sitting 1's device
-# tests deleted its profile there. The restore that deletes the emulator's Copilot profile through the hook
-# provider-delete is registered first, so that every way in which the sitting ends deletes it (review C I6).
-function Invoke-OwnerStep2 {
+# The restores of sitting 2's end on kestrel-api37 (design D30 step 23): the owner's Copilot profile deleted through the
+# hook provider-delete (review C I6), the Play Store enabled again, and the test Google account and the apps that sitting 1
+# installed there removed. A call that runs the step end, as a call without -Step does, registers them at its start, so
+# that every way in which it ends runs them; a call with -Step that does not run end keeps them for the next call, so that
+# a resume needs neither a new sign-in nor a new count of AI Credits (final-5c-review-b M3). The account's restore is
+# registered after the Play Store's, so that it runs before it, and after the accessibility settings', which screen-tap
+# needs.
+function Register-SittingEndRestores {
+    if ($Step -and 'end' -notin $Step) {
+        Add-Result session 'the owner''s Copilot profile, the test account and its apps, and the disabled Play Store stay on kestrel-api37 until a call that runs the step end'
+        return
+    }
     Register-Restore 'the owner''s Copilot profile on kestrel-api37' 'On kestrel-api37, the emulator''s window, use the mouse: Kestrel''s settings > Providers and profiles > the Copilot profile > Delete profile > Delete.' $EmulatorSerial {
         param($Device)
         Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
@@ -1448,6 +1472,40 @@ function Invoke-OwnerStep2 {
         if ($answer['copilot'] -ne '0') { throw 'a Copilot profile is left' }
         Add-Result end 'the owner''s Copilot profile on kestrel-api37 is deleted'
     } | Out-Null
+    $record = Read-AgentRecord $recordFile
+    if ($record.playDisabled) {
+        Register-Restore 'the Play Store on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm enable com.android.vending" $EmulatorSerial {
+            param($Device)
+            Invoke-Device $Device 'pm enable com.android.vending' | Out-Null
+            Set-AgentRecord $recordFile 'playDisabled' $false
+        } | Out-Null
+    }
+    if (-not $DryRun -and ($record.emulatorAccount -or @($record.installedEmulator | Where-Object { $_ }).Count -gt 0)) {
+        Register-Restore 'the test Google account and the apps of sitting 1 on kestrel-api37' 'On kestrel-api37, the emulator''s window: Settings > Passwords and accounts > the test account > Remove account; then uninstall Waze and Gmail.' $record {
+            param($Record)
+            $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)" } else { '' }
+            if ($Record.emulatorAccount) {
+                Invoke-Device $EmulatorSerial 'am start -a android.settings.SYNC_SETTINGS' | Out-Null
+                Start-Sleep -Seconds 3
+                if ($address -and (Invoke-ScreenTap $EmulatorSerial $address) -and (Invoke-ScreenTap $EmulatorSerial 'Remove account') -and (Invoke-ScreenTap $EmulatorSerial 'Remove account')) { Start-Sleep -Seconds 5 }
+            }
+            foreach ($package in @($Record.installedEmulator | Where-Object { $_ })) {
+                if (Test-Installed $EmulatorSerial $package) { Invoke-Device $EmulatorSerial "pm uninstall $package" | Out-Null }
+            }
+            Set-AgentRecord $recordFile 'installedEmulator' @()
+            $left = Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')
+            Add-Result end "kestrel-api37 has $left Google accounts; the apps of sitting 1 are uninstalled"
+            if ($left -gt 0) { throw "$left Google accounts are left" }
+            # The emulator's Waze and e-mail runs need the account, so a later call no longer runs them.
+            Set-AgentRecord $recordFile 'emulatorAccount' $false
+        } | Out-Null
+    }
+}
+
+# Design D30 step 14: the owner signs Kestrel in to Copilot on kestrel-api37, and on the A71 when sitting 1's device
+# tests deleted its profile there. The restore that deletes the emulator's Copilot profile is registered at the start of
+# the call (Register-SittingEndRestores).
+function Invoke-OwnerStep2 {
     $a71 = Get-A71
     $items = @(
         [pscustomobject]@{ Device = $EmulatorSerial; Prompt = 'Item 1, about 3 minutes: in the emulator''s window on this computer, Kestrel''s page "Providers and profiles" is open. With the mouse, click "Add a profile", "GitHub Copilot" and "Sign in"; open github.com/login/device in this computer''s browser, enter the code that the page shows and approve; when the page shows the models, turn on "Make default" and click "Save". Press Enter when the page shows the profile (s skips).' }
@@ -1492,6 +1550,21 @@ function Invoke-OwnerStep2 {
     }
 }
 
+# Whether Gmail on the device shows the owner's address of gmailAddress (design D30 step 16): its compose screen shows
+# the address in its To field, and once more as its sender when Gmail's account is that address; only the count leaves
+# the phone. On the A71 the compose screen opens only when sitting 1 saw Gmail's discard work there, and with Drafts
+# counted before and after (Invoke-GmailCompose; final-5c-review-b M4).
+function Test-GmailAccount([string]$Device, $Record) {
+    $isA71 = $Device -ne $EmulatorSerial
+    if ($isA71 -and $Record.gmailDiscardA71 -ne 'ok') {
+        Add-Result prepare 'Gmail''s account on the A71: not checked, because sitting 1 did not see Gmail''s discard work there'
+        return $false
+    }
+    $compose = Invoke-GmailCompose -Device $Device -Owner:$isA71 -Inside { param($Device) Get-ScreenCount $Device @{ Package = 'com.google.android.gm'; Contains = "$($config.gmailAddress)" } }
+    if (-not $compose.Discarded) { Add-Result prepare $compose.Note }
+    [int]$compose.Inside -gt 1
+}
+
 # Design D30 step 16: the reviewed fix installed on both devices, :testapp on the A71 again when it is missing, and
 # everything that sitting 1's restores or a device test put back set again and checked through the hooks; Gmail's
 # account on the A71 checked against gmailAddress (a count only), the test variants' first names chosen, and the live
@@ -1500,31 +1573,6 @@ function Invoke-PrepareStep2 {
     $script:gradleUsed = $true
     $a71 = Get-A71
     $record = Read-AgentRecord $recordFile
-    if ($record.playDisabled) {
-        Register-Restore 'the Play Store on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm enable com.android.vending" $EmulatorSerial {
-            param($Device)
-            Invoke-Device $Device 'pm enable com.android.vending' | Out-Null
-        } | Out-Null
-    }
-    if (-not $DryRun -and ($record.emulatorAccount -or @($record.installedEmulator | Where-Object { $_ }).Count -gt 0)) {
-        # Registered after the Play Store's restore, so that it runs before it and before the accessibility settings come
-        # back, which screen-tap needs; it runs however the sitting ends (design D30 step 23).
-        Register-Restore 'the test Google account and the apps of sitting 1 on kestrel-api37' 'On kestrel-api37, the emulator''s window: Settings > Passwords and accounts > the test account > Remove account; then uninstall Waze and Gmail.' $record {
-            param($Record)
-            $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)" } else { '' }
-            if ($Record.emulatorAccount) {
-                Invoke-Device $EmulatorSerial 'am start -a android.settings.SYNC_SETTINGS' | Out-Null
-                Start-Sleep -Seconds 3
-                if ($address -and (Invoke-ScreenTap $EmulatorSerial $address) -and (Invoke-ScreenTap $EmulatorSerial 'Remove account') -and (Invoke-ScreenTap $EmulatorSerial 'Remove account')) { Start-Sleep -Seconds 5 }
-            }
-            foreach ($package in @($Record.installedEmulator | Where-Object { $_ })) {
-                if (Test-Installed $EmulatorSerial $package) { Invoke-Device $EmulatorSerial "pm uninstall $package" | Out-Null }
-            }
-            $left = Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')
-            Add-Result end "kestrel-api37 has $left Google accounts; the apps of sitting 1 are uninstalled"
-            if ($left -gt 0) { throw "$left Google accounts are left" }
-        } | Out-Null
-    }
     if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
     foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
         & "$PSScriptRoot\install.ps1" -Serial $device
@@ -1564,15 +1612,7 @@ function Invoke-PrepareStep2 {
     $branch = if ($record.touchBranch) { $record.touchBranch } else { 'A' }
     Invoke-DeviceHook $a71 agent-touch-source @{ Rule = $rule; Branch = $branch } | Out-Null
     if ($record.hotspot -eq 'ok' -and $record.wifiSharing) { Enable-WifiSharing $a71 | Out-Null }
-    if (Test-Installed $a71 'com.google.android.gm') {
-        Invoke-Device $a71 "am start -a android.intent.action.SENDTO -d mailto:$($config.gmailAddress) -p com.google.android.gm" | Out-Null
-        Start-Sleep -Seconds 5
-        # The compose screen shows the address in its To field, and once more as its sender when Gmail's account is that
-        # address; only the count leaves the phone.
-        $script:gmailChecked = (Get-ScreenCount $a71 @{ Package = 'com.google.android.gm'; Contains = "$($config.gmailAddress)" }) -gt 1
-        if (-not ((Invoke-ScreenTap $a71 'More options' 5) -and (Invoke-ScreenTap $a71 'Discard' 5))) { Add-Result prepare 'Gmail''s check left a draft on the A71; delete it by hand' }
-        Invoke-Device $a71 'am force-stop com.google.android.gm' | Out-Null
-    }
+    if (Test-Installed $a71 'com.google.android.gm') { $script:gmailChecked = Test-GmailAccount $a71 $record }
     if (Test-Installed $a71 'org.telegram.messenger') {
         Open-App $a71 'org.telegram.messenger'
         Start-Sleep -Seconds 4
@@ -1738,6 +1778,25 @@ $plans = @{
     )
 }
 
+# Whether a call shows on either device before or after a step (design D27 and D30: Oracle's mCallState, from 'dumpsys
+# telephony.registry'; final-5c-review-b M5). A call is ended at once with the end-call key (Stop-DeviceCall), never
+# answered or confirmed (process rule 10), and fails the step with a line of its own. Returns whether a call showed.
+function Test-StepCalls([string]$StepName, [string]$When) {
+    $found = $false
+    foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
+        $registry = try { @(Invoke-Device $device 'dumpsys telephony.registry') } catch { $null }
+        if ($null -eq $registry) {
+            Add-Result $StepName "the call state of $(Get-DeviceName $device) could not be read $When the step"
+            continue
+        }
+        if (-not (Test-CallActive -Registry $registry)) { continue }
+        $found = $true
+        $ended = Stop-DeviceCall -Serial $device
+        Add-Result $StepName "failed: a call showed on $(Get-DeviceName $device) $When the step; $(if ($ended) { 'the script ended it with the end-call key' } else { 'it is still active; end it on the phone app''s screen' })"
+    }
+    $found
+}
+
 $completed = $false
 $stopped = $false
 try {
@@ -1768,7 +1827,9 @@ try {
     foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
         Enable-StayAwake $device
         Enable-KestrelService $device
+        Register-ListeningRestore $device
     }
+    if ($Sitting -eq '2') { Register-SittingEndRestores }
     if (-not (Unlock-Device $Serial)) { Add-Result session 'the A71 stays locked' }
     # An earlier run that ended without its finally block, such as when its window closed, can have left a live session
     # open (design D28), so every sitting closes it first on each device that has Kestrel. A build without the hook is
@@ -1784,13 +1845,16 @@ try {
     foreach ($entry in $plans[$Sitting]) {
         if ($Step -and $entry.Name -notin $Step) { continue }
         Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title)."
+        if (Test-StepCalls $entry.Name 'before') { continue }
         try {
             & $entry.Run
         } catch {
             # The owner's q, and the ceiling of AI Credits, stop the whole sitting.
             if ($_.Exception.Message -in 'The owner stopped the sitting.', $ceilingMessage) { throw }
-            # The scripts' and hooks' errors name only steps, files, keys and classes, never a value of the owner's.
+            # Format-Failure leaves out the owner's values and any address that a failed command named.
             Add-Result $entry.Name "failed: $(Format-Failure $_)"
+        } finally {
+            Test-StepCalls $entry.Name 'after' | Out-Null
         }
     }
     $completed = $true

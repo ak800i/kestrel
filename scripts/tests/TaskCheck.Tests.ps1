@@ -7,13 +7,15 @@
 param()
 
 BeforeAll {
+    . "$PSScriptRoot\..\lib\Kestrel.ps1"
     . "$PSScriptRoot\..\lib\Session.ps1"
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\task-check.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-TaskTable', 'New-RunMarker', 'Format-TaskText', 'Get-TaskReply', 'Test-TaskPassed', 'Format-TaskLine',
         'Test-WazeNavigating', 'Test-HotspotOn', 'Test-WifiValidated', 'Get-PressKinds', 'Get-TreeImageCount', 'Get-AnswerArguments',
-        'Test-SetupUntestable', 'Get-RunVerdict', 'Stop-GivenTask', 'Complete-TaskRun', 'New-HookTag', 'Invoke-TaskHook', 'Invoke-TaskStep')
+        'Test-SetupUntestable', 'Get-RunVerdict', 'Stop-GivenTask', 'Complete-TaskRun', 'New-HookTag', 'Invoke-TaskHook', 'Invoke-TaskStep',
+        'Invoke-Device', 'Test-RunCall')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -178,6 +180,21 @@ Describe 'The helpers of the agent''s task check' {
         Complete-TaskRun -Tag 't1' -Ended $false -Live $true -Restore 'none' -Run $null -Name 'hotspot' -Number 1
 
         @($calls) | Should -Be @('restore none', 'restore none', 'agent-task', 'restore none')
+    }
+
+    It 'ends a call that shows before or after a run with the end-call key, and reports it (final-5c-review-b M5)' {
+        $Serial = 'R58N66RVD7Z'
+        Mock Invoke-Device { @('  mCallState=0', '  mCallState=2') } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
+        Mock Stop-DeviceCall { $true }
+
+        Test-RunCall | Should -BeTrue
+        Should -Invoke Stop-DeviceCall -Times 1 -Exactly -ParameterFilter { $Serial -eq 'R58N66RVD7Z' }
+
+        Mock Invoke-Device { @('  mCallState=0') } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
+        Test-RunCall | Should -BeFalse
+        Mock Invoke-Device { throw 'adb: device offline' } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
+        Test-RunCall 3>$null | Should -BeFalse
+        Should -Invoke Stop-DeviceCall -Times 1 -Exactly
     }
 
     It 'refuses to run without the scripted model before it touches a device' {

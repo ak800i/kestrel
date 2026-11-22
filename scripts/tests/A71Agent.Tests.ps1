@@ -21,7 +21,8 @@ BeforeAll {
     $helpers += @('Get-DeviceName', 'Register-Restore', 'Complete-Restore', 'Invoke-Device', 'Invoke-DeviceHook', 'Invoke-ScreenTap', 'Get-ScreenCount',
         'Open-App', 'Unlock-Device', 'Set-HotspotSwitch', 'Wait-Validated', 'Add-Result', 'Test-Installed', 'Save-AgentTree', 'Read-DeviceText',
         'Format-Failure', 'Invoke-TelegramRecording', 'Get-GmailDraftCount', 'Invoke-GmailCompose', 'Restore-Hotspot', 'Register-HotspotRestore',
-        'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults')
+        'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
+        'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -431,5 +432,80 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         Add-SittingResults
         @((Read-AgentRecord $recordFile).sitting2Results) | Should -Be @((Split-Path -Leaf $resultsFile))
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 0
+    }
+}
+
+Describe 'The restores and checks of every call of a sitting (the fix round before the sittings)' {
+    BeforeEach {
+        $EmulatorSerial = 'emulator-5554'
+        $A71 = 'R58N66RVD7Z'
+        $Serial = $A71
+        $DryRun = $false
+        $Step = @()
+        $config = [pscustomobject]@{ gmailAddress = 'pera.test@example.com'; emulatorGmailAddress = 'kestrel.test@example.com' }
+        $recordFile = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N')).json"
+        $listening = @{}
+        $registered = [System.Collections.Generic.List[string]]::new()
+        Mock Register-Restore { $registered.Add($What); [pscustomobject]@{ What = $What; Data = $Data } }
+        $results = [System.Collections.Generic.List[string]]::new()
+        Mock Add-Result { $results.Add("${StepName}: $Text") }
+        Mock Start-Sleep { }
+    }
+
+    It 'registers the restores of Kestrel''s mode and microphone once per device, before any step starts Kestrel (final-5c-review-b M1)' {
+        Mock Get-VoiceState { [ordered]@{ mode = 'off'; session = 'closed' } }
+
+        Register-ListeningRestore $A71
+        Register-ListeningRestore $A71
+
+        @($registered) | Should -Be @('Kestrel''s own microphone on the A71', 'Kestrel''s mode Off on the A71')
+        $listening.ContainsKey($A71) | Should -BeTrue
+
+        Mock Get-VoiceState { [ordered]@{ mode = 'listening'; session = 'open' } }
+        Register-ListeningRestore $EmulatorSerial
+        @($registered) | Should -Be @('Kestrel''s own microphone on the A71', 'Kestrel''s mode Off on the A71', 'Kestrel''s own microphone on kestrel-api37')
+    }
+
+    It 'keeps the Copilot profile, the test account and the Play Store of kestrel-api37 for a call with -Step that does not end the sitting (final-5c-review-b M3)' {
+        Set-AgentRecord $recordFile 'playDisabled' $true
+        Set-AgentRecord $recordFile 'emulatorAccount' $true
+        $Step = @('prepare', 'look-closer')
+
+        Register-SittingEndRestores
+
+        $registered.Count | Should -Be 0
+        $results | Should -Contain 'session: the owner''s Copilot profile, the test account and its apps, and the disabled Play Store stay on kestrel-api37 until a call that runs the step end'
+
+        $Step = @('prepare', 'end')
+        Register-SittingEndRestores
+        @($registered) | Should -Be @('the owner''s Copilot profile on kestrel-api37', 'the Play Store on kestrel-api37', 'the test Google account and the apps of sitting 1 on kestrel-api37')
+    }
+
+    It 'checks Gmail''s account on the A71 only when sitting 1 saw its discard work there, with Drafts counted around it (final-5c-review-b M4)' {
+        Mock Invoke-GmailCompose { [pscustomobject]@{ Opened = $true; Discarded = $true; Inside = (& $Inside $Device); Note = 'discarded' } }
+        Mock Get-ScreenCount { 2 }
+
+        Test-GmailAccount $A71 ([pscustomobject]@{ gmailDiscardA71 = 'left' }) | Should -BeFalse
+        Should -Invoke Invoke-GmailCompose -Times 0 -Exactly
+        $results | Should -Contain 'prepare: Gmail''s account on the A71: not checked, because sitting 1 did not see Gmail''s discard work there'
+
+        Test-GmailAccount $A71 ([pscustomobject]@{ gmailDiscardA71 = 'ok' }) | Should -BeTrue
+        Should -Invoke Invoke-GmailCompose -Times 1 -Exactly -ParameterFilter { $Device -eq $A71 -and $Owner }
+        Should -Invoke Get-ScreenCount -Times 1 -Exactly -ParameterFilter { $With.Contains -eq 'pera.test@example.com' }
+    }
+
+    It 'ends a call that shows before or after a step with the end-call key, and fails the step (final-5c-review-b M5)' {
+        Mock Invoke-Device { @('  mCallState=2', '  mCallState=0') } -ParameterFilter { $Device -eq $A71 -and $Command -eq 'dumpsys telephony.registry' }
+        Mock Invoke-Device { @('  mCallState=0') } -ParameterFilter { $Device -eq $EmulatorSerial -and $Command -eq 'dumpsys telephony.registry' }
+        Mock Stop-DeviceCall { $true }
+
+        Test-StepCalls 'injection' 'after' | Should -BeTrue
+
+        Should -Invoke Stop-DeviceCall -Times 1 -Exactly -ParameterFilter { $Serial -eq $A71 }
+        @($results) | Should -Be @('injection: failed: a call showed on the A71 after the step; the script ended it with the end-call key')
+
+        Mock Invoke-Device { @('  mCallState=0') } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
+        Test-StepCalls 'injection' 'before' | Should -BeFalse
+        Should -Invoke Stop-DeviceCall -Times 1 -Exactly
     }
 }

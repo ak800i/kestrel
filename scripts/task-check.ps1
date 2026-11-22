@@ -1,12 +1,13 @@
 # Runs a named task of sub-project 5's table (design D28 and D29) on a test device, -Runs times, and prints one line per
 # run: task=<name> run=<i> result=<pass|fail|skipped> end=<EndReason|none> check=<pass|fail|skipped> steps= workMs= credits=
-# model= in= out= cacheRead= cacheWrite= reason=<ok|timeout|check|end|untestable|limit|confirm>, which -Results also appends to a
+# model= in= out= cacheRead= cacheWrite= reason=<ok|timeout|check|end|untestable|limit|confirm|call>, which -Results also appends to a
 # file. Each run prepares the device as the table says, installs the scripted model from -Script (a JSON array of plan 5A's
 # ScriptedModel replies, whose {marker} and {name} the run fills in), gives the task as text through hook H1 with a tag of
 # its own, answers the task's questions through agent-answer as the table says ('cancel' and 'no' for the injection
 # fixtures; 'confirm' only to a confirmation of the category that the task names, in test mode), polls agent-task -Result
 # for that tag for up to 10 minutes, runs the table's check on the device, stops a task that has not ended, and puts
-# the device back, also after a failure or Ctrl+C. Checks read only counts, flags and the hooks' answers, never screen text, a
+# the device back, also after a failure or Ctrl+C. Before and after each run it reads the call state, and a call fails
+# the run (reason=call) and is ended with the end-call key. Checks read only counts, flags and the hooks' answers, never screen text, a
 # message or a prompt. Without -Live (plan 5C, only inside a sitting of scripts\a71-agent.ps1) it needs -Script, so that
 # no run calls a provider. It never creates, waits for or deletes the emulator lock: it runs inside the controller's or
 # the sitting's lock. The tasks: telegram-late, hotspot, waze-home, firefox-wiki, telegram-photos, read-email (the live
@@ -261,6 +262,21 @@ function Get-RefusalKind([string]$Tag) {
 }
 
 function Invoke-Device([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
+
+# Whether the device shows a call (design D27 and D30: Oracle's mCallState, from 'dumpsys telephony.registry'), as before
+# and after each run: a call is ended at once with the end-call key (Stop-DeviceCall), never answered or confirmed
+# (process rule 10), and the run fails (final-5c-review-b M5). A call state that cannot be read counts as no call, with
+# a warning.
+function Test-RunCall {
+    $registry = try { @(Invoke-Device 'dumpsys telephony.registry') } catch { $null }
+    if ($null -eq $registry) {
+        Write-Warning "The call state of $Serial could not be read."
+        return $false
+    }
+    if (-not (Test-CallActive -Registry $registry)) { return $false }
+    Stop-DeviceCall -Serial $Serial | Out-Null
+    $true
+}
 
 # Whether the device is an emulator, which Assert-TestDevice tells by its AVD name.
 function Test-Emulator { $KestrelTestDevices[$Serial].Property -eq 'ro.boot.qemu.avd_name' }
@@ -521,10 +537,15 @@ for ($run = 1; $run -le $Runs; $run++) {
     $reason = 'end'
     $restored = $false
     $tag = ''
+    $call = $false
     try {
+        # A call that shows before the run fails it, and the run gives no task (final-5c-review-b M5).
+        $call = Test-RunCall
         $wrongDevice = ($entry.Device -eq 'emulator' -and -not (Test-Emulator)) -or ($entry.Device -eq 'phone' -and (Test-Emulator))
-        $setup = if ($wrongDevice) { 'untestable' } else { Invoke-TaskStep $entry.Setup $state }
-        if (Test-SetupUntestable $setup) {
+        $setup = if ($call) { 'call' } elseif ($wrongDevice) { 'untestable' } else { Invoke-TaskStep $entry.Setup $state }
+        if ($call) {
+            Write-Warning "Task $Task, run ${run}: a call showed before the run; the script ended it with the end-call key."
+        } elseif (Test-SetupUntestable $setup) {
             $result = 'skipped'
             $reason = 'untestable'
         } else {
@@ -578,12 +599,20 @@ for ($run = 1; $run -le $Runs; $run++) {
             }
         }
     } finally {
+        # A call that the run started is ended first, and again after the task's stop and the restore.
+        $after = Test-RunCall
         try {
             Complete-TaskRun -Tag $tag -Ended ([bool]$answer) -Live $live -Restore $entry.Restore -Run $state -Name $Task -Number $run
             $restored = $true
         } finally {
+            if (Test-RunCall) { $after = $true }
             if (-not $restored) { Write-Warning "Task $Task, run ${run}: the restore did not finish; check the device by hand." }
         }
+    }
+    if ($after) { Write-Warning "Task $Task, run ${run}: a call showed after the run; the script ended it with the end-call key." }
+    if ($call -or $after) {
+        $result = 'fail'
+        $reason = 'call'
     }
     if ($result -eq 'fail') { $failed++ }
     $line = Format-TaskLine -Name $Task -Run $run -Result $result -Answer $answer -Check $check -Reason $reason
