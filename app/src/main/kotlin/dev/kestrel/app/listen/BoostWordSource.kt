@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import dev.kestrel.datatools.contacts.ContactsReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -44,38 +45,76 @@ internal class LauncherAppLabels(private val context: Context) : AppLabels {
     }
 }
 
+/** Reads the owner's own names for the boost words: aliases and contact names (D32 item 44 of sub-project 5). */
+internal fun interface PeopleNames {
+    suspend fun read(): List<String>
+}
+
 /**
- * The boost words of a voice session (design spec, section 8.3): "Kestrel" first, then the names of the apps that the
- * owner installed, and then those of the system apps, each group in the order in which [labels] reads them. sherpa-onnx
- * gets at most 100 phrases, so the cap drops system apps first: their common names, such as "Phone" or "Camera", need
- * no boost, while the owner's apps have the rare names that the recogniser misses, such as "Revolut". Sub-project 3
- * adds the labels on the screen and the command vocabulary, and sub-project 5 the owner's aliases and contact names. A
- * name with fewer than [SHORTEST] letters or digits, such as "X", is left out, because so short a boost would pull many
- * words towards it, and a repeated name counts once, ignoring case. When the names cannot be read, [report] gets the
- * error, which it must log by its classes only (section 13.5), and the words are "Kestrel" alone. Never log a boost
- * word or an app's name.
+ * The owner's names (D32 item 44 of sub-project 5): memory's [aliases] always, and, only while Kestrel may read the
+ * contacts, the starred contacts and the contacts that recent tasks [found]. Android stopped reporting "recently
+ * contacted" in API 29, so the recent contacts are those that Kestrel's own tasks found. It reads the contacts through
+ * [contacts], so call it off the main thread.
  */
-internal class BoostWordSource(private val labels: AppLabels, private val report: (String, Throwable) -> Unit) {
-    /** Reads the names of the apps on [Dispatchers.IO]. A voice session asks once, when it opens. */
+internal class OwnerNames(
+    private val contacts: ContactsReader,
+    private val aliases: suspend () -> List<String> = { emptyList() },
+    private val found: suspend () -> List<String> = { emptyList() },
+) : PeopleNames {
+    override suspend fun read(): List<String> {
+        val all = contacts.contacts() ?: return aliases()
+        return aliases() + all.filter { it.starred }.mapNotNull { it.names.firstOrNull() } + found()
+    }
+}
+
+/**
+ * The boost words of a voice session (design spec, section 8.3): "Kestrel" first, then at most [MAX_PEOPLE] of the
+ * owner's own names that [people] reads (D32 item 44 of sub-project 5), then the names of the apps that the owner
+ * installed, and then those of the system apps, each group in the order in which it is read. sherpa-onnx gets at most
+ * 100 phrases, so the cap drops system apps first: their common names, such as "Phone" or "Camera", need no boost, while
+ * the owner's apps and people have the rare names that the recogniser misses, such as "Revolut". Sub-project 3 adds the
+ * labels on the screen and the command vocabulary. A name with fewer than [SHORTEST] letters or digits, such as "X", is
+ * left out, because so short a boost would pull many words towards it, and a repeated name counts once, ignoring case. A
+ * capital "Đ" becomes "Dj" ([spellable]), because the speech model has no piece for it and its guard would drop the whole
+ * name. When the names cannot be read, [report] gets the error, which it must log by its classes only (section 13.5),
+ * and the words go on without them. Never log a boost word, an app's name or a person's name.
+ */
+internal class BoostWordSource(
+    private val labels: AppLabels,
+    private val people: PeopleNames = PeopleNames { emptyList() },
+    private val report: (String, Throwable) -> Unit,
+) {
+    /** Reads the names of the people and the apps on [Dispatchers.IO]. A voice session asks once, when it opens. */
     suspend fun words(): List<String> {
-        val apps = try {
-            withContext(Dispatchers.IO) { labels.read() }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            report("Reading the names of the apps", e)
-            emptyList()
-        }
+        val owners = read("Reading the owner's names") { people.read() }.map { it.trim() }.filter(::fits).take(MAX_PEOPLE)
+        val apps = read("Reading the names of the apps") { labels.read() }
         // The owner's apps first; filter and filterNot keep the package manager's order within each group.
         val names = (apps.filterNot { it.system } + apps.filter { it.system })
             .map { it.label.trim() }
-            .filter { name -> name.count { it.isLetterOrDigit() } >= SHORTEST }
-        return (listOf(NAME) + names).distinctBy { it.lowercase() }
+            .filter(::fits)
+        return (listOf(NAME) + owners + names).map(::spellable).distinctBy { it.lowercase() }
     }
+
+    private suspend fun <T> read(what: String, block: suspend () -> List<T>): List<T> = try {
+        withContext(Dispatchers.IO) { block() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        report(what, e)
+        emptyList()
+    }
+
+    private fun fits(name: String): Boolean = name.count { it.isLetterOrDigit() } >= SHORTEST
 
     companion object {
         const val NAME = "Kestrel"
         const val SHORTEST = 3
+
+        /** The owner's names take at most this many of sherpa-onnx's 100 phrases, so that his apps keep their place. */
+        const val MAX_PEOPLE = 20
+
+        /** [name] with a capital "Đ" as "Dj", which the speech model can spell; a small "đ" stays, because the model has it. */
+        fun spellable(name: String): String = name.replace("Đ", "Dj")
     }
 }
 

@@ -1,19 +1,19 @@
-package dev.kestrel.app.commands
+package dev.kestrel.datatools.contacts
 
 import android.content.ContentResolver
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.ContactsContract
+import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Nickname
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
 import android.provider.ContactsContract.Data
 import dev.kestrel.commands.phone.Contact
-import dev.kestrel.commands.phone.PhoneEntry
 
 /** Where the contacts come from: Android's contacts provider, or a fake in the JVM tests. */
-internal interface ContactsSource {
+interface ContactsSource {
     /** Every contact with its names and numbers. Throws [SecurityException] without `READ_CONTACTS`. */
     fun read(): List<Contact>
 
@@ -28,7 +28,7 @@ internal interface ContactsSource {
  * again. When the permission is missing at a read, the reader drops what it kept and its watch, so that a later grant
  * starts afresh. It never logs a name or a number; a failure is reported by its classes only.
  */
-internal class ContactsReader(
+class ContactsReader(
     private val access: ContactsAccess,
     private val source: ContactsSource,
     private val report: (String, Throwable) -> Unit,
@@ -76,31 +76,16 @@ internal class ContactsReader(
     }
 }
 
-/** The contacts of Android's provider: names, nicknames and phone numbers, never other data. */
-internal class AndroidContacts(private val resolver: ContentResolver) : ContactsSource {
-    override fun read(): List<Contact> {
-        val names = LinkedHashMap<Long, MutableList<String>>()
-        val numbers = HashMap<Long, MutableList<PhoneEntry>>()
-        val starred = HashMap<Long, Boolean>()
-        val kinds = arrayOf(StructuredName.CONTENT_ITEM_TYPE, Nickname.CONTENT_ITEM_TYPE, Phone.CONTENT_ITEM_TYPE)
-        resolver.query(Data.CONTENT_URI, COLUMNS, "${Data.MIMETYPE} IN (?, ?, ?)", kinds, Data._ID)?.use { rows ->
-            while (rows.moveToNext()) {
-                val id = rows.getLong(0)
-                val contactNames = names.getOrPut(id) { mutableListOf() }
-                rows.getString(1)?.let { if (it !in contactNames) contactNames.add(0, it) }
-                starred[id] = rows.getInt(6) != 0
-                val value = rows.getString(3) ?: continue
-                when (rows.getString(2)) {
-                    Nickname.CONTENT_ITEM_TYPE -> if (value !in contactNames) contactNames += value
-                    Phone.CONTENT_ITEM_TYPE -> numbers.getOrPut(id) { mutableListOf() } +=
-                        PhoneEntry(value, kind(rows.getInt(4), rows.getString(5)), rows.getInt(7) != 0)
-                }
-            }
-        }
-        return names.filterValues { it.isNotEmpty() }.map { (id, contactNames) ->
-            Contact(id, contactNames, numbers[id].orEmpty(), starred[id] == true)
-        }
-    }
+/**
+ * The contacts of Android's provider, read by mimetype in one query, never with SQL `LIKE` (research r53): for the instant
+ * commands names, nicknames and phone numbers; for the agent's `find_contact` also the e-mail addresses and the messaging
+ * apps' rows (design D12 of sub-project 5). Call it off the main thread.
+ */
+class AndroidContacts(private val resolver: ContentResolver) : ContactsSource {
+    override fun read(): List<Contact> = ContactRows.fold(rows(BASIC)).map { it.contact }
+
+    /** Every contact with its e-mail addresses and the messaging apps whose rows it has. Throws without `READ_CONTACTS`. */
+    fun details(): List<ContactDetails> = ContactRows.fold(rows(BASIC + Email.CONTENT_ITEM_TYPE + MessagingApps.MIMETYPES.keys))
 
     override fun watch(changed: () -> Unit): AutoCloseable {
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -110,17 +95,31 @@ internal class AndroidContacts(private val resolver: ContentResolver) : Contacts
         return AutoCloseable { resolver.unregisterContentObserver(observer) }
     }
 
-    private fun kind(type: Int, label: String?): String = when (type) {
-        Phone.TYPE_MOBILE -> "mobile"
-        Phone.TYPE_WORK -> "work"
-        Phone.TYPE_HOME -> "home"
-        Phone.TYPE_MAIN -> "main"
-        Phone.TYPE_WORK_MOBILE -> "work mobile"
-        Phone.TYPE_CUSTOM -> label?.takeIf { it.isNotBlank() } ?: "other"
-        else -> "other"
+    private fun rows(kinds: List<String>): List<ContactRow> {
+        val rows = mutableListOf<ContactRow>()
+        val selection = "${Data.MIMETYPE} IN (${kinds.joinToString(", ") { "?" }})"
+        resolver.query(Data.CONTENT_URI, COLUMNS, selection, kinds.toTypedArray(), Data._ID)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val mimetype = cursor.getString(2)
+                rows += ContactRow(
+                    contactId = cursor.getLong(0),
+                    displayName = cursor.getString(1),
+                    mimetype = mimetype,
+                    value = cursor.getString(3),
+                    // Only a phone row keeps a number in DATA2; the apps' rows keep text there.
+                    type = if (mimetype == Phone.CONTENT_ITEM_TYPE) cursor.getInt(4) else 0,
+                    label = if (mimetype == Phone.CONTENT_ITEM_TYPE) cursor.getString(5) else null,
+                    starred = cursor.getInt(6) != 0,
+                    superPrimary = cursor.getInt(7) != 0,
+                )
+            }
+        }
+        return rows
     }
 
     private companion object {
+        val BASIC = listOf(StructuredName.CONTENT_ITEM_TYPE, Nickname.CONTENT_ITEM_TYPE, Phone.CONTENT_ITEM_TYPE)
+
         // The display name of the contact, the row's kind and value, a phone number's type and label, the star and
         // whether the number is the contact's default.
         val COLUMNS = arrayOf(

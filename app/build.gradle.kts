@@ -26,6 +26,7 @@ dependencies {
     implementation(project(":core:screen"))
     implementation(project(":core:voice"))
     // sub-project 5B: dependencies
+    implementation(project(":core:datatools"))
     // sub-project 5C: dependencies
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)

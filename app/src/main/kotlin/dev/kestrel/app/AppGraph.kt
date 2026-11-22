@@ -311,6 +311,18 @@ class AppGraph(context: Context) {
     }
 
     /**
+     * The owner's names for the recogniser's boost words (D32 item 44 of sub-project 5): the starred contacts, read only
+     * with READ_CONTACTS; plan 5B's Task 14 adds memory's aliases and the contacts that tasks found.
+     */
+    private val ownerNames = dev.kestrel.app.listen.OwnerNames(
+        dev.kestrel.datatools.contacts.ContactsReader(
+            dev.kestrel.datatools.contacts.contactsAccess(appContext),
+            dev.kestrel.datatools.contacts.AndroidContacts(appContext.contentResolver),
+            reportFailure,
+        ),
+    )
+
+    /**
      * Kestrel's listening, one for the whole process (design spec, sections 7.2 and 7.3), so that the accessibility
      * service, the notification and the tile reach it whether or not ListeningService runs. Its thread runs one thing at a
      * time; failures are logged by their classes and stack frames only (section 13.5).
@@ -321,8 +333,9 @@ class AppGraph(context: Context) {
             thread = Dispatchers.Default.limitedParallelism(1),
             sessions = object : VoiceSessions {
                 override suspend fun open(microphone: Microphone, listener: SessionListener): Session =
-                    // "Kestrel" and the names of the apps that the launcher shows, read once while the engines load.
-                    openWithBoostWords(BoostWordSource(LauncherAppLabels(appContext), reportFailure)) { boostWords ->
+                    // "Kestrel", the owner's names and the names of the apps that the launcher shows, read once while the
+                    // engines load.
+                    openWithBoostWords(BoostWordSource(LauncherAppLabels(appContext), ownerNames, reportFailure)) { boostWords ->
                         VoiceSession.open(
                             appContext,
                             voice,

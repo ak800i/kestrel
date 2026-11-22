@@ -1,5 +1,8 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.commands.phone.Contact
+import dev.kestrel.datatools.contacts.ContactsReader
+import dev.kestrel.datatools.contacts.ContactsSource
 import dev.kestrel.voice.listen.Recognition
 import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.CancellationException
@@ -45,6 +48,42 @@ class BoostWordSourceTest {
         val kept = source { listOf(system("Phone")) + owners + system("Camera") }.words().take(100)
 
         assertEquals(listOf("Kestrel") + owners.map { it.label }, kept)
+    }
+
+    @Test
+    fun theOwnersNamesComeAfterKestrelAndBeforeTheApps() = runTest {
+        val people = PeopleNames { listOf("mom", " Ana Petrović ", "Al", "Viber") + (1..30).map { "Person $it" } }
+
+        val words = BoostWordSource({ listOf(installed("Viber"), system("Phone")) }, people) { what, error -> reports += what to error }.words()
+
+        // "Al" is too short and "Viber" counts once; at most 20 of the owner's names, so that the apps keep their place.
+        val names = listOf("mom", "Ana Petrović", "Viber") + (1..17).map { "Person $it" }
+        assertEquals(listOf("Kestrel") + names + "Phone", words)
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test
+    fun aCapitalDjeBecomesDjBeforeTheGuardAndASmallOneStays() = runTest {
+        val words = BoostWordSource({ listOf(installed("Đak")) }, { listOf("Đorđe Đurić") }) { what, error -> reports += what to error }.words()
+
+        assertEquals(listOf("Kestrel", "Djorđe Djurić", "Djak"), words)
+    }
+
+    @Test
+    fun theStarredAndFoundContactsCountOnlyWhileKestrelMayReadTheContacts() = runTest {
+        var allowed = false
+        val starred = Contact(1, listOf("Đorđe Petrović"), emptyList(), starred = true)
+        val other = Contact(2, listOf("Marko Marković"), emptyList(), starred = false)
+        val source = object : ContactsSource {
+            override fun read() = listOf(starred, other)
+
+            override fun watch(changed: () -> Unit) = AutoCloseable { }
+        }
+        val names = OwnerNames(ContactsReader({ allowed }, source) { _, _ -> }, aliases = { listOf("mom") }, found = { listOf("Ana Petrović") })
+
+        assertEquals(listOf("mom"), names.read())
+        allowed = true
+        assertEquals(listOf("mom", "Đorđe Petrović", "Ana Petrović"), names.read())
     }
 
     @Test

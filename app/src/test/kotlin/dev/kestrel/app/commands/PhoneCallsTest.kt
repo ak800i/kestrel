@@ -15,6 +15,8 @@ import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.phone.Contact
 import dev.kestrel.commands.phone.PhoneEntry
 import dev.kestrel.commands.phone.PhoneNumbers
+import dev.kestrel.datatools.contacts.ContactsReader
+import dev.kestrel.datatools.contacts.ContactsSource
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement

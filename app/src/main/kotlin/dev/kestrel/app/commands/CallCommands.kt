@@ -31,6 +31,9 @@ import dev.kestrel.commands.phone.PhoneEntry
 import dev.kestrel.commands.phone.PhoneNumbers
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Strictness
+import dev.kestrel.datatools.contacts.AndroidContacts
+import dev.kestrel.datatools.contacts.ContactsReader
+import dev.kestrel.datatools.contacts.contactsAccess
 import dev.kestrel.safety.EmergencyGuard as SafetyGuard
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult

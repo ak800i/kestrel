@@ -1,4 +1,4 @@
-package dev.kestrel.app.commands
+package dev.kestrel.datatools.contacts
 
 import dev.kestrel.commands.phone.Contact
 import dev.kestrel.commands.phone.PhoneEntry
