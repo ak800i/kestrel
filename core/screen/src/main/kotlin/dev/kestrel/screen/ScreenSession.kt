@@ -394,7 +394,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /** Branch B of D19: a click or a text change in another app's window that Kestrel did not cause is the owner's touch. */
     private fun signalOwner(event: AccessibilityEvent) {
         if (ownActions.source.branch != TouchBranch.B || !watcher.running) return
-        val focused = event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && event.source?.isFocused == true
+        val focused = { event.source?.isFocused == true }
         if (OwnerSignal.counts(event.eventType, event.packageName?.toString(), ownPackage, focused, ownActions.busy())) {
             watcher.report(OwnActions.signal())
         }
