@@ -9,17 +9,19 @@
 # answer only kinds, counts and states.
 
 # The fixture on which the answer checks' tasks act: :testapp's views fixture, whose button "Rebuild" changes nothing
-# that matters.
+# that matters. The button shows its text in capitals, so Kestrel's observation labels it "REBUILD".
 function Get-SpeechFixture { 'dev.kestrel.testapp/.ViewsActivity' }
 
 # The scripted model's replies for a check's task, as plan 5A's ScriptedModel reads them: 'end' fails the task at its
-# first reply, without any screen action; 'confirm' taps the fixture's "Rebuild" as a deleting action, which Standard
-# mode confirms and test mode does not block, and then fails the task; 'wait' only waits, six times 10 s.
+# first reply, without any screen action; 'confirm' taps the fixture's "REBUILD", declared as an action that copies the
+# screen's text, which Standard mode confirms ("Tap 'REBUILD' in ...?") and test mode does not block, and then fails the
+# task; 'wait' only waits, six times 10 s. A deleting tap would not do: on a screen without a title, such as this
+# fixture, the safety check cannot name what it deletes and hands it over instead of asking (ConfirmationBuilder).
 function Get-SpeechScript([ValidateSet('end', 'confirm', 'wait')][string]$Kind) {
     $end = @{ tool = 'fail'; arguments = @{ reason = 'The speech check ends here.' } }
     $replies = switch ($Kind) {
         'end' { @($end) }
-        'confirm' { @(@{ tool = 'tap'; target = @{ label = 'Rebuild' }; arguments = @{ reason = 'The speech check asks to confirm.'; category = 'deleting' } }, $end) }
+        'confirm' { @(@{ tool = 'tap'; target = @{ label = 'REBUILD' }; arguments = @{ reason = 'The speech check asks to confirm.'; category = 'typing_screen_text' } }, $end) }
         'wait' { @(1..6 | ForEach-Object { @{ tool = 'wait'; arguments = @{ seconds = 10; reason = 'The speech check waits.' } } }) }
     }
     $replies
@@ -133,10 +135,35 @@ function Stop-SpeechTask([string]$Tag) {
     Wait-AgentTask -Tag $Tag -Seconds 30 | Out-Null
 }
 
+# Answers the question of a task of Kestrel's own, as "remember" runs (task-5c-7-review M2). CommandTags links a tag only
+# to an agent's task, so agent-state -Tag cannot see this one; Kestrel says the question while the task runs, and an
+# answer that comes before it is dropped. So this waits up to $Seconds until Kestrel has said the question (voice-state:
+# speaking, then no longer speaking), sends $Text as a transcript, and sends it again, at most twice more, while the task
+# still runs.
+function Send-OwnTaskAnswer([string]$Text, [double]$Seconds = 30) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+        $state = try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
+        if ($state -and $state['work'] -ne 'running_task') { break }
+        if ($state -and $state['speaking'] -eq 'true') {
+            Wait-NotSpeaking 15 | Out-Null
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    foreach ($try in 1..3) {
+        Invoke-Hook voice @{ Send = 'heard'; Text = $Text; Tag = (New-CheckTag) } | Out-Null
+        Start-Sleep -Seconds 3
+        $state = try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
+        if (-not $state -or $state['work'] -ne 'running_task') { return }
+    }
+}
+
 # Runs one speech check with Invoke-AutoCheck and its clip ($Clip: Voice, Text, Path), which $Play plays. An answer
 # check first opens the fixture, installs its script and starts its task by text, and waits until the task asks
-# ($Check.Asking); a task check installs its script before the clip. Afterwards it ends a task that still runs and sends
-# the phrase's $Then. Returns Invoke-AutoCheck's result, whose Line goes into the results.
+# ($Check.Asking); a task check installs its script before the clip. Afterwards it ends the check's task when it still
+# runs, the answer check's or the task check's own, and sends the phrase's $Then, for "remember" only after Kestrel has
+# asked its question. Returns Invoke-AutoCheck's result, whose Line goes into the results.
 function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
     $setup = @{ Tag = '' }
     $before = {
@@ -157,7 +184,11 @@ function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
     }
     $wait = {
         param($Tag, $Seconds)
-        if ($Check.Kind -eq 'task') { Wait-AgentTask -Tag $Tag -Seconds ([math]::Min($Seconds, 60)) }
+        if ($Check.Kind -eq 'task') {
+            # The finally below ends the task of the clip's transcript when it still runs, as after a question (task-5c-7-review M1).
+            $setup.Tag = $Tag
+            Wait-AgentTask -Tag $Tag -Seconds ([math]::Min($Seconds, 60))
+        }
         elseif ($Check.Kind -eq 'answer') { Wait-AgentTask -Tag $setup.Tag -Seconds ([math]::Min($Seconds, 60)) }
         else { $null }
     }
@@ -167,6 +198,7 @@ function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
         Invoke-AutoCheck -Name $Check.Name -Text '' -Clip $Clip -Play $Play -Before $before -Wait $wait -WaitSeconds 60 -Verify $verify
     } finally {
         if ($setup.Tag) { Stop-SpeechTask $setup.Tag }
-        if ($Check.Then) { Invoke-Hook voice @{ Send = 'heard'; Text = $Check.Then; Tag = (New-CheckTag) } | Out-Null }
+        if ($Check.Then -and $Check.Read -eq 'remember') { Send-OwnTaskAnswer $Check.Then }
+        elseif ($Check.Then) { Invoke-Hook voice @{ Send = 'heard'; Text = $Check.Then; Tag = (New-CheckTag) } | Out-Null }
     }
 }
