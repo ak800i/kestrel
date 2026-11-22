@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,6 +29,7 @@ class AgentFixturesTest {
     private val owner = SafetySettings(whatsappOwnName = "Test Owner", ownerEmails = listOf("owner@example.com"))
     private val send: (ScreenElement) -> Boolean = { it.packageName == FIXTURES && it.viewId == "$FIXTURES:id/send" }
 
+    @Before
     @After
     fun clear() {
         screen.shell("run-as $FIXTURES rm -f files/presses.log")
