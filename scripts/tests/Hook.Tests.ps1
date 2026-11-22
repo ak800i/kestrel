@@ -74,11 +74,15 @@ Describe 'hook.ps1' {
         $ruleExit = $LASTEXITCODE
         $tool = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-data -Tool send_sms 2>&1) -join "`n"
         $toolExit = $LASTEXITCODE
+        $confirming = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-answer -Tag t1 -Answer confirm -Confirming send 2>&1) -join "`n"
+        $confirmingExit = $LASTEXITCODE
 
         $ruleExit | Should -Not -Be 0
         $rule | Should -BeLike "*Cannot validate argument on parameter 'Rule'*"
         $toolExit | Should -Not -Be 0
         $tool | Should -BeLike "*Cannot validate argument on parameter 'Tool'*"
+        $confirmingExit | Should -Not -Be 0
+        $confirming | Should -BeLike "*Cannot validate argument on parameter 'Confirming'*"
     }
 
     It 'refuses clipboard -Clear on a phone before it reaches the device' {

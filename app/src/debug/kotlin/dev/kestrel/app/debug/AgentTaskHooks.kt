@@ -54,7 +54,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         return AgentHookAnswers.result(ended.report, ended.spoken, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT))
     }
 
-    // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…>, as the owner's voice would answer.
+    // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>], as the owner's
+    // voice would answer; an answer to a confirmation other than no or cancel needs the category that agent-state read.
     fun answer(intent: Intent): String {
         val (tag, number) = taggedTask(intent)
         val reply = intent.getStringExtra(EXTRA_ANSWER) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
@@ -65,6 +66,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val handedOver = state.task == number && state.taskPhase == TaskPhase.HANDED_OVER
         // A script never answers another task's question (design D28; review C2-I3).
         if (asking == null && !handedOver) throw HookError("the task of tag $tag asks nothing")
+        val confirming = graph.agent.confirming(number)?.takeIf { asking == TaskAsk.CONFIRM }
+        AgentHookAnswers.answerRefusal(asking, words, confirming, intent.getStringExtra(EXTRA_CONFIRMING))?.let { throw HookError(it) }
         val event = if (asking == null) {
             // A hand-over is not a question: it ends with "Kestrel, continue" or "cancel" (design D2).
             when (words) {
@@ -341,6 +344,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         private const val EXTRA_MARKER = "marker"
         private const val EXTRA_RECIPIENT = "recipient"
         private const val EXTRA_ANSWER = "answer"
+        private const val EXTRA_CONFIRMING = "confirming"
         private const val EXTRA_CLEAR = "clear"
         private const val EXTRA_FILE = "file"
         private const val EXTRA_FIELD = "field"

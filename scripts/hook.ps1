@@ -226,9 +226,12 @@
 #                                           confirmed recipient is the name (match, other, none) and whether the spoken
 #                                           reply holds the marker (1 or 0), the decisions that test mode changed from Run,
 #                                           the model and the tokens
-#   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words>
+#   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category]
 #                                           answers the open question of that task as the owner's voice would, and ends its
-#                                           hand-over with continue or cancel; refused when that task asks nothing
+#                                           hand-over with continue or cancel; refused when that task asks nothing. With
+#                                           -Confirming (agent-state's confirming), it is refused unless the open question
+#                                           is a confirmation of that category; without it, a confirmation takes only no
+#                                           and cancel
 #   agent-script -File name.json | -Clear   installs plan 5A's scripted model from files/agent-scripts/name.json in
 #                                           Kestrel's files folder (scripts\task-check.ps1 copies it there), or removes it
 #   agent-state -Tag k                      the task's phase, its open question's kind, Kestrel's work, the hand-over and
@@ -328,6 +331,8 @@ param(
     [string]$Marker,
     [string]$Recipient,
     [string]$Answer,
+    [ValidateSet('reading', 'typing_request', 'ordinary_settings', 'typing_screen_text', 'sending', 'calls', 'deleting', 'payments',
+        'credentials', 'protected')][string]$Confirming,
     [ValidateSet('anthropicMarks', 'responsesExplicit', 'chatCopilotMarks')][string]$Field,
     [ValidateSet('NONE', 'FIELD', 'CREDITS')][string]$Rule,
     [ValidateSet('A', 'B')][string]$Branch,
@@ -437,6 +442,7 @@ if ($Restore) { $extras += '--ez restore true' }
 if ($PSBoundParameters.ContainsKey('Marker')) { $extras += "--es marker $(ConvertTo-ShellText $Marker)" }
 if ($PSBoundParameters.ContainsKey('Recipient')) { $extras += "--es recipient $(ConvertTo-ShellText $Recipient)" }
 if ($Answer) { $extras += "--es answer $(ConvertTo-ShellText $Answer)" }
+# ValidateSet accepts any letter case, and the hook compares the category's wire name in lower case. ($Confirming) { $extras += "--es confirming $($Confirming.ToLowerInvariant())" }
 if ($Field) { $extras += "--es field $Field" }
 # ValidateSet accepts any letter case, and the hook takes the rule and the branch in capitals.
 if ($Rule) { $extras += "--es rule $($Rule.ToUpperInvariant())" }

@@ -1,6 +1,7 @@
 package dev.kestrel.app.debug
 
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Category
@@ -48,6 +49,19 @@ internal object AgentHookAnswers {
         answer in SPOKEN -> answer
         answer.matches(Regex("\\d{1,3}")) -> answer
         answer.startsWith("text:") && answer.length > 5 -> answer.substring(5)
+        else -> null
+    }
+
+    /**
+     * Why agent-answer may not send [words] to the open question of kind [asking], whose confirmation, if any, has the
+     * category [open], when the script read the category [expected] (a wire name) with agent-state; null when it may
+     * (design D28; task-5b-20-review M1). With [expected], the open question must be a confirmation of exactly that
+     * category, so that an answer meant for one confirmation never reaches the next one. Without it, a confirmation takes
+     * only "no" and "cancel", so that no word that confirms reaches a confirmation whose category the script did not read.
+     */
+    fun answerRefusal(asking: TaskAsk?, words: String, open: Category?, expected: String?): String? = when {
+        expected != null && (asking != TaskAsk.CONFIRM || open?.wire != expected) -> "the task asks no confirmation of $expected now"
+        expected == null && asking == TaskAsk.CONFIRM && words !in DECLINING -> "add --es confirming with the open confirmation's category"
         else -> null
     }
 
@@ -117,6 +131,7 @@ internal object AgentHookAnswers {
     const val SYSTEM_UI = "com.android.systemui"
 
     private val SPOKEN = setOf("yes", "no", "confirm", "cancel", "continue")
+    private val DECLINING = setOf("no", "cancel")
     private val PACKAGE = Regex("[A-Za-z0-9_.]{1,128}")
 
     private fun word(text: String?): String = text?.trim()?.replace(Regex("\\s+"), "_")?.ifEmpty { null } ?: "none"

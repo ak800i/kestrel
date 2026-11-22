@@ -2,6 +2,8 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.app.orchestrator.TaskAsk
+import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
@@ -10,6 +12,7 @@ import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -74,6 +77,25 @@ class AgentHookAnswersTest {
         assertEquals("last-seen", AgentHookAnswers.status("last seen recently"))
         assertEquals("members", AgentHookAnswers.status("3 members"))
         assertEquals("none", AgentHookAnswers.status("Ana Petrović"))
+    }
+
+    @Test
+    fun anAnswerReachesAConfirmationOnlyWithItsCategory() {
+        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "confirm", Category.SENDING, "sending"))
+        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "cancel", Category.DELETING, null))
+        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "no", Category.DELETING, null))
+        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.YES_NO, "no", null, null))
+        assertNull(AgentHookAnswers.answerRefusal(null, "continue", null, null))
+
+        // The confirmation changed between agent-state and agent-answer.
+        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "confirm", Category.DELETING, "sending"))
+        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "cancel", Category.DELETING, "sending"))
+        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.FREE, "yes", null, "sending"))
+        assertNotNull(AgentHookAnswers.answerRefusal(null, "continue", null, "sending"))
+        // A word that confirms needs the category that the script read.
+        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "confirm", Category.SENDING, null))
+        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "yes", Category.SENDING, null))
+        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "send it", Category.SENDING, null))
     }
 
     @Test
