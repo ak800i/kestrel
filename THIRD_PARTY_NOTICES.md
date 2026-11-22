@@ -14,6 +14,7 @@ Kestrel's release build includes the libraries below. Their licences are the Apa
 | JSpecify (`org.jspecify:jspecify`) | Apache-2.0 | https://github.com/jspecify/jspecify |
 | Public Suffix List, bundled by OkHttp as `assets/PublicSuffixDatabase.list` | MPL-2.0 | https://publicsuffix.org (source: https://github.com/publicsuffix/list) |
 | sherpa-onnx 1.13.8, the Android library with ONNX Runtime linked statically (`com.k2fsa.sherpa.onnx:sherpa-onnx-static-link-onnxruntime`) | Apache-2.0 | https://github.com/k2-fsa/sherpa-onnx |
+| ONNX Runtime 1.28.0, the Android library that runs the OCR models (`com.microsoft.onnxruntime:onnxruntime-android`), Copyright (c) Microsoft Corporation; its own third-party notices are in `licences/onnxruntime-ThirdPartyNotices.txt`. Kestrel's app contains its native libraries, as those of sherpa-onnx, only for arm64-v8a and x86_64 | MIT | https://github.com/microsoft/onnxruntime |
 
 The texts of the Apache License 2.0, the Mozilla Public License 2.0, the MIT License and hclust-cpp's BSD 2-clause licence are in the `licences` folder; the first two are copied from https://www.apache.org/licenses/LICENSE-2.0.txt and https://www.mozilla.org/media/MPL/2.0/index.txt. The same folder has ONNX Runtime's third-party notices, `licences/onnxruntime-ThirdPartyNotices.txt`, copied unchanged from https://raw.githubusercontent.com/microsoft/onnxruntime/v1.28.2/ThirdPartyNotices.txt. `LICENSE` holds the text of the GNU General Public License, version 3. Kestrel is licensed under version 3 or later, and espeak-ng's licence also requires this text. Kestrel's About page shows all of these texts, together with this file.
 
@@ -43,6 +44,16 @@ sherpa-onnx's build links these projects into its library `libsherpa-onnx-jni.so
 | Eigen 5.0.1 | MPL-2.0 | https://gitlab.com/libeigen/eigen |
 | hclust-cpp, with fastcluster, Copyright 2011 Daniel Müllner and 2018 Christoph Dalitz | BSD-2-Clause | https://github.com/cdalitz/hclust-cpp |
 | JSON for Modern C++ 3.12.0, Copyright (c) 2013-2025 Niels Lohmann | MIT | https://github.com/nlohmann/json |
+
+## OCR models
+
+Kestrel's app does not contain its OCR models either. `scripts\push-models.ps1` downloads them from ModelScope, Hugging Face and GitHub, at the addresses in `models/manifest.json`, with the SHA-256 hash of every file, and copies them to the phone. They are PaddlePaddle's PP-OCRv5 mobile models from the PaddleOCR project (https://github.com/PaddlePaddle/PaddleOCR), converted to ONNX by others, as the table says.
+
+| Model | Licence | Project |
+|---|---|---|
+| PP-OCRv5's mobile text detector (`ocr-ppocrv5-det`), in RapidOCR v3.10.0's ONNX conversion | Apache-2.0 | https://www.modelscope.cn/models/RapidAI/RapidOCR |
+| PP-OCRv5's mobile Latin recogniser (`ocr-ppocrv5-latin`), in iText Research's ONNX conversion at commit bb953c8fd9ebf04f344eb09c9c94bb367c39033c, with PaddleOCR's `ppocrv5_latin_dict.txt` at commit 8ee4a20cc64fe2d73adf96110f9c9b1c3b7b85a5 | Apache-2.0 | https://huggingface.co/itextresearch/itext-latin_PP-OCRv5_mobile_rec_infer |
+| PP-OCRv5's mobile Cyrillic recogniser (`ocr-ppocrv5-cyrillic`), in RapidOCR v3.10.0's ONNX conversion, with PaddleOCR's `ppocrv5_cyrillic_dict.txt` at commit 8ee4a20cc64fe2d73adf96110f9c9b1c3b7b85a5 | Apache-2.0 | https://www.modelscope.cn/models/RapidAI/RapidOCR |
 
 ## Speech models
 
