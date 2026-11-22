@@ -22,7 +22,8 @@ BeforeAll {
         'Open-App', 'Unlock-Device', 'Set-HotspotSwitch', 'Wait-Validated', 'Add-Result', 'Test-Installed', 'Save-AgentTree', 'Read-DeviceText',
         'Format-Failure', 'Invoke-TelegramRecording', 'Get-GmailDraftCount', 'Invoke-GmailCompose', 'Restore-Hotspot', 'Register-HotspotRestore',
         'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
-        'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText')
+        'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText',
+        'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -350,6 +351,7 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         $resultsFile = Join-Path $TestDrive "agent-sitting2-$([guid]::NewGuid().ToString('N')).txt"
         [IO.File]::WriteAllText($resultsFile, '')
         $credits = 0.0
+        $script:credits = 0.0
         $creditCeiling = 150
         $ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
         $results = [System.Collections.Generic.List[string]]::new()
@@ -440,6 +442,52 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         @((Read-AgentRecord $recordFile).sitting2Results) | Should -Be @((Split-Path -Leaf $resultsFile))
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 0
     }
+
+    It 'starts no run on a resume once the earlier calls'' results hold the ceiling, also when the record missed their credits (fix-5c-scripts-review I1)' {
+        $first = Join-Path $TestDrive 'agent-sitting2-20261201-0900.txt'
+        [IO.File]::WriteAllLines($first, [string[]]@(
+                "2026-12-01 09:10:00`ta71-runs`thotspot on the A71, 3 runs"
+                "2026-12-01 09:12:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=5 workMs=30000 credits=60.00 model=gpt-6-luna in=20000 out=500 cacheRead=0 cacheWrite=0 reason=ok"
+                "2026-12-01 09:14:00`ttask`ttask=hotspot run=2 result=pass end=FINISHED check=pass steps=5 workMs=30000 credits=60.00 model=gpt-6-luna in=20000 out=500 cacheRead=0 cacheWrite=0 reason=ok"
+                "2026-12-01 09:30:00`tlook-closer`tthe A71, the answer yes: end=FINISHED steps=3 credits=30.00 model=gpt-6-luna; the screenshot question came 1 times, another app's free question 0 times (answered no); ""Details shown"" shows 1 times (pass); spent=30.00"))
+        Set-AgentRecord $recordFile 'sitting2Results' @('agent-sitting2-20261201-0900.txt')
+        $Step = @('prepare', 'emulator-runs')
+        Add-SittingResults
+        $script:credits = 0.0
+        Mock Invoke-TaskCheck { }
+
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' } | Should -Throw $ceilingMessage
+
+        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+        (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150
+    }
+
+    It 'starts a run below the ceiling, whose cost shows only after it, and no run after it (the plan''s rule: the sitting stops when its credits reach 150)' {
+        $script:credits = 149.5
+        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
+
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $ceilingMessage
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'firefox-wiki' 1 } | Should -Throw $ceilingMessage
+
+        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150.5
+    }
+
+    It 'gives look_closer no live task once the ceiling is reached (fix-5c-scripts-review I1)' {
+        $Serial = $A71
+        $script:credits = 150.0
+        Mock Unlock-Device { $true }
+        Mock Invoke-Device { }
+        Mock Invoke-DeviceHook { 'approvals=0' }
+        Mock Register-Restore { [pscustomobject]@{ What = $What } }
+        Mock Complete-Restore { }
+        Mock Wait-LiveTask { [pscustomobject]@{ Result = $null; Asked = 0; Other = 0; Stopped = $null } }
+        Mock Get-ScreenCount { 0 }
+
+        { Invoke-LookCloserStep } | Should -Throw $ceilingMessage
+
+        Should -Invoke Invoke-DeviceHook -Times 0 -Exactly -ParameterFilter { $Command -eq 'voice' }
+    }
 }
 
 Describe 'The restores and checks of every call of a sitting (the fix round before the sittings)' {
@@ -473,19 +521,43 @@ Describe 'The restores and checks of every call of a sitting (the fix round befo
         @($registered) | Should -Be @('Kestrel''s own microphone on the A71', 'Kestrel''s mode Off on the A71', 'Kestrel''s own microphone on kestrel-api37')
     }
 
-    It 'keeps the Copilot profile, the test account and the Play Store of kestrel-api37 for a call with -Step that does not end the sitting (final-5c-review-b M3)' {
+    It 'registers the end''s restores of kestrel-api37 only in the step end, and runs them first there (fix-5c-scripts-review M1)' {
         Set-AgentRecord $recordFile 'playDisabled' $true
         Set-AgentRecord $recordFile 'emulatorAccount' $true
-        $Step = @('prepare', 'look-closer')
+        $pending = [System.Collections.Generic.List[object]]::new()
+        $pending.Add([pscustomobject]@{ What = 'the live session on the A71' })
+        $done = [System.Collections.Generic.List[string]]::new()
+        Mock Register-Restore { $registered.Add($What); $restore = [pscustomobject]@{ What = $What }; $pending.Add($restore); $restore }
+        Mock Complete-Restore { $done.Add($Restore.What) }
+        Mock Invoke-Device { }
 
-        Register-SittingEndRestores
+        Invoke-EndStep2
 
-        $registered.Count | Should -Be 0
-        $results | Should -Contain 'session: the owner''s Copilot profile, the test account and its apps, and the disabled Play Store stay on kestrel-api37 until a call that runs the step end'
-
-        $Step = @('prepare', 'end')
-        Register-SittingEndRestores
         @($registered) | Should -Be @('the owner''s Copilot profile on kestrel-api37', 'the Play Store on kestrel-api37', 'the test Google account and the apps of sitting 1 on kestrel-api37')
+        @($done) | Should -Be @('the test Google account and the apps of sitting 1 on kestrel-api37', 'the Play Store on kestrel-api37', 'the owner''s Copilot profile on kestrel-api37', 'the live session on the A71')
+    }
+
+    It 'runs only the step end after the ceiling, and then stops with the ceiling''s sentence (fix-5c-scripts-review I1, M1)' {
+        $ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
+        $ran = [System.Collections.Generic.List[string]]::new()
+        Mock Test-StepCalls { $false }
+        Mock Write-Host { }
+        $entries = @(
+            @{ Name = 'a71-runs'; Run = { $ran.Add('a71-runs'); throw $ceilingMessage } }
+            @{ Name = 'cache'; Run = { $ran.Add('cache') } }
+            @{ Name = 'end'; Run = { $ran.Add('end') } }
+        )
+
+        { Invoke-SittingSteps $entries } | Should -Throw $ceilingMessage
+
+        @($ran) | Should -Be @('a71-runs', 'end')
+        $results | Should -Contain "a71-runs: stopped: $ceilingMessage"
+
+        # A call with -Step without end stops at once, and keeps the emulator's profile and account for the next call.
+        $ran.Clear()
+        $Step = @('a71-runs', 'cache')
+        { Invoke-SittingSteps $entries } | Should -Throw $ceilingMessage
+        @($ran) | Should -Be @('a71-runs')
     }
 
     It 'checks Gmail''s account on the A71 only when sitting 1 saw its discard work there, with Drafts counted around it (final-5c-review-b M4)' {

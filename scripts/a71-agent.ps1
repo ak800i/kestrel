@@ -10,11 +10,13 @@
 # without him, the script prepares both devices again, opens the devices' live sessions (hook agent-live) and runs
 # scripts\task-check.ps1 -Live for the six tasks of design D3 on the A71 and the emulator's tasks on kestrel-api37, 3 runs
 # each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
-# it stops when the sitting's AI Credits reach 150. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
+# it stops when the sitting's AI Credits reach 150, checked before and after each task's runs, and then runs only the
+# step end. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
 # named steps, also as one text separated by commas. A sitting 2 that stopped goes on with a call with -Step and the
 # steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
-# Credits of the earlier calls and reads their results too, and only a call that runs the step end deletes the
-# emulator's Copilot profile and removes its test account, so that the next call needs no new sign-in. A new sitting 2
+# Credits of the earlier calls and reads their results too. Only the step end deletes the emulator's Copilot profile
+# and removes its test account, so that after a stop by q, Ctrl+C or an error, also of a call without -Step, the next
+# call needs no new sign-in; -Step end alone ends a sitting 2 that will not go on. A new sitting 2
 # is a call without -Step. Before and after each step the script reads both devices' call state, and ends a call with
 # the end-call key.
 # The A71's test PIN is typed only by Unlock-TestPhone (scripts\lib\Session.ps1), which alone reads the key "pin" of
@@ -1301,9 +1303,10 @@ function Invoke-TaskCheck([hashtable]$Arguments) { & "$PSScriptRoot\task-check.p
 
 # Runs scripts\task-check.ps1 for a task on a device: -Live in a real sitting, or the task's stand-in with its scripted
 # model in a dry run (one run), so that no request reaches a provider. The runs' lines go into this sitting's results
-# file, from which they are read back; their AI Credits are added, and the sitting stops at its ceiling. Returns the
-# runs' lines as tables.
+# file, from which they are read back; their AI Credits are added, and the sitting stops at its ceiling, which is checked
+# before the runs too (Assert-CreditsLeft). Returns the runs' lines as tables.
 function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int]$Runs = 3, [hashtable]$With = @{}) {
+    Assert-CreditsLeft
     $arguments = @{ Serial = $Device; Task = $Task; Runs = $Runs; Results = $resultsFile } + $With
     if ($DryRun) {
         $standIn = Get-StandInTask $Task
@@ -1374,6 +1377,32 @@ function Get-SittingRuns {
                 }
             }
         })
+}
+
+# The AI Credits that this sitting 2 spent so far: the runs' lines and look-closer's "spent=" in the results files of all
+# its calls, which task-check.ps1 writes run by run, so that they hold also the runs of a call that stopped before it
+# could add them to the record; or the record's count (sitting2Credits, and this call's), when that is higher.
+function Get-SpentCredits {
+    $total = Get-CreditTotal (Get-SittingRuns)
+    foreach ($file in Get-SittingResultFiles) {
+        foreach ($line in Get-Content -LiteralPath $file) {
+            if ("$line" -match "`tlook-closer`t.*; spent=(\d+(\.\d+)?)$") { $total += [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) }
+        }
+    }
+    [math]::Max($total, [double]$script:credits)
+}
+
+# Stops the step with the ceiling's sentence before a live run when the sitting's AI Credits have reached the ceiling of
+# Q5, also in a call with -Step that goes on after the stop (fix-5c-scripts-review I1). The rule is the plan's: the
+# sitting stops when its credits reach 150. A run's cost is known only after it, so a run starts while the credits are
+# below 150, and the sitting can pass 150 by at most that task's runs.
+function Assert-CreditsLeft {
+    $spent = Get-SpentCredits
+    if ($spent -gt $script:credits) {
+        $script:credits = $spent
+        Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
+    }
+    if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
 }
 
 # Whether the default profile on kestrel-api37 lists the comparison's model in the model list that the owner's
@@ -1461,16 +1490,11 @@ function Revoke-ScreenshotApprovals([string]$Device, [int]$Before) {
 
 # The restores of sitting 2's end on kestrel-api37 (design D30 step 23): the owner's Copilot profile deleted through the
 # hook provider-delete (review C I6), the Play Store enabled again, and the test Google account and the apps that sitting 1
-# installed there removed. A call that runs the step end, as a call without -Step does, registers them at its start, so
-# that every way in which it ends runs them; a call with -Step that does not run end keeps them for the next call, so that
-# a resume needs neither a new sign-in nor a new count of AI Credits (final-5c-review-b M3). The account's restore is
-# registered after the Play Store's, so that it runs before it, and after the accessibility settings', which screen-tap
-# needs.
+# installed there removed. Only the step end registers them, so that a stop before it (q, Ctrl+C, an error) keeps them
+# for a resume, which then needs neither a new sign-in nor the owner (fix-5c-scripts-review M1); the session's last
+# line then says so. The account's restore is registered after the Play Store's, so that it runs before it, and after
+# the accessibility settings', which screen-tap needs.
 function Register-SittingEndRestores {
-    if ($Step -and 'end' -notin $Step) {
-        Add-Result session 'the owner''s Copilot profile, the test account and its apps, and the disabled Play Store stay on kestrel-api37 until a call that runs the step end'
-        return
-    }
     Register-Restore 'the owner''s Copilot profile on kestrel-api37' 'On kestrel-api37, the emulator''s window, use the mouse: Kestrel''s settings > Providers and profiles > the Copilot profile > Delete profile > Delete.' $EmulatorSerial {
         param($Device)
         Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
@@ -1693,6 +1717,7 @@ function Invoke-LookCloserStep {
             if (-not (Revoke-ScreenshotApprovals $Data.Device $Data.Before)) { throw 'an approval is left' }
         }
         foreach ($answer in 'yes', 'text:always for this app') {
+            Assert-CreditsLeft
             Invoke-Device $device 'am start -W -S -n dev.kestrel.testapp/.OcrCanvasActivity' | Out-Null
             Start-Sleep -Seconds 3
             $tag = New-CheckTag
@@ -1705,10 +1730,12 @@ function Invoke-LookCloserStep {
             Invoke-DeviceHook $device voice $with | Out-Null
             $end = Wait-LiveTask -Serial $device -Tag $tag -Answer $answer -App 'dev.kestrel.testapp'
             $paid = Get-ScreenCount $device @{ Package = 'dev.kestrel.testapp'; Contains = 'Details shown' }
-            foreach ($counted in @($end.Result, $end.Stopped)) { if ($counted) { $script:credits += Get-CreditTotal @($counted) } }
+            $spent = 0.0
+            foreach ($counted in @($end.Result, $end.Stopped)) { if ($counted) { $spent += Get-CreditTotal @($counted) } }
+            $script:credits += $spent
             Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
             $result = if ($end.Result) { "end=$($end.Result['end']) steps=$($end.Result['steps']) credits=$($end.Result['credits']) model=$($end.Result['model'])" } else { 'did not end within 10 minutes' }
-            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times, another app's free question $($end.Other) times (answered no); ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' }))"
+            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times, another app's free question $($end.Other) times (answered no); ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' })); spent=$(Format-Number $spent 2)"
             if ($DryRun) { Invoke-DeviceHook $device agent-script @{ Clear = $true } | Out-Null }
             if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
         }
@@ -1749,9 +1776,11 @@ function Invoke-CacheStep {
 # Design D30 step 23: the restores now (among them the emulator's Copilot profile, the live sessions, the test Google
 # account and the apps that sitting 1 installed on kestrel-api37, the Play Store and :testapp on the A71); and the
 # browsers' versions compared with those that sitting 1 recorded. Telegram, WhatsApp and the apps of sitting 1's
-# step 2 stay on the A71 (Q6, Q8).
+# step 2 stay on the A71 (Q6, Q8). The end's own restores are registered here, the newest, so that they run first.
 function Invoke-EndStep2 {
     $record = Read-AgentRecord $recordFile
+    $script:endReached = $true
+    Register-SittingEndRestores
     $reversed = @($pending)
     [array]::Reverse($reversed)
     Invoke-Restore $reversed
@@ -1804,8 +1833,39 @@ function Test-StepCalls([string]$StepName, [string]$When) {
     $found
 }
 
+# Runs the call's steps of the sitting in order. A step that fails is recorded, and the next step runs. The owner's q
+# stops the sitting at once. The ceiling of AI Credits stops the step, and of the steps that remain only end runs, so
+# that the sitting's real end removes the emulator's Copilot profile and test account; then the sitting stops with the
+# ceiling's sentence.
+function Invoke-SittingSteps([object[]]$Entries) {
+    $ceilingReached = $false
+    foreach ($entry in $Entries) {
+        if ($Step -and $entry.Name -notin $Step) { continue }
+        if ($ceilingReached -and $entry.Name -ne 'end') { continue }
+        Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title)."
+        if (Test-StepCalls $entry.Name 'before') { continue }
+        try {
+            & $entry.Run
+        } catch {
+            if ($_.Exception.Message -eq 'The owner stopped the sitting.') { throw }
+            if ($_.Exception.Message -eq $ceilingMessage) {
+                $ceilingReached = $true
+                Add-Result $entry.Name "stopped: $ceilingMessage"
+            } else {
+                # Format-Failure leaves out the owner's values and any address that a failed command named.
+                Add-Result $entry.Name "failed: $(Format-Failure $_)"
+            }
+        } finally {
+            Test-StepCalls $entry.Name 'after' | Out-Null
+        }
+    }
+    if ($ceilingReached) { throw $ceilingMessage }
+}
+
 $completed = $false
 $stopped = $false
+# Whether this call reached sitting 2's step end, which removes the emulator's profile and test account (Invoke-EndStep2).
+$endReached = $false
 try {
     # The emulator's lock first, before any command reaches a device (process rule 9); a dry run runs inside the
     # controller's lock and never touches it.
@@ -1836,7 +1896,6 @@ try {
         Enable-KestrelService $device
         Register-ListeningRestore $device
     }
-    if ($Sitting -eq '2') { Register-SittingEndRestores }
     if (-not (Unlock-Device $Serial)) { Add-Result session 'the A71 stays locked' }
     # An earlier run that ended without its finally block, such as when its window closed, can have left a live session
     # open (design D28), so every sitting closes it first on each device that has Kestrel. A build without the hook is
@@ -1849,21 +1908,7 @@ try {
             Add-Result session "$(Get-DeviceName $device): the live session could not be closed before the step prepare: $(Format-Failure $_)"
         }
     }
-    foreach ($entry in $plans[$Sitting]) {
-        if ($Step -and $entry.Name -notin $Step) { continue }
-        Write-Host "Step $($entry.Name), about $($entry.Minutes) minutes: $($entry.Title)."
-        if (Test-StepCalls $entry.Name 'before') { continue }
-        try {
-            & $entry.Run
-        } catch {
-            # The owner's q, and the ceiling of AI Credits, stop the whole sitting.
-            if ($_.Exception.Message -in 'The owner stopped the sitting.', $ceilingMessage) { throw }
-            # Format-Failure leaves out the owner's values and any address that a failed command named.
-            Add-Result $entry.Name "failed: $(Format-Failure $_)"
-        } finally {
-            Test-StepCalls $entry.Name 'after' | Out-Null
-        }
-    }
+    Invoke-SittingSteps $plans[$Sitting]
     $completed = $true
 } catch {
     $stopped = $true
@@ -1901,6 +1946,11 @@ try {
         }
     }
     if (-not ($completed -or $stopped)) { Add-SessionResult -Path $resultsFile -Step session -Text 'stopped, as by Ctrl+C' }
+    if ($Sitting -eq '2' -and -not $endReached) {
+        $kept = 'kestrel-api37 keeps the owner''s Copilot profile, the test account and its apps, and the disabled Play Store until a call of sitting 2 that runs the step end: to go on, call with -Step and the steps that remain, prepare first; to end sitting 2 without more runs, call with -Step end'
+        Add-SessionResult -Path $resultsFile -Step session -Text $kept
+        Write-Host "$kept."
+    }
     if ($gradleUsed) { & "$PSScriptRoot\gradle.ps1" --stop | Out-Null }
     if (Test-Path -LiteralPath $resultsFile) { Write-Host "The results are in $((Resolve-Path -LiteralPath $resultsFile).Path)." }
     if (-not ($completed -or $stopped)) {
