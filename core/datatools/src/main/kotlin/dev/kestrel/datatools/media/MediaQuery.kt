@@ -1,6 +1,8 @@
 package dev.kestrel.datatools.media
 
 import android.Manifest
+import dev.kestrel.agent.port.DataLine
+import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.MediaKinds
 import java.time.Instant
 import java.time.LocalDate
@@ -62,5 +64,16 @@ object MediaQuery {
         bytes >= 1_000_000 -> String.format(Locale.ROOT, "%.1f MB", bytes / 1_000_000.0)
         bytes >= 1_000 -> "${bytes / 1_000} KB"
         else -> "$bytes B"
+    }
+
+    /**
+     * `find_media`'s result of [found], which is in time order: the newest [MAX_ITEMS] items, still oldest first, so that
+     * "the photo I just took" is always among them, and a last line without fields that tells the model how many items
+     * the days have. The note carries only [PARTIAL], because Kestrel says it to the owner before a share (design D12).
+     */
+    fun <T> result(found: List<T>, access: Access, line: (T) -> String): DataResult.Ok {
+        val lines = found.takeLast(MAX_ITEMS).map { DataLine(line(it), emptyList()) }
+        val count = DataLine("Kestrel lists the newest $MAX_ITEMS of ${found.size} items.", emptyList()).takeIf { found.size > MAX_ITEMS }
+        return DataResult.Ok(lines + listOfNotNull(count), note = PARTIAL.takeIf { access == Access.SELECTED })
     }
 }

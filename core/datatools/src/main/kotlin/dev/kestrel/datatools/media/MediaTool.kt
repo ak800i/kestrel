@@ -6,7 +6,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.MediaKinds
 import kotlinx.coroutines.Dispatchers
@@ -40,15 +39,10 @@ class MediaTool(
             val videos = if (kinds != MediaKinds.PHOTOS) query(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), true, start, end) else emptyList()
             (photos + videos).sortedBy { it.taken }
         }
-        val lines = found.take(MediaQuery.MAX_ITEMS).map { item ->
+        return MediaQuery.result(found, access) { item ->
             val known = items.getOrPut(item.uri) { Item("m${items.size + 1}", item.uri, item.video) }
-            DataLine(MediaQuery.line(known.id, item.video, item.taken, item.size, zone), emptyList())
+            MediaQuery.line(known.id, item.video, item.taken, item.size, zone)
         }
-        val notes = listOfNotNull(
-            MediaQuery.PARTIAL.takeIf { access == MediaQuery.Access.SELECTED },
-            "Kestrel lists the first ${MediaQuery.MAX_ITEMS} of ${found.size} items.".takeIf { found.size > MediaQuery.MAX_ITEMS },
-        )
-        return DataResult.Ok(lines, note = notes.joinToString(" ").ifEmpty { null })
     }
 
     /** The item numbers of [ids] that this task's `find_media` never gave. */

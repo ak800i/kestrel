@@ -4,6 +4,7 @@ import android.Manifest
 import dev.kestrel.agent.port.MediaKinds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -64,5 +65,25 @@ class MediaQueryTest {
         assertEquals(MediaQuery.Access.NONE, MediaQuery.access(MediaKinds.VIDEOS, 33) { it == images })
         // Android 13 has no partial access, so the permission of Android 14 never counts there.
         assertEquals(MediaQuery.Access.NONE, MediaQuery.access(MediaKinds.PHOTOS, 33) { it == selected })
+    }
+
+    @Test
+    fun aBusyDayListsItsNewestItemsInTimeOrderAndTellsTheModelHowManyThereAre() {
+        val found = (1..42).toList()
+
+        val result = MediaQuery.result(found, MediaQuery.Access.FULL) { "m$it" }
+
+        assertEquals((13..42).map { "m$it" } + "Kestrel lists the newest 30 of 42 items.", result.lines.map { it.fixed })
+        assertEquals(emptyList<Any>(), result.lines.last().fields)
+        assertNull(result.note)
+        assertEquals((1..30).map { "m$it" }, MediaQuery.result((1..30).toList(), MediaQuery.Access.FULL) { "m$it" }.lines.map { it.fixed })
+    }
+
+    @Test
+    fun theNoteThatTheOwnerHearsIsOnlyThePartialAccessSentence() {
+        val result = MediaQuery.result((1..42).toList(), MediaQuery.Access.SELECTED) { "m$it" }
+
+        assertEquals(MediaQuery.PARTIAL, result.note)
+        assertEquals(31, result.lines.size)
     }
 }
