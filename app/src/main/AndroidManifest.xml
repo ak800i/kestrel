@@ -316,5 +316,14 @@
                 tools:node="remove" />
         </provider>
         <!-- sub-project 5B: components -->
+        <!-- Kestrel's own permission request during a task (design D12 of sub-project 5): transparent, with no place in the
+             recent apps and in a task of its own, so that its end brings back the task's app. Not noHistory, because
+             such an activity never gets the result of the dialog that it starts. -->
+        <activity
+            android:name=".agent.PermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

@@ -18,6 +18,7 @@ import dev.kestrel.app.agent.AppAgentEnvironment
 import dev.kestrel.app.agent.AppModels
 import dev.kestrel.app.agent.CacheState
 import dev.kestrel.app.agent.CallBackstop
+import dev.kestrel.app.agent.PermissionActivity
 import dev.kestrel.app.agent.Permissions
 import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.assist.KestrelAssistantService
@@ -133,6 +134,9 @@ object SettingKeys {
     val SPENDING = SettingKey("spending", Spending.serializer(), Spending())
 
     // sub-project 5B: keys
+
+    /** Whether the owner has reviewed the suggested agent-free apps once, the checklist's step (design D26 of sub-project 5). */
+    val AGENT_FREE_REVIEWED = SettingKey("agent-free-reviewed", Boolean.serializer(), false)
 
     /**
      * Whether a live sitting is open (design D28 of sub-project 5): a debug build's task with the hook's extra `live` runs
@@ -314,7 +318,7 @@ class AppGraph(context: Context) {
             eyes = { agentEyes },
             showBadges = { session, badges -> showAgentBadges(session, badges) },
             hideBadges = { session -> hideAgentBadges(session) },
-            askAndroid = { permissions -> Permissions.granted(context, permissions) },
+            askAndroid = { permissions -> PermissionActivity.ask(context, permissions) },
             knownNames = { contacts.contacts().orEmpty().flatMap { it.names }.toSet() },
             report = reportFailure,
         )

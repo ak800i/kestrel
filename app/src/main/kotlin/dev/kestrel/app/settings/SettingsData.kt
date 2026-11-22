@@ -86,6 +86,9 @@ interface SettingsData {
 
     // sub-project 5B: safety and memory
 
+    /** Whether the owner has reviewed the suggested agent-free apps once, for the checklist (design D26 of sub-project 5). */
+    val agentFreeReviewed: Flow<Boolean> get() = flowOf(false)
+
     // sub-project 5C: screenshot approvals
 }
 
@@ -150,6 +153,8 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override val providers: ProviderData by lazy { StoredProviderData(graph.providers) }
 
     // sub-project 5B: stored safety and memory
+
+    override val agentFreeReviewed: Flow<Boolean> = graph.settings.observe(SettingKeys.AGENT_FREE_REVIEWED)
 
     // sub-project 5C: stored screenshot approvals
 

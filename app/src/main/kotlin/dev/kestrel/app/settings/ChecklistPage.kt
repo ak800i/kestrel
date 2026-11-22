@@ -17,7 +17,8 @@ import dev.kestrel.app.R
 /**
  * The setup checklist (design spec, section 15). [models] is what Kestrel knows about the model files. [samsung]: the
  * battery step also names Samsung's "Never sleeping apps". [onOpenProviders] opens the page "Providers and profiles"
- * from the provider step (design D18 of sub-project 4).
+ * from the provider step (design D18 of sub-project 4). [onOpenSafety] opens the Safety page, whose suggestions the step
+ * of the agent-free apps reviews (design D26 of sub-project 5).
  */
 @Composable
 internal fun ChecklistPage(
@@ -26,6 +27,7 @@ internal fun ChecklistPage(
     samsung: Boolean,
     onAction: (SetupAction) -> Unit,
     onOpenProviders: () -> Unit,
+    onOpenSafety: () -> Unit,
     onBack: () -> Unit,
 ) {
     PageHeader(stringResource(R.string.settings_checklist), onBack)
@@ -35,6 +37,13 @@ internal fun ChecklistPage(
             if (step == SetupStep.COPY_MODELS) ModelProblems(models)
             if (step == SetupStep.PROVIDER && state in NEEDS_ACTION) {
                 Button(onClick = onOpenProviders) { Text(stringResource(R.string.setup_provider_open)) }
+            }
+            // Whether Android 16 and 17 restrict this setting after an adb install depends on the device (design D9).
+            if (step == SetupStep.NOTIFICATION_ACCESS && state in NEEDS_ACTION) {
+                Text(stringResource(R.string.setup_notification_access_restricted), style = MaterialTheme.typography.bodySmall)
+            }
+            if (step == SetupStep.AGENT_FREE_APPS && state in NEEDS_ACTION) {
+                Button(onClick = onOpenSafety) { Text(stringResource(R.string.setup_open_agent_free)) }
             }
         }
     }
@@ -129,6 +138,13 @@ private fun texts(step: SetupStep, samsung: Boolean): StepTexts = when (step) {
         R.string.setup_allow_calls,
     )
     SetupStep.PROVIDER -> StepTexts(R.string.setup_provider_title, R.string.setup_provider_detail)
+    SetupStep.NOTIFICATION_ACCESS -> StepTexts(
+        R.string.setup_notification_access_title,
+        R.string.setup_notification_access_detail,
+        SetupAction.NOTIFICATION_ACCESS,
+        R.string.setup_open_notification_access,
+    )
+    SetupStep.AGENT_FREE_APPS -> StepTexts(R.string.setup_agent_free_title, R.string.setup_agent_free_detail)
     SetupStep.VOICE_ACCESS -> StepTexts(
         R.string.setup_voice_access_title,
         R.string.setup_voice_access_detail,

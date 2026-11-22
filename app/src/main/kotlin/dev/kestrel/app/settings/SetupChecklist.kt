@@ -13,6 +13,8 @@ enum class SetupStep {
     DEFAULT_ASSISTANT,
     CALLS,
     PROVIDER,
+    NOTIFICATION_ACCESS,
+    AGENT_FREE_APPS,
     VOICE_ACCESS,
 }
 
@@ -52,6 +54,8 @@ sealed interface ModelCheck {
  * [shortcutTarget] and [buttonTarget]: Android's accessibility settings name Kestrel as the target of the accessibility
  * shortcut, and of the accessibility button or gesture (section 8.6). [providerReady]: the default provider profile
  * exists, its credential exists, and its borrowed sign-in is not switched off (design D18 of sub-project 4).
+ * [notificationAccess]: Kestrel's notification listener has Android's notification access, and [agentFreeReviewed]: the
+ * owner has reviewed the suggested agent-free apps once (design D26 of sub-project 5).
  */
 data class SetupStatus(
     val serviceOn: Boolean,
@@ -68,6 +72,8 @@ data class SetupStatus(
     val shortcutTarget: Boolean = false,
     val buttonTarget: Boolean = false,
     val providerReady: Boolean = false,
+    val notificationAccess: Boolean = false,
+    val agentFreeReviewed: Boolean = false,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -79,6 +85,10 @@ object SetupChecklist {
             // An optional model that the owner did not copy, such as the Kokoro voice, is no problem.
             SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready || it.absent } == true)
             SetupStep.PROVIDER -> doneIf(status.providerReady)
+            // Design D26 of sub-project 5: optional, because the agent asks for notification access at its first use and the
+            // shipped agent-free apps count without a review.
+            SetupStep.NOTIFICATION_ACCESS -> if (status.notificationAccess) StepState.DONE else StepState.OPTIONAL
+            SetupStep.AGENT_FREE_APPS -> if (status.agentFreeReviewed) StepState.DONE else StepState.OPTIONAL
             SetupStep.DEFAULT_ASSISTANT -> if (status.assistantRole) StepState.DONE else StepState.OPTIONAL
             SetupStep.CALLS -> if (status.callsAllowed) StepState.DONE else StepState.OPTIONAL
             SetupStep.ACCESSIBILITY_SERVICE -> when {

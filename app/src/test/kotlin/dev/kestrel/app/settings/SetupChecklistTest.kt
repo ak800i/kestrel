@@ -31,10 +31,22 @@ class SetupChecklistTest {
                 SetupStep.DEFAULT_ASSISTANT to StepState.OPTIONAL,
                 SetupStep.CALLS to StepState.OPTIONAL,
                 SetupStep.PROVIDER to StepState.TO_DO,
+                SetupStep.NOTIFICATION_ACCESS to StepState.OPTIONAL,
+                SetupStep.AGENT_FREE_APPS to StepState.OPTIONAL,
                 SetupStep.VOICE_ACCESS to StepState.DONE,
             ),
             SetupChecklist.states(nothingSetUp),
         )
+    }
+
+    @Test
+    fun theAgentsTwoOptionalStepsAreDoneWithNotificationAccessAndOnceTheSuggestionsWereReviewed() {
+        fun state(status: SetupStatus, step: SetupStep) = SetupChecklist.states(status).getValue(step)
+
+        assertEquals(StepState.OPTIONAL, state(nothingSetUp, SetupStep.NOTIFICATION_ACCESS))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(notificationAccess = true), SetupStep.NOTIFICATION_ACCESS))
+        assertEquals(StepState.OPTIONAL, state(nothingSetUp, SetupStep.AGENT_FREE_APPS))
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(agentFreeReviewed = true), SetupStep.AGENT_FREE_APPS))
     }
 
     @Test

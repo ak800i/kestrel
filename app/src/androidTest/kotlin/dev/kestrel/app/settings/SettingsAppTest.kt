@@ -58,7 +58,7 @@ class SettingsAppTest {
     private fun text(@StringRes id: Int, vararg args: Any): String = compose.activity.getString(id, *args)
 
     private fun progress(done: Int): String =
-        compose.activity.resources.getQuantityString(R.plurals.settings_checklist_progress, 9, done, 9)
+        compose.activity.resources.getQuantityString(R.plurals.settings_checklist_progress, 11, done, 11)
 
     private fun openChecklist() {
         compose.onNodeWithText(text(R.string.settings_checklist)).performClick()
@@ -532,6 +532,31 @@ class SettingsAppTest {
         compose.onNodeWithText(text(R.string.providers_title)).assertIsDisplayed()
     }
 
+    @Test
+    fun theNotificationAccessStepOpensAndroidsPageAndSaysHowToAllowARestrictedSetting() {
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_notification_access_restricted)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.setup_open_notification_access)).performScrollTo().performClick()
+
+        assertEquals(listOf(SetupAction.NOTIFICATION_ACCESS), actions)
+    }
+
+    @Test
+    fun theAgentFreeStepOpensTheSafetyPageAndCountsOnceTheSuggestionsWereReviewed() {
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(progress(2)).assertIsDisplayed()
+        data.agentFreeReviewed.value = true
+        compose.onNodeWithText(progress(3)).assertIsDisplayed()
+        data.agentFreeReviewed.value = false
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_open_agent_free)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.safety_test_mode)).assertIsDisplayed()
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
@@ -540,6 +565,7 @@ class SettingsAppTest {
         override var providers: ProviderData? = null
 
         // sub-project 5B: fake safety and memory
+        override val agentFreeReviewed = MutableStateFlow(false)
 
         // sub-project 5C: fake screenshot approvals
         var activity = emptyList<LogEntry<ActivityEvent>>()

@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import dev.kestrel.app.KestrelAccessibilityService
+import dev.kestrel.datatools.notifications.KestrelNotificationListener
 
 /** Reads what Kestrel can find out about its own setup, for the setup checklist (design spec, section 15). */
 class SetupStatusReader(private val context: Context) {
@@ -40,6 +41,7 @@ class SetupStatusReader(private val context: Context) {
             assistantRole = context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT),
             shortcutTarget = names(SHORTCUT_TARGET, kestrel),
             buttonTarget = names(BUTTON_TARGETS, kestrel) || names(GESTURE_TARGETS, kestrel),
+            notificationAccess = KestrelNotificationListener.hasAccess(context),
         )
     }
 

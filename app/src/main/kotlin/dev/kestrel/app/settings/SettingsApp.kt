@@ -41,7 +41,7 @@ enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, COMMANDS, SAFETY, A
 class PageRequest(val page: SettingsPage, val resumeAdd: Boolean = false)
 
 /** What the button of a checklist step does. */
-enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS }
+enum class SetupAction { ACCESSIBILITY_SETTINGS, PERMISSIONS, APP_SETTINGS, CALL_PERMISSIONS, DEFAULT_APPS, NOTIFICATION_ACCESS }
 
 /**
  * Kestrel's settings app. Every page has a Back button, because a voice user cannot easily use the back gesture.
@@ -80,13 +80,17 @@ fun SettingsApp(
     BackHandler(enabled = page != SettingsPage.HOME) { if (licence != null) licence = null else page = SettingsPage.HOME }
     // The checklist's provider step reads the stored profiles, which SetupStatusReader does not know.
     val providerReady by data.providerReady.collectAsState(initial = false)
-    val states = SetupChecklist.states(status.copy(providerReady = providerReady))
+    // Design D26 of sub-project 5: the flag is stored encrypted, and the Safety page sets it.
+    val agentFreeReviewed by data.agentFreeReviewed.collectAsState(initial = false)
+    val states = SetupChecklist.states(status.copy(providerReady = providerReady, agentFreeReviewed = agentFreeReviewed))
     val home = { page = SettingsPage.HOME }
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
             SettingsPage.CHECKLIST -> ScrollingPage {
-                ChecklistPage(states, status.models, status.samsung, onAction, { page = SettingsPage.PROVIDERS }, home)
+                ChecklistPage(
+                    states, status.models, status.samsung, onAction, { page = SettingsPage.PROVIDERS }, { page = SettingsPage.SAFETY }, home,
+                )
             }
             SettingsPage.PROVIDERS -> ScrollingPage {
                 val providers = data.providers

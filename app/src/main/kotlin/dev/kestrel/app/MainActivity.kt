@@ -30,6 +30,7 @@ import dev.kestrel.app.settings.SetupStatusReader
 import dev.kestrel.app.settings.StoredSettingsData
 import dev.kestrel.app.settings.checkModelFiles
 import dev.kestrel.app.settings.writeLogExport
+import dev.kestrel.datatools.notifications.KestrelNotificationListener
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.UUID
@@ -151,6 +152,8 @@ class MainActivity : ComponentActivity() {
             SetupAction.APP_SETTINGS -> openAppSettings()
             // Android does not let an app ask for the assistant role, so the owner picks Kestrel there (research r6).
             SetupAction.DEFAULT_APPS -> startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+            // Design D26 of sub-project 5: Android's page for Kestrel's notification listener.
+            SetupAction.NOTIFICATION_ACCESS -> startActivity(KestrelNotificationListener.accessSettings(this))
         }
     }
 

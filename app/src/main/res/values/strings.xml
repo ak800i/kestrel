@@ -302,6 +302,13 @@
     <!-- Plan 3B strings -->
     <!-- Plan 3C strings -->
     <!-- sub-project 5B -->
+    <string name="setup_notification_access_title">Allow notification access</string>
+    <string name="setup_notification_access_detail">Optional: so that Kestrel\'s agent can read your notifications when a task asks for them. Without it, the agent asks for it the first time that a task needs it.</string>
+    <string name="setup_notification_access_restricted">If Android says that this setting is restricted, open Kestrel\'s App info, tap the ⋮ menu, then \'Allow restricted settings\', and try again.</string>
+    <string name="setup_open_notification_access">Open notification access</string>
+    <string name="setup_agent_free_title">Review the agent-free apps</string>
+    <string name="setup_agent_free_detail">Optional: Kestrel\'s agent never acts in an agent-free app, such as a bank\'s app or a password manager. The Safety page suggests the apps on this phone whose names sound like money or passwords.</string>
+    <string name="setup_open_agent_free">Review suggestions</string>
     <string name="logs_newest" tools:ignore="PluralsCandidate">Showing the newest %1$d entries.</string>
     <string name="log_kind_prompt">Prompt</string>
     <string name="log_kind_reply">Reply</string>
