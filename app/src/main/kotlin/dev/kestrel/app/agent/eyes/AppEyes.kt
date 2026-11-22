@@ -11,6 +11,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
 import dev.kestrel.agent.observe.SystemUiParts
 import dev.kestrel.agent.port.Badge
 import dev.kestrel.agent.port.Capture
@@ -117,7 +118,7 @@ internal class AppEyes(
                 drawMarks(canvas, shown, max(copy.width, copy.height))
                 val scale = minOf(1f, MAX_SIDE.toFloat() / max(copy.width, copy.height))
                 val out = if (scale < 1f) {
-                    Bitmap.createScaledBitmap(copy, max(1, (copy.width * scale).roundToInt()), max(1, (copy.height * scale).roundToInt()), true)
+                    copy.scale(max(1, (copy.width * scale).roundToInt()), max(1, (copy.height * scale).roundToInt()))
                 } else {
                     copy
                 }

@@ -573,6 +573,29 @@ class AgentToolsTest {
     }
 
     @Test
+    fun withoutOcrAMaskedRowThatMovedJustBeforeTheCaptureIsSeenAsMoved() = runTest {
+        val moved = codeRow(700)
+        val harness = Harness(codeRow(400), listOf(look, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        harness.eyes.lines = null
+        // The row moves just before the screenshot's first capture, and the tree shows it 150 ms later, as Kestrel's
+        // snapshot cache does.
+        var reads = 0
+        var movedAt: Long? = null
+        harness.eyes.onRead = { if (++reads == 2) movedAt = testScheduler.currentTime }
+        harness.screen.onSnapshot = {
+            if (movedAt?.let { testScheduler.currentTime >= it + 150 } == true) harness.screen.current = moved
+        }
+        harness.owner.answers += Answer.Text("Yes.")
+
+        harness.run("Read the chat")
+
+        assertEquals(3, harness.eyes.captures)
+        val masks = harness.eyes.encoded.single().first
+        assertTrue(masks.toString(), masks.any { it.top <= 700 && it.bottom >= 820 })
+        assertFalse(masks.toString(), masks.any { it.top == 400 })
+    }
+
+    @Test
     fun aMaskedRowThatMovesDuringEachCaptureSendsNoScreenshot() = runTest {
         val still = codeRow(400)
         val moved = codeRow(700)

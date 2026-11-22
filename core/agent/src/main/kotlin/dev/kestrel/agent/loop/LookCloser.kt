@@ -14,6 +14,7 @@ import dev.kestrel.screen.model.ScreenSignature
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
 import dev.kestrel.screen.model.Signature
+import kotlinx.coroutines.delay
 
 /**
  * `look_closer`'s three steps (design D20; spec 11.6), one per call on the same screen: OCR where the tree has no text,
@@ -111,12 +112,17 @@ internal class LookCloser(private val run: TaskRun) {
 
     // The masks come from [now], read before the capture; when the masked parts are elsewhere after the capture and OCR,
     // such as a chat row that a new message pushed up, the picture may show a secret beside its black box (review 5C-A M2).
-    // With a target, the picture holds only the target (D20), where OCR read every line for the masks.
+    // With a target, the picture holds only the target (D20), where OCR read every line for the masks. The tree shows a
+    // move only some time after it (review 5C M1), so the tree is read again no sooner than MOVE_SEEN_MILLIS after the
+    // capture; OCR usually takes longer than that.
     private suspend fun shot(capture: Capture.Captured, now: ScreenSnapshot, target: TableEntry?): Shot? {
+        val capturedAt = run.ports.clock.elapsedMillis()
         val captured = IntRect(capture.originX, capture.originY, capture.originX + capture.image.width, capture.originY + capture.image.height)
         val area = target?.let { it.bounds.intersect(captured) ?: return null }
         val lines = read(capture, now, target).orEmpty()
         val masks = masks(now, lines)
+        val left = MOVE_SEEN_MILLIS - (run.ports.clock.elapsedMillis() - capturedAt)
+        if (left > 0) delay(left)
         if (masks(run.fresh(), lines).toSet() != masks.toSet()) return Shot.Moved
         return Shot.Sent(run.ports.eyes.encode(capture, masks, badges(), area))
     }
@@ -217,6 +223,12 @@ internal class LookCloser(private val run: TaskRun) {
         const val CHANGED = "The screen changed while the owner answered, so Kestrel took no screenshot."
         const val MOVED = "The screen moved while Kestrel captured it, so Kestrel took no screenshot."
         private const val CAPTURES = 2
+
+        // Kestrel learns of a move about 150 ms after it: an app's content-change events come at most every 100 ms, and
+        // Android delivers them 50 ms later (the service's notificationTimeout). Once the event is in, the snapshot cache
+        // itself waits for a quiet screen before it builds the next tree.
+        private const val MOVE_SEEN_MILLIS = 250L
+
         private const val LARGE_SHARE = 16
         private val YES = setOf("yes", "yes send it", "ok", "yes please", "sure")
         private val ALWAYS = setOf("always", "always for this app", "yes always")
