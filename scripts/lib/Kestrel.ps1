@@ -388,6 +388,41 @@ function Get-GrantedPermissions([string[]]$Dump, [string[]]$Permissions) {
     }
 }
 
+# Reads, from the output of 'dumpsys package <package>', whether each runtime permission of the list is granted, and
+# whether it has the flags USER_SET and USER_FIXED. A permission that the output does not show, as for a package that is
+# not installed, is not granted and has neither flag. Returns an ordered dictionary from the permission to its state.
+function Get-PermissionStates([string[]]$Dump, [string[]]$Permissions) {
+    $text = $Dump -join "`n"
+    $states = [ordered]@{}
+    foreach ($permission in $Permissions) {
+        $state = @{ Granted = $false; UserSet = $false; UserFixed = $false }
+        if ($text -match "$([regex]::Escape($permission)): granted=(true|false)(?:, flags=\[([^\]]*)\])?") {
+            $flags = @("$($Matches[2])" -split '\|' | ForEach-Object { $_.Trim() })
+            $state = @{ Granted = $Matches[1] -eq 'true'; UserSet = 'USER_SET' -in $flags; UserFixed = 'USER_FIXED' -in $flags }
+        }
+        $states[$permission] = $state
+    }
+    $states
+}
+
+# Returns the device commands that put the runtime permissions of a package back from the states $Now to the states
+# $Before, both read by Get-PermissionStates: a grant or a revoke where the grant differs, then a clear of the flags
+# USER_SET and USER_FIXED that were not set before, when one is set now or the grant changes, which can set them. A
+# revoke ends the package's process.
+function Get-PermissionRestoreCommands([string]$Package, $Before, $Now) {
+    foreach ($permission in $Before.Keys) {
+        $was = $Before[$permission]
+        $is = $Now[$permission]
+        $changed = $is.Granted -ne $was.Granted
+        if ($changed) { "pm $(if ($was.Granted) { 'grant' } else { 'revoke' }) $Package $permission" }
+        $flags = @(
+            if (-not $was.UserSet -and ($changed -or $is.UserSet)) { 'user-set' }
+            if (-not $was.UserFixed -and ($changed -or $is.UserFixed)) { 'user-fixed' }
+        )
+        if ($flags.Count -gt 0) { "pm clear-permission-flags $Package $permission $($flags -join ' ')" }
+    }
+}
+
 # The instrumentation argument that selects command device tests: the whole package dev.kestrel.app.commands, or the
 # classes of [Class], each a simple class name with an optional '#method'. Throws for any other name, so that no name can
 # reach other packages or the shell.

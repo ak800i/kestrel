@@ -1,5 +1,7 @@
 package dev.kestrel.app.voice
 
+import android.Manifest
+import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.listen.SettingsOpener
 import dev.kestrel.app.orchestrator.Event
@@ -20,7 +22,8 @@ import org.junit.runners.model.Statement
  * background and its accessibility service off. Both start listening and wait for a task. With the assistant role,
  * "Kestrel, open settings" also brings Kestrel's settings to the front. The two tests of the role run only on an
  * emulator, because they make Kestrel the holder of the role: they put the holder back themselves, and
- * scripts\voice-test.ps1 puts it back at the end in case the test's process died before it could.
+ * scripts\voice-test.ps1 puts it back at the end in case the test's process died before it could. They also grant
+ * Kestrel the role's permissions, which only voice-test.ps1 puts back.
  */
 class AssistTest {
     // The tests of the role skip on a phone before setUp changes anything there.
@@ -126,6 +129,12 @@ class AssistTest {
         val settings = ASSISTANT_SETTINGS.associateWith { secure(it) }
         var failure: Throwable? = null
         try {
+            // The role grants its holder the permissions of its list that the holder declares, and revokes them when the
+            // role goes back, which ends Kestrel's process, the test's own (investigation of plan 5B). A permission that
+            // is granted already stays granted when the role goes back. The test cannot revoke them, as that would end
+            // its process too, so scripts\voice-test.ps1 puts them back at the end.
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            for (permission in ROLE_PERMISSIONS) automation.grantRuntimePermission("dev.kestrel", permission)
             VoiceTests.shell("cmd role add-role-holder $ROLE dev.kestrel")
             // Android points both settings at Kestrel's service a moment after the role changes, and the key goes to the
             // assistant that they name.
@@ -196,6 +205,10 @@ class AssistTest {
 
     private companion object {
         const val ROLE = "android.app.role.ASSISTANT"
+
+        // The permissions of the role's list (its permission set "sms" and READ_CALL_LOG) that Kestrel declares, as
+        // voice-test.ps1 knows.
+        val ROLE_PERMISSIONS = listOf(Manifest.permission.READ_SMS, Manifest.permission.READ_CALL_LOG)
 
         // The tests that make Kestrel the holder of the role, which run only on an emulator, as voice-test.ps1 knows.
         val ROLE_TESTS = setOf(

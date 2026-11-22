@@ -551,6 +551,68 @@ Describe 'Get-LargestRowId' {
     }
 }
 
+Describe 'Get-PermissionStates' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'reads the grant and the owner''s flags of each permission, and none for a permission that the dump does not show' {
+        $dump = @(
+            '    requested permissions:',
+            '      android.permission.READ_SMS',
+            '    User 0: ceDataInode=1 installed=true',
+            '      runtime permissions:',
+            '        android.permission.READ_SMS: granted=true, flags=[ USER_SET|USER_SENSITIVE_WHEN_GRANTED|USER_FIXED ]',
+            '        android.permission.READ_CALL_LOG: granted=false, flags=[ USER_SENSITIVE_WHEN_GRANTED|RESTRICTION_INSTALLER_EXEMPT]'
+        )
+
+        $states = Get-PermissionStates -Dump $dump -Permissions @('android.permission.READ_SMS', 'android.permission.READ_CALL_LOG', 'android.permission.READ_CALENDAR')
+
+        @($states.Keys) | Should -Be @('android.permission.READ_SMS', 'android.permission.READ_CALL_LOG', 'android.permission.READ_CALENDAR')
+        $states['android.permission.READ_SMS'].Granted | Should -BeTrue
+        $states['android.permission.READ_SMS'].UserSet | Should -BeTrue
+        $states['android.permission.READ_SMS'].UserFixed | Should -BeTrue
+        foreach ($permission in 'android.permission.READ_CALL_LOG', 'android.permission.READ_CALENDAR') {
+            $states[$permission].Granted | Should -BeFalse
+            $states[$permission].UserSet | Should -BeFalse
+            $states[$permission].UserFixed | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Get-PermissionRestoreCommands' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        function Get-ReadSmsState([bool]$Granted, [bool]$UserSet = $false, [bool]$UserFixed = $false) {
+            [ordered]@{ 'android.permission.READ_SMS' = @{ Granted = $Granted; UserSet = $UserSet; UserFixed = $UserFixed } }
+        }
+    }
+
+    It 'revokes a permission that was not granted before, and clears the owner''s flags that the change can set' {
+        Get-PermissionRestoreCommands -Package dev.kestrel -Before (Get-ReadSmsState $false) -Now (Get-ReadSmsState $true) | Should -Be @(
+            'pm revoke dev.kestrel android.permission.READ_SMS'
+            'pm clear-permission-flags dev.kestrel android.permission.READ_SMS user-set user-fixed'
+        )
+    }
+
+    It 'grants a permission that was granted before, and keeps the flags that were set before' {
+        Get-PermissionRestoreCommands -Package dev.kestrel -Before (Get-ReadSmsState $true -UserSet $true) -Now (Get-ReadSmsState $false) | Should -Be @(
+            'pm grant dev.kestrel android.permission.READ_SMS'
+            'pm clear-permission-flags dev.kestrel android.permission.READ_SMS user-fixed'
+        )
+    }
+
+    It 'only clears a flag that is new when the grant is the same' {
+        Get-PermissionRestoreCommands -Package dev.kestrel -Before (Get-ReadSmsState $true) -Now (Get-ReadSmsState $true -UserSet $true) |
+            Should -Be @('pm clear-permission-flags dev.kestrel android.permission.READ_SMS user-set')
+    }
+
+    It 'returns nothing when nothing changed' {
+        @(Get-PermissionRestoreCommands -Package dev.kestrel -Before (Get-ReadSmsState $false -UserFixed $true) -Now (Get-ReadSmsState $false -UserFixed $true)).Count |
+            Should -Be 0
+    }
+}
+
 Describe 'Test-CallActive' {
     BeforeAll {
         . "$PSScriptRoot\..\lib\Kestrel.ps1"

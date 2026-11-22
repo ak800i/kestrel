@@ -15,10 +15,13 @@
 # RefusedReplyTest#aReplyThatAndroidRefusesIsShownOnTheBar, which sets Kestrel's app op TAKE_AUDIO_FOCUS to ignore and
 # back to foreground, the op's normal mode on Android 17. So do AssistTest#theAssistKeyStartsListeningAndWaitsForATask and
 # AssistTest#withTheAssistantRoleOpenSettingsBringsTheSettingsToTheFront, which make Kestrel the holder of the assistant
-# role. The run fails when one of these six tests ran on a phone or did not run on an emulator. On an emulator the script
-# turns the lock screen off again at the end, sets TAKE_AUDIO_FOCUS back to foreground, gives the assistant role and the
-# settings assistant and voice_interaction_service back as they were before the run, wakes the screen and dismisses the
-# keyguard, also when the run failed or was interrupted.
+# role. The run fails when one of these six tests ran on a phone or did not run on an emulator. The two tests of the role
+# grant Kestrel READ_SMS and READ_CALL_LOG before they add the role, because the role grants these to its holder and
+# revokes them when it goes back, which would end Kestrel's process and the tests with it; they cannot revoke them either.
+# On an emulator the script turns the lock screen off again at the end, sets TAKE_AUDIO_FOCUS back to foreground, gives
+# the assistant role and the settings assistant and voice_interaction_service back as they were before the run, puts
+# READ_SMS and READ_CALL_LOG of Kestrel back as they were (with 'pm revoke' and 'pm clear-permission-flags'), wakes the
+# screen and dismisses the keyguard, also when the run failed or was interrupted.
 # The test MicCaptureTest#withTheEarbudMicrophoneAllowedAndNoEarbudsThePhoneRecordsAndNoRequestStays asks Android for
 # connected earbuds, which would switch a phone's earbuds to their call profile, so on a phone the script leaves it out
 # as well, and the run fails when it ran there; it changes nothing that the script must put back.
@@ -53,6 +56,12 @@ $lockScreenOff = $false
 $assistantHolder = $null
 # The settings that name the assistant's service before the run, which Android changes with the role.
 $assistantSettings = [ordered]@{}
+# The permissions that the assistant role grants and revokes and that Kestrel declares. The assistant tests grant them
+# before they add the role, so that the role leaves them alone and does not end Kestrel's process when it goes back, and
+# cannot revoke them, which would end it too.
+$rolePermissions = @('android.permission.READ_SMS', 'android.permission.READ_CALL_LOG')
+# Their states before the run, from Get-PermissionStates; $null until they are read.
+$rolePermissionsBefore = $null
 try {
     Use-KestrelToolchain
     Assert-TestDevice -Serial $Serial
@@ -64,6 +73,7 @@ try {
         # The assistant tests make Kestrel the holder of the role and put the holder back, unless their process dies.
         $assistantHolder = ((Invoke-SettingsCommand -Serial $Serial -Command 'cmd role get-role-holders android.app.role.ASSISTANT') -join '').Trim()
         foreach ($name in 'assistant', 'voice_interaction_service') { $assistantSettings[$name] = Get-SecureSetting -Serial $Serial -Name $name }
+        $rolePermissionsBefore = Get-PermissionStates -Dump (Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys package dev.kestrel') -Permissions $rolePermissions
     }
     & "$PSScriptRoot\install.ps1" -Serial $Serial
     $code = $LASTEXITCODE
@@ -165,6 +175,22 @@ try {
                     if ($now -cne $assistantSettings[$name] -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $assistantSettings[$name])) {
                         $code = 1
                     }
+                }
+            }
+            # After the role is back, so that the role changes them no more. A revoke ends Kestrel's process, whose tests are
+            # over by now.
+            if ($null -ne $rolePermissionsBefore) {
+                $restore = try {
+                    $dump = Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys package dev.kestrel'
+                    @(Get-PermissionRestoreCommands -Package dev.kestrel -Before $rolePermissionsBefore -Now (Get-PermissionStates -Dump $dump -Permissions $rolePermissions))
+                } catch {
+                    Write-Warning ("Could not read Kestrel's permissions on $Serial ($($_.Exception.Message)), so $($rolePermissions -join ' and ') " +
+                        "may stay as the assistant tests left them. Read them with: & '$((Get-Adb) -replace "'", "''")' -s $Serial shell dumpsys package dev.kestrel")
+                    $code = 1
+                    @()
+                }
+                foreach ($command in $restore) {
+                    if (-not (Invoke-DeviceRestore 'put back a permission of Kestrel' $command)) { $code = 1 }
                 }
             }
             if (-not (Invoke-DeviceRestore 'wake the screen' 'input keyevent KEYCODE_WAKEUP')) { $code = 1 }
