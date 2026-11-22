@@ -84,7 +84,8 @@ class AppOwnerPortTest {
         }
     }
     private val android = CompletableDeferred<PermissionEnd>()
-    private val owner = AppOwnerPort(1, { sent += it }, screen, audio, signals, { android.await() }, { PermissionEnd.PARTLY })
+    private var androidAsked = 0
+    private val owner = AppOwnerPort(1, { sent += it }, screen, audio, signals, { androidAsked++; android.await() }, { PermissionEnd.PARTLY })
 
     private val send = Confirmation("Send 'Hi' to Ana on Viber?", "Send to Ana on Viber: 'Hi'? Say confirm or cancel.", Category.SENDING, listOf("Ana"), "Viber", "Hi", "1", null)
 
@@ -230,6 +231,51 @@ class AppOwnerPortTest {
         assertEquals(HandOverEnd.CONTINUED, handedOver.await())
         // The watcher starts again after the pause and after the hand-over, which an instant command may have stopped.
         assertEquals(2, screen.watched)
+    }
+
+    @Test
+    fun aPermissionRequestThatAPauseMetBeforeItBeganAsksAfterTheResume() = runTest {
+        owner.paused()
+        val asked = started { owner.askPermission(listOf("android.permission.READ_CONTACTS"), "Why") }
+        assertFalse(asked.isCompleted)
+        assertTrue(sent.isEmpty())
+        assertEquals(0, androidAsked)
+
+        owner.resumed()
+        runCurrent()
+        assertEquals(Event.TaskHandsOver(1, "Why"), sent.single())
+        assertEquals(1, androidAsked)
+        android.complete(PermissionEnd.GRANTED)
+        assertEquals(PermissionEnd.GRANTED, asked.await())
+    }
+
+    @Test
+    fun theAccessPageOpensOnlyAfterThePauseThatMetItsHandOver() = runTest {
+        owner.paused()
+        val handedOver = started { owner.handOver(HandOver.of(HandOverKind.ACCESS)) }
+        assertTrue(opened.isEmpty())
+
+        owner.resumed()
+        runCurrent()
+        assertEquals(listOf(HandOverKind.ACCESS), opened)
+        ended.complete(Unit)
+        assertEquals(HandOverEnd.DONE_BY_ITSELF, handedOver.await())
+    }
+
+    @Test
+    fun theScreenshotQuestionSaysFirstThatKestrelPausedTheOtherAppsAudio() = runTest {
+        audio.plays = true
+        val asked = started { owner.ask("May I take a screenshot?", AnswerKind.SCREENSHOT) }
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(listOf<Event>(Event.TaskAsks(1, "${AppOwnerPort.AUDIO_PAUSED} May I take a screenshot?", TaskAsk.FREE)), sent)
+        owner.answered("yes")
+        asked.await()
+
+        val quiet = started { owner.ask("May I take a screenshot?", AnswerKind.SCREENSHOT) }
+        assertEquals(Event.TaskAsks(1, "May I take a screenshot?", TaskAsk.FREE), sent.last())
+        owner.answered("yes")
+        quiet.await()
     }
 
     @Test

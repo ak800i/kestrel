@@ -61,12 +61,17 @@ internal class CallBackstop(private val calls: CallApi, private val clock: () ->
 
 /**
  * Returns when [states] show a call that became active without ringing first, which is a call that the owner placed (the
- * CALL hand-over of design D15 then ends by itself). A call that rang is an incoming call and does not count.
+ * CALL hand-over of design D15 then ends by itself). A call that rang is an incoming call and does not count; once it is
+ * over, the next call counts again.
  */
 internal suspend fun awaitOutgoingCall(states: Flow<State>) {
     var rang = false
     states.first { state ->
-        if (state.mode == Mode.RINGING) rang = true
+        when (state.mode) {
+            Mode.RINGING -> rang = true
+            Mode.IN_CALL -> {}
+            else -> rang = false
+        }
         state.mode == Mode.IN_CALL && !rang
     }
 }

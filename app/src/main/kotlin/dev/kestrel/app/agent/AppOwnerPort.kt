@@ -75,9 +75,10 @@ internal interface HandOverSignals {
  * question, whose answer is then [Answer.Interrupted]. A confirmation shows the card while Kestrel speaks the question,
  * and the first answer, from the card's buttons or the voice, decides. While another app's audio plays, a confirmation
  * of a send or a delete, and the screenshot question, take the voice only after Kestrel paused that audio; when it still
- * plays, only the card's button counts. [askAndroid] shows Android's dialog for Kestrel's own permissions, and [granted]
- * checks them again when the owner says "Kestrel, continue" before the dialog answered. [report] logs a failure of
- * [close], which never throws, by its classes only.
+ * plays, only the card's button counts, and when Kestrel paused it, it says [AUDIO_PAUSED] first. A hand-over or a
+ * permission request that a pause met before it began begins after the resume. [askAndroid] shows Android's dialog for
+ * Kestrel's own permissions, and [granted] checks them again when the owner says "Kestrel, continue" before the dialog
+ * answered. [report] logs a failure of [close], which never throws, by its classes only.
  */
 internal class AppOwnerPort(
     private val task: Int,
@@ -118,14 +119,16 @@ internal class AppOwnerPort(
     override suspend fun ask(question: String, kind: AnswerKind): Answer = questions.withLock {
         screen.forgetOwnActions()
         try {
-            if (kind == AnswerKind.SCREENSHOT && !voiceAllowed()) {
+            val playing = kind == AnswerKind.SCREENSHOT && audio.playing()
+            if (playing && !voiceAllowed()) {
                 return@withLock when (askWithCard(question, TaskAsk.FREE, voice = false)) {
                     CardOrVoice.Yes -> Answer.Yes
                     CardOrVoice.No, CardOrVoice.Silence -> Answer.No
                     CardOrVoice.Paused -> Answer.Interrupted
                 }
             }
-            when (val wake = wait { send(Event.TaskAsks(task, question, asked(kind))) }) {
+            val spoken = if (playing) "$AUDIO_PAUSED $question" else question
+            when (val wake = wait { send(Event.TaskAsks(task, spoken, asked(kind))) }) {
                 Wake.Paused -> Answer.Interrupted
                 is Wake.Answered -> answer(kind, wake.answer)
                 else -> Answer.Silence
@@ -162,9 +165,19 @@ internal class AppOwnerPort(
             var end: HandOverEnd? = null
             while (end == null) {
                 end = coroutineScope {
-                    val waking = async { wait { send(Event.TaskHandsOver(task, handOver.text)) } }
-                    signals.opened(handOver.kind)
-                    val itself = async { signals.endedByItself(handOver.kind) }
+                    val begun = CompletableDeferred<Unit>()
+                    val waking = async {
+                        wait {
+                            send(Event.TaskHandsOver(task, handOver.text))
+                            begun.complete(Unit)
+                        }
+                    }
+                    // Android's notification-access page opens only once the hand-over has begun, never during a pause.
+                    val itself = async {
+                        begun.await()
+                        signals.opened(handOver.kind)
+                        signals.endedByItself(handOver.kind)
+                    }
                     select<HandOverEnd?> {
                         waking.onAwait {
                             when (it) {
@@ -195,17 +208,41 @@ internal class AppOwnerPort(
     override suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd = questions.withLock {
         handOverKind = HandOverKind.PERMISSION
         try {
-            coroutineScope {
-                val waking = async { wait { send(Event.TaskHandsOver(task, why)) } }
-                val asked = async { askAndroid(permissions) }
-                select {
-                    asked.onAwait { end ->
-                        send(Event.TaskBusy(task))
-                        end
+            var end: PermissionEnd? = null
+            while (end == null) {
+                end = coroutineScope {
+                    val begun = CompletableDeferred<Unit>()
+                    val waking = async {
+                        wait {
+                            send(Event.TaskHandsOver(task, why))
+                            begun.complete(Unit)
+                        }
                     }
-                    waking.onAwait { if (it == Wake.Expired) PermissionEnd.REFUSED else granted(permissions) }
-                }.also { currentCoroutineContext().cancelChildren() }
-            }.also { screen.watch() }
+                    // Android's dialog shows only once the hand-over has begun, never during a pause.
+                    val asked = async {
+                        begun.await()
+                        askAndroid(permissions)
+                    }
+                    select<PermissionEnd?> {
+                        asked.onAwait { end ->
+                            send(Event.TaskBusy(task))
+                            end
+                        }
+                        waking.onAwait {
+                            when (it) {
+                                Wake.Expired -> PermissionEnd.REFUSED
+                                // A pause came before the Rules began the hand-over: the owner is asked after the
+                                // resume, as for any question (design D2), so it never counts as his refusal.
+                                Wake.Paused -> null
+                                else -> granted(permissions)
+                            }
+                        }
+                    }.also { currentCoroutineContext().cancelChildren() }
+                }
+                if (end == null) gate()
+            }
+            screen.watch()
+            end
         } finally {
             handOverKind = null
             withContext(NonCancellable) { screen.releaseBar() }

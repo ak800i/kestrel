@@ -111,6 +111,24 @@ class CallBackstopTest {
         assertTrue(placed.isCompleted)
     }
 
+    @Test
+    fun aCallThatTheOwnerPlacesAfterAnIncomingCallEndedStillEndsTheHandOver() = runTest {
+        val states = MutableStateFlow(running)
+        val placed = async { awaitOutgoingCall(states) }
+        runCurrent()
+        states.value = running.copy(mode = Mode.RINGING)
+        runCurrent()
+        states.value = running.copy(mode = Mode.IN_CALL)
+        runCurrent()
+        states.value = running
+        runCurrent()
+        assertFalse(placed.isCompleted)
+
+        states.value = running.copy(mode = Mode.IN_CALL)
+        runCurrent()
+        assertTrue(placed.isCompleted)
+    }
+
     private class FakeCalls : CallApi {
         var allowed = true
         var ended = 0
