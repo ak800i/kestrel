@@ -22,7 +22,7 @@ BeforeAll {
         'Open-App', 'Unlock-Device', 'Set-HotspotSwitch', 'Wait-Validated', 'Add-Result', 'Test-Installed', 'Save-AgentTree', 'Read-DeviceText',
         'Format-Failure', 'Invoke-TelegramRecording', 'Get-GmailDraftCount', 'Invoke-GmailCompose', 'Restore-Hotspot', 'Register-HotspotRestore',
         'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
-        'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls')
+        'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -174,6 +174,12 @@ Describe 'The helpers of the sittings of sub-project 5' {
             'task=firefox-wiki model=claude-haiku-5.5 passed=1 of 1 steps=7 seconds=50 credits=1'
             'task=hotspot model=none passed=0 of 0 steps=0 seconds=0 credits=0')
         Format-Number 1.26 1 | Should -Be '1.3'
+    }
+
+    It 'gives the stand-in microphone a one-word clip without its full stop, which Kestrel''s own voice says as another word' {
+        Get-StandInText 'No.' | Should -BeExactly 'No'
+        Get-StandInText 'Kestrel, delete history.' | Should -BeExactly 'Kestrel, delete history.'
+        Get-StandInText 'Yes' | Should -BeExactly 'Yes'
     }
 
     It 'runs a stand-in with its scripted model in a dry run, and has none for Waze' {

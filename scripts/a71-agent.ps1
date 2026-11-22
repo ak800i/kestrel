@@ -1216,6 +1216,11 @@ function Measure-Gain([string]$Device) {
     }
 }
 
+# The text that a dry run gives Kestrel's stand-in microphone for a clip: a one-word clip loses its full stop, because
+# Kestrel's own voice says a lone "No." so that its recogniser hears another word (on kestrel-api37, "No." matched 0 of 2
+# times, "No" 2 of 2); the phone still expects the clip's own text. A real sitting plays the clips themselves.
+function Get-StandInText([string]$Text) { if ($Text -match '^\w+\.$') { $Text.TrimEnd('.') } else { $Text } }
+
 # The speech checks of one device (scripts\lib\AgentChecks.ps1) in both voices, with Kestrel on its own microphone and
 # :testapp in front; a dry run plays each clip's text into Kestrel's stand-in microphone instead. The fact "gate code"
 # is removed again afterwards, and the scripted model too.
@@ -1233,7 +1238,7 @@ function Invoke-SpeechOn([string]$Serial) {
             return
         }
     }
-    $play = if ($DryRun) { { param($Clip) Invoke-Hook voice-clip @{ Text = $Clip.Text } | Out-Null } } else { { param($Clip) Invoke-Clip -Path $Clip.Path -Gain $gain | Out-Null } }
+    $play = if ($DryRun) { { param($Clip) Invoke-Hook voice-clip @{ Text = (Get-StandInText $Clip.Text) } | Out-Null } } else { { param($Clip) Invoke-Clip -Path $Clip.Path -Gain $gain | Out-Null } }
     $passed = 0
     $run = 0
     try {
