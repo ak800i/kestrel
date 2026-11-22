@@ -42,6 +42,7 @@ import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.OwnActions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -112,11 +113,13 @@ internal class AppAgentEnvironment(
         )
         val provider = model.model.providerName
         if (start.local || screen == null) return Prepared.Ready(ports, agentSettings, owner, emptySet(), emptyFlow(), provider) {}
-        if (!screen.startTouchWatcher()) return Prepared.Refused(AgentTexts.NO_WATCHER)
+        // Read before the watcher starts, so that a failed read leaves no watcher on the screen.
+        val names = knownNames()
+        if (!startWatcherOrStop(screen::startTouchWatcher, screen::stopTouchWatcher)) return Prepared.Refused(AgentTexts.NO_WATCHER)
         val touches = screen.touches.filter { it.owner }.map { touch ->
             OwnerTouch(touch.sinceNodeActionMillis?.takeIf { it <= OwnActions.LATE_ECHO_MILLIS })
         }
-        return Prepared.Ready(ports, agentSettings, owner, knownNames(), touches, provider) {
+        return Prepared.Ready(ports, agentSettings, owner, names, touches, provider) {
             screen.stopTouchWatcher()
             data.forgetTask()
         }
@@ -146,6 +149,17 @@ internal class AppAgentEnvironment(
         override suspend fun call(role: ModelRole, request: ChatRequest, step: Int): PricedResponse =
             throw IllegalStateException("Kestrel's own memory requests call no model.")
     }
+}
+
+/**
+ * Starts the touch watcher (design D19 of sub-project 5). When [start] throws, also when the task is cancelled after the
+ * watcher's window was added, [stop] removes the window again before the exception goes on, because no release would.
+ */
+internal suspend fun startWatcherOrStop(start: suspend () -> Boolean, stop: suspend () -> Unit): Boolean = try {
+    start()
+} catch (e: Throwable) {
+    withContext(NonCancellable) { stop() }
+    throw e
 }
 
 /**
