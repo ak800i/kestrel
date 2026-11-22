@@ -246,8 +246,10 @@
 #   selfchat-check                          whether test mode's recogniser takes the chat on the screen for a self-chat
 #   agent-tree                              writes the screen's structure, with labels only where they are safe, to
 #                                           cache/agent-tree.json, which the script reads and removes with run-as
-#   screen-tap -Label text                  the script's own tap on the element with that label; never in Kestrel's own
-#                                           app or a phone app
+#   screen-tap -Label text                  the script's own tap on the element with that label; it answers
+#                                           tapped=false error=refused, without the label, for what the agent would
+#                                           never press without the owner: anything in Kestrel's own app, a phone app or
+#                                           a contacts app, and in any app a call, emergency or SOS control
 # sub-project 5C: live hooks
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3

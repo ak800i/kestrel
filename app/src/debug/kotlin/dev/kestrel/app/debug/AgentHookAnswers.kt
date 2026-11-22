@@ -2,6 +2,12 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.safety.AgentFreeApps
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.EmergencyGuard
+import dev.kestrel.safety.LabelWords
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.ScreenTree
 import java.util.Locale
 
 /**
@@ -75,6 +81,29 @@ internal object AgentHookAnswers {
             else -> "none"
         }
     }
+
+    /**
+     * Whether screen-tap refuses to press element [index] of [snapshot] for the requested [label] (process rule 10): what
+     * the agent itself would never press without the owner's confirmation or at all. That is anything while Kestrel's own
+     * app, a phone app of [phonePackages] (with the default phone app) or a contacts app is in front, as the safety check's
+     * call rules read them; and in any app, SystemUI's emergency controls included, a label, text or content description
+     * of the element or of a clickable ancestor that holds a word of [Category.CALLS] ([LabelWords]) or "emergency" or
+     * "SOS" ([EmergencyGuard]), and the requested label itself with such a word.
+     */
+    fun tapRefused(snapshot: ScreenSnapshot, index: Int?, label: String, phonePackages: Set<String>): Boolean {
+        val front = ScreenTree.frontWindow(snapshot)?.packageName
+        if (front == AgentFreeApps.KESTREL || front in phonePackages || front in EmergencyGuard.CONTACTS_PACKAGES) return true
+        if (callOrEmergency(label)) return true
+        if (index == null) return false
+        val reached = listOf(index) + ScreenTree.ancestors(snapshot, index).filter { snapshot.elements[it].clickable }
+        return reached.any { at ->
+            val element = snapshot.elements[at]
+            // emergencyNamed reads the view ID too, such as SystemUI's "emergency_button".
+            EmergencyGuard.emergencyNamed(snapshot, at) || listOf(element.label, element.text, element.contentDescription).any(::callOrEmergency)
+        }
+    }
+
+    private fun callOrEmergency(text: String?): Boolean = LabelWords.holds(text, Category.CALLS) || EmergencyGuard.namesEmergency(text)
 
     /** The self-chats' fixed texts that agent-tree may keep (design D28). */
     val FIXED_SAFE = setOf("Saved Messages", "forward here to save", "Forward here to save.", "Message yourself", "My Notes")

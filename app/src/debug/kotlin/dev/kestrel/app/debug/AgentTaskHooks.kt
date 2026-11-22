@@ -3,6 +3,7 @@ package dev.kestrel.app.debug
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.telecom.TelecomManager
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
 import dev.kestrel.agent.port.DataResult
@@ -284,12 +285,14 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val snapshot = session.snapshots.current().snapshot
         val front = ScreenTree.frontWindow(snapshot) ?: return "tapped=false count=0"
-        // Never Kestrel's own app or a phone app, so that a script's tap can never place a call (process rule 10).
-        if (front.packageName == AgentFreeApps.KESTREL || front.packageName in EmergencyGuard.PHONE_PACKAGES) {
-            throw HookError("screen-tap refuses Kestrel's own app and the phone apps")
+        val matches = snapshot.elements.indices.filter { snapshot.elements[it].windowId == front.id && snapshot.elements[it].label == label }
+        val phoneApp = context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
+        // Never what the agent would press only after the owner's yes or never, so that a script's tap can never place a
+        // call (process rule 10). The answer names no label.
+        if (AgentHookAnswers.tapRefused(snapshot, matches.firstOrNull(), label, EmergencyGuard.PHONE_PACKAGES + listOfNotNull(phoneApp))) {
+            return "tapped=false error=refused"
         }
-        val matches = snapshot.elements.filter { it.windowId == front.id && it.label == label }
-        val target = matches.firstOrNull() ?: return "tapped=false count=0"
+        val target = matches.firstOrNull()?.let { snapshot.elements[it] } ?: return "tapped=false count=0"
         val done = session.actions.tap(target.key) is dev.kestrel.screen.act.ActionResult.Done
         return "tapped=$done count=${matches.size}"
     }

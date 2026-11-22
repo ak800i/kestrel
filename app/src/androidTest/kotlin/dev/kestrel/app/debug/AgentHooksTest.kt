@@ -101,7 +101,22 @@ class AgentHooksTest {
 
         screen.shell("am start -W -n $KESTREL/.app.MainActivity")
         screen.awaitElement { it.packageName == KESTREL }
-        assertTrue(hook("SCREEN_TAP --es label Back").contains("result=1, data=\"error: screen-tap refuses Kestrel's own app and the phone apps\""))
+        assertEquals("tapped=false error=refused", answer(hook("SCREEN_TAP --es label Back")))
+    }
+
+    @Test
+    fun screenTapRefusesACallControlInAnyAppWithoutNamingIt() = runBlocking {
+        screen.shell("run-as $FIXTURES rm -f files/presses.log")
+        try {
+            screen.open("MessengerActivity", "Ana Petrović", "--es chat ana")
+
+            val reply = answer(hook("SCREEN_TAP --es label Call"))
+
+            assertEquals("tapped=false error=refused", reply)
+            assertEquals("", screen.shell("run-as $FIXTURES cat files/presses.log").trim())
+        } finally {
+            screen.shell("run-as $FIXTURES rm -f files/presses.log")
+        }
     }
 
     @Test

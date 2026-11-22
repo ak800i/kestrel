@@ -2,9 +2,16 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.safety.EmergencyGuard
+import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowKind
+import dev.kestrel.screen.model.WindowSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The answers of the agent's debug hooks (design D28 of sub-project 5): counts, kinds and matches, never words. */
@@ -68,4 +75,38 @@ class AgentHookAnswersTest {
         assertEquals("members", AgentHookAnswers.status("3 members"))
         assertEquals("none", AgentHookAnswers.status("Ana Petrović"))
     }
+
+    @Test
+    fun screenTapRefusesWhatTheAgentWouldNeverPressWithoutTheOwner() {
+        val phones = EmergencyGuard.PHONE_PACKAGES + "com.example.dialer"
+        fun refused(packageName: String, vararg elements: ScreenElement, label: String = elements.last().label.orEmpty()): Boolean {
+            val window = WindowSummary(1, WindowKind.APPLICATION, packageName, bounds = IntRect(0, 0, 100, 100), active = true)
+            val snapshot = ScreenSnapshot(0, listOf(window), elements.map { it.copy(packageName = packageName) })
+            return AgentHookAnswers.tapRefused(snapshot, elements.lastIndex, label, phones)
+        }
+        val chat = "org.telegram.messenger"
+
+        assertFalse(refused(chat, button("Send")))
+        assertFalse(refused(AgentHookAnswers.SYSTEM_UI, button("Mobile Hotspot")))
+        // Kestrel's own app, the phone apps, the contacts apps and the default phone app, whatever the label.
+        for (packageName in listOf("dev.kestrel", "com.android.dialer", "com.google.android.contacts", "com.example.dialer")) {
+            assertTrue(packageName, refused(packageName, button("Back")))
+        }
+        // The call rules' words in any app, in English and Serbian, in a label or a content description.
+        assertTrue(refused(chat, button("Voice call")))
+        assertTrue(refused(chat, button(null, description = "Pozovi")))
+        assertTrue(refused(chat, button("Back"), label = "Video call"))
+        // Emergency and SOS, such as the lock screen's button, also by its view ID.
+        assertTrue(refused(AgentHookAnswers.SYSTEM_UI, button("Emergency call")))
+        assertTrue(refused(AgentHookAnswers.SYSTEM_UI, button("SOS")))
+        assertTrue(refused(AgentHookAnswers.SYSTEM_UI, button("Help", viewId = "com.android.systemui:id/emergency_button")))
+        // A contact's name inside a row that calls.
+        assertTrue(refused(chat, button("Call Ana"), button("Ana", parent = 0, clickable = false)))
+    }
+
+    private fun button(label: String?, description: String? = null, viewId: String? = null, parent: Int? = null, clickable: Boolean = true) =
+        ScreenElement(
+            key = "k${label ?: description}", windowId = 1, parent = parent, text = label, contentDescription = description, viewId = viewId,
+            label = label ?: description, bounds = IntRect(0, 0, 10, 10), clickable = clickable,
+        )
 }
