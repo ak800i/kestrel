@@ -351,7 +351,10 @@
     <string name="memory_routine_name">Name</string>
     <string name="memory_routine_phrasings">What you say, one phrasing on each line</string>
     <string name="memory_signatures">Finished tasks</string>
-    <string name="memory_signature_runs">%1$s: %2$d times</string>
+    <plurals name="memory_signature_runs">
+        <item quantity="one">%1$s: %2$d time</item>
+        <item quantity="other">%1$s: %2$d times</item>
+    </plurals>
     <string name="memory_found_contacts">Contacts that recent tasks found</string>
     <string name="memory_delete_all">Delete all memory</string>
     <string name="memory_delete_all_question">Delete every alias, fact, route note and routine, and the lists of finished tasks and found contacts? This cannot be undone.</string>

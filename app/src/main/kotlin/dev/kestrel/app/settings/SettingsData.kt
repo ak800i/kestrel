@@ -103,7 +103,8 @@ interface SettingsData {
     /** The owner's changes to the shipped list of agent-free apps (design D16 of sub-project 5). */
     val agentFree: Flow<AgentFreeChanges> get() = flowOf(AgentFreeChanges())
 
-    suspend fun setAgentFree(changes: AgentFreeChanges) {}
+    /** Stores the agent-free changes that [change] makes of the stored ones, under the store's lock (as [setSafety]). */
+    suspend fun setAgentFree(change: (AgentFreeChanges) -> AgentFreeChanges) {}
 
     /** The launcher apps of the owner's profile, for "Add an app" and the suggestions (design D16). */
     suspend fun launcherApps(): List<LauncherApp> = emptyList()
@@ -119,15 +120,22 @@ interface SettingsData {
 
     suspend fun deleteFact(key: String) {}
 
-    /** Replaces route note [old] of its app with [new], which keeps the path form. */
+    /**
+     * Replaces route note [old] of its app with [new], which keeps the path form: the stored note with [old]'s path takes
+     * [new]'s path and keeps the counts that a task may have changed meanwhile; when a task removed it, [new] is stored.
+     */
     suspend fun replaceNote(old: RouteNote, new: RouteNote) {}
 
+    /** Deletes the route note with [note]'s path. */
     suspend fun deleteNote(note: RouteNote) {}
 
     /** Deletes every route note of the app [packageName]. */
     suspend fun deleteNotes(packageName: String) {}
 
-    /** Replaces the routine called [oldName] with [routine], which may have another name and other phrasings. */
+    /**
+     * Gives the routine called [oldName] [routine]'s name and phrasings; it keeps its steps. A routine with the new name
+     * gives way to it.
+     */
     suspend fun replaceRoutine(oldName: String, routine: Routine) {}
 
     suspend fun deleteRoutine(name: String) {}
@@ -213,7 +221,10 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
 
     override val agentFree: Flow<AgentFreeChanges> = graph.settings.observe(SettingKeys.AGENT_FREE_APPS)
 
-    override suspend fun setAgentFree(changes: AgentFreeChanges) = write { graph.settings.set(SettingKeys.AGENT_FREE_APPS, changes) }
+    // From the stored value, so that a second tap before the page shows the first change keeps both (task-5b-16-review M1).
+    override suspend fun setAgentFree(change: (AgentFreeChanges) -> AgentFreeChanges) = write {
+        graph.settings.set(SettingKeys.AGENT_FREE_APPS, change(graph.settings.get(SettingKeys.AGENT_FREE_APPS)))
+    }
 
     override suspend fun setAgentFreeReviewed() = write { graph.settings.set(SettingKeys.AGENT_FREE_REVIEWED, true) }
 
@@ -237,20 +248,14 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
 
     override suspend fun deleteFact(key: String) = write { graph.memory.deleteFact(key) }
 
-    override suspend fun replaceNote(old: RouteNote, new: RouteNote) = write {
-        graph.memory.saveNotes(old.packageName, graph.memory.notes(old.packageName).map { if (it == old) new else it })
-    }
+    // In one change of the memory store each, under its lock, so that a task's change between a read and a write is kept.
+    override suspend fun replaceNote(old: RouteNote, new: RouteNote) = write { graph.memory.replaceNote(old, new) }
 
-    override suspend fun deleteNote(note: RouteNote) = write {
-        graph.memory.saveNotes(note.packageName, graph.memory.notes(note.packageName) - note)
-    }
+    override suspend fun deleteNote(note: RouteNote) = write { graph.memory.deleteNote(note) }
 
     override suspend fun deleteNotes(packageName: String) = write { graph.memory.deleteNotes(packageName) }
 
-    override suspend fun replaceRoutine(oldName: String, routine: Routine) = write {
-        if (oldName != routine.name) graph.memory.deleteRoutine(oldName)
-        graph.memory.saveRoutine(routine)
-    }
+    override suspend fun replaceRoutine(oldName: String, routine: Routine) = write { graph.memory.replaceRoutine(oldName, routine) }
 
     override suspend fun deleteRoutine(name: String) = write { graph.memory.deleteRoutine(name) }
 

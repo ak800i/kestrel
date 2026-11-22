@@ -2,6 +2,9 @@ package dev.kestrel.app.agent
 
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
+import dev.kestrel.agent.memory.RouteNote
+import dev.kestrel.agent.memory.Routine
+import dev.kestrel.agent.memory.RoutineStep
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.SettingRow
 import dev.kestrel.privacy.db.SettingsDao
@@ -60,6 +63,45 @@ class SettingsMemoryStoreTest {
         assertEquals(emptyMap<String, Int>(), memory.signatures())
         assertEquals(emptyList<String>(), memory.foundContacts())
         assertTrue(memory.screenshotApproved("org.mozilla.firefox", "github-copilot"))
+    }
+
+    @Test
+    fun anEditedNoteKeepsWhatATaskChangedMeanwhileAndATaskRemovingItDoesNotDropTheEdit() = runTest {
+        val app = "org.telegram.messenger"
+        val shown = RouteNote(app, "open \"Chats\"", proposals = 1)
+        val other = RouteNote(app, "tap \"Search\"", proposals = 2)
+        memory.saveNotes(app, listOf(shown, other))
+        // A task confirms the note while the Memory page shows its old version.
+        memory.saveNotes(app, listOf(shown.copy(proposals = 2), other))
+
+        memory.replaceNote(shown, shown.copy(path = "open \"Chats\" → tap \"New chat\""))
+
+        assertEquals(listOf(RouteNote(app, "open \"Chats\" → tap \"New chat\"", proposals = 2), other), memory.notes(app))
+
+        // A task removed the note meanwhile: the owner's edit is stored as a new note.
+        memory.saveNotes(app, listOf(other))
+        memory.replaceNote(shown, shown.copy(path = "open \"Archive\""))
+        assertEquals(listOf(other, shown.copy(path = "open \"Archive\"")), memory.notes(app))
+
+        // A delete finds the note by its path, also after a task struck it.
+        memory.saveNotes(app, listOf(other.copy(strikes = 1)))
+        memory.deleteNote(other)
+        assertEquals(emptyList<RouteNote>(), memory.notes(app))
+    }
+
+    @Test
+    fun aRenamedRoutineKeepsItsStepsAndReplacesARoutineOfTheNewName() = runTest {
+        val step = RoutineStep("open_app", arguments = null)
+        memory.saveRoutine(Routine("morning", listOf("good morning"), emptyList(), listOf(step, step)))
+        memory.saveRoutine(Routine("evening", listOf("good evening"), emptyList(), emptyList()))
+        memory.saveRoutine(Routine("Morning news", listOf("news"), emptyList(), emptyList()))
+
+        memory.replaceRoutine("Morning", Routine("morning news", listOf("read the news", "news please"), emptyList(), emptyList()))
+
+        assertEquals(
+            listOf(Routine("morning news", listOf("read the news", "news please"), emptyList(), listOf(step, step)), Routine("evening", listOf("good evening"), emptyList(), emptyList())),
+            memory.routines(),
+        )
     }
 
     private class MemoryDao : SettingsDao {

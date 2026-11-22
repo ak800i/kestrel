@@ -129,7 +129,7 @@ private fun AgentFreeList(data: SettingsData) {
     for (packageName in AgentFreeEdits.listed(current).sortedBy { (labels[it] ?: it).lowercase() }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(labels[packageName] ?: packageName, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = { now(scope) { data.setAgentFree(AgentFreeEdits.remove(current, packageName)) } }) {
+            TextButton(onClick = { now(scope) { data.setAgentFree { AgentFreeEdits.remove(it, packageName) } } }) {
                 Text(stringResource(R.string.safety_remove))
             }
         }
@@ -141,7 +141,7 @@ private fun AgentFreeList(data: SettingsData) {
     if (adding) {
         val list = AgentFreeApps.from(current)
         for (app in apps.filter { !list.isAgentFree(it.packageName) }.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }) {
-            TextButton(onClick = { now(scope) { data.setAgentFree(AgentFreeEdits.add(current, app.packageName)) } }) { Text(app.label) }
+            TextButton(onClick = { now(scope) { data.setAgentFree { AgentFreeEdits.add(it, app.packageName) } } }) { Text(app.label) }
         }
     }
     if (suggesting) {
@@ -167,7 +167,7 @@ private fun AgentFreeList(data: SettingsData) {
                     ticked.clear()
                     suggesting = false
                     now(scope) {
-                        data.setAgentFree(chosen.fold(current) { edits, packageName -> AgentFreeEdits.add(edits, packageName) })
+                        data.setAgentFree { stored -> chosen.fold(stored) { edits, packageName -> AgentFreeEdits.add(edits, packageName) } }
                         data.setAgentFreeReviewed()
                     }
                 }, Modifier.padding(end = 8.dp)) { Text(stringResource(R.string.safety_add_ticked)) }

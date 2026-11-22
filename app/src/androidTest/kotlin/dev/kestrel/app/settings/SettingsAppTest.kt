@@ -619,6 +619,32 @@ class SettingsAppTest {
         compose.onAllNodesWithText("home").assertCountEquals(0)
     }
 
+    @Test
+    fun twoQuickAgentFreeAddsAreBothKept() {
+        data.apps = listOf(LauncherApp("Moja Banka", "rs.example.mojabanka", null), LauncherApp("Recipes", "org.example.recipes", null))
+        // The encrypted store shows a change only later, so the page still lists the first app when the second tap comes.
+        data.agentFreeLate = true
+        show(NOTHING_SET_UP)
+        openFromHome(R.string.settings_safety)
+
+        compose.onNodeWithText(text(R.string.safety_add_app)).performScrollTo().performClick()
+        compose.onNodeWithText("Moja Banka").performScrollTo().performClick()
+        compose.onNodeWithText("Recipes").performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(setOf("rs.example.mojabanka", "org.example.recipes"), data.storedAgentFree.added.toSet())
+    }
+
+    @Test
+    fun theMemoryPageCountsTheFinishedTasksInWords() {
+        data.memoryView = MemoryView(signatures = mapOf("open-viber" to 1, "send-photos" to 2))
+        show(NOTHING_SET_UP)
+        openFromHome(R.string.settings_memory)
+
+        compose.onNodeWithText("open-viber: 1 time").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("send-photos: 2 times").performScrollTo().assertIsDisplayed()
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
@@ -632,13 +658,16 @@ class SettingsAppTest {
         override val agentFree = MutableStateFlow(AgentFreeChanges())
         var apps = emptyList<LauncherApp>()
         var memoryView = MemoryView()
+        var agentFreeLate = false
+        var storedAgentFree = AgentFreeChanges()
 
         override suspend fun setSafety(change: (SafetySettings) -> SafetySettings) {
             safety.value = change(safety.value)
         }
 
-        override suspend fun setAgentFree(changes: AgentFreeChanges) {
-            agentFree.value = changes
+        override suspend fun setAgentFree(change: (AgentFreeChanges) -> AgentFreeChanges) {
+            storedAgentFree = change(storedAgentFree)
+            if (!agentFreeLate) agentFree.value = storedAgentFree
         }
 
         override suspend fun launcherApps(): List<LauncherApp> = apps

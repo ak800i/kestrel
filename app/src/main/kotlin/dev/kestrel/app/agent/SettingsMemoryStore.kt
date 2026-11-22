@@ -66,6 +66,39 @@ internal class SettingsMemoryStore(
 
     suspend fun deleteNotes(packageName: String) = change(SettingKeys.ROUTE_NOTES) { it - packageName }
 
+    /**
+     * The Memory page's edit of route note [old] into [new], in one change under the lock, so that a task's note stored
+     * meanwhile is kept (task-5b-16-review M2). The note is found by its path: its counts, which a task may have changed
+     * meanwhile, stay, and only the path changes. When a task removed the note meanwhile, [new] is stored as a new note,
+     * so the owner's edit is never dropped. Another note with the new path gives way to it.
+     */
+    suspend fun replaceNote(old: RouteNote, new: RouteNote) = change(SettingKeys.ROUTE_NOTES) { all ->
+        val notes = all[old.packageName].orEmpty()
+        val index = notes.indexOfFirst { it.path == old.path }
+        val edited = if (index >= 0) notes[index].copy(path = new.path) else new
+        val kept = notes.filterIndexed { at, note -> at == index || (note.path != old.path && note.path != new.path) }
+        val result = if (index >= 0) kept.map { if (it.path == old.path) edited else it } else kept + edited
+        all + (old.packageName to result.takeLast(MAX_NOTES))
+    }
+
+    /** Deletes route note [note], found by its path, in one change under the lock. */
+    suspend fun deleteNote(note: RouteNote) = change(SettingKeys.ROUTE_NOTES) { all ->
+        val notes = all[note.packageName].orEmpty().filter { it.path != note.path }
+        if (notes.isEmpty()) all - note.packageName else all + (note.packageName to notes)
+    }
+
+    /**
+     * The Memory page's edit of the routine called [oldName] into [routine]'s name and phrasings, in one change under the
+     * lock (task-5b-16-review M2): the stored routine keeps its slots and steps and its place; another routine with the new
+     * name gives way to it, as a save does. A routine that is gone meanwhile is stored as [routine].
+     */
+    suspend fun replaceRoutine(oldName: String, routine: Routine) = change(SettingKeys.ROUTINES) { routines ->
+        val stored = routines.firstOrNull { same(it.name, oldName) }
+        val edited = stored?.copy(name = routine.name, phrasings = routine.phrasings) ?: routine
+        val kept = routines.filter { it === stored || (!same(it.name, oldName) && !same(it.name, routine.name)) }
+        if (stored != null) kept.map { if (it === stored) edited else it } else kept + edited
+    }
+
     suspend fun deleteRoutine(name: String): Boolean {
         var found = false
         change(SettingKeys.ROUTINES) { routines -> routines.filterNot { same(it.name, name) }.also { found = it.size < routines.size } }

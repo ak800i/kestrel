@@ -24,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -96,7 +97,7 @@ internal fun MemoryPage(data: SettingsData, onBack: () -> Unit) {
     Heading(R.string.memory_signatures)
     if (current.signatures.isEmpty()) Text(stringResource(R.string.memory_none), style = MaterialTheme.typography.bodyMedium)
     for ((signature, count) in current.signatures) {
-        Text(stringResource(R.string.memory_signature_runs, signature, count), style = MaterialTheme.typography.bodyMedium)
+        Text(pluralStringResource(R.plurals.memory_signature_runs, count, signature, count), style = MaterialTheme.typography.bodyMedium)
     }
     Heading(R.string.memory_found_contacts)
     if (current.foundContacts.isEmpty()) Text(stringResource(R.string.memory_none), style = MaterialTheme.typography.bodyMedium)
