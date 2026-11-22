@@ -27,6 +27,8 @@ dependencies {
     implementation(project(":core:voice"))
     // sub-project 5B: dependencies
     implementation(project(":core:datatools"))
+    implementation(project(":core:agent"))
+    testImplementation(testFixtures(project(":core:agent")))
     // LogExportFileTest exports a store of its own, in a database in memory (design D32 item 47 of sub-project 5).
     androidTestImplementation(libs.androidx.room.runtime)
     // sub-project 5C: dependencies
@@ -79,5 +81,5 @@ androidComponents {
 // Kestrel's accessibility service, so they run after the other modules' device tests instead of alongside them.
 tasks.matching { it.name == "connectedDebugAndroidTest" }.configureEach {
     dependsOn(":testapp:installDebug")
-    mustRunAfter(":core:privacy:connectedDebugAndroidTest", ":core:voice:connectedDebugAndroidTest")
+    mustRunAfter(":core:privacy:connectedDebugAndroidTest", ":core:voice:connectedDebugAndroidTest", ":core:datatools:connectedDebugAndroidTest")
 }

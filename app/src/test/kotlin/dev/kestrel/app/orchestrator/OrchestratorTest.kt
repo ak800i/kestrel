@@ -296,6 +296,26 @@ class OrchestratorTest {
     }
 
     @Test
+    fun aTaskThatCannotStartSaysSo() = runTest {
+        val orchestrator = Orchestrator(
+            backgroundScope,
+            { effect ->
+                if (effect is Effect.RunTask) throw IllegalStateException("No agent")
+                performed += effect
+            },
+            { errors += it },
+            taskFailed = "I couldn't start the task.",
+        )
+
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+
+        assertEquals(Work.IDLE, orchestrator.state.value.work)
+        assertEquals(Effect.Say(Reply.Text("I couldn't start the task.")), performed.last())
+    }
+
+    @Test
     fun aTaskQuestionEndsAfterItsWaitAndAHandOverAfterThreeMinutes() = runTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
         orchestrator.send(Event.Toggle)

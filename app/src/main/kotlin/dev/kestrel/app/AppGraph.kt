@@ -2,9 +2,17 @@ package dev.kestrel.app
 
 import android.app.role.RoleManager
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
+import dev.kestrel.agent.port.EyesPort
+import dev.kestrel.agent.port.NoEyes
+import dev.kestrel.app.agent.AgentEnvironment
+import dev.kestrel.app.agent.AgentRunner
+import dev.kestrel.app.agent.AgentTexts
+import dev.kestrel.app.agent.CallBackstop
+import dev.kestrel.app.agent.Prepared
 import dev.kestrel.app.assist.KestrelAssistantService
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
@@ -59,6 +67,7 @@ import dev.kestrel.providers.discovery.ModelList
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderHttp
 import dev.kestrel.providers.profiles.ProvidersSetting
+import dev.kestrel.safety.AgentFreeChanges
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.voice.Synthesizer
@@ -82,6 +91,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.serializer
 import java.io.File
 
 /** Every setting that Kestrel stores. */
@@ -113,6 +123,15 @@ object SettingKeys {
     val SPENDING = SettingKey("spending", Spending.serializer(), Spending())
 
     // sub-project 5B: keys
+
+    /**
+     * Whether a live sitting is open (design D28 of sub-project 5): a debug build's task with the hook's extra `live` runs
+     * against the real profile only while it is true. Only plan 5C's hook `agent-live` changes it.
+     */
+    val AGENT_LIVE_SESSION = SettingKey("agent-live-session", Boolean.serializer(), false)
+
+    /** The owner's changes to the shipped list of agent-free apps (design D16 of sub-project 5; review B M6). */
+    val AGENT_FREE_APPS = SettingKey("agent-free-apps", AgentFreeChanges.serializer(), AgentFreeChanges())
 
     // sub-project 5C: keys
 }
@@ -228,6 +247,50 @@ class AppGraph(context: Context) {
     // Plan 4C: provider graph
 
     // sub-project 5B: agent
+    /** The agent's eyes for look_closer (design D20): NoEyes until plan 5C's block below sets them. AgentRunner reads it at each task. */
+    internal var agentEyes: EyesPort = NoEyes
+
+    /**
+     * ScreenPort.showBadges and hideBadges (design D20's third step): they do nothing until plan 5C's block below sets
+     * them to ScreenSession's. AppScreenPort calls them with the session that is connected when the step runs.
+     */
+    internal var showAgentBadges: suspend (ScreenSession, List<dev.kestrel.agent.port.Badge>) -> Unit = { _, _ -> }
+    internal var hideAgentBadges: suspend (ScreenSession) -> Unit = { }
+
+    /** The screenshot approvals per app and provider (design D20): none until plan 5C's block below sets them. SettingsMemoryStore calls them at each use. */
+    internal var screenshotApproved: suspend (packageName: String, providerId: String) -> Boolean = { _, _ -> false }
+    internal var approveScreenshots: suspend (packageName: String, providerId: String) -> Unit = { _, _ -> }
+
+    /** What each task needs from Kestrel's parts (design D1 of sub-project 5); read when a task starts. */
+    private val agentEnvironment: AgentEnvironment = AgentEnvironment { Prepared.Refused(AgentTexts.COULD_NOT_START) }
+
+    /**
+     * Runs Kestrel's tasks and memory requests (design D2 of sub-project 5): Listening's [Listening.runTask],
+     * [Listening.runMemory] and [Listening.steerTask] go to it. Built at the first task; it reaches Listening only
+     * through lambdas, because Listening is built first.
+     */
+    internal val agent: AgentRunner by lazy {
+        AgentRunner(
+            scope = scope,
+            environment = { agentEnvironment.prepare(it) },
+            send = { listening.send(it) },
+            latestTask = { listening.state.value.task },
+            options = { task -> listening.taskOptions?.invoke(task).orEmpty() },
+            debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
+            liveSession = { settings.get(SettingKeys.AGENT_LIVE_SESSION) },
+            deleteHistory = { logs.deleteHistory() },
+            showOnBar = { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text, false) } },
+            backstop = CallBackstop(AndroidCallApi(appContext), SystemClock::elapsedRealtime),
+            report = reportFailure,
+            nowMillis = System::currentTimeMillis,
+        )
+    }
+
+    private fun runTasks(listening: Listening) {
+        listening.runTask = { task, text -> agent.run(task, text) }
+        listening.runMemory = { task, request -> agent.runMemory(task, request) }
+        listening.steerTask = { effect -> agent.steer(effect) }
+    }
 
     // sub-project 5C: eyes
 
@@ -401,7 +464,7 @@ class AppGraph(context: Context) {
                 MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }).also { latestMicrophone = it }
             },
             timeline = timeline,
-        ).also(::keepScreenFresh)
+        ).also(::keepScreenFresh).also(::runTasks)
     }
 
     /** The microphone of the newest voice session, for the debug hook voice-route (plan 2E). */

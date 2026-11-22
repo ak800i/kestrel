@@ -220,13 +220,13 @@ class ListeningTest {
     }
 
     @Test
-    fun aTaskGetsTheStubReplyAtOnce() = runTest {
+    fun aTaskWithoutTheAgentSaysThatItCouldNotStart() = runTest {
         val listening = listeningWithSession()
 
         listening.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
 
-        assertEquals(listOf(ListeningTexts.NO_TASKS), sessions.opened.single().said)
+        assertEquals(listOf(ListeningTexts.TASK_FAILED), sessions.opened.single().said)
         assertEquals(Work.IDLE, listening.state.value.work)
         assertEquals(1, listening.state.value.task)
     }
@@ -253,7 +253,7 @@ class ListeningTest {
         // A refused and a failed reply go to the bar (section 14.6). "Yes?" shows at the start of the wait for the
         // task, and a failed "Yes?" is not shown a second time.
         assertEquals(
-            listOf(ListeningTexts.NO_TASKS, "Kestrel, open the settings.", ListeningTexts.NO_TASKS, "Kestrel", ListeningTexts.YES),
+            listOf(ListeningTexts.TASK_FAILED, "Kestrel, open the settings.", ListeningTexts.TASK_FAILED, "Kestrel", ListeningTexts.YES),
             shown,
         )
         assertEquals(listOf("A reply", "A reply"), reports.map { it.first })
@@ -272,7 +272,7 @@ class ListeningTest {
         session.replies.single().complete(Spoke.INTERRUPTED)
         runCurrent()
 
-        assertEquals(listOf(ListeningTexts.NO_TASKS), shown)
+        assertEquals(listOf(ListeningTexts.TASK_FAILED), shown)
         assertFalse(listening.state.value.speaking)
     }
 
@@ -296,7 +296,7 @@ class ListeningTest {
         // The answer is a task, and its reply goes to the bar, because there is no voice (section 14.6).
         listening.send(Event.Heard("Open the settings.", named = false))
         runCurrent()
-        assertEquals(ListeningTexts.NO_TASKS, shown.last())
+        assertEquals(ListeningTexts.TASK_FAILED, shown.last())
     }
 
     @Test
@@ -467,7 +467,7 @@ class ListeningTest {
     }
 
     @Test
-    fun aDeferredTaskThatThrowsIsReportedAndEndsWithoutAReply() = runTest {
+    fun aDeferredTaskThatThrowsIsReportedAndSaysThatItCouldNotStart() = runTest {
         val listening = listeningWithSession()
         val gate = CompletableDeferred<Unit>()
         runner.action = {
@@ -486,6 +486,7 @@ class ListeningTest {
 
         assertEquals("An effect", reports.single().first)
         assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(ListeningTexts.TASK_FAILED, sessions.opened.single().said.last())
     }
 
     @Test
@@ -2534,7 +2535,7 @@ class ListeningTest {
         runCurrent()
 
         // Section 14.6: the reply's text goes to the bar after the call's mode.
-        assertEquals(listOf(ListeningTexts.RINGING, ListeningTexts.NO_TASKS), shown)
+        assertEquals(listOf(ListeningTexts.RINGING, ListeningTexts.TASK_FAILED), shown)
     }
 
     @Test

@@ -116,7 +116,7 @@ internal enum class SettingsOpening {
 /** What Kestrel says and shows while it listens, and why it stopped (design spec, sections 8.9 and 14.6). */
 internal object ListeningTexts {
     const val YES = "Yes?"
-    const val NO_TASKS = "I can't run tasks yet."
+    const val TASK_FAILED = "I couldn't start the task."
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
@@ -300,12 +300,13 @@ class Listening internal constructor(
     internal var sessions: VoiceSessions = sessions
 
     /**
-     * Runs task number `task`, and must send [Event.TaskEnded] for it once it ends. Sub-project 5 runs tasks with the
-     * agent; until then every task ends at once with a reply that says so, or Kestrel would wait for it for ever. The
-     * debug hooks replace it with a task that takes its time. Called on the controller's thread; it must not block.
+     * Runs task number `task`, and must send [Event.TaskEnded] for it once it ends: sub-project 5's AgentRunner, which
+     * the app graph sets. Until it is set, every task ends at once with [ListeningTexts.TASK_FAILED], or Kestrel would
+     * wait for it for ever. The debug hooks replace it with a task that takes its time. Called on the controller's
+     * thread; it must not block.
      */
     @Volatile
-    internal var runTask: (task: Int, text: String) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.NO_TASKS)) }
+    internal var runTask: (task: Int, text: String) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.TASK_FAILED)) }
 
     /**
      * Where the effects that steer a running task go, such as an answer to its question or the end of its hand-over
@@ -316,11 +317,11 @@ class Listening internal constructor(
 
     /**
      * Runs task number `task`, which is Kestrel's own memory request (design D2 of sub-project 5), and must send
-     * [Event.TaskEnded] for it once it ends. Sub-project 5's AgentRunner runs it; until then it ends at once, as a task
-     * does. Called on the controller's thread; it must not block.
+     * [Event.TaskEnded] for it once it ends. Sub-project 5's AgentRunner runs it; until the app graph sets it, it ends
+     * at once, as a task does. Called on the controller's thread; it must not block.
      */
     @Volatile
-    internal var runMemory: (task: Int, request: Request.Memory) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.NO_TASKS)) }
+    internal var runMemory: (task: Int, request: Request.Memory) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.TASK_FAILED)) }
 
     // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start(),
     // onStartAction() and shutdown() change it together with [serviceState], so it always equals
@@ -448,6 +449,7 @@ class Listening internal constructor(
         perform = ::perform,
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
+        taskFailed = ListeningTexts.TASK_FAILED,
         onStep = { event, before, step -> steps?.invoke(event, before, step) },
     )
 
@@ -1027,10 +1029,9 @@ class Listening internal constructor(
             Effect.StopSaying -> session?.stopSpeaking()
             is Effect.RunTask -> {
                 timeline.reacted("task")
-                afterStopping({ send(Event.TaskEnded(effect.task, reply = null)) }) { runTask(effect.task, effect.text) }
+                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) { runTask(effect.task, effect.text) }
             }
-            // Nothing runs that could be cancelled yet; the tasks come with sub-project 5.
-            Effect.CancelTask -> Unit
+            Effect.CancelTask -> steerTask(effect)
             is Effect.RunCommand -> {
                 newestCommand = effect.command
                 timeline.reacted("command")
@@ -1070,7 +1071,7 @@ class Listening internal constructor(
             is Effect.ExpirePause, Effect.DeleteHistory -> steerTask(effect)
             is Effect.RunMemoryTask -> {
                 timeline.reacted("task")
-                afterStopping({ send(Event.TaskEnded(effect.task, reply = null)) }) { runMemory(effect.task, effect.request) }
+                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) { runMemory(effect.task, effect.request) }
             }
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }

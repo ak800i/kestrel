@@ -65,7 +65,8 @@ class ConversationTest {
                 awaitState("the answer to the name") { it.work == Work.AWAITING_TASK && !it.speaking && replies().size == 1 }
 
                 clip.play(task)
-                // Until sub-project 5, every task ends at once with a spoken "I can't run tasks yet."
+                // A test build runs no task without a test script, so the task ends at once with a spoken sentence that
+                // says so (design D28 of sub-project 5).
                 awaitState("the task's reply") {
                     it.task == expectedTask && it.work == Work.IDLE && !it.speaking && replies().size == 2
                 }

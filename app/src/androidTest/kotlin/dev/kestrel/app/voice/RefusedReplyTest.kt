@@ -1,7 +1,7 @@
 package dev.kestrel.app.voice
 
+import dev.kestrel.app.agent.AgentTexts
 import dev.kestrel.app.debug.ClipMicrophone
-import dev.kestrel.app.listen.ListeningTexts
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.voice.models.Engine
@@ -62,12 +62,13 @@ class RefusedReplyTest {
         try {
             VoiceTests.shell("cmd appops set dev.kestrel TAKE_AUDIO_FOCUS ignore")
 
-            // A task gets the stub's reply at once, which Android now refuses.
+            // A test build refuses a task without a test script at once (design D28 of sub-project 5), and Android now
+            // refuses that reply.
             listening.send(Event.Heard("Kestrel, open the settings.", named = true))
 
             assertTrue(
                 "The feedback bar did not show the refused reply",
-                VoiceTests.waitUntil(10_000) { screen.session.feedbackText == ListeningTexts.NO_TASKS },
+                VoiceTests.waitUntil(10_000) { screen.session.feedbackText == AgentTexts.couldNotStart(AgentTexts.TEST_BUILD) },
             )
             assertTrue("The reply did not end", VoiceTests.waitUntil(5_000) { !listening.state.value.speaking })
         } finally {

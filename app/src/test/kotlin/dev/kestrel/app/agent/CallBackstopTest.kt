@@ -44,6 +44,8 @@ class CallBackstopTest {
 
         assertEquals(PauseCause.OUTGOING_CALL, cause)
         assertEquals(CallBackstop.Verdict.STOP, backstop.onPause(cause!!))
+        assertEquals(0, calls.ended)
+        backstop.endCall()
         assertEquals(1, calls.ended)
     }
 
@@ -57,6 +59,7 @@ class CallBackstopTest {
         now = 7_000
         backstop.acted()
         assertEquals(CallBackstop.Verdict.STOP, backstop.onPause(PauseCause.OUTGOING_CALL))
+        backstop.endCall()
         assertEquals(0, calls.ended)
     }
 

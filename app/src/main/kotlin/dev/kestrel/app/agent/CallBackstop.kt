@@ -29,16 +29,23 @@ internal class CallBackstop(private val calls: CallApi, private val clock: () ->
         lastAction = null
     }
 
-    /** What the pause of the running task for [cause] means. */
+    /** What the pause of the running task for [cause] means; after [Verdict.STOP] the caller ends the call with [endCall]. */
     fun onPause(cause: PauseCause): Verdict {
         val last = lastAction ?: return Verdict.PAUSE
         if (cause != PauseCause.OUTGOING_CALL || clock() - last > WINDOW_MILLIS) return Verdict.PAUSE
+        return Verdict.STOP
+    }
+
+    /**
+     * Ends the call that [onPause] stopped the task for, with Android's permission for calls. These are binder calls, so
+     * the caller runs it off the controller's thread; it throws what [CallApi] throws, except a SecurityException.
+     */
+    fun endCall() {
         try {
             if (calls.allowed()) calls.end()
         } catch (e: SecurityException) {
             // The owner took the permission back meanwhile; the task stops all the same.
         }
-        return Verdict.STOP
     }
 
     override fun toString(): String = "CallBackstop(acted=${lastAction != null})"
