@@ -6,7 +6,10 @@
 param()
 
 BeforeAll {
+    . "$PSScriptRoot\..\lib\Kestrel.ps1"
     . "$PSScriptRoot\..\lib\Session.ps1"
+    . "$PSScriptRoot\..\lib\AutoCheck.ps1"
+    . "$PSScriptRoot\..\lib\AgentChecks.ps1"
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-agent.ps1", [ref]$tokens, [ref]$errors)
@@ -14,6 +17,11 @@ BeforeAll {
         'Test-PackageListed', 'Test-NetworkValidated', 'Test-HotspotOn', 'Get-TouchRuleFromProbe', 'Get-OcrMeasures', 'Get-BoundsCentre',
         'ConvertFrom-TaskLine', 'Get-CreditTotal', 'Select-TestName', 'Get-CacheShares', 'Get-CacheFields', 'Get-StandInTask', 'Format-Number', 'Get-RunSummary',
         'Get-SittingRuns')
+    # The step helpers of the fix round before the sittings, and the helpers that they call, which the tests mock.
+    $helpers += @('Get-DeviceName', 'Register-Restore', 'Complete-Restore', 'Invoke-Device', 'Invoke-DeviceHook', 'Invoke-ScreenTap', 'Get-ScreenCount',
+        'Open-App', 'Unlock-Device', 'Set-HotspotSwitch', 'Wait-Validated', 'Add-Result', 'Test-Installed', 'Save-AgentTree', 'Read-DeviceText',
+        'Format-Failure', 'Invoke-TelegramRecording', 'Get-GmailDraftCount', 'Invoke-GmailCompose', 'Restore-Hotspot', 'Register-HotspotRestore',
+        'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -128,6 +136,8 @@ Describe 'The helpers of the sittings of sub-project 5' {
 
         # Each run keeps the device of the line before it, so that the comparison reads only the emulator's runs.
         $resultsFile = Join-Path $TestDrive 'results.txt'
+        $owner = $TestDrive
+        $recordFile = Join-Path $TestDrive 'no-record.json'
         [IO.File]::WriteAllLines($resultsFile, [string[]]($lines + @(
                     "2026-12-01 10:10:00`temulator-runs`thotspot on kestrel-api37, 3 runs"
                     "2026-12-01 10:12:00`ttask-check`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=5 workMs=30000 credits=0.50 model=gpt-6-luna in=20000 out=500 cacheRead=0 cacheWrite=0 reason=ok")))
@@ -171,5 +181,255 @@ Describe 'The helpers of the sittings of sub-project 5' {
         (Get-StandInTask 'inject-07').Script | Should -Be 'tasks\hostile.json'
         (Get-StandInTask 'inject-07').Task | Should -Be 'inject-07'
         Get-StandInTask 'waze-home' | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'The steps of the sittings on the owner''s A71 (the fix round before them)' {
+    BeforeEach {
+        $EmulatorSerial = 'emulator-5554'
+        $A71 = 'R58N66RVD7Z'
+        $DryRun = $false
+        $pending = [System.Collections.Generic.List[object]]::new()
+        $config = [pscustomobject]@{ SpeakerTargetDb = -26.0; whatsappOwnName = 'Pera Test'; gmailAddress = 'pera.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Knez Mihailova' }
+        $owner = $TestDrive
+        $stamp = '20261122-2000'
+        $recordFile = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N')).json"
+        $results = [System.Collections.Generic.List[string]]::new()
+        Mock Add-Result { $results.Add("${StepName}: $Text") }
+        Mock Start-Sleep { }
+    }
+
+    It 'writes a line and a record key when Telegram''s Saved Messages does not open (task-5c-9-review M1)' {
+        Mock Open-App { }
+        Mock Invoke-Device { }
+        Mock Save-AgentTree { "$Name recorded (1 windows, 2 elements)" }
+        Mock Invoke-DeviceHook { 'selfchat=yes rule=telegram' } -ParameterFilter { $Command -eq 'selfchat-check' }
+        Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Search' }
+
+        $notes = @(Invoke-TelegramRecording $A71)
+
+        $notes | Should -Contain 'Telegram''s search did not open, so Saved Messages is not recorded'
+        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'not shown'
+
+        Mock Invoke-ScreenTap { $true } -ParameterFilter { $Label -eq 'Search' }
+        Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Saved Messages' }
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'Telegram shows no element "Saved Messages", so it is not recorded'
+        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'not shown'
+
+        Mock Invoke-ScreenTap { $true } -ParameterFilter { $Label -eq 'Saved Messages' }
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'telegram-saved recorded (1 windows, 2 elements)'
+        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'recorded'
+    }
+
+    It 'reads a recorded tree from the device as UTF-8 (task-5c-9-review M2)' {
+        $pages = [System.Collections.Generic.List[int]]::new()
+        $before = [Console]::OutputEncoding
+        Mock Invoke-DeviceHook { 'tree=written windows=1 elements=2' } -ParameterFilter { $Command -eq 'agent-tree' }
+        Mock Invoke-Device { $pages.Add([Console]::OutputEncoding.CodePage); '{"label":"x"}' } -ParameterFilter { $Command -like '*cat cache/agent-tree.json' }
+        Mock Invoke-Device { } -ParameterFilter { $Command -like '*rm -f cache/agent-tree.json' }
+
+        # A console whose code page is not UTF-8, as this computer's OEM code page is.
+        [Console]::OutputEncoding = [Text.Encoding]::ASCII
+        try {
+            Save-AgentTree $A71 'gmail-compose' | Should -Be 'gmail-compose recorded (1 windows, 2 elements)'
+            [Console]::OutputEncoding.CodePage | Should -Be 20127
+        } finally {
+            [Console]::OutputEncoding = $before
+        }
+
+        @($pages) | Should -Be @(65001)
+        Get-Content -LiteralPath (Join-Path $TestDrive "trees\$stamp\a71-gmail-compose.json") -Raw | Should -Be '{"label":"x"}'
+    }
+
+    It 'counts Gmail''s drafts in its Drafts folder, and gives no count when the folder does not show or is too full (task-5c-9-review M3)' {
+        Mock Invoke-Device { }
+        Mock Open-App { }
+        Mock Invoke-ScreenTap { $true }
+        Mock Invoke-DeviceHook { 'count=2 number=none bounds=none first=none app=com.google.android.gm' } -ParameterFilter { $Command -eq 'screen-has' -and $With.Contains -eq 'Draft' }
+
+        Get-GmailDraftCount $A71 | Should -Be 2
+        Should -Invoke Invoke-ScreenTap -Times 1 -Exactly -ParameterFilter { $Label -eq 'Open navigation drawer' }
+        Should -Invoke Invoke-ScreenTap -Times 1 -Exactly -ParameterFilter { $Label -eq 'Drafts' }
+
+        Mock Invoke-DeviceHook { 'count=6 number=none bounds=none first=none app=com.google.android.gm' } -ParameterFilter { $Command -eq 'screen-has' }
+        Get-GmailDraftCount $A71 | Should -BeNullOrEmpty
+        Mock Invoke-DeviceHook { 'count=0 number=none bounds=none first=none app=com.android.settings' } -ParameterFilter { $Command -eq 'screen-has' }
+        Get-GmailDraftCount $A71 | Should -BeNullOrEmpty
+        Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Open navigation drawer' }
+        Get-GmailDraftCount $A71 | Should -BeNullOrEmpty
+    }
+
+    It 'discards Gmail''s compose screen, and calls it discarded only when Drafts did not grow (task-5c-9-review M3)' {
+        $counts = [System.Collections.Generic.Queue[object]]::new([object[]]@(2, 2, 2, 3, 1, 1))
+        Mock Get-GmailDraftCount { $counts.Dequeue() }
+        Mock Invoke-Device { }
+        Mock Invoke-ScreenTap { $true }
+        Mock Get-ScreenCount { 0 }
+
+        $kept = Invoke-GmailCompose -Device $A71 -Owner -Inside { param($Device) "inside on $Device" }
+        $kept.Opened | Should -BeTrue
+        $kept.Discarded | Should -BeTrue
+        $kept.Inside | Should -Be "inside on $A71"
+        $kept.Note | Should -Be 'Gmail''s compose screen on the A71: discarded; Drafts shows 2 as before'
+        Should -Invoke Invoke-ScreenTap -Times 1 -Exactly -ParameterFilter { $Label -eq 'Discard' }
+
+        $grew = Invoke-GmailCompose -Device $A71 -Owner -Inside { }
+        $grew.Discarded | Should -BeFalse
+        $grew.Note | Should -Be 'Gmail''s draft on the A71 may stay in Drafts (Drafts grew from 2 to 3); delete it by hand'
+
+        Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Discard' }
+        (Invoke-GmailCompose -Device $A71 -Owner -Inside { }).Note | Should -Be 'Gmail''s draft on the A71 may stay in Drafts (the taps on "More options" and "Discard" missed); delete it by hand'
+    }
+
+    It 'opens no compose screen on the A71 when Drafts cannot be counted, and writes a fixed text when the mailto: command fails (task-5c-9-review M3, M5)' {
+        Mock Get-GmailDraftCount { $null }
+        Mock Invoke-Device { }
+
+        $skipped = Invoke-GmailCompose -Device $A71 -Owner -Inside { }
+        $skipped.Opened | Should -BeFalse
+        $skipped.Note | Should -Be 'Gmail''s compose screen on the A71: not opened, because its Drafts could not be counted'
+        Should -Invoke Invoke-Device -Times 0 -Exactly -ParameterFilter { $Command -like '*mailto:*' }
+
+        Mock Get-GmailDraftCount { 1 }
+        Mock Invoke-Device { throw "Could not run 'am start -a android.intent.action.SENDTO -d mailto:pera.test@example.com' on R58N66RVD7Z: error" } -ParameterFilter { $Command -like '*mailto:*' }
+        $message = try { Invoke-GmailCompose -Device $A71 -Owner -Inside { } | Out-Null; '' } catch { $_.Exception.Message }
+        $message | Should -BeExactly 'Gmail''s compose screen did not open on the A71.'
+    }
+
+    It 'leaves out the owner''s values and any e-mail address from an error''s line (task-5c-9-review M5, task-5c-10-review M1)' {
+        $failure = { param($Message) try { throw $Message } catch { Format-Failure $_ } }
+
+        & $failure "Could not run 'am start -d mailto:pera.test@example.com?subject=x -p com.google.android.gm' on R58N66RVD7Z: error`nmore" | Should -BeExactly "Could not run 'am start -d mailto:<address> -p com.google.android.gm' on R58N66RVD7Z: error"
+        & $failure 'Waze did not find Belgrade Fortress near Knez Mihailova, nor PERA.TEST@EXAMPLE.COM' | Should -BeExactly 'Waze did not find <value> near <value>, nor <address>'
+        & $failure 'The live session is still open on the A71.' | Should -BeExactly 'The live session is still open on the A71.'
+    }
+
+    It 'turns the hotspot off and Wi-Fi on through adb also when the A71 stays locked (task-5c-9-review M4)' {
+        $tethering = [System.Collections.Generic.Queue[string]]::new([string[]]@('    swlan0 - TetheredState - lastError = 0', '    swlan0 - AvailableState - lastError = 0'))
+        $commands = [System.Collections.Generic.List[string]]::new()
+        Mock Unlock-Device { $false }
+        Mock Invoke-Device { $commands.Add($Command); if ($Command -eq 'dumpsys tethering') { $tethering.Dequeue() } }
+        Mock Wait-Validated { $true }
+
+        Restore-Hotspot $A71
+
+        @($commands) | Should -Be @('dumpsys tethering', 'cmd wifi stop-softap', 'dumpsys tethering', 'svc wifi enable')
+    }
+
+    It 'registers the hotspot''s restore before Enable-WifiSharing taps "Mobile Hotspot", and runs it afterwards (task-5c-9-review M4)' {
+        $events = [System.Collections.Generic.List[string]]::new()
+        Mock Register-Restore { $events.Add("register $What"); [pscustomobject]@{ What = $What } }
+        Mock Complete-Restore { $events.Add("complete $($Restore.What)") }
+        Mock Invoke-ScreenTap { $events.Add("tap $Label"); $true }
+        Mock Invoke-Device { if ($Command -like 'input tap *') { $events.Add('tap the switch') } }
+        Mock Invoke-DeviceHook { 'count=1 number=none bounds=0,0,10,10 first=none app=com.android.settings' } -ParameterFilter { $Command -eq 'screen-has' }
+
+        Enable-WifiSharing $A71 | Should -BeTrue
+
+        @($events) | Should -Be @('register the hotspot off and Wi-Fi on, on the A71', 'tap Mobile Hotspot', 'register Wi-Fi sharing off on the A71', 'tap the switch', 'complete the hotspot off and Wi-Fi on, on the A71')
+    }
+}
+
+Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
+    BeforeEach {
+        $EmulatorSerial = 'emulator-5554'
+        $A71 = 'R58N66RVD7Z'
+        $DryRun = $false
+        $Step = @()
+        $config = [pscustomobject]@{ gmailAddress = 'pera.test@example.com' }
+        $owner = $TestDrive
+        $recordFile = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N')).json"
+        $resultsFile = Join-Path $TestDrive "agent-sitting2-$([guid]::NewGuid().ToString('N')).txt"
+        [IO.File]::WriteAllText($resultsFile, '')
+        $credits = 0.0
+        $creditCeiling = 150
+        $ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
+        $results = [System.Collections.Generic.List[string]]::new()
+        Mock Add-Result { $results.Add("${StepName}: $Text") }
+        Mock Start-Sleep { }
+    }
+
+    It 'writes only the error''s class and a fixed sentence when task-check.ps1 stops (task-5c-10-review M1)' {
+        Mock Invoke-TaskCheck { throw "Could not run 'am start -W -a android.intent.action.SENDTO -d 'mailto:pera.test@example.com?subject=x' -p com.google.android.gm' on R58N66RVD7Z: error" }
+
+        Invoke-TaskRuns a71-runs $A71 'read-email' 3 @{ Mail = 'pera.test@example.com' } | Out-Null
+
+        $results | Should -Contain 'a71-runs: read-email on the A71: failed: task-check.ps1 stopped with RuntimeException before its runs ended'
+        ($results -join "`n") | Should -Not -Match '@|pera'
+    }
+
+    It 'answers each question of a live task once, and survives an answer whose question has closed (task-5c-10-review M2)' {
+        $done = @{ Value = $false }
+        $answers = [System.Collections.Generic.List[string]]::new()
+        $states = [System.Collections.Generic.Queue[string]]::new([string[]]@('asking=free', 'asking=free', 'asking=free', 'asking=none', 'asking=confirm', 'asking=confirm'))
+        Mock Invoke-DeviceHook { if ($done.Value) { 'state=done end=FINISHED steps=3 credits=0.5 model=m' } else { 'state=running' } } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-DeviceHook { if ($states.Count -eq 0) { $done.Value = $true; return 'phase=running asking=none' }; "phase=running $($states.Dequeue())" } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Invoke-DeviceHook { 'count=1 app=dev.kestrel.testapp' } -ParameterFilter { $Command -eq 'screen-has' }
+        Mock Invoke-DeviceHook {
+            $answers.Add($With.Answer)
+            if ($With.Answer -eq 'cancel') { throw 'error: the task of tag k1 asks nothing' }
+            'answered'
+        } -ParameterFilter { $Command -eq 'agent-answer' }
+        Mock Stop-SpeechTask { }
+
+        $end = Wait-LiveTask -Serial $A71 -Tag 'k1' -Answer 'yes' -App 'dev.kestrel.testapp'
+
+        $end.Result['end'] | Should -Be 'FINISHED'
+        $end.Asked | Should -Be 1
+        $end.Other | Should -Be 0
+        @($answers) | Should -Be @('yes', 'cancel', 'cancel')
+        Should -Invoke Stop-SpeechTask -Times 0 -Exactly
+    }
+
+    It 'approves the screenshot question only for the step''s fixture app, and says no for another app (final-5c-review-b M2)' {
+        $done = @{ Value = $false }
+        $answers = [System.Collections.Generic.List[string]]::new()
+        Mock Invoke-DeviceHook { if ($done.Value) { 'state=done end=FINISHED steps=3' } else { 'state=running' } } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-DeviceHook { 'phase=running asking=free' } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Invoke-DeviceHook { 'count=0 app=org.telegram.messenger' } -ParameterFilter { $Command -eq 'screen-has' }
+        Mock Invoke-DeviceHook { $answers.Add($With.Answer); $done.Value = $true; 'answered' } -ParameterFilter { $Command -eq 'agent-answer' }
+
+        $end = Wait-LiveTask -Serial $A71 -Tag 'k1' -Answer 'text:always for this app' -App 'dev.kestrel.testapp'
+
+        @($answers) | Should -Be @('no')
+        $end.Asked | Should -Be 0
+        $end.Other | Should -Be 1
+    }
+
+    It 'stops the live task when the wait ends with an error, as Ctrl+C ends it (task-5c-10-review M2)' {
+        Mock Invoke-DeviceHook { 'state=running' } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-DeviceHook { 'phase=running asking=none' } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Start-Sleep { throw 'The pipeline has been stopped.' }
+        Mock Stop-SpeechTask { }
+
+        { Wait-LiveTask -Serial $A71 -Tag 'k1' -Answer 'yes' -App 'dev.kestrel.testapp' } | Should -Throw 'The pipeline has been stopped.'
+
+        Should -Invoke Stop-SpeechTask -Times 1 -Exactly -ParameterFilter { $Tag -eq 'k1' }
+    }
+
+    It 'reads the runs of every call of this sitting 2, also after a stop, for the summary and the cache record (task-5c-10-review M3)' {
+        $first = Join-Path $TestDrive 'agent-sitting2-20261201-1000.txt'
+        [IO.File]::WriteAllLines($first, [string[]]@(
+                "2026-12-01 10:10:00`temulator-runs`thotspot on kestrel-api37, 3 runs"
+                "2026-12-01 10:12:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=5 workMs=30000 credits=0.50 model=gpt-6-luna in=20000 out=500 cacheRead=0 cacheWrite=0 reason=ok"))
+        Set-AgentRecord $recordFile 'sitting2Results' @('agent-sitting2-20261201-1000.txt')
+        $Step = @('compare', 'cache', 'end')
+        Add-SittingResults
+        [IO.File]::WriteAllLines($resultsFile, [string[]]@(
+                "2026-12-01 12:00:00`tcompare`thotspot on kestrel-api37, 3 runs"
+                "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=0.20 model=gemini-3.8-flash in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok"))
+
+        $runs = @(Get-SittingRuns)
+
+        @($runs | ForEach-Object { $_['model'] }) | Should -Be @('gpt-6-luna', 'gemini-3.8-flash')
+        @($runs | ForEach-Object { $_['device'] }) | Should -Be @('kestrel-api37', 'kestrel-api37')
+        @((Read-AgentRecord $recordFile).sitting2Results) | Should -Be @('agent-sitting2-20261201-1000.txt', (Split-Path -Leaf $resultsFile))
+
+        # A call without -Step starts a new sitting 2: its credits from 0 and its results from this call's file.
+        $Step = @()
+        Set-AgentRecord $recordFile 'sitting2Credits' 12.5
+        Add-SittingResults
+        @((Read-AgentRecord $recordFile).sitting2Results) | Should -Be @((Split-Path -Leaf $resultsFile))
+        (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 0
     }
 }

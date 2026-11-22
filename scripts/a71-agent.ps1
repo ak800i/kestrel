@@ -82,9 +82,10 @@ function Get-AgentConfig([string]$Path) {
 }
 
 # The script's own record of what a sitting found and what sitting 2 needs (the touch branch and rule, the hotspot's
-# result, whether Waze shows the test location, whether the A71 keeps its Copilot profile, the apps that the owner's
-# step installed, Play's state and the browsers' versions on kestrel-api37), in a JSON file of corpus\owner. It holds no
-# name, text or address.
+# result, whether Waze shows the test location, whether the A71 keeps its Copilot profile, whether Telegram's Saved
+# Messages was recorded and Gmail's discard worked on the A71, the apps that the owner's step installed, Play's state and
+# the browsers' versions on kestrel-api37, and sitting 2's AI Credits and results files), in a JSON file of
+# corpus\owner. It holds no name, text or address.
 function Read-AgentRecord([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return [pscustomobject]@{} }
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
@@ -268,12 +269,25 @@ $ceilingMessage = 'The runs reached the sitting''s ceiling of 150 AI Credits.'
 $testNames = @{ Ana = 'Ana'; John = 'John' }
 $gmailChecked = $false
 # A call with -Step after a stop counts on from the AI Credits that the earlier calls of this sitting 2 kept in the
-# record (Q5); the step owner, with which a sitting 2 starts, sets them to 0.
+# record (Q5); a call without -Step starts a new sitting 2 and sets them to 0 (Add-SittingResults).
 $savedCredits = (Read-AgentRecord $recordFile).sitting2Credits
 if ($Sitting -eq '2' -and $null -ne $savedCredits) { $credits = [double]$savedCredits }
 $compareRefused = "The owner's Copilot account does not list the model $CompareModel, so the comparison does not run; give -CompareModel one of the models that Kestrel's page ""Providers and profiles"" shows for the Copilot profile."
 # Whether a dry run registered the restore of kestrel-api37's touch rule and branch (Register-TouchSourceRestore).
 $touchSourceSaved = $false
+
+# The first line of an error, for the results: any e-mail address, a mailto: URI and each text value of the owner's
+# configuration are left out, because a command that fails, such as Gmail's mailto:, names them in its error
+# (task-5c-9-review M5, task-5c-10-review M1).
+function Format-Failure($ErrorRecord) {
+    $text = ("$($ErrorRecord.Exception.Message)" -split "`r?`n")[0]
+    $text = $text -replace '[\w.+-]+@[\w-]+(\.[\w-]+)+', '<address>' -replace 'mailto:\S+', 'mailto:<address>'
+    foreach ($property in @($config.PSObject.Properties)) {
+        $value = if ($property.Value -is [string]) { $property.Value.Trim() } else { '' }
+        if ($value.Length -ge 3) { $text = [regex]::Replace($text, [regex]::Escape($value), '<value>', 'IgnoreCase') }
+    }
+    $text
+}
 
 function Get-DeviceName([string]$Device) { if ($Device -eq $EmulatorSerial) { 'kestrel-api37' } else { 'the A71' } }
 
@@ -323,7 +337,7 @@ function Complete-Restore($Restore) {
         & $Restore.Action $Restore.Data | Out-Null
         $pending.Remove($Restore) | Out-Null
     } catch {
-        $Restore.Reason = $_.Exception.Message
+        $Restore.Reason = Format-Failure $_
     }
 }
 
@@ -347,7 +361,7 @@ function Unlock-Device([string]$Device) {
     }
     if ($script:unlockFailed) { return $false }
     $why = 'the A71 did not show its PIN pad clearly, so the script typed nothing'
-    $unlocked = try { Unlock-TestPhone -Serial $Device -ConfigPath $pinConfig } catch { $why = "$($_.Exception.Message)"; $false }
+    $unlocked = try { Unlock-TestPhone -Serial $Device -ConfigPath $pinConfig } catch { $why = Format-Failure $_; $false }
     if (-not $unlocked) {
         $script:unlockFailed = $true
         Add-Result session "$why; the sitting tries no more unlocks and skips the steps that need an unlocked A71"
@@ -546,6 +560,19 @@ function Start-TestLocation([string]$Device) {
     $restore
 }
 
+# Runs a command on the device and reads its output as UTF-8, as scripts\hook.ps1 does: kotlinx.serialization writes a
+# label with a letter outside ASCII, such as a Serbian name, as UTF-8, and PowerShell would otherwise read adb's output
+# with the console's code page (task-5c-9-review M2).
+function Read-DeviceText([string]$Device, [string]$Command) {
+    $consoleEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    try {
+        Invoke-Device $Device $Command
+    } finally {
+        [Console]::OutputEncoding = $consoleEncoding
+    }
+}
+
 # Saves the structure that the hook agent-tree recorded on the device (design D28: classes, view IDs, bounds, flags and
 # states, and only safe labels) into corpus\owner\trees, and deletes it on the device.
 function Save-AgentTree([string]$Device, [string]$Name) {
@@ -553,7 +580,7 @@ function Save-AgentTree([string]$Device, [string]$Name) {
     if ($answer['tree'] -ne 'written') { throw "agent-tree wrote nothing for $Name." }
     $folder = Join-Path $owner "trees\$stamp"
     New-Item -ItemType Directory -Force -Path $folder | Out-Null
-    $json = (Invoke-Device $Device 'run-as dev.kestrel cat cache/agent-tree.json') -join "`n"
+    $json = (Read-DeviceText $Device 'run-as dev.kestrel cat cache/agent-tree.json') -join "`n"
     Invoke-Device $Device 'run-as dev.kestrel rm -f cache/agent-tree.json' | Out-Null
     $file = Join-Path $folder "$(if ($Device -eq $EmulatorSerial) { 'emulator' } else { 'a71' })-$Name.json"
     [IO.File]::WriteAllText($file, $json, [Text.UTF8Encoding]::new($false))
@@ -703,7 +730,7 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
         & $Body
     } catch {
         if ($_.Exception.Message -eq 'The owner stopped the sitting.') { throw }
-        Add-Result owner "${Name}: failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+        Add-Result owner "${Name}: failed: $(Format-Failure $_)"
     }
 }
 
@@ -890,18 +917,60 @@ function Wait-Validated([string]$Device, [int]$Seconds = 60) {
     $false
 }
 
+# Turns the device's hotspot off and Wi-Fi on again. The settings page's switch needs an unlocked phone, but
+# 'cmd wifi stop-softap' and 'svc wifi enable' work on a locked one, so they run also when the unlock failed
+# (task-5c-9-review M4; plan 4D's review I1).
+function Restore-Hotspot([string]$Device) {
+    if (Unlock-Device $Device) {
+        Invoke-Device $Device 'am start -a android.settings.TETHER_SETTINGS' | Out-Null
+        Start-Sleep -Seconds 3
+        Set-HotspotSwitch $Device $false | Out-Null
+    }
+    # A switch that the page did not show, or a hotspot that Wi-Fi sharing keeps validated, must not count as off.
+    if (Test-HotspotOn @(Invoke-Device $Device 'dumpsys tethering')) {
+        Invoke-Device $Device 'cmd wifi stop-softap' | Out-Null
+        Start-Sleep -Seconds 3
+    }
+    if (Test-HotspotOn @(Invoke-Device $Device 'dumpsys tethering')) { throw 'the hotspot is still on' }
+    Invoke-Device $Device 'svc wifi enable' | Out-Null
+    if (-not (Wait-Validated $Device 60)) { throw 'Wi-Fi has no validated network again' }
+}
+
+# Registers the restore that turns the device's hotspot off and Wi-Fi on (Restore-Hotspot), and returns it.
+function Register-HotspotRestore([string]$Device) {
+    Register-Restore "the hotspot off and Wi-Fi on, on $(Get-DeviceName $Device)" 'Settings > Connections > Mobile Hotspot and Tethering: turn Mobile Hotspot off; then turn Wi-Fi on.' $Device {
+        param($Device)
+        Restore-Hotspot $Device
+    }
+}
+
 # Turns on One UI's "Wi-Fi sharing" on the page of Mobile Hotspot (Q7 allows it), so that the hotspot can share the
-# Wi-Fi network, and registers its restore. Returns whether it turned it on.
+# Wi-Fi network, and registers its restore. The tap on "Mobile Hotspot" may reach the hotspot's own switch, so the
+# hotspot's restore is registered before it and runs at the end (task-5c-9-review M4). Returns whether it turned Wi-Fi
+# sharing on.
 function Enable-WifiSharing([string]$Device) {
-    Invoke-Device $Device 'am start -a android.settings.TETHER_SETTINGS' | Out-Null
-    Start-Sleep -Seconds 3
-    Invoke-ScreenTap $Device 'Mobile Hotspot' 5 | Out-Null
-    $found = ConvertFrom-HookPairs (Invoke-DeviceHook $Device screen-has @{ Label = 'Wi-Fi sharing'; ClassName = 'Switch'; State = 'unchecked' })
-    $centre = Get-BoundsCentre $found['bounds']
-    if (-not ([int]$found['count'] -gt 0 -and $centre)) { return $false }
+    $hotspot = Register-HotspotRestore $Device
+    try {
+        Invoke-Device $Device 'am start -a android.settings.TETHER_SETTINGS' | Out-Null
+        Start-Sleep -Seconds 3
+        Invoke-ScreenTap $Device 'Mobile Hotspot' 5 | Out-Null
+        $found = ConvertFrom-HookPairs (Invoke-DeviceHook $Device screen-has @{ Label = 'Wi-Fi sharing'; ClassName = 'Switch'; State = 'unchecked' })
+        $centre = Get-BoundsCentre $found['bounds']
+        if (-not ([int]$found['count'] -gt 0 -and $centre)) { return $false }
+        Register-WifiSharingRestore $Device | Out-Null
+        Invoke-Device $Device "input tap $centre" | Out-Null
+        Start-Sleep -Seconds 2
+        $true
+    } finally {
+        Complete-Restore $hotspot
+    }
+}
+
+# The restore of Wi-Fi sharing, which only the settings page can turn off, so it needs an unlocked phone.
+function Register-WifiSharingRestore([string]$Device) {
     Register-Restore "Wi-Fi sharing off on $(Get-DeviceName $Device)" 'Settings > Connections > Mobile Hotspot and Tethering > Mobile Hotspot: turn Wi-Fi sharing off.' $Device {
         param($Device)
-        if (-not (Unlock-Device $Device)) { throw 'the A71 is locked' }
+        if (-not (Unlock-Device $Device)) { throw 'the A71 is locked, and only its settings page turns Wi-Fi sharing off' }
         Invoke-Device $Device 'am start -a android.settings.TETHER_SETTINGS' | Out-Null
         Start-Sleep -Seconds 3
         Invoke-ScreenTap $Device 'Mobile Hotspot' 5 | Out-Null
@@ -913,10 +982,7 @@ function Enable-WifiSharing([string]$Device) {
         }
         $off = ConvertFrom-HookPairs (Invoke-DeviceHook $Device screen-has @{ Label = 'Wi-Fi sharing'; ClassName = 'Switch'; State = 'unchecked' })
         if ([int]$off['count'] -eq 0) { throw 'Wi-Fi sharing may still be on' }
-    } | Out-Null
-    Invoke-Device $Device "input tap $centre" | Out-Null
-    Start-Sleep -Seconds 2
-    $true
+    }
 }
 # Design D30 step 10: the hotspot probe on the A71 (r60; review C I3). With Wi-Fi validated, the script turns the
 # hotspot on through its settings page, reads the tethering state and whether the network stays validated, and turns it
@@ -932,21 +998,7 @@ function Invoke-HotspotStep {
     $result = 'limit'
     $sharing = $false
     foreach ($try in 1, 2) {
-        $restore = Register-Restore "the hotspot off and Wi-Fi on, on $(Get-DeviceName $a71)" 'Settings > Connections > Mobile Hotspot and Tethering: turn Mobile Hotspot off; then turn Wi-Fi on.' $a71 {
-            param($Device)
-            if (-not (Unlock-Device $Device)) { throw 'the A71 is locked' }
-            Invoke-Device $Device 'am start -a android.settings.TETHER_SETTINGS' | Out-Null
-            Start-Sleep -Seconds 3
-            Set-HotspotSwitch $Device $false | Out-Null
-            # A switch that the page did not show, or a hotspot that Wi-Fi sharing keeps validated, must not count as off.
-            if (Test-HotspotOn @(Invoke-Device $Device 'dumpsys tethering')) {
-                Invoke-Device $Device 'cmd wifi stop-softap' | Out-Null
-                Start-Sleep -Seconds 3
-            }
-            if (Test-HotspotOn @(Invoke-Device $Device 'dumpsys tethering')) { throw 'the hotspot is still on' }
-            Invoke-Device $Device 'svc wifi enable' | Out-Null
-            if (-not (Wait-Validated $Device 60)) { throw 'Wi-Fi has no validated network again' }
-        }
+        $restore = Register-HotspotRestore $a71
         Invoke-Device $a71 'am start -a android.settings.TETHER_SETTINGS' | Out-Null
         Start-Sleep -Seconds 3
         if (-not (Set-HotspotSwitch $a71 $true)) {
@@ -971,32 +1023,106 @@ function Invoke-HotspotStep {
     Set-AgentRecord $recordFile 'wifiSharing' $sharing
     Add-Result hotspot "the A71's hotspot: $(if ($result -eq 'ok') { 'testable' } else { 'a limit of the device; its runs are skipped' })"
 }
+# Telegram's chat list, its Saved Messages chat (found by search) and its share picker, through agent-tree. A tap that
+# misses writes its own line, and the record's telegramSelfChat says whether Saved Messages was recorded, from which the
+# controller pins Telegram's self-chat rule (task-5c-9-review M1). Returns the lines for the results.
+function Invoke-TelegramRecording([string]$Device) {
+    $notes = @()
+    Open-App $Device 'org.telegram.messenger'
+    Start-Sleep -Seconds 4
+    $notes += Save-AgentTree $Device 'telegram-chats'
+    $saved = 'not shown'
+    if (Invoke-ScreenTap $Device 'Search') {
+        Invoke-Device $Device 'input text Saved\ Messages' | Out-Null
+        Start-Sleep -Seconds 3
+        if (Invoke-ScreenTap $Device 'Saved Messages') {
+            $notes += Save-AgentTree $Device 'telegram-saved'
+            $notes += "Telegram's Saved Messages: $(Invoke-DeviceHook $Device selfchat-check)"
+            $saved = 'recorded'
+        } else {
+            $notes += 'Telegram shows no element "Saved Messages", so it is not recorded'
+        }
+    } else {
+        $notes += 'Telegram''s search did not open, so Saved Messages is not recorded'
+    }
+    Set-AgentRecord $recordFile 'telegramSelfChat' $saved
+    Invoke-Device $Device 'am force-stop org.telegram.messenger' | Out-Null
+    # Telegram's share picker, opened by a text share from the shell and closed with back, without sending.
+    Invoke-Device $Device "am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'Kestrel test' -p org.telegram.messenger" | Out-Null
+    Start-Sleep -Seconds 4
+    $notes += Save-AgentTree $Device 'telegram-share'
+    Invoke-Device $Device 'input keyevent KEYCODE_BACK' | Out-Null
+    Invoke-Device $Device 'am force-stop org.telegram.messenger' | Out-Null
+    $notes
+}
+
+# The number of drafts that Gmail's Drafts folder shows (hook H3, a count only; design D30 step 11): Gmail opens, then its
+# navigation drawer and Drafts, and the elements that hold the word "Draft", as each draft's row does, are counted (H3
+# compares whole words, so the title "Drafts" and "Nothing in Drafts" do not count). $null when the folder did not show,
+# or when it shows so many that a new draft could push another one off the screen.
+function Get-GmailDraftCount([string]$Device) {
+    $gmail = 'com.google.android.gm'
+    try {
+        Invoke-Device $Device "am force-stop $gmail" | Out-Null
+        Open-App $Device $gmail
+        Start-Sleep -Seconds 5
+        if (-not (Invoke-ScreenTap $Device 'Open navigation drawer' 10)) { return $null }
+        if (-not (Invoke-ScreenTap $Device 'Drafts' 5)) { return $null }
+        Start-Sleep -Seconds 3
+        $found = ConvertFrom-HookPairs (Invoke-DeviceHook $Device screen-has @{ Package = $gmail; Contains = 'Draft' })
+        if ($found['app'] -ne $gmail -or [int]$found['count'] -ge 6) { return $null }
+        [int]$found['count']
+    } finally {
+        Invoke-Device $Device "am force-stop $gmail" | Out-Null
+    }
+}
+
+# Gmail's compose screen with a mailto: to the owner's address (design D30 steps 11 and 16): $Inside runs with the device
+# while it shows, and the screen's own "More options" and "Discard" close it (and "Discard" once more when Gmail asks).
+# Drafts is counted before and after; on the A71 (-Owner) the screen opens only when Drafts could be counted first
+# (task-5c-9-review M3). A failed mailto: command throws a fixed text, because its own text holds the address (M5).
+# Returns Opened, Discarded (both taps worked, and Drafts was counted before and after and did not grow), Inside (what
+# $Inside returned) and Note, a line for the results with counts only.
+function Invoke-GmailCompose([string]$Device, [scriptblock]$Inside, [switch]$Owner) {
+    $gmail = 'com.google.android.gm'
+    $name = Get-DeviceName $Device
+    $before = Get-GmailDraftCount $Device
+    if ($Owner -and $null -eq $before) {
+        return [pscustomobject]@{ Opened = $false; Discarded = $false; Inside = $null; Note = "Gmail's compose screen on ${name}: not opened, because its Drafts could not be counted" }
+    }
+    $tapped = $false
+    $inner = $null
+    try {
+        try {
+            Invoke-Device $Device "am start -a android.intent.action.SENDTO -d mailto:$($config.gmailAddress) -p $gmail" | Out-Null
+        } catch {
+            throw "Gmail's compose screen did not open on $name."
+        }
+        Start-Sleep -Seconds 5
+        $inner = & $Inside $Device
+        $tapped = (Invoke-ScreenTap $Device 'More options' 5) -and (Invoke-ScreenTap $Device 'Discard' 5)
+        if ($tapped -and (Get-ScreenCount $Device @{ Package = $gmail; Label = 'Discard' }) -gt 0) { Invoke-ScreenTap $Device 'Discard' 5 | Out-Null }
+    } finally {
+        Invoke-Device $Device "am force-stop $gmail" | Out-Null
+    }
+    $after = Get-GmailDraftCount $Device
+    $discarded = $tapped -and $null -ne $before -and $null -ne $after -and $after -le $before
+    $note = if ($discarded) {
+        "Gmail's compose screen on ${name}: discarded; Drafts shows $after as before"
+    } else {
+        $why = if (-not $tapped) { 'the taps on "More options" and "Discard" missed' } elseif ($null -eq $before -or $null -eq $after) { 'Drafts could not be counted' } else { "Drafts grew from $before to $after" }
+        "Gmail's draft on $name may stay in Drafts ($why); delete it by hand"
+    }
+    [pscustomobject]@{ Opened = $true; Discarded = $discarded; Inside = $inner; Note = $note }
+}
+
 # Design D30 step 11: the structure of the real self-chats, the chat lists and the pickers (never an ordinary chat), and
 # of SystemUI's shade and a heads-up notification, recorded through agent-tree into corpus\owner\trees.
 function Invoke-RecordingsStep {
     $a71 = Get-A71
     if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
     $notes = @()
-    if (Test-Installed $a71 'org.telegram.messenger') {
-        Open-App $a71 'org.telegram.messenger'
-        Start-Sleep -Seconds 4
-        $notes += Save-AgentTree $a71 'telegram-chats'
-        if ((Invoke-ScreenTap $a71 'Search') ) {
-            Invoke-Device $a71 'input text Saved\ Messages' | Out-Null
-            Start-Sleep -Seconds 3
-            if (Invoke-ScreenTap $a71 'Saved Messages') {
-                $notes += Save-AgentTree $a71 'telegram-saved'
-                $notes += "Telegram's Saved Messages: $(Invoke-DeviceHook $a71 selfchat-check)"
-            }
-        }
-        Invoke-Device $a71 'am force-stop org.telegram.messenger' | Out-Null
-        # Telegram's share picker, opened by a text share from the shell and closed with back, without sending.
-        Invoke-Device $a71 "am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'Kestrel test' -p org.telegram.messenger" | Out-Null
-        Start-Sleep -Seconds 4
-        $notes += Save-AgentTree $a71 'telegram-share'
-        Invoke-Device $a71 'input keyevent KEYCODE_BACK' | Out-Null
-        Invoke-Device $a71 'am force-stop org.telegram.messenger' | Out-Null
-    }
+    if (Test-Installed $a71 'org.telegram.messenger') { $notes += Invoke-TelegramRecording $a71 }
     if (Test-Installed $a71 'com.whatsapp') {
         Open-App $a71 'com.whatsapp'
         Start-Sleep -Seconds 4
@@ -1011,14 +1137,23 @@ function Invoke-RecordingsStep {
         }
         Invoke-Device $a71 'am force-stop com.whatsapp' | Out-Null
     }
+    # The emulator, with the test account, comes first; the A71's compose screen opens only when the discard worked there.
+    $emulatorDiscarded = $false
     foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
         if (Test-Installed $device 'com.google.android.gm') {
-            Invoke-Device $device "am start -a android.intent.action.SENDTO -d mailto:$($config.gmailAddress) -p com.google.android.gm" | Out-Null
-            Start-Sleep -Seconds 5
-            $notes += Save-AgentTree $device 'gmail-compose'
-            $discarded = (Invoke-ScreenTap $device 'More options' 5) -and (Invoke-ScreenTap $device 'Discard' 5)
-            if (-not $discarded) { $notes += "Gmail's draft on $(Get-DeviceName $device) may stay in Drafts; delete it by hand" }
-            Invoke-Device $device 'am force-stop com.google.android.gm' | Out-Null
+            if ($device -ne $EmulatorSerial -and -not $emulatorDiscarded) {
+                $notes += "Gmail's compose screen on $(Get-DeviceName $device): skipped, because its discard did not work on kestrel-api37"
+                Set-AgentRecord $recordFile 'gmailDiscardA71' 'not opened'
+            } else {
+                $compose = Invoke-GmailCompose -Device $device -Owner:($device -ne $EmulatorSerial) -Inside { param($Device) Save-AgentTree $Device 'gmail-compose' }
+                if ($compose.Inside) { $notes += $compose.Inside }
+                $notes += $compose.Note
+                if ($device -eq $EmulatorSerial) {
+                    $emulatorDiscarded = $compose.Discarded
+                } else {
+                    Set-AgentRecord $recordFile 'gmailDiscardA71' $(if ($compose.Discarded) { 'ok' } elseif ($compose.Opened) { 'left' } else { 'not opened' })
+                }
+            }
         }
         Invoke-Device $device 'cmd statusbar expand-notifications' | Out-Null
         Start-Sleep -Seconds 2
@@ -1100,7 +1235,7 @@ function Invoke-SpeechOn([string]$Serial) {
                     if ($result.Passed) { $passed++ }
                     Add-Result speech "$(Get-DeviceName $Serial): $($result.Line)"
                 } catch {
-                    Add-Result speech "$(Get-DeviceName $Serial): $($check.Name) [$voice]: failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+                    Add-Result speech "$(Get-DeviceName $Serial): $($check.Name) [$voice]: failed: $(Format-Failure $_)"
                 }
             }
         }
@@ -1138,6 +1273,9 @@ function Invoke-EndStep {
 
 # Sitting 2's steps (design D30 steps 14 to 23).
 
+# Runs scripts\task-check.ps1 with the arguments, its output on the console.
+function Invoke-TaskCheck([hashtable]$Arguments) { & "$PSScriptRoot\task-check.ps1" @Arguments | Out-Host }
+
 # Runs scripts\task-check.ps1 for a task on a device: -Live in a real sitting, or the task's stand-in with its scripted
 # model in a dry run (one run), so that no request reaches a provider. The runs' lines go into this sitting's results
 # file, from which they are read back; their AI Credits are added, and the sitting stops at its ceiling. Returns the
@@ -1159,11 +1297,12 @@ function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int
     }
     Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device), $($arguments.Runs) runs"
     $before = @(Get-Content -LiteralPath $resultsFile).Count
-    # A task whose setup or check fails is recorded, and the step goes on with its next task (design D27).
+    # A task whose setup or check fails is recorded, and the step goes on with its next task (design D27). Its error can
+    # hold the owner's address, as read-email's mailto: command does, so only its class is written (task-5c-10-review M1).
     try {
-        & "$PSScriptRoot\task-check.ps1" @arguments | Out-Host
+        Invoke-TaskCheck $arguments
     } catch {
-        Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+        Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): failed: task-check.ps1 stopped with $($_.Exception.GetType().Name) before its runs ended"
     }
     # PowerShell's names ignore case, so this list may not be called $runs, which is the parameter -Runs.
     $lines = @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | ForEach-Object { ConvertFrom-TaskLine $_ } | Where-Object { $_ })
@@ -1174,19 +1313,42 @@ function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int
     $lines
 }
 
-# The runs' lines of this sitting so far, read from its results file, each with the device of the line
+# A sitting 2 can take more than one call: a call without -Step starts it, and a call with -Step goes on after a stop
+# (task-5c-10-review M3; final-5c-review-b M3). A new sitting 2 counts its AI Credits from 0 (Q5) and its results from
+# this call's file; a call with -Step adds its file to the record's list and counts on from the record's credits.
+function Add-SittingResults {
+    $file = Split-Path -Leaf $resultsFile
+    if (-not $Step) {
+        $script:credits = 0.0
+        Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
+        Set-AgentRecord $recordFile 'sitting2Results' @($file)
+        return
+    }
+    $files = @(@((Read-AgentRecord $recordFile).sitting2Results | Where-Object { $_ }) + $file | Select-Object -Unique)
+    Set-AgentRecord $recordFile 'sitting2Results' $files
+}
+
+# The results files of this sitting 2 that exist: those of its earlier calls, which the record lists, and this call's.
+function Get-SittingResultFiles {
+    $names = @((Read-AgentRecord $recordFile).sitting2Results | Where-Object { $_ })
+    @(@($names | ForEach-Object { Join-Path $owner $_ }) + $resultsFile | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ })
+}
+
+# The runs' lines of this sitting 2 so far, read from the results files of all its calls, each with the device of the line
 # '<task> on <device>, <n> runs' that Invoke-TaskRuns writes before them.
 function Get-SittingRuns {
-    $device = 'none'
-    @(foreach ($line in Get-Content -LiteralPath $resultsFile) {
-            if ("$line" -match "`t\S+ on (the A71|kestrel-api37), \d+ runs$") {
-                $device = $Matches[1]
-                continue
-            }
-            $run = ConvertFrom-TaskLine $line
-            if ($run) {
-                $run['device'] = $device
-                $run
+    @(foreach ($file in Get-SittingResultFiles) {
+            $device = 'none'
+            foreach ($line in Get-Content -LiteralPath $file) {
+                if ("$line" -match "`t\S+ on (the A71|kestrel-api37), \d+ runs$") {
+                    $device = $Matches[1]
+                    continue
+                }
+                $run = ConvertFrom-TaskLine $line
+                if ($run) {
+                    $run['device'] = $device
+                    $run
+                }
             }
         })
 }
@@ -1203,33 +1365,64 @@ function Install-AgentScriptOn([string]$Serial, [string]$Name, [object[]]$Replie
     Install-AgentScript -Name $Name -Replies $Replies
 }
 
-# Waits for the end of a live task that the step sent with its tag, at most $Seconds: the screenshot question (FREE) gets
-# $Answer through agent-answer, and any other question "cancel". Returns the task's last answer and how often the
-# screenshot question came; a task that still runs at the end is stopped.
-function Wait-LiveTask([string]$Serial, [string]$Tag, [string]$Answer, [int]$Seconds = 600) {
+# Waits for the end of a live task that the step sent with its tag, at most $Seconds. A FREE question while $App is in
+# front is the screenshot question of look_closer, which asks for the app in front (design D20): it gets $Answer. A FREE
+# question in front of another app gets "no", so that no screenshot of it is sent and no approval for it is stored
+# (final-5c-review-b M2), and any other question gets "cancel". Each question is answered once (task-5c-10-review M2):
+# an answer whose question had closed is no answer, and the next answer waits until the task asks again. Returns the
+# task's last answer, how often the screenshot question came (Asked) and how often another FREE question came (Other).
+# A task that still runs at the end, also after an error or Ctrl+C, is stopped, so that it spends no more credits.
+function Wait-LiveTask([string]$Serial, [string]$Tag, [string]$Answer, [string]$App, [int]$Seconds = 600) {
     $asked = 0
+    $other = 0
+    $answered = $false
+    $ended = $false
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
-        $result = try { ConvertFrom-AgentTaskResult (Invoke-DeviceHook $Serial agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
-        if ($result -and $result['state'] -eq 'done') { return [pscustomobject]@{ Result = $result; Asked = $asked; Stopped = $null } }
-        $state = try { ConvertFrom-HookPairs (Invoke-DeviceHook $Serial agent-state @{ Tag = $Tag }) } catch { $null }
-        if ($state -and $state['asking'] -eq 'free') {
-            $asked++
-            Invoke-DeviceHook $Serial agent-answer @{ Tag = $Tag; Answer = $Answer } | Out-Null
-        } elseif ($state -and $state['asking'] -notin '', 'none') {
-            Invoke-DeviceHook $Serial agent-answer @{ Tag = $Tag; Answer = 'cancel' } | Out-Null
+    try {
+        while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+            $result = try { ConvertFrom-AgentTaskResult (Invoke-DeviceHook $Serial agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+            if ($result -and $result['state'] -eq 'done') {
+                $ended = $true
+                return [pscustomobject]@{ Result = $result; Asked = $asked; Other = $other; Stopped = $null }
+            }
+            $state = try { ConvertFrom-HookPairs (Invoke-DeviceHook $Serial agent-state @{ Tag = $Tag }) } catch { $null }
+            $asking = if ($state) { "$($state['asking'])" } else { '' }
+            if ($asking -in '', 'none') {
+                $answered = $false
+            } elseif (-not $answered) {
+                $reply = 'cancel'
+                $screenshot = $false
+                if ($asking -eq 'free') {
+                    $front = try { (ConvertFrom-HookPairs (Invoke-DeviceHook $Serial screen-has @{ Package = $App }))['app'] } catch { $null }
+                    $screenshot = $front -eq $App
+                    $reply = if ($screenshot) { $Answer } else { 'no' }
+                }
+                try {
+                    Invoke-DeviceHook $Serial agent-answer @{ Tag = $Tag; Answer = $reply } | Out-Null
+                    $answered = $true
+                    if ($screenshot) { $asked++ } elseif ($asking -eq 'free') { $other++ }
+                    Start-Sleep -Seconds 3
+                } catch {
+                    Write-Verbose 'The question had ended or changed.'
+                }
+            }
+            Start-Sleep -Seconds 1
         }
-        Start-Sleep -Seconds 1
+        Stop-SpeechTask $Tag
+        $ended = $true
+        # A task that the step stopped spent AI Credits too, which count towards the sitting's ceiling (Q5).
+        $stopped = $null
+        for ($try = 0; $try -lt 10 -and -not $stopped; $try++) {
+            Start-Sleep -Seconds 1
+            $last = try { ConvertFrom-AgentTaskResult (Invoke-DeviceHook $Serial agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+            if ($last -and $last['state'] -eq 'done') { $stopped = $last }
+        }
+        [pscustomobject]@{ Result = $null; Asked = $asked; Other = $other; Stopped = $stopped }
+    } finally {
+        if (-not $ended) {
+            try { Stop-SpeechTask $Tag } catch { Write-Warning "Could not stop the live task on $(Get-DeviceName $Serial). Say ""Kestrel, stop"" to it, or turn Kestrel off." }
+        }
     }
-    Stop-SpeechTask $Tag
-    # A task that the step stopped spent AI Credits too, which count towards the sitting's ceiling (Q5).
-    $stopped = $null
-    for ($try = 0; $try -lt 10 -and -not $stopped; $try++) {
-        Start-Sleep -Seconds 1
-        $last = try { ConvertFrom-AgentTaskResult (Invoke-DeviceHook $Serial agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
-        if ($last -and $last['state'] -eq 'done') { $stopped = $last }
-    }
-    [pscustomobject]@{ Result = $null; Asked = $asked; Stopped = $stopped }
 }
 
 # Revokes the screenshot approvals of the OCR fixture's app (design D20, D26), which look_closer's runs may have stored
@@ -1255,9 +1448,6 @@ function Invoke-OwnerStep2 {
         if ($answer['copilot'] -ne '0') { throw 'a Copilot profile is left' }
         Add-Result end 'the owner''s Copilot profile on kestrel-api37 is deleted'
     } | Out-Null
-    # A new sitting 2 counts its AI Credits from 0 (Q5).
-    $script:credits = 0.0
-    Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
     $a71 = Get-A71
     $items = @(
         [pscustomobject]@{ Device = $EmulatorSerial; Prompt = 'Item 1, about 3 minutes: in the emulator''s window on this computer, Kestrel''s page "Providers and profiles" is open. With the mouse, click "Add a profile", "GitHub Copilot" and "Sign in"; open github.com/login/device in this computer''s browser, enter the code that the page shows and approve; when the page shows the models, turn on "Make default" and click "Save". Press Enter when the page shows the profile (s skips).' }
@@ -1466,12 +1656,12 @@ function Invoke-LookCloserStep {
                 $with.Live = $true
             }
             Invoke-DeviceHook $device voice $with | Out-Null
-            $end = Wait-LiveTask -Serial $device -Tag $tag -Answer $answer
+            $end = Wait-LiveTask -Serial $device -Tag $tag -Answer $answer -App 'dev.kestrel.testapp'
             $paid = Get-ScreenCount $device @{ Package = 'dev.kestrel.testapp'; Contains = 'Details shown' }
             foreach ($counted in @($end.Result, $end.Stopped)) { if ($counted) { $script:credits += Get-CreditTotal @($counted) } }
             Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
             $result = if ($end.Result) { "end=$($end.Result['end']) steps=$($end.Result['steps']) credits=$($end.Result['credits']) model=$($end.Result['model'])" } else { 'did not end within 10 minutes' }
-            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times; ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' }))"
+            Add-Result look-closer "${name}, the answer $(($answer -replace '^text:', '')): $result; the screenshot question came $($end.Asked) times, another app's free question $($end.Other) times (answered no); ""Details shown"" shows $paid times ($(if ($end.Result -and $end.Result['end'] -eq 'FINISHED' -and $paid -eq 1) { 'pass' } else { 'fail' }))"
             if ($DryRun) { Invoke-DeviceHook $device agent-script @{ Clear = $true } | Out-Null }
             if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
         }
@@ -1574,6 +1764,7 @@ try {
     if ($KestrelTestDevices[$EmulatorSerial].Pattern -ne 'kestrel-api37') { throw "$EmulatorSerial is not kestrel-api37." }
     if (-not $DryRun -and $KestrelTestDevices[$Serial].Pattern -ne 'SM-A715F*') { throw "$Serial is not the Galaxy A71." }
     Add-Result session "sitting $Sitting started$(if ($DryRun) { ' as a dry run on kestrel-api37' })$(if ($Sitting -eq '2') { "; the comparison's model is $CompareModel" })"
+    if ($Sitting -eq '2') { Add-SittingResults }
     foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
         Enable-StayAwake $device
         Enable-KestrelService $device
@@ -1587,7 +1778,7 @@ try {
             Close-LiveSession $device
         } catch {
             if ($Step -and 'prepare' -notin $Step) { throw }
-            Add-Result session "$(Get-DeviceName $device): the live session could not be closed before the step prepare: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+            Add-Result session "$(Get-DeviceName $device): the live session could not be closed before the step prepare: $(Format-Failure $_)"
         }
     }
     foreach ($entry in $plans[$Sitting]) {
@@ -1599,13 +1790,13 @@ try {
             # The owner's q, and the ceiling of AI Credits, stop the whole sitting.
             if ($_.Exception.Message -in 'The owner stopped the sitting.', $ceilingMessage) { throw }
             # The scripts' and hooks' errors name only steps, files, keys and classes, never a value of the owner's.
-            Add-Result $entry.Name "failed: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+            Add-Result $entry.Name "failed: $(Format-Failure $_)"
         }
     }
     $completed = $true
 } catch {
     $stopped = $true
-    Add-Result session "stopped: $(("$($_.Exception.Message)" -split "`r?`n")[0])"
+    Add-Result session "stopped: $(Format-Failure $_)"
 } finally {
     # Newest first, so that a later change is undone before the one that it built on. A stop such as Ctrl+C that comes
     # while this block runs ends it at once, after the finally blocks inside it, so "Stay awake", the A71's lock, the
