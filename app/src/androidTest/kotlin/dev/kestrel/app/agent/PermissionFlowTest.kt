@@ -43,7 +43,8 @@ class PermissionFlowTest {
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private var photo: android.net.Uri? = null
-    private var flagsBefore: Map<String, Set<String>> = emptyMap()
+    // Null until @Before has passed its assumption: JUnit runs @After also for a skipped test, which must change nothing.
+    private var flagsBefore: Map<String, Set<String>>? = null
 
     @Before
     fun start() {
@@ -58,13 +59,14 @@ class PermissionFlowTest {
 
     @After
     fun stop() {
+        val before = flagsBefore ?: return
         try {
             AgentTests.stop()
         } finally {
             photo?.let { context.contentResolver.delete(it, null, null) }
             AgentTests.clearPresses(screen)
             screen.shell("am force-stop $FIXTURES")
-            putBackFlags()
+            putBackFlags(before)
         }
     }
 
@@ -78,7 +80,7 @@ class PermissionFlowTest {
         }
     }
 
-    private fun putBackFlags() {
+    private fun putBackFlags(flagsBefore: Map<String, Set<String>>) {
         val now = flags()
         for (permission in MEDIA) {
             val before = flagsBefore[permission].orEmpty()
