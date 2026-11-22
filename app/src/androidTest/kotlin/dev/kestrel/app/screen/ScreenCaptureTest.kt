@@ -302,6 +302,14 @@ class ScreenCaptureTest {
             } finally {
                 image.recycle()
             }
+            // With an area, such as look_closer's target, the picture holds only that area.
+            val cropped = eyes.encode(capture, listOf(keep.bounds), emptyList(), area = title.bounds)
+            val part = BitmapFactory.decodeByteArray(cropped.bytes, 0, cropped.bytes.size)
+            try {
+                assertEquals(title.bounds.width to title.bounds.height, part.width to part.height)
+            } finally {
+                part.recycle()
+            }
         }
     }
 

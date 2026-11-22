@@ -313,6 +313,9 @@ class FakeEyes(var lines: List<OcrLine>? = emptyList(), var capture: Capture? = 
     var onRead: suspend () -> Unit = {}
     val encoded = mutableListOf<Pair<List<IntRect>, List<Badge>>>()
 
+    /** The area of each call of [encode], null for the whole capture. */
+    val areas = mutableListOf<IntRect?>()
+
     override suspend fun capture(): Capture = (capture ?: Capture.Captured(
         image = object : Capture.Image {
             override val width = 1080
@@ -333,8 +336,9 @@ class FakeEyes(var lines: List<OcrLine>? = emptyList(), var capture: Capture? = 
         return lines
     }
 
-    override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>): Part.Image {
+    override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>, area: IntRect?): Part.Image {
         encoded += masks to marks
+        areas += area
         return Part.Image(ImageType.JPEG, byteArrayOf(1, 2, 3))
     }
 

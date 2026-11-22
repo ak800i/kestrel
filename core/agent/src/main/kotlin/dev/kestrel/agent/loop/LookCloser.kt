@@ -8,6 +8,7 @@ import dev.kestrel.agent.port.Capture
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.providers.chat.Part
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSignature
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -82,22 +83,42 @@ internal class LookCloser(private val run: TaskRun) {
         }
         // The owner may take a while to answer: a screen that changed since the question is never captured (spec 12.5).
         run.gate()
-        val now = run.fresh()
-        val same = ScreenTree.frontWindow(now)?.packageName == front && ScreenSignature.of(now).sameScreen(ScreenSignature.of(asked))
-        if (!same || !run.capturable(now)) {
-            return Done(call.tool, text = "Result: $CHANGED", summary = "Step ${run.replies}: look_closer took no screenshot; the screen changed.",
-                last = "look_closer took no screenshot; the screen changed", after = now, progress = false)
+        repeat(CAPTURES) {
+            val now = run.fresh()
+            val same = ScreenTree.frontWindow(now)?.packageName == front && ScreenSignature.of(now).sameScreen(ScreenSignature.of(asked))
+            if (!same || !run.capturable(now)) {
+                return Done(call.tool, text = "Result: $CHANGED", summary = "Step ${run.replies}: look_closer took no screenshot; the screen changed.",
+                    last = "look_closer took no screenshot; the screen changed", after = now, progress = false)
+            }
+            val shot = withCapture { capture -> shot(capture, now, target) } ?: return Done(call.tool, Outcome.Failed(NO_SCREENSHOT), target)
+            val image = (shot as? Shot.Sent)?.image ?: return@repeat
+            return Done(
+                call.tool, target = target, screenshot = image, progress = false,
+                text = "Result: the screenshot follows.",
+                summary = "Step ${run.replies}: look_closer sent a screenshot.",
+                last = "look_closer sent a screenshot",
+            )
         }
-        val image = withCapture { capture ->
-            val lines = read(capture, now, target).orEmpty()
-            run.ports.eyes.encode(capture, masks(now, lines), badges())
-        } ?: return Done(call.tool, Outcome.Failed(NO_SCREENSHOT), target)
-        return Done(
-            call.tool, target = target, screenshot = image, progress = false,
-            text = "Result: the screenshot follows.",
-            summary = "Step ${run.replies}: look_closer sent a screenshot.",
-            last = "look_closer sent a screenshot",
-        )
+        return Done(call.tool, text = "Result: $MOVED", summary = "Step ${run.replies}: look_closer took no screenshot; the screen moved.",
+            last = "look_closer took no screenshot; the screen moved", after = run.fresh(), progress = false)
+    }
+
+    private sealed interface Shot {
+        class Sent(val image: Part.Image) : Shot
+
+        data object Moved : Shot
+    }
+
+    // The masks come from [now], read before the capture; when the masked parts are elsewhere after the capture and OCR,
+    // such as a chat row that a new message pushed up, the picture may show a secret beside its black box (review 5C-A M2).
+    // With a target, the picture holds only the target (D20), where OCR read every line for the masks.
+    private suspend fun shot(capture: Capture.Captured, now: ScreenSnapshot, target: TableEntry?): Shot? {
+        val captured = IntRect(capture.originX, capture.originY, capture.originX + capture.image.width, capture.originY + capture.image.height)
+        val area = target?.let { it.bounds.intersect(captured) ?: return null }
+        val lines = read(capture, now, target).orEmpty()
+        val masks = masks(now, lines)
+        if (masks(run.fresh(), lines).toSet() != masks.toSet()) return Shot.Moved
+        return Shot.Sent(run.ports.eyes.encode(capture, masks, badges(), area))
     }
 
     // Step 3 (D20): the owner picks a number on the screen.
@@ -194,6 +215,8 @@ internal class LookCloser(private val run: TaskRun) {
         const val SECURE = "This screen cannot be captured (the app blocks screenshots)."
         const val NO_SCREENSHOT = "the screenshot failed"
         const val CHANGED = "The screen changed while the owner answered, so Kestrel took no screenshot."
+        const val MOVED = "The screen moved while Kestrel captured it, so Kestrel took no screenshot."
+        private const val CAPTURES = 2
         private const val LARGE_SHARE = 16
         private val YES = setOf("yes", "yes send it", "ok", "yes please", "sure")
         private val ALWAYS = setOf("always", "always for this app", "yes always")

@@ -13,8 +13,11 @@ interface EyesPort {
     /** The OCR lines in [regions] of the capture, with [exclude] blacked out first; null when OCR is unavailable. */
     suspend fun read(capture: Capture.Captured, regions: List<IntRect>, exclude: List<IntRect>): List<OcrLine>?
 
-    /** The capture as a JPEG for the model, with [masks] blacked out and the [marks] drawn on it. */
-    suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>): Part.Image
+    /**
+     * The capture as a JPEG for the model, with [masks] blacked out and the [marks] drawn on it; with an [area] (screen
+     * coordinates, inside the capture), only that part of the capture.
+     */
+    suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>, area: IntRect? = null): Part.Image
 
     /**
      * The OCR lines that `look_closer` keeps for the observation, with each line that overlapping regions both read given
@@ -29,7 +32,7 @@ object NoEyes : EyesPort {
 
     override suspend fun read(capture: Capture.Captured, regions: List<IntRect>, exclude: List<IntRect>): List<OcrLine>? = null
 
-    override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>): Part.Image =
+    override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>, area: IntRect?): Part.Image =
         throw IllegalStateException("No screenshots without eyes")
 }
 

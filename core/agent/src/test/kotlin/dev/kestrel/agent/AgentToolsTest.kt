@@ -532,4 +532,61 @@ class AgentToolsTest {
         assertTrue(harness.eyes.encoded.isEmpty())
         assertEquals(EndReason.AGENT_FREE, report.end)
     }
+
+    @Test
+    fun aScreenshotWithATargetHoldsOnlyTheTarget() = runTest {
+        val screen = ScreenBuilder.screen("com.example.map") { button(null, 900, viewId = "pay", suggestedName = "pay") }
+        val lookAt = call("look_closer", null, null, null, "target" to 1, "reason" to "the button has no label")
+        val harness = Harness(screen, listOf(lookAt, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        harness.eyes.lines = null
+        harness.owner.answers += Answer.Text("Yes.")
+
+        harness.run("Pay the bill")
+
+        assertEquals(listOf(IntRect(40, 900, 1040, 1020)), harness.eyes.areas)
+    }
+
+    // A chat whose row with a code is at [top] in its list; the redactor changes the code, so the row is masked.
+    private fun codeRow(top: Int): ScreenSnapshot = ScreenBuilder.screen("com.example.chat") {
+        val list = list(null, 300, 2000, viewId = "chat_list")
+        val row = button(null, top, viewId = "row", parent = list)
+        text("Your verification code", top, parent = row)
+        text("483920", top + 70, parent = row)
+    }
+
+    @Test
+    fun aMaskedRowThatMovedDuringTheCaptureIsCapturedAgain() = runTest {
+        val moved = codeRow(700)
+        val harness = Harness(codeRow(400), listOf(look, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        harness.eyes.lines = null
+        // The first read is step 1's OCR; the row moves while the screenshot's first capture is read, and then stays.
+        var reads = 0
+        harness.eyes.onRead = { if (++reads == 2) harness.screen.current = moved }
+        harness.owner.answers += Answer.Text("Yes.")
+
+        harness.run("Read the chat")
+
+        assertEquals(3, harness.eyes.captures)
+        val masks = harness.eyes.encoded.single().first
+        assertTrue(masks.toString(), masks.any { it.top <= 700 && it.bottom >= 820 })
+        assertFalse(masks.toString(), masks.any { it.top == 400 })
+    }
+
+    @Test
+    fun aMaskedRowThatMovesDuringEachCaptureSendsNoScreenshot() = runTest {
+        val still = codeRow(400)
+        val moved = codeRow(700)
+        val harness = Harness(still, listOf(look, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        harness.eyes.lines = null
+        var reads = 0
+        harness.eyes.onRead = { harness.screen.current = if (++reads % 2 == 0) moved else still }
+        harness.owner.answers += Answer.Text("Yes.")
+
+        harness.run("Read the chat")
+
+        assertEquals(3, harness.eyes.captures)
+        assertTrue(harness.eyes.encoded.isEmpty())
+        assertTrue(harness.lastRequestText().contains("took no screenshot"))
+        assertFalse(harness.lastRequestText().contains("483920"))
+    }
 }

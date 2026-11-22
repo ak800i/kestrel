@@ -10,6 +10,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import androidx.core.graphics.createBitmap
 import dev.kestrel.agent.observe.SystemUiParts
 import dev.kestrel.agent.port.Badge
 import dev.kestrel.agent.port.Capture
@@ -98,16 +99,22 @@ internal class AppEyes(
         }
     }
 
-    override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>): Part.Image =
+    override suspend fun encode(capture: Capture.Captured, masks: List<IntRect>, marks: List<Badge>, area: IntRect?): Part.Image =
         withContext(Dispatchers.Default) {
-            val copy = (capture.image as Pixels).bitmap.copy(Bitmap.Config.ARGB_8888, true)
+            val pixels = (capture.image as Pixels).bitmap
+            val whole = IntRect(0, 0, pixels.width, pixels.height)
+            // With an area, only that part of the capture is in the picture (D20: a target limits the screenshot).
+            val crop = if (area == null) whole else requireNotNull(area.inside(capture).intersect(whole)) { "The area is outside the capture" }
+            val copy = createBitmap(crop.width, crop.height)
             try {
                 val canvas = Canvas(copy)
-                // Masks and marks come in screen coordinates; the image starts at the capture's origin.
-                canvas.translate(-capture.originX.toFloat(), -capture.originY.toFloat())
+                canvas.drawBitmap(pixels, -crop.left.toFloat(), -crop.top.toFloat(), null)
+                // Masks and marks come in screen coordinates; the image starts at the capture's origin plus the crop's.
+                canvas.translate(-(capture.originX + crop.left).toFloat(), -(capture.originY + crop.top).toFloat())
                 val black = Paint().apply { color = Color.BLACK }
                 for (mask in masks) canvas.drawRect(mask.left.toFloat(), mask.top.toFloat(), mask.right.toFloat(), mask.bottom.toFloat(), black)
-                drawMarks(canvas, marks, max(copy.width, copy.height))
+                val shown = if (area == null) marks else marks.mapNotNull { mark -> mark.bounds.intersect(area)?.let { mark.copy(bounds = it) } }
+                drawMarks(canvas, shown, max(copy.width, copy.height))
                 val scale = minOf(1f, MAX_SIDE.toFloat() / max(copy.width, copy.height))
                 val out = if (scale < 1f) {
                     Bitmap.createScaledBitmap(copy, max(1, (copy.width * scale).roundToInt()), max(1, (copy.height * scale).roundToInt()), true)
