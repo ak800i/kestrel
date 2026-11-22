@@ -91,6 +91,8 @@ class OcrDeviceTest {
             val started = SystemClock.elapsedRealtime()
             OcrEngine.open(files, threads).use { engine ->
                 val loadMs = SystemClock.elapsedRealtime() - started
+                // ONNX Runtime prepares its buffers and kernels on the first run: one untimed read, so that no measure is cold.
+                engine.detect(full).forEach { engine.recognise(full, it) }
                 for (limit in listOf(Detector.LIMIT, 1280)) {
                     for ((kind, image) in listOf("full" to full, "region" to region)) {
                         val detectStart = SystemClock.elapsedRealtime()
