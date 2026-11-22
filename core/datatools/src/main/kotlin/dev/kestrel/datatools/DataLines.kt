@@ -4,6 +4,7 @@ import android.provider.CallLog
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -25,10 +26,15 @@ object DataLines {
 
     fun time(millis: Long, zone: ZoneId): String = TIME.format(Instant.ofEpochMilli(millis).atZone(zone))
 
-    /** "event · 2026-11-20 12:00 to 13:30", or "event · 2026-11-19 · all day" for an event that Android stores in UTC. */
+    /**
+     * "event · 2026-11-20 12:00 to 13:30", or "event · 2026-11-19 · all day" for an event that Android stores in UTC, and
+     * "event · 2026-11-19 to 2026-11-21 · all day" for one that covers several days.
+     */
     fun event(title: String?, begin: Long, end: Long, allDay: Boolean, location: String?, calendar: String?, zone: ZoneId): DataLine {
         val fixed = if (allDay) {
-            "event · ${DAY.format(Instant.ofEpochMilli(begin).atZone(ZoneOffset.UTC))} · all day"
+            val days = allDayDates(begin, end)
+            val shown = if (days.endInclusive == days.start) DAY.format(days.start) else "${DAY.format(days.start)} to ${DAY.format(days.endInclusive)}"
+            "event · $shown · all day"
         } else {
             val from = Instant.ofEpochMilli(begin).atZone(zone)
             val to = Instant.ofEpochMilli(end).atZone(zone)
@@ -36,6 +42,17 @@ object DataLines {
         }
         return DataLine(fixed, listOfNotNull(field("title", title), field("location", location), field("calendar", calendar)))
     }
+
+    /**
+     * The days of an all-day event, which Android stores from the UTC midnight of its first day to the UTC midnight after
+     * its last one.
+     */
+    fun allDayDates(begin: Long, end: Long): ClosedRange<LocalDate> {
+        val first = utcDate(begin)
+        return first..maxOf(first, utcDate(end - 1))
+    }
+
+    private fun utcDate(millis: Long): LocalDate = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
 
     /** "sms · received · 2026-11-20 10:20", with the other side by the contact's [name] and its number, and the body. */
     fun sms(received: Boolean, address: String?, name: String?, body: String?, date: Long, zone: ZoneId): DataLine {

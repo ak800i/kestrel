@@ -50,6 +50,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 
@@ -149,28 +150,43 @@ class DataToolsTest {
     }
 
     @Test
-    fun listEventsReadsTheEventOfATestCalendar() {
+    fun listEventsReadsTheEventsOfAVisibleTestCalendarThatCoverTheDays() {
         val zone = ZoneId.systemDefault()
         val calendar = addTestCalendar()
         val start = DAY.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+        addTestEvent(calendar, "Kestrel test lunch", start, start + 3_600_000, location = "Test Street 1")
+        // Yesterday's all-day event, a timed one that ends as DAY starts, and an event of a hidden calendar are left out;
+        // an all-day event from the day before DAY to the day after it shows its three days.
+        addTestEvent(calendar, "Kestrel test yesterday", utcMidnight(DAY.minusDays(1)), utcMidnight(DAY), allDay = true)
+        val dayStart = DAY.atStartOfDay(zone).toInstant().toEpochMilli()
+        addTestEvent(calendar, "Kestrel test late", dayStart - 7_200_000, dayStart)
+        addTestEvent(calendar, "Kestrel test trip", utcMidnight(DAY.minusDays(1)), utcMidnight(DAY.plusDays(2)), allDay = true)
+        addTestEvent(addTestCalendar(HIDDEN_CALENDAR, visible = false), "Kestrel test hidden", start, start + 3_600_000)
+        val tool = CalendarTool(resolver, { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED })
+
+        val lines = waitFor { (runBlocking { tool.list(DAY, DAY, zone) } as DataResult.Ok).lines.takeIf { it.size >= 2 } }
+
+        assertEquals(listOf("event · 2001-02-02 to 2001-02-04 · all day", "event · 2001-02-03 12:00 to 13:00"), lines.map { it.fixed })
+        assertEquals(listOf("title" to "Kestrel test lunch", "location" to "Test Street 1", "calendar" to TEST_CALENDAR), lines[1].fields.map { it.name to it.value })
+    }
+
+    private fun addTestEvent(calendar: Long, title: String, begin: Long, end: Long, allDay: Boolean = false, location: String? = null) {
         resolver.insert(
             CalendarContract.Events.CONTENT_URI,
             ContentValues().apply {
                 put(CalendarContract.Events.CALENDAR_ID, calendar)
-                put(CalendarContract.Events.TITLE, "Kestrel test lunch")
-                put(CalendarContract.Events.EVENT_LOCATION, "Test Street 1")
-                put(CalendarContract.Events.DTSTART, start)
-                put(CalendarContract.Events.DTEND, start + 3_600_000)
-                put(CalendarContract.Events.EVENT_TIMEZONE, zone.id)
+                put(CalendarContract.Events.TITLE, title)
+                location?.let { put(CalendarContract.Events.EVENT_LOCATION, it) }
+                put(CalendarContract.Events.DTSTART, begin)
+                put(CalendarContract.Events.DTEND, end)
+                put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
+                // Android stores an all-day event at UTC midnights.
+                put(CalendarContract.Events.EVENT_TIMEZONE, if (allDay) "UTC" else ZoneId.systemDefault().id)
             },
         )
-        val tool = CalendarTool(resolver, { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED })
-
-        val line = waitFor { (runBlocking { tool.list(DAY, DAY, zone) } as DataResult.Ok).lines.singleOrNull() }
-
-        assertEquals("event · 2001-02-03 12:00 to 13:00", line.fixed)
-        assertEquals(listOf("title" to "Kestrel test lunch", "location" to "Test Street 1", "calendar" to TEST_CALENDAR), line.fields.map { it.name to it.value })
     }
+
+    private fun utcMidnight(day: LocalDate): Long = day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 
     @Test
     fun theIntentsOfTheClockTheSmsAppAndTheCalendarCarryTheirExtras() {
@@ -218,15 +234,15 @@ class DataToolsTest {
     }
 
     /** Adds a local calendar of the test account, as a sync adapter may, and returns its ID. */
-    private fun addTestCalendar(): Long {
+    private fun addTestCalendar(name: String = TEST_CALENDAR, visible: Boolean = true): Long {
         val values = ContentValues().apply {
             put(CalendarContract.Calendars.ACCOUNT_NAME, TEST_ACCOUNT)
             put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
-            put(CalendarContract.Calendars.NAME, TEST_CALENDAR)
-            put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, TEST_CALENDAR)
+            put(CalendarContract.Calendars.NAME, name)
+            put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, name)
             put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
             put(CalendarContract.Calendars.OWNER_ACCOUNT, TEST_ACCOUNT)
-            put(CalendarContract.Calendars.VISIBLE, 1)
+            put(CalendarContract.Calendars.VISIBLE, if (visible) 1 else 0)
             put(CalendarContract.Calendars.SYNC_EVENTS, 1)
             put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, ZoneId.systemDefault().id)
         }
@@ -295,6 +311,7 @@ class DataToolsTest {
             Manifest.permission.WRITE_CALENDAR,
         )
         const val TEST_CALENDAR = "Kestrel test calendar"
+        const val HIDDEN_CALENDAR = "Kestrel hidden test calendar"
 
         // A day long ago, on which no other photo of the emulator was taken, and a folder of this test's own.
         val DAY: LocalDate = LocalDate.of(2001, 2, 3)

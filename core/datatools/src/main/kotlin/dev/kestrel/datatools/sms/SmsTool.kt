@@ -19,8 +19,8 @@ import java.time.ZoneId
 /**
  * `list_sms` and `compose_sms` (design D12 of sub-project 5): the owner's received and sent SMS, newest first, at most
  * [MAX], optionally from one number or one contact, with the contact's name while [contacts] gives the contacts (null
- * without `READ_CONTACTS`); and the SMS app's compose screen with a prefilled text, whose send happens on the screen.
- * Kestrel never asks for `SEND_SMS` (spec 13.6).
+ * without `READ_CONTACTS`, which a name then needs); and the SMS app's compose screen with a prefilled text, whose send
+ * happens on the screen. Kestrel never asks for `SEND_SMS` (spec 13.6).
  */
 class SmsTool(
     private val resolver: ContentResolver,
@@ -31,8 +31,9 @@ class SmsTool(
         if (!granted(Manifest.permission.READ_SMS)) return DataResult.NeedsPermission(listOf(Manifest.permission.READ_SMS))
         val count = limit.coerceIn(1, MAX)
         val wanted = from?.trim()?.takeIf { it.isNotEmpty() }
-        val lines = withContext(Dispatchers.IO) {
+        return withContext(Dispatchers.IO) {
             val known = contacts()
+            wanted?.let { refusal(it, known) }?.let { return@withContext it }
             val numbers = wanted?.let { numbersOf(it, known) }
             val found = mutableListOf<DataLine>()
             val selection = "${Telephony.Sms.TYPE} IN (${Telephony.Sms.MESSAGE_TYPE_INBOX}, ${Telephony.Sms.MESSAGE_TYPE_SENT})"
@@ -44,13 +45,14 @@ class SmsTool(
                     found += DataLines.sms(rows.getInt(2) == Telephony.Sms.MESSAGE_TYPE_INBOX, address, name, rows.getString(3), rows.getLong(1), zone)
                 }
             }
-            found
+            DataResult.Ok(found)
         }
-        return DataResult.Ok(lines)
     }
 
     companion object {
         const val MAX = 20
+
+        const val TOO_MANY = "More than four contacts have that name. Use find_contact to choose one, then list_sms with its number."
 
         private val COLUMNS = arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.DATE, Telephony.Sms.TYPE, Telephony.Sms.BODY)
 
@@ -59,6 +61,18 @@ class SmsTool(
             Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", number, null))
                 .putExtra("sms_body", text)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        /**
+         * Why Kestrel cannot look up the name [wanted] in the [contacts]: it may not read them, or more contacts have the
+         * name than "Which one?" offers; null for a number, and for a name that Kestrel can look up, also one that no
+         * contact has, which then compares with an alphanumeric sender.
+         */
+        fun refusal(wanted: String, contacts: List<Contact>?): DataResult? = when {
+            wanted.count(Char::isDigit) >= 3 -> null
+            contacts == null -> DataResult.NeedsPermission(listOf(Manifest.permission.READ_CONTACTS))
+            ContactMatcher.find(wanted, contacts) is ContactMatch.TooMany -> DataResult.Failed(TOO_MANY)
+            else -> null
+        }
 
         /**
          * The numbers of the contacts that [wanted] names, when it is a name and Kestrel has the [contacts]; null when it is
