@@ -12,6 +12,8 @@ import android.graphics.Color
 import android.media.ExifInterface
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.AlarmClock
+import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Phone
@@ -23,9 +25,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.MediaKinds
+import dev.kestrel.datatools.calendar.CalendarTool
+import dev.kestrel.datatools.clock.ClockIntents
 import dev.kestrel.datatools.contacts.AndroidContacts
 import dev.kestrel.datatools.contacts.FindContact
 import dev.kestrel.datatools.media.MediaTool
+import dev.kestrel.datatools.sms.SmsTool
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -38,6 +43,7 @@ import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
 import java.io.File
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -139,6 +145,81 @@ class DataToolsTest {
         file.delete()
     }
 
+    @Test
+    fun listEventsReadsTheEventOfATestCalendar() {
+        val zone = ZoneId.systemDefault()
+        val calendar = addTestCalendar()
+        val start = DAY.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+        resolver.insert(
+            CalendarContract.Events.CONTENT_URI,
+            ContentValues().apply {
+                put(CalendarContract.Events.CALENDAR_ID, calendar)
+                put(CalendarContract.Events.TITLE, "Kestrel test lunch")
+                put(CalendarContract.Events.EVENT_LOCATION, "Test Street 1")
+                put(CalendarContract.Events.DTSTART, start)
+                put(CalendarContract.Events.DTEND, start + 3_600_000)
+                put(CalendarContract.Events.EVENT_TIMEZONE, zone.id)
+            },
+        )
+        val tool = CalendarTool(resolver, { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED })
+
+        val line = waitFor { (runBlocking { tool.list(DAY, DAY, zone) } as DataResult.Ok).lines.singleOrNull() }
+
+        assertEquals("event · 2001-02-03 12:00 to 13:00", line.fixed)
+        assertEquals(listOf("title" to "Kestrel test lunch", "location" to "Test Street 1", "calendar" to TEST_CALENDAR), line.fields.map { it.name to it.value })
+    }
+
+    @Test
+    fun theIntentsOfTheClockTheSmsAppAndTheCalendarCarryTheirExtras() {
+        val alarm = ClockIntents.alarm(7, 30, "Kestrel test", listOf(DayOfWeek.MONDAY, DayOfWeek.FRIDAY))
+        assertEquals(AlarmClock.ACTION_SET_ALARM, alarm.action)
+        assertEquals(7, alarm.getIntExtra(AlarmClock.EXTRA_HOUR, -1))
+        assertEquals(30, alarm.getIntExtra(AlarmClock.EXTRA_MINUTES, -1))
+        assertTrue(alarm.getBooleanExtra(AlarmClock.EXTRA_SKIP_UI, false))
+        assertEquals(arrayListOf(2, 6), alarm.getIntegerArrayListExtra(AlarmClock.EXTRA_DAYS))
+
+        val timer = ClockIntents.timer(90, null)
+        assertEquals(AlarmClock.ACTION_SET_TIMER, timer.action)
+        assertEquals(90, timer.getIntExtra(AlarmClock.EXTRA_LENGTH, -1))
+        assertTrue(timer.getBooleanExtra(AlarmClock.EXTRA_SKIP_UI, false))
+
+        val sms = SmsTool.composeIntent(NUMBER, "I'm late")
+        assertEquals(Intent.ACTION_SENDTO, sms.action)
+        assertEquals("smsto", sms.data?.scheme)
+        assertEquals(NUMBER, sms.data?.schemeSpecificPart)
+        assertEquals("I'm late", sms.getStringExtra("sms_body"))
+
+        val zone = ZoneId.systemDefault()
+        val event = CalendarTool.insertIntent("Kestrel test", DAY.atTime(9, 0), null, null, zone)
+        assertEquals(Intent.ACTION_INSERT, event.action)
+        val begin = DAY.atTime(9, 0).atZone(zone).toInstant().toEpochMilli()
+        assertEquals(begin, event.getLongExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, 0))
+        assertEquals(begin + 3_600_000, event.getLongExtra(CalendarContract.EXTRA_EVENT_END_TIME, 0))
+        assertEquals("Kestrel test", event.getStringExtra(CalendarContract.Events.TITLE))
+    }
+
+    /** Adds a local calendar of the test account, as a sync adapter may, and returns its ID. */
+    private fun addTestCalendar(): Long {
+        val values = ContentValues().apply {
+            put(CalendarContract.Calendars.ACCOUNT_NAME, TEST_ACCOUNT)
+            put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            put(CalendarContract.Calendars.NAME, TEST_CALENDAR)
+            put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, TEST_CALENDAR)
+            put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
+            put(CalendarContract.Calendars.OWNER_ACCOUNT, TEST_ACCOUNT)
+            put(CalendarContract.Calendars.VISIBLE, 1)
+            put(CalendarContract.Calendars.SYNC_EVENTS, 1)
+            put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, ZoneId.systemDefault().id)
+        }
+        return checkNotNull(resolver.insert(testCalendars(), values)).lastPathSegment!!.toLong()
+    }
+
+    private fun testCalendars() = CalendarContract.Calendars.CONTENT_URI.buildUpon()
+        .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+        .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, TEST_ACCOUNT)
+        .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+        .build()
+
     /** Adds a contact of the test account with a name and, when given, a mobile number, an address and an app's row. */
     private fun addTestContact(name: String, phone: String? = null, email: String? = null, appMimetype: String? = null) {
         val operations = arrayListOf(
@@ -162,8 +243,10 @@ class DataToolsTest {
             .apply { type?.let { withValue(it.first, it.second) } }
             .build()
 
-    /** Removes everything that the cases add: the contacts of the test account and this package's test photos. */
+    /** Removes everything that the cases add: the contacts and the calendar of the test account and this package's test photos. */
     private fun removeTestData() {
+        // Deleting a calendar deletes its events.
+        resolver.delete(testCalendars(), "${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.ACCOUNT_TYPE} = ?", arrayOf(TEST_ACCOUNT, CalendarContract.ACCOUNT_TYPE_LOCAL))
         val rawContacts = RawContacts.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
         resolver.delete(rawContacts, "${RawContacts.ACCOUNT_NAME} = ? AND ${RawContacts.ACCOUNT_TYPE} = ?", arrayOf(TEST_ACCOUNT, TEST_ACCOUNT_TYPE))
         resolver.delete(
@@ -189,7 +272,10 @@ class DataToolsTest {
             Manifest.permission.WRITE_CONTACTS,
             Manifest.permission.READ_MEDIA_IMAGES,
             Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_CALENDAR,
+            Manifest.permission.WRITE_CALENDAR,
         )
+        const val TEST_CALENDAR = "Kestrel test calendar"
 
         // A day long ago, on which no other photo of the emulator was taken, and a folder of this test's own.
         val DAY: LocalDate = LocalDate.of(2001, 2, 3)

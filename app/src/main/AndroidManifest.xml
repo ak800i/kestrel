@@ -50,6 +50,16 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <!-- Asked at the agent's first list_events, list_sms and list_calls (design D12 of sub-project 5). Kestrel never asks for
+         SEND_SMS: an SMS is sent on the SMS app's screen. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- READ_SMS would make Google Play require telephony; Kestrel only reads SMS, so it needs none (lint's
+         PermissionImpliesUnsupportedChromeOsHardware). -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- Granted at install, for the clock intents of set_alarm and set_timer. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android
          11 an app sees the other apps' launcher activities only when it declares their intent here. -->
