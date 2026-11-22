@@ -6,13 +6,20 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
+import dev.kestrel.agent.memory.Fact
+import dev.kestrel.agent.memory.FactKind
+import dev.kestrel.agent.memory.RouteNote
+import dev.kestrel.agent.memory.Routine
 import dev.kestrel.agent.port.EyesPort
 import dev.kestrel.agent.port.NoEyes
 import dev.kestrel.app.agent.AgentEnvironment
 import dev.kestrel.app.agent.AgentRunner
-import dev.kestrel.app.agent.AgentTexts
+import dev.kestrel.app.agent.AppAgentEnvironment
+import dev.kestrel.app.agent.AppModels
+import dev.kestrel.app.agent.CacheState
 import dev.kestrel.app.agent.CallBackstop
-import dev.kestrel.app.agent.Prepared
+import dev.kestrel.app.agent.Permissions
+import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.assist.KestrelAssistantService
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
@@ -59,6 +66,7 @@ import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.network.TaskTag
 import dev.kestrel.privacy.settings.SettingKey
+import dev.kestrel.providers.chat.CacheFields
 import dev.kestrel.providers.catalog.Catalog
 import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.cost.Spending
@@ -91,6 +99,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import java.io.File
 
@@ -132,6 +142,24 @@ object SettingKeys {
 
     /** The owner's changes to the shipped list of agent-free apps (design D16 of sub-project 5; review B M6). */
     val AGENT_FREE_APPS = SettingKey("agent-free-apps", AgentFreeChanges.serializer(), AgentFreeChanges())
+
+    /** The owner's aliases and facts (design D22 of sub-project 5; spec 11.9). */
+    val MEMORY_FACTS = SettingKey("memory-facts", ListSerializer(Fact.serializer()), emptyList())
+
+    /** The route notes per app's package, at most 20 each (design D22 of sub-project 5). */
+    val ROUTE_NOTES = SettingKey("route-notes", MapSerializer(String.serializer(), ListSerializer(RouteNote.serializer())), emptyMap())
+
+    /** The saved routines (design D23 of sub-project 5). */
+    val ROUTINES = SettingKey("routines", ListSerializer(Routine.serializer()), emptyList())
+
+    /** How many tasks finished with each `finish` signature, for the routine offer (design D23 of sub-project 5). */
+    val ROUTINE_SIGNATURES = SettingKey("routine-signatures", MapSerializer(String.serializer(), Int.serializer()), emptyMap())
+
+    /** The names of the contacts that the last tasks found, for the boost words (design D32 item 44 of sub-project 5). */
+    val FOUND_CONTACTS = SettingKey("found-contacts", ListSerializer(String.serializer()), emptyList())
+
+    /** Which of Copilot's cache fields the requests carry (design D5 of sub-project 5); only the hook `agent-cache` changes it. */
+    val AGENT_CACHE_FIELDS = SettingKey("agent-cache-fields", CacheFields.serializer(), CacheFields.ALL)
 
     // sub-project 5C: keys
 }
@@ -261,8 +289,36 @@ class AppGraph(context: Context) {
     internal var screenshotApproved: suspend (packageName: String, providerId: String) -> Boolean = { _, _ -> false }
     internal var approveScreenshots: suspend (packageName: String, providerId: String) -> Unit = { _, _ -> }
 
-    /** What each task needs from Kestrel's parts (design D1 of sub-project 5); read when a task starts. */
-    private val agentEnvironment: AgentEnvironment = AgentEnvironment { Prepared.Refused(AgentTexts.COULD_NOT_START) }
+    /** Kestrel's memory (design D22 and D23 of sub-project 5), which the agent, the Memory page and the boost words read. */
+    internal val memory: SettingsMemoryStore by lazy {
+        SettingsMemoryStore(settings, { app, provider -> screenshotApproved(app, provider) }, { app, provider -> approveScreenshots(app, provider) })
+    }
+
+    /** What each task needs from Kestrel's parts (design D1 of sub-project 5); built at the first task. */
+    private val agentEnvironment: AgentEnvironment by lazy {
+        AppAgentEnvironment(
+            context = appContext,
+            session = { screen.value },
+            settings = settings,
+            memory = memory,
+            appendLog = { logs.append(it) },
+            models = AppModels(
+                { providers },
+                appliedProviders,
+                { profileId -> settings.get(SettingKeys.providerModels(profileId)).models },
+                CacheState { settings.get(SettingKeys.AGENT_CACHE_FIELDS) },
+                reportFailure,
+            ),
+            send = { listening.send(it) },
+            states = listening.state,
+            eyes = { agentEyes },
+            showBadges = { session, badges -> showAgentBadges(session, badges) },
+            hideBadges = { session -> hideAgentBadges(session) },
+            askAndroid = { permissions -> Permissions.granted(context, permissions) },
+            knownNames = { contacts.contacts().orEmpty().flatMap { it.names }.toSet() },
+            report = reportFailure,
+        )
+    }
 
     /**
      * Runs Kestrel's tasks and memory requests (design D2 of sub-project 5): Listening's [Listening.runTask],
@@ -373,16 +429,21 @@ class AppGraph(context: Context) {
         )
     }
 
+    /** The owner's contacts, read only with READ_CONTACTS: the boost words' names and the names that a task may know (D13). */
+    private val contacts = dev.kestrel.datatools.contacts.ContactsReader(
+        dev.kestrel.datatools.contacts.contactsAccess(appContext),
+        dev.kestrel.datatools.contacts.AndroidContacts(appContext.contentResolver),
+        reportFailure,
+    )
+
     /**
-     * The owner's names for the recogniser's boost words (D32 item 44 of sub-project 5): the starred contacts, read only
-     * with READ_CONTACTS; plan 5B's Task 14 adds memory's aliases and the contacts that tasks found.
+     * The owner's names for the recogniser's boost words (D32 item 44 of sub-project 5): the starred contacts, the keys of
+     * memory's aliases and the contacts that the last tasks found.
      */
     private val ownerNames = dev.kestrel.app.listen.OwnerNames(
-        dev.kestrel.datatools.contacts.ContactsReader(
-            dev.kestrel.datatools.contacts.contactsAccess(appContext),
-            dev.kestrel.datatools.contacts.AndroidContacts(appContext.contentResolver),
-            reportFailure,
-        ),
+        contacts,
+        aliases = { memory.facts().filter { it.kind == FactKind.ALIAS }.map { it.key } },
+        found = { memory.foundContacts() },
     )
 
     /**
