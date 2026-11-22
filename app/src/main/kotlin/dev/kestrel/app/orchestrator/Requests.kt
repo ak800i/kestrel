@@ -3,12 +3,12 @@ package dev.kestrel.app.orchestrator
 /** What a transcript asks of Kestrel itself (design spec, sections 8.3, 8.5 and 11.10, and Appendix A). */
 sealed interface Request {
     /**
-     * "Kestrel, [task]". [text] is the task as the owner said it, without the name. [stopFirst]: the owner said "stop" or
-     * "cancel" before the task, as in "Stop. Kestrel, open Viber.", so a running task should be cancelled first.
-     * [nearWakeUp]: the words are two words away from "wake up", as in "Kestrel, sign up", so that Kestrel starts no task
-     * with them while it is paused (plan 4E).
+     * "Kestrel, [task]". [text] is the task as the owner said it, without the name. [nearWakeUp]: the words are two words
+     * away from "wake up", as in "Kestrel, sign up", so that Kestrel starts no task with them while it is paused (plan
+     * 4E). Whether "stop" or "cancel" came before the name, as in "Stop. Kestrel, open Viber.", is
+     * [Requests.stopsFirst], for every request.
      */
-    data class Task(val text: String, val stopFirst: Boolean = false, val nearWakeUp: Boolean = false) : Request {
+    data class Task(val text: String, val nearWakeUp: Boolean = false) : Request {
         override fun toString() = "Task(${text.length} characters)"
     }
 
@@ -27,11 +27,8 @@ sealed interface Request {
     /** "Stop Kestrel", or "Kestrel, turn off": off. */
     data object TurnOff : Request
 
-    /**
-     * "Kestrel, open settings" or "Kestrel settings": Kestrel's settings app (section 15). [stopFirst]: the owner said
-     * "stop" or "cancel" before it, as in "Stop. Kestrel, open settings.", so a running task should be cancelled first.
-     */
-    data class OpenSettings(val stopFirst: Boolean = false) : Request
+    /** "Kestrel, open settings" or "Kestrel settings": Kestrel's settings app (section 15). */
+    data object OpenSettings : Request
 
     /**
      * "Kestrel, continue", only as the whole request after the name, with "please" allowed: it ends a hand-over (design D2
@@ -105,8 +102,8 @@ sealed interface Request {
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
  *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings",
  *    "continue", "delete history", "remember that <key> is <value>", "forget <key>", "save that as <name>", or a task.
- *    In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. A task or
- *    "open settings" after "stop" or "cancel" asks to cancel a running task first.
+ *    In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. Any request
+ *    after "stop" or "cancel" asks to cancel a task first ([stopsFirst]).
  * 4. Otherwise "stop listening" pauses, and "wake up", "stop listening", "turn off" or "switch off" followed by the
  *    name count too. In an answer to "Yes?", "never mind", "forget it" and "nothing" followed by the name are a named
  *    stop.
@@ -183,16 +180,12 @@ object Requests {
      * start, so that "Stop Kestrel" allows a first word one letter away from "stop" and a name three letters away.
      */
     fun read(transcript: String, spotted: Boolean, afterName: Boolean = false, stopSpotted: Boolean = false): Request? {
-        val words = WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
+        val words = words(transcript)
         if (words.isEmpty()) return null
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
         if (isStopKestrel(words, limit, stopSpotted)) return Request.TurnOff
         readStop(words, limit)?.let { return if (afterName) Request.Stop(named = true) else it }
-        val start = when {
-            nameAt(words, 0, limit) > 0 -> 0
-            spotted && words[0].text in BEFORE_NAME && nameAt(words, 1, limit) > 0 -> 1
-            else -> -1
-        }
+        val start = nameStart(words, spotted, limit)
         if (start >= 0) {
             var rest = words.drop(start + nameAt(words, start, limit))
             var again = nameAt(rest, 0, limit)
@@ -200,8 +193,7 @@ object Requests {
                 rest = rest.drop(again)
                 again = nameAt(rest, 0, limit)
             }
-            val stopFirst = start == 1 && words[0].text in STOP_WORDS
-            return named(transcript, rest, limit, stopFirst = stopFirst, afterName = afterName, nameSaid = true)
+            return named(transcript, rest, limit, afterName = afterName, nameSaid = true)
         }
         val phrase = phrase(words)
         val trailingName = nameBefore(words, words.size, limit)
@@ -211,9 +203,32 @@ object Requests {
             beforeName == "wake up" -> Request.WakeUp
             beforeName != null && beforeName in TURN_OFF -> Request.TurnOff
             afterName && trailingName > 0 && isNeverMind(words.dropLast(trailingName)) -> Request.Stop(named = true)
-            afterName -> named(transcript, words, limit, stopFirst = false, afterName = true, nameSaid = false)
+            afterName -> named(transcript, words, limit, afterName = true, nameSaid = false)
             else -> Request.Other(transcript.trim())
         }
+    }
+
+    /**
+     * Whether the owner said "stop" or "cancel" right before the name, as in "Stop. Kestrel, open Viber." or "Stop.
+     * Kestrel, forget the gate code.", so that whatever [read] finds after the name cancels a task first (design D2 of
+     * sub-project 5). The word before the name counts only when the keyword spotter heard the name ([spotted]), as in
+     * [read].
+     */
+    fun stopsFirst(transcript: String, spotted: Boolean): Boolean {
+        val words = words(transcript)
+        val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
+        return words.isNotEmpty() && nameStart(words, spotted, limit) == 1 && words[0].text in STOP_WORDS
+    }
+
+    private fun words(transcript: String): List<Word> =
+        WORD.findAll(transcript).map { Word(it.value.lowercase().replace("'", ""), it.range) }.toList()
+
+    // Where the name starts: 0, 1 after one short word when the spotter heard it, or -1 when the name does not start the
+    // utterance.
+    private fun nameStart(words: List<Word>, spotted: Boolean, limit: Int): Int = when {
+        nameAt(words, 0, limit) > 0 -> 0
+        spotted && words[0].text in BEFORE_NAME && nameAt(words, 1, limit) > 0 -> 1
+        else -> -1
     }
 
     /**
@@ -278,7 +293,6 @@ object Requests {
         transcript: String,
         rest: List<Word>,
         limit: Int,
-        stopFirst: Boolean,
         afterName: Boolean,
         nameSaid: Boolean,
     ): Request {
@@ -289,14 +303,14 @@ object Requests {
         return when {
             said == "stop listening" -> Request.PauseListening
             nameSaid && said in TURN_OFF -> Request.TurnOff
-            said in OPEN_SETTINGS -> Request.OpenSettings(stopFirst)
+            said in OPEN_SETTINGS -> Request.OpenSettings
             said == CONTINUE -> Request.Continue
             said in DELETE_HISTORY -> Request.DeleteHistory
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
             else -> memory(transcript, rest)
-                ?: Request.Task(transcript.substring(rest.first().range.first).trim(), stopFirst, nearWakeUp = fromWakeUp == 2)
+                ?: Request.Task(transcript.substring(rest.first().range.first).trim(), nearWakeUp = fromWakeUp == 2)
         }
     }
 

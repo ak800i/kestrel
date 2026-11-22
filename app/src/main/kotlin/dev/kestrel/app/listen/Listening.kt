@@ -12,6 +12,8 @@ import dev.kestrel.app.orchestrator.Reply
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.app.orchestrator.Step
+import dev.kestrel.app.orchestrator.TaskAsk
+import dev.kestrel.app.orchestrator.TaskPhase
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.voice.ModelsNotReadyException
@@ -374,6 +376,9 @@ class Listening internal constructor(
     private var newestCommand = 0
     private var cancelledCommand = 0
 
+    // Only [thread] uses it: the newest pause of a task, for a task whose start waited for a cancelled command.
+    private var lastPause: Effect.PauseTask? = null
+
     // The number of the newest command whose job started. Written on [thread] and read by the jobs, so that a stuck job
     // that completes late never releases a text that a newer command keeps on the bar.
     @Volatile
@@ -450,7 +455,11 @@ class Listening internal constructor(
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
         taskFailed = ListeningTexts.TASK_FAILED,
-        onStep = { event, before, step -> steps?.invoke(event, before, step) },
+        onStep = { event, before, step ->
+            // "Continue the task?" fades from the bar once it has ended, before the step's own texts show.
+            if (before.taskAsking == TaskAsk.CONTINUE && step.state.taskAsking != TaskAsk.CONTINUE) bar.release()
+            steps?.invoke(event, before, step)
+        },
     )
 
     /** The Orchestrator's state after the last event. */
@@ -1029,7 +1038,9 @@ class Listening internal constructor(
             Effect.StopSaying -> session?.stopSpeaking()
             is Effect.RunTask -> {
                 timeline.reacted("task")
-                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) { runTask(effect.task, effect.text) }
+                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) {
+                    startTask(effect.task) { runTask(effect.task, effect.text) }
+                }
             }
             Effect.CancelTask -> steerTask(effect)
             is Effect.RunCommand -> {
@@ -1060,18 +1071,26 @@ class Listening internal constructor(
                     // stays on until Android stops the service, if it does, when destroyed() names the battery.
                     stopBecause(StopReason.BATTERY_RESTRICTED)
                 } else {
-                    val keep = (effect.feedback as? Feedback.CommandText)?.keep == true || (effect.feedback as? Feedback.TaskText)?.keep == true
+                    // "Continue the task?" stays until it has its answer (design D2 of sub-project 5).
+                    val keep = (effect.feedback as? Feedback.CommandText)?.keep == true ||
+                        (effect.feedback as? Feedback.TaskText)?.keep == true || effect.feedback == Feedback.ContinueQuestion
                     bar.show(text(effect.feedback), keep = keep)
                 }
             }
             // The Orchestrator runs the timers itself.
             is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, Effect.TimeHandOver,
             Effect.TimePause, Effect.ArmTouches -> Unit
-            is Effect.AnswerTask, is Effect.ContinueTask, is Effect.ExpireHandOver, is Effect.PauseTask, is Effect.ResumeTask,
+            is Effect.AnswerTask, is Effect.ContinueTask, is Effect.ExpireHandOver, is Effect.ResumeTask,
             is Effect.ExpirePause, Effect.DeleteHistory -> steerTask(effect)
+            is Effect.PauseTask -> {
+                lastPause = effect
+                steerTask(effect)
+            }
             is Effect.RunMemoryTask -> {
                 timeline.reacted("task")
-                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) { runMemory(effect.task, effect.request) }
+                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) {
+                    startTask(effect.task) { runMemory(effect.task, effect.request) }
+                }
             }
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
@@ -1150,9 +1169,11 @@ class Listening internal constructor(
         // A command's say() waits for this reply, and returns once it has ended in any way.
         val ended = (reply as? Reply.Command)?.let { conversation?.takeSpoken(it.command) }
         // Section 14.6: a reply that Kestrel cannot speak, or that Android interrupted, goes to the bar, except "Yes?",
-        // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask), and a command's
-        // text, which the Rules showed already, a question kept until the command ends.
-        val showInstead = { if (reply != Reply.Yes && reply !is Reply.Command) bar.show(text) }
+        // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask), and the texts that
+        // the Rules showed already and keep on the bar: a command's text, a task's question or hand-over, and "Continue
+        // the task?" (design D2 of sub-project 5).
+        val kept = reply is Reply.Command || (reply as? Reply.Text)?.kept == true || reply == Reply.ContinueQuestion
+        val showInstead = { if (reply != Reply.Yes && !kept) bar.show(text) }
         val current = session
         if (current == null) {
             // Thrown before the reply starts, so that the Orchestrator ends the reply in its place.
@@ -1220,6 +1241,19 @@ class Listening internal constructor(
      * Runs [action] at once, or, while a cancelled command's job has not completed, on [thread] once it has, but after
      * at most [STOPPING_MILLIS] (section 7.3). A deferred action that throws is reported, and then [failed] runs.
      */
+    // Design D2 of sub-project 5: a task whose start waited for a cancelled command starts only while the Orchestrator
+    // still has it, and a pause that came during the wait reaches it at once (AgentRunner keeps a pause that comes before
+    // the task can take it). A task that was cancelled or replaced in the meantime ends without a reply.
+    private fun startTask(task: Int, start: () -> Unit) {
+        val now = state.value
+        if (now.task != task || !now.taskExists || now.cancelled) {
+            send(Event.TaskEnded(task, reply = null))
+            return
+        }
+        start()
+        if (now.taskPhase == TaskPhase.PAUSED) lastPause?.takeIf { it.task == task }?.let(steerTask)
+    }
+
     private fun afterStopping(failed: () -> Unit = {}, action: () -> Unit) {
         // A cancelled job is no longer active, but it may still run until it completes.
         val job = stopping?.takeIf { !it.isCompleted }

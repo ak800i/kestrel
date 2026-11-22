@@ -593,7 +593,7 @@ Secure windows (`FLAG_SECURE`) cannot be captured, so only the tree and the numb
 
 ### 11.10 What Kestrel listens to while a task runs
 
-- While the agent or a routine is acting, or while Kestrel waits for a confirmation or for an answer to its question, Kestrel accepts only "stop", "cancel" and the answer it asked for. "Stop" and "cancel" also count with a few filler words, as in "Stop it" or "Okay, cancel that". Kestrel ignores all other speech, so that a conversation or a TV cannot interfere. To start a different task, the owner first says "stop".
+- While the agent or a routine is acting, or while Kestrel waits for a confirmation or for an answer to its question, Kestrel accepts only "stop", "cancel" and the answer it asked for. "Stop" and "cancel" also count with a few filler words, as in "Stop it" or "Okay, cancel that". Kestrel ignores all other speech, so that a conversation or a TV cannot interfere. To start a different task, the owner first says "stop". Any request after "stop", as in "Stop. Kestrel, open Viber." or "Stop. Kestrel, forget the gate code.", cancels the task first, also while it is paused or handed over, and then counts as it would without a task.
 - During a hand-over (section 12.4), Kestrel is not acting. All instant commands work as usual, so that the owner can do the step by voice, and "Kestrel, continue" resumes the task.
 
 ## 12. Safety

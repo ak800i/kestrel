@@ -4,9 +4,12 @@ import dev.kestrel.app.commands.CommandConversation
 import dev.kestrel.app.commands.CommandReport
 import dev.kestrel.app.commands.CommandRunner
 import dev.kestrel.app.orchestrator.CallState
+import dev.kestrel.app.orchestrator.Effect
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.orchestrator.PauseCause
 import dev.kestrel.app.orchestrator.Request
+import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.Command
@@ -464,6 +467,101 @@ class ListeningTest {
         gate.complete(Unit)
         runCurrent()
         assertEquals(listOf(1), tasks)
+    }
+
+    @Test
+    fun aTaskThatIsStoppedWhileItWaitsForTheCancelledCommandNeverStarts() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        val tasks = mutableListOf<Int>()
+        listening.runTask = { task, _ -> tasks += task }
+        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
+        runCurrent()
+
+        listening.send(Event.Heard("Stop.", named = false))
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(emptyList<Int>(), tasks)
+        // The task that never started ended for the Orchestrator, without a reply.
+        assertFalse(listening.state.value.cancelled)
+        assertEquals(Work.IDLE, listening.state.value.work)
+    }
+
+    @Test
+    fun aPauseWhileTheTaskWaitsForTheCancelledCommandReachesItWhenItStarts() = runTest {
+        val listening = listeningWithSession()
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        val calls = mutableListOf<Any>()
+        listening.runTask = { task, _ -> calls += "run $task" }
+        listening.steerTask = { calls += it }
+        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
+        runCurrent()
+        listening.send(Event.Screen(on = false))
+        runCurrent()
+        calls.clear()
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf("run 1", Effect.PauseTask(1, PauseCause.LOCK)), calls)
+    }
+
+    @Test
+    fun aTaskQuestionAHandOverAndContinueTheTaskThatCannotBeSpokenStayKeptOnTheBar() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.runTask = { _, _ -> }
+        listening.send(Event.Screen(on = true))
+        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
+        runCurrent()
+
+        listening.send(Event.TaskAsks(1, "Shall I send it?", TaskAsk.CONFIRM))
+        runCurrent()
+        var before = shown.size
+        session.replies.last().complete(Spoke.REFUSED)
+        runCurrent()
+        assertEquals(before, shown.size)
+
+        listening.send(Event.Heard("Yes.", named = false))
+        listening.send(Event.TaskHandsOver(1, "Please pay yourself, then say 'Kestrel, continue'."))
+        runCurrent()
+        before = shown.size
+        session.replies.last().complete(Spoke.INTERRUPTED)
+        runCurrent()
+        assertEquals(before, shown.size)
+
+        listening.send(Event.Heard("Kestrel, continue.", named = true))
+        listening.send(Event.Screen(on = false))
+        listening.send(Event.Screen(on = true))
+        runCurrent()
+        before = shown.size
+        session.replies.last().complete(Spoke.REFUSED)
+        runCurrent()
+        assertEquals(before, shown.size)
+        assertEquals(
+            listOf("Shall I send it?", "Please pay yourself, then say 'Kestrel, continue'.", ListeningTexts.CONTINUE_TASK),
+            kept,
+        )
+        assertEquals(0, releases)
+
+        // "Continue the task?" fades once it has its answer.
+        listening.send(Event.Heard("No.", named = false))
+        runCurrent()
+        assertEquals(1, releases)
     }
 
     @Test

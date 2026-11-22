@@ -373,8 +373,12 @@ sealed interface Reply {
     /** Android kept Kestrel's settings back, and a notification opens them (section 14). */
     data object SettingsBlocked : Reply
 
-    data class Text(val text: String) : Reply {
-        override fun toString() = "Text(${text.length} characters)"
+    /**
+     * [kept]: the Rules show [text] on the bar already and keep it there, as a task's question or a hand-over's sentence,
+     * so a reply that Kestrel cannot speak does not show it again.
+     */
+    data class Text(val text: String, val kept: Boolean = false) : Reply {
+        override fun toString() = "Text(${text.length} characters, kept=$kept)"
     }
 
     /** What instant command number [command] says or asks. */
@@ -445,7 +449,7 @@ sealed interface Feedback {
     /** A new task came during a hand-over: "Say 'Kestrel, continue' or 'cancel' first." (design D2 of sub-project 5). */
     data object FinishHandOverFirst : Feedback
 
-    /** "Continue the task?", after a pause (section 14.4). */
+    /** "Continue the task?", after a pause (section 14.4); the bar keeps it until the question has ended. */
     data object ContinueQuestion : Feedback
 
     /** A new task came while a task is paused: "Answer 'Continue the task?' first, or say 'cancel'." (design D2 of sub-project 5). */
@@ -676,6 +680,10 @@ object Rules {
             }
         is Event.AnswerWaitEnded -> when {
             event.wait != state.wait -> Step(state)
+            // A question that is still spoken keeps its wait: speechEnded() starts the whole wait again once it has been
+            // spoken, so that a long confirmation is never declined before the owner has heard it (design D14 of
+            // sub-project 5).
+            state.speaking && (state.taskAsking != null || state.deleteAsking) -> Step(state)
             // Silence after "Continue the task?" cancels the task (section 14.4).
             state.taskAsking == TaskAsk.CONTINUE -> cancelTask(state)
             state.taskAsking != null -> answerTask(state, null)
@@ -696,18 +704,30 @@ object Rules {
             ?: return if (state.screenOn) withoutWords(state, awaiting) else Step(state)
         // Words start the count of empty transcripts again.
         val counted = state.copy(emptyTranscripts = 0)
-        // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
-        // only the requests that stop something count, because nothing may start (section 14.4).
-        if (!counted.screenOn && !stopsSomething(request)) return Step(counted)
         val shown = Effect.Show(Feedback.Heard(event.text))
-        if (counted.deleteAsking) return deleteAnswer(counted, event, shown)
-        return when (counted.work) {
+        val stopsFirst = stopsTaskFirst(counted, request, event)
+        // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
+        // only the requests that stop something count, because nothing may start (section 14.4); a "Stop." before the
+        // name still cancels the task.
+        if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) cancelTask(counted, shown) else Step(counted)
+        if (stopsFirst) return cancelFirst(counted, request, event, shown, event.spokeAt)
+        // Design D2 of sub-project 5: the question before deleting the history takes every other transcript as its
+        // answer, but the stop words, "stop listening", "Stop Kestrel" and "Kestrel" on its own keep their meaning, as
+        // they do during an instant command's question, and end it.
+        if (counted.deleteAsking && request is Request.Stop) {
+            return Step(counted.copy(deleteAsking = false), listOfNotNull(shown, Effect.StopSaying.takeIf { counted.speaking }))
+        }
+        if (counted.deleteAsking && request != Request.PauseListening && request != Request.TurnOff && request != Request.Name) {
+            return deleteAnswer(counted, event, shown)
+        }
+        val open = counted.copy(deleteAsking = false)
+        return when (open.work) {
             Work.RUNNING_TASK ->
-                if (counted.taskAsking != null) answering(counted, request, event, shown) else whileTaskRuns(counted, request, shown)
-            Work.AWAITING_TASK -> whileAwaitingTask(counted, request, event.text, shown)
-            Work.IDLE -> idle(counted, request, event, shown, event.spokeAt)
+                if (open.taskAsking != null) answering(open, request, event, shown) else whileTaskRuns(open, request, shown)
+            Work.AWAITING_TASK -> whileAwaitingTask(open, request, event.text, shown)
+            Work.IDLE -> idle(open, request, event, shown, event.spokeAt)
             // duringCommand() reads the transcripts of a running command.
-            Work.RUNNING_COMMAND -> Step(counted)
+            Work.RUNNING_COMMAND -> Step(open)
         }
     }
 
@@ -724,22 +744,27 @@ object Rules {
     private fun stopsSomething(request: Request): Boolean =
         request is Request.Stop || request == Request.PauseListening || request == Request.TurnOff
 
-    // Section 11.10: while a task runs, only "stop" and "cancel" count, and the ways to pause or turn Kestrel off.
-    // "Stop. Kestrel, [task]" cancels the running task and runs the new one, and "Stop. Kestrel, open settings" cancels it
-    // and opens the settings.
+    // Section 11.10: while a task runs, only "stop" and "cancel" count, and the ways to pause or turn Kestrel off. A
+    // request after "Stop." cancels the task first (cancelFirst()).
     private fun whileTaskRuns(state: State, request: Request, shown: Effect): Step = when (request) {
         is Request.Stop -> cancelTask(state, shown)
-        is Request.Task -> when {
-            !request.stopFirst -> Step(state)
-            // Plan 4E: after "Stop.", a near miss of "wake up" while Kestrel is paused cancels the task and starts none.
-            request.nearWakeUp && state.mode == Mode.PAUSED -> cancelTask(state, shown)
-            else -> cancelTask(state, shown).then { runTask(it, request.text) }
-        }
         Request.PauseListening -> cancelTask(state, shown).then { changeMode(it, Mode.PAUSED) }
         Request.TurnOff -> turnOff(state, shown)
-        is Request.OpenSettings ->
-            if (request.stopFirst) cancelTask(state, shown).then { Step(it, listOf(Effect.OpenSettings)) } else Step(state)
         else -> Step(state)
+    }
+
+    // Design D2 of sub-project 5: "Stop. Kestrel, [request]" cancels the task in every phase, as the stop alone would, and
+    // the request then counts as it does without a task, so that the stop is never lost: a task or Kestrel's own request
+    // runs, the settings open, and "continue" finds no task. "Stop" and "turn off" after the name keep their own rules,
+    // which end the task too.
+    private fun stopsTaskFirst(state: State, request: Request, event: Event.Heard): Boolean =
+        state.taskExists && request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
+
+    // The transcript shows once, before the task is cancelled.
+    private fun cancelFirst(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long?): Step {
+        val cancelled = cancelTask(state, shown)
+        val after = whileIdle(cancelled.state, request, event.text, shown, spokeAt)
+        return Step(after.state, cancelled.effects + after.effects.filter { it !== shown })
     }
 
     // Design D2 of sub-project 5: while the task asks, "stop" and "cancel" cancel it in every kind of question, Kestrel's
@@ -747,8 +772,7 @@ object Rules {
     // only the card may answer (D32 item 17), no spoken answer counts.
     private fun answering(state: State, request: Request, event: Event.Heard, shown: Effect): Step {
         if (request is Request.Stop || (request is Request.Other && startsWithStop(event.text))) return cancelTask(state, shown)
-        val stopsFirst = (request is Request.Task && request.stopFirst) || (request is Request.OpenSettings && request.stopFirst)
-        if (stopsFirst || request == Request.PauseListening || request == Request.TurnOff) return whileTaskRuns(state, request, shown)
+        if (request == Request.PauseListening || request == Request.TurnOff) return whileTaskRuns(state, request, shown)
         val kind = state.taskAsking ?: return Step(state)
         if (!state.voiceAnswers) return Step(state, listOf(shown))
         val answer = TaskAnswers.read(kind, event.text, event.named, request) ?: return Step(state, listOf(shown))
@@ -797,20 +821,20 @@ object Rules {
 
     // A transcript while Kestrel is idle: during a hand-over or a pause the task's own rules come first (design D2 of
     // sub-project 5).
-    private fun idle(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long? = null): Step = when (state.taskPhase) {
-        TaskPhase.HANDED_OVER -> whileHandedOver(state, request, event.text, shown, spokeAt)
-        TaskPhase.PAUSED -> whilePaused(state, request, event, shown, spokeAt)
+    private fun idle(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long? = null): Step = when {
+        stopsTaskFirst(state, request, event) -> cancelFirst(state, request, event, shown, spokeAt)
+        state.taskPhase == TaskPhase.HANDED_OVER -> whileHandedOver(state, request, event.text, shown, spokeAt)
+        state.taskPhase == TaskPhase.PAUSED -> whilePaused(state, request, event, shown, spokeAt)
         else -> whileIdle(state, request, event.text, shown, spokeAt)
     }
 
     // Design D2 of sub-project 5 (section 14.4): while a task is paused, nothing of it runs and the instant commands work.
     // "Continue the task?" takes yes, which resumes the task, or no; any other speech is ignored then. "Stop" and "cancel"
-    // cancel the task, "Stop. Kestrel, [task]" cancels it and runs the new one, and any other task waits for the answer.
+    // cancel the task, and any other task waits for the answer.
     private fun whilePaused(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long?): Step {
         val asking = state.taskAsking == TaskAsk.CONTINUE
         when {
             request is Request.Stop || (asking && request is Request.Other && startsWithStop(event.text)) -> return cancelTask(state, shown)
-            request is Request.Task && request.stopFirst -> return cancelTask(state, shown).then { runTask(it, request.text) }
             request is Request.Task || request is Request.Memory -> return Step(state, listOf(shown, Effect.Show(Feedback.AnswerContinueFirst)))
             request == Request.PauseListening -> return cancelTask(state, shown).then { changeMode(it, Mode.PAUSED) }
             request == Request.TurnOff -> return turnOff(state, shown)
@@ -832,16 +856,11 @@ object Rules {
 
     // Design D2 and D15 of sub-project 5: while the owner does a step by hand, the instant commands work as when idle,
     // also in the paused mode, "Kestrel, continue" gives the step back to the task, "stop" and "cancel" cancel the task,
-    // "Stop. Kestrel, [task]" cancels it and runs the new one, and any other task waits until the hand-over has ended.
+    // and any other task waits until the hand-over has ended.
     private fun whileHandedOver(state: State, request: Request, text: String, shown: Effect, spokeAt: Long?): Step = when (request) {
         Request.Continue -> continueTask(state, shown)
         is Request.Stop -> cancelTask(state, shown)
-        is Request.Task ->
-            if (request.stopFirst) {
-                cancelTask(state, shown).then { runTask(it, request.text) }
-            } else {
-                Step(state, listOf(shown, Effect.Show(Feedback.FinishHandOverFirst)))
-            }
+        is Request.Task -> Step(state, listOf(shown, Effect.Show(Feedback.FinishHandOverFirst)))
         else -> whileIdle(state, request, text, shown, spokeAt)
     }
 
@@ -1105,7 +1124,8 @@ object Rules {
                 if (state.taskExists) {
                     cancelTask(state.copy(spottedStop = true))
                 } else {
-                    Step(state.copy(work = Work.IDLE, spottedStop = true), listOf(Effect.StopSaying))
+                    // The question before deleting the history ends too, as an instant command's question would.
+                    Step(state.copy(work = Work.IDLE, spottedStop = true, deleteAsking = false), listOf(Effect.StopSaying))
                 }
             // Kestrel does not wait for a task while a task runs or asks "Continue the task?", or the screen is off.
             Keyword.KESTREL ->
@@ -1217,7 +1237,7 @@ object Rules {
         if (event.task != state.task || state.work != Work.RUNNING_TASK || state.taskAsking != null) return Step(state)
         return say(
             state.copy(taskAsking = event.kind, voiceAnswers = event.voice),
-            Reply.Text(event.question),
+            Reply.Text(event.question, kept = true),
             Effect.Show(Feedback.TaskText(event.question, keep = true)),
         ).then { waitForAnswer(it) }
     }
@@ -1234,13 +1254,14 @@ object Rules {
             voiceAnswers = true,
             handOver = state.handOver + 1,
         )
-        return say(handed, Reply.Text(event.text), Effect.Show(Feedback.TaskText(event.text, keep = true)))
+        return say(handed, Reply.Text(event.text, kept = true), Effect.Show(Feedback.TaskText(event.text, keep = true)))
             .then { Step(it, listOf(Effect.TimeHandOver)) }
     }
 
     // The task acts again: after a hand-over that ended by itself it runs, and a question that the card answered is over.
+    // A paused task acts no more, so a late TaskBusy never drops "Continue the task?" (design D2 of sub-project 5).
     private fun taskBusy(state: State, task: Int): Step = when {
-        task != state.task -> Step(state)
+        task != state.task || state.taskPhase == TaskPhase.PAUSED -> Step(state)
         state.taskPhase == TaskPhase.HANDED_OVER -> Step(state.copy(work = Work.RUNNING_TASK, taskPhase = TaskPhase.RUNNING))
         state.taskAsking != null -> Step(state.copy(taskAsking = null, voiceAnswers = true))
         else -> Step(state)
@@ -1256,9 +1277,11 @@ object Rules {
     private fun askForTask(state: State, vararg first: Effect): Step =
         waitForTask(state, *first, Effect.Show(Feedback.AwaitingTask)).then { say(it, Reply.Yes) }
 
-    // Every wait gets the next number, so that the end of an older wait changes nothing.
+    // Every wait gets the next number, so that the end of an older wait changes nothing. A wait for a task ends the
+    // question before deleting the history, as after "Kestrel" over a command's question, so that the task that the owner
+    // then says runs (design D2 of sub-project 5).
     private fun waitForTask(state: State, vararg first: Effect, answering: Boolean = false): Step = Step(
-        state.copy(work = Work.AWAITING_TASK, wait = state.wait + 1, cancelled = false),
+        state.copy(work = Work.AWAITING_TASK, wait = state.wait + 1, cancelled = false, deleteAsking = false),
         first.toList() + Effect.WaitForTask(answering),
     )
 

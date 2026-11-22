@@ -736,7 +736,11 @@ class RulesTest {
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Scroll down", named = false)))
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Stop.", named = false)))
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Kestrel?", named = true)))
-        assertEquals(Step(darkAndRunning), Rules.next(darkAndRunning, Event.Heard("Stop. Kestrel, open Viber.", named = true)))
+        // Design D2 of sub-project 5: "Stop." before the name still cancels the task, and nothing starts.
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.CancelTask),
+            Rules.next(darkAndRunning, Event.Heard("Stop. Kestrel, open Viber.", named = true)).effects,
+        )
 
         val stopped = Rules.next(darkAndRunning, Event.Heard("Stop.", named = false))
         assertEquals(Work.IDLE, stopped.state.work)
@@ -1382,7 +1386,7 @@ class RulesTest {
         assertEquals(
             listOf(
                 Effect.Show(Feedback.TaskText("I'm not getting anywhere. Should I keep trying?", keep = true)),
-                Effect.Say(Reply.Text("I'm not getting anywhere. Should I keep trying?")),
+                Effect.Say(Reply.Text("I'm not getting anywhere. Should I keep trying?", kept = true)),
                 Effect.WaitForAnswer(),
             ),
             step.effects,
@@ -1426,7 +1430,7 @@ class RulesTest {
 
     @Test
     fun theSilenceAfterATaskQuestionIsNoAnswer() {
-        val question = asking(TaskAsk.CONFIRM)
+        val question = Rules.next(asking(TaskAsk.CONFIRM), Event.SpeechEnded).state
 
         val ended = Rules.next(question, Event.AnswerWaitEnded(question.wait))
 
@@ -1458,7 +1462,7 @@ class RulesTest {
 
     @Test
     fun whileOnlyTheCardMayAnswerSpokenAnswersDoNotCount() {
-        val question = asking(TaskAsk.CONFIRM, voice = false)
+        val question = Rules.next(asking(TaskAsk.CONFIRM, voice = false), Event.SpeechEnded).state
 
         assertEquals(Step(question, listOf(Effect.Show(Feedback.Heard("Confirm.")))), heard(question, "Confirm."))
         assertTrue(Effect.CancelTask in heard(question, "Cancel.").effects)
@@ -1483,7 +1487,7 @@ class RulesTest {
         assertEquals(
             listOf(
                 Effect.Show(Feedback.TaskText("This is a payment. Please finish it yourself, then say 'Kestrel, continue'.", keep = true)),
-                Effect.Say(Reply.Text("This is a payment. Please finish it yourself, then say 'Kestrel, continue'.")),
+                Effect.Say(Reply.Text("This is a payment. Please finish it yourself, then say 'Kestrel, continue'.", kept = true)),
                 Effect.TimeHandOver,
             ),
             step.effects,
@@ -1818,7 +1822,8 @@ class RulesTest {
         assertEquals(listOf(Effect.Show(Feedback.Heard("Yes.")), Effect.DeleteHistory), yes.effects)
         assertFalse(yes.state.deleteAsking)
         assertEquals(listOf(Effect.Show(Feedback.Heard("Go on"))), heard(asked.state, "Go on").effects)
-        assertFalse(Rules.next(asked.state, Event.AnswerWaitEnded(asked.state.wait)).state.deleteAsking)
+        val spoken = Rules.next(asked.state, Event.SpeechEnded).state
+        assertFalse(Rules.next(spoken, Event.AnswerWaitEnded(spoken.wait)).state.deleteAsking)
         assertEquals(Effect.Say(Reply.HistoryDeleted(true)), Rules.next(listening, Event.HistoryDeleted(true)).effects.last())
         // While a task exists, it is ignored (section 11.10).
         assertEquals(Step(runningTask), heard(runningTask, "Kestrel, clear history", named = true))
@@ -1836,6 +1841,118 @@ class RulesTest {
         assertEquals(Effect.RunTask(1, "remember to buy milk"), heard(listening, "Kestrel, remember to buy milk", named = true).effects.last())
         // During a hand-over it waits, as a task does.
         assertEquals(Effect.Show(Feedback.FinishHandOverFirst), heard(handedOver(), "Kestrel, forget the gate code", named = true).effects.last())
+    }
+
+    @Test
+    fun theWaitForAnAnswerDoesNotEndWhileKestrelStillSpeaksTheQuestion() {
+        // A confirmation may take longer to say than the wait to start the answer (design D14 of sub-project 5).
+        val question = asking(TaskAsk.CONFIRM)
+        assertTrue(question.speaking)
+        assertEquals(Step(question), Rules.next(question, Event.AnswerWaitEnded(question.wait)))
+        // The whole wait starts again once the question has been spoken.
+        val spoken = Rules.next(question, Event.SpeechEnded)
+        assertEquals(listOf(Effect.WaitForAnswer()), spoken.effects)
+        assertEquals(listOf(Effect.AnswerTask(1, null)), Rules.next(spoken.state, Event.AnswerWaitEnded(spoken.state.wait)).effects)
+        // "Continue the task?" and the question before deleting the history wait in the same way.
+        val continuing = Rules.next(pausedByLock().copy(screenSeen = true), Event.Screen(on = true)).state
+        assertEquals(Step(continuing), Rules.next(continuing, Event.AnswerWaitEnded(continuing.wait)))
+        val deleting = heard(listening, "Kestrel, delete history", named = true).state
+        assertEquals(Step(deleting), Rules.next(deleting, Event.AnswerWaitEnded(deleting.wait)))
+    }
+
+    @Test
+    fun aStopBeforeKestrelsOwnRequestsCancelsTheTaskFirst() {
+        val forget = heard(runningTask, "Stop. Kestrel, forget the gate code.", named = true)
+        assertEquals(
+            listOf(
+                Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code.")),
+                Effect.CancelTask,
+                Effect.RunMemoryTask(2, Request.Forget("the gate code")),
+            ),
+            forget.effects,
+        )
+        assertEquals(TaskPhase.RUNNING, forget.state.taskPhase)
+        // Once the task has gone, "delete history" asks as it does without a task.
+        assertEquals(
+            listOf(
+                Effect.Show(Feedback.Heard("Stop. Kestrel, delete history")),
+                Effect.CancelTask,
+                Effect.Say(Reply.DeleteHistoryQuestion),
+                Effect.WaitForAnswer(),
+            ),
+            heard(runningTask, "Stop. Kestrel, delete history", named = true).effects,
+        )
+        // In every phase: while the task asks, while it is paused, during "Continue the task?" and during a hand-over.
+        for (state in listOf(asking(TaskAsk.CONFIRM), pausedByLock().copy(screenOn = true), continueAsked(), handedOver())) {
+            val step = heard(state, "Stop. Kestrel, remember that the gate code is blue.", named = true)
+            assertTrue("$state", Effect.CancelTask in step.effects)
+            assertEquals("$state", Effect.RunMemoryTask(2, Request.Remember("the gate code", "blue")), step.effects.last())
+        }
+        assertTrue(Effect.RunMemoryTask(2, Request.SaveRoutine("test routine")) in heard(runningTask, "Stop. Kestrel, save that as test routine", named = true).effects)
+        // During "Continue the task?" every request after "Stop." cancels the task first.
+        val asked = continueAsked()
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.CancelTask, Effect.OpenSettings),
+            heard(asked, "Stop. Kestrel, open settings.", named = true).effects,
+        )
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, continue.")), Effect.CancelTask, Effect.Say(Reply.NoTaskToContinue)),
+            heard(asked, "Stop. Kestrel, continue.", named = true).effects,
+        )
+        // With the screen off nothing may start, but the stop still cancels the task.
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code")), Effect.CancelTask),
+            heard(pausedByLock(), "Stop. Kestrel, forget the gate code", named = true).effects,
+        )
+    }
+
+    @Test
+    fun aLateTaskBusyLeavesAPausedTaskAndItsQuestionAlone() {
+        val asked = continueAsked()
+
+        assertEquals(Step(asked), Rules.next(asked, Event.TaskBusy(1)))
+        assertEquals(Step(pausedByLock()), Rules.next(pausedByLock(), Event.TaskBusy(1)))
+    }
+
+    @Test
+    fun duringTheDeleteQuestionTurningOffPausingAndStoppingKeepTheirMeaning() {
+        val speaking = heard(listening, "Kestrel, delete history", named = true).state
+        val asked = Rules.next(speaking, Event.SpeechEnded).state
+
+        val off = heard(asked, "Stop Kestrel")
+        assertEquals(Mode.OFF, off.state.mode)
+        assertFalse(off.state.deleteAsking)
+        val paused = heard(asked, "Stop listening")
+        assertEquals(Mode.PAUSED, paused.state.mode)
+        assertFalse(paused.state.deleteAsking)
+        assertFalse(Effect.DeleteHistory in paused.effects)
+        // "Stop" ends the question and Kestrel's voice, and the spotter's "stop" over the question ends it too.
+        val stopped = heard(speaking, "Stop.")
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.StopSaying), stopped.effects)
+        assertFalse(stopped.state.deleteAsking)
+        val spotted = Rules.next(speaking, Event.Spotted(Keyword.STOP))
+        assertEquals(listOf(Effect.StopSaying), spotted.effects)
+        assertFalse(spotted.state.deleteAsking)
+    }
+
+    @Test
+    fun kestrelOrTheAssistantGestureDuringTheDeleteQuestionWaitsForTheTask() {
+        val speaking = heard(listening, "Kestrel, delete history", named = true).state
+        val asked = Rules.next(speaking, Event.SpeechEnded).state
+
+        val waits = listOf(
+            Rules.next(speaking, Event.Spotted(Keyword.KESTREL)),
+            Rules.next(speaking, Event.Assist),
+            Rules.next(asked, Event.Assist),
+            heard(asked, "Kestrel", named = true),
+        )
+        for (wait in waits) {
+            assertEquals(Work.AWAITING_TASK, wait.state.work)
+            assertFalse(wait.state.deleteAsking)
+            // The question ended without deleting anything, and the task that the owner then says runs.
+            assertFalse(Effect.DeleteHistory in wait.effects)
+            assertEquals(Effect.RunTask(1, "Open Viber."), heard(wait.state, "Open Viber.").effects.last())
+        }
     }
 
     @Test

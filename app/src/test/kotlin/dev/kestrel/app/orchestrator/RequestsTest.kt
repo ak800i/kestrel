@@ -1,7 +1,9 @@
 package dev.kestrel.app.orchestrator
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RequestsTest {
@@ -130,10 +132,16 @@ class RequestsTest {
     }
 
     @Test
-    fun aTaskAfterStopCancelsARunningTaskFirst() {
-        assertEquals(Request.Task("open Viber.", stopFirst = true), Requests.read("Stop. Kestrel, open Viber.", spotted = true))
-        assertEquals(Request.Task("open Viber.", stopFirst = true), Requests.read("Cancel, Kestrel, open Viber.", spotted = true))
-        assertEquals(Request.Task("open Viber.", stopFirst = false), Requests.read("Hey Kestrel, open Viber.", spotted = true))
+    fun aRequestAfterStopCancelsATaskFirst() {
+        assertEquals(Request.Task("open Viber."), Requests.read("Stop. Kestrel, open Viber.", spotted = true))
+        assertTrue(Requests.stopsFirst("Stop. Kestrel, open Viber.", spotted = true))
+        assertTrue(Requests.stopsFirst("Cancel, Kestrel, open Viber.", spotted = true))
+        assertTrue(Requests.stopsFirst("Stop. Kestrel, forget the gate code.", spotted = true))
+        assertTrue(Requests.stopsFirst("Stop. Kestrel, open settings.", spotted = true))
+        assertFalse(Requests.stopsFirst("Hey Kestrel, open Viber.", spotted = true))
+        assertFalse(Requests.stopsFirst("Kestrel, open Viber.", spotted = true))
+        // Only the spotter's name allows a word before it, as in read().
+        assertFalse(Requests.stopsFirst("Stop. Kestrel, open Viber.", spotted = false))
     }
 
     @Test
@@ -198,11 +206,11 @@ class RequestsTest {
 
     @Test
     fun kestrelsSettingsOpenWithTheirOwnPhrases() {
-        assertEquals(Request.OpenSettings(), Requests.read("Kestrel, open settings.", spotted = false))
-        assertEquals(Request.OpenSettings(), Requests.read("Kestrel, open your settings, please.", spotted = true))
-        assertEquals(Request.OpenSettings(), Requests.read("Kestrel settings", spotted = false))
-        assertEquals(Request.OpenSettings(), Requests.read("Open settings.", spotted = false, afterName = true))
-        assertEquals(Request.OpenSettings(stopFirst = true), Requests.read("Stop. Kestrel, open settings.", spotted = true))
+        assertEquals(Request.OpenSettings, Requests.read("Kestrel, open settings.", spotted = false))
+        assertEquals(Request.OpenSettings, Requests.read("Kestrel, open your settings, please.", spotted = true))
+        assertEquals(Request.OpenSettings, Requests.read("Kestrel settings", spotted = false))
+        assertEquals(Request.OpenSettings, Requests.read("Open settings.", spotted = false, afterName = true))
+        assertEquals(Request.OpenSettings, Requests.read("Stop. Kestrel, open settings.", spotted = true))
         // The owner may mean Android's settings, so these stay a task and an instant command.
         assertEquals(Request.Task("open the settings."), Requests.read("Kestrel, open the settings.", spotted = false))
         assertEquals(Request.Other("Open settings."), Requests.read("Open settings.", spotted = false))
