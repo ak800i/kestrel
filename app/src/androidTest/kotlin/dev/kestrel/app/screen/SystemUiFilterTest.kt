@@ -12,7 +12,9 @@ import dev.kestrel.safety.Vault
 import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -61,8 +63,18 @@ class SystemUiFilterTest {
         screen.session.actions.global(GlobalAction.DISMISS_SHADE)
 
         screen.session.actions.global(GlobalAction.QUICK_SETTINGS)
-        val tile = screen.awaitElement(15_000) { it.packageName == SystemUiParts.SYSTEM_UI && parts.isTile(it) && it.label != null }
-        assertTrue("The observation left out a tile", build(screen.session.snapshots.current().snapshot).table.entries.any { it.key == tile.key })
+        // One snapshot for both steps, because a tile's key holds its state, and an actionable tile, which always gets a
+        // line of its own (task 5B-8's review, M1).
+        val (qs, tile) = withTimeout(15_000) {
+            var found: Pair<ScreenSnapshot, ScreenElement>? = null
+            while (found == null) {
+                val snapshot = screen.session.snapshots.current().snapshot
+                found = snapshot.elements.firstOrNull { it.packageName == SystemUiParts.SYSTEM_UI && parts.isTile(it) && it.isActionable }?.let { snapshot to it }
+                if (found == null) delay(100)
+            }
+            found
+        }
+        assertTrue("The observation left out a tile", build(qs).table.byKey(tile.key) != null)
     }
 
     @Test

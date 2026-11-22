@@ -135,7 +135,7 @@ class ScreenActions internal constructor(
         }
         if (key != null && element != null && expected?.invoke(element) == false) return ActionResult.CHANGED
         val node = element?.let { live.node(it.key) ?: return NOT_ON_SCREEN }
-        val page = node?.firefoxPage(element?.packageName)
+        val page = node?.firefoxPage(element.packageName)
         if (node != null && page != null) {
             // Inside a Firefox page, the root's action scrolls the whole page, and a region of the page needs a swipe (r57).
             val region = node.selfOrParent { it.isScrollable }?.node.let { it != null && it != page }
@@ -469,12 +469,14 @@ class ScreenActions internal constructor(
         refused(live.snapshot, key, expected)?.let { return it }
         val node = live.node(key) ?: return NOT_ON_SCREEN
         val windowId = live.snapshot.element(key)?.windowId
-        // Gecko's long click does nothing and answers true (r57), so a long press on a Firefox page is a gesture.
-        if (action == AccessibilityNodeInfo.ACTION_LONG_CLICK && node.firefoxPage(live.snapshot.element(key)?.packageName) != null) {
+        // Gecko's long click does nothing and answers true (r57), so a long press on a Firefox page is always a gesture,
+        // where the node is now, as below; a node that has gone or is hidden is looked for again.
+        val gecko = action == AccessibilityNodeInfo.ACTION_LONG_CLICK && node.firefoxPage(live.snapshot.element(key)?.packageName) != null
+        if (gecko && node.refresh() && node.isVisibleToUser) {
             val bounds = node.screenBounds()
             if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback))
         }
-        val target = node.touchTarget(action)
+        val target = if (gecko) null else node.touchTarget(action)
         if (target != null && !target.node.isEnabled) return DISABLED
         if (target != null && target.node.offers(action)) {
             if (target.node.perform(action)) {
@@ -484,7 +486,7 @@ class ScreenActions internal constructor(
             if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
             return pressAgain(key, action, fallback, expected, live.snapshot, windowId, target.node)
         }
-        if (node.refresh() && node.isVisibleToUser) {
+        if (!gecko && node.refresh() && node.isVisibleToUser) {
             // The element is still there, but what a touch on it reaches does not offer the action: a gesture presses it.
             val bounds = node.screenBounds()
             if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback))
@@ -495,7 +497,7 @@ class ScreenActions internal constructor(
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return GONE
         if (expected != null && !expected(element)) return ActionResult.CHANGED
-        val freshTarget = fresh.node(key)?.touchTarget(action)
+        val freshTarget = if (gecko) null else fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
         if (freshTarget != null && freshTarget.node.offers(action)) {
             if (freshTarget.node.perform(action)) return settled(ActionMethod.RETRY_ACTION)
