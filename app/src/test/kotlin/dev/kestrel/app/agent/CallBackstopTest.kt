@@ -10,10 +10,17 @@ import dev.kestrel.app.orchestrator.Rules
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.app.orchestrator.TaskPhase
 import dev.kestrel.app.orchestrator.Work
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class CallBackstopTest {
     private var now = 0L
     private val calls = FakeCalls()
@@ -83,6 +90,25 @@ class CallBackstopTest {
         now = 1_000
 
         assertEquals(CallBackstop.Verdict.PAUSE, backstop.onPause(PauseCause.OUTGOING_CALL))
+    }
+
+    @Test
+    fun aCallHandOverEndsByItselfOnlyWhenTheOwnerPlacesTheCall() = runTest {
+        val states = MutableStateFlow(running)
+        val incoming = async { awaitOutgoingCall(states) }
+        runCurrent()
+        states.value = running.copy(mode = Mode.RINGING)
+        runCurrent()
+        states.value = running.copy(mode = Mode.IN_CALL)
+        runCurrent()
+        assertFalse(incoming.isCompleted)
+        incoming.cancel()
+
+        val placed = async { awaitOutgoingCall(states.apply { value = running }) }
+        runCurrent()
+        states.value = running.copy(mode = Mode.IN_CALL)
+        runCurrent()
+        assertTrue(placed.isCompleted)
     }
 
     private class FakeCalls : CallApi {

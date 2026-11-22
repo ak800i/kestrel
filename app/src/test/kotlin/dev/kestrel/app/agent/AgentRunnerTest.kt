@@ -345,10 +345,30 @@ class AgentRunnerTest {
         advanceUntilIdle()
     }
 
+    @Test
+    fun aFailedCloseOfTheOwnerPortStillReleasesTheTask() = runTest {
+        var released = false
+        owner.closeFails = true
+        val prepare = environment
+        environment = AgentEnvironment { start ->
+            val ready = prepare.prepare(start) as Prepared.Ready
+            Prepared.Ready(ready.ports, ready.settings, ready.owner, ready.knownNames, ready.touches, ready.providerName) { released = true }
+        }
+
+        runner().run(1, "open Viber")
+        advanceUntilIdle()
+
+        // The release stops the touch watcher, so a throw of the owner port's close must not skip it.
+        assertTrue(released)
+        assertEquals(listOf("Ending a task"), failures)
+        assertEquals(Event.TaskEnded(1, "I couldn't do it: No such app. I didn't change anything."), ended())
+    }
+
     private class FakeTaskOwner(val owner: FakeOwner = FakeOwner()) : TaskOwner, OwnerPort by owner {
         val steered = mutableListOf<String>()
         var gateWait: CompletableDeferred<Unit>? = null
         var closed = false
+        var closeFails = false
 
         override suspend fun gate(): Gate {
             gateWait?.await()
@@ -379,6 +399,7 @@ class AgentRunnerTest {
 
         override fun close() {
             closed = true
+            if (closeFails) error("The card failed")
         }
     }
 }

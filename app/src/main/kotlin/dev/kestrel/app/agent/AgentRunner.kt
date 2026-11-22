@@ -328,9 +328,14 @@ internal class AgentRunner(
         while (ends.size > MAX_ENDS) ends.remove(ends.keys.first())
     }
 
+    // Each part in its own try: a failed close must not skip the release, which stops the touch watcher (design D19).
     private suspend fun release(ready: Prepared.Ready) {
         try {
             ready.owner.close()
+        } catch (e: Exception) {
+            report("Ending a task", e)
+        }
+        try {
             ready.release()
         } catch (e: Exception) {
             report("Ending a task", e)

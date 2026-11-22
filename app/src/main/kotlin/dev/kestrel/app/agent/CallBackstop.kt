@@ -1,7 +1,11 @@
 package dev.kestrel.app.agent
 
 import dev.kestrel.app.listen.CallApi
+import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.PauseCause
+import dev.kestrel.app.orchestrator.State
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 /**
  * The backstop against a call that an action of the agent placed (design D13 of sub-project 5; review B3-I1). The agent
@@ -52,5 +56,17 @@ internal class CallBackstop(private val calls: CallApi, private val clock: () ->
 
     companion object {
         const val WINDOW_MILLIS = 5_000L
+    }
+}
+
+/**
+ * Returns when [states] show a call that became active without ringing first, which is a call that the owner placed (the
+ * CALL hand-over of design D15 then ends by itself). A call that rang is an incoming call and does not count.
+ */
+internal suspend fun awaitOutgoingCall(states: Flow<State>) {
+    var rang = false
+    states.first { state ->
+        if (state.mode == Mode.RINGING) rang = true
+        state.mode == Mode.IN_CALL && !rang
     }
 }
