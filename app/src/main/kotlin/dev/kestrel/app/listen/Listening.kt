@@ -164,6 +164,10 @@ internal object ListeningTexts {
         "assistant app. Tap my listening notification, or open Kestrel from the launcher."
     const val SETTINGS_BLOCKED = "Android did not let me open my settings. Tap my notification, or open Kestrel from " +
         "the launcher."
+
+    // A task's hand-over (design D2 of sub-project 5).
+    const val NO_TASK_TO_CONTINUE = "There's no task to continue."
+    const val FINISH_HAND_OVER_FIRST = "Say 'Kestrel, continue' or 'cancel' first."
 }
 
 /**
@@ -295,6 +299,13 @@ class Listening internal constructor(
      */
     @Volatile
     internal var runTask: (task: Int, text: String) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.NO_TASKS)) }
+
+    /**
+     * Where the effects that steer a running task go, such as an answer to its question or the end of its hand-over
+     * (design D2 of sub-project 5): sub-project 5's AgentRunner. Called on the controller's thread; it must not block.
+     */
+    @Volatile
+    internal var steerTask: (Effect) -> Unit = {}
 
     // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start(),
     // onStartAction() and shutdown() change it together with [serviceState], so it always equals
@@ -1033,11 +1044,13 @@ class Listening internal constructor(
                     // stays on until Android stops the service, if it does, when destroyed() names the battery.
                     stopBecause(StopReason.BATTERY_RESTRICTED)
                 } else {
-                    bar.show(text(effect.feedback), keep = (effect.feedback as? Feedback.CommandText)?.keep == true)
+                    val keep = (effect.feedback as? Feedback.CommandText)?.keep == true || (effect.feedback as? Feedback.TaskText)?.keep == true
+                    bar.show(text(effect.feedback), keep = keep)
                 }
             }
             // The Orchestrator runs the timers itself.
-            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers -> Unit
+            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, Effect.TimeHandOver -> Unit
+            is Effect.AnswerTask, is Effect.ContinueTask, is Effect.ExpireHandOver -> steerTask(effect)
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
             // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.
@@ -1107,6 +1120,7 @@ class Listening internal constructor(
             Reply.SettingsBlocked -> ListeningTexts.SETTINGS_BLOCKED
             is Reply.Text -> reply.text
             is Reply.Command -> reply.text
+            Reply.NoTaskToContinue -> ListeningTexts.NO_TASK_TO_CONTINUE
         }
         // A command's say() waits for this reply, and returns once it has ended in any way.
         val ended = (reply as? Reply.Command)?.let { conversation?.takeSpoken(it.command) }
@@ -1164,6 +1178,8 @@ class Listening internal constructor(
         Feedback.CommandBusy -> ListeningTexts.BUSY
         Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
         Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
+        is Feedback.TaskText -> feedback.text
+        Feedback.FinishHandOverFirst -> ListeningTexts.FINISH_HAND_OVER_FIRST
     }
 
     private fun privateInput(): Boolean = try {

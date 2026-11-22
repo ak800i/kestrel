@@ -23,7 +23,9 @@ import kotlinx.coroutines.launch
  * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
  * does the timer of the pause after [silenceMillis] without speech (section 8.5), and the timer of the answer to an
  * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
- * started it; after a question without an answer, a number counts as a late answer for [lateMillis] (section 9.4). A
+ * started it; after a question without an answer, a number counts as a late answer for [lateMillis] (section 9.4). The
+ * answer to a task's question has the same waits, and a task's hand-over ends after [handOverMillis] (design D2 of
+ * sub-project 5). A
  * [Effect.RunCommand] that throws counts as a command that ended as failed,
  * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14). [onStep] sees each event with the
  * state before it and the step that it caused, on the Orchestrator's coroutine, after the new state is set and before the
@@ -38,6 +40,7 @@ class Orchestrator(
     private val silenceMillis: Long = SILENCE_MILLIS,
     private val questionMillis: Long = QUESTION_MILLIS,
     private val lateMillis: Long = LATE_MILLIS,
+    private val handOverMillis: Long = HAND_OVER_MILLIS,
     private val commandFailed: String? = null,
     private val onStep: (Event, State, Step) -> Unit = { _, _, _ -> },
 ) {
@@ -48,6 +51,7 @@ class Orchestrator(
     private var silence: Job? = null
     private var answer: Job? = null
     private var late: Job? = null
+    private var handOver: Job? = null
 
     /** The state after the last event. */
     val state: StateFlow<State> = current.asStateFlow()
@@ -88,13 +92,17 @@ class Orchestrator(
             silence?.cancel()
             silence = null
         }
-        if (!step.state.asking) {
+        if (!step.state.asking && step.state.taskAsking == null) {
             answer?.cancel()
             answer = null
         }
         if (!step.state.questionEnded) {
             late?.cancel()
             late = null
+        }
+        if (step.state.taskPhase != TaskPhase.HANDED_OVER) {
+            handOver?.cancel()
+            handOver = null
         }
         val notStarted = mutableListOf<Event>()
         for (effect in step.effects) {
@@ -120,6 +128,13 @@ class Orchestrator(
                 late = scope.launch {
                     delay(lateMillis)
                     send(Event.LateAnswersEnded(number))
+                }
+            } else if (effect == Effect.TimeHandOver) {
+                val number = step.state.handOver
+                handOver?.cancel()
+                handOver = scope.launch {
+                    delay(handOverMillis)
+                    send(Event.HandOverEnded(number))
                 }
             } else if (effect == Effect.TimeSilence) {
                 val number = step.state.silence
@@ -169,5 +184,8 @@ class Orchestrator(
         // Section 9.4: a late answer began before the question's wait ran out, so its transcript comes within a few
         // seconds of the end of the question.
         const val LATE_MILLIS = 10_000L
+
+        // Section 12.4: a hand-over ends after 3 minutes without "Kestrel, continue" or "cancel".
+        const val HAND_OVER_MILLIS = 180_000L
     }
 }

@@ -294,4 +294,28 @@ class OrchestratorTest {
         assertEquals(Work.IDLE, orchestrator.state.value.work)
         assertEquals(2, errors.size)
     }
+
+    @Test
+    fun aTaskQuestionEndsAfterItsWaitAndAHandOverAfterThreeMinutes() = runTest {
+        val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.Heard("Kestrel, pay the bill.", named = true))
+        orchestrator.send(Event.TaskAsks(1, "Which account?", TaskAsk.FREE))
+        orchestrator.send(Event.SpeechEnded)
+        runCurrent()
+        advanceTimeBy(15_001)
+        runCurrent()
+        assertEquals(Effect.AnswerTask(1, null), performed.last())
+
+        orchestrator.send(Event.TaskHandsOver(1, "This is a payment. Please finish it yourself, then say 'Kestrel, continue'."))
+        orchestrator.send(Event.SpeechEnded)
+        runCurrent()
+        advanceTimeBy(179_999)
+        runCurrent()
+        assertFalse(Effect.ExpireHandOver(1) in performed)
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(Effect.ExpireHandOver(1), performed.last())
+        assertEquals(emptyList<Exception>(), errors)
+    }
 }

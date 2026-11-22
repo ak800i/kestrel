@@ -33,6 +33,12 @@ sealed interface Request {
      */
     data class OpenSettings(val stopFirst: Boolean = false) : Request
 
+    /**
+     * "Kestrel, continue", only as the whole request after the name, with "please" allowed: it ends a hand-over (design D2
+     * and D15 of sub-project 5).
+     */
+    data object Continue : Request
+
     /** A call command (section 8.7), which [Requests.readCall] reads while a call rings or lasts. */
     sealed interface Call : Request
 
@@ -70,9 +76,9 @@ sealed interface Request {
  *    anywhere among them, as in "Stop it, Kestrel"; then the stop is named.
  * 3. The name starts the utterance, or, when the spotter heard it, comes after one short word such as "hey", "okay" or
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
- *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings", or a
- *    task. In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. A task
- *    or "open settings" after "stop" or "cancel" asks to cancel a running task first.
+ *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings",
+ *    "continue", or a task. In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which
+ *    ends the wait. A task or "open settings" after "stop" or "cancel" asks to cancel a running task first.
  * 4. Otherwise "stop listening" pauses, and "wake up", "stop listening", "turn off" or "switch off" followed by the
  *    name count too. In an answer to "Yes?", "never mind", "forget it" and "nothing" followed by the name are a named
  *    stop.
@@ -111,6 +117,7 @@ object Requests {
     // Kestrel's own phrases after the name, as phrase() gives them (Appendix A).
     private val TURN_OFF = setOf("turn off", "switch off")
     private val OPEN_SETTINGS = setOf("open settings", "open your settings", "settings")
+    private const val CONTINUE = "continue"
 
     // "Wake up" word by word, for the misheard words of wakeUpDistance().
     private val WAKE_UP = listOf("wake", "up")
@@ -251,6 +258,7 @@ object Requests {
             said == "stop listening" -> Request.PauseListening
             nameSaid && said in TURN_OFF -> Request.TurnOff
             said in OPEN_SETTINGS -> Request.OpenSettings(stopFirst)
+            said == CONTINUE -> Request.Continue
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)

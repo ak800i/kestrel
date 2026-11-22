@@ -285,4 +285,13 @@ class RequestsTest {
         assertEquals("Task(17 characters)", Request.Task("open the settings").toString())
         assertEquals("Other(11 characters)", Request.Other("Scroll down").toString())
     }
+
+    @Test
+    fun continueAfterTheNameEndsAHandOver() {
+        assertEquals(Request.Continue, Requests.read("Kestrel, continue.", spotted = false))
+        assertEquals(Request.Continue, Requests.read("Kestrel, continue, please", spotted = true))
+        assertEquals(Request.Continue, Requests.read("Continue.", spotted = false, afterName = true))
+        assertEquals(Request.Task("continue the video"), Requests.read("Kestrel, continue the video", spotted = false))
+        assertEquals(Request.Other("Continue"), Requests.read("Continue", spotted = false))
+    }
 }
