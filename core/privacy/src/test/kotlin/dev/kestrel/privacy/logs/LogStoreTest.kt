@@ -140,10 +140,11 @@ class LogStoreTest {
 
     @Test
     fun exportReadsTheLogsAPageAtATimeAndKeepsTheirOrder() = runTest {
-        // Two pages and one entry more, and every second entry at the same time, as several entries of one step are.
+        // Two pages and one entry more, and pairs of entries at the same time, as several entries of one step are; each
+        // page ends with the first entry of a pair, so that the export's cursor must tell them apart by their IDs.
         repeat(LogStore.EXPORT_PAGE * 2 + 1) {
             store.append(ActivityEvent(ActivityKind.NOTE, "note $it"))
-            if (it % 2 == 1) now += 1
+            if (it % 2 == 0) now += 1
         }
 
         val export = exported()
