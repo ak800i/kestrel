@@ -61,8 +61,8 @@ internal interface HandOverSignals {
     suspend fun opened(kind: HandOverKind)
 
     /**
-     * Returns when the hand-over of [kind] ended by itself: notification access when Kestrel's listener connects, a call
-     * when the owner placed it. It never returns for the other kinds.
+     * Returns when the hand-over of [kind] ended by itself: notification access when Kestrel's listener connects and
+     * Android's page has left the front, a call when the owner placed it. It never returns for the other kinds.
      */
     suspend fun endedByItself(kind: HandOverKind)
 }

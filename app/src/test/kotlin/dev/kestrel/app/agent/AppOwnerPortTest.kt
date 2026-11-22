@@ -18,7 +18,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -286,5 +288,27 @@ class AppOwnerPortTest {
         owner.answered("yes")
         assertEquals(ConfirmEnd.YES, asked.await())
         assertNull(owner.confirming)
+    }
+
+    @Test
+    fun theAccessHandOverEndsByItselfOnlyOnceAndroidsPageHasLeftTheFront() = runTest {
+        val connected = MutableStateFlow(false)
+        var front: String? = SETTINGS
+        val ended = async { awaitAccessGiven(connected, SETTINGS, { front }) }
+
+        runCurrent()
+        assertFalse(ended.isCompleted)
+        // The owner turned access on by touch; his Back or Home on the page must not reach a running task.
+        connected.value = true
+        advanceTimeBy(10_000)
+        assertFalse(ended.isCompleted)
+
+        front = "com.android.launcher3"
+        advanceTimeBy(1_000)
+        assertTrue(ended.isCompleted)
+    }
+
+    private companion object {
+        const val SETTINGS = "com.android.settings"
     }
 }

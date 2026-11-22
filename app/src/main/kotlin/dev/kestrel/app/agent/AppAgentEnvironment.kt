@@ -41,6 +41,7 @@ import dev.kestrel.safety.EmergencyNumbers
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.OwnActions
+import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -96,7 +97,7 @@ internal class AppAgentEnvironment(
             send,
             SessionOwnerScreen(session),
             AndroidOtherAudio(context),
-            AppHandOverSignals(context, open, states),
+            AppHandOverSignals(context, open, states) { session()?.let { ScreenTree.frontWindow(it.snapshots.current().snapshot)?.packageName } },
             askAndroid,
             { Permissions.granted(context, it) },
         )
