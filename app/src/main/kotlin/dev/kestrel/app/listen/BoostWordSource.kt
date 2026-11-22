@@ -74,7 +74,8 @@ internal class OwnerNames(
  * 100 phrases, so the cap drops system apps first: their common names, such as "Phone" or "Camera", need no boost, while
  * the owner's apps and people have the rare names that the recogniser misses, such as "Revolut". Sub-project 3 adds the
  * labels on the screen and the command vocabulary. A name with fewer than [SHORTEST] letters or digits, such as "X", is
- * left out, because so short a boost would pull many words towards it, and a repeated name counts once, ignoring case. A
+ * left out, because so short a boost would pull many words towards it, and a repeated name counts once, ignoring case;
+ * the owner's names lose their repeats before the limit, and one without a letter or with an "@" is left out. A
  * capital "Đ" becomes "Dj" ([spellable]), because the speech model has no piece for it and its guard would drop the whole
  * name. When the names cannot be read, [report] gets the error, which it must log by its classes only (section 13.5),
  * and the words go on without them. Never log a boost word, an app's name or a person's name.
@@ -86,7 +87,12 @@ internal class BoostWordSource(
 ) {
     /** Reads the names of the people and the apps on [Dispatchers.IO]. A voice session asks once, when it opens. */
     suspend fun words(): List<String> {
-        val owners = read("Reading the owner's names") { people.read() }.map { it.trim() }.filter(::fits).take(MAX_PEOPLE)
+        val owners = read("Reading the owner's names") { people.read() }
+            .map { it.trim() }
+            .filter { fits(it) && isPersonal(it) }
+            .map(::spellable)
+            .distinctBy { it.lowercase() }
+            .take(MAX_PEOPLE)
         val apps = read("Reading the names of the apps") { labels.read() }
         // The owner's apps first; filter and filterNot keep the package manager's order within each group.
         val names = (apps.filterNot { it.system } + apps.filter { it.system })
@@ -105,6 +111,9 @@ internal class BoostWordSource(
     }
 
     private fun fits(name: String): Boolean = name.count { it.isLetterOrDigit() } >= SHORTEST
+
+    // Android shows a contact without a name by its number or its e-mail address, which is no name to boost.
+    private fun isPersonal(name: String): Boolean = name.any { it.isLetter() } && '@' !in name
 
     companion object {
         const val NAME = "Kestrel"

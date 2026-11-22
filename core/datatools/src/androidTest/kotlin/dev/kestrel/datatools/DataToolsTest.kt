@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.ExifInterface
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
@@ -29,9 +30,13 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -40,9 +45,10 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 
 /**
- * The data tools against Android's own providers on kestrel-api37 (design D12 and D27 of sub-project 5): each case adds
- * its own test data under this test package and removes it again, also after a failure, and never reads anything else.
- * The intents are built and checked, never started.
+ * The data tools against Android's own providers (design D12 and D27 of sub-project 5): each case adds its own test data
+ * under this test package and removes it again, also after a failure. `AndroidContacts.details()` reads every contact on
+ * the device, which on kestrel-api37 holds only test data, so on any other device [onlyOnKestrelApi37] skips every case
+ * before it touches anything. The intents are built and checked, never started.
  */
 @RunWith(AndroidJUnit4::class)
 class DataToolsTest {
@@ -51,6 +57,21 @@ class DataToolsTest {
     // A library's device tests run in their own test package, which is also the target here.
     private val context: Context = instrumentation.targetContext
     private val resolver: ContentResolver = context.contentResolver
+
+    // A rule runs around @Before and @After, so a skipped case neither grants nor deletes anything.
+    @get:Rule
+    val onlyOnKestrelApi37 = TestRule { base, _ ->
+        object : Statement() {
+            override fun evaluate() {
+                assumeTrue("Runs only on kestrel-api37", avdName() == "kestrel-api37")
+                base.evaluate()
+            }
+        }
+    }
+
+    private fun avdName(): String =
+        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand("getprop ro.boot.qemu.avd_name"))
+            .use { it.readBytes().decodeToString().trim() }
 
     @Before
     fun grant() {

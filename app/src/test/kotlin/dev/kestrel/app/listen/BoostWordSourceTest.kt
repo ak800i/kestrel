@@ -70,6 +70,31 @@ class BoostWordSourceTest {
     }
 
     @Test
+    fun aStarredContactWithoutANameGivesNoBoostWord() = runTest {
+        // Android shows a contact without a name by its number or its e-mail address.
+        val contacts = listOf("+1 202 555 0143", "ana@example.com", "Ana Petrović").mapIndexed { i, name -> Contact(i.toLong(), listOf(name), emptyList(), starred = true) }
+        val source = object : ContactsSource {
+            override fun read() = contacts
+
+            override fun watch(changed: () -> Unit) = AutoCloseable { }
+        }
+        val people = OwnerNames(ContactsReader({ true }, source) { _, _ -> })
+
+        val words = BoostWordSource({ emptyList() }, people) { what, error -> reports += what to error }.words()
+
+        assertEquals(listOf("Kestrel", "Ana Petrović"), words)
+    }
+
+    @Test
+    fun repeatedNamesDoNotUseUpThePlacesOfTheOwnersNames() = runTest {
+        val people = PeopleNames { listOf("Ana", "ana", " Ana ") + (1..20).map { "Person $it" } }
+
+        val words = BoostWordSource({ emptyList() }, people) { what, error -> reports += what to error }.words()
+
+        assertEquals(listOf("Kestrel", "Ana") + (1..19).map { "Person $it" }, words)
+    }
+
+    @Test
     fun theStarredAndFoundContactsCountOnlyWhileKestrelMayReadTheContacts() = runTest {
         var allowed = false
         val starred = Contact(1, listOf("Đorđe Petrović"), emptyList(), starred = true)
