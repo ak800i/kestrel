@@ -254,6 +254,11 @@
 #                                           never press without the owner: anything in Kestrel's own app, a phone app or
 #                                           a contacts app, and in any app a call, emergency or SOS control
 # sub-project 5C: live hooks
+#   agent-live [-On true|false] [-Model id] opens (true) or closes (false) the device's live session of sitting 2 of
+#                                           scripts\a71-agent.ps1 (design D28), in which a task sent with -Live may call
+#                                           the owner's provider, and answers live=on|off; only a71-agent.ps1 opens it;
+#                                           with -Model it adds model=listed|unlisted: whether the default profile's own
+#                                           model list holds that ID
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -271,6 +276,7 @@ param(
         'agent-task', 'agent-answer', 'agent-script', 'agent-state', 'agent-cache', 'agent-touch-source', 'agent-settings',
         'agent-memory', 'agent-data', 'selfchat-check', 'agent-tree', 'screen-tap',
         # sub-project 5C: live hook names
+        'agent-live',
         'clipboard')][string]$Command,
     [string]$Key,
     [int]$Number,

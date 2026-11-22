@@ -22,6 +22,13 @@ param(
     [ValidateRange(1, 10)][int]$Runs = 3,
     [string]$Script,
     # sub-project 5C: live parameter
+    # Plan 5C: a live run in sitting 2 of scripts\a71-agent.ps1 (design D28), the lightweight model of each run (design
+    # D32 item 35), the first name of the Telegram variants (design D30 step 16), and the owner's address for
+    # read-email's test e-mail, which only a71-agent.ps1 reads from corpus\owner\a71-config.json.
+    [switch]$Live,
+    [string]$Model,
+    [string]$Name,
+    [string]$Mail,
     [string]$Results
 )
 $ErrorActionPreference = 'Stop'
@@ -31,6 +38,17 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Oracle.ps1"
 $live = $false
 # sub-project 5C: live
+# PowerShell's names ignore case, so $live above is the switch -Live too; the switch is read from the bound parameters.
+if ($PSBoundParameters['Live']) {
+    # A live run calls the owner's provider, so it runs only in sitting 2 of scripts\a71-agent.ps1, which sets
+    # KESTREL_AGENT_SESSION for its own process and opens the device's live session with the hook agent-live (design D28).
+    if (-not $env:KESTREL_AGENT_SESSION) { throw 'task-check.ps1 -Live runs only inside a sitting of scripts\a71-agent.ps1.' }
+    if ($Script) { throw 'task-check.ps1 -Live calls the owner''s provider and takes no -Script.' }
+    if ("$(& "$PSScriptRoot\hook.ps1" -Serial $Serial -Command agent-live)" -notmatch '(^|\s)live=on(\s|$)') {
+        throw "task-check.ps1 -Live needs the device's live session, which scripts\a71-agent.ps1 opens; $Serial has none."
+    }
+    $live = $true
+}
 if (-not $live -and -not $Script) { throw 'task-check.ps1 needs -Script <file> (the scripted model), or -Live in a sitting.' }
 Use-KestrelToolchain
 
