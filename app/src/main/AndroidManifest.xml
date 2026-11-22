@@ -45,6 +45,11 @@
     </queries>
     <!-- Plan 3C: permissions -->
     <!-- sub-project 5B: permissions -->
+    <!-- Asked together at the agent's first find_media; from Android 14 the owner may give only selected photos (design
+         D12 of sub-project 5). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
 
     <!-- Kestrel boosts the names of the apps that the launcher shows (design spec, sections 8.3 and 13.6). Since Android
          11 an app sees the other apps' launcher activities only when it declares their intent here. -->
