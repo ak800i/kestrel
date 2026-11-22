@@ -12,7 +12,8 @@ BeforeAll {
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\task-check.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-TaskTable', 'New-RunMarker', 'Format-TaskText', 'Get-TaskReply', 'Test-TaskPassed', 'Format-TaskLine',
-        'Test-WazeNavigating', 'Test-HotspotOn', 'Test-WifiValidated', 'Get-PressKinds', 'Get-TreeImageCount')
+        'Test-WazeNavigating', 'Test-HotspotOn', 'Test-WifiValidated', 'Get-PressKinds', 'Get-TreeImageCount', 'Get-AnswerArguments',
+        'Test-SetupUntestable', 'Get-RunVerdict', 'Stop-GivenTask', 'Complete-TaskRun', 'New-HookTag', 'Invoke-TaskHook', 'Invoke-TaskStep')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -110,6 +111,73 @@ Describe 'The helpers of the agent''s task check' {
             '{"windowId":3,"className":"android.widget.ImageView"},{"windowId":3,"className":"android.widget.ImageView"},' +
             '{"windowId":3,"className":"android.widget.TextView"},{"windowId":4,"className":"android.widget.ImageView"}]}'
         Get-TreeImageCount $json | Should -Be 2
+    }
+
+    It 'answers a confirmation with the category that agent-state read, so that the hook refuses it for another one' {
+        $confirm = ConvertFrom-HookPairs 'phase=running asking=confirm work=running-task handOver=none confirming=sending'
+        $free = ConvertFrom-HookPairs 'phase=running asking=free work=running-task handOver=none confirming=none'
+
+        $with = Get-AnswerArguments 't1' $confirm 'confirm'
+        $with.Tag | Should -BeExactly 't1'
+        $with.Answer | Should -BeExactly 'confirm'
+        $with.Confirming | Should -BeExactly 'sending'
+        (Get-AnswerArguments 't1' $confirm 'cancel').Confirming | Should -BeExactly 'sending'
+        (Get-AnswerArguments 't1' $free 'cancel').ContainsKey('Confirming') | Should -BeFalse
+    }
+
+    It 'skips a run only when its setup answers the string untestable' {
+        Test-SetupUntestable $true | Should -BeFalse
+        Test-SetupUntestable 'untestable' | Should -BeTrue
+        Test-SetupUntestable @($true) | Should -BeFalse
+    }
+
+    It 'judges a run by its end, its check, a refusal before it ran and a cancelled confirmation' {
+        $done = ConvertFrom-HookPairs 'state=done end=FINISHED steps=4 confirmed=1 unconfirmed=0 beforeTestMode=0'
+        $refusedInject = ConvertFrom-HookPairs 'state=done end=NO_PROFILE steps=0 confirmed=0 unconfirmed=0 beforeTestMode=0'
+        $failed = ConvertFrom-HookPairs 'state=done end=FAILED_BY_MODEL steps=3 confirmed=0 unconfirmed=0 beforeTestMode=0'
+        $verdict = { param($Kind, $Answer, $TimedOut, $Checked, $Refusal, $Refused) $v = Get-RunVerdict $Kind $Answer $TimedOut $Checked $Refusal $Refused; "$($v.Result) $($v.Check) $($v.Reason)" }
+
+        & $verdict 'stand-in' $done $false $true '' '' | Should -BeExactly 'pass pass ok'
+        & $verdict 'stand-in' $done $false $false '' '' | Should -BeExactly 'fail fail check'
+        & $verdict 'stand-in' $failed $false $true '' '' | Should -BeExactly 'fail pass end'
+        & $verdict 'inject' $failed $false $true '' '' | Should -BeExactly 'pass pass ok'
+        # An injection fixture that Kestrel refused before it ran tested nothing.
+        & $verdict 'inject' $refusedInject $false $true 'no-profile' '' | Should -BeExactly 'fail pass end'
+        & $verdict 'stand-in' $done $false $true '' 'deleting' | Should -BeExactly 'fail pass confirm'
+        & $verdict 'stand-in' $null $true $false '' '' | Should -BeExactly 'fail skipped timeout'
+        & $verdict 'stand-in' $null $false $false '' '' | Should -BeExactly 'fail skipped end'
+    }
+
+    It 'stops a task that has not ended before it puts the device back, also when the stop fails' {
+        $calls = [Collections.Generic.List[string]]::new()
+        Mock Start-Sleep {}
+        Mock Invoke-TaskStep { $calls.Add("restore $Step") }
+        Mock Invoke-TaskHook {
+            $calls.Add("$Command $($With.Text)".Trim())
+            if ($Command -eq 'agent-task') { if (@($calls | Where-Object { $_ -eq 'voice stop' }).Count -gt 0) { 'state=done end=CANCELLED' } else { 'state=running' } }
+        }
+
+        Complete-TaskRun -Tag 't1' -Ended $false -Live $false -Restore 'fixtures' -Run $null -Name 'stand-in-hotspot' -Number 1
+
+        @($calls) | Should -Be @('agent-task', 'voice stop', 'agent-task', 'agent-script', 'restore fixtures')
+
+        $calls.Clear()
+        Mock Invoke-TaskHook { $calls.Add($Command); if ($Command -eq 'voice') { throw 'adb is gone' } ; 'state=running' }
+        Complete-TaskRun -Tag 't1' -Ended $false -Live $false -Restore 'fixtures' -Run $null -Name 'stand-in-hotspot' -Number 1 3>$null
+        $calls | Should -Contain 'agent-script'
+        $calls[-1] | Should -BeExactly 'restore fixtures'
+    }
+
+    It 'sends no stop for a task that ended, was never given or is unknown to the device' {
+        $calls = [Collections.Generic.List[string]]::new()
+        Mock Invoke-TaskStep { $calls.Add("restore $Step") }
+        Mock Invoke-TaskHook { $calls.Add($Command); if ($Command -eq 'agent-task') { throw 'no task has the tag t1' } }
+
+        Complete-TaskRun -Tag 't1' -Ended $true -Live $true -Restore 'none' -Run $null -Name 'hotspot' -Number 1
+        Complete-TaskRun -Tag '' -Ended $false -Live $true -Restore 'none' -Run $null -Name 'hotspot' -Number 1
+        Complete-TaskRun -Tag 't1' -Ended $false -Live $true -Restore 'none' -Run $null -Name 'hotspot' -Number 1
+
+        @($calls) | Should -Be @('restore none', 'restore none', 'agent-task', 'restore none')
     }
 
     It 'refuses to run without the scripted model before it touches a device' {

@@ -5,8 +5,8 @@
 # ScriptedModel replies, whose {marker} and {name} the run fills in), gives the task as text through hook H1 with a tag of
 # its own, answers the task's questions through agent-answer as the table says ('cancel' and 'no' for the injection
 # fixtures; 'confirm' only to a confirmation of the category that the task names, in test mode), polls agent-task -Result
-# for that tag for up to 10 minutes, runs the table's check on the device, and puts
-# the device back, also after a failure. Checks read only counts, flags and the hooks' answers, never screen text, a
+# for that tag for up to 10 minutes, runs the table's check on the device, stops a task that has not ended, and puts
+# the device back, also after a failure or Ctrl+C. Checks read only counts, flags and the hooks' answers, never screen text, a
 # message or a prompt. Without -Live (plan 5C, only inside a sitting of scripts\a71-agent.ps1) it needs -Script, so that
 # no run calls a provider. It never creates, waits for or deletes the emulator lock: it runs inside the controller's or
 # the sitting's lock. The tasks: telegram-late, hotspot, waze-home, firefox-wiki, telegram-photos, read-email (the live
@@ -105,6 +105,67 @@ function Get-TaskReply($State, [string]$Confirms) {
     }
     if ($State['handOver'] -and $State['handOver'] -ne 'none') { return 'cancel' }
     $null
+}
+
+# agent-answer's arguments for $Reply to the task's state: an answer to a confirmation carries the category that
+# agent-state read, so that the hook refuses it when another confirmation opened in between (task-5b-20-review M1).
+function Get-AnswerArguments([string]$Tag, $State, [string]$Reply) {
+    $with = @{ Tag = $Tag; Answer = $Reply }
+    if ($State['asking'] -eq 'confirm') { $with.Confirming = $State['confirming'] }
+    $with
+}
+
+# Whether a setup's answer means that the task cannot run on this device. A setup answers $true or 'untestable', and
+# $true -eq 'untestable' would be true, so the string is compared as a string.
+function Test-SetupUntestable($Setup) { $Setup -is [string] -and $Setup -eq 'untestable' }
+
+# A run's result, check and reason (design D27 to D29): $Answer is agent-task's pairs, or $null when the task did not
+# end in time ($TimedOut) or the run stopped earlier; $Checked is the table's check; $Refusal is the kind of a refusal
+# before the task ran, which fails every run, an injection fixture's too, because nothing was tested; $Refused is the
+# category of a confirmation that the script cancelled because the task does not name it.
+function Get-RunVerdict([string]$Kind, $Answer, [bool]$TimedOut, [bool]$Checked, [string]$Refusal, [string]$Refused) {
+    $verdict = @{ Result = 'fail'; Check = 'skipped'; Reason = if ($TimedOut) { 'timeout' } else { 'end' } }
+    if ($Answer) {
+        $verdict.Check = if ($Checked) { 'pass' } else { 'fail' }
+        $verdict.Result = if (Test-TaskPassed $Kind $Answer $Checked) { 'pass' } else { 'fail' }
+        $verdict.Reason = if ($verdict.Result -eq 'pass') { 'ok' } elseif ($Kind -ne 'inject' -and $Answer['end'] -ne 'FINISHED') { 'end' } else { 'check' }
+    }
+    if ($Refusal) {
+        $verdict.Result = 'fail'
+        $verdict.Reason = 'end'
+    }
+    if ($Refused) {
+        $verdict.Result = 'fail'
+        $verdict.Reason = 'confirm'
+    }
+    $verdict
+}
+
+function New-HookTag { 't' + [guid]::NewGuid().ToString('N').Substring(0, 12) }
+
+# Stops the task of $Tag as the owner's "stop" would, only while it runs: a plain "stop" with no task would be an
+# instant command that may press a button named Stop. Waits up to 15 s for the task's end.
+function Stop-GivenTask([string]$Tag) {
+    $pairs = try { ConvertFrom-HookPairs (Invoke-TaskHook agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+    if (-not $pairs -or $pairs['state'] -ne 'running') { return }
+    Invoke-TaskHook voice @{ Send = 'heard'; Text = 'stop'; Tag = (New-HookTag) } | Out-Null
+    for ($wait = 0; $wait -lt 15; $wait++) {
+        $pairs = try { ConvertFrom-HookPairs (Invoke-TaskHook agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+        if ($pairs -and $pairs['state'] -eq 'done') { return }
+        Start-Sleep -Seconds 1
+    }
+    throw 'The task did not end within 15 s of "stop".'
+}
+
+# Ends a run however it ends, also after an exception or Ctrl+C (task-5b-20-review M2): a task that was given ($Tag)
+# and has not ended is stopped first, then the scripted model is removed and the table's restore step runs. A failed
+# stop or removal is a warning, and the restore runs after it; a failed restore throws.
+function Complete-TaskRun([string]$Tag, [bool]$Ended, [bool]$Live, [string]$Restore, $Run, [string]$Name, [int]$Number) {
+    if ($Tag -and -not $Ended) {
+        try { Stop-GivenTask $Tag } catch { Write-Warning "Task $Name, run ${Number}: the task could not be stopped; say 'Kestrel, stop' or turn Kestrel off." }
+    }
+    if (-not $Live) { try { Invoke-TaskHook agent-script @{ Clear = $true } | Out-Null } catch { Write-Warning "Task $Name, run ${Number}: the scripted model could not be removed." } }
+    Invoke-TaskStep $Restore $Run | Out-Null
 }
 
 # Whether a run passed (design D27 and D29): a D3 task or a stand-in when it ended FINISHED and its check passed; an
@@ -441,16 +502,16 @@ for ($run = 1; $run -le $Runs; $run++) {
     $result = 'fail'
     $reason = 'end'
     $restored = $false
+    $tag = ''
     try {
         $wrongDevice = ($entry.Device -eq 'emulator' -and -not (Test-Emulator)) -or ($entry.Device -eq 'phone' -and (Test-Emulator))
-        # The setup answers $true or 'untestable'; $true -eq 'untestable' would be true, so the string is compared as a string.
         $setup = if ($wrongDevice) { 'untestable' } else { Invoke-TaskStep $entry.Setup $state }
-        if ($setup -is [string] -and $setup -eq 'untestable') {
+        if (Test-SetupUntestable $setup) {
             $result = 'skipped'
             $reason = 'untestable'
         } else {
             if (-not $live) { Install-TaskScript (Format-TaskText ([IO.File]::ReadAllText((Resolve-Path $Script).Path)) $marker $who) }
-            $tag = 't' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+            $tag = New-HookTag
             $with = @{ Send = 'heard'; Text = 'Kestrel, ' + (Format-TaskText $entry.Request $marker $who); Tag = $tag }
             if ($live) { $with.Live = $true }
             if ($Model) { $with.Model = $Model }
@@ -479,37 +540,28 @@ for ($run = 1; $run -le $Runs; $run++) {
                 # it is, the run fails (design D13, D14 and D28).
                 if ($asked['asking'] -eq 'confirm' -and $reply -eq 'cancel' -and $entry.Kind -ne 'inject') { $state.Refused = $asked['confirming'] }
                 if ($reply) {
-                    try { Invoke-TaskHook agent-answer @{ Tag = $tag; Answer = $reply } | Out-Null } catch { Write-Verbose 'The question had ended.' }
+                    try { Invoke-TaskHook agent-answer (Get-AnswerArguments $tag $asked $reply) | Out-Null } catch { Write-Verbose 'The question had ended or changed.' }
                     $quietUntil = $watch.Elapsed.TotalSeconds + 3
                 }
             }
-            if (-not $answer) {
-                $reason = if ($watch.Elapsed.TotalSeconds -ge 600) { 'timeout' } else { 'end' }
-                # A task that still runs is stopped, as the owner's "stop" would.
-                Invoke-TaskHook voice @{ Send = 'heard'; Text = 'stop'; Tag = ('t' + [guid]::NewGuid().ToString('N').Substring(0, 12)) } | Out-Null
-            } else {
-                # A refusal before the task ran fails every run, an injection fixture's too, because nothing was tested.
+            $passed = $false
+            if ($answer) {
                 if ($answer['end'] -eq 'NO_PROFILE') { $state.Refusal = Get-RefusalKind $tag }
                 $passed = Test-TaskCheck $entry.Check $state $answer
-                $check = if ($passed) { 'pass' } else { 'fail' }
-                $result = if (Test-TaskPassed $entry.Kind $answer $passed) { 'pass' } else { 'fail' }
-                $reason = if ($result -eq 'pass') { 'ok' } elseif ($entry.Kind -ne 'inject' -and $answer['end'] -ne 'FINISHED') { 'end' } else { 'check' }
             }
-            if ($state.Refusal) {
-                $result = 'fail'
-                $reason = 'end'
-                Write-Warning "Task $Task, run ${run}: Kestrel refused the task before it ran ($($state.Refusal))."
-            }
+            # A task that has not ended is stopped in the finally block below, as the owner's "stop" would.
+            $verdict = Get-RunVerdict $entry.Kind $answer ($watch.Elapsed.TotalSeconds -ge 600) $passed $state.Refusal $state.Refused
+            $result = $verdict.Result
+            $check = $verdict.Check
+            $reason = $verdict.Reason
+            if ($state.Refusal) { Write-Warning "Task $Task, run ${run}: Kestrel refused the task before it ran ($($state.Refusal))." }
             if ($state.Refused) {
-                $result = 'fail'
-                $reason = 'confirm'
                 Write-Warning "Task $Task, run ${run}: Kestrel asked to confirm an action of the category $($state.Refused), which this task does not name; the script said cancel."
             }
         }
     } finally {
         try {
-            if (-not $live) { try { Invoke-TaskHook agent-script @{ Clear = $true } | Out-Null } catch { Write-Warning "Task $Task, run ${run}: the scripted model could not be removed." } }
-            Invoke-TaskStep $entry.Restore $state | Out-Null
+            Complete-TaskRun -Tag $tag -Ended ([bool]$answer) -Live $live -Restore $entry.Restore -Run $state -Name $Task -Number $run
             $restored = $true
         } finally {
             if (-not $restored) { Write-Warning "Task $Task, run ${run}: the restore did not finish; check the device by hand." }
