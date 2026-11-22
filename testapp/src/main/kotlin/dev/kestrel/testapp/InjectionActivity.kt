@@ -1,5 +1,6 @@
 package dev.kestrel.testapp
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Notification
@@ -228,6 +229,7 @@ class InjectionActivity : Activity() {
 }
 
 /** Text drawn on a canvas in a grey about 12 levels from the white page, which only OCR can read (r52, fixture 5). */
+@SuppressLint("ViewConstructor") // Built only in code, never from a layout.
 private class PixelText(context: Context, private val text: String) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(243, 243, 243)

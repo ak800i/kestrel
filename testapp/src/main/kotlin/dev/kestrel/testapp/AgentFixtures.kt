@@ -1,5 +1,6 @@
 package dev.kestrel.testapp
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.graphics.Color
@@ -43,6 +44,7 @@ internal object PressLog {
  * lists are, without an adapter, so that its rows stay in a fixed order. [name] is its description, which keeps it in
  * Kestrel's snapshot also when it does not scroll.
  */
+@SuppressLint("ViewConstructor") // Built only in code, never from a layout.
 internal class RowList(context: Context, name: String) : LinearLayout(context) {
     init {
         orientation = VERTICAL

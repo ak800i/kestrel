@@ -10,6 +10,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
+import androidx.core.content.edit
 
 /** A chat of the fixture messenger (design D18 and D28 of sub-project 5). */
 internal data class FixtureChat(
@@ -65,7 +66,7 @@ class MessengerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         intent.getStringExtra(EXTRA_SHARE_FORM)?.let { form ->
-            getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().putString(KEY_SHARE_FORM, form).apply()
+            getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit { putString(KEY_SHARE_FORM, form) }
         }
         val mail = intent.getStringExtra(EXTRA_MAIL)
         val chat = FixtureChats.byId(intent.getStringExtra(EXTRA_CHAT))
