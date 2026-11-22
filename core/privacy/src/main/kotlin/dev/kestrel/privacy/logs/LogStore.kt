@@ -11,6 +11,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import java.io.FileOutputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.io.Writer
 import java.time.Instant
@@ -85,21 +87,38 @@ class LogStore(
      * phone only this way, when the owner exports them to a file of their choice (design spec, section 13.5). It reads and
      * writes [EXPORT_PAGE] entries at a time, so that a log of tens of megabytes never has to fit into memory (design D32
      * item 47 of sub-project 5). An entry that can never be read is left out and deleted, as when the log is read. It
-     * flushes [output] and leaves it open.
+     * flushes [output] and leaves it open. When the export fails, it truncates a file's stream ([FileOutputStream], which
+     * a document provider's file gives) to nothing before it throws, so that no cut-off JSON stays in the file; any other
+     * stream keeps what was written.
      */
     suspend fun export(output: OutputStream) = withContext(dispatcher) {
         purgeExpired()
         val writer = output.bufferedWriter(Charsets.UTF_8)
-        writer.write("{\"exportedAt\":")
-        writer.write(json.encodeToString(String.serializer(), isoTime(clock())))
-        writer.write(",\"activity\":[")
-        val activity = exportLog(writer, ACTIVITY, ActivityEvent.serializer())
-        writer.write("],\"network\":[")
-        val network = exportLog(writer, NETWORK, NetworkEvent.serializer())
-        writer.write("]}")
-        writer.flush()
-        noteUnreadable(ACTIVITY, activity)
-        noteUnreadable(NETWORK, network)
+        val unreadable = try {
+            writer.write("{\"exportedAt\":")
+            writer.write(json.encodeToString(String.serializer(), isoTime(clock())))
+            writer.write(",\"activity\":[")
+            val activity = exportLog(writer, ACTIVITY, ActivityEvent.serializer())
+            writer.write("],\"network\":[")
+            val network = exportLog(writer, NETWORK, NetworkEvent.serializer())
+            writer.write("]}")
+            writer.flush()
+            activity to network
+        } catch (e: Throwable) {
+            emptied(output, e)
+            throw e
+        }
+        noteUnreadable(ACTIVITY, unreadable.first)
+        noteUnreadable(NETWORK, unreadable.second)
+    }
+
+    private fun emptied(output: OutputStream, failure: Throwable) {
+        val file = output as? FileOutputStream ?: return
+        try {
+            file.channel.truncate(0)
+        } catch (e: IOException) {
+            failure.addSuppressed(e)
+        }
     }
 
     /** Writes the entries of [log], oldest first and separated by commas, page by page; returns how many were unreadable. */

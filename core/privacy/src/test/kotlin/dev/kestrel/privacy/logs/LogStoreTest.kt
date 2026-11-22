@@ -14,8 +14,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
@@ -26,6 +30,9 @@ class LogStoreTest {
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
     private var now = 1_000_000_000_000L
     private val store = LogStore(dao, AesGcmFieldCipher { key }, clock = { now }, dispatcher = Dispatchers.Unconfined)
+
+    @get:Rule
+    val folder = TemporaryFolder(File("build").apply { mkdirs() })
 
     @Test
     fun readsActivityBackNewestFirst() = runTest {
@@ -171,6 +178,19 @@ class LogStoreTest {
         assertEquals(kinds, exported().activity.map { it.event.kind })
     }
 
+    @Test
+    fun aFailedExportLeavesTheFileEmptyRatherThanCutOff() = runTest {
+        // Entries long enough that the first page reaches the file before the second page's read fails.
+        repeat(LogStore.EXPORT_PAGE + 1) { store.append(ActivityEvent(ActivityKind.NOTE, "note $it " + "x".repeat(200))) }
+        dao.exportReadsBeforeFailure = 1
+        val file = folder.newFile("export.json")
+
+        val failure = runCatching { FileOutputStream(file).use { store.export(it) } }.exceptionOrNull()
+
+        assertEquals("the disk is full", failure?.message)
+        assertEquals(0L, file.length())
+    }
+
     private suspend fun exported(): LogExport {
         val output = ByteArrayOutputStream()
         store.export(output)
@@ -278,7 +298,11 @@ private class FakeLogDao : LogDao {
     // The largest number of rows that one export query asked for.
     var largestExportRead = 0
 
+    // How many export reads work before the next one fails, as a damaged database's would.
+    var exportReadsBeforeFailure = Int.MAX_VALUE
+
     override suspend fun oldestAfter(log: String, afterMillis: Long, afterId: Long, limit: Int): List<LogEntryRow> {
+        if (exportReadsBeforeFailure-- <= 0) throw IllegalStateException("the disk is full")
         largestExportRead = maxOf(largestExportRead, limit)
         return rows.filter { it.log == log && (it.timestampMillis > afterMillis || (it.timestampMillis == afterMillis && it.id > afterId)) }
             .sortedWith(compareBy<LogEntryRow> { it.timestampMillis }.thenBy { it.id })
