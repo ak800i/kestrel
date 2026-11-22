@@ -52,6 +52,22 @@ class AgentHooksTest {
     }
 
     @Test
+    fun agentSettingsChangesNothingWhenTheAliasesAreInvalid() = runBlocking {
+        val safety = graph.settings.get(SettingKeys.SAFETY)
+        val aliases = graph.agent.selfChatAliases
+        try {
+            val refused = hook("AGENT_SETTINGS --es ownerEmails changed@example.com --es selfChatAliases $FIXTURES")
+
+            assertTrue(refused, refused.contains("result=1, data=\"error: add --es selfChatAliases as pkg=pkg,pkg=pkg\""))
+            assertEquals(safety, graph.settings.get(SettingKeys.SAFETY))
+            assertEquals(aliases, graph.agent.selfChatAliases)
+        } finally {
+            graph.settings.set(SettingKeys.SAFETY, safety)
+            graph.agent.selfChatAliases = aliases
+        }
+    }
+
+    @Test
     fun theScriptedModelComesOnlyFromKestrelsFilesAndIsCleared() {
         val folder = File(context.filesDir, AgentTaskHooks.SCRIPTS).apply { mkdirs() }
         val file = File(folder, "hooks-test.json").apply { writeText("""[{"tool": "fail", "arguments": {"reason": "I stop here."}}]""") }

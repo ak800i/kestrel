@@ -160,18 +160,20 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     suspend fun settings(intent: Intent): String {
         // Only its named keys; another key is refused by its name, never with its value (design D18; review B3 nit 3).
         intent.extras?.keySet()?.firstOrNull { it !in SETTINGS_KEYS }?.let { throw HookError("agent-settings has no key $it") }
-        var safety = graph.settings.get(SettingKeys.SAFETY)
-        intent.getStringExtra(KEY_EMAILS)?.let { text -> safety = safety.copy(ownerEmails = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }) }
-        intent.getStringExtra(KEY_VIBER)?.let { safety = safety.copy(viberSelfChatName = it.trim().ifEmpty { VIBER_DEFAULT }) }
-        intent.getStringExtra(KEY_WHATSAPP)?.let { safety = safety.copy(whatsappOwnName = it.trim().ifEmpty { null }) }
-        graph.settings.set(SettingKeys.SAFETY, safety)
-        intent.getStringExtra(KEY_ALIASES)?.let { text ->
-            graph.agent.selfChatAliases = try {
+        // The aliases are read first, so that an invalid one leaves every setting as it was.
+        val aliases = intent.getStringExtra(KEY_ALIASES)?.let { text ->
+            try {
                 AgentHookAnswers.aliases(text)
             } catch (e: IllegalArgumentException) {
                 throw HookError("add --es selfChatAliases as pkg=pkg,pkg=pkg")
             }
         }
+        var safety = graph.settings.get(SettingKeys.SAFETY)
+        intent.getStringExtra(KEY_EMAILS)?.let { text -> safety = safety.copy(ownerEmails = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }) }
+        intent.getStringExtra(KEY_VIBER)?.let { safety = safety.copy(viberSelfChatName = it.trim().ifEmpty { VIBER_DEFAULT }) }
+        intent.getStringExtra(KEY_WHATSAPP)?.let { safety = safety.copy(whatsappOwnName = it.trim().ifEmpty { null }) }
+        graph.settings.set(SettingKeys.SAFETY, safety)
+        aliases?.let { graph.agent.selfChatAliases = it }
         return "ownerEmails=${safety.ownerEmails.size} viberSelfChatName=${if (safety.viberSelfChatName != VIBER_DEFAULT) "set" else "unset"} " +
             "whatsappOwnName=${if (safety.whatsappOwnName != null) "set" else "unset"} selfChatAliases=${graph.agent.selfChatAliases.size}"
     }
