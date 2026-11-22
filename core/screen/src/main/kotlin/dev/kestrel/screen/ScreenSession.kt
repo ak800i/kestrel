@@ -402,4 +402,42 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     }
 
     // sub-project 5C
+
+    /** Screenshots of the app in front for the agent's look_closer (design D20 of sub-project 5). */
+    val capture = dev.kestrel.screen.capture.ScreenCapture(service) { hideAllForCapture() }
+
+    // The agent's numbers of look_closer's third step, and the mode of "show numbers" that they replaced.
+    private var agentBadges = false
+    private var modeBeforeBadges: NumbersMode? = null
+
+    /**
+     * Makes Kestrel's overlays transparent for a screenshot of the whole display and returns the handle that shows them
+     * again, or null when Android did not draw them hidden within 500 ms (design D20 of sub-project 5).
+     */
+    suspend fun hideAllForCapture(): dev.kestrel.screen.overlay.HiddenOverlays? =
+        withContext(Dispatchers.Main) { dev.kestrel.screen.overlay.HiddenOverlays.hide(overlays) }
+
+    /**
+     * Shows the agent's [badges] instead of Numbering's own until [hideBadges] (design D20 of sub-project 5); "show
+     * numbers" pauses meanwhile and comes back afterwards.
+     */
+    suspend fun showBadges(badges: List<Badge>) = withContext(Dispatchers.Main) {
+        if (!agentBadges) {
+            agentBadges = true
+            modeBeforeBadges = numbersMode
+        }
+        numbersMode = null
+        whichOneShownOn = null
+        whichOne.value = false
+        changing { numbers.show(badges) }
+    }
+
+    /** Removes the agent's numbers; the numbers of "show numbers" come back when it was on. Nothing else changes. */
+    suspend fun hideBadges() = withContext(Dispatchers.Main) {
+        if (!agentBadges) return@withContext
+        agentBadges = false
+        val mode = modeBeforeBadges
+        modeBeforeBadges = null
+        if (mode == null) changing { numbers.hide() } else showNumbers(mode)
+    }
 }

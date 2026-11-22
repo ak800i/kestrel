@@ -21,6 +21,9 @@ class OverlayHost(private val service: AccessibilityService) {
 
     val context: Context get() = service
 
+    /** The overlays on the screen now, for a screenshot that hides them (design D20 of sub-project 5). */
+    internal val visibleViews: List<View> get() = shown.toList()
+
     /**
      * Shows [view], or updates its layout when it is on the screen already, and returns whether it is on the screen.
      * After [close], or once Android has disconnected the service, it shows nothing. It gives [view] the accessibility
