@@ -5,13 +5,18 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** Kestrel's speech engines (design spec, section 8.2). */
+/**
+ * The engines whose models Kestrel copies from this computer: the speech engines (design spec, section 8.2) and the OCR
+ * of the agent's look_closer (design D20 of sub-project 5). Every value of the manifest must be here, because an
+ * unknown value stops the whole manifest from parsing.
+ */
 @Serializable
 enum class Engine {
     @SerialName("vad") VAD,
     @SerialName("kws") KWS,
     @SerialName("asr") ASR,
     @SerialName("tts") TTS,
+    @SerialName("ocr") OCR,
 }
 
 /**

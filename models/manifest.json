@@ -224,6 +224,63 @@
           "url": "https://huggingface.co/csukuangfj/kokoro-int8-multi-lang-v1_0/resolve/57adb37fc0e8d4bd430cfc1b8f8c2294945b9af2/model.int8.onnx"
         }
       ]
+    },
+    {
+      "id": "ocr-ppocrv5-det",
+      "engine": "ocr",
+      "name": "PP-OCRv5 mobile text detector (RapidOCR's ONNX conversion)",
+      "licence": "Apache-2.0",
+      "project": "https://www.modelscope.cn/models/RapidAI/RapidOCR",
+      "files": [
+        {
+          "path": "ocr-ppocrv5-det/ch_PP-OCRv5_det_mobile.onnx",
+          "size": 4819576,
+          "sha256": "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
+          "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_mobile.onnx"
+        }
+      ]
+    },
+    {
+      "id": "ocr-ppocrv5-latin",
+      "engine": "ocr",
+      "name": "PP-OCRv5 mobile Latin recogniser (iText Research's ONNX conversion)",
+      "licence": "Apache-2.0",
+      "project": "https://huggingface.co/itextresearch/itext-latin_PP-OCRv5_mobile_rec_infer",
+      "files": [
+        {
+          "path": "ocr-ppocrv5-latin/latin_PP-OCRv5_mobile_rec.onnx",
+          "size": 8068114,
+          "sha256": "bc243bda530317419d3a24ee66af5406e672fceaca19627247f22a628920f778",
+          "url": "https://huggingface.co/itextresearch/itext-latin_PP-OCRv5_mobile_rec_infer/resolve/bb953c8fd9ebf04f344eb09c9c94bb367c39033c/inference.onnx"
+        },
+        {
+          "path": "ocr-ppocrv5-latin/ppocrv5_latin_dict.txt",
+          "size": 2616,
+          "sha256": "ccbcc45730b3fbbd9050c5bc74db6a99067141ef1035e3d14889a84a6b9b1aff",
+          "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/8ee4a20cc64fe2d73adf96110f9c9b1c3b7b85a5/ppocr/utils/dict/ppocrv5_latin_dict.txt"
+        }
+      ]
+    },
+    {
+      "id": "ocr-ppocrv5-cyrillic",
+      "engine": "ocr",
+      "name": "PP-OCRv5 mobile Cyrillic recogniser (RapidOCR's ONNX conversion)",
+      "licence": "Apache-2.0",
+      "project": "https://www.modelscope.cn/models/RapidAI/RapidOCR",
+      "files": [
+        {
+          "path": "ocr-ppocrv5-cyrillic/cyrillic_PP-OCRv5_rec_mobile.onnx",
+          "size": 8074092,
+          "sha256": "90f761b4bfcce0c8c561c0cb5c887b0971d3ec01c32164bdf7374a35b0982711",
+          "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/cyrillic_PP-OCRv5_rec_mobile.onnx"
+        },
+        {
+          "path": "ocr-ppocrv5-cyrillic/ppocrv5_cyrillic_dict.txt",
+          "size": 2781,
+          "sha256": "db40aa52ceb112055be80c694afdf655d5d2c4f7873704524cc16a447ca913ba",
+          "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/8ee4a20cc64fe2d73adf96110f9c9b1c3b7b85a5/ppocr/utils/dict/ppocrv5_cyrillic_dict.txt"
+        }
+      ]
     }
   ]
 }

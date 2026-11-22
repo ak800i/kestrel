@@ -16,6 +16,8 @@ android {
     buildFeatures {
         compose = true
     }
+    // sherpa-onnx and onnxruntime-android both ship an x86 libonnxruntime.so; the ABI filter keeps x86 out of the APK, but the merge checks duplicates first.
+    packaging.jniLibs.excludes += "lib/x86/**"
 }
 
 dependencies {
@@ -35,6 +37,7 @@ dependencies {
     // LogExportFileTest exports a store of its own, in a database in memory (design D32 item 47 of sub-project 5).
     androidTestImplementation(libs.androidx.room.runtime)
     // sub-project 5C: dependencies
+    implementation(project(":core:perception"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)

@@ -64,6 +64,14 @@ class ModelManifestTest {
     }
 
     @Test
+    fun theOcrModelsAreCopiedByDefault() {
+        val ocr = manifest.models.filter { it.engine == Engine.OCR }
+
+        assertEquals(listOf("ocr-ppocrv5-det", "ocr-ppocrv5-latin", "ocr-ppocrv5-cyrillic"), ocr.map { it.id })
+        assertTrue(ocr.none { it.optional })
+    }
+
+    @Test
     fun theAppIgnoresFieldsThatItDoesNotKnow() {
         val text = """{"format":1,"later":true,"models":[{"id":"m","engine":"vad","name":"M","licence":"MIT",""" +
             """"project":"https://example.org","files":[{"path":"m/a.onnx","size":1,"sha256":"${"0".repeat(64)}",""" +

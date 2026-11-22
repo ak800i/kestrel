@@ -708,7 +708,7 @@ A Gradle task fails the build when:
 - a dependency that ships in the app has a licence that is not on the list of licences that are compatible with GPL-3.0;
 - compiled code outside `:core:privacy` refers to network APIs such as `java.net.Socket`, `URL.openConnection`, `HttpURLConnection` or an OkHttp client;
 - a bundled native library imports socket functions such as `socket`, `connect` or `getaddrinfo`;
-- the ONNX Runtime version differs from the pinned version that was audited. This is currently 1.28.x, which has no Android telemetry. ONNX Runtime turns telemetry on by default on Android from 1.29 (B14). sherpa-onnx links its own copy of ONNX Runtime, so the audit pins the version of the sherpa-onnx library, Gradle checks the library's SHA-256 hash when it downloads it, and a device test checks that the library reports ONNX Runtime 1.28.2.
+- the ONNX Runtime version differs from the pinned version that was audited. This is currently 1.28.x, which has no Android telemetry. ONNX Runtime turns telemetry on by default on Android from 1.29 (B14). sherpa-onnx links its own copy of ONNX Runtime, so the audit pins the version of the sherpa-onnx library, Gradle checks the library's SHA-256 hash when it downloads it, and a device test checks that the library reports ONNX Runtime 1.28.2. Kestrel's OCR (`:core:perception`, section 11.6) ships ONNX Runtime's own Android library 1.28.0, the last version before 1.29 on Maven Central (it has no 1.28.1 or 1.28.2); the audit pins it to 1.28.* and allows its MIT licence, Gradle checks its SHA-256 hash, and the native scan finds no network function in it. The two copies work side by side in one process (spike S8).
 
 An exception requires a written justification in the audit configuration.
 

@@ -1,4 +1,5 @@
-# Copies Kestrel's speech models to a test device (design spec, section 8.10). It downloads the files that
+# Copies Kestrel's speech models and the OCR models of the agent's look_closer to a test device (design spec, section
+# 8.10; design D20 of sub-project 5), the OCR models from ModelScope, Hugging Face and GitHub. It downloads the files that
 # models\manifest.json lists into a cache on this computer, from the addresses in the manifest: sherpa-onnx's releases on
 # GitHub (github.com) and Hugging Face (huggingface.co), which redirect to their own download servers. It checks the
 # files' SHA-256 hashes. Then it copies the files that the device lacks, and those whose size or hash differs on the
@@ -28,4 +29,4 @@ $manifest = Select-ModelManifest -Manifest (Read-ModelManifest -Path (Join-Path 
 Assert-KestrelInstalled -Serial $Serial
 Save-ModelFiles -Manifest $manifest -Cache $Cache
 Push-ModelFiles -Serial $Serial -Manifest $manifest -Cache $Cache
-Write-Host "The speech models are on $Serial."
+Write-Host "The speech and OCR models are on $Serial."
