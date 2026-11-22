@@ -2,7 +2,8 @@
 # path of scripts\a71-commands.ps1 and scripts\a71-session.ps1 plays their clips through this computer's speakers, and
 # the phone matches each one to its text (hook voice-expect). scripts\make-corpus.ps1 -List checks says each line in one
 # of Kestrel's voices into corpus\generated\<voice>, next to the clips of commands.txt, so the ids start with k. No line
-# is marked for the owner, and none is private.
+# is marked for the owner, and none is private. k024 to k033 are the agent's phrases (plan 5C), which the speech checks of
+# scripts\lib\AgentChecks.ps1 play in the sittings of scripts\a71-agent.ps1.
 k001 | appendix | idle | 0 | Other | 0 | Tap 3.
 k002 | appendix | idle | 0 | Other | 0 | Tap Display.
 k003 | appendix | idle | 0 | Other | 0 | Display.
@@ -26,3 +27,13 @@ k020 | appendix | idle | 0 | Other | 0 | Open Clock.
 k021 | appendix | idle | 0 | Other | 0 | Open Calendar.
 k022 | task | idle | 1 | Task | 0 | Kestrel, read me the news.
 k023 | answer | answer | 0 | Task | 0 | Open the weather.
+k024 | task | idle | 1 | Task | 0 | Kestrel, send Ana a Viber message that I'm 10 minutes late.
+k025 | task | idle | 1 | Task | 0 | Kestrel, turn on hotspot.
+k026 | task | idle | 1 | Task | 0 | Kestrel, start Waze navigation to home.
+k027 | task | idle | 1 | Task | 0 | Kestrel, open en.wikipedia.org in Firefox and search for common kestrel.
+k028 | task | idle | 1 | Task | 0 | Kestrel, send yesterday's photos to John on Telegram.
+k029 | task | idle | 1 | Task | 0 | Kestrel, read my latest email back to me.
+k030 | own | idle | 0 | - | 0 | Confirm.
+k031 | own | idle | 0 | - | 0 | Yes.
+k032 | own | idle | 1 | - | 0 | Kestrel, remember that the gate code is blue.
+k033 | own | idle | 1 | - | 0 | Kestrel, save that as test routine.

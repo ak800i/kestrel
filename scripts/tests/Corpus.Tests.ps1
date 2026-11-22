@@ -193,7 +193,7 @@ Describe 'The corpora of the A71 sessions'' automatic checks' {
         $commands = @(Read-Corpus -Path "$root\commands.txt")
         $checks = @(Read-Corpus -Path "$root\checks.txt")
 
-        $checks.Count | Should -Be 23
+        $checks.Count | Should -Be 33
         @($checks | Where-Object { $_.Id -notmatch '^k\d{3}$' }).Count | Should -Be 0
         @($checks | Where-Object { $_.Owner }).Count | Should -Be 0
         $known = @($commands | ForEach-Object { $_.Text.ToLowerInvariant() })
