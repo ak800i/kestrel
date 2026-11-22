@@ -24,16 +24,19 @@ import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.MediaKinds
 import dev.kestrel.datatools.calendar.CalendarTool
 import dev.kestrel.datatools.clock.ClockIntents
 import dev.kestrel.datatools.contacts.AndroidContacts
 import dev.kestrel.datatools.contacts.FindContact
 import dev.kestrel.datatools.media.MediaTool
+import dev.kestrel.datatools.navigation.NavigationIntents
 import dev.kestrel.datatools.sms.SmsTool
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -196,6 +199,22 @@ class DataToolsTest {
         assertEquals(begin, event.getLongExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, 0))
         assertEquals(begin + 3_600_000, event.getLongExtra(CalendarContract.EXTRA_EVENT_END_TIME, 0))
         assertEquals("Kestrel test", event.getStringExtra(CalendarContract.Events.TITLE))
+    }
+
+    @Test
+    fun anIntentSpecBecomesTheIntentThatItDescribes() {
+        val link = IntentSpecs.toIntent(IntentSpec(Intent.ACTION_VIEW, "https://en.wikipedia.org/", "org.mozilla.firefox", browsable = true, extras = mapOf("note" to "test")))
+        assertEquals(Intent.ACTION_VIEW, link.action)
+        assertEquals("https://en.wikipedia.org/", link.dataString)
+        assertEquals("org.mozilla.firefox", link.`package`)
+        assertTrue(link.hasCategory(Intent.CATEGORY_BROWSABLE))
+        assertEquals("test", link.getStringExtra("note"))
+        assertTrue(link.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+
+        val waze = IntentSpecs.toIntent(NavigationIntents.waze("Main Street 1"))
+        assertEquals("waze://?q=Main%20Street%201&navigate=yes", waze.dataString)
+        assertEquals(NavigationIntents.WAZE, waze.`package`)
+        assertFalse(waze.hasCategory(Intent.CATEGORY_BROWSABLE))
     }
 
     /** Adds a local calendar of the test account, as a sync adapter may, and returns its ID. */
