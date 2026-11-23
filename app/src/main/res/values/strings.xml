@@ -79,16 +79,31 @@
     <string name="setup_state_warning">Needs attention</string>
 
     <string name="setup_install_title">Install Kestrel</string>
-    <string name="setup_install_detail">Kestrel is installed. scripts\\install.ps1 installs it with adb. On a Samsung phone, Auto Blocker must be off while USB debugging is on.</string>
-    <string name="setup_models_title">Copy the voice models</string>
-    <!-- Lint's Typos check reads "ps1 -Serial" as a typo for "ps! -Serial", so this suppression is on purpose. -->
-    <string name="setup_models_detail" tools:ignore="Typos">Run scripts\\push-models.ps1 -Serial &lt;serial&gt; on your computer. It downloads the speech models once and copies them to this phone, and Kestrel checks them against the hashes that come with the app.</string>
+    <string name="setup_install_detail">Kestrel is installed, from the APK of a GitHub release or, on a test device, with scripts\\install.ps1. On a Samsung phone, Auto Blocker must be off for the install.</string>
+    <string name="setup_models_title">Download the speech models</string>
+    <string name="setup_models_detail">Kestrel downloads its speech and OCR models, about 780 MB, and about 354 MB more with Kokoro, from their own sources: GitHub, Hugging Face and ModelScope. These servers see this phone\'s address and which files it downloads, and nothing else. Kestrel checks each file against the SHA-256 hash that comes with the app. Without \"Use mobile data\", it downloads only on Wi-Fi or another network that does not count its data. If a download stops, tap Download again, and it goes on where it stopped.</string>
     <string name="setup_models_checking">Checking the model files…</string>
     <string name="setup_models_check_failed">Kestrel could not check the model files. It checks them again when this page opens again.</string>
     <string name="setup_models_missing">Missing: %1$s</string>
     <string name="setup_models_damaged">Damaged: %1$s</string>
+    <string name="setup_models_suggest_kokoro">Kokoro is chosen first, because this phone is fast enough for it. Piper is downloaded too, and speaks whenever Kokoro cannot.</string>
+    <string name="setup_models_suggest_piper">Piper is chosen first, because Kokoro may speak too slowly on this phone. If you choose Kokoro, Kestrel measures its speed when it first speaks, and Piper speaks if Kokoro is too slow.</string>
+    <string name="setup_models_mobile_data">Use mobile data</string>
+    <string name="setup_models_download">Download</string>
+    <string name="setup_models_cancel">Cancel</string>
+    <string name="setup_models_progress" tools:ignore="PluralsCandidate">Downloaded %1$d MB of %2$d MB</string>
+    <string name="setup_models_cancelled">You cancelled the download. Tap Download, and it goes on where it stopped.</string>
+    <string name="setup_models_no_network">The phone has no network connection. Connect it, and tap Download again.</string>
+    <string name="setup_models_metered">Kestrel downloads only on Wi-Fi or another network that does not count its data. Connect to Wi-Fi, or turn on \"Use mobile data\", and tap Download again.</string>
+    <string name="setup_models_no_space" tools:ignore="PluralsCandidate">The download needs %1$d MB of free space, and the phone has %2$d MB. Free some space, and tap Download again.</string>
+    <string name="setup_models_server" tools:ignore="PluralsCandidate">The server answered %2$d for %1$s. Tap Download to try again later.</string>
+    <string name="setup_models_refused">Kestrel\'s network allowlist refused a server for %1$s, so Kestrel downloaded nothing more.</string>
+    <string name="setup_models_connection">The connection broke while Kestrel downloaded %1$s. Tap Download, and it goes on where it stopped.</string>
+    <string name="setup_models_storage">Kestrel could not write %1$s to the phone\'s storage.</string>
+    <string name="setup_models_damaged_download">%1$s did not match its SHA-256 hash, so Kestrel deleted it. Tap Download to download it again.</string>
+    <string name="setup_models_failed">The download failed. Tap Download to try again.</string>
     <string name="setup_service_title">Turn on Kestrel\'s accessibility service</string>
-    <string name="setup_service_detail">Kestrel reads the screen and acts on it through this service.</string>
+    <string name="setup_service_detail">Kestrel reads the screen and acts on it through this service. If Android says that this setting is restricted, as after an install from a browser, open Kestrel\'s app info, tap the menu and then Allow restricted settings, and try again.</string>
     <string name="setup_service_warning">Android lists Kestrel\'s accessibility service as on, but the service does not run, for example after Kestrel was stopped. Turn it off and on again.</string>
     <string name="setup_permissions_title">Allow the microphone and notifications</string>
     <string name="setup_permissions_detail">Kestrel listens for your voice and shows what it is doing in a notification.</string>
@@ -172,9 +187,8 @@
     <string name="voice_piper_short">Piper</string>
     <string name="voice_kokoro">Kokoro (af_heart)</string>
     <string name="voice_kokoro_short">Kokoro</string>
-    <!-- As for setup_models_detail, Lint's Typos check reads "ps1 -Kokoro" as a typo, so these suppressions are on purpose. -->
-    <string name="voice_kokoro_missing" tools:ignore="Typos">Kokoro\'s files are not on the phone. Copy them with scripts\\push-models.ps1 -Kokoro.</string>
-    <string name="voice_kokoro_damaged" tools:ignore="Typos">Some of Kokoro\'s files are missing or damaged. Copy them again with scripts\\push-models.ps1 -Kokoro.</string>
+    <string name="voice_kokoro_missing">Kokoro\'s files are not on the phone. Choose Kokoro in step 2 of the setup checklist, and tap Download.</string>
+    <string name="voice_kokoro_damaged">Some of Kokoro\'s files are missing or damaged. Choose Kokoro in step 2 of the setup checklist, and tap Download to download them again.</string>
     <string name="voice_kokoro_failed">Kokoro did not load the last time that Kestrel turned on, so Piper spoke. Kestrel tries Kokoro again the next time it turns on.</string>
     <string name="voice_kokoro_slow">Kokoro is too slow on this phone: it needs %1$s seconds to say one second of speech, so Piper speaks instead. Tap Kokoro again, and Kestrel measures it again the next time it turns on.</string>
     <string name="voice_speed">Speed: %1$s</string>

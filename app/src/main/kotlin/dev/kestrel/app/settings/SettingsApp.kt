@@ -82,14 +82,30 @@ fun SettingsApp(
     val providerReady by data.providerReady.collectAsState(initial = false)
     // Design D26 of sub-project 5: the flag is stored encrypted, and the Safety page sets it.
     val agentFreeReviewed by data.agentFreeReviewed.collectAsState(initial = false)
-    val states = SetupChecklist.states(status.copy(providerReady = providerReady, agentFreeReviewed = agentFreeReviewed))
+    // Release plan: the model step waits for Kokoro's files when the owner chose Kokoro for the download.
+    val downloadChoice by data.downloadChoice.collectAsState(initial = null)
+    val states = SetupChecklist.states(
+        status.copy(
+            providerReady = providerReady,
+            agentFreeReviewed = agentFreeReviewed,
+            kokoroWanted = downloadChoice?.voice == VoiceChoice.KOKORO,
+        ),
+    )
     val home = { page = SettingsPage.HOME }
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {
             SettingsPage.HOME -> ScrollingPage { HomePage(states, data) { page = it } }
             SettingsPage.CHECKLIST -> ScrollingPage {
                 ChecklistPage(
-                    states, status.models, status.samsung, onAction, { page = SettingsPage.PROVIDERS }, { page = SettingsPage.SAFETY }, home,
+                    states,
+                    status.models,
+                    status.samsung,
+                    data,
+                    onAction,
+                    onCheckModels,
+                    { page = SettingsPage.PROVIDERS },
+                    { page = SettingsPage.SAFETY },
+                    home,
                 )
             }
             SettingsPage.PROVIDERS -> ScrollingPage {

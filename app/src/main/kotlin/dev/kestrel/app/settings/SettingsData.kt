@@ -15,6 +15,11 @@ import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.listen.forgetsKokoroSpeed
+import dev.kestrel.app.download.DownloadChoice
+import dev.kestrel.app.download.DownloadState
+import dev.kestrel.app.download.ModelDownloadSetting
+import dev.kestrel.app.download.VoiceSuggestion
+import dev.kestrel.app.download.readHardware
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
@@ -91,6 +96,23 @@ interface SettingsData {
 
     /** What the page "Providers and profiles" reads and changes, or null for a fake without providers. */
     val providers: ProviderData? get() = null
+
+    // release plan: the model download
+
+    /** The voice and the network for the download of the models, which step 2 of the checklist shows. */
+    val downloadChoice: Flow<DownloadChoice> get() = flowOf(DownloadChoice(VoiceChoice.PIPER, VoiceChoice.PIPER, mobileData = false))
+
+    /** Stores [choice] for the next download. */
+    suspend fun setDownloadChoice(choice: DownloadChoice) {}
+
+    /** Where the download of the models stands. */
+    val modelDownload: Flow<DownloadState> get() = flowOf(DownloadState.Idle)
+
+    /** Starts a download of the models with [choice], unless one has not ended yet, and stores [choice]. */
+    suspend fun downloadModels(choice: DownloadChoice) {}
+
+    /** Stops the download of the models; its part files stay for the next one. */
+    fun cancelModelDownload() {}
 
     // sub-project 5B: safety and memory
 
@@ -214,6 +236,33 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override val providerReady: Flow<Boolean> get() = graph.providers.providerReady
 
     override val providers: ProviderData by lazy { StoredProviderData(graph.providers) }
+
+    // release plan: the stored model download
+
+    // Read once, by the flow below on Dispatchers.IO: the CPU's speed comes from files of the kernel.
+    private val suggestedVoice: VoiceChoice by lazy { VoiceSuggestion.of(readHardware(context)) }
+
+    override val downloadChoice: Flow<DownloadChoice> =
+        graph.settings.observe(SettingKeys.MODEL_DOWNLOAD)
+            .map { DownloadChoice(it.voice ?: suggestedVoice, suggestedVoice, it.mobileData) }
+            .flowOn(Dispatchers.IO)
+
+    override suspend fun setDownloadChoice(choice: DownloadChoice) = write {
+        graph.settings.set(SettingKeys.MODEL_DOWNLOAD, ModelDownloadSetting(choice.voice, choice.mobileData))
+    }
+
+    override val modelDownload: Flow<DownloadState> get() = graph.modelDownloads.state
+
+    // The download starts before the choice is stored, so that leaving the page at once cannot stop it.
+    override suspend fun downloadModels(choice: DownloadChoice) {
+        graph.modelDownloads.start(kokoro = choice.voice == VoiceChoice.KOKORO, mobileData = choice.mobileData) {
+            // The chosen voice counts once its files are on the phone, from the next time that Kestrel turns on.
+            setVoiceOptions(graph.settings.get(SettingKeys.VOICE).copy(voice = choice.voice))
+        }
+        setDownloadChoice(choice)
+    }
+
+    override fun cancelModelDownload() = graph.modelDownloads.cancel()
 
     // sub-project 5B: stored safety and memory
 

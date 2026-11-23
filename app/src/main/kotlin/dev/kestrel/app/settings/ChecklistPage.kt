@@ -18,14 +18,17 @@ import dev.kestrel.app.R
  * The setup checklist (design spec, section 15). [models] is what Kestrel knows about the model files. [samsung]: the
  * battery step also names Samsung's "Never sleeping apps". [onOpenProviders] opens the page "Providers and profiles"
  * from the provider step (design D18 of sub-project 4). [onOpenSafety] opens the Safety page, whose suggestions the step
- * of the agent-free apps reviews (design D26 of sub-project 5).
+ * of the agent-free apps reviews (design D26 of sub-project 5). The model step downloads the models with [data], and
+ * [onCheckModels] checks them again when a download ends (release plan).
  */
 @Composable
 internal fun ChecklistPage(
     states: Map<SetupStep, StepState>,
     models: ModelCheck,
     samsung: Boolean,
+    data: SettingsData,
     onAction: (SetupAction) -> Unit,
+    onCheckModels: () -> Unit,
     onOpenProviders: () -> Unit,
     onOpenSafety: () -> Unit,
     onBack: () -> Unit,
@@ -34,7 +37,10 @@ internal fun ChecklistPage(
     for (step in SetupStep.entries) {
         val state = states.getValue(step)
         StepCard(step, state, samsung, onAction) {
-            if (step == SetupStep.COPY_MODELS) ModelProblems(models)
+            if (step == SetupStep.COPY_MODELS) {
+                ModelDownloadStep(data, state in NEEDS_ACTION, onCheckModels)
+                ModelProblems(models)
+            }
             if (step == SetupStep.PROVIDER && state in NEEDS_ACTION) {
                 Button(onClick = onOpenProviders) { Text(stringResource(R.string.setup_provider_open)) }
             }

@@ -134,7 +134,7 @@ internal fun VoicePage(data: SettingsData, models: ModelCheck, onBack: () -> Uni
 internal fun speedText(speed: Float): String = String.format(Locale.ROOT, "%.1f", speed)
 
 @Composable
-private fun VoiceRow(label: String, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
+internal fun VoiceRow(label: String, selected: Boolean, enabled: Boolean, onSelect: () -> Unit) {
     // The whole row is one radio button, so that its label names it for Voice Access and TalkBack.
     Row(
         Modifier

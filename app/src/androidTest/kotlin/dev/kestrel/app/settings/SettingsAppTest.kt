@@ -39,6 +39,9 @@ import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
 import dev.kestrel.privacy.logs.NetworkOutcome
 import dev.kestrel.voice.VoiceChoice
+import dev.kestrel.app.download.DownloadChoice
+import dev.kestrel.app.download.DownloadState
+import dev.kestrel.voice.models.DownloadFailure
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.Model
 import dev.kestrel.voice.models.ModelFile
@@ -659,6 +662,50 @@ class SettingsAppTest {
         assertEquals(0, data.approvals.value.size)
     }
 
+    @Test
+    fun theModelStepOffersTheSuggestedVoiceAndDownloadsTheChoice() {
+        data.choice.value = DownloadChoice(VoiceChoice.KOKORO, VoiceChoice.KOKORO, mobileData = false)
+        show(NOTHING_SET_UP)
+        openChecklist()
+        compose.onNodeWithText(text(R.string.setup_models_suggest_kokoro)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.voice_kokoro)).performScrollTo().assertIsSelected()
+
+        compose.onNodeWithText(text(R.string.voice_piper)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.setup_models_mobile_data)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.setup_models_download)).performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf(DownloadChoice(VoiceChoice.PIPER, VoiceChoice.KOKORO, mobileData = true)), data.downloads)
+    }
+
+    @Test
+    fun theModelStepShowsTheProgressAndCancels() {
+        data.download.value = DownloadState.Running(doneBytes = 100_000_000, totalBytes = 400_000_000)
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_models_progress, 100L, 400L)).performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(text(R.string.setup_models_download)).assertCountEquals(0)
+        compose.onNodeWithText(text(R.string.setup_models_cancel)).performScrollTo().performClick()
+
+        assertEquals(1, data.cancels)
+    }
+
+    @Test
+    fun theModelStepSaysWhyADownloadStoppedAndChecksTheModelsWhenOneEnds() {
+        data.download.value = DownloadState.Failed(DownloadFailure.MeteredNetwork)
+        show(NOTHING_SET_UP)
+        openChecklist()
+        compose.onNodeWithText(text(R.string.setup_models_metered)).performScrollTo().assertIsDisplayed()
+        compose.waitForIdle()
+        val before = checks
+
+        data.download.value = DownloadState.Done
+        compose.waitForIdle()
+
+        assertEquals(before + 1, checks)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())
@@ -704,6 +751,28 @@ class SettingsAppTest {
 
         override suspend fun revokeScreenshots(row: dev.kestrel.app.agent.eyes.ScreenshotApprovalRow) {
             approvals.value = approvals.value - row
+        }
+
+        // release plan: the fake model download
+        val choice = MutableStateFlow(DownloadChoice(VoiceChoice.PIPER, VoiceChoice.PIPER, mobileData = false))
+        val download = MutableStateFlow<DownloadState>(DownloadState.Idle)
+        val downloads = mutableListOf<DownloadChoice>()
+        var cancels = 0
+
+        override val downloadChoice: kotlinx.coroutines.flow.Flow<DownloadChoice> get() = choice
+
+        override suspend fun setDownloadChoice(choice: DownloadChoice) {
+            this.choice.value = choice
+        }
+
+        override val modelDownload: kotlinx.coroutines.flow.Flow<DownloadState> get() = download
+
+        override suspend fun downloadModels(choice: DownloadChoice) {
+            downloads += choice
+        }
+
+        override fun cancelModelDownload() {
+            cancels++
         }
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()

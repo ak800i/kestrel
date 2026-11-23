@@ -1,5 +1,6 @@
 package dev.kestrel.app.settings
 
+import dev.kestrel.voice.models.ModelDownloader
 import dev.kestrel.voice.models.ModelStatus
 import kotlinx.coroutines.CancellationException
 
@@ -55,7 +56,8 @@ sealed interface ModelCheck {
  * shortcut, and of the accessibility button or gesture (section 8.6). [providerReady]: the default provider profile
  * exists, its credential exists, and its borrowed sign-in is not switched off (design D18 of sub-project 4).
  * [notificationAccess]: Kestrel's notification listener has Android's notification access, and [agentFreeReviewed]: the
- * owner has reviewed the suggested agent-free apps once (design D26 of sub-project 5).
+ * owner has reviewed the suggested agent-free apps once (design D26 of sub-project 5). [kokoroWanted]: the owner chose
+ * Kokoro for the download of the models, so its files must be on the phone too (release plan).
  */
 data class SetupStatus(
     val serviceOn: Boolean,
@@ -74,6 +76,7 @@ data class SetupStatus(
     val providerReady: Boolean = false,
     val notificationAccess: Boolean = false,
     val agentFreeReviewed: Boolean = false,
+    val kokoroWanted: Boolean = false,
 )
 
 /** Decides the state of each step of the setup checklist (design spec, section 15). */
@@ -82,8 +85,7 @@ object SetupChecklist {
         when (step) {
             // Kestrel is running, so it is installed.
             SetupStep.INSTALL -> StepState.DONE
-            // An optional model that the owner did not copy, such as the Kokoro voice, is no problem.
-            SetupStep.COPY_MODELS -> doneIf((status.models as? ModelCheck.Done)?.statuses?.all { it.ready || it.absent } == true)
+            SetupStep.COPY_MODELS -> doneIf(modelsReady(status))
             SetupStep.PROVIDER -> doneIf(status.providerReady)
             // Design D26 of sub-project 5: optional, because the agent asks for notification access at its first use and the
             // shipped agent-free apps count without a review.
@@ -114,6 +116,13 @@ object SetupChecklist {
     }
 
     private fun doneIf(done: Boolean) = if (done) StepState.DONE else StepState.TO_DO
+
+    // An optional model that is not on the phone, such as the Kokoro voice, is no problem, unless the owner chose Kokoro for
+    // the download (release plan).
+    private fun modelsReady(status: SetupStatus): Boolean {
+        val statuses = (status.models as? ModelCheck.Done)?.statuses ?: return false
+        return statuses.all { it.ready || (it.absent && !(status.kokoroWanted && it.model.id == ModelDownloader.KOKORO_ID)) }
+    }
 }
 
 /**

@@ -56,6 +56,10 @@ import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.measuredTooSlow
 import dev.kestrel.app.listen.openWithBoostWords
 import dev.kestrel.app.listen.realTimeFactor
+import dev.kestrel.app.download.ModelDownloadSetting
+import dev.kestrel.app.download.ModelDownloads
+import dev.kestrel.app.download.downloadBlockedBy
+import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.providers.ProviderAllowlist
 import dev.kestrel.app.providers.StoredCredentials
@@ -63,6 +67,7 @@ import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.BlockedRequestException
 import dev.kestrel.privacy.network.LogPathTag
+import dev.kestrel.privacy.network.ModelDownloadTag
 import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.network.TaskTag
@@ -86,6 +91,8 @@ import dev.kestrel.voice.listen.MicCapture
 import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelManifest
+import dev.kestrel.voice.models.DownloadProgress
+import dev.kestrel.voice.models.ModelDownloader
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -180,6 +187,11 @@ object SettingKeys {
         dev.kestrel.app.agent.eyes.ScreenshotApprovalList.serializer(),
         dev.kestrel.app.agent.eyes.ScreenshotApprovalList(),
     )
+
+    // release plan: keys
+
+    /** The voice and the network that the owner chose for the download of the models (release plan). */
+    val MODEL_DOWNLOAD = SettingKey("model-download", ModelDownloadSetting.serializer(), ModelDownloadSetting())
 }
 
 /**
@@ -408,6 +420,22 @@ class AppGraph(context: Context) {
 
     /** Kestrel's speech engines, which load their models from [models] (design spec, section 8.2). */
     val voice: VoiceEngines by lazy { VoiceEngines(models, File(appContext.noBackupFilesDir, "voice")) }
+
+    /** The download of the models from step 2 of the setup checklist (release plan): one at a time, in [scope]. */
+    internal val modelDownloads: ModelDownloads by lazy { ModelDownloads(scope, ::downloadModels, reportFailure) }
+
+    /**
+     * Downloads the models that are missing or damaged through the network gateway, from the download hosts of the
+     * manifest that comes with the app, which only these requests may reach (release plan). It runs in [scope], so the
+     * gateway and the downloader are built off the main thread.
+     */
+    private suspend fun downloadModels(kokoro: Boolean, mobileData: Boolean, progress: (DownloadProgress) -> Unit) {
+        networkPolicy.setModelHosts(models.manifest.downloadHosts)
+        val downloader = ModelDownloader(models, network.callFactory, refused = { it is BlockedRequestException }) {
+            it.tag(ModelDownloadTag::class.java, ModelDownloadTag)
+        }
+        downloader.download(kokoro, gate = { downloadBlockedBy(networkKind(appContext), mobileData) }, progress = progress)
+    }
 
     private val kokoroFallback = MutableStateFlow(false)
 

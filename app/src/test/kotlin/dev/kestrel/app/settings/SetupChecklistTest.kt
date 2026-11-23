@@ -143,6 +143,21 @@ class SetupChecklistTest {
     }
 
     @Test
+    fun theModelStepWaitsForKokoroWhenTheOwnerChoseItForTheDownload() {
+        val voice = Model("tts", Engine.TTS, "Voice", "MIT", "https://example.org", listOf(ModelFile("tts/a.onnx", 1, "0".repeat(64))))
+        val kokoro = Model(
+            "tts-kokoro", Engine.TTS, "Kokoro", "Apache-2.0", "https://example.org",
+            listOf(ModelFile("tts-kokoro/model.onnx", 1, "0".repeat(64))), optional = true,
+        )
+        val absent = ModelStatus(kokoro, missing = listOf("tts-kokoro/model.onnx"), damaged = emptyList())
+        val models = ModelCheck.Done(listOf(ModelStatus(voice, emptyList(), emptyList()), absent))
+        fun state(status: SetupStatus) = SetupChecklist.states(status).getValue(SetupStep.COPY_MODELS)
+
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(models = models)))
+        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = models, kokoroWanted = true)))
+    }
+
+    @Test
     fun aModelCheckThatFailsIsReportedAndSaysSo() = runTest {
         val failure = IllegalStateException("The manifest cannot be read")
         val reported = mutableListOf<Exception>()
