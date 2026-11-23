@@ -58,6 +58,8 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.okhttp.mockwebserver3)
+    // ModelDownloadDeviceTest packs a .tar.bz2 archive for its local server (release plan).
+    androidTestImplementation(libs.commons.compress)
     // Spike S8: Kestrel's OCR will use onnxruntime-android beside sherpa-onnx's own ONNX Runtime (design spec, section 19).
     androidTestImplementation(libs.onnxruntime.android)
     // SystemUiFilterTest builds observations with plan 5A's ObservationBuilder (design D9 of sub-project 5).
