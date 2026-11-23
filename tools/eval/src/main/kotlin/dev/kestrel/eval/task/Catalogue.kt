@@ -4,7 +4,7 @@ import dev.kestrel.eval.device.DeviceKind
 
 /** Every task of :tools:eval (design D4 and D7 of sub-project 6), in the suite's order. */
 object Catalogue {
-    val ALL: List<Task> = D3Tasks.ALL + StandIns.ALL
+    val ALL: List<Task> = D3Tasks.ALL + StandIns.ALL + InjectionFixtures.ALL
 
     fun find(name: String): Task? = ALL.firstOrNull { it.name == name }
 
