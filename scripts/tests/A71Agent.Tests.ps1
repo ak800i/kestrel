@@ -25,6 +25,11 @@ BeforeAll {
         'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText',
         'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
         'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown')
+    # The owner's decisions for the sittings (fix-5c-owner), and the helpers that their steps call, which the tests mock.
+    $helpers += @('Get-AccountCount', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
+        'Test-WazeHome', 'Set-EmulatorFix', 'Start-TestLocation', 'Invoke-EmulatorAccountItem', 'Invoke-OwnerItem', 'Invoke-OwnerStep', 'Set-OwnerNames',
+        'Request-OwnerItem', 'Install-FromPlay', 'Start-Listening', 'Invoke-FingerCheck', 'Invoke-OwnerStep2', 'Get-DefaultProfileKind', 'Test-CompareModel',
+        'Invoke-RecordingsStep', 'Invoke-EmulatorTasks', 'Invoke-EmulatorRunsStep', 'Invoke-CompareStep')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -623,8 +628,8 @@ Describe 'The restores and checks of every call of a sitting (the fix round befo
 
         Invoke-EndStep2
 
-        @($registered) | Should -Be @('the owner''s Copilot profile on kestrel-api37', 'the Play Store on kestrel-api37', 'the test Google account and the apps of sitting 1 on kestrel-api37')
-        @($done) | Should -Be @('the test Google account and the apps of sitting 1 on kestrel-api37', 'the Play Store on kestrel-api37', 'the owner''s Copilot profile on kestrel-api37', 'the live session on the A71')
+        @($registered) | Should -Be @('the Play Store on kestrel-api37', 'the test Google account on kestrel-api37')
+        @($done) | Should -Be @('the test Google account on kestrel-api37', 'the Play Store on kestrel-api37', 'the live session on the A71')
     }
 
     It 'runs only the step end after the ceiling, and then stops with the ceiling''s sentence (fix-5c-scripts-review I1, M1)' {
@@ -697,5 +702,213 @@ Describe 'The restores and checks of every call of a sitting (the fix round befo
         Mock Invoke-Device { @('  mCallState=0') } -ParameterFilter { $Command -eq 'dumpsys telephony.registry' }
         Test-StepCalls 'injection' 'before' | Should -BeFalse
         Should -Invoke Stop-DeviceCall -Times 1 -Exactly
+    }
+}
+Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
+    BeforeEach {
+        $EmulatorSerial = 'emulator-5554'
+        $A71 = 'R58N66RVD7Z'
+        $Serial = $A71
+        $DryRun = $false
+        $Step = @()
+        # The emulator holds the owner's own Google account: emulatorGmailAddress equals gmailAddress.
+        $config = [pscustomobject]@{ whatsappOwnName = ''; gmailAddress = 'pera.test@example.com'; emulatorGmailAddress = 'Pera.Test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Knez Mihailova' }
+        $owner = $TestDrive
+        $recordFile = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N')).json"
+        $pending = [System.Collections.Generic.List[object]]::new()
+        $registered = [System.Collections.Generic.List[object]]::new()
+        Mock Register-Restore { $restore = [pscustomobject]@{ What = $What; Data = $Data; Action = $Action }; $registered.Add($restore); $restore }
+        Mock Complete-Restore { }
+        $results = [System.Collections.Generic.List[string]]::new()
+        Mock Add-Result { $results.Add("${StepName}: $Text") }
+        Mock Start-Sleep { }
+        Mock Write-Host { }
+        $commands = [System.Collections.Generic.List[string]]::new()
+        Mock Invoke-Device { $commands.Add("$Device $Command") }
+        Mock Invoke-Device { '    Account {name=someone@example.com, type=com.google}' } -ParameterFilter { $Device -eq $EmulatorSerial -and $Command -eq 'dumpsys account' }
+        Mock Invoke-Device { '      android.permission.POST_NOTIFICATIONS: granted=true' } -ParameterFilter { $Command -eq 'dumpsys package com.google.android.gm' }
+    }
+
+    It 'takes an empty or missing whatsappOwnName, because WhatsApp is skipped, and then sets no WhatsApp name in test mode' {
+        $path = Join-Path $TestDrive 'a71-config.json'
+        $fake = [ordered]@{ pin = '97531'; whatsappOwnName = ''; gmailAddress = 'pera.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Knez Mihailova' }
+        [IO.File]::WriteAllText($path, ($fake | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        "$((Get-AgentConfig $path).whatsappOwnName)" | Should -Be ''
+        $fake.Remove('whatsappOwnName')
+        [IO.File]::WriteAllText($path, ($fake | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        "$((Get-AgentConfig $path).whatsappOwnName)" | Should -Be ''
+
+        Mock Invoke-DeviceHook { "ownerEmails=0 viberSelfChatName=unset whatsappOwnName=$(if ($With.WhatsappOwnName) { 'set' } else { 'unset' }) selfChatAliases=0" } -ParameterFilter { $Command -eq 'agent-settings' }
+        Set-OwnerNames $A71
+        Should -Invoke Invoke-DeviceHook -Times 1 -Exactly -ParameterFilter { $Command -eq 'agent-settings' -and $With.ContainsKey('WhatsappOwnName') -and $With.WhatsappOwnName -eq '' }
+
+        $config.whatsappOwnName = 'Pera Test'
+        Set-OwnerNames $A71
+        Should -Invoke Invoke-DeviceHook -Times 1 -Exactly -ParameterFilter { $Command -eq 'agent-settings' -and $With.WhatsappOwnName -eq 'Pera Test' }
+    }
+
+    It 'counts Telegram''s accounts by their type only, and never lists WhatsApp among the apps that the owner installs' {
+        $accounts = @('    Account {name=+381601234567, type=org.telegram.messenger}', '    Account {name=someone@example.com, type=com.google}')
+        Get-AccountCount $accounts 'org.telegram.messenger' | Should -Be 1
+        Get-AccountCount $accounts 'com.whatsapp' | Should -Be 0
+
+        Mock Test-Installed { $false }
+        @(Get-MissingApps $A71) | Should -Be @('org.telegram.messenger', 'com.waze', 'com.google.android.gm')
+    }
+
+    It 'checks Waze''s Home with its deep link to Home and its navigation notification, and stops Waze afterwards' {
+        Mock Test-Installed { $true }
+        Mock Set-EmulatorFix { }
+        Mock Start-TestLocation { [pscustomobject]@{ What = 'the test location on the A71' } }
+        Mock Invoke-Device { $commands.Add("$Device $Command"); @('  NotificationRecord(0x0b pkg=com.waze user=UserHandle{0} id=7)', '    flags=0x62') } -ParameterFilter { $Command -eq 'dumpsys notification' }
+
+        Test-WazeHome $EmulatorSerial | Should -BeTrue
+        $commands | Should -Contain "$EmulatorSerial am start -a android.intent.action.VIEW -d 'waze://?favorite=home&navigate=yes' -p com.waze"
+        $commands[-1] | Should -Be "$EmulatorSerial am force-stop com.waze"
+        Should -Invoke Set-EmulatorFix -Times 1 -Exactly
+
+        Mock Invoke-Device { $commands.Add("$Device $Command"); @('  NotificationRecord(0x0b pkg=com.waze user=UserHandle{0} id=7)', '    flags=0x10') } -ParameterFilter { $Command -eq 'dumpsys notification' }
+        $commands.Clear()
+        Test-WazeHome $A71 | Should -BeFalse
+        $commands[-1] | Should -Be "$A71 am force-stop com.waze"
+        Should -Invoke Start-TestLocation -Times 1 -Exactly
+        Should -Invoke Complete-Restore -Times 1 -Exactly
+    }
+
+    It 'asks the owner of sitting 1 only for the touch when Telegram, the apps, Waze''s Home and the emulator''s own account are there, and sets up the emulator without him' {
+        Set-AgentRecord $recordFile 'emulatorPlay' $true
+        Mock Unlock-Device { $true }
+        Mock Get-MissingApps { @() }
+        Mock Test-Installed { $true }
+        Mock Test-TelegramSignedIn { $true }
+        Mock Test-WazeHome { $true }
+        Mock Request-OwnerItem { 'go' }
+        Mock Install-FromPlay { $true }
+        Mock Start-Listening { }
+        Mock Invoke-FingerCheck { 'A' }
+
+        Invoke-OwnerStep
+
+        Should -Invoke Request-OwnerItem -Times 0 -Exactly
+        Should -Invoke Install-FromPlay -Times 0 -Exactly
+        Should -Invoke Invoke-FingerCheck -Times 1 -Exactly
+        $commands | Should -Contain "$EmulatorSerial pm revoke com.google.android.gm android.permission.POST_NOTIFICATIONS"
+        $commands | Should -Contain "$EmulatorSerial pm disable-user --user 0 com.android.vending"
+        $record = Read-AgentRecord $recordFile
+        $record.playDisabled | Should -BeTrue
+        $record.gmailNotificationsOff | Should -BeTrue
+        $record.emulatorAccount | Should -Not -BeTrue
+        ($results -join "`n") | Should -Not -Match 'failed|WhatsApp on'
+    }
+
+    It 'never asks to sign the owner''s own account in on kestrel-api37, and changes nothing there in a dry run' {
+        Set-AgentRecord $recordFile 'emulatorPlay' $true
+        Mock Request-OwnerItem { 'go' }
+        Mock Invoke-Device { $commands.Add("$Device $Command") } -ParameterFilter { $Device -eq $EmulatorSerial -and $Command -eq 'dumpsys account' }
+
+        Invoke-EmulatorAccountItem
+
+        Should -Invoke Request-OwnerItem -Times 0 -Exactly
+        $commands | Should -Not -Contain "$EmulatorSerial pm disable-user --user 0 com.android.vending"
+
+        Mock Invoke-Device { '    Account {name=someone@example.com, type=com.google}' } -ParameterFilter { $Device -eq $EmulatorSerial -and $Command -eq 'dumpsys account' }
+        $DryRun = $true
+        Invoke-EmulatorAccountItem
+        Should -Invoke Request-OwnerItem -Times 0 -Exactly
+        @($commands | Where-Object { $_ -match 'pm (revoke|disable-user|uninstall)' }) | Should -BeNullOrEmpty
+        (Read-AgentRecord $recordFile).playDisabled | Should -Not -BeTrue
+    }
+
+    It 'never deletes the emulator''s Copilot profile, signs out its own account or uninstalls Gmail at the end of sitting 2, and keeps the other restores' {
+        Set-AgentRecord $recordFile 'playDisabled' $true
+        Set-AgentRecord $recordFile 'gmailNotificationsOff' $true
+        Set-AgentRecord $recordFile 'emulatorAccount' $true
+        Set-AgentRecord $recordFile 'installedEmulator' @('com.waze', 'com.google.android.gm')
+        Mock Invoke-DeviceHook { 'deleted=1 failed=0 copilot=0' }
+        Mock Test-Installed { $true }
+
+        Register-SittingEndRestores
+
+        @($registered | ForEach-Object { $_.What }) | Should -Be @('the Play Store on kestrel-api37', 'Gmail''s notifications on kestrel-api37', 'the apps that sitting 1 installed on kestrel-api37')
+        foreach ($restore in $registered) { & $restore.Action $restore.Data | Out-Null }
+        $commands | Should -Contain "$EmulatorSerial pm uninstall com.waze"
+        $commands | Should -Contain "$EmulatorSerial pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS"
+        @($commands | Where-Object { $_ -match 'uninstall com\.google\.android\.gm|uninstall com\.android\.vending|SYNC_SETTINGS' }) | Should -BeNullOrEmpty
+        Should -Invoke Invoke-DeviceHook -Times 0 -Exactly -ParameterFilter { $Command -eq 'provider-delete' }
+
+        # A test account of another address, which sitting 1 signed in, still leaves; a dry run removes nothing.
+        $registered.Clear()
+        $config.emulatorGmailAddress = 'kestrel.test@example.com'
+        Register-SittingEndRestores
+        @($registered | ForEach-Object { $_.What }) | Should -Contain 'the test Google account on kestrel-api37'
+        $registered.Clear()
+        $DryRun = $true
+        Register-SittingEndRestores
+        @($registered | ForEach-Object { $_.What }) | Should -Not -Contain 'the test Google account on kestrel-api37'
+        @($registered | ForEach-Object { $_.What }) | Should -Not -Contain 'the apps that sitting 1 installed on kestrel-api37'
+    }
+
+    It 'asks nothing in sitting 2''s owner step when both devices already have a Copilot profile, and asks only for a device without one' {
+        Mock Unlock-Device { $true }
+        Mock Request-OwnerItem { 'go' }
+        Mock Test-CompareModel { $true }
+        Mock Invoke-DeviceHook { 'standin=off profile=copilot copilot=1' } -ParameterFilter { $Command -eq 'provider-standin' }
+
+        Invoke-OwnerStep2
+
+        Should -Invoke Request-OwnerItem -Times 0 -Exactly
+        $results | Should -Contain 'owner: kestrel-api37: the default profile is already a Copilot profile, so the owner is not asked'
+        $results | Should -Contain 'owner: the A71: the default profile is already a Copilot profile, so the owner is not asked'
+
+        Mock Get-DefaultProfileKind { if ($Device -eq $A71) { 'none' } else { 'copilot' } }
+        Mock Request-OwnerItem { 'skip' }
+        Invoke-OwnerStep2
+        Should -Invoke Request-OwnerItem -Times 1 -Exactly -ParameterFilter { $Prompt -match 'on the A71' }
+        Should -Invoke Request-OwnerItem -Times 1 -Exactly
+    }
+
+    It 'skips Telegram on kestrel-api37 and WhatsApp on both devices in the recordings, and opens Gmail on the emulator''s own account only with Drafts counted' {
+        Mock Unlock-Device { $true }
+        Mock Test-Installed { $true }
+        Mock Invoke-TelegramRecording { 'telegram recorded' }
+        Mock Open-App { }
+        Mock Save-AgentTree { "$Name recorded" }
+        Mock Invoke-GmailCompose { [pscustomobject]@{ Opened = $true; Discarded = $true; Inside = $null; Note = 'discarded' } }
+
+        # A dry run, whose A71 steps run on kestrel-api37.
+        $DryRun = $true
+        $Serial = $EmulatorSerial
+        Invoke-RecordingsStep
+
+        Should -Invoke Invoke-TelegramRecording -Times 0 -Exactly
+        Should -Invoke Open-App -Times 0 -Exactly -ParameterFilter { $Package -eq 'com.whatsapp' }
+        Should -Invoke Invoke-GmailCompose -Times 0 -Exactly
+        $results | Should -Contain 'recordings: Telegram''s recordings: not run on kestrel-api37 (the owner''s choice)'
+        $results | Should -Contain 'recordings: WhatsApp''s recordings: skipped on both devices (the owner''s choice)'
+        (Read-AgentRecord $recordFile).whatsappSelfChat | Should -Be 'skipped'
+
+        $DryRun = $false
+        $Serial = $A71
+        Invoke-RecordingsStep
+        Should -Invoke Invoke-TelegramRecording -Times 1 -Exactly -ParameterFilter { $Device -eq $A71 }
+        Should -Invoke Open-App -Times 0 -Exactly -ParameterFilter { $Package -eq 'com.whatsapp' }
+        Should -Invoke Invoke-GmailCompose -Times 1 -Exactly -ParameterFilter { $Device -eq $EmulatorSerial -and $OwnerAccount }
+    }
+
+    It 'runs the emulator''s e-mail task on its own account, says that Telegram''s tasks do not run there, and compares only tasks without Telegram or WhatsApp' {
+        Mock Test-Installed { $true }
+        Mock Invoke-TaskRuns { @() }
+
+        Invoke-EmulatorRunsStep
+
+        Should -Invoke Invoke-TaskRuns -Times 1 -Exactly -ParameterFilter { $Task -eq 'read-email' -and $Device -eq $EmulatorSerial -and $With.Mail -eq 'Pera.Test@example.com' }
+        $results | Should -Contain 'emulator-runs: telegram-late and telegram-photos: not run on kestrel-api37 (the owner''s choice)'
+
+        Mock Get-SittingRuns { @() }
+        Mock Test-CompareModel { $true }
+        Invoke-CompareStep
+        $results | Should -Contain 'compare: the comparison runs hotspot, waze-home and firefox-wiki, which need neither Telegram nor WhatsApp'
+        Should -Invoke Invoke-TaskRuns -Times 3 -Exactly -ParameterFilter { $StepName -eq 'compare' }
+        Should -Invoke Invoke-TaskRuns -Times 0 -Exactly -ParameterFilter { $StepName -eq 'compare' -and $Task -in 'telegram-late', 'telegram-photos', 'read-email' }
     }
 }

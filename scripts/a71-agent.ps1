@@ -1,13 +1,17 @@
-# The two sittings of sub-project 5 (design D30) on the Galaxy A71 and kestrel-api37. Sitting 1 records and needs no
-# model: before the owner's step the script installs Kestrel and the fixture app, copies the models with the OCR files,
-# turns test mode on, sets the owner's names and checks which accounts and apps the A71 has; the owner then installs the
-# missing apps from Play while he watches, signs in to Telegram, links WhatsApp, signs the test Google account in on
-# kestrel-api37, sets Waze's Home on both devices and touches the A71's screen once (about 10 to 25 minutes of his
-# hands); then, without him, the script prepares the devices, runs the A71's device tests, probes the hotspot, records the
-# structure of the self-chats, the pickers and SystemUI, and plays the speech checks of scripts\lib\AgentChecks.ps1
-# through this computer's speakers. Sitting 2 calls the owner's Copilot: the owner signs Kestrel in to Copilot on
-# kestrel-api37 (and on the A71 when sitting 1's device tests deleted its profile; 3 to 6 minutes of his hands), and then,
-# without him, the script prepares both devices again, opens the devices' live sessions (hook agent-live) and runs
+# The two sittings of sub-project 5 (design D30) on the Galaxy A71 and kestrel-api37, with the owner's decisions of
+# 2026-11-22 (fix-5c-owner): he is needed as little as possible, so the script checks what is already done before it asks
+# him anything; kestrel-api37 holds his own Google account and Kestrel's Copilot profile, which the script never signs in,
+# removes or clears there, in any step, a stop or a dry run; Telegram runs only on the A71; WhatsApp is skipped on both
+# devices. Sitting 1 records and needs no model: before the owner's step the script installs Kestrel and the fixture app,
+# copies the models with the OCR files, turns test mode on (with no WhatsApp name) and checks which accounts and apps the
+# A71 has; the owner then installs the missing apps from Play while he watches, signs in to Telegram, and sets Waze's
+# Home, each only when it is not done yet, and touches the A71's screen once (about 2 minutes of his hands when the rest
+# is done, up to about 15 more when it is not); then, without him, the script prepares the devices, runs the A71's device
+# tests, probes the hotspot, records the structure of Telegram's self-chat, its picker, Gmail's compose screen and
+# SystemUI, and plays the speech checks of scripts\lib\AgentChecks.ps1 through this computer's speakers. Sitting 2 calls
+# the owner's Copilot: the owner signs Kestrel in to Copilot only on a device whose default profile is not a Copilot
+# profile (none when both have one; about 3 minutes per device otherwise), and then, without him, the script prepares
+# both devices again, opens the devices' live sessions (hook agent-live) and runs
 # scripts\task-check.ps1 -Live for the six tasks of design D3 on the A71 and the emulator's tasks on kestrel-api37, 3 runs
 # each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
 # it stops when the sitting's AI Credits reach 150, checked before and after each task's runs, and then runs only the
@@ -16,16 +20,17 @@
 # named steps, also as one text separated by commas. A sitting 2 that stopped goes on with a call with -Step and the
 # steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
 # Credits of the earlier calls and reads their results too, and starts no run when the record lists no earlier call or
-# a results file that it lists is gone. Only the step end deletes the emulator's Copilot profile
-# and removes its test account, so that after a stop by q, Ctrl+C or an error, also of a call without -Step, the next
-# call needs no new sign-in; -Step end alone ends a sitting 2 that will not go on. A new sitting 2
+# a results file that it lists is gone. Only the step end enables the emulator's Play Store again, turns Gmail's
+# notifications on there again and removes a test account (one whose address is not gmailAddress) and the apps that
+# sitting 1 installed there, never Gmail; -Step end alone ends a sitting 2 that will not go on. A new sitting 2
 # is a call without -Step. Before and after each step the script reads both devices' call state, and ends a call with
 # the end-call key.
 # The A71's test PIN is typed only by Unlock-TestPhone (scripts\lib\Session.ps1), which alone reads the key "pin" of
 # corpus\owner\a71-config.json; this script reads the file only through Read-A71Config, which leaves the key out. The
-# script also needs the keys whatsappOwnName, gmailAddress, homePlace, testLocation ("<latitude>,<longitude>") and
-# testStreet; sitting 2 also reads emulatorGmailAddress, the test account's address on kestrel-api37, for the e-mail
-# task there, which it skips without it. It refuses every device but the A71 and kestrel-api37, keeps its results in
+# script also needs the keys gmailAddress, homePlace, testLocation ("<latitude>,<longitude>") and testStreet;
+# whatsappOwnName may be empty or missing. emulatorGmailAddress is the address of kestrel-api37's Google account, for the
+# e-mail task there, which is skipped without it; when it equals gmailAddress, the account is the owner's own, which the
+# script never signs in or out. It refuses every device but the A71 and kestrel-api37, keeps its results in
 # corpus\owner (which git
 # ignores), and never prints a prompt, a reply, screen text, a message, an e-mail, a notification or a word that Kestrel
 # heard: the hooks answer only counts, kinds, states and hashes. Every change is registered with its restore before it is
@@ -37,7 +42,9 @@
 # and the script only checks that it exists; without it, the script takes the lock itself, waits up to 60 minutes, and
 # deletes its own lock at the end. -DryRun runs every step on kestrel-api37 inside the controller's lock, which it never
 # touches: it answers the owner's items itself, uses a fake configuration, plays the clips through Kestrel's stand-in
-# microphone and runs the stand-in variants of the tasks with the scripted model, so that no request reaches a provider.
+# microphone and runs the stand-in variants of the tasks with the scripted model, so that no request reaches a provider;
+# it opens no Gmail compose screen on a kestrel-api37 that has a Google account, and changes nothing in its account, its
+# Play Store or its Gmail.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-agent.ps1 -Serial R58N66RVD7Z -EmulatorSerial emulator-5554 -Sitting 1 -LockHeld
 #Requires -Version 7.3
@@ -76,17 +83,19 @@ function Get-SessionSteps([string[]]$Step, [string[]]$Names) {
 }
 
 # The owner's answers that the sittings need, from corpus\owner\a71-config.json through Read-A71Config, which leaves out
-# the key "pin": the name that WhatsApp shows with "(You)", the address of Gmail's account on the A71, the public place
-# that Waze's Home is, the test location of the A71 ("<latitude>,<longitude>", a public place a few kilometres from
-# Home) and the street that Waze shows there. A missing key, or a test location of another form, throws a message that
-# names only the keys; no value reaches a message.
+# the key "pin": the address of Gmail's account on the A71, the public place that Waze's Home is, the test location of
+# the A71 ("<latitude>,<longitude>", a public place a few kilometres from Home) and the street that Waze shows there; and
+# the name that WhatsApp shows with "(You)", which may be empty or missing, because WhatsApp is skipped (the owner's
+# choice), and is then empty, so that test mode has no WhatsApp name. A missing key, or a test location of another form,
+# throws a message that names only the keys; no value reaches a message.
 function Get-AgentConfig([string]$Path) {
     $config = Read-A71Config -Path $Path
-    $missing = @(foreach ($key in 'whatsappOwnName', 'gmailAddress', 'homePlace', 'testLocation', 'testStreet') {
+    $missing = @(foreach ($key in 'gmailAddress', 'homePlace', 'testLocation', 'testStreet') {
             if (-not $config.PSObject.Properties[$key] -or -not "$($config.$key)".Trim()) { $key }
         })
     if ($missing) { throw "corpus\owner\a71-config.json lacks the keys $($missing -join ', '), which the sittings of sub-project 5 need." }
     if ("$($config.testLocation)" -notmatch '^-?\d{1,2}\.\d+,-?\d{1,3}\.\d+$') { throw 'The key testLocation of corpus\owner\a71-config.json must be "<latitude>,<longitude>", such as "44.8100,20.4600".' }
+    $config | Add-Member -NotePropertyName whatsappOwnName -NotePropertyValue "$($config.whatsappOwnName)".Trim() -Force
     $config
 }
 
@@ -106,10 +115,14 @@ function Set-AgentRecord([string]$Path, [string]$Name, $Value) {
     [IO.File]::WriteAllText($Path, ($record | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
 }
 
-# The number of Google accounts in 'dumpsys account', from the type only, never a name.
-function Get-GoogleAccountCount([string[]]$Dump) {
-    @($Dump | Where-Object { $_ -match '^\s*Account \{.*type=com\.google\}' }).Count
+# The number of accounts of the type in 'dumpsys account', such as com.google or Telegram's org.telegram.messenger, which
+# Telegram adds while it is signed in; from the type only, never a name.
+function Get-AccountCount([string[]]$Dump, [string]$Type) {
+    @($Dump | Where-Object { $_ -match "^\s*Account \{.*type=$([regex]::Escape($Type))\}" }).Count
 }
+
+# The number of Google accounts in 'dumpsys account', from the type only, never a name.
+function Get-GoogleAccountCount([string[]]$Dump) { Get-AccountCount $Dump 'com.google' }
 
 # The first versionName in 'dumpsys package <package>', or 'none'.
 function Get-VersionName([string[]]$Dump) {
@@ -128,6 +141,19 @@ function Test-NetworkValidated([string[]]$Dump) {
 # Whether 'dumpsys tethering' lists a Wi-Fi interface (wlan, swlan or ap) in TetheredState or LocalHotspotState (r60).
 function Test-HotspotOn([string[]]$Dump) {
     @($Dump | Where-Object { $_ -match '^\s*(s?wlan\d+|ap\d+)\s+-\s+(TetheredState|LocalHotspotState)\b' }).Count -gt 0
+}
+
+# Whether 'dumpsys notification' lists a notification of Waze whose flags hold FLAG_ONGOING_EVENT (0x2), as Waze's
+# navigation notification does (as scripts\task-check.ps1's check of waze-home reads it). It reads packages and flags only.
+function Test-WazeNavigating([string[]]$Dump) {
+    $waze = $false
+    foreach ($line in $Dump) {
+        if ($line -match 'NotificationRecord\(') { $waze = $line -match '\bpkg=com\.waze\b' }
+        if ($waze -and $line -match '\bflags=0x([0-9a-fA-F]+)') {
+            if (([Convert]::ToInt32($Matches[1], 16) -band 0x2) -ne 0) { return $true }
+        }
+    }
+    $false
 }
 
 # The touch rule that D19's probe calls for (plan 5B's OwnActionsTest, logcat tag KestrelProbe): CREDITS when a node
@@ -269,7 +295,7 @@ $gradleUsed = $false
 # a dry run uses a fake configuration and never opens the owner's file.
 $pinConfig = if ($DryRun) { $null } else { Join-Path $owner 'a71-config.json' }
 $config = if ($DryRun) {
-    [pscustomobject]@{ SpeakerTargetDb = -26.0; whatsappOwnName = 'Test Owner'; gmailAddress = 'kestrel.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Test Street'; emulatorGmailAddress = 'kestrel.test@example.com' }
+    [pscustomobject]@{ SpeakerTargetDb = -26.0; whatsappOwnName = ''; gmailAddress = 'kestrel.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Test Street'; emulatorGmailAddress = 'kestrel.test@example.com' }
 } else {
     Get-AgentConfig $pinConfig
 }
@@ -501,10 +527,13 @@ function Enable-NotificationAccess([string]$Device) {
 }
 
 # The owner's names for test mode's self-chat rules (design D18), through agent-settings; ownerEmails stays empty, so
-# that test mode blocks every e-mail of the agent's (review B3-N2).
+# that test mode blocks every e-mail of the agent's (review B3-N2). WhatsApp is skipped (the owner's choice), so an empty
+# whatsappOwnName clears test mode's WhatsApp name, and WhatsApp's own chat is then no self-chat.
 function Set-OwnerNames([string]$Device) {
-    $answer = ConvertFrom-HookPairs (Invoke-DeviceHook $Device agent-settings @{ WhatsappOwnName = "$($config.whatsappOwnName)" })
-    if ($answer['whatsappOwnName'] -ne 'set' -or $answer['ownerEmails'] -ne '0') { throw "agent-settings did not take the owner's name on $(Get-DeviceName $Device)." }
+    $name = "$($config.whatsappOwnName)".Trim()
+    $answer = ConvertFrom-HookPairs (Invoke-DeviceHook $Device agent-settings @{ WhatsappOwnName = $name })
+    $expected = if ($name) { 'set' } else { 'unset' }
+    if ($answer['whatsappOwnName'] -ne $expected -or $answer['ownerEmails'] -ne '0') { throw "agent-settings did not take the owner's name on $(Get-DeviceName $Device)." }
 }
 
 # Test mode on (design D18; process rule 10), checked through the hook state.
@@ -595,6 +624,72 @@ function Start-TestLocation([string]$Device) {
     $restore
 }
 
+# Whether kestrel-api37's Google account is the owner's own (emulatorGmailAddress equals gmailAddress), which the script
+# never signs in, removes or clears there (the owner's decision of 2026-11-22).
+function Test-EmulatorOwnAccount {
+    $own = "$($config.gmailAddress)".Trim()
+    $emulator = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)".Trim() } else { '' }
+    [bool]($own -and $emulator -and $emulator -ieq $own)
+}
+
+# Whether Telegram's part of a step runs on the device: Telegram is not signed in on kestrel-api37 and must not be (the
+# owner's choice), so there the part is written as not run, as in a dry run, whose A71 steps run there. $What names the
+# part in the results.
+function Test-TelegramDevice([string]$Device, [string]$StepName, [string]$What) {
+    if ($Device -ne $EmulatorSerial) { return $true }
+    Add-Result $StepName "${What}: not run on kestrel-api37 (the owner's choice)"
+    $false
+}
+
+# Whether Telegram is signed in on the device: a signed-in Telegram adds an Android account of its own type, which
+# 'dumpsys account' lists (counted by type only, never a name).
+function Test-TelegramSignedIn([string]$Device) { (Get-AccountCount @(Invoke-Device $Device 'dumpsys account') 'org.telegram.messenger') -gt 0 }
+
+# The apps that the owner's step installs from Play on the A71 when they are missing: Telegram, Waze and Gmail. WhatsApp
+# is skipped on both devices (the owner's choice).
+function Get-MissingApps([string]$Device) {
+    @(foreach ($package in 'org.telegram.messenger', 'com.waze', 'com.google.android.gm') { if (-not (Test-Installed $Device $package)) { $package } })
+}
+
+# The emulator's location at the test location (adb emu geo fix takes the longitude first), as task-check.ps1's Waze
+# task sets one there.
+function Set-EmulatorFix([string]$Device) {
+    $latitude, $longitude = "$($config.testLocation)" -split ','
+    & $adb -s $Device emu geo fix $longitude $latitude | Out-Null
+}
+
+# Whether Waze's Home is set on the device: Waze's deep link to the favourite Home starts a navigation, whose ongoing
+# notification shows within 30 s, only when Home is set and Waze is past its first screens. The device is at the test
+# location meanwhile, and Waze is stopped afterwards, which ends the navigation. Home's place cannot be read; it must be
+# the public place of homePlace.
+function Test-WazeHome([string]$Device) {
+    if (-not (Test-Installed $Device 'com.waze')) { return $false }
+    $restore = $null
+    if ($Device -eq $EmulatorSerial) { Set-EmulatorFix $Device } else { $restore = Start-TestLocation $Device }
+    try {
+        Invoke-Device $Device 'am force-stop com.waze' | Out-Null
+        Invoke-Device $Device "am start -a android.intent.action.VIEW -d 'waze://?favorite=home&navigate=yes' -p com.waze" | Out-Null
+        for ($try = 0; $try -lt 15; $try++) {
+            Start-Sleep -Seconds 2
+            if (Test-WazeNavigating @(Invoke-Device $Device 'dumpsys notification')) { return $true }
+        }
+        $false
+    } finally {
+        Invoke-Device $Device 'am force-stop com.waze' | Out-Null
+        if ($restore) { Complete-Restore $restore }
+    }
+}
+
+# The kind of the device's default profile (hook provider-standin: none, copilot or other), or $null when Kestrel does
+# not answer. Kestrel's activity starts first, because a stopped app gets no hook broadcast.
+function Get-DefaultProfileKind([string]$Device) {
+    try {
+        Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+        Start-Sleep -Seconds 3
+        (ConvertFrom-HookPairs (Invoke-DeviceHook $Device provider-standin))['profile']
+    } catch { $null }
+}
+
 # Runs a command on the device and reads its output as UTF-8, as scripts\hook.ps1 does: kotlinx.serialization writes a
 # label with a letter outside ASCII, such as a Serbian name, as UTF-8, and PowerShell would otherwise read adb's output
 # with the console's code page (task-5c-9-review M2).
@@ -670,20 +765,20 @@ function Invoke-PrepareStep {
         if ($LASTEXITCODE -ne 0) { throw "scripts\push-models.ps1 failed on $(Get-DeviceName $device)." }
         Enable-TestMode $device
         Set-OwnerNames $device
-        Add-Result prepare "$(Get-DeviceName $device): Kestrel and the fixture app installed, the models with the OCR files copied, test mode on, the owner's name set"
+        Add-Result prepare "$(Get-DeviceName $device): Kestrel and the fixture app installed, the models with the OCR files copied, test mode on, $(if ("$($config.whatsappOwnName)".Trim()) { 'the owner''s name set' } else { 'no WhatsApp name' })"
     }
     $a71 = Get-A71
     $accounts = Get-GoogleAccountCount @(Invoke-Device $a71 'dumpsys account')
-    $missing = @(foreach ($package in 'com.whatsapp', 'com.waze', 'com.google.android.gm') { if (-not (Test-Installed $a71 $package)) { $package } })
+    $missing = @(Get-MissingApps $a71)
     Set-AgentRecord $recordFile 'missingA71' $missing
-    Add-Result prepare "the A71 has $accounts Google accounts; Telegram $(if (Test-Installed $a71 'org.telegram.messenger') { 'is' } else { 'is not' }) installed; missing from Play: $(if ($missing) { $missing -join ', ' } else { 'none' })"
+    Add-Result prepare "the A71 has $accounts Google accounts; missing from Play: $(if ($missing) { $missing -join ', ' } else { 'none' }); WhatsApp is skipped on both devices (the owner's choice)"
     $play = (Test-Installed $EmulatorSerial 'com.android.vending') -and -not (Test-PackageListed @(Invoke-Device $EmulatorSerial 'pm list packages -d com.android.vending') 'com.android.vending')
     Set-AgentRecord $recordFile 'emulatorPlay' $play
     $chrome = Get-VersionName @(Invoke-Device $EmulatorSerial 'dumpsys package com.android.chrome')
     $webView = Get-VersionName @(Invoke-Device $EmulatorSerial 'dumpsys package com.google.android.webview')
     Set-AgentRecord $recordFile 'chromeVersion' $chrome
     Set-AgentRecord $recordFile 'webViewVersion' $webView
-    Add-Result prepare "kestrel-api37: the Play Store $(if ($play) { 'is there' } else { 'is missing or disabled, so Waze and the e-mail task run on the A71 only' }); Chrome $chrome, Android System WebView $webView"
+    Add-Result prepare "kestrel-api37: the Play Store $(if ($play) { 'is there' } else { 'is missing or disabled, so the script installs nothing there from Play' }); $(Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) Google accounts$(if (Test-EmulatorOwnAccount) { ' (emulatorGmailAddress is the owner''s own address, which the sittings never sign in or out there)' }); Chrome $chrome, Android System WebView $webView"
 }
 
 # A real sitting keeps the A71's touch rule and branch for sitting 2; a dry run sets them on kestrel-api37 only for its
@@ -769,17 +864,69 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
     }
 }
 
-# The owner's step at the start of sitting 1 (design D30 steps 2 to 7): the A71 unlocked and awake, the missing apps
-# from Play while he watches, Telegram's sign-in, WhatsApp's link, the test Google account on kestrel-api37 with Play's
-# auto-update off, Waze's first screens and Home on both devices, and the real finger touch.
+# kestrel-api37's Google account and its apps for the owner's step of sitting 1. The emulator holds the owner's own
+# account (emulatorGmailAddress equals gmailAddress), which the script never signs in or out, so he is asked for nothing
+# there; only for a test account of another address, when the emulator has no Google account, does he sign it in, as
+# before (it then leaves at the end of sitting 2). With an account, and without the owner, the script installs Waze and
+# Gmail from Play when they are missing, turns Gmail's notifications off and disables the Play Store, so that no mail
+# shows in the shade and Play updates neither Chrome nor WebView, until the end of sitting 2, which puts both back. A
+# dry run changes nothing there.
+function Invoke-EmulatorAccountItem {
+    $record = Read-AgentRecord $recordFile
+    $own = Test-EmulatorOwnAccount
+    $accounts = Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')
+    if ($DryRun) {
+        Add-Result owner "kestrel-api37 has $accounts Google accounts; a dry run signs in, installs and turns off nothing there"
+        return
+    }
+    if ($accounts -lt 1) {
+        if ($own -or -not $record.emulatorPlay) {
+            Add-Result owner 'kestrel-api37 has no Google account, so Waze''s install and the e-mail task there are skipped'
+            return
+        }
+        if ((Request-OwnerItem 'Item 3, 2 to 5 minutes: in the emulator''s window on this computer, use the mouse: Settings > Passwords and accounts > Add account > Google, and sign in with the test Google account. Then open the Play Store, tap your profile picture, Settings > Network preferences > Auto-update apps, choose "Don''t auto-update apps" and tap Done. Press Enter when that is done (s skips).' 'skip') -ne 'go') { return }
+        if ((Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) -lt 1) {
+            Add-Result owner 'kestrel-api37 has no Google account, so Waze and the e-mail task run on the A71 only'
+            return
+        }
+        # Recorded first, so that sitting 2 removes the test account also when an install below fails.
+        Set-AgentRecord $recordFile 'emulatorAccount' $true
+    } else {
+        Add-Result owner "kestrel-api37 already has a Google account$(if ($own) { ', the owner''s own, which the sittings never sign in or out' }), so the owner is not asked"
+    }
+    if (-not $record.emulatorPlay) {
+        Add-Result owner 'kestrel-api37: the Play Store is missing or disabled, so the script installs nothing there'
+        return
+    }
+    $installedEmulator = @(foreach ($package in 'com.waze', 'com.google.android.gm') {
+            if (-not (Test-Installed $EmulatorSerial $package) -and (Install-FromPlay $EmulatorSerial $package)) { $package }
+        })
+    Set-AgentRecord $recordFile 'installedEmulator' $installedEmulator
+    $notify = 'android.permission.POST_NOTIFICATIONS'
+    if ((Test-Installed $EmulatorSerial 'com.google.android.gm') -and @(Get-GrantedPermissions -Dump (Invoke-Device $EmulatorSerial 'dumpsys package com.google.android.gm') -Permissions $notify)) {
+        Set-AgentRecord $recordFile 'gmailNotificationsOff' $true
+        Invoke-Device $EmulatorSerial "pm revoke com.google.android.gm $notify" | Out-Null
+    }
+    Set-AgentRecord $recordFile 'playDisabled' $true
+    Invoke-Device $EmulatorSerial 'pm disable-user --user 0 com.android.vending' | Out-Null
+    Add-Result owner "kestrel-api37: installed $(if ($installedEmulator) { $installedEmulator -join ', ' } else { 'nothing' }); Gmail's notifications off and the Play Store disabled until the end of sitting 2"
+}
+
+# The owner's step at the start of sitting 1 (design D30 steps 2 to 7, with the owner's decisions of 2026-11-22): the
+# A71 unlocked and awake; then each item only when it is not done yet: the missing apps from Play while he watches,
+# Telegram's sign-in on the A71 (never on kestrel-api37), kestrel-api37's account and apps (Invoke-EmulatorAccountItem),
+# and Waze's Home on each device where Waze's deep link to Home starts no navigation; WhatsApp is skipped. The real finger
+# touch always comes, because only a finger can make it.
 function Invoke-OwnerStep {
     $a71 = Get-A71
     if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
-    $record = Read-AgentRecord $recordFile
-    $missing = @($record.missingA71 | Where-Object { $_ })
     Invoke-OwnerItem 'Item 1' {
+        $missing = @(Get-MissingApps $a71)
+        Set-AgentRecord $recordFile 'missingA71' $missing
         $installed = @()
-        if ($missing -and (Request-OwnerItem "Item 1, 0 to 6 minutes: the script now installs $($missing -join ', ') on the A71 from Play with your account; watch the A71, and press Enter to start (s skips)." 'skip') -eq 'go') {
+        if (-not $missing) {
+            Add-Result owner 'the A71 has Telegram, Waze and Gmail, so the owner installs nothing'
+        } elseif ((Request-OwnerItem "Item 1, 0 to 6 minutes: the script now installs $($missing -join ', ') on the A71 from Play with your account; watch the A71, and press Enter to start (s skips)." 'skip') -eq 'go') {
             foreach ($package in $missing) {
                 if (Install-FromPlay $a71 $package) { $installed += $package }
             }
@@ -788,49 +935,45 @@ function Invoke-OwnerStep {
         Set-AgentRecord $recordFile 'installedA71' $installed
     }
     Invoke-OwnerItem 'Item 2' {
+        if (-not (Test-TelegramDevice $a71 owner 'Telegram''s sign-in')) { return }
+        if (-not (Test-Installed $a71 'org.telegram.messenger')) {
+            Add-Result owner 'Telegram is not installed on the A71, so its recordings and runs are skipped'
+            return
+        }
+        if (Test-TelegramSignedIn $a71) {
+            Add-Result owner 'Telegram on the A71: already signed in, so the owner is not asked'
+            return
+        }
         if ((Request-OwnerItem 'Item 2, about 4 minutes: on the A71, open Telegram and sign in with your number and the code that Telegram shows on the S23+ (never "Send SMS"), and your Two-Step Verification password if it asks. Press Enter when Telegram shows its chat list (s skips).' 'skip') -eq 'go') {
             Open-App $a71 'org.telegram.messenger'
             Start-Sleep -Seconds 5
             $front = (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 screen-has @{ Package = 'org.telegram.messenger' }))['app'] -eq 'org.telegram.messenger'
             $login = Get-ScreenCount $a71 @{ Package = 'org.telegram.messenger'; Contains = 'phone number' }
-            Add-Result owner "Telegram on the A71: $(if ($front -and $login -eq 0) { 'signed in' } else { 'not signed in' })"
+            Add-Result owner "Telegram on the A71: $(if ((Test-TelegramSignedIn $a71) -or ($front -and $login -eq 0)) { 'signed in' } else { 'not signed in' })"
         }
     }
-    Invoke-OwnerItem 'Item 3' {
-        if ((Request-OwnerItem 'Item 3, about 3 minutes: on the S23+, open WhatsApp > Linked devices > Link a device, and scan the QR code that WhatsApp shows on the A71 (open WhatsApp on the A71 first). Press Enter when the A71 shows WhatsApp''s chat list (s skips).' 'skip') -eq 'go') {
-            Open-App $a71 'com.whatsapp'
-            Start-Sleep -Seconds 5
-            $front = (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 screen-has @{ Package = 'com.whatsapp' }))['app'] -eq 'com.whatsapp'
-            $login = Get-ScreenCount $a71 @{ Package = 'com.whatsapp'; Contains = 'link with phone number' }
-            Add-Result owner "WhatsApp on the A71: $(if ($front -and $login -eq 0) { 'linked' } else { 'not linked' })"
-        }
-    }
-    Invoke-OwnerItem 'Item 3b' {
-        if ($record.emulatorPlay -and (Request-OwnerItem 'Item 3b, 2 to 5 minutes: in the emulator''s window on this computer, use the mouse: Settings > Passwords and accounts > Add account > Google, and sign in with the test Google account. Then open the Play Store, tap your profile picture, Settings > Network preferences > Auto-update apps, choose "Don''t auto-update apps" and tap Done. Press Enter when that is done (s skips).' 'skip') -eq 'go') {
-            if ((Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) -lt 1) {
-                Add-Result owner 'kestrel-api37 has no Google account, so Waze and the e-mail task run on the A71 only'
-            } else {
-                # Recorded first, so that sitting 2 removes the account also when an install below fails.
-                Set-AgentRecord $recordFile 'emulatorAccount' $true
-                $installedEmulator = @(foreach ($package in 'com.waze', 'com.google.android.gm') {
-                        if (-not (Test-Installed $EmulatorSerial $package) -and (Install-FromPlay $EmulatorSerial $package)) { $package }
-                    })
-                Set-AgentRecord $recordFile 'installedEmulator' $installedEmulator
-                # Gmail's notifications stay off on the emulator, so that no mail of the test account shows in the shade.
-                if (Test-Installed $EmulatorSerial 'com.google.android.gm') { Invoke-Device $EmulatorSerial 'pm revoke com.google.android.gm android.permission.POST_NOTIFICATIONS' | Out-Null }
-                # The Play Store stays disabled until the end of sitting 2, so that it never updates Chrome or WebView.
-                Invoke-Device $EmulatorSerial 'pm disable-user --user 0 com.android.vending' | Out-Null
-                Set-AgentRecord $recordFile 'playDisabled' $true
-                Add-Result owner "kestrel-api37: the test account is signed in; installed $(if ($installedEmulator) { $installedEmulator -join ', ' } else { 'nothing' }); Gmail's notifications off; the Play Store disabled until the end of sitting 2"
-            }
-        }
-    }
+    Invoke-OwnerItem 'Item 3' { Invoke-EmulatorAccountItem }
     Invoke-OwnerItem 'Item 4' {
-        if ((Request-OwnerItem "Item 4, about 4 minutes: open Waze on the A71, pass its first screens, allow the location, and set Home to $($config.homePlace); then do the same in the emulator's window with the mouse, if Waze is there. Press Enter when both show Waze's map (s skips)." 'skip') -eq 'go') {
-            Add-Result owner "Waze's Home set by the owner on the A71$(if (Test-Installed $EmulatorSerial 'com.waze') { ' and kestrel-api37' })"
-            foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) { Invoke-Device $device 'am force-stop com.waze' | Out-Null }
+        if ($DryRun) {
+            Add-Result owner 'Waze''s Home: not checked in a dry run'
+            return
+        }
+        $unset = @(foreach ($device in @($a71, $EmulatorSerial)) {
+                if (-not (Test-Installed $device 'com.waze')) { continue }
+                if (Test-WazeHome $device) {
+                    Add-Result owner "Waze's Home on $(Get-DeviceName $device): already set, so the owner is not asked (the script cannot read its place, which must be the public place of homePlace)"
+                } else {
+                    $device
+                }
+            })
+        if (-not $unset) { return }
+        $where = (@($unset | ForEach-Object { if ($_ -eq $EmulatorSerial) { 'the emulator''s window, with the mouse' } else { 'the A71' } })) -join ', then in '
+        if ((Request-OwnerItem "Item 4, about 2 minutes for each device: open Waze on $where, pass its first screens, allow the location, and set Home to $($config.homePlace). Press Enter when Waze shows its map (s skips)." 'skip') -eq 'go') {
+            Add-Result owner "Waze's Home set by the owner on $(@($unset | ForEach-Object { Get-DeviceName $_ }) -join ' and ')"
+            foreach ($device in $unset) { Invoke-Device $device 'am force-stop com.waze' | Out-Null }
         }
     }
+    Add-Result owner 'WhatsApp: skipped on both devices (the owner''s choice)'
     Start-Listening $a71 'quiet'
     $branch = Invoke-FingerCheck $a71
     Add-Result owner "the real finger: $(switch ($branch) { 'A' { 'branch A, the touch watcher saw it' } 'B' { 'branch B, the watcher did not see it, and OwnerSignal cancelled the task' } 'skipped' { 'skipped' } default { 'neither the watcher nor OwnerSignal cancelled the task; branch A kept, a finding for the controller' } })"
@@ -1153,36 +1296,31 @@ function Invoke-GmailCompose([string]$Device, [scriptblock]$Inside, [switch]$Own
     [pscustomobject]@{ Opened = $true; Discarded = $discarded; Inside = $inner; Note = $note }
 }
 
-# Design D30 step 11: the structure of the real self-chats, the chat lists and the pickers (never an ordinary chat), and
-# of SystemUI's shade and a heads-up notification, recorded through agent-tree into corpus\owner\trees.
+# Design D30 step 11: the structure of Telegram's self-chat, chat list and picker on the A71 (never an ordinary chat; not
+# on kestrel-api37, whose Telegram is not signed in, and WhatsApp on neither device: the owner's choices), Gmail's
+# compose screen, and SystemUI's shade and a heads-up notification, recorded through agent-tree into corpus\owner\trees.
 function Invoke-RecordingsStep {
     $a71 = Get-A71
     if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
     $notes = @()
-    if (Test-Installed $a71 'org.telegram.messenger') { $notes += Invoke-TelegramRecording $a71 }
-    if (Test-Installed $a71 'com.whatsapp') {
-        Open-App $a71 'com.whatsapp'
-        Start-Sleep -Seconds 4
-        $notes += Save-AgentTree $a71 'whatsapp-chats'
-        if (Invoke-ScreenTap $a71 "$($config.whatsappOwnName) (You)") {
-            $notes += Save-AgentTree $a71 'whatsapp-self'
-            $notes += "WhatsApp's own chat: $(Invoke-DeviceHook $a71 selfchat-check)"
-            Set-AgentRecord $recordFile 'whatsappSelfChat' 'recorded'
-        } else {
-            Set-AgentRecord $recordFile 'whatsappSelfChat' 'not shown'
-            $notes += 'WhatsApp shows no row "<owner> (You)", so WhatsApp is not testable on this device'
-        }
-        Invoke-Device $a71 'am force-stop com.whatsapp' | Out-Null
-    }
-    # The emulator, with the test account, comes first; the A71's compose screen opens only when the discard worked there.
+    if ((Test-TelegramDevice $a71 recordings 'Telegram''s recordings') -and (Test-Installed $a71 'org.telegram.messenger')) { $notes += Invoke-TelegramRecording $a71 }
+    Set-AgentRecord $recordFile 'whatsappSelfChat' 'skipped'
+    $notes += 'WhatsApp''s recordings: skipped on both devices (the owner''s choice)'
+    # The emulator comes first; the A71's compose screen opens only when the discard worked there. The emulator's Gmail
+    # holds the owner's own account when emulatorGmailAddress is gmailAddress, so it opens only with Drafts counted, as on
+    # the A71, and a dry run opens it on no emulator that has a Google account.
     $emulatorDiscarded = $false
+    $emulatorAccounts = Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')
     foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
         if (Test-Installed $device 'com.google.android.gm') {
-            if ($device -ne $EmulatorSerial -and -not $emulatorDiscarded) {
+            if ($DryRun -and $emulatorAccounts -gt 0) {
+                $notes += 'Gmail''s compose screen on kestrel-api37: not opened in a dry run, because the emulator has a Google account'
+            } elseif ($device -ne $EmulatorSerial -and -not $emulatorDiscarded) {
                 $notes += "Gmail's compose screen on $(Get-DeviceName $device): skipped, because its discard did not work on kestrel-api37"
                 Set-AgentRecord $recordFile 'gmailDiscardA71' 'not opened'
             } else {
-                $compose = Invoke-GmailCompose -Device $device -OwnerAccount:($device -ne $EmulatorSerial) -Inside { param($Device) Save-AgentTree $Device 'gmail-compose' }
+                $ownAccount = $device -ne $EmulatorSerial -or (Test-EmulatorOwnAccount)
+                $compose = Invoke-GmailCompose -Device $device -OwnerAccount:$ownAccount -Inside { param($Device) Save-AgentTree $Device 'gmail-compose' }
                 if ($compose.Inside) { $notes += $compose.Inside }
                 $notes += $compose.Note
                 if ($device -eq $EmulatorSerial) {
@@ -1306,11 +1444,12 @@ function Invoke-SpeechStep {
     }
 }
 
-# Design D30 step 13: the restores run at the sitting's end; Play's disabled state on kestrel-api37 stays until the end
-# of sitting 2 (review C3-M4), and the fixture app leaves the A71 when the sitting installed it.
+# Design D30 step 13: the restores run at the sitting's end; Play's disabled state and Gmail's notifications on
+# kestrel-api37 stay until the end of sitting 2 (review C3-M4), and the fixture app leaves the A71 when the sitting
+# installed it.
 function Invoke-EndStep {
     $record = Read-AgentRecord $recordFile
-    Add-Result end "the record for sitting 2: touch branch $(if ($record.touchBranch) { $record.touchBranch } else { 'A' }), rule $(if ($record.touchRule) { $record.touchRule } else { 'the default' }), hotspot $(if ($record.hotspot) { $record.hotspot } else { 'not probed' }), Waze on the A71 $(if ($record.wazeA71) { $record.wazeA71 } else { 'not checked' }), WhatsApp's own chat $(if ($record.whatsappSelfChat) { $record.whatsappSelfChat } else { 'not recorded' }); the Play Store on kestrel-api37 stays disabled until the end of sitting 2"
+    Add-Result end "the record for sitting 2: touch branch $(if ($record.touchBranch) { $record.touchBranch } else { 'A' }), rule $(if ($record.touchRule) { $record.touchRule } else { 'the default' }), hotspot $(if ($record.hotspot) { $record.hotspot } else { 'not probed' }), Waze on the A71 $(if ($record.wazeA71) { $record.wazeA71 } else { 'not checked' }), WhatsApp skipped (the owner's choice)$(if ($record.playDisabled) { '; the Play Store on kestrel-api37 stays disabled until the end of sitting 2' })"
 }
 
 # Sitting 2's steps (design D30 steps 14 to 23).
@@ -1535,21 +1674,15 @@ function Revoke-ScreenshotApprovals([string]$Device, [int]$Before) {
     [int]$answer['approvals'] -le $Before
 }
 
-# The restores of sitting 2's end on kestrel-api37 (design D30 step 23): the owner's Copilot profile deleted through the
-# hook provider-delete (review C I6), the Play Store enabled again, and the test Google account and the apps that sitting 1
-# installed there removed. Only the step end registers them, so that a stop before it (q, Ctrl+C, an error) keeps them
-# for a resume, which then needs neither a new sign-in nor the owner (fix-5c-scripts-review M1); the session's last
-# line then says so. The account's restore is registered after the Play Store's, so that it runs before it, and after
-# the accessibility settings', which screen-tap needs.
+# The restores of sitting 2's end on kestrel-api37 (design D30 step 23, with the owner's decisions of 2026-11-22): the
+# Play Store enabled again, Gmail's notifications turned on again, the apps that sitting 1 installed there uninstalled
+# (never Gmail), and a test Google account that sitting 1 signed in removed, but never the owner's own account
+# (emulatorGmailAddress equals gmailAddress) and never Kestrel's Copilot profile, which stay on the emulator. Only the
+# step end registers them, so that a stop before it (q, Ctrl+C, an error) keeps them for a resume (fix-5c-scripts-review
+# M1); the session's last line then says so. A dry run removes no account and no app. The account's restore is
+# registered last, so that it runs first, before the Play Store's, and after the accessibility settings', which
+# screen-tap needs.
 function Register-SittingEndRestores {
-    Register-Restore 'the owner''s Copilot profile on kestrel-api37' 'On kestrel-api37, the emulator''s window, use the mouse: Kestrel''s settings > Providers and profiles > the Copilot profile > Delete profile > Delete.' $EmulatorSerial {
-        param($Device)
-        Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-        Start-Sleep -Seconds 3
-        $answer = ConvertFrom-HookPairs (Invoke-DeviceHook $Device provider-delete)
-        if ($answer['copilot'] -ne '0') { throw 'a Copilot profile is left' }
-        Add-Result end 'the owner''s Copilot profile on kestrel-api37 is deleted'
-    } | Out-Null
     $record = Read-AgentRecord $recordFile
     if ($record.playDisabled) {
         Register-Restore 'the Play Store on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm enable com.android.vending" $EmulatorSerial {
@@ -1558,71 +1691,83 @@ function Register-SittingEndRestores {
             Set-AgentRecord $recordFile 'playDisabled' $false
         } | Out-Null
     }
-    if (-not $DryRun -and ($record.emulatorAccount -or @($record.installedEmulator | Where-Object { $_ }).Count -gt 0)) {
-        Register-Restore 'the test Google account and the apps of sitting 1 on kestrel-api37' 'On kestrel-api37, the emulator''s window: Settings > Passwords and accounts > the test account > Remove account; then uninstall Waze and Gmail.' $record {
-            param($Record)
-            $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)" } else { '' }
-            if ($Record.emulatorAccount) {
-                Invoke-Device $EmulatorSerial 'am start -a android.settings.SYNC_SETTINGS' | Out-Null
-                Start-Sleep -Seconds 3
-                if ($address -and (Invoke-ScreenTap $EmulatorSerial $address) -and (Invoke-ScreenTap $EmulatorSerial 'Remove account') -and (Invoke-ScreenTap $EmulatorSerial 'Remove account')) { Start-Sleep -Seconds 5 }
-            }
-            foreach ($package in @($Record.installedEmulator | Where-Object { $_ })) {
+    if ($record.gmailNotificationsOff) {
+        Register-Restore 'Gmail''s notifications on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS" $EmulatorSerial {
+            param($Device)
+            Invoke-Device $Device 'pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS' | Out-Null
+            Set-AgentRecord $recordFile 'gmailNotificationsOff' $false
+        } | Out-Null
+    }
+    if ($DryRun) { return }
+    $apps = @($record.installedEmulator | Where-Object { $_ -and $_ -ne 'com.google.android.gm' })
+    if ($apps) {
+        Register-Restore 'the apps that sitting 1 installed on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial uninstall $($apps -join ', then the same with ')" $apps {
+            param($Apps)
+            foreach ($package in $Apps) {
                 if (Test-Installed $EmulatorSerial $package) { Invoke-Device $EmulatorSerial "pm uninstall $package" | Out-Null }
             }
             Set-AgentRecord $recordFile 'installedEmulator' @()
-            $left = Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')
-            Add-Result end "kestrel-api37 has $left Google accounts; the apps of sitting 1 are uninstalled"
+            Add-Result end "the apps that sitting 1 installed on kestrel-api37 are uninstalled: $($Apps -join ', ')"
+        } | Out-Null
+    }
+    if ($record.emulatorAccount -and -not (Test-EmulatorOwnAccount)) {
+        Register-Restore 'the test Google account on kestrel-api37' 'On kestrel-api37, the emulator''s window: Settings > Passwords and accounts > the test account > Remove account.' $EmulatorSerial {
+            param($Device)
+            $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)" } else { '' }
+            Invoke-Device $Device 'am start -a android.settings.SYNC_SETTINGS' | Out-Null
+            Start-Sleep -Seconds 3
+            if ($address -and (Invoke-ScreenTap $Device $address) -and (Invoke-ScreenTap $Device 'Remove account') -and (Invoke-ScreenTap $Device 'Remove account')) { Start-Sleep -Seconds 5 }
+            $left = Get-GoogleAccountCount @(Invoke-Device $Device 'dumpsys account')
+            Add-Result end "kestrel-api37 has $left Google accounts"
             if ($left -gt 0) { throw "$left Google accounts are left" }
-            # The emulator's Waze and e-mail runs need the account, so a later call no longer runs them.
+            # The emulator's e-mail runs need the account, so a later call no longer runs them.
             Set-AgentRecord $recordFile 'emulatorAccount' $false
         } | Out-Null
     }
 }
 
-# Design D30 step 14: the owner signs Kestrel in to Copilot on kestrel-api37, and on the A71 when sitting 1's device
-# tests deleted its profile there. The restore that deletes the emulator's Copilot profile is registered at the start of
-# the call (Register-SittingEndRestores).
+# Design D30 step 14, with the owner's decisions of 2026-11-22: the owner signs Kestrel in to Copilot only on a device
+# whose default profile is not a Copilot profile, so that he is asked nothing when both devices have one; kestrel-api37
+# keeps its profile after the sitting. The comparison's model is checked here, and asked about only when the owner is
+# here for a sign-in.
 function Invoke-OwnerStep2 {
     $a71 = Get-A71
-    $items = @(
-        [pscustomobject]@{ Device = $EmulatorSerial; Prompt = 'Item 1, about 3 minutes: in the emulator''s window on this computer, Kestrel''s page "Providers and profiles" is open. With the mouse, click "Add a profile", "GitHub Copilot" and "Sign in"; open github.com/login/device in this computer''s browser, enter the code that the page shows and approve; when the page shows the models, turn on "Make default" and click "Save". Press Enter when the page shows the profile (s skips).' }
-    )
-    # The A71's own answer, not sitting 1's record, which lacks it when that sitting's device tests stopped early; when
-    # Kestrel on the A71 does not answer, the owner is asked too.
-    $copilotA71 = if ($a71 -ne $EmulatorSerial) {
-        try {
-            Invoke-Device $a71 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-            Start-Sleep -Seconds 3
-            (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 provider-standin))['copilot']
-        } catch { $null }
-    }
-    if ($a71 -ne $EmulatorSerial -and $copilotA71 -in '0', $null) {
-        $items += [pscustomobject]@{ Device = $a71; Prompt = 'Item 2, about 3 minutes: on the A71, Kestrel''s page "Providers and profiles" is open. Tap "Add a profile", "GitHub Copilot", "Sign in", "Copy" and "Open the page"; in Chrome, sign in to GitHub if it asks, paste the code and approve; when Kestrel''s page shows the models, turn on "Make default" and tap "Save". Press Enter when the page shows the profile (s skips).' }
-    }
-    foreach ($item in $items) {
-        $name = Get-DeviceName $item.Device
+    $asked = $false
+    foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
+        $name = Get-DeviceName $device
+        # The device's own answer, not sitting 1's record, which lacks it when that sitting's device tests stopped early;
+        # when Kestrel does not answer, the owner is asked.
+        if ((Get-DefaultProfileKind $device) -eq 'copilot') {
+            Add-Result owner "${name}: the default profile is already a Copilot profile, so the owner is not asked"
+            continue
+        }
         if ($DryRun) {
             Add-Result owner "${name}: no Copilot sign-in in a dry run, which runs the stand-in variants with the scripted model"
             continue
         }
-        if (-not (Unlock-Device $item.Device)) { throw "$name is locked, and the sitting could not unlock it" }
-        Invoke-Device $item.Device 'am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE PROVIDERS' | Out-Null
-        $prompt = $item.Prompt
+        if (-not (Unlock-Device $device)) { throw "$name is locked, and the sitting could not unlock it" }
+        Invoke-Device $device 'am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE PROVIDERS' | Out-Null
+        $prompt = if ($device -eq $EmulatorSerial) {
+            'Kestrel''s Copilot sign-in on kestrel-api37, about 3 minutes: in the emulator''s window on this computer, Kestrel''s page "Providers and profiles" is open. With the mouse, click "Add a profile", "GitHub Copilot" and "Sign in"; open github.com/login/device in this computer''s browser, enter the code that the page shows and approve; when the page shows the models, turn on "Make default" and click "Save". Press Enter when the page shows the profile (s skips).'
+        } else {
+            'Kestrel''s Copilot sign-in on the A71, about 3 minutes: on the A71, Kestrel''s page "Providers and profiles" is open. Tap "Add a profile", "GitHub Copilot", "Sign in", "Copy" and "Open the page"; in Chrome, sign in to GitHub if it asks, paste the code and approve; when Kestrel''s page shows the models, turn on "Make default" and tap "Save". Press Enter when the page shows the profile (s skips).'
+        }
         $kind = $null
+        $asked = $true
         for ($try = 1; $try -le 3 -and $kind -ne 'copilot'; $try++) {
             if ((Request-OwnerItem $prompt) -eq 'skip') { break }
-            $kind = (ConvertFrom-HookPairs (Invoke-DeviceHook $item.Device provider-standin))['profile']
+            $kind = (ConvertFrom-HookPairs (Invoke-DeviceHook $device provider-standin))['profile']
             $prompt = "The default profile of $name is $kind, not a Copilot profile. Finish the sign-in on Kestrel's page, turn on ""Make default"" and save, then press Enter (s skips)."
         }
         Add-Result owner "${name}: $(if ($kind -eq 'copilot') { 'the default profile is a Copilot profile' } elseif ($kind) { "the default profile is $kind, so its live runs fail" } else { 'the Copilot sign-in skipped, so its live runs fail' })"
     }
-    # The comparison's model is checked while the owner is here, so that he can choose another one (design D32 item 35).
+    # The comparison's model is checked at the start, so that the owner, when he is here, can choose another one (design
+    # D32 item 35); without him, the step compare records the refusal.
     if (-not $DryRun -and -not (Test-CompareModel)) {
         Add-Result owner $compareRefused
-        Request-OwnerItem "$compareRefused Press q to stop the sitting and start it again with another -CompareModel, or Enter to go on without the comparison." | Out-Null
+        if ($asked) { Request-OwnerItem "$compareRefused Press q to stop the sitting and start it again with another -CompareModel, or Enter to go on without the comparison." | Out-Null }
     }
-    if (-not $DryRun) {
+    if ($asked) {
         try { [console]::Beep(880, 300) } catch { Write-Verbose 'This console cannot beep.' }
         Write-Host 'You may leave now. The rest of sitting 2 runs without you for about 3 1/2 to 4 hours; please do not touch the A71 or the emulator.'
     }
@@ -1690,8 +1835,13 @@ function Invoke-PrepareStep2 {
     $branch = if ($record.touchBranch) { $record.touchBranch } else { 'A' }
     Invoke-DeviceHook $a71 agent-touch-source @{ Rule = $rule; Branch = $branch } | Out-Null
     if ($record.hotspot -eq 'ok' -and $record.wifiSharing) { Enable-WifiSharing $a71 | Out-Null }
-    if (Test-Installed $a71 'com.google.android.gm') { $script:gmailChecked = Test-GmailAccount $a71 $record }
-    if (Test-Installed $a71 'org.telegram.messenger') {
+    # A dry run's A71 is kestrel-api37, whose Gmail may hold the owner's own account: no compose screen opens there.
+    if ($DryRun) {
+        Add-Result prepare 'Gmail''s account: not checked in a dry run, whose e-mail runs are the stand-in''s'
+    } elseif (Test-Installed $a71 'com.google.android.gm') {
+        $script:gmailChecked = Test-GmailAccount $a71 $record
+    }
+    if ((Test-TelegramDevice $a71 prepare 'Telegram''s test names') -and (Test-Installed $a71 'org.telegram.messenger')) {
         Open-App $a71 'org.telegram.messenger'
         Start-Sleep -Seconds 4
         $rows = @{}
@@ -1700,7 +1850,7 @@ function Invoke-PrepareStep2 {
         $testNames.Ana = Select-TestName 'Ana' $rows
         $testNames.John = Select-TestName 'John' $rows @($testNames.Ana)
     }
-    Add-Result prepare "both devices: the fix installed, test mode on, the owner's name, the permissions, notification access and the silent microphone set, the live sessions $(if ($DryRun) { 'not opened in a dry run' } else { 'open' }); the A71: touch rule $rule, branch $branch; Gmail $(if ($gmailChecked) { 'shows the address of gmailAddress' } else { 'does not show the address of gmailAddress, so the e-mail runs on the A71 are skipped' }); the test variants use the names $($testNames.Ana) and $($testNames.John)"
+    Add-Result prepare "both devices: the fix installed, test mode on, the owner's name, the permissions, notification access and the silent microphone set, the live sessions $(if ($DryRun) { 'not opened in a dry run' } else { 'open' }); the A71: touch rule $rule, branch $branch; Gmail $(if ($gmailChecked) { 'shows the address of gmailAddress' } elseif ($DryRun) { 'not checked' } else { 'does not show the address of gmailAddress, so the e-mail runs on the A71 are skipped' }); the test variants use the names $($testNames.Ana) and $($testNames.John)"
 }
 
 # Design D30 step 17: the live D3 runs on the A71 (D29), 3 runs each.
@@ -1722,29 +1872,35 @@ function Invoke-A71RunsStep {
     Invoke-TaskRuns a71-runs $a71 'firefox-wiki' | Out-Null
 }
 
-# The emulator's tasks (design D29): the hotspot, Waze when it is installed, Firefox, and the e-mail with the test
-# account; $With goes to each, as the comparison's model.
+# The emulator's tasks (design D29): the hotspot, Waze when it is installed, Firefox, and the e-mail with the emulator's
+# Google account, the owner's own when emulatorGmailAddress is gmailAddress; none of them needs Telegram or WhatsApp.
+# $With goes to each, as the comparison's model.
 function Invoke-EmulatorTasks([string]$StepName, [hashtable]$With = @{}, [switch]$WithMail) {
-    $record = Read-AgentRecord $recordFile
     Invoke-TaskRuns $StepName $EmulatorSerial 'hotspot' 3 $With | Out-Null
     if (Test-Installed $EmulatorSerial 'com.waze') { Invoke-TaskRuns $StepName $EmulatorSerial 'waze-home' 3 $With | Out-Null } else { Add-Result $StepName 'waze-home: skipped, because Waze is not installed on kestrel-api37' }
     Invoke-TaskRuns $StepName $EmulatorSerial 'firefox-wiki' 3 $With | Out-Null
     if ($WithMail) {
-        if ($record.emulatorAccount -and $config.PSObject.Properties['emulatorGmailAddress'] -and "$($config.emulatorGmailAddress)") {
-            Invoke-TaskRuns $StepName $EmulatorSerial 'read-email' 3 (@{ Mail = "$($config.emulatorGmailAddress)" } + $With) | Out-Null
+        $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)".Trim() } else { '' }
+        if ($address -and (Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) -gt 0) {
+            Invoke-TaskRuns $StepName $EmulatorSerial 'read-email' 3 (@{ Mail = $address } + $With) | Out-Null
         } else {
-            Add-Result $StepName 'read-email: skipped, because kestrel-api37 has no test account with its address in emulatorGmailAddress'
+            Add-Result $StepName 'read-email: skipped, because kestrel-api37 has no Google account, or emulatorGmailAddress does not give its address'
         }
     }
 }
 
-# Design D30 step 18: the live D3 runs on kestrel-api37, 3 runs each.
-function Invoke-EmulatorRunsStep { Invoke-EmulatorTasks emulator-runs -WithMail }
+# Design D30 step 18: the live D3 runs on kestrel-api37, 3 runs each. Telegram's tasks run only on the A71, because the
+# emulator's Telegram is not signed in (the owner's choice).
+function Invoke-EmulatorRunsStep {
+    Add-Result emulator-runs 'telegram-late and telegram-photos: not run on kestrel-api37 (the owner''s choice)'
+    Invoke-EmulatorTasks emulator-runs -WithMail
+}
 
 # Design D30 step 19 and D32 item 35: the emulator's three tasks again with -CompareModel as the lightweight model, and a
-# summary per task and model of both.
+# summary per task and model of both. The three tasks need neither Telegram nor WhatsApp (the owner's choices).
 function Invoke-CompareStep {
     if (-not $DryRun -and -not (Test-CompareModel)) { throw $compareRefused }
+    Add-Result compare 'the comparison runs hotspot, waze-home and firefox-wiki, which need neither Telegram nor WhatsApp'
     Invoke-EmulatorTasks compare @{ Model = $CompareModel }
     $runs = @(Get-SittingRuns | Where-Object { $_['device'] -eq 'kestrel-api37' -and $_['task'] -in 'hotspot', 'waze-home', 'firefox-wiki', 'stand-in-hotspot', 'stand-in-firefox' })
     foreach ($line in Get-RunSummary $runs) { Add-Result compare $line }
@@ -1830,10 +1986,10 @@ function Invoke-CacheStep {
     }
 }
 
-# Design D30 step 23: the restores now (among them the emulator's Copilot profile, the live sessions, the test Google
-# account and the apps that sitting 1 installed on kestrel-api37, the Play Store and :testapp on the A71); and the
-# browsers' versions compared with those that sitting 1 recorded. Telegram, WhatsApp and the apps of sitting 1's
-# step 2 stay on the A71 (Q6, Q8). The end's own restores are registered here, the newest, so that they run first.
+# Design D30 step 23: the restores now (among them the live sessions, the Play Store, Gmail's notifications, a test
+# Google account and the apps other than Gmail that sitting 1 installed on kestrel-api37, and :testapp on the A71); and
+# the browsers' versions compared with those that sitting 1 recorded. The owner's own Google account and Kestrel's
+# Copilot profile stay on kestrel-api37, and Telegram and the apps of sitting 1's step 2 on the A71 (Q6, Q8). The end's own restores are registered here, the newest, so that they run first.
 function Invoke-EndStep2 {
     $record = Read-AgentRecord $recordFile
     $script:endReached = $true
@@ -1850,7 +2006,7 @@ function Invoke-EndStep2 {
 $plans = @{
     '1' = @(
         @{ Name = 'prepare'; Minutes = 20; Title = 'the builds, the models, test mode and the owner''s names on both devices, and what the owner''s step needs'; Run = 'Invoke-PrepareStep' }
-        @{ Name = 'owner'; Minutes = 20; Title = 'the owner''s step: the installs, Telegram, WhatsApp, the emulator''s test account, Waze''s Home and one real touch'; Run = 'Invoke-OwnerStep' }
+        @{ Name = 'owner'; Minutes = 20; Title = 'the owner''s step: of the installs, Telegram''s sign-in, the emulator''s account and Waze''s Home what is not done yet, and one real touch'; Run = 'Invoke-OwnerStep' }
         @{ Name = 'setup'; Minutes = 20; Title = 'the permissions, notification access, the A71''s test location in Waze and Firefox'; Run = 'Invoke-SetupStep' }
         @{ Name = 'device-tests'; Minutes = 25; Title = 'the A71''s device tests, then what they may have deleted set again'; Run = 'Invoke-DeviceTestsStep' }
         @{ Name = 'hotspot'; Minutes = 5; Title = 'the hotspot probe on the A71'; Run = 'Invoke-HotspotStep' }
@@ -1859,7 +2015,7 @@ $plans = @{
         @{ Name = 'end'; Minutes = 5; Title = 'the record for sitting 2, and the restores'; Run = 'Invoke-EndStep' }
     )
     '2' = @(
-        @{ Name = 'owner'; Minutes = 6; Title = 'the owner''s step: Kestrel''s Copilot sign-in on kestrel-api37, and on the A71 when its profile is gone'; Run = 'Invoke-OwnerStep2' }
+        @{ Name = 'owner'; Minutes = 6; Title = 'the owner''s step: Kestrel''s Copilot sign-in on a device whose default profile is not a Copilot profile'; Run = 'Invoke-OwnerStep2' }
         @{ Name = 'prepare'; Minutes = 20; Title = 'the fix installed, everything set again, Gmail''s account and the test names checked, and the live sessions opened'; Run = 'Invoke-PrepareStep2' }
         @{ Name = 'a71-runs'; Minutes = 60; Title = 'the live D3 runs on the A71, 3 each'; Run = 'Invoke-A71RunsStep' }
         @{ Name = 'emulator-runs'; Minutes = 35; Title = 'the live D3 runs on kestrel-api37, 3 each'; Run = 'Invoke-EmulatorRunsStep' }
@@ -1892,7 +2048,7 @@ function Test-StepCalls([string]$StepName, [string]$When) {
 
 # Runs the call's steps of the sitting in order. A step that fails is recorded, and the next step runs. The owner's q
 # stops the sitting at once. The ceiling of AI Credits stops the step, and of the steps that remain only end runs, so
-# that the sitting's real end removes the emulator's Copilot profile and test account; then the sitting stops with the
+# that the sitting's real end puts back the emulator's Play Store and removes a test account; then the sitting stops with the
 # ceiling's sentence. A run whose credits are unknown, and credits of earlier calls that cannot be read, stop the
 # sitting in the same way, with their own sentences (fix-5c-ceiling-review M1 and M2).
 function Invoke-SittingSteps([object[]]$Entries) {
@@ -1922,7 +2078,7 @@ function Invoke-SittingSteps([object[]]$Entries) {
 
 $completed = $false
 $stopped = $false
-# Whether this call reached sitting 2's step end, which removes the emulator's profile and test account (Invoke-EndStep2).
+# Whether this call reached sitting 2's step end, which puts back the emulator's Play Store (Invoke-EndStep2).
 $endReached = $false
 try {
     # The emulator's lock first, before any command reaches a device (process rule 9); a dry run runs inside the
@@ -2005,7 +2161,7 @@ try {
     }
     if (-not ($completed -or $stopped)) { Add-SessionResult -Path $resultsFile -Step session -Text 'stopped, as by Ctrl+C' }
     if ($Sitting -eq '2' -and -not $endReached) {
-        $kept = 'kestrel-api37 keeps the owner''s Copilot profile, the test account and its apps, and the disabled Play Store until a call of sitting 2 that runs the step end: to go on, call with -Step and the steps that remain, prepare first; to end sitting 2 without more runs, call with -Step end'
+        $kept = 'kestrel-api37 always keeps the owner''s own Google account and Kestrel''s Copilot profile; its disabled Play Store, Gmail''s notifications off, and a test account and apps of sitting 1 stay until a call of sitting 2 that runs the step end: to go on, call with -Step and the steps that remain, prepare first; to end sitting 2 without more runs, call with -Step end'
         Add-SessionResult -Path $resultsFile -Step session -Text $kept
         Write-Host "$kept."
     }
