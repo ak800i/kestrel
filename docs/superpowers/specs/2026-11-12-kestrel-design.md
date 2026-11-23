@@ -16,7 +16,7 @@ It keeps everything that Voice Access does. The owner can still give direct comm
 
 Three rules shape the whole design:
 
-1. **Nothing leaves the phone except the traffic to the LLM provider that the owner configures.** Speech recognition, voice output, OCR and all storage run on the phone. There is no telemetry of any kind.
+1. **Nothing leaves the phone except the traffic to the LLM provider that the owner configures, and the download of the speech and OCR models after the owner taps Download in the setup checklist, from the models' own hosts, which see the phone's address and which files it downloads, and nothing else.** Speech recognition, voice output, OCR and all storage run on the phone. There is no telemetry of any kind.
 2. **The agent reads the screen as text whenever it can.** It uses the accessibility tree first and on-device OCR second. It sends a screenshot to the LLM only with the owner's permission, which Kestrel asks for by voice.
 3. **Safety rules live in code, not in the LLM prompt.** A check in Kestrel's code decides which actions need a spoken confirmation, which are handed back to the owner, and which are always blocked.
 

@@ -21,7 +21,7 @@ enum class Engine {
 
 /**
  * One file of a model: its [path] below Kestrel's folder `files/models`, its [size] in bytes and its [sha256] hash in
- * lowercase hex. [url], or [archive] and [member], say where scripts\push-models.ps1 gets the file; the app ignores them.
+ * lowercase hex. [url], or [archive] and [member], say where the app's model download and scripts\push-models.ps1 get the file.
  */
 @Serializable
 data class ModelFile(
