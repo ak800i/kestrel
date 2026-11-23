@@ -3,7 +3,13 @@ package dev.kestrel.eval.run
 import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.config.Redactions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import kotlin.concurrent.thread
+import kotlin.time.Duration.Companion.milliseconds
 
 /** The restores: newest first, each once, a failure does not stop the next one, and the shutdown hook (design D3 of sub-project 6). */
 class RestoresTest {
@@ -52,5 +58,73 @@ class RestoresTest {
 
         assertEquals(1, hooks.size)
         assertEquals(listOf("alias", "hotspot"), ran)
+    }
+
+    @Test
+    fun aRestoreThatThrowsAnErrorDoesNotStopTheNext() {
+        val ran = mutableListOf<String>()
+        restores.push("the first", "do one") { ran.add("first") }
+        restores.push("the broken", "do two") { throw StackOverflowError() }
+
+        val failures = restores.runAll()
+
+        assertEquals(listOf("first"), ran)
+        assertEquals(listOf(RestoreFailure("the broken", "do two", "StackOverflowError")), failures)
+    }
+
+    @Test
+    fun aPushAfterTheShutdownHookStartedThrows() {
+        restores.push("the hotspot", "Turn the hotspot off.") {}
+
+        hooks.single().run()
+
+        assertTrue(restores.stopping)
+        assertThrows(Stopping::class.java) { restores.push("the next run's alias", "Remove it.") {} }
+        assertEquals(0, restores.size)
+    }
+
+    @Test
+    fun theShutdownHookWaitsForARestoreThatTheMainThreadIsRunningAndReportsItsFailure() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        restores.push("the task stopped", "Say 'Kestrel, stop'.") {
+            started.countDown()
+            release.await()
+            throw IllegalStateException("the task did not stop")
+        }
+        val main = thread { restores.runAll() }
+        started.await()
+
+        val hook = hooks.single().apply { start() }
+        hook.join(300)
+        assertTrue(hook.isAlive)
+        release.countDown()
+        hook.join(5_000)
+        main.join(5_000)
+
+        assertFalse(hook.isAlive)
+        assertEquals(listOf("Not put back: the task stopped (the task did not stop). By hand: Say 'Kestrel, stop'."), console.warnings)
+    }
+
+    @Test
+    fun aRestoreStillRunningWhenTheHookStopsWaitingIsNotPutBack() {
+        val bounded = Restores(console, Redactions(LocalConfig.EMPTY), 100.milliseconds) { hooks.add(it) }
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        bounded.push("the test location", "Turn the mock location off.") {
+            started.countDown()
+            release.await()
+        }
+        val main = thread { bounded.runAll() }
+        started.await()
+
+        hooks.single().run()
+        release.countDown()
+        main.join(5_000)
+
+        assertEquals(
+            listOf("Not put back: the test location (it was still running when :tools:eval stopped). By hand: Turn the mock location off."),
+            console.warnings,
+        )
     }
 }

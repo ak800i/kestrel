@@ -1,9 +1,11 @@
 package dev.kestrel.eval.config
 
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.device.Refusal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -31,6 +33,17 @@ class LocalConfigTest {
         assertEquals("Kalemegdan", config.homePlace)
         assertFalse(config.allValues.contains("123456"))
         assertEquals("LocalConfig(keys=[emulatorGmailAddress, gmailAddress, homePlace, testLocation])", config.toString())
+    }
+
+    @Test
+    fun aMalformedFileIsARefusalThatHoldsNoneOfItsContent() {
+        val file = folder.newFile("a71-config.json").toPath()
+        Files.writeString(file, """{"gmailAddress": "pera.test@example.com", "homePlace": "Kalemegdan",}""")
+
+        val refusal = assertThrows(Refusal::class.java) { LocalConfig.read(file) }
+
+        assertEquals("corpus\\owner\\a71-config.json is not valid JSON (no comments or trailing commas).", refusal.message)
+        assertNull(refusal.cause)
     }
 
     @Test

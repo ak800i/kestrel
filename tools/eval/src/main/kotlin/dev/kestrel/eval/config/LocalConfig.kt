@@ -1,6 +1,7 @@
 package dev.kestrel.eval.config
 
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.device.Refusal
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -31,10 +32,18 @@ class LocalConfig private constructor(private val values: Map<String, String>) {
         val KEYS = listOf("gmailAddress", "emulatorGmailAddress", "testLocation", "homePlace")
         val EMPTY = LocalConfig(emptyMap())
 
-        /** The configuration of [file], or [EMPTY] when there is none; a key whose value is not a text is left out. */
+        /**
+         * The configuration of [file], or [EMPTY] when there is none; a key whose value is not a text is left out. A file
+         * that is not strict JSON is a [Refusal] whose message holds none of the file, because the parser's error quotes it.
+         */
         fun read(file: Path): LocalConfig {
             if (!Files.isRegularFile(file)) return EMPTY
-            val json = Json.parseToJsonElement(Files.readString(file)) as? JsonObject ?: return EMPTY
+            val parsed = try {
+                Json.parseToJsonElement(Files.readString(file))
+            } catch (e: IllegalArgumentException) {
+                throw Refusal("corpus\\owner\\a71-config.json is not valid JSON (no comments or trailing commas).")
+            }
+            val json = parsed as? JsonObject ?: return EMPTY
             val texts = KEYS.mapNotNull { key -> (json[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() }?.let { key to it } }
             return of(texts.toMap())
         }

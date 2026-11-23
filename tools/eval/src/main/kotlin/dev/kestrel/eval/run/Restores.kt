@@ -1,33 +1,65 @@
 package dev.kestrel.eval.run
 
 import dev.kestrel.eval.config.Redactions
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** What puts back one change: [what] it is, what to do [byHand] when it fails, and the [action]. */
 class Restore(val what: String, val byHand: String, val action: () -> Unit)
 
 data class RestoreFailure(val what: String, val byHand: String, val reason: String)
 
+/** [Restores.push] after the shutdown hook began: the command is ending, and it must make no further change. */
+class Stopping(message: String) : Exception(message)
+
 /**
  * The restores of a command (design D3 of sub-project 6): a stack on which each change pushes its restore before it is
- * made. They run newest first, each once, and a failure does not stop the next one. The first push registers a JVM
- * shutdown hook that runs every restore still on the stack, so that Ctrl+C or an error puts the device back; the stack is
- * shared by the main thread and the hook, and a restore leaves it before it runs, so that no restore runs twice. A run
- * puts back only its own changes with [mark] and [runDownTo].
+ * made. They run newest first, each once, and a failure, even an [Error], does not stop the next one. The first push
+ * registers a JVM shutdown hook that runs every restore still on the stack, so that Ctrl+C or an error puts the device
+ * back; the stack is shared by the main thread and the hook, and a restore leaves it before it runs, so that no restore
+ * runs twice. A run puts back only its own changes with [mark] and [runDownTo].
+ *
+ * The JVM does not stop the main thread while the hook runs. So the hook first sets [stopping], after which [push] throws
+ * [Stopping] and no new change starts; then it waits, for at most [stopWait], for the restores that the main thread is
+ * running, and reports one that is still running at the bound as not put back. While [stopping], a failure is reported
+ * as soon as it happens, because the main thread may never reach its [report].
  */
-class Restores(
+class Restores internal constructor(
     private val console: Console,
     private val redactions: Redactions,
-    private val addShutdownHook: (Thread) -> Unit = { Runtime.getRuntime().addShutdownHook(it) },
+    private val stopWait: Duration,
+    private val addShutdownHook: (Thread) -> Unit,
 ) {
+    constructor(
+        console: Console,
+        redactions: Redactions,
+        addShutdownHook: (Thread) -> Unit = { Runtime.getRuntime().addShutdownHook(it) },
+    ) : this(console, redactions, STOP_WAIT, addShutdownHook)
+
+    private val lock = ReentrantLock()
+    private val idle = lock.newCondition()
     private val stack = ArrayList<Restore>()
+    private val running = LinkedHashSet<Restore>()
+    private val unreported = ArrayList<RestoreFailure>()
+    private val reported: MutableSet<RestoreFailure> = Collections.newSetFromMap(IdentityHashMap())
     private var hooked = false
 
-    val size: Int get() = synchronized(stack) { stack.size }
+    /** Whether the shutdown hook has begun; a run checks it to end at once instead of on its next [push]. */
+    @Volatile
+    var stopping = false
+        private set
 
-    fun push(what: String, byHand: String, action: () -> Unit): Restore = synchronized(stack) {
+    val size: Int get() = lock.withLock { stack.size }
+
+    fun push(what: String, byHand: String, action: () -> Unit): Restore = lock.withLock {
+        if (stopping) throw Stopping("The restores are running because :tools:eval is stopping; no change may start.")
         if (!hooked) {
             hooked = true
-            addShutdownHook(Thread({ report(runAll()) }, "eval-restores"))
+            addShutdownHook(Thread(::stop, "eval-restores"))
         }
         Restore(what, byHand, action).also { stack.add(it) }
     }
@@ -39,11 +71,23 @@ class Restores(
     fun runDownTo(mark: Int): List<RestoreFailure> {
         val failures = mutableListOf<RestoreFailure>()
         while (true) {
-            val next = synchronized(stack) { if (stack.size > mark) stack.removeAt(stack.size - 1) else null } ?: break
-            try {
+            val next = lock.withLock {
+                if (stack.size > mark) stack.removeAt(stack.size - 1).also { running.add(it) } else null
+            } ?: break
+            val failure = try {
                 next.action()
-            } catch (e: Exception) {
-                failures.add(RestoreFailure(next.what, next.byHand, redactions.forConsole(e.message ?: e.javaClass.simpleName)))
+                null
+            } catch (e: Throwable) {
+                RestoreFailure(next.what, next.byHand, redactions.forConsole(e.message ?: e.javaClass.simpleName))
+            }
+            lock.withLock {
+                failure?.let {
+                    failures.add(it)
+                    unreported.add(it)
+                }
+                if (stopping) warn(failures)
+                running.remove(next)
+                idle.signalAll()
             }
         }
         return failures
@@ -51,8 +95,32 @@ class Restores(
 
     fun runAll(): List<RestoreFailure> = runDownTo(0)
 
-    /** Says what could not be put back and how to do it by hand, as a71-agent.ps1's last lines do. */
-    fun report(failures: List<RestoreFailure>) {
-        for (failure in failures) console.warn("Not put back: ${failure.what} (${failure.reason}). By hand: ${failure.byHand}")
+    /** Says what could not be put back and how to do it by hand, as a71-agent.ps1's last lines do; each failure once. */
+    fun report(failures: List<RestoreFailure>) = lock.withLock { warn(failures) }
+
+    private fun warn(failures: List<RestoreFailure>) {
+        for (failure in failures) {
+            if (!reported.add(failure)) continue
+            unreported.removeAll { it === failure }
+            console.warn("Not put back: ${failure.what} (${failure.reason}). By hand: ${failure.byHand}")
+        }
+    }
+
+    /** The shutdown hook: no new change, every restore left, the main thread's restore awaited, and every failure reported. */
+    private fun stop() {
+        stopping = true
+        runAll()
+        lock.withLock {
+            var left = stopWait.inWholeNanoseconds
+            while (running.isNotEmpty() && left > 0) left = idle.awaitNanos(left)
+            warn(unreported.toList())
+            for (restore in running) {
+                console.warn("Not put back: ${restore.what} (it was still running when :tools:eval stopped). By hand: ${restore.byHand}")
+            }
+        }
+    }
+
+    private companion object {
+        val STOP_WAIT = 30.seconds
     }
 }
