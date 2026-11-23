@@ -22,3 +22,8 @@ captures/
 # recordings and the A71 session's results, which are private (design spec, section 16.4)
 /corpus/generated/
 /corpus/owner/
+# The release signing key, which lives only in the owner's folders and in GitHub's secrets.
+/release-key/
+*.p12
+*.jks
+*.keystore
