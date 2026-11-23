@@ -23,7 +23,7 @@ Describe 'Get-DeviceTaskArgument' {
 
     It 'returns nothing for tasks and options that do not reach a device: <_>' -ForEach @(
         'check', 'assembleDebug', 'kestrelAudit', ':app:assembleDebugAndroidTest', 'testDebugUnitTest', 'lint', '--stop',
-        '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest'
+        '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest', ':tools:eval:installDist'
     ) {
         Get-DeviceTaskArgument -Arguments @($_) | Should -BeNullOrEmpty
     }

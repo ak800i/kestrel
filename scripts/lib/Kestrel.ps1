@@ -167,10 +167,11 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
 }
 
 # Returns the arguments of a Gradle call that name a task of the Android Gradle plugin that acts on a device: installs,
-# uninstalls, connected (on-device) tests and device checks. Options, which start with '-', are not tasks. Gradle also
-# accepts abbreviated task names, which this check misses, so scripts\gradle.ps1 has a second guard.
+# uninstalls, connected (on-device) tests and device checks. Options, which start with '-', are not tasks. installDist of
+# Gradle's application plugin, which scripts\eval.ps1 runs to build :tools:eval's copy on this computer, reaches no device.
+# Gradle also accepts abbreviated task names, which this check misses, so scripts\gradle.ps1 has a second guard.
 function Get-DeviceTaskArgument([string[]]$Arguments) {
-    @($Arguments | Where-Object { $_ -notlike '-*' -and ($_ -split ':')[-1] -match 'install|connected|devicecheck' })
+    @($Arguments | Where-Object { $_ -notlike '-*' -and ($_ -split ':')[-1] -match 'install|connected|devicecheck' -and ($_ -split ':')[-1] -ne 'installDist' })
 }
 
 function Find-EmulatorSerial([string]$AvdName) {

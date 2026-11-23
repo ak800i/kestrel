@@ -22,6 +22,9 @@ captures/
 # recordings and the A71 session's results, which are private (design spec, section 16.4)
 /corpus/generated/
 /corpus/owner/
+# The results of :tools:eval (scripts\eval.ps1), which can hold personal data, and its local keys (design spec, section 16.5)
+/eval-results/
+/eval/local/
 # The release signing key, which lives only in the owner's folders and in GitHub's secrets.
 /release-key/
 *.p12
