@@ -471,11 +471,20 @@ function Stop-DeviceCall([string]$Serial) {
     $false
 }
 
+# Returns the Android user folder, which holds the debug keystore, in the order in which the Android Gradle plugin looks
+# for it, so that a release build signed by Get-DebugSigningEnvironment has the debug build's key.
+function Get-AndroidUserHome {
+    if ($env:ANDROID_USER_HOME) { return $env:ANDROID_USER_HOME }
+    if ($env:ANDROID_SDK_HOME) { return (Join-Path $env:ANDROID_SDK_HOME '.android') }
+    if ($env:ANDROID_PREFS_ROOT) { return (Join-Path $env:ANDROID_PREFS_ROOT '.android') }
+    Join-Path $env:USERPROFILE '.android'
+}
+
 # Returns the variables with which Gradle signs Kestrel's release build (design spec, section 17), set to this computer's
 # debug key: the keystore that the Android Gradle plugin creates in the Android user folder, with its fixed alias and
 # passwords. A release build signed with it installs over the debug build with adb install -r and keeps Kestrel's data.
 # The release key never comes here.
-function Get-DebugSigningEnvironment([string]$AndroidUserHome = $(if ($env:ANDROID_USER_HOME) { $env:ANDROID_USER_HOME } else { Join-Path $env:USERPROFILE '.android' })) {
+function Get-DebugSigningEnvironment([string]$AndroidUserHome = $(Get-AndroidUserHome)) {
     $keystore = Join-Path $AndroidUserHome 'debug.keystore'
     if (-not (Test-Path -LiteralPath $keystore -PathType Leaf)) {
         throw "No debug keystore at $keystore. Build the debug app once, for example with scripts\install.ps1."

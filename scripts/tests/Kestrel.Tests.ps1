@@ -690,4 +690,30 @@ Describe 'Get-DebugSigningEnvironment' {
     It 'throws when the folder has no debug keystore' {
         { Get-DebugSigningEnvironment -AndroidUserHome (Join-Path $TestDrive 'none') } | Should -Throw '*No debug keystore*'
     }
+
+    It 'finds the Android user folder in the order of the Android Gradle plugin when <Case>' -TestCases @(
+        @{ Case = 'ANDROID_USER_HOME is set'; UserHome = 'user'; SdkHome = 'sdk'; PrefsRoot = 'prefs'; Expected = 'user' }
+        @{ Case = 'only ANDROID_SDK_HOME and ANDROID_PREFS_ROOT are set'; UserHome = ''; SdkHome = 'sdk'; PrefsRoot = 'prefs'; Expected = 'sdk\.android' }
+        @{ Case = 'only ANDROID_PREFS_ROOT is set'; UserHome = ''; SdkHome = ''; PrefsRoot = 'prefs'; Expected = 'prefs\.android' }
+        @{ Case = 'none is set'; UserHome = ''; SdkHome = ''; PrefsRoot = ''; Expected = 'profile\.android' }
+    ) {
+        param($UserHome, $SdkHome, $PrefsRoot, $Expected)
+        $names = 'ANDROID_USER_HOME', 'ANDROID_SDK_HOME', 'ANDROID_PREFS_ROOT', 'USERPROFILE'
+        $before = @{}
+        foreach ($name in $names) { $before[$name] = [Environment]::GetEnvironmentVariable($name) }
+        try {
+            $values = @{ ANDROID_USER_HOME = $UserHome; ANDROID_SDK_HOME = $SdkHome; ANDROID_PREFS_ROOT = $PrefsRoot; USERPROFILE = 'profile' }
+            foreach ($name in $names) {
+                $value = if ($values[$name]) { Join-Path $TestDrive $values[$name] } else { $null }
+                [Environment]::SetEnvironmentVariable($name, $value)
+            }
+            $folder = Join-Path $TestDrive $Expected
+            New-Item -ItemType Directory -Path $folder -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $folder 'debug.keystore') -Value 'key'
+
+            (Get-DebugSigningEnvironment).KESTREL_KEYSTORE | Should -BeExactly (Join-Path $folder 'debug.keystore')
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $before[$name]) }
+        }
+    }
 }
