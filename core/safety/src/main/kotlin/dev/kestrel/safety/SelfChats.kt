@@ -23,14 +23,16 @@ object SelfChats {
     /** The only package that an alias may map to an app's rule: `:testapp`'s fixtures (review 2 n2). */
     const val FIXTURES = "dev.kestrel.testapp"
 
-    /** The apps whose rule a reviewed fix has pinned from a real tree; none in plan 5A (design D18, review B3-N1). */
-    val ACTIVE: Set<String> = setOf(
-        // sub-project 5: the reviewed fix after the owner's first sitting adds Telegram's and WhatsApp's packages here.
-    )
+    /**
+     * The apps whose rule a reviewed fix has pinned from a real tree (design D18, review B3-N1): Telegram's, from Telegram
+     * 13.3.1 (`org.telegram.messenger.web`) on the A71 in sitting 1 of 2026-11-23, for both of Telegram's packages.
+     * WhatsApp's waits for a recording, which the owner skipped, and Viber's has none.
+     */
+    val ACTIVE: Set<String> = setOf(TELEGRAM, TELEGRAM_WEB)
 
     /** The top part of a chat's window that holds its toolbar's title and subtitle. */
     private const val HEADER = 0.12
-    private val TELEGRAM_OTHERS = listOf("member", "subscriber", "last seen", "online", "typing", "bot", "recently")
+    private const val SAVED_MESSAGES = "Saved Messages"
     private val EMAIL = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
     private val RECIPIENT_FIELDS = setOf("to", "cc", "bcc")
 
@@ -54,17 +56,20 @@ object SelfChats {
         val rows = rowsTo(snapshot, index, window)
         // In a share flow, a send in a dialog without rows or a message field (an app's own "Send to …?") sends to the rows
         // that the flow selected: it passes only when each of them is the self-chat and the dialog itself shows that name.
-        // A chat on the screen is checked by its app's own chat rule below (review 2 C1).
+        // A chat on the screen is checked by its app's own chat rule below (review 2 C1). No recording shows such a dialog
+        // in Telegram, so there Telegram's selection never counts.
         if (rows == null && flow != null && flow.selected.isNotEmpty() && rule != GMAIL && ContextRules.messageField(snapshot, window.id) == null) {
             val self = when (rule) {
                 WHATSAPP -> settings.whatsappOwnName?.let { "$it (You)" }
                 VIBER -> settings.viberSelfChatName
-                else -> "Saved Messages"
+                else -> null
             } ?: return false
             return flow.selected.all { it == self } && ContextRules.showsName(snapshot, window.id, self)
         }
         return when (rule) {
-            TELEGRAM, TELEGRAM_WEB -> if (rows != null) rows.isNotEmpty() && rows.all { telegramRow(snapshot, it, window) } else telegramChat(snapshot, window)
+            // Telegram 13.3.1's share picker names a row only on its search page, whose rows a chat of any name can match,
+            // and the row that a tap selects has no name, so no row of a picker counts until a recording shows a safe one.
+            TELEGRAM, TELEGRAM_WEB -> rows == null && telegramChat(snapshot, window)
             WHATSAPP -> {
                 val name = settings.whatsappOwnName ?: return false
                 val title = "$name (You)"
@@ -115,20 +120,21 @@ object SelfChats {
             .mapNotNull { snapshot.elements[it].text?.trim()?.takeIf(String::isNotEmpty) }
     }
 
-    /** Telegram's chat: the title "Saved Messages", the subtitle "forward here to save", and nothing else in the header. */
-    private fun telegramChat(snapshot: ScreenSnapshot, window: WindowSummary): Boolean {
-        val texts = header(snapshot, window)
-        return texts == listOf("Saved Messages", "forward here to save") &&
-            texts.none { text -> TELEGRAM_OTHERS.any { it in text.lowercase() } && text != "forward here to save" }
-    }
-
     /**
-     * Telegram's picker: the first row of the list, "Saved Messages" with the preview "Forward here to save." and no time,
-     * tick or counter, while no search shows results.
+     * Telegram's Saved Messages as Telegram 13.3.1 shows it: the toolbar's only text is the title "Saved Messages", which
+     * its title block repeats, with no second line. Every other chat has a second line that its owner cannot remove: a
+     * person's "last seen", "online" or "bot", a group's members or a channel's subscribers. The toolbar is what lies
+     * wholly inside the top part of the window, outside the messages (238 of 2400 pixels on the A71), so that a pinned
+     * message just below it is not read; a field there means that a search has taken the title's place.
      */
-    private fun telegramRow(snapshot: ScreenSnapshot, row: Int, window: WindowSummary): Boolean {
-        val searching = snapshot.elements.any { it.windowId == window.id && it.editable && !it.text.isNullOrBlank() }
-        return !searching && row == firstRow(snapshot, window) && rowTexts(snapshot, row) == listOf("Saved Messages", "Forward here to save.")
+    private fun telegramChat(snapshot: ScreenSnapshot, window: WindowSummary): Boolean {
+        val bottom = window.bounds.top + window.bounds.height * HEADER
+        val toolbar = snapshot.elements.indices.filter {
+            val element = snapshot.elements[it]
+            element.windowId == window.id && element.bounds.bottom <= bottom && !ScreenTree.insideScrollable(snapshot, it)
+        }
+        val texts = toolbar.mapNotNull { snapshot.elements[it].text?.trim()?.takeIf(String::isNotEmpty) }.distinct()
+        return toolbar.none { snapshot.elements[it].editable } && texts == listOf(SAVED_MESSAGES)
     }
 
     /** One sign of Viber's notes chat: a note's checkbox in the messages, the "Reminders list" icon or "Hide completed notes". */

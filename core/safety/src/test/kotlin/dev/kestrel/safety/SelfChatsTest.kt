@@ -1,10 +1,27 @@
 package dev.kestrel.safety
 
+import dev.kestrel.screen.model.ElementAction
+import dev.kestrel.screen.model.IntRect
+import dev.kestrel.screen.model.ScreenElement
+import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScrollAxis
+import dev.kestrel.screen.model.WindowKind
+import dev.kestrel.screen.model.WindowSummary
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.File
 
 /** Test mode's recogniser and its look-alikes (design D18 of sub-project 5; research r63), on snapshots with the real apps' packages. */
 class SelfChatsTest {
@@ -39,77 +56,189 @@ class SelfChatsTest {
 
     private val telegram = setOf(SelfChats.TELEGRAM)
 
-
-    @Test
-    fun aTabStripAboveThePickerIsNoListOfRows() {
-        val screen = TestScreen(SelfChats.TELEGRAM)
-        val tabs = screen.add(150, null, className = "androidx.recyclerview.widget.RecyclerView", axis = ScrollAxis.HORIZONTAL, scrollable = true, height = 100, clickable = false)
-        screen.add(150, "All chats", parent = tabs, right = 300)
-        val list = screen.add(300, null, scrollable = true, axis = ScrollAxis.VERTICAL, height = 1600, clickable = false)
-        val row = screen.add(300, null, parent = list, height = 140, text = null)
-        screen.add(310, "Saved Messages", parent = row, clickable = false, height = 40)
-        screen.add(350, "Forward here to save.", parent = row, clickable = false, height = 40)
-
-        assertTrue(recognise(screen to row))
-    }
-
-    private fun recognise(pair: Pair<TestScreen, String>, active: Set<String> = telegram, aliases: Map<String, String> = emptyMap(), flow: ShareFlow? = null, owner: SafetySettings = settings) =
+    private fun recognise(pair: Pair<TestScreen, String?>, active: Set<String> = telegram, aliases: Map<String, String> = emptyMap(), flow: ShareFlow? = null, owner: SafetySettings = settings) =
         SelfChats.recognise(pair.first.snapshot(), pair.second, owner, flow, aliases, active)
 
-    @Test
-    fun telegramsSavedMessagesNeedsItsSubtitleAndAnActiveRuleOrAnAlias() {
-        val saved = chat(SelfChats.TELEGRAM, "Saved Messages", "forward here to save")
+    /**
+     * A Telegram chat in the structure that sitting 1 recorded from Telegram 13.3.1's Saved Messages on the A71 (1080 × 2400
+     * pixels): the messages behind everything; the toolbar with Back, the title block that repeats its texts, the title
+     * and, for any other chat, the line below it, and two icons; a pinned message just below the toolbar; the message field
+     * and Send. Returns the snapshot and Send.
+     */
+    private fun telegram(title: String, subtitle: String? = null, packageName: String = SelfChats.TELEGRAM_WEB, extra: TestScreen.() -> Unit = {}): Pair<TestScreen, String?> {
+        val screen = TestScreen(packageName, bounds = IntRect(0, 0, 1080, 2400))
+        val messages = screen.add(0, null, className = RECYCLER, scrollable = true, axis = ScrollAxis.VERTICAL, right = 1080, height = 2400, clickable = false)
+        screen.add(0, "Note", parent = messages, className = VIEW_GROUP, right = 1080, height = 833, clickable = false)
+        screen.add(913, "Note", parent = messages, className = VIEW_GROUP, right = 1080, height = 226, clickable = false)
+        val bar = screen.add(0, null, className = FRAME, right = 1080, height = 238)
+        screen.add(91, null, parent = bar, className = IMAGE, left = 6, right = 148, height = 147, description = "Go back")
+        val block = screen.add(0, null, parent = bar, className = FRAME, left = 137, right = 838, height = 238, description = listOfNotNull(title, subtitle).joinToString(" "))
+        if (subtitle == null) {
+            screen.add(122, title, parent = block, className = TEXT, left = 289, right = 806, height = 86, clickable = false)
+        } else {
+            screen.add(105, title, parent = block, className = TEXT, left = 289, right = 806, height = 60, clickable = false)
+            screen.add(165, subtitle, parent = block, className = TEXT, left = 289, right = 806, height = 48, clickable = false)
+        }
+        screen.add(91, null, parent = bar, className = IMAGE_BUTTON, left = 857, right = 969, height = 147, description = "Search")
+        screen.add(91, null, parent = bar, className = IMAGE_BUTTON, left = 941, right = 1053, height = 147, description = "More options")
+        val pinned = screen.add(243, null, className = FRAME, left = 19, right = 1061, height = 126)
+        screen.add(263, "Pinned Message", parent = pinned, className = TEXT, left = 80, right = 945, height = 48, clickable = false)
+        screen.add(310, "Note", parent = pinned, className = TEXT, left = 80, right = 945, height = 48, clickable = false)
+        screen.add(2221, null, className = IMAGE, left = 27, right = 143, height = 116, description = "Emoji")
+        screen.add(2226, null, className = EDIT, editable = true, hint = "Message", text = "Test", left = 151, right = 939, height = 107)
+        val send = screen.add(2221, null, className = VIEW, left = 798, right = 1061, height = 116, description = "Send")
+        screen.extra()
+        return screen to send
+    }
 
-        assertTrue(recognise(saved))
-        assertFalse(recognise(saved, active = SelfChats.ACTIVE))
-        assertTrue(SelfChats.ACTIVE.isEmpty())
-        val fixture = chat("dev.kestrel.testapp", "Saved Messages", "forward here to save")
+    @Test
+    fun telegramsSavedMessagesIsTheRecordedToolbarInBothPackagesAndItsRuleIsActive() {
+        assertEquals(setOf(SelfChats.TELEGRAM, SelfChats.TELEGRAM_WEB), SelfChats.ACTIVE)
+        assertTrue(recognise(telegram("Saved Messages"), active = SelfChats.ACTIVE))
+        assertTrue(recognise(telegram("Saved Messages", packageName = SelfChats.TELEGRAM), active = SelfChats.ACTIVE))
+        // The check without a target, as the hook selfchat-check makes it.
+        assertTrue(recognise(telegram("Saved Messages").first to null, active = SelfChats.ACTIVE))
+        assertFalse(recognise(telegram("Saved Messages", packageName = "com.example.messenger"), active = SelfChats.ACTIVE))
+    }
+
+    @Test
+    fun anAliasAppliesTelegramsRuleOnlyToTheFixtures() {
+        val fixture = chat("dev.kestrel.testapp", "Saved Messages", null)
+
         assertTrue(recognise(fixture, active = emptySet(), aliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM)))
         // An alias never turns on a rule for a real app's package (review 2 n2).
-        val lookAlike = chat("com.example.messenger", "Saved Messages", "forward here to save")
+        val lookAlike = chat("com.example.messenger", "Saved Messages", null)
         assertFalse(recognise(lookAlike, active = emptySet(), aliases = mapOf("com.example.messenger" to SelfChats.TELEGRAM)))
         assertFalse(recognise(fixture, active = emptySet()))
         assertTrue(SafetyEnvironment().selfChatAliases.isEmpty())
     }
 
     @Test
-    fun telegramsLookAlikesAreNoSelfChat() {
-        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Saved Messages", null)))
-        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Saved Messages", "last seen recently")))
-        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Saved Messages", "3 members")))
-        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Saved Messages", "bot")))
-        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Ana", "online", message = "forward here to save")))
+    fun aChatWithAPersonAGroupOrAChannelIsNoSelfChat() {
+        assertFalse(recognise(telegram("Ana", "last seen recently")))
+        assertFalse(recognise(telegram("Ana", "online")))
+        assertFalse(recognise(telegram("Close friends", "12 members")))
+        assertFalse(recognise(telegram("News", "1,024 subscribers")))
+        assertFalse(recognise(telegram("Helper", "bot")))
+        // A person's chat with a message that names the self-chat.
+        assertFalse(recognise(telegram("Ana", "online") { add(1300, "Saved Messages", parent = "${SelfChats.TELEGRAM_WEB}|0|", clickable = false) }))
     }
 
     @Test
-    fun telegramsPickerRowIsTheFirstWithItsPreviewAndNoSearch() {
-        val (screen, rows) = picker(SelfChats.TELEGRAM, listOf(listOf("Saved Messages", "Forward here to save."), listOf("Ana", "See you", "12:30")))
-        val (impostor, impostorRows) = picker(SelfChats.TELEGRAM, listOf(listOf("Saved Messages", "Forward here to save.", "12:30")))
-        val (second, secondRows) = picker(SelfChats.TELEGRAM, listOf(listOf("Ana", "Hi"), listOf("Saved Messages", "Forward here to save.")))
-        val (search, searchRows) = picker(SelfChats.TELEGRAM, listOf(listOf("Saved Messages", "Forward here to save.")), searching = true)
+    fun aChatThatTheOwnerNamedSavedMessagesIsNoSelfChat() {
+        // Telegram shows a line below the name of every other chat, which its owner cannot remove.
+        for (line in listOf("last seen recently", "last seen a long time ago", "online", "typing…", "3 members", "15 subscribers", "bot")) {
+            assertFalse(line, recognise(telegram("Saved Messages", line)))
+        }
+        assertFalse(recognise(telegram("Saved Messages", "Saved Messages")))
+    }
 
-        assertTrue(recognise(screen to rows[0]))
+    @Test
+    fun aScreenThatTheRecordingDoesNotMatchIsNoSelfChat() {
+        // Research r63's second line, which Telegram 13.3.1 does not show.
+        assertFalse(recognise(telegram("Saved Messages", "forward here to save")))
+        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Saved Messages", "forward here to save")))
+        // Another text in the toolbar, such as a state of the connection in the title's place.
+        assertFalse(recognise(telegram("Saved Messages") { add(91, "Connecting…", left = 300, right = 800, height = 60, className = TEXT, clickable = false) }))
+        assertFalse(recognise(telegram("Connecting…")))
+        // No toolbar at all, or a title below the toolbar's part of the window.
+        val low = TestScreen(SelfChats.TELEGRAM_WEB, bounds = IntRect(0, 0, 1080, 2400))
+        low.add(300, "Saved Messages", className = TEXT, left = 289, right = 806, height = 86, clickable = false)
+        assertFalse(recognise(low to low.add(2221, null, className = VIEW, left = 798, right = 1061, height = 116, description = "Send")))
+        // Telegram's chat list and share picker as sitting 1 recorded them: a title of their own and a search field.
+        assertFalse(recognise(recordedList("Telegram") to null))
+        assertFalse(recognise(recordedList("Select chat") to null))
+    }
+
+    @Test
+    fun aSearchIsNoSelfChat() {
+        // A search in the chat takes the title's place with its field.
+        assertFalse(recognise(telegram("Saved Messages") { add(91, null, className = EDIT, editable = true, hint = "Search", left = 150, right = 850, height = 147) }))
+        // The search page of the chat list or the share picker, as the investigation recorded it: the row "Saved Messages",
+        // named by itself, with its check box, whether or not it lies in a list.
+        for (inList in listOf(false, true)) {
+            val page = TestScreen(SelfChats.TELEGRAM_WEB, bounds = IntRect(0, 0, 1080, 2400))
+            page.add(0, null, className = FRAME, right = 1080, height = 238)
+            page.add(129, null, className = EDIT, editable = true, hint = "Search", left = 30, right = 1050, height = 104)
+            val list = if (inList) page.add(406, null, className = RECYCLER, scrollable = true, axis = ScrollAxis.VERTICAL, right = 1080, height = 1800, clickable = false) else null
+            page.add(464, "Recent", parent = list, className = TEXT, left = 42, right = 1038, height = 84, clickable = false)
+            val row = page.add(548, null, parent = list, className = VIEW_GROUP, right = 1080, height = 158, clickable = false, description = "Saved Messages")
+            page.add(643, null, parent = row, className = SWITCH, checkable = true, left = 111, right = 174, height = 63, clickable = false)
+
+            assertFalse("inList=$inList", recognise(page to row))
+            assertFalse("inList=$inList", recognise(page to null))
+        }
+    }
+
+    @Test
+    fun noRowOfTelegramsPickerCounts() {
+        // The picker after a tap selected a row, as the investigation recorded it: a checked row without a name, a field
+        // for a comment and Send. A row that named itself "Saved Messages" would not count either.
+        for (named in listOf(false, true)) {
+            val picker = recordedList("Select chat")
+            val list = picker.add(0, null, className = RECYCLER, scrollable = true, axis = ScrollAxis.VERTICAL, right = 1080, height = 2400, clickable = false)
+            val selected = picker.add(482, null, parent = list, className = CHECKBOX, checkable = true, checked = true, right = 1080, height = 185, clickable = false)
+            picker.add(593, null, parent = selected, className = SWITCH, checkable = true, checked = true, left = 119, right = 182, height = 63, clickable = false)
+            if (named) picker.add(500, "Saved Messages", parent = selected, className = TEXT, left = 220, right = 900, height = 60, clickable = false)
+            picker.add(2226, null, className = EDIT, editable = true, hint = "Add a caption", left = 151, right = 886, height = 107)
+            val send = picker.add(2229, "Send", left = 791, right = 1080, height = 132)
+
+            assertFalse("named=$named", recognise(picker to send))
+            assertFalse("named=$named", recognise(picker to selected))
+        }
+        // Research r63's first row with its preview, which Telegram 13.3.1's picker does not show.
+        val (screen, rows) = picker(SelfChats.TELEGRAM, listOf(listOf("Saved Messages", "Forward here to save."), listOf("Ana", "See you", "12:30")))
+        assertFalse(recognise(screen to rows[0]))
         assertFalse(recognise(screen to rows[1]))
-        assertFalse(recognise(impostor to impostorRows[0]))
-        assertFalse(recognise(second to secondRows[1]))
-        assertFalse(recognise(search to searchRows[0]))
+    }
+
+    /**
+     * Telegram's picker or chat list in the structure that sitting 1 recorded: the toolbar with [title] and Back, the folder
+     * tabs and the search field; its rows are no elements until one is selected.
+     */
+    private fun recordedList(title: String): TestScreen {
+        val screen = TestScreen(SelfChats.TELEGRAM_WEB, bounds = IntRect(0, 0, 1080, 2400))
+        val bar = screen.add(0, null, className = FRAME, right = 1080, height = 238)
+        screen.add(112, title, parent = bar, className = TEXT, left = 189, right = 1038, height = 83, clickable = false)
+        screen.add(91, null, parent = bar, className = IMAGE, right = 142, height = 147, description = "Go back")
+        screen.add(372, "All chats", className = VIEW, left = 42, right = 555, height = 95, clickable = false)
+        screen.add(244, null, className = EDIT, editable = true, hint = "Search", left = 30, right = 1050, height = 104)
+        return screen
+    }
+
+    @Test
+    fun aTabStripAboveThePickerIsNoListOfRows() {
+        val screen = TestScreen(SelfChats.VIBER)
+        val tabs = screen.add(150, null, className = RECYCLER, axis = ScrollAxis.HORIZONTAL, scrollable = true, height = 100, clickable = false)
+        screen.add(150, "All chats", parent = tabs, right = 300)
+        val list = screen.add(300, null, scrollable = true, axis = ScrollAxis.VERTICAL, height = 1600, clickable = false)
+        val row = screen.add(300, null, parent = list, height = 140, text = null)
+        screen.add(310, "My Notes", parent = row, clickable = false, height = 40)
+
+        assertTrue(recognise(screen to row, active = setOf(SelfChats.VIBER)))
     }
 
     @Test
     fun aSendAfterTheRowCountsOnlyWhenTheScreenShowsTheSelfChat() {
-        val dialog = TestScreen(SelfChats.TELEGRAM)
-        dialog.add(900, "Send to Saved Messages?", clickable = false)
+        val whatsapp = setOf(SelfChats.WHATSAPP)
+        val dialog = TestScreen(SelfChats.WHATSAPP)
+        dialog.add(900, "Send to Aleksa (You)?", clickable = false)
         val send = dialog.add(1000, "Send")
-        val silent = TestScreen(SelfChats.TELEGRAM)
+        val silent = TestScreen(SelfChats.WHATSAPP)
         val silentSend = silent.add(1000, "Send")
-        val saved = ShareFlow(SelfChats.TELEGRAM, listOf("Saved Messages"), ShareCount(1, 0), serial = 1)
+        val own = ShareFlow(SelfChats.WHATSAPP, listOf("Aleksa (You)"), ShareCount(1, 0), serial = 1)
 
-        assertTrue(recognise(dialog to send, flow = saved))
-        assertFalse(recognise(dialog to send, flow = ShareFlow(SelfChats.TELEGRAM, listOf("Ana"), ShareCount(1, 0), serial = 1)))
-        assertFalse(recognise(silent to silentSend, flow = saved))
+        assertTrue(recognise(dialog to send, active = whatsapp, flow = own))
+        assertFalse(recognise(dialog to send, active = whatsapp, flow = ShareFlow(SelfChats.WHATSAPP, listOf("Ana"), ShareCount(1, 0), serial = 1)))
+        assertFalse(recognise(silent to silentSend, active = whatsapp, flow = own))
+        // No recording shows such a dialog in Telegram, so there the flow's selection never counts.
+        val telegramDialog = TestScreen(SelfChats.TELEGRAM)
+        telegramDialog.add(900, "Send to Saved Messages?", clickable = false)
+        val saved = ShareFlow(SelfChats.TELEGRAM, listOf("Saved Messages"), ShareCount(1, 0), serial = 1)
+        assertFalse(recognise(telegramDialog to telegramDialog.add(1000, "Send"), flow = saved))
         // Another chat on the screen is checked by the chat's own rule, never by the flow's selection (review 2 C1), also
         // when its message field is empty and a message in it names the self-chat (review 2-2 New 1).
-        assertFalse(recognise(chat(SelfChats.TELEGRAM, "Marko", "online"), flow = saved))
+        assertFalse(recognise(telegram("Marko", "online"), flow = saved))
         val marko = TestScreen(SelfChats.TELEGRAM)
         marko.add(80, "Marko", left = 150, height = 50, clickable = false)
         marko.add(140, "online", left = 150, height = 40, clickable = false)
@@ -118,6 +247,73 @@ class SelfChatsTest {
         marko.add(1800, null, editable = true, hint = "Message", text = "", right = 850)
         val share = marko.add(1700, "Share my phone number")
         assertFalse(recognise(marko to share, flow = saved))
+    }
+
+    /**
+     * The trees that the owner's sittings recorded on the A71 (`corpus/owner/trees`, which git ignores; skipped when they
+     * are missing): Saved Messages passes, and no element of the chat list or the share picker does.
+     */
+    @Test
+    fun theRecordedTreesOfTelegramPassOnlyInSavedMessages() {
+        val folders = repositoryRoot()?.resolve("corpus/owner/trees")?.listFiles()?.filter { it.isDirectory }.orEmpty().sortedBy { it.name }
+        val saved = folders.mapNotNull { File(it, "a71-telegram-saved.json").takeIf(File::isFile) }.lastOrNull()
+        assumeTrue("no recorded tree of Telegram's Saved Messages", saved != null)
+
+        assertTrue(SelfChats.recognise(recorded(saved!!), null, settings))
+        val others = folders.flatMap { folder -> listOf("a71-telegram-chats.json", "a71-telegram-share.json").map { File(folder, it) } }.filter(File::isFile)
+        for (file in others) {
+            val snapshot = recorded(file)
+            assertFalse(file.path, SelfChats.recognise(snapshot, null, settings))
+            for (element in snapshot.elements) assertFalse(file.path, SelfChats.recognise(snapshot, element.key, settings))
+        }
+    }
+
+    private fun repositoryRoot(): File? =
+        generateSequence(File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }.firstOrNull { File(it, "settings.gradle.kts").isFile }
+
+    /**
+     * A snapshot from a tree of the hook agent-tree, which keeps a label only where it is safe and else its length: a
+     * TextView's label becomes its text, an EditText's its hint and any other element's its description, and a length
+     * becomes as many x's.
+     */
+    private fun recorded(file: File): ScreenSnapshot {
+        val tree = Json.parseToJsonElement(file.readText()).jsonObject
+        fun JsonObject.flag(name: String) = getValue(name).jsonPrimitive.boolean
+        fun JsonObject.bounds() = getValue("bounds").jsonArray.map { it.jsonPrimitive.int }.let { IntRect(it[0], it[1], it[2], it[3]) }
+        val windows = tree.getValue("windows").jsonArray.map { it.jsonObject }.mapIndexed { index, window ->
+            WindowSummary(
+                window.getValue("id").jsonPrimitive.int, WindowKind.valueOf(window.getValue("kind").jsonPrimitive.content),
+                window["packageName"]?.jsonPrimitive?.contentOrNull, null, window.bounds(), layer = index, active = window.flag("active"),
+            )
+        }
+        val elements = tree.getValue("elements").jsonArray.map { it.jsonObject }.mapIndexed { index, element ->
+            val className = element["className"]?.jsonPrimitive?.contentOrNull
+            val label = element["label"]?.jsonPrimitive?.contentOrNull ?: element["labelLength"]?.jsonPrimitive?.intOrNull?.let { "x".repeat(it) }
+            val editable = element.flag("editable")
+            val text = label.takeIf { className.orEmpty().endsWith("TextView") }
+            ScreenElement(
+                key = "$index", windowId = element.getValue("windowId").jsonPrimitive.int, parent = element["parent"]?.jsonPrimitive?.intOrNull,
+                packageName = element["packageName"]?.jsonPrimitive?.contentOrNull, className = className, text = text,
+                contentDescription = label.takeIf { text == null && !editable }, hint = label.takeIf { editable }, label = label,
+                bounds = element.bounds(), actions = if (element.flag("scrollable")) setOf(ElementAction.SCROLL_FORWARD) else emptySet(),
+                clickable = element.flag("clickable"), editable = editable, checkable = element.flag("checkable"),
+                checked = element.flag("checked"), scrollable = element.flag("scrollable"), password = element.flag("password"),
+            )
+        }
+        return ScreenSnapshot(0, windows, elements)
+    }
+
+    private companion object {
+        const val RECYCLER = "androidx.recyclerview.widget.RecyclerView"
+        const val VIEW_GROUP = "android.view.ViewGroup"
+        const val VIEW = "android.view.View"
+        const val FRAME = "android.widget.FrameLayout"
+        const val TEXT = "android.widget.TextView"
+        const val EDIT = "android.widget.EditText"
+        const val IMAGE = "android.widget.ImageView"
+        const val IMAGE_BUTTON = "android.widget.ImageButton"
+        const val SWITCH = "android.widget.Switch"
+        const val CHECKBOX = "android.widget.CheckBox"
     }
 
     @Test

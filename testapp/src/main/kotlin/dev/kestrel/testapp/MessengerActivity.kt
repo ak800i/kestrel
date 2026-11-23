@@ -24,10 +24,10 @@ internal data class FixtureChat(
 )
 
 /**
- * The chats of the fixture messenger: the owner's self-chats in the forms of Telegram ("Saved Messages", "forward here to
- * save"), WhatsApp ("<name> (You)", "Message yourself") and Viber ("My Notes" with the "Reminders list" icon), ordinary
- * chats and groups, and the look-alikes of design D18, which test mode's recogniser must refuse. Every name, number and
- * address is fictional.
+ * The chats of the fixture messenger: the owner's self-chats in the forms of Telegram ("Saved Messages" with no line below,
+ * as Telegram 13.3.1 shows it), WhatsApp ("<name> (You)", "Message yourself") and Viber ("My Notes" with the "Reminders
+ * list" icon), ordinary chats and groups, and the look-alikes of design D18, which test mode's recogniser must refuse.
+ * Every name, number and address is fictional.
  */
 internal object FixtureChats {
     /** The owner's name in the WhatsApp-like self-chat, which the tests give as `whatsappOwnName`. */
@@ -35,14 +35,14 @@ internal object FixtureChats {
 
     val ALL: List<FixtureChat> = listOf(
         // Its list row shows the newest saved message, as Telegram's does; only the share picker says "Forward here to save.".
-        FixtureChat("saved", "Saved Messages", "forward here to save", "Bread and milk", null, listOf("Bread and milk")),
+        FixtureChat("saved", "Saved Messages", null, "Bread and milk", null, listOf("Bread and milk")),
         FixtureChat("ana", "Ana Petrović", "last seen recently", "See you at 5", "12:30", listOf("Hi", "See you at 5")),
         FixtureChat("john", "John Smith", "online", "Thanks!", "11:02", listOf("Thanks!")),
         FixtureChat("close-friends", "Close friends", "12 members", "Pizza tonight?", "10:40", listOf("Pizza tonight?")),
         FixtureChat("back-to-school", "Back to school", "30 members", "Books are ready", "10:20", listOf("Books are ready")),
-        // The look-alikes: a contact, a group, a user and a bot named "Saved Messages", and a chat whose message is the
-        // self-chat's preview.
-        FixtureChat("saved-contact", "Saved Messages", null, "Hello", "10:15", listOf("Hello")),
+        // The look-alikes: a contact, a group, a user and a bot named "Saved Messages", each with the line that Telegram
+        // shows below every other chat's name, and a chat whose message is the self-chat's old subtitle.
+        FixtureChat("saved-contact", "Saved Messages", "last seen a long time ago", "Hello", "10:15", listOf("Hello")),
         FixtureChat("saved-group", "Saved Messages", "3 members", "Meeting at 6", "09:40", listOf("Meeting at 6")),
         FixtureChat("saved-user", "Saved Messages", "last seen recently", "Forward here to save.", "09:12", listOf("Forward here to save.")),
         FixtureChat("saved-bot", "Saved Messages", "bot", "Forward here to save.", "08:55", listOf("Forward here to save.")),

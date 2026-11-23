@@ -312,7 +312,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     private fun kind(ask: TaskAsk): String = ask.name.lowercase().replace('_', '-')
 
     private fun signs(rule: String?): String = when (rule) {
-        SelfChats.TELEGRAM, SelfChats.TELEGRAM_WEB -> "telegram-title,telegram-subtitle"
+        SelfChats.TELEGRAM, SelfChats.TELEGRAM_WEB -> "telegram-title,telegram-toolbar"
         SelfChats.WHATSAPP -> "whatsapp-title,whatsapp-subtitle"
         SelfChats.VIBER -> "viber-title,viber-notes"
         SelfChats.GMAIL -> "gmail-recipients"

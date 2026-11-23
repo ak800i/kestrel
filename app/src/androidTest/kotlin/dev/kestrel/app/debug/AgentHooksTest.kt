@@ -91,7 +91,7 @@ class AgentHooksTest {
         val tree = File(context.cacheDir, AgentTaskHooks.TREE_FILE)
         try {
             screen.open("MessengerActivity", "Saved Messages", "--es chat saved")
-            assertEquals("selfchat=yes signs=telegram-title,telegram-subtitle", answer(hook("SELFCHAT_CHECK")))
+            assertEquals("selfchat=yes signs=telegram-title,telegram-toolbar", answer(hook("SELFCHAT_CHECK")))
             screen.open("MessengerActivity", "Ana Petrović", "--es chat ana")
             assertEquals("selfchat=no signs=none", answer(hook("SELFCHAT_CHECK")))
 

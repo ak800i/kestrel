@@ -505,11 +505,11 @@ class SafetyCheckTest {
         assertEquals(listOf(TypedText(field, "Message", "com.example.chat", "I'm late")), typed.typed)
     }
 
-    /** A Telegram-like chat of [packageName] with [title] and [subtitle] in its header and a Send button. */
-    private fun telegramChat(packageName: String, title: String, subtitle: String): Pair<TestScreen, String> {
+    /** A Telegram-like chat of [packageName] with [title] and [subtitle], if any, in its header and a Send button. */
+    private fun telegramChat(packageName: String, title: String, subtitle: String?): Pair<TestScreen, String> {
         val screen = TestScreen(packageName)
         screen.add(80, title, id = "chat_title", left = 150, height = 50, clickable = false)
-        screen.add(140, subtitle, left = 150, height = 40, clickable = false)
+        if (subtitle != null) screen.add(140, subtitle, left = 150, height = 40, clickable = false)
         screen.add(1800, null, editable = true, focused = true, hint = "Message", text = "Test", right = 850)
         return screen to screen.add(1800, "Send", left = 850)
     }
@@ -518,7 +518,7 @@ class SafetyCheckTest {
     fun testModeBlocksASendToAnyoneButTheOwnerBeforeAnyQuestion() {
         val testMode = SafetySettings()
         val (ana, send) = telegramChat("org.telegram.messenger", "Ana", "online")
-        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", "forward here to save")
+        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", null)
         val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
 
         val blocked = SafetyCheck.assess(tap(send), ana.snapshot(), everything, testMode)
@@ -546,7 +546,7 @@ class SafetyCheckTest {
     @Test
     fun theCheckAfterTheYesRepeatsTestMode() {
         val (ana, send) = telegramChat("org.telegram.messenger", "Ana", "online")
-        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", "forward here to save")
+        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", null)
         val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
 
         assertEquals(false, SafetyCheck.testModeAllows(tap(send), ana.snapshot(), everything, SafetySettings()))

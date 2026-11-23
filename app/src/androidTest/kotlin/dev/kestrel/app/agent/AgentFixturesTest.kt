@@ -18,8 +18,8 @@ import org.junit.runner.RunWith
 
 /**
  * The agent's fixtures in `:testapp` (design D18, D27 and D28 of sub-project 5), read through Kestrel's own snapshots: the
- * fixture messenger's self-chats pass test mode's recogniser under an alias and its look-alikes do not, the share picker's
- * first row is the self-chat and its other rows are not, and every press of a send control is recorded by its kind only.
+ * fixture messenger's self-chats pass test mode's recogniser under an alias and its look-alikes do not, no row of the share
+ * picker counts as Telegram's self-chat, and every press of a send control is recorded by its kind only.
  */
 @RunWith(AndroidJUnit4::class)
 class AgentFixturesTest {
@@ -78,13 +78,14 @@ class AgentFixturesTest {
     }
 
     @Test
-    fun thePickersFirstRowIsTheSelfChatAndCloseFriendsIsNot() = runBlocking {
+    fun noRowOfThePickerIsTelegramsSelfChat() = runBlocking {
         screen.shell("am start -W -n $FIXTURES/.MessengerActivity --es shareForm tap")
         screen.shell("am start -W -S -a android.intent.action.SEND -t image/jpeg -n $FIXTURES/.ShareActivity")
         screen.awaitElement { it.label == "Share with" }
         fun row(name: String): (ScreenElement) -> Boolean = { it.viewId == "$FIXTURES:id/picker_row" && it.label?.startsWith(name) == true }
 
-        assertTrue(recognised(SelfChats.TELEGRAM, row("Saved Messages")))
+        // Telegram 13.3.1's picker shows no row that its rule could pin, so no row counts, the first one included.
+        assertFalse(recognised(SelfChats.TELEGRAM, row("Saved Messages")))
         assertFalse(recognised(SelfChats.TELEGRAM, row("Close friends")))
         assertFalse(recognised(SelfChats.TELEGRAM, row("Back to school")))
     }
