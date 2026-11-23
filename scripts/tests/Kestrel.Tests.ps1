@@ -668,3 +668,26 @@ Describe 'Stop-DeviceCall' {
         @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 1
     }
 }
+
+Describe 'Get-DebugSigningEnvironment' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    It 'names the debug keystore of the Android user folder with its fixed alias and passwords' {
+        $folder = Join-Path $TestDrive 'android'
+        New-Item -ItemType Directory -Path $folder | Out-Null
+        Set-Content -LiteralPath (Join-Path $folder 'debug.keystore') -Value 'key'
+
+        $signing = Get-DebugSigningEnvironment -AndroidUserHome $folder
+
+        @($signing.Keys) | Should -BeExactly @('KESTREL_KEYSTORE', 'KESTREL_KEYSTORE_PASSWORD', 'KESTREL_KEY_ALIAS', 'KESTREL_KEY_PASSWORD')
+        $signing.KESTREL_KEYSTORE | Should -BeExactly (Join-Path $folder 'debug.keystore')
+        $signing.KESTREL_KEY_ALIAS | Should -BeExactly 'androiddebugkey'
+        $signing.KESTREL_KEYSTORE_PASSWORD | Should -BeExactly 'android'
+    }
+
+    It 'throws when the folder has no debug keystore' {
+        { Get-DebugSigningEnvironment -AndroidUserHome (Join-Path $TestDrive 'none') } | Should -Throw '*No debug keystore*'
+    }
+}

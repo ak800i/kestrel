@@ -10,8 +10,9 @@ android {
     namespace = "dev.kestrel.app"
     defaultConfig {
         applicationId = "dev.kestrel"
-        versionCode = 1
-        versionName = "0.1.0"
+        // Design spec, section 17: the tag of a release is v and the version name; each release raises the code.
+        versionCode = 100
+        versionName = "1.0.0"
     }
     buildFeatures {
         compose = true
