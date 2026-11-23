@@ -1,0 +1,85 @@
+package dev.kestrel.eval.task
+
+import dev.kestrel.eval.config.LocalConfig
+import dev.kestrel.eval.device.Clock
+import dev.kestrel.eval.device.Device
+import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.hook.Hooks
+import dev.kestrel.eval.run.Console
+import dev.kestrel.eval.run.Restores
+import java.nio.file.Path
+
+/**
+ * The values of one run (design D4 of sub-project 6) that fill the placeholders of a request and a script: `{marker}`,
+ * two words of the run, and `{name}`, `{time}`, `{number}` and `{address}`, which a setup step sets.
+ */
+class RunValues(val marker: String, var name: String? = null, var time: String? = null, var number: String? = null, var address: String? = null) {
+    /** [text] with its placeholders filled; for a JSON script ([json]) each value is escaped as a JSON string's content. */
+    fun fill(text: String, json: Boolean = false): String = PLACEHOLDER.replace(text) { match ->
+        val value = when (match.groupValues[1]) {
+            "marker" -> marker
+            "name" -> name
+            "time" -> time
+            "number" -> number
+            else -> address
+        } ?: throw IllegalStateException("The run has no value for ${match.value}.")
+        if (json) value.replace("\\", "\\\\").replace("\"", "\\\"") else value
+    }
+
+    private companion object {
+        val PLACEHOLDER = Regex("\\{(marker|name|time|number|address)\\}")
+    }
+}
+
+/** The request of a task: the words after "Kestrel, ", with the run's placeholders. */
+@JvmInline
+value class Request(val text: String) {
+    fun fill(values: RunValues): String = values.fill(text)
+}
+
+/** What one run's steps work with: the device, its hooks, the run's restores, the clock, the console and its values. */
+class RunScope(
+    val device: Device,
+    val hooks: Hooks,
+    val restores: Restores,
+    val clock: Clock,
+    val console: Console,
+    val config: LocalConfig,
+    /** A folder of this computer for the run's files, such as the filled script and the test photos. */
+    val work: Path,
+    val values: RunValues,
+) {
+    /** The tag of the task that the run gave, once it gave one. */
+    var tag: String? = null
+}
+
+/** What a setup step found: the device is ready, or it cannot run the task ([Untestable], which skips the run). */
+sealed interface SetupResult {
+    data object Ready : SetupResult
+
+    data class Untestable(val why: String) : SetupResult
+}
+
+/** A setup step that could not prepare the device; it fails only this run (`reason=setup`). */
+class SetupFailed(message: String) : Exception(message)
+
+/**
+ * A step that changes the device for a run (design D4 of sub-project 6). It pushes its restore on the run's
+ * [RunScope.restores] before the change, with the value that it read before the change, so that the restore puts back
+ * the owner's value, never a default.
+ */
+interface Setup {
+    fun apply(scope: RunScope): SetupResult
+
+    /** The values that the step changes, read now as counts, flags or modes, which a rehearsal compares before and after. */
+    fun probe(scope: RunScope): Map<String, String> = emptyMap()
+}
+
+/** A check of a run's result on the device (design D4 of sub-project 6), which answers only pass or fail, never screen text. */
+interface Check {
+    /** [answer] is agent-task's answer at the task's end, or [HookAnswer.EMPTY] in a rehearsal. */
+    fun passes(scope: RunScope, answer: HookAnswer): Boolean
+
+    /** Whether the check reads the task's answer or its reply, which only a run with a task has. */
+    val needsTask: Boolean get() = false
+}
