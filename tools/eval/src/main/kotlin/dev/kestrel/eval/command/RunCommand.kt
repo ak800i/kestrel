@@ -16,7 +16,8 @@ import java.nio.file.Paths
  * `run --device <s> --task <name>` (design D2 of sub-project 6): one task, as task-check.ps1 ran it, with its lines on the
  * console and appended to `--results` with the step `task`. Without `--live` the runs use the task's form without a
  * model: its stand-in with its script, as scripts\a71-agent.ps1's dry run needs, and `--dry-run` runs that form once; a
- * task without one writes `result=skipped reason=untestable`. Returns 0 when no run failed, else 1.
+ * task without one writes `result=skipped reason=untestable`, as does a task that the device does not run, before the
+ * preflight changes anything. Returns 0 when no run failed, else 1.
  */
 class RunCommand(private val environment: Environment, private val command: Command.Run) {
     fun execute(lines: (LineWriter) -> Unit): Int {
@@ -31,6 +32,12 @@ class RunCommand(private val environment: Environment, private val command: Comm
             return 0
         }
         val executed = if (command.live) task else dryRun!!.standIn?.let { Catalogue.find(it) } ?: task
+        // Before the preflight, so that a task that this device does not run installs nothing and changes no setting.
+        if (session.device.kind !in executed.devices) {
+            writer.write(RunLine(executed.name, 1, RunResult.SKIPPED, null, CheckResult.SKIPPED, Reason.UNTESTABLE))
+            session.console.line("Task ${executed.name} does not run on ${session.device.kind.label}; scripts\\eval.ps1 list --device ${session.device.serial} shows the tasks that it runs.")
+            return 0
+        }
         val script = if (command.live) null else ScriptInstaller.resource(dryRun!!.script)
         val runs = if (command.dryRun) 1 else command.runs
         return session.guarded {

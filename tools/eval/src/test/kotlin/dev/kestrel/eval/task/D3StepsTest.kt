@@ -13,6 +13,7 @@ import org.junit.Test
 /** The steps of the D3 tasks: the hotspot, the test e-mail, the test location, Waze's Home and the test name (design D5 and D8 of sub-project 6). */
 class D3StepsTest {
     private val config = LocalConfig.of(mapOf("gmailAddress" to "pera.test@example.com", "emulatorGmailAddress" to "pera.second@example.com", "testLocation" to "44.8100,20.4600"))
+    private val compose = "  topResumedActivity=ActivityRecord{9f3e2b1 u0 com.google.android.gm/.ComposeActivityGmail t12}"
 
     @Test
     fun aHotspotThatIsOffNeedsNoStopAndAValidatedWifiNoEnable() {
@@ -60,6 +61,7 @@ class D3StepsTest {
     @Test
     fun theTestEmailIsSentToTheDevicesOwnAddressAndTheInboxOpensInANewTask() {
         val run = FakeRun(config = config)
+        run.adb.on("^dumpsys activity activities$") { compose }
         run.adb.hook("SCREEN_TAP") { "tapped=true count=1" }
         var polls = 0
         run.adb.hook("SCREEN_HAS") { if (++polls < 2) "count=0 app=com.google.android.gm" else "count=1 app=com.google.android.gm" }
@@ -78,8 +80,22 @@ class D3StepsTest {
     }
 
     @Test
+    fun theTestEmailsSendIsNeverTappedWhenGmailsComposeScreenDidNotOpen() {
+        val run = FakeRun(config = config)
+        run.adb.on("^am start -W -a android.intent.action.SENDTO ") { null }
+        run.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{9f3e2b1 u0 org.telegram.messenger.web/org.telegram.ui.LaunchActivity t12}" }
+        run.adb.hook("SCREEN_TAP") { "tapped=true count=1" }
+
+        val failure = assertThrows(SetupFailed::class.java) { MailToSelf.apply(run.scope) }
+
+        assertEquals("Gmail's compose screen did not open.", failure.message)
+        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
+    }
+
+    @Test
     fun theMailSetupFailsAtOnceWhenAnotherAppCoversGmailThreeTimes() {
         val run = FakeRun(config = config)
+        run.adb.on("^dumpsys activity activities$") { compose }
         run.adb.hook("SCREEN_TAP") { "tapped=true count=1" }
         run.adb.hook("SCREEN_HAS") { "count=0 app=com.google.android.permissioncontroller" }
 

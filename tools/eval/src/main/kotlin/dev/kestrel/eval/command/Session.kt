@@ -47,15 +47,31 @@ class Session(private val environment: Environment, serial: String) {
     fun runner(options: RunOptions, writer: LineWriter): Runner =
         Runner(device, hooks, restores, environment.clock, console, config, work, writer, options, preflight::waitListening)
 
+    /**
+     * Runs [body], then the restores, then on kestrel-api37 the check of its accounts and profile. When the body threw, a
+     * failure of the check is added to the body's error as suppressed, so that the first error is kept and both reach
+     * the console; when the body succeeded, the check's failure is the command's error.
+     */
     fun <T> guarded(body: () -> T): T {
         preflight.wake()
         val accounts = if (device.kind == DeviceKind.EMULATOR) AccountGuard(device, hooks) else null
         val before = accounts?.read()
+        var failure: Throwable? = null
         try {
             return body()
+        } catch (e: Throwable) {
+            failure = e
+            throw e
         } finally {
             restores.report(restores.runAll())
-            if (accounts != null && before != null) accounts.check(before)
+            if (accounts != null && before != null) {
+                try {
+                    accounts.check(before)
+                } catch (e: Exception) {
+                    if (failure == null) throw e
+                    failure.addSuppressed(e)
+                }
+            }
         }
     }
 }

@@ -125,6 +125,7 @@ class TaskRunsTest {
     @Test
     fun readEmailLiveSkipsWithoutAnAddress() {
         val bench = TaskBench(config = config, live = true)
+        bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{9f3e2b1 u0 com.google.android.gm/.ComposeActivityGmail t12}" }
         bench.adb.hook("SCREEN_TAP") { "tapped=true count=1" }
         bench.adb.hook("SCREEN_HAS") { "count=1 app=com.google.android.gm" }
 

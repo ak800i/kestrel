@@ -59,6 +59,18 @@ class CommandsTest {
     }
 
     @Test
+    fun aTaskThatTheDeviceDoesNotRunIsSkippedBeforeThePreflightChangesAnything() {
+        val a71 = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
+        fake.devices[a71.serial] = a71
+
+        assertEquals(Cli.EXIT_PASSED, fake.cli("run", "--device", "R58N66RVD7Z", "--task", "telegram-late", "--runs", "2"))
+
+        assertEquals(listOf("task=stand-in-messenger-late run=1 result=skipped end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=untestable"), runLines())
+        assertTrue(fake.processes.isEmpty())
+        assertTrue(a71.commands.none { it.startsWith("am ") || it.startsWith("pm install") || it.startsWith("input ") })
+    }
+
+    @Test
     fun aFailedRunEndsWithExitCode1() {
         fake.adb.hook("SCREEN_HAS") { "count=0 app=dev.kestrel.testapp" }
 
@@ -138,6 +150,16 @@ class CommandsTest {
     }
 
     @Test
+    fun aChangeOfTheEmulatorsGoogleAccountsAfterTheCommandFailedKeepsTheFirstErrorAndReportsBoth() {
+        fake.adb.hook("STATE") { fake.accounts = 0; "screen=off testMode=on numbers=0" }
+
+        assertEquals(Cli.EXIT_FAILED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1"))
+
+        assertTrue(fake.output.contains("REFUSED: Kestrel's accessibility service is off on emulator-5554."))
+        assertTrue(fake.output.contains("ERROR: kestrel-api37's Google accounts (1 before, 0 now)"))
+    }
+
+    @Test
     fun aMalformedLocalConfigurationIsARefusalThatQuotesNoneOfIt() {
         val config = fake.root.resolve("corpus").resolve("owner").resolve("a71-config.json")
         Files.createDirectories(config.parent)
@@ -157,7 +179,7 @@ class CommandsTest {
         // Ctrl+C while run 1's task is being given: the JVM runs the shutdown hook, here on this thread.
         fake.adb.hook("VOICE") { hook?.run(); "sent" }
 
-        assertEquals(Cli.EXIT_REFUSED, Cli(environment).run(listOf("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "2")))
+        assertEquals(Cli.EXIT_FAILED, Cli(environment).run(listOf("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "2")))
 
         assertEquals(listOf("result=fail", "result=fail"), runLines().map { it.split(' ')[2] })
         assertTrue(runLines().all { it.endsWith(" reason=stopped") })

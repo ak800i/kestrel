@@ -4,12 +4,13 @@
 # It rebuilds the tool's installed copy (tools\eval\build\install\eval) with scripts\gradle.ps1 :tools:eval:installDist
 # only when a file of tools\eval (outside its build folder), of build-logic (outside its build output), or
 # gradle\libs.versions.toml or settings.gradle.kts is newer than the stamp tools\eval\build\eval-built.stamp, which it
-# writes after each build that succeeded, and then stops the Gradle daemon, as AGENTS.md asks. The tool runs in the
-# repository's folder, where it finds corpus\owner, eval-results and
-# scripts\install.ps1. Ctrl+C reaches the tool, whose shutdown hook puts the device back; Windows then asks "Terminate
-# batch job (Y/N)?", and either answer is safe. Commands: run, suite, injection, rehearse and list (scripts\eval.ps1
-# without arguments prints them). In PowerShell, quote a list, as in --tasks 'stand-in-hotspot,stand-in-read', because
-# PowerShell would pass a,b on as two arguments.
+# writes after each build that succeeded, and then stops the Gradle daemon, as AGENTS.md asks. It runs the tool with
+# JAVA_HOME's java.exe, the installed copy's lib\* and its main class, not through Gradle's eval.bat, so that cmd.exe
+# changes none of the arguments; the tool runs in the repository's folder, where it finds corpus\owner, eval-results and
+# scripts\install.ps1, and writes to this console directly, so its output is not in this script's pipeline. Ctrl+C
+# reaches the tool, whose shutdown hook puts the device back. Commands: run, suite, injection, rehearse and list
+# (scripts\eval.ps1 without arguments prints them). In PowerShell, quote a list, as in --tasks
+# 'stand-in-hotspot,stand-in-read', because PowerShell would pass a,b on as two arguments.
 # Example: scripts\eval.ps1 run --device emulator-5554 --task stand-in-hotspot --dry-run
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -44,28 +45,59 @@ function Invoke-Gradle([string[]]$Arguments) {
 }
 
 # Builds the installed copy when it is out of date, and stops the Gradle daemon afterwards, also after a failed build.
-# After a build that succeeded, it writes the stamp that Test-EvalStale reads. Returns whether the installed copy is current.
+# After a build that succeeded, it writes the stamp that Test-EvalStale reads, with the time at which the build started,
+# so that a source saved during the build counts as newer than the copy. Returns whether the installed copy is current.
 function Update-EvalTool([string]$Root) {
     if (-not (Test-EvalStale $Root)) { return $true }
+    $started = [datetime]::UtcNow
     $built = Invoke-Gradle @(':tools:eval:installDist')
     Invoke-Gradle @('--stop') | Out-Null
     if ($built -ne 0) { return $false }
-    [IO.File]::WriteAllText((Join-Path $Root 'tools\eval\build\eval-built.stamp'), '')
+    $stamp = Join-Path $Root 'tools\eval\build\eval-built.stamp'
+    [IO.File]::WriteAllText($stamp, '')
+    (Get-Item -LiteralPath $stamp).LastWriteTimeUtc = $started
     $true
 }
 
+# Runs a program with the arguments in the folder, on this console, and returns its exit code. It starts the program
+# itself: a batch file such as Gradle's eval.bat would pass the arguments through cmd.exe, which changes % and &, and
+# PowerShell quotes a native command's arguments differently in Windows PowerShell 5.1 and PowerShell 7. Each argument
+# is quoted by the rules that java.exe and most programs use to split their command line, so that it arrives as it was
+# given; a quoted argument is also never a wildcard, which java.exe would expand.
+function Invoke-Java([string]$Java, [string[]]$Arguments, [string]$Directory) {
+    $quoted = foreach ($argument in $Arguments) {
+        # Backslashes before a quote and at the end are doubled, and each quote gets a backslash.
+        '"' + [regex]::Replace($argument, '(\\*)("|\z)', { param($match) $match.Groups[1].Value * 2 + $(if ($match.Groups[2].Value) { '\"' } else { '' }) }) + '"'
+    }
+    $start = [Diagnostics.ProcessStartInfo]::new($Java, ($quoted -join ' '))
+    $start.UseShellExecute = $false
+    $start.WorkingDirectory = $Directory
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $process.WaitForExit()
+        $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
+}
+
+# Builds the tool when it is out of date and runs it in the repository's folder with the arguments. Returns its exit
+# code, or 2 when the build failed or threw, as for any refusal before a run.
+function Invoke-EvalScript([string]$Root, [string[]]$Arguments) {
+    try {
+        if (-not (Update-EvalTool $Root)) {
+            Write-Warning 'scripts\gradle.ps1 :tools:eval:installDist failed, so :tools:eval did not run.'
+            return 2
+        }
+        # The tool finds adb through ANDROID_HOME and runs on JAVA_HOME, which Use-KestrelToolchain sets.
+        Use-KestrelToolchain
+    } catch {
+        Write-Warning "scripts\eval.ps1 could not build :tools:eval, so it did not run: $($_.Exception.Message)"
+        return 2
+    }
+    $library = Join-Path $Root 'tools\eval\build\install\eval\lib\*'
+    Invoke-Java (Join-Path $env:JAVA_HOME 'bin\java.exe') (@('-classpath', $library, 'dev.kestrel.eval.MainKt') + $Arguments) $Root
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-if (-not (Update-EvalTool $root)) {
-    Write-Warning 'scripts\gradle.ps1 :tools:eval:installDist failed, so :tools:eval did not run.'
-    exit 2
-}
-# The tool finds adb through ANDROID_HOME and runs on JAVA_HOME, which Use-KestrelToolchain sets.
-Use-KestrelToolchain
-Push-Location -LiteralPath $root
-try {
-    & (Join-Path $root 'tools\eval\build\install\eval\bin\eval.bat') @args
-    $code = $LASTEXITCODE
-} finally {
-    Pop-Location
-}
-exit $code
+exit (Invoke-EvalScript $root $args)

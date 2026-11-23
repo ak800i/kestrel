@@ -10,7 +10,7 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\eval.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-NewestSource', 'Test-EvalStale', 'Invoke-Gradle', 'Update-EvalTool')
+    $helpers = @('Get-NewestSource', 'Test-EvalStale', 'Invoke-Gradle', 'Update-EvalTool', 'Invoke-Java', 'Invoke-EvalScript')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -112,5 +112,44 @@ Describe 'scripts\eval.ps1' {
 
         (Get-Item -LiteralPath (Join-Path $root 'tools\eval\build\install\eval\lib\eval.jar')).LastWriteTimeUtc | Should -Be $jar
         Test-EvalStale $root | Should -BeFalse
+    }
+
+    It 'is out of date after a build during which a source was saved' {
+        $root = New-Repository ([datetime]::UtcNow.AddHours(-2))
+        Set-WriteTime $root 'tools\eval\build.gradle.kts' ([datetime]::UtcNow.AddHours(-1))
+        Mock Invoke-Gradle {
+            if ($Arguments -contains ':tools:eval:installDist') {
+                Start-Sleep -Milliseconds 50
+                Set-WriteTime $root 'tools\eval\src\main\kotlin\dev\kestrel\eval\Main.kt' ([datetime]::UtcNow)
+                Start-Sleep -Milliseconds 50
+            }
+            0
+        }
+
+        Update-EvalTool $root | Should -BeTrue
+
+        Test-EvalStale $root | Should -BeTrue
+    }
+
+    It 'ends with exit code 2 when scripts\gradle.ps1 throws' {
+        $root = New-Repository $built
+        Set-WriteTime $root 'tools\eval\build.gradle.kts' $later
+        Mock Invoke-Gradle { throw 'Set JAVA_HOME to a JDK 21.' }
+
+        Invoke-EvalScript $root @('list') 3>$null | Should -Be 2
+    }
+
+    It 'gives the program every argument as it was, without cmd.exe, and returns its exit code' {
+        # A PowerShell like this one stands in for java.exe: it writes the arguments of its own command line, which it
+        # splits by the same rules, to a file.
+        $probe = Join-Path $TestDrive 'arguments.ps1'
+        $written = Join-Path $TestDrive 'arguments.txt'
+        $given = @('50%', '%PATH%', 'a&b|c', 'x^y<z>', 'say "hi" \"', 'C:\with space\', '', 'R*?')
+        [IO.File]::WriteAllText($probe, "[Environment]::GetCommandLineArgs() | Select-Object -Last $($given.Count) | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(`$_)) } | Set-Content -LiteralPath '$written'; exit 3")
+
+        Invoke-Java (Get-Process -Id $PID).Path (@('-NoProfile', '-NonInteractive', '-File', $probe) + $given) $TestDrive | Should -Be 3
+
+        $arrived = @(Get-Content -LiteralPath $written | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) })
+        $arrived | Should -Be $given
     }
 }

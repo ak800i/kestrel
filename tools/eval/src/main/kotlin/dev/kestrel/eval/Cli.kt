@@ -18,8 +18,10 @@ import dev.kestrel.eval.run.Stopping
  * The command line of :tools:eval (design D2 of sub-project 6) and its exit codes: 0 when every run passed or was skipped
  * with a reason, 1 when a run failed or an error stopped the runs, and 2 for a refusal before any run (a device, the live
  * gate, a missing configuration, a command line that it does not take), which starts no run and writes no run line. A
- * command that Ctrl+C ends ([Stopping]) also ends with 2, with no error: the shutdown hook puts the device back and
- * reports what it could not.
+ * command that Ctrl+C ends ([Stopping]) prints no error: it ends with 1 when run lines were written (the shutdown hook
+ * writes `reason=stopped` for the runs that did not end), and with 2 when none was. On a real Ctrl+C the JVM is already
+ * shutting down, so the process ends with the JVM's own exit code instead. An error that came after the first one, such
+ * as a change of kestrel-api37's accounts after a failed command, is printed after it, and makes a refusal an error (1).
  */
 class Cli(private val environment: Environment) {
     fun run(args: List<String>): Int {
@@ -49,14 +51,22 @@ class Cli(private val environment: Environment) {
                 is Command.ListTasks -> ListCommand(environment, command).execute(out)
             }
         } catch (e: Stopping) {
-            EXIT_REFUSED
+            errors(e, redactions)
+            if (writer?.lines.isNullOrEmpty()) EXIT_REFUSED else EXIT_FAILED
         } catch (e: Refusal) {
             out.println("REFUSED: ${redactions.forConsole(e.message.orEmpty())}")
-            if (writer?.lines.isNullOrEmpty()) EXIT_REFUSED else EXIT_FAILED
+            errors(e, redactions)
+            if (writer?.lines.isNullOrEmpty() && e.suppressed.isEmpty()) EXIT_REFUSED else EXIT_FAILED
         } catch (e: Exception) {
             out.println("ERROR: ${redactions.forConsole(e.message ?: e.javaClass.simpleName)}")
+            errors(e, redactions)
             EXIT_FAILED
         }
+    }
+
+    /** The errors that came after [first], such as a change of kestrel-api37's accounts after a command that failed. */
+    private fun errors(first: Throwable, redactions: Redactions) {
+        for (later in first.suppressed) environment.out.println("ERROR: ${redactions.forConsole(later.message ?: later.javaClass.simpleName)}")
     }
 
     companion object {
