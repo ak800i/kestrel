@@ -13,17 +13,20 @@ data class MemoryAlias(val key: String, val text: String) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val name = scope.values.fill(key)
         if (has(scope, name)) throw SetupFailed("Kestrel's memory already has a fact with the run's key, which the run does not touch.")
-        scope.restores.push("the test alias in Kestrel's memory", "Kestrel's settings > Memory: delete the alias of the test name.") {
+        val byHand = "Kestrel's settings > Memory: delete the alias of the test name."
+        scope.restores.push("the test alias in Kestrel's memory", byHand) {
             try {
                 scope.hooks.agentMemoryRemove(name)
             } catch (e: HookLost) {
                 if (scope.hooks.agentMemoryHas(name)) throw e
             }
         }
-        try {
-            scope.hooks.agentMemoryAdd(name, scope.values.fill(text))
-        } catch (e: HookLost) {
-            if (!has(scope, name)) throw SetupFailed("The test alias did not reach Kestrel's memory.")
+        scope.restores.change("the test alias added to Kestrel's memory", byHand) {
+            try {
+                scope.hooks.agentMemoryAdd(name, scope.values.fill(text))
+            } catch (e: HookLost) {
+                if (!has(scope, name)) throw SetupFailed("The test alias did not reach Kestrel's memory.")
+            }
         }
         return SetupResult.Ready
     }
@@ -41,17 +44,20 @@ data class MemoryAlias(val key: String, val text: String) : Setup {
 /** The debug aliases that let test mode's self-chat rules take a fixture for an app (hook agent-settings -SelfChatAliases), cleared after the run. */
 data class SelfChatAliases(val aliases: String) : Setup {
     override fun apply(scope: RunScope): SetupResult {
-        scope.restores.push("the fixtures' self-chat aliases", "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} agent-settings -SelfChatAliases ''") {
+        val byHand = "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} agent-settings -SelfChatAliases ''"
+        scope.restores.push("the fixtures' self-chat aliases", byHand) {
             try {
                 scope.hooks.agentSettings(selfChatAliases = "")
             } catch (e: HookLost) {
                 if (scope.hooks.agentSettings().int("selfChatAliases") != 0) throw e
             }
         }
-        try {
-            scope.hooks.agentSettings(selfChatAliases = aliases)
-        } catch (e: HookLost) {
-            if (scope.hooks.agentSettings().int("selfChatAliases") == 0) throw SetupFailed("The fixtures' self-chat aliases did not reach Kestrel.")
+        scope.restores.change("the fixtures' self-chat aliases set", byHand) {
+            try {
+                scope.hooks.agentSettings(selfChatAliases = aliases)
+            } catch (e: HookLost) {
+                if (scope.hooks.agentSettings().int("selfChatAliases") == 0) throw SetupFailed("The fixtures' self-chat aliases did not reach Kestrel.")
+            }
         }
         return SetupResult.Ready
     }
@@ -73,15 +79,19 @@ data object OwnerEmails : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val addresses = listOfNotNull(scope.config.gmailAddress, scope.config.emulatorGmailAddress).distinct()
         if (addresses.isEmpty()) return SetupResult.Untestable("corpus\\owner\\a71-config.json gives no address of the owner's")
-        if (scope.hooks.agentSettings().int("ownerEmails") == 0) {
-            scope.restores.push("test mode's owner addresses emptied", "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} agent-settings -OwnerEmails ''") {
+        val byHand = "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} agent-settings -OwnerEmails ''"
+        val hadNone = scope.hooks.agentSettings().int("ownerEmails") == 0
+        if (hadNone) {
+            scope.restores.push("test mode's owner addresses emptied", byHand) {
                 scope.hooks.agentSettings(ownerEmails = "")
             }
         }
-        try {
-            scope.hooks.agentSettings(ownerEmails = addresses.joinToString(","))
-        } catch (e: HookLost) {
-            if (scope.hooks.agentSettings().int("ownerEmails") == 0) throw SetupFailed("The owner's addresses did not reach test mode.")
+        scope.restores.change("the owner's addresses given to test mode", if (hadNone) byHand else "None: they are the owner's own.") {
+            try {
+                scope.hooks.agentSettings(ownerEmails = addresses.joinToString(","))
+            } catch (e: HookLost) {
+                if (scope.hooks.agentSettings().int("ownerEmails") == 0) throw SetupFailed("The owner's addresses did not reach test mode.")
+            }
         }
         return SetupResult.Ready
     }

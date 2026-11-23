@@ -1,7 +1,9 @@
 package dev.kestrel.eval.task
 
+import dev.kestrel.eval.config.Redactions
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.run.Restores
 import dev.kestrel.eval.run.Stopping
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -62,6 +64,57 @@ class StepsTest {
             ),
             run.adb.commands.filter { it.startsWith("pm ") },
         )
+    }
+
+    @Test
+    fun afterCtrlCNoMemoryAliasIsAddedOnceTheRestoreThatRemovesItRan() {
+        val keys = mutableSetOf<String>()
+        run.adb.hook("AGENT_MEMORY") { extras ->
+            val key = extras.getValue("key")
+            when {
+                extras["has"] == "true" -> if (key in keys) "has=yes" else "has=no"
+                extras["add"] == "true" -> { keys.add(key); "keys=${keys.size} added=$key" }
+                else -> { keys.remove(key); "keys=${keys.size}" }
+            }
+        }
+        val (scope, hook) = ctrlCAtThePush()
+
+        assertThrows(Stopping::class.java) { MemoryAlias("Mira", "the Telegram chat 'Saved Messages'").apply(scope) }
+        hook().join(5_000)
+
+        assertEquals(0, run.adb.hookCalls("AGENT_MEMORY").count { it["add"] == "true" })
+        assertEquals(1, run.adb.hookCalls("AGENT_MEMORY").count { it["remove"] == "true" })
+        assertEquals(emptySet<String>(), keys)
+    }
+
+    @Test
+    fun afterCtrlCNoStepMakesItsChangeOnceItsRestoreRan() {
+        run.adb.hook("AGENT_SETTINGS") { "ownerEmails=0 viberSelfChatName=unset whatsappOwnName=unset selfChatAliases=0" }
+        val config = dev.kestrel.eval.config.LocalConfig.of(mapOf("gmailAddress" to "pera.test@example.com"))
+        val steps = listOf(SelfChatAliases.TELEGRAM, OwnerEmails, FixtureScreen("StandInActivity"), OpenUri("https://en.wikipedia.org/wiki/Kestrel", "org.mozilla.firefox"))
+
+        for (step in steps) {
+            val (scope, hook) = ctrlCAtThePush(config)
+            assertThrows(Stopping::class.java) { step.apply(scope) }
+            hook().join(5_000)
+        }
+
+        assertEquals(listOf(mapOf("selfChatAliases" to ""), mapOf("ownerEmails" to "")), run.adb.hookCalls("AGENT_SETTINGS").filter { it.isNotEmpty() })
+        assertTrue(run.adb.commands.none { it.startsWith("am start") })
+        assertEquals(listOf("am force-stop dev.kestrel.testapp", "am force-stop org.mozilla.firefox"), run.adb.commands.filter { it.startsWith("am force-stop") })
+    }
+
+    /** A scope whose restores start their shutdown hook, as Ctrl+C does, when a step pushes its first restore; and that hook. */
+    private fun ctrlCAtThePush(config: dev.kestrel.eval.config.LocalConfig = run.scope.config): Pair<RunScope, () -> Thread> {
+        var hook: Thread? = null
+        lateinit var restores: Restores
+        restores = Restores(run.console, Redactions(config)) { thread ->
+            hook = thread
+            thread.start()
+            while (!restores.stopping) Thread.sleep(1)
+        }
+        val scope = RunScope(run.device, run.hooks, restores, run.clock, run.console, config, run.scope.work, RunValues("maple heron"))
+        return scope to { hook!! }
     }
 
     @Test

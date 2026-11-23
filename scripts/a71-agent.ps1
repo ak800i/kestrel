@@ -1586,7 +1586,11 @@ function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int
     $script:credits += Get-CreditTotal $lines
     Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
     $unknown = Get-UnknownCreditCount $lines
-    Add-Result $StepName "$Task on $(Get-DeviceName $Device): $(@($lines | Where-Object { $_['result'] -eq 'pass' }).Count) of $($lines.Count) runs passed; the sitting's AI Credits so far: $(Format-Number $script:credits 2)$(if ($unknown) { ", and $unknown runs' AI Credits are unknown" })"
+    # A skipped run did not run, so it is named apart instead of as a run that did not pass (final-review-6a M3).
+    $ran = @($lines | Where-Object { $_['result'] -ne 'skipped' })
+    $skipped = @($lines | Where-Object { $_['result'] -eq 'skipped' })
+    $skippedText = if ($skipped) { ", $($skipped.Count) skipped ($(@($skipped | ForEach-Object { $_['reason'] } | Select-Object -Unique) -join ', '))" }
+    Add-Result $StepName "$Task on $(Get-DeviceName $Device): $(@($ran | Where-Object { $_['result'] -eq 'pass' }).Count) of $($ran.Count) runs passed$skippedText; the sitting's AI Credits so far: $(Format-Number $script:credits 2)$(if ($unknown) { ", and $unknown runs' AI Credits are unknown" })"
     if ($unknown) { throw $unknownMessage }
     if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
     $lines

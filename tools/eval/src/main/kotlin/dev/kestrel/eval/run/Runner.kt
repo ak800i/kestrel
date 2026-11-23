@@ -161,10 +161,11 @@ class Runner(
         state.tag = tag
         scope.tag = tag
         restores.push("the task of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
-            if (state.answer == null) state.tag?.let { stop(task, number, it) }
+            if (state.answer == null) state.tag?.let { stop(task, number, it, state.sent) }
         }
         stopIfStopping()
         try {
+            state.sent = true
             hooks.voiceHeard("Kestrel, " + task.request.fill(scope.values), tag, options.live, options.model)
         } catch (e: HookLost) {
             // A lost transcript is read back: the task with the tag exists, or the run stops without one.
@@ -248,15 +249,28 @@ class Runner(
         return End(after, credits(state), failures)
     }
 
-    /** Stops the task of [tag] as the owner's "stop" would, only while it runs: a plain "stop" with no task would be an instant command. */
-    private fun stop(task: Task, number: Int, tag: String) {
-        if (quietly { hooks.agentTask(tag) }?.get("state") != "running") return
+    /**
+     * Stops the task of [tag] as the owner's "stop" would, only while it runs: a plain "stop" with no task would be an
+     * instant command. Once its transcript was [sent], Kestrel may register the task late, after Ctrl+C, so a tag that
+     * Kestrel does not know yet is read once a second for up to 10 s.
+     */
+    private fun stop(task: Task, number: Int, tag: String, sent: Boolean) {
+        if (!running(tag, if (sent) EXISTS_TRIES else 1)) return
         quietly { hooks.voiceHeard("stop", tags()) }
         repeat(STOP_SECONDS) {
             if (quietly { hooks.agentTask(tag) }?.get("state") == "done") return
             clock.sleep(1.seconds)
         }
         console.warn("Task ${task.name}, run $number: the task could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
+    }
+
+    /** Whether the task of [tag] runs, read up to [tries] times while Kestrel does not answer with its state. */
+    private fun running(tag: String, tries: Int): Boolean {
+        repeat(tries) { attempt ->
+            quietly { hooks.agentTask(tag) }?.get("state")?.let { return it == "running" }
+            if (attempt < tries - 1) clock.sleep(1.seconds)
+        }
+        return false
     }
 
     /**
@@ -289,6 +303,10 @@ class Runner(
     private class RunState {
         var call = false
         var tag: String? = null
+
+        // Read by the shutdown hook's stop restore.
+        @Volatile
+        var sent = false
         var answer: HookAnswer? = null
         var timedOut = false
         var stalled = false

@@ -17,7 +17,9 @@ data class FixtureScreen(val activity: String, val extras: Map<String, String> =
     override fun apply(scope: RunScope): SetupResult {
         scope.restores.push("the fixture app stopped", "Close Kestrel's fixture app.") { scope.device.idempotent("am force-stop ${Fixtures.PACKAGE}") }
         val arguments = extras.entries.joinToString("") { (name, value) -> " " + Extra.Text(name, scope.values.fill(value)).shell() }
-        scope.device.idempotent("am start -W -S -n ${Fixtures.PACKAGE}/.$activity$arguments")
+        scope.restores.change("the fixture screen $activity started", "Close Kestrel's fixture app.") {
+            scope.device.idempotent("am start -W -S -n ${Fixtures.PACKAGE}/.$activity$arguments")
+        }
         return SetupResult.Ready
     }
 }

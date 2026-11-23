@@ -548,6 +548,14 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150.5
     }
 
+    It 'leaves a skipped run out of the runs that passed or not, and names it apart (final-review-6a M3)' {
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=skipped end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=untestable" }
+
+        Invoke-TaskRuns a71-runs $A71 'hotspot' 1 | Out-Null
+
+        $results | Should -Contain 'a71-runs: hotspot on the A71: 0 of 0 runs passed, 1 skipped (untestable); the sitting''s AI Credits so far: 0'
+    }
+
     It 'gives look_closer no live task once the ceiling is reached (fix-5c-scripts-review I1)' {
         $Serial = $A71
         $script:credits = 150.0

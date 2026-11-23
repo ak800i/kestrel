@@ -19,7 +19,9 @@ data class OpenUri(val uri: String, val packageName: String, val settle: Duratio
     override fun apply(scope: RunScope): SetupResult {
         scope.restores.push("$packageName stopped", "Close $packageName.") { scope.device.idempotent("am force-stop $packageName") }
         // A lost answer needs no read-back here: the task's checks read the screen next.
-        scope.device.once("am start -W -a android.intent.action.VIEW -d '${scope.values.fill(uri)}' -p $packageName")
+        scope.restores.change("a page opened in $packageName", "Close $packageName.") {
+            scope.device.once("am start -W -a android.intent.action.VIEW -d '${scope.values.fill(uri)}' -p $packageName")
+        }
         scope.clock.sleep(settle)
         return SetupResult.Ready
     }

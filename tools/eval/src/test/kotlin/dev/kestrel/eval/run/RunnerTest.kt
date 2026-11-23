@@ -266,6 +266,38 @@ class RunnerTest {
     }
 
     @Test
+    fun ctrlCAsTheTranscriptIsSentStopsTheTaskThatKestrelRegistersLate() {
+        var stopped = false
+        var reads = 0
+        // Kestrel registers the tag only after two reads of the stop restore.
+        run.adb.on("dev\\.kestrel\\.hook\\.AGENT_TASK") {
+            val answer = when {
+                stopped -> "-1, data=\"state=done end=STOPPED steps=1 workMs=2000 credits=0.00\""
+                ++reads <= 2 -> "1, data=\"no task has the tag t1\""
+                else -> "-1, data=\"state=running\""
+            }
+            "Broadcasting: Intent { act=dev.kestrel.hook.AGENT_TASK }\nBroadcast completed: result=$answer"
+        }
+        var interrupted = false
+        // The shutdown hook runs the restores while the transcript is on its way to Kestrel.
+        run.adb.hook("VOICE") { extras ->
+            if (extras["text"] == "stop") {
+                stopped = true
+            } else if (!interrupted) {
+                interrupted = true
+                run.restores.report(run.restores.runAll())
+            }
+            "sent"
+        }
+
+        runner().runAll(task(), "[]", 1)
+
+        assertTrue(stopped)
+        assertEquals(1, run.adb.hookCalls("VOICE").count { it["text"] == "stop" })
+        assertEquals(listOf("1 fail stopped"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
+    }
+
+    @Test
     fun ctrlCWhileTheCreditsCannotBeReadWritesTheRunsLineOnceWithUnknownCredits() {
         run.adb.hook("AGENT_TASK") { "state=running" }
         var interrupted = false
