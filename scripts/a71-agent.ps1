@@ -16,7 +16,9 @@
 # each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
 # it stops when the sitting's AI Credits reach 150, checked before and after each task's runs, and then runs only the
 # step end. A run whose credits are unknown (task-check.ps1's credits=unknown, when it could not read the end of a live
-# task) stops the sitting in the same way. Each sitting is one call with -Sitting 1 or 2; -Step runs only the
+# task) stops the sitting in the same way; a later call with -Step and -AssumeUnknownCredits <n> counts each such run of
+# the earlier calls as n AI Credits, says so in a line of its own, and keeps the ceiling of 150 on the sum. Each sitting
+# is one call with -Sitting 1 or 2; -Step runs only the
 # named steps, also as one text separated by commas. A sitting 2 that stopped goes on with a call with -Step and the
 # steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
 # Credits of the earlier calls and reads their results too, and starts no run when the record lists no earlier call or
@@ -57,7 +59,10 @@ param(
     [string]$CompareModel = 'gemini-3.8-flash',
     [switch]$DryRun,
     [switch]$LockHeld,
-    [string[]]$Step
+    [string[]]$Step,
+    # A call of sitting 2 with -Step after a stop at a run whose AI Credits are unknown: each such run of the earlier calls
+    # counts as this many AI Credits, which the owner approves, and the ceiling of 150 applies to the sum.
+    [ValidateScript({ $_ -gt 0 })][double]$AssumeUnknownCredits = 0
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -279,6 +284,7 @@ function Get-RunSummary([object[]]$Runs) {
 }
 
 $Step = @(Get-SessionSteps -Step $Step -Names $stepNames[$Sitting])
+if ($PSBoundParameters.ContainsKey('AssumeUnknownCredits') -and ($Sitting -ne '2' -or -not $Step)) { throw '-AssumeUnknownCredits applies only to a call of sitting 2 with -Step.' }
 if ($DryRun -and $Serial -and $Serial -notlike 'emulator-*') { throw 'A dry run runs only on the emulator kestrel-api37.' }
 if (-not $DryRun -and -not $Serial) { throw 'Give the A71''s serial with -Serial.' }
 # In a dry run, the A71's steps run on kestrel-api37 too.
@@ -958,6 +964,9 @@ function Invoke-EmulatorAccountItem {
     if ((Test-Installed $EmulatorSerial 'com.google.android.gm') -and @(Get-GrantedPermissions -Dump (Invoke-Device $EmulatorSerial 'dumpsys package com.google.android.gm') -Permissions $notify)) {
         Set-AgentRecord $recordFile 'gmailNotificationsOff' $true
         Invoke-Device $EmulatorSerial "pm revoke com.google.android.gm $notify" | Out-Null
+        # Without the user-fixed flag, Gmail asks for the permission again when it starts, and Android's dialog covers its
+        # list, where screen-tap and screen-has look (inv-5c-sitting2 item 5); the end of sitting 2 clears the flag again.
+        Invoke-Device $EmulatorSerial "pm set-permission-flags com.google.android.gm $notify user-fixed" | Out-Null
     }
     Set-AgentRecord $recordFile 'playDisabled' $true
     Invoke-Device $EmulatorSerial 'pm disable-user --user 0 com.android.vending' | Out-Null
@@ -1368,7 +1377,10 @@ function Invoke-RecordingsStep {
     foreach ($device in @($EmulatorSerial, $a71) | Select-Object -Unique) {
         if (Test-Installed $device 'com.google.android.gm') {
             if ($DryRun -and $emulatorAccounts -gt 0) {
-                $notes += 'Gmail''s compose screen on kestrel-api37: not opened in a dry run, because the emulator has a Google account'
+                # Counting Drafts opens only Gmail's folders, which changes nothing in the account, and shows whether Gmail
+                # opens its list without a dialog in front of it.
+                $drafts = Get-GmailDraftCount $device
+                $notes += "Gmail's compose screen on kestrel-api37: not opened in a dry run, because the emulator has a Google account; its Drafts $(if ($null -eq $drafts) { 'could not be counted' } else { "shows $drafts" })"
             } elseif ($device -ne $EmulatorSerial -and -not $emulatorDiscarded) {
                 $notes += "Gmail's compose screen on $(Get-DeviceName $device): skipped, because its discard did not work on kestrel-api37"
                 Set-AgentRecord $recordFile 'gmailDiscardA71' 'not opened'
@@ -1607,7 +1619,8 @@ function Get-SittingRuns {
 
 # The AI Credits that this sitting 2 spent so far: the runs' lines and look-closer's "spent=" in the results files of all
 # its calls, which task-check.ps1 writes run by run, so that they hold also the runs of a call that stopped before it
-# could add them to the record; or the record's count (sitting2Credits, and this call's), when that is higher.
+# could add them to the record, and the earlier calls' runs whose credits are unknown at -AssumeUnknownCredits each
+# (Get-AssumedUnknownCount); or the record's count (sitting2Credits, and this call's), when that is higher.
 function Get-SpentCredits {
     $total = Get-CreditTotal (Get-SittingRuns)
     foreach ($file in Get-SittingResultFiles) {
@@ -1615,17 +1628,49 @@ function Get-SpentCredits {
             if ("$line" -match "`tlook-closer`t.*; spent=(\d+(\.\d+)?)$") { $total += [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) }
         }
     }
+    $total += $AssumeUnknownCredits * (Get-AssumedUnknownCount)
     [math]::Max($total, [double]$script:credits)
 }
 
-# Whether a run of this sitting 2 so far has AI Credits that are unknown: a task-check.ps1 run's credits=unknown, or
-# look-closer's "spent=unknown", in the results files of all its calls (fix-5c-ceiling-review M2).
-function Test-SittingCreditsUnknown {
-    if (Get-UnknownCreditCount (Get-SittingRuns)) { return $true }
-    foreach ($file in Get-SittingResultFiles) {
-        foreach ($line in Get-Content -LiteralPath $file) {
-            if ("$line" -match "`tlook-closer`t.*; spent=unknown$") { return $true }
+# The number of runs in a results file whose AI Credits are unknown: task-check.ps1's credits=unknown and look-closer's
+# "spent=unknown" (fix-5c-ceiling-review M2).
+function Get-UnknownRunCount([string]$Path) {
+    $count = 0
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $run = ConvertFrom-TaskLine $line
+        if ($run) {
+            $count += Get-UnknownCreditCount @($run)
+        } elseif ("$line" -match "`tlook-closer`t.*; spent=unknown$") {
+            $count++
         }
+    }
+    $count
+}
+
+# The runs of the earlier calls of this sitting 2 whose AI Credits are unknown, which a call with -AssumeUnknownCredits
+# counts at that many credits each; 0 without it. The runs of this call are never assumed.
+function Get-AssumedUnknownCount {
+    if ($AssumeUnknownCredits -le 0) { return 0 }
+    $count = 0
+    foreach ($file in Get-SittingResultFiles) { if ($file -ne $resultsFile) { $count += Get-UnknownRunCount $file } }
+    $count
+}
+
+# Writes, in a line of its own, how a call with -AssumeUnknownCredits counts the earlier calls' runs whose AI Credits are
+# unknown. A call whose earlier results cannot be read writes nothing here, because its first run stops it anyway.
+function Add-AssumedCreditsResult {
+    if ($AssumeUnknownCredits -le 0) { return }
+    try { $count = Get-AssumedUnknownCount } catch { return }
+    Add-Result session "-AssumeUnknownCredits $(Format-Number $AssumeUnknownCredits 2): the AI Credits of $count runs of earlier calls of this sitting 2 are unknown, and this call counts each as $(Format-Number $AssumeUnknownCredits 2) AI Credits, $(Format-Number ($count * $AssumeUnknownCredits) 2) in all"
+}
+
+# Whether a run of this sitting 2 so far has AI Credits that are unknown: a task-check.ps1 run's credits=unknown, or
+# look-closer's "spent=unknown", in the results files of all its calls (fix-5c-ceiling-review M2); with
+# -AssumeUnknownCredits, only in this call's file, because the earlier ones count at the assumed credits.
+function Test-SittingCreditsUnknown {
+    foreach ($file in Get-SittingResultFiles) {
+        if ($AssumeUnknownCredits -gt 0 -and $file -ne $resultsFile) { continue }
+        if (Get-UnknownRunCount $file) { return $true }
     }
     $false
 }
@@ -1746,8 +1791,9 @@ function Register-SittingEndRestores {
         } | Out-Null
     }
     if ($record.gmailNotificationsOff) {
-        Register-Restore 'Gmail''s notifications on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS" $EmulatorSerial {
+        Register-Restore 'Gmail''s notifications on kestrel-api37' "Run: & '$adb' -s $EmulatorSerial shell pm clear-permission-flags com.google.android.gm android.permission.POST_NOTIFICATIONS user-fixed; then: & '$adb' -s $EmulatorSerial shell pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS" $EmulatorSerial {
             param($Device)
+            Invoke-Device $Device 'pm clear-permission-flags com.google.android.gm android.permission.POST_NOTIFICATIONS user-fixed' | Out-Null
             Invoke-Device $Device 'pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS' | Out-Null
             Set-AgentRecord $recordFile 'gmailNotificationsOff' $false
         } | Out-Null
@@ -2162,7 +2208,10 @@ try {
     if ($KestrelTestDevices[$EmulatorSerial].Pattern -ne 'kestrel-api37') { throw "$EmulatorSerial is not kestrel-api37." }
     if (-not $DryRun -and $KestrelTestDevices[$Serial].Pattern -ne 'SM-A715F*') { throw "$Serial is not the Galaxy A71." }
     Add-Result session "sitting $Sitting started$(if ($DryRun) { ' as a dry run on kestrel-api37' })$(if ($Sitting -eq '2') { "; the comparison's model is $CompareModel" })"
-    if ($Sitting -eq '2') { Add-SittingResults }
+    if ($Sitting -eq '2') {
+        Add-SittingResults
+        Add-AssumedCreditsResult
+    }
     foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
         Enable-StayAwake $device
         Enable-KestrelService $device

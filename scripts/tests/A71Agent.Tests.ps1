@@ -24,7 +24,7 @@ BeforeAll {
         'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
         'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText',
         'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
-        'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown')
+        'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown', 'Get-UnknownRunCount', 'Get-AssumedUnknownCount', 'Add-AssumedCreditsResult')
     # The owner's decisions for the sittings (fix-5c-owner), and the helpers that their steps call, which the tests mock.
     $helpers += @('Test-WazeDevice', 'Invoke-SetupStep', 'Invoke-A71RunsStep', 'Grant-AgentPermissions', 'Enable-NotificationAccess', 'Get-AccountCount', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
         'Test-WazeHome', 'Set-EmulatorFix', 'Start-TestLocation', 'Invoke-EmulatorAccountItem', 'Invoke-OwnerItem', 'Invoke-OwnerStep', 'Set-OwnerNames',
@@ -366,6 +366,7 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         $resultsGoneMessage = 'A results file of an earlier call of this sitting 2, which the record lists, is gone, so the sitting''s AI Credits are unknown and no run starts.'
         $noRecordMessage = 'The record lists no results of an earlier call of this sitting 2, so the sitting''s AI Credits are unknown and no run starts; a new sitting 2 is a call without -Step.'
         $script:sittingRecordMissing = $false
+        $AssumeUnknownCredits = 0
         $results = [System.Collections.Generic.List[string]]::new()
         Mock Add-Result { $results.Add("${StepName}: $Text") }
         Mock Start-Sleep { }
@@ -583,6 +584,46 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         { Invoke-LookCloserStep } | Should -Throw 'The pipeline has been stopped.'
 
         @($results) | Should -Contain 'look-closer: kestrel-api37, the answer yes: the step stopped before it read the task''s end; spent=unknown'
+        { Assert-CreditsLeft } | Should -Throw $unknownMessage
+    }
+
+    It 'counts each earlier run whose AI Credits are unknown as -AssumeUnknownCredits, says so in a line of its own, and keeps the ceiling on the sum (fix-5c-sitting2)' {
+        $first = Join-Path $TestDrive "agent-sitting2-$([guid]::NewGuid().ToString('N')).txt"
+        [IO.File]::WriteAllLines($first, [string[]]@(
+                "2026-11-23 10:40:00`tcompare`tfirefox-wiki on kestrel-api37, 3 runs"
+                "2026-11-23 10:42:00`ttask`ttask=firefox-wiki run=1 result=pass end=FINISHED check=pass steps=5 workMs=30000 credits=10.00 model=gemini-3.8-flash in=20000 out=500 cacheRead=0 cacheWrite=0 reason=ok"
+                "2026-11-23 10:50:00`ttask`ttask=firefox-wiki run=3 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stalled"))
+        Set-AgentRecord $recordFile 'sitting2Results' @((Split-Path -Leaf $first))
+        Set-AgentRecord $recordFile 'sitting2Credits' 10.0
+        $script:credits = 10.0
+        $Step = @('prepare', 'look-closer')
+        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-11-23 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
+        Add-SittingResults
+
+        # Without it, the call stops as before.
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $unknownMessage
+        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+
+        $AssumeUnknownCredits = 20
+        Add-AssumedCreditsResult
+        $results | Should -Contain 'session: -AssumeUnknownCredits 20: the AI Credits of 1 runs of earlier calls of this sitting 2 are unknown, and this call counts each as 20 AI Credits, 20 in all'
+        Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 | Out-Null
+        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        $script:credits | Should -Be 31
+        (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 31
+
+        # The ceiling applies to the sum with the assumed credits.
+        $script:credits = 10.0
+        $AssumeUnknownCredits = 140
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $ceilingMessage
+        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+
+        # A run of this call whose credits are unknown still stops the sitting.
+        $script:credits = 10.0
+        $AssumeUnknownCredits = 20
+        [IO.File]::WriteAllText($resultsFile, '')
+        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-11-23 12:02:00`ttask`ttask=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stalled" }
+        { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $unknownMessage
         { Assert-CreditsLeft } | Should -Throw $unknownMessage
     }
 }
@@ -862,6 +903,9 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Should -Invoke Test-WazeHome -Times 0 -Exactly -ParameterFilter { $Device -eq $EmulatorSerial }
         $results | Should -Contain 'owner: Waze''s Home: not run on kestrel-api37 (the owner''s choice: Waze does not work there)'
         $commands | Should -Contain "$EmulatorSerial pm revoke com.google.android.gm android.permission.POST_NOTIFICATIONS"
+        # With the user-fixed flag, Gmail opens its list without Android's permission dialog (inv-5c-sitting2 item 5).
+        $commands.IndexOf("$EmulatorSerial pm set-permission-flags com.google.android.gm android.permission.POST_NOTIFICATIONS user-fixed") |
+            Should -BeGreaterThan $commands.IndexOf("$EmulatorSerial pm revoke com.google.android.gm android.permission.POST_NOTIFICATIONS")
         $commands | Should -Contain "$EmulatorSerial pm disable-user --user 0 com.android.vending"
         $record = Read-AgentRecord $recordFile
         $record.playDisabled | Should -BeTrue
@@ -902,6 +946,8 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         foreach ($restore in $registered) { & $restore.Action $restore.Data | Out-Null }
         $commands | Should -Contain "$EmulatorSerial pm uninstall com.waze"
         $commands | Should -Contain "$EmulatorSerial pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS"
+        $commands.IndexOf("$EmulatorSerial pm clear-permission-flags com.google.android.gm android.permission.POST_NOTIFICATIONS user-fixed") |
+            Should -BeIn @(0..($commands.IndexOf("$EmulatorSerial pm grant com.google.android.gm android.permission.POST_NOTIFICATIONS") - 1))
         @($commands | Where-Object { $_ -match 'uninstall com\.google\.android\.gm|uninstall com\.android\.vending|SYNC_SETTINGS' }) | Should -BeNullOrEmpty
         Should -Invoke Invoke-DeviceHook -Times 0 -Exactly -ParameterFilter { $Command -eq 'provider-delete' }
 
@@ -943,6 +989,7 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Mock Open-App { }
         Mock Save-AgentTree { "$Name recorded" }
         Mock Invoke-GmailCompose { [pscustomobject]@{ Opened = $true; Discarded = $true; Inside = $null; Note = 'discarded' } }
+        Mock Get-GmailDraftCount { 0 }
 
         # A dry run, whose A71 steps run on kestrel-api37.
         $DryRun = $true
@@ -952,6 +999,9 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Should -Invoke Invoke-TelegramRecording -Times 0 -Exactly
         Should -Invoke Open-App -Times 0 -Exactly -ParameterFilter { $Package -eq 'com.whatsapp' }
         Should -Invoke Invoke-GmailCompose -Times 0 -Exactly
+        # Counting Drafts opens only Gmail's folders, and shows that Gmail opens its list without a dialog in front.
+        Should -Invoke Get-GmailDraftCount -Times 1 -Exactly -ParameterFilter { $Device -eq $EmulatorSerial }
+        $results | Should -Contain 'recordings: Gmail''s compose screen on kestrel-api37: not opened in a dry run, because the emulator has a Google account; its Drafts shows 0'
         $results | Should -Contain 'recordings: Telegram''s recordings: not run on kestrel-api37 (the owner''s choice)'
         $results | Should -Contain 'recordings: WhatsApp''s recordings: skipped on both devices (the owner''s choice)'
         (Read-AgentRecord $recordFile).whatsappSelfChat | Should -Be 'skipped'
