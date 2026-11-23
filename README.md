@@ -50,7 +50,7 @@ To open the project in Android Studio, use Android Studio Rabbit 2 (2026.2.2) or
 
 ## Releasing
 
-A release is a tag `v<version>`, such as `v1.0.0`, whose version equals the app's `versionName` in `app/build.gradle.kts` (design spec, section 17). The workflow `.github/workflows/release.yml` runs for every pushed tag that starts with `v`: it runs CI's checks (the audit's own tests, the unit tests, lint and the privacy audit), decodes the release key from the repository's secrets into the runner's temporary folder, builds the signed release APK, refuses an APK whose version differs from the tag's or that carries a debug key, and creates a GitHub release with `kestrel-<version>.apk` and `kestrel-<version>.apk.sha256`. A tag with a hyphen, such as `v1.0.0-rc.1`, makes a pre-release.
+A release is a tag `v<version>`, such as `v1.0.0`, whose version equals the app's `versionName` in `app/build.gradle.kts` (design spec, section 17). The workflow `.github/workflows/release.yml` runs for every pushed tag that starts with `v`: it runs CI's checks (the audit's own tests, the unit tests, lint and the privacy audit), decodes the release key from the repository's secrets into the runner's temporary folder, builds the signed release APK, refuses an APK whose version differs from the tag's, that carries a debug key, or whose only signer is not the release key (by its certificate's SHA-256 digest, which the workflow pins), and creates a GitHub release with `kestrel-<version>.apk` and `kestrel-<version>.apk.sha256`. A tag with a hyphen, such as `v1.0.0-rc.1`, makes a pre-release.
 
 The release key is in the repository's four secrets: `KESTREL_KEYSTORE_BASE64` (the PKCS12 keystore in base64), `KESTREL_KEYSTORE_PASSWORD`, `KESTREL_KEY_ALIAS` and `KESTREL_KEY_PASSWORD`. Outside GitHub, it is only in `%LOCALAPPDATA%\Kestrel\release-key` on the owner's computer, with its password protected for his Windows account, and in his own backup; it is never committed. Without the same key, a later release cannot install over an earlier one.
 
@@ -60,7 +60,7 @@ The release checklist:
 2. On `kestrel-api37`, `scripts\install.ps1 -Serial $serial -Release` installs the release build, signed with this computer's debug key. Open the setup checklist, check that step 2 is done, and put the debug build back with `scripts\install.ps1 -Serial $serial`.
 3. For a new version, raise `versionCode` and `versionName` in `app/build.gradle.kts`, and commit.
 4. Tag and push, such as `git tag -a v1.0.0 -m "Kestrel 1.0.0"` and `git push origin v1.0.0`, and follow the workflow with `gh run watch`.
-5. Check the release: `gh release download v1.0.0 --repo ak800i/kestrel --dir <folder>`, compare the APK's SHA-256 with the `.sha256` file as above, and check with the SDK's `apksigner verify --print-certs` that the signer is `CN=Kestrel`.
+5. Check the release: `gh release download v1.0.0 --repo ak800i/kestrel --dir <folder>`, compare the APK's SHA-256 with the `.sha256` file as above, and check with the SDK's `apksigner verify --print-certs` that it has one signer, whose certificate's SHA-256 digest is `ad26dda70846e874d1624783c7983b09f209301c00aa92c157d46571c16003f5`, the digest that `release.yml` checks too.
 
 ## Testing on a device
 
