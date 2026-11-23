@@ -10,6 +10,11 @@ android {
     defaultConfig {
         consumerProguardFiles("consumer-rules.pro")
     }
+    testOptions {
+        // OkHttp's Android build calls android.util.Log when it starts. On the PC that call would fail and print a stack
+        // trace, so this module's unit tests get default return values, as those of :core:privacy do.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 androidComponents {
@@ -37,8 +42,13 @@ dependencies {
     implementation(libs.sherpa.onnx) { artifact { type = "aar" } }
     api(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    // The model download (release plan): its requests go through the network gateway's Call.Factory, which :app passes
+    // in, and Commons Compress unpacks sherpa-onnx's .tar.bz2 archives.
+    implementation(libs.okhttp)
+    implementation(libs.commons.compress)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver3)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }

@@ -19,6 +19,7 @@ androidxTestRules = "1.7.0"
 asm = "9.11.1"
 sherpaOnnx = "1.13.8"
 onnxruntime = "1.28.0"
+commonsCompress = "1.28.0"
 
 [libraries]
 android-gradleApi = { module = "com.android.tools.build:gradle-api", version.ref = "agp" }
@@ -51,6 +52,7 @@ androidx-test-rules = { module = "androidx.test:rules", version.ref = "androidxT
 androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidxTestEspresso" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 sherpa-onnx = { module = "com.k2fsa.sherpa.onnx:sherpa-onnx-static-link-onnxruntime", version.ref = "sherpaOnnx" }
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

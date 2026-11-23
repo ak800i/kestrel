@@ -65,6 +65,12 @@ allow org.jetbrains.kotlinx:* Apache-2.0
 allow org.jetbrains:annotations Apache-2.0
 allow com.squareup.okhttp3:* Apache-2.0
 allow com.squareup.okio:* Apache-2.0
+# The model download unpacks sherpa-onnx's .tar.bz2 archives with Commons Compress, which needs Commons IO, Lang and
+# Codec at run time (release plan).
+allow org.apache.commons:commons-compress Apache-2.0
+allow org.apache.commons:commons-lang3 Apache-2.0
+allow commons-io:commons-io Apache-2.0
+allow commons-codec:commons-codec Apache-2.0
 allow com.google.guava:listenablefuture Apache-2.0
 allow org.jspecify:jspecify Apache-2.0
 # sherpa-onnx itself is Apache-2.0. Its library also contains espeak-ng (GPL-3.0-or-later), the only GPL part, so the

@@ -10,6 +10,7 @@ Kestrel's release build includes the libraries below. Their licences are the Apa
 | JetBrains Java Annotations (`org.jetbrains:annotations`) | Apache-2.0 | https://github.com/JetBrains/java-annotations |
 | OkHttp (`com.squareup.okhttp3`) | Apache-2.0 | https://github.com/square/okhttp |
 | Okio (`com.squareup.okio`) | Apache-2.0 | https://github.com/square/okio |
+| Apache Commons Compress (`org.apache.commons:commons-compress`), which unpacks sherpa-onnx's `.tar.bz2` model archives during the model download, with the libraries that it uses, Apache Commons IO (`commons-io:commons-io`), Apache Commons Lang (`org.apache.commons:commons-lang3`) and Apache Commons Codec (`commons-codec:commons-codec`). Copyright The Apache Software Foundation; their NOTICE files say: "This product includes software developed at The Apache Software Foundation (https://www.apache.org/)." | Apache-2.0 | https://commons.apache.org/proper/commons-compress/ |
 | Guava ListenableFuture (`com.google.guava:listenablefuture`) | Apache-2.0 | https://github.com/google/guava |
 | JSpecify (`org.jspecify:jspecify`) | Apache-2.0 | https://github.com/jspecify/jspecify |
 | Public Suffix List, bundled by OkHttp as `assets/PublicSuffixDatabase.list` | MPL-2.0 | https://publicsuffix.org (source: https://github.com/publicsuffix/list) |
