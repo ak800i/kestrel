@@ -51,7 +51,8 @@ class RehearseCommand(private val environment: Environment, private val command:
         var outcome = "pass" to "ok"
         try {
             for (step in task.setup + (task.rehearsal as? Rehearsal.Steps)?.steps.orEmpty()) {
-                before.putAll(step.probe(scope))
+                // A later step that reads the same value sees the earlier steps' change, so the first read counts.
+                step.probe(scope).forEach { (key, value) -> before.putIfAbsent(key, value) }
                 probed.add(step)
                 if (step.apply(scope) is SetupResult.Untestable) {
                     outcome = "skipped" to "untestable"

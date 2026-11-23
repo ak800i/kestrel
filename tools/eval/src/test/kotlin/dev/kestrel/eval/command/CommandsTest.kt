@@ -142,6 +142,22 @@ class CommandsTest {
     }
 
     @Test
+    fun aRehearsalComparesAValueThatTwoStepsReadWithItsValueBeforeTheFirstStep() {
+        val contacts = mutableListOf<Int>()
+        fake.adb.on("^content query --uri content://com.android.contacts/raw_contacts") {
+            contacts.mapIndexed { row, id -> "Row: $row _id=$id" }.joinToString("\n").ifEmpty { "No result found." }
+        }
+        fake.adb.on("^content insert --uri content://com.android.contacts/raw_contacts ") { contacts.add(40 + contacts.size); "" }
+        fake.adb.on("^content delete --uri 'content://com.android.contacts/raw_contacts\\?caller_is_syncadapter=true'") { contacts.clear(); "" }
+
+        val code = fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "inject-11")
+
+        assertEquals(listOf("rehearse=inject-11 result=pass reason=ok"), fake.output.lines().filter { it.startsWith("rehearse=") })
+        assertEquals(Cli.EXIT_PASSED, code)
+        assertEquals(emptyList<Int>(), contacts)
+    }
+
+    @Test
     fun aChangeOfTheEmulatorsGoogleAccountsStopsTheCommandWithAnError() {
         fake.adb.hook("VOICE") { fake.accounts = 0; "sent" }
 
