@@ -15,13 +15,13 @@ BeforeAll {
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-agent.ps1", [ref]$tokens, [ref]$errors)
     $helpers = @('Get-SessionSteps', 'Get-AgentConfig', 'Read-AgentRecord', 'Set-AgentRecord', 'Get-GoogleAccountCount', 'Get-VersionName',
         'Test-PackageListed', 'Test-NetworkValidated', 'Test-HotspotOn', 'Get-TouchRuleFromProbe', 'Get-OcrMeasures', 'Get-BoundsCentre',
-        'ConvertFrom-TaskLine', 'Get-CreditTotal', 'Select-TestName', 'Get-CacheShares', 'Get-CacheFields', 'Get-StandInTask', 'Format-Number', 'Get-RunSummary',
+        'ConvertFrom-TaskLine', 'Get-CreditTotal', 'Select-TestName', 'Get-CacheShares', 'Get-CacheFields', 'Format-Number', 'Get-RunSummary',
         'Get-SittingRuns')
     # The step helpers of the fix round before the sittings, and the helpers that they call, which the tests mock.
     $helpers += @('Get-DeviceName', 'Register-Restore', 'Complete-Restore', 'Invoke-Device', 'Invoke-DeviceHook', 'Invoke-ScreenTap', 'Get-ScreenCount',
         'Open-App', 'Unlock-Device', 'Set-HotspotSwitch', 'Wait-Validated', 'Add-Result', 'Test-Installed', 'Save-AgentTree', 'Read-DeviceText',
         'Format-Failure', 'Invoke-TelegramRecording', 'Get-GmailDraftCount', 'Invoke-GmailCompose', 'Restore-Hotspot', 'Register-HotspotRestore',
-        'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-TaskCheck', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
+        'Enable-WifiSharing', 'Register-WifiSharingRestore', 'Invoke-TaskRuns', 'Invoke-EvalTool', 'Invoke-Eval', 'Wait-LiveTask', 'Get-SittingResultFiles', 'Add-SittingResults',
         'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText',
         'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
         'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown', 'Get-UnknownRunCount', 'Get-AssumedUnknownCount', 'Add-AssumedCreditsResult')
@@ -133,7 +133,7 @@ Describe 'The helpers of the sittings of sub-project 5' {
         Get-BoundsCentre 'none' | Should -BeNullOrEmpty
     }
 
-    It 'reads task-check.ps1''s run lines from the results, and adds up their AI Credits' {
+    It 'reads the run lines of :tools:eval from the results, and adds up their AI Credits' {
         $lines = @(
             "2026-12-01 10:00:00`ta71-runs`ttelegram-late on the A71, 3 runs"
             "2026-12-01 10:03:00`ttask-check`ttask=telegram-late run=1 result=pass end=FINISHED check=pass steps=9 workMs=61000 credits=1.25 model=gpt-6-luna in=42000 out=900 cacheRead=30000 cacheWrite=0 reason=ok"
@@ -197,12 +197,32 @@ Describe 'The helpers of the sittings of sub-project 5' {
         Get-StandInText 'Yes' | Should -BeExactly 'Yes'
     }
 
-    It 'runs a stand-in with its scripted model in a dry run, and has none for Waze' {
-        (Get-StandInTask 'telegram-late').Task | Should -Be 'stand-in-messenger-late'
-        (Get-StandInTask 'firefox-wiki').Script | Should -Be 'tasks\stand-in-firefox.json'
-        (Get-StandInTask 'inject-07').Script | Should -Be 'tasks\hostile.json'
-        (Get-StandInTask 'inject-07').Task | Should -Be 'inject-07'
-        Get-StandInTask 'waze-home' | Should -BeNullOrEmpty
+    It 'runs a task through scripts\eval.ps1: live in a sitting, once without a model in a dry run, and throws on a refusal or a call without run lines (design D16 of sub-project 6)' {
+        $EmulatorSerial = 'emulator-5554'
+        $resultsFile = Join-Path $TestDrive "eval-$([guid]::NewGuid().ToString('N')).txt"
+        [IO.File]::WriteAllText($resultsFile, '')
+        $calls = [System.Collections.Generic.List[string]]::new()
+        # A line as :tools:eval writes it; its RunLineTest checks the same form.
+        $line = "2026-11-23 12:00:04`ttask`ttask=stand-in-hotspot run=1 result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=scripted in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok"
+        Mock Invoke-EvalTool { $calls.Add($Arguments -join ' '); Add-Content -LiteralPath $resultsFile $line; 0 }
+
+        $DryRun = $true
+        Invoke-Eval $EmulatorSerial 'hotspot' 1 @{}
+        $DryRun = $false
+        Invoke-Eval 'R58N66RVD7Z' 'telegram-late' 3 @{ Name = 'Mira'; Model = 'gemini-3.8-flash' }
+
+        @($calls) | Should -Be @(
+            "run --device emulator-5554 --task hotspot --runs 1 --results $resultsFile --dry-run",
+            "run --device R58N66RVD7Z --task telegram-late --runs 3 --results $resultsFile --live --model gemini-3.8-flash --name Mira")
+        (ConvertFrom-TaskLine $line)['task'] | Should -Be 'stand-in-hotspot'
+
+        # Exit code 1 is a run that failed, which its line says; exit code 2 is a refusal, which writes no line.
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile $line.Replace('result=pass', 'result=fail'); 1 }
+        { Invoke-Eval $EmulatorSerial 'hotspot' 1 @{} } | Should -Not -Throw
+        Mock Invoke-EvalTool { 2 }
+        { Invoke-Eval $EmulatorSerial 'hotspot' 1 @{} } | Should -Throw 'scripts\eval.ps1 refused to run hotspot on kestrel-api37.'
+        Mock Invoke-EvalTool { 0 }
+        { Invoke-Eval $EmulatorSerial 'hotspot' 1 @{} } | Should -Throw 'scripts\eval.ps1 wrote no run line for hotspot on kestrel-api37.'
     }
 }
 
@@ -414,12 +434,12 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         Mock Start-Sleep { }
     }
 
-    It 'writes only the error''s class and a fixed sentence when task-check.ps1 stops (task-5c-10-review M1)' {
-        Mock Invoke-TaskCheck { throw "Could not run 'am start -W -a android.intent.action.SENDTO -d 'mailto:pera.test@example.com?subject=x' -p com.google.android.gm' on R58N66RVD7Z: error" }
+    It 'writes only the error''s class and a fixed sentence when scripts\eval.ps1 stops (task-5c-10-review M1)' {
+        Mock Invoke-EvalTool { throw "Could not run 'am start -W -a android.intent.action.SENDTO -d 'mailto:pera.test@example.com?subject=x' -p com.google.android.gm' on R58N66RVD7Z: error" }
 
-        Invoke-TaskRuns a71-runs $A71 'read-email' 3 @{ Mail = 'pera.test@example.com' } | Out-Null
+        Invoke-TaskRuns a71-runs $A71 'read-email' 3 | Out-Null
 
-        $results | Should -Contain 'a71-runs: read-email on the A71: failed: task-check.ps1 stopped with RuntimeException before its runs ended'
+        $results | Should -Contain 'a71-runs: read-email on the A71: failed: eval.ps1 stopped with RuntimeException before its runs ended'
         ($results -join "`n") | Should -Not -Match '@|pera'
     }
 
@@ -509,22 +529,22 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         $Step = @('prepare', 'emulator-runs')
         Add-SittingResults
         $script:credits = 0.0
-        Mock Invoke-TaskCheck { }
+        Mock Invoke-EvalTool { }
 
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' } | Should -Throw $ceilingMessage
 
-        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 0 -Exactly
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150
     }
 
     It 'starts a run below the ceiling, whose cost shows only after it, and no run after it (the plan''s rule: the sitting stops when its credits reach 150)' {
         $script:credits = 149.5
-        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
 
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $ceilingMessage
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'firefox-wiki' 1 } | Should -Throw $ceilingMessage
 
-        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150.5
     }
 
@@ -549,42 +569,42 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         Set-AgentRecord $recordFile 'sitting2Credits' 10.0
         $Step = @('prepare', 'emulator-runs')
         Add-SittingResults
-        Mock Invoke-TaskCheck { }
+        Mock Invoke-EvalTool { }
 
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' } | Should -Throw $resultsGoneMessage
 
-        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 0 -Exactly
     }
 
     It 'starts no run in a call with -Step whose record lists no earlier call, and starts at 0 in a call without -Step (fix-5c-ceiling-review M1)' {
-        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
         $Step = @('prepare', 'emulator-runs')
         Add-SittingResults
 
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $noRecordMessage
 
-        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 0 -Exactly
         # The record does not start a list from this call, so a later call with -Step stops too.
         (Read-AgentRecord $recordFile).PSObject.Properties['sitting2Results'] | Should -BeNullOrEmpty
 
         $Step = @()
         Add-SittingResults
         Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 | Out-Null
-        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 1
     }
 
     It 'stops at a run whose AI Credits are unknown as at the ceiling, and starts no run after it, also on a resume (fix-5c-ceiling-review M2)' {
         $Step = @()
         Add-SittingResults
-        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped" }
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped" }
 
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 3 } | Should -Throw $unknownMessage
         $Step = @('prepare', 'firefox-wiki')
         Add-SittingResults
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'firefox-wiki' 3 } | Should -Throw $unknownMessage
 
-        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
         $results | Should -Contain 'emulator-runs: hotspot on kestrel-api37: 0 of 1 runs passed; the sitting''s AI Credits so far: 0, and 1 runs'' AI Credits are unknown'
         @(Get-RunSummary @(Get-SittingRuns)) | Should -Be @('task=hotspot model=none passed=0 of 1 steps=0 seconds=0 credits=0 creditsUnknown=1')
     }
@@ -639,18 +659,18 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         Set-AgentRecord $recordFile 'sitting2Credits' 10.0
         $script:credits = 10.0
         $Step = @('prepare', 'look-closer')
-        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-11-23 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-11-23 12:02:00`ttask`ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=4 workMs=20000 credits=1.00 model=gpt-6-luna in=10000 out=300 cacheRead=0 cacheWrite=0 reason=ok" }
         Add-SittingResults
 
         # Without it, the call stops as before.
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $unknownMessage
-        Should -Invoke Invoke-TaskCheck -Times 0 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 0 -Exactly
 
         $AssumeUnknownCredits = 20
         Add-AssumedCreditsResult
         $results | Should -Contain 'session: -AssumeUnknownCredits 20: the AI Credits of 1 runs of earlier calls of this sitting 2 are unknown, and this call counts each as 20 AI Credits, 20 in all'
         Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 | Out-Null
-        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
         $script:credits | Should -Be 31
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 31
 
@@ -658,13 +678,13 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         $script:credits = 10.0
         $AssumeUnknownCredits = 140
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $ceilingMessage
-        Should -Invoke Invoke-TaskCheck -Times 1 -Exactly
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
 
         # A run of this call whose credits are unknown still stops the sitting.
         $script:credits = 10.0
         $AssumeUnknownCredits = 20
         [IO.File]::WriteAllText($resultsFile, '')
-        Mock Invoke-TaskCheck { Add-Content -LiteralPath $resultsFile "2026-11-23 12:02:00`ttask`ttask=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stalled" }
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-11-23 12:02:00`ttask`ttask=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stalled" }
         { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 } | Should -Throw $unknownMessage
         { Assert-CreditsLeft } | Should -Throw $unknownMessage
     }
@@ -1063,7 +1083,7 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
 
         Invoke-EmulatorRunsStep
 
-        Should -Invoke Invoke-TaskRuns -Times 1 -Exactly -ParameterFilter { $Task -eq 'read-email' -and $Device -eq $EmulatorSerial -and $With.Mail -eq 'Pera.Test@example.com' }
+        Should -Invoke Invoke-TaskRuns -Times 1 -Exactly -ParameterFilter { $Task -eq 'read-email' -and $Device -eq $EmulatorSerial }
         Should -Invoke Invoke-TaskRuns -Times 0 -Exactly -ParameterFilter { $Task -eq 'waze-home' }
         $results | Should -Contain 'emulator-runs: waze-home: not run on kestrel-api37 (the owner''s choice: Waze does not work there)'
         $results | Should -Contain 'emulator-runs: telegram-late and telegram-photos: not run on kestrel-api37 (the owner''s choice)'

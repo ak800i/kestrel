@@ -12,10 +12,10 @@
 # the owner's Copilot: the owner signs Kestrel in to Copilot only on a device whose default profile is not a Copilot
 # profile (none when both have one; about 3 minutes per device otherwise), and then, without him, the script prepares
 # both devices again, opens the devices' live sessions (hook agent-live) and runs
-# scripts\task-check.ps1 -Live for the six tasks of design D3 on the A71 and the emulator's tasks on kestrel-api37, 3 runs
-# each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection fixtures and the cache record;
-# it stops when the sitting's AI Credits reach 150, checked before and after each task's runs, and then runs only the
-# step end. A run whose credits are unknown (task-check.ps1's credits=unknown, when it could not read the end of a live
+# scripts\eval.ps1 run --live (:tools:eval, sub-project 6) for the six tasks of design D3 on the A71 and the emulator's
+# tasks on kestrel-api37, 3 runs each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection
+# fixtures and the cache record; it stops when the sitting's AI Credits reach 150, checked before and after each task's
+# runs, and then runs only the step end. A run whose credits are unknown (:tools:eval's credits=unknown, when it could not read the end of a live
 # task) stops the sitting in the same way; a later call with -Step and -AssumeUnknownCredits <n> counts each such run of
 # the earlier calls as n AI Credits, says so in a line of its own, and keeps the ceiling of 150 on the sum. Each sitting
 # is one call with -Sitting 1 or 2; -Step runs only the
@@ -149,7 +149,7 @@ function Test-HotspotOn([string[]]$Dump) {
 }
 
 # Whether 'dumpsys notification' lists a notification of Waze whose flags hold FLAG_ONGOING_EVENT (0x2), as Waze's
-# navigation notification does (as scripts\task-check.ps1's check of waze-home reads it). It reads packages and flags only.
+# navigation notification does (as :tools:eval's check of waze-home reads it). It reads packages and flags only.
 function Test-WazeNavigating([string[]]$Dump) {
     $waze = $false
     foreach ($line in $Dump) {
@@ -189,7 +189,7 @@ function Get-BoundsCentre([string]$Bounds) {
     "$([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))"
 }
 
-# A run's line of scripts\task-check.ps1 in the results file ('<time><tab><step><tab>task=<name> run=<i> result=...'), as
+# A run's line of :tools:eval (scripts\eval.ps1) in the results file ('<time><tab><step><tab>task=<name> run=<i> result=...'), as
 # an ordered table, or $null for another line.
 function ConvertFrom-TaskLine([string]$Line) {
     $text = ("$Line" -split "`t")[-1]
@@ -207,7 +207,7 @@ function Get-CreditTotal([object[]]$Runs) {
     $total
 }
 
-# The number of runs whose AI Credits are not a number, such as credits=unknown, which task-check.ps1 writes for a live
+# The number of runs whose AI Credits are not a number, such as credits=unknown, which :tools:eval writes for a live
 # run whose end it did not read (fix-5c-ceiling-review M2).
 function Get-UnknownCreditCount([object[]]$Runs) {
     @($Runs | Where-Object { $_ -and "$($_['credits'])" -notmatch '^\d+(\.\d+)?$' }).Count
@@ -249,18 +249,6 @@ function Get-CacheFields([string]$Model) {
     if ($Model -match '^(gpt|o\d)') { return @('responsesExplicit') }
     if ($Model -match '^claude') { return @('chatCopilotMarks', 'anthropicMarks') }
     @()
-}
-
-# The task of scripts\task-check.ps1 that a dry run runs instead of a live task, with its script; $null when the live
-# task has no stand-in, as Waze.
-function Get-StandInTask([string]$Task) {
-    $map = @{
-        'telegram-late' = 'stand-in-messenger-late'; 'telegram-photos' = 'stand-in-messenger-photos'; 'read-email' = 'stand-in-read'
-        'hotspot' = 'stand-in-hotspot'; 'firefox-wiki' = 'stand-in-firefox'
-    }
-    if ($Task -match '^inject-\d{2}$') { return [pscustomobject]@{ Task = $Task; Script = 'tasks\hostile.json' } }
-    if (-not $map.ContainsKey($Task)) { return $null }
-    [pscustomobject]@{ Task = $map[$Task]; Script = "tasks\$($map[$Task]).json" }
 }
 
 # A number with at most $Digits decimals, in the invariant culture, for the results.
@@ -711,8 +699,7 @@ function Get-MissingApps([string]$Device) {
     @(foreach ($package in (Get-TelegramPackage $Device), 'com.waze', 'com.google.android.gm') { if (-not (Test-Installed $Device $package)) { $package } })
 }
 
-# The emulator's location at the test location (adb emu geo fix takes the longitude first), as task-check.ps1's Waze
-# task sets one there.
+# The emulator's location at the test location (adb emu geo fix takes the longitude first).
 function Set-EmulatorFix([string]$Device) {
     $latitude, $longitude = "$($config.testLocation)" -split ','
     & $adb -s $Device emu geo fix $longitude $latitude | Out-Null
@@ -1555,44 +1542,51 @@ function Invoke-EndStep {
 
 # Sitting 2's steps (design D30 steps 14 to 23).
 
-# Runs scripts\task-check.ps1 with the arguments, its output on the console.
-function Invoke-TaskCheck([hashtable]$Arguments) { & "$PSScriptRoot\task-check.ps1" @Arguments | Out-Host }
+# Runs scripts\eval.ps1 with the arguments, its output on the console, and returns its exit code. A seam for the tests.
+function Invoke-EvalTool([string[]]$Arguments) {
+    & "$PSScriptRoot\eval.ps1" @Arguments | Out-Host
+    $LASTEXITCODE
+}
 
-# Runs scripts\task-check.ps1 for a task on a device: -Live in a real sitting, or the task's stand-in with its scripted
-# model in a dry run (one run), so that no request reaches a provider. The runs' lines go into this sitting's results
-# file, from which they are read back; their AI Credits are added, and the sitting stops at its ceiling, which is checked
-# before the runs too (Assert-CreditsLeft). Returns the runs' lines as tables.
+# Runs $Runs runs of a task on a device through :tools:eval (scripts\eval.ps1 run; design D16 of sub-project 6): --live in
+# a real sitting, or the task's form without a model (--dry-run, its stand-in with its script, one run) in a dry run, so
+# that no request reaches a provider; -Model and -Name of $With become --model and --name, and the tool reads the owner's
+# addresses itself. The tool appends the runs' lines to this sitting's results file. A refusal (exit code 2) writes no run
+# line, and a call that should have runs but left none is an error too, so both throw, and Invoke-TaskRuns records them
+# as a task that failed; exit code 1 is a run that failed, which its lines name.
+function Invoke-Eval([string]$Device, [string]$Task, [int]$Runs, [hashtable]$With) {
+    $arguments = @('run', '--device', $Device, '--task', $Task, '--runs', "$Runs", '--results', $resultsFile, $(if ($DryRun) { '--dry-run' } else { '--live' }))
+    if ($With.Model) { $arguments += @('--model', $With.Model) }
+    if ($With.Name) { $arguments += @('--name', $With.Name) }
+    $before = @(Get-Content -LiteralPath $resultsFile).Count
+    $code = Invoke-EvalTool $arguments
+    if ($code -eq 2) { throw "scripts\eval.ps1 refused to run $Task on $(Get-DeviceName $Device)." }
+    if (-not @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | Where-Object { ConvertFrom-TaskLine $_ })) {
+        throw "scripts\eval.ps1 wrote no run line for $Task on $(Get-DeviceName $Device)."
+    }
+}
+
+# Runs a task on a device through Invoke-Eval: live in a real sitting, or once without a model in a dry run. The runs'
+# lines go into this sitting's results file, from which they are read back; their AI Credits are added, and the sitting
+# stops at its ceiling, which is checked before the runs too (Assert-CreditsLeft). Returns the runs' lines as tables.
 function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int]$Runs = 3, [hashtable]$With = @{}) {
     Assert-CreditsLeft
-    $arguments = @{ Serial = $Device; Task = $Task; Runs = $Runs; Results = $resultsFile } + $With
-    if ($DryRun) {
-        $standIn = Get-StandInTask $Task
-        if (-not $standIn) {
-            Add-Result $StepName "$Task on $(Get-DeviceName $Device): skipped in a dry run, because it has no stand-in"
-            return @()
-        }
-        $arguments.Task = $standIn.Task
-        $arguments.Script = Join-Path $PSScriptRoot $standIn.Script
-        $arguments.Runs = 1
-        $arguments.Remove('Mail')
-    } else {
-        $arguments.Live = $true
-    }
-    Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device), $($arguments.Runs) runs"
+    $count = if ($DryRun) { 1 } else { $Runs }
+    Add-Result $StepName "$Task on $(Get-DeviceName $Device), $count runs"
     $before = @(Get-Content -LiteralPath $resultsFile).Count
     # A task whose setup or check fails is recorded, and the step goes on with its next task (design D27). Its error can
     # hold the owner's address, as read-email's mailto: command does, so only its class is written (task-5c-10-review M1).
     try {
-        Invoke-TaskCheck $arguments
+        Invoke-Eval $Device $Task $count $With
     } catch {
-        Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): failed: task-check.ps1 stopped with $($_.Exception.GetType().Name) before its runs ended"
+        Add-Result $StepName "${Task} on $(Get-DeviceName $Device): failed: eval.ps1 stopped with $($_.Exception.GetType().Name) before its runs ended"
     }
     # PowerShell's names ignore case, so this list may not be called $runs, which is the parameter -Runs.
     $lines = @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | ForEach-Object { ConvertFrom-TaskLine $_ } | Where-Object { $_ })
     $script:credits += Get-CreditTotal $lines
     Set-AgentRecord $recordFile 'sitting2Credits' $script:credits
     $unknown = Get-UnknownCreditCount $lines
-    Add-Result $StepName "$($arguments.Task) on $(Get-DeviceName $Device): $(@($lines | Where-Object { $_['result'] -eq 'pass' }).Count) of $($lines.Count) runs passed; the sitting's AI Credits so far: $(Format-Number $script:credits 2)$(if ($unknown) { ", and $unknown runs' AI Credits are unknown" })"
+    Add-Result $StepName "$Task on $(Get-DeviceName $Device): $(@($lines | Where-Object { $_['result'] -eq 'pass' }).Count) of $($lines.Count) runs passed; the sitting's AI Credits so far: $(Format-Number $script:credits 2)$(if ($unknown) { ", and $unknown runs' AI Credits are unknown" })"
     if ($unknown) { throw $unknownMessage }
     if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
     $lines
@@ -1653,7 +1647,7 @@ function Get-SittingRuns {
 }
 
 # The AI Credits that this sitting 2 spent so far: the runs' lines and look-closer's "spent=" in the results files of all
-# its calls, which task-check.ps1 writes run by run, so that they hold also the runs of a call that stopped before it
+# its calls, which :tools:eval writes run by run, so that they hold also the runs of a call that stopped before it
 # could add them to the record, and the earlier calls' runs whose credits are unknown at -AssumeUnknownCredits each
 # (Get-AssumedUnknownCount); or the record's count (sitting2Credits, and this call's), when that is higher.
 function Get-SpentCredits {
@@ -1667,7 +1661,7 @@ function Get-SpentCredits {
     [math]::Max($total, [double]$script:credits)
 }
 
-# The number of runs in a results file whose AI Credits are unknown: task-check.ps1's credits=unknown and look-closer's
+# The number of runs in a results file whose AI Credits are unknown: :tools:eval's credits=unknown and look-closer's
 # "spent=unknown" (fix-5c-ceiling-review M2).
 function Get-UnknownRunCount([string]$Path) {
     $count = 0
@@ -1699,7 +1693,7 @@ function Add-AssumedCreditsResult {
     Add-Result session "-AssumeUnknownCredits $(Format-Number $AssumeUnknownCredits 2): the AI Credits of $count runs of earlier calls of this sitting 2 are unknown, and this call counts each as $(Format-Number $AssumeUnknownCredits 2) AI Credits, $(Format-Number ($count * $AssumeUnknownCredits) 2) in all"
 }
 
-# Whether a run of this sitting 2 so far has AI Credits that are unknown: a task-check.ps1 run's credits=unknown, or
+# Whether a run of this sitting 2 so far has AI Credits that are unknown: a :tools:eval run's credits=unknown, or
 # look-closer's "spent=unknown", in the results files of all its calls (fix-5c-ceiling-review M2); with
 # -AssumeUnknownCredits, only in this call's file, because the earlier ones count at the assumed credits.
 function Test-SittingCreditsUnknown {
@@ -1926,7 +1920,7 @@ function Test-GmailAccount([string]$Device, $Record) {
 # Design D30 step 16: the reviewed fix installed on both devices, :testapp on the A71 again when it is missing, and
 # everything that sitting 1's restores or a device test put back set again and checked through the hooks; Gmail's
 # account on the A71 checked against gmailAddress (a count only), the test variants' first names chosen, and the live
-# sessions opened (agent-live on the devices, KESTREL_AGENT_SESSION in this process) until the sitting's end.
+# sessions opened (agent-live on the devices) until the sitting's end.
 function Invoke-PrepareStep2 {
     $script:gradleUsed = $true
     $a71 = Get-A71
@@ -1963,7 +1957,6 @@ function Invoke-PrepareStep2 {
             if ((Invoke-DeviceHook $device agent-live @{ On = 'true' }) -notmatch '(^|\s)live=on(\s|$)') { throw "The live session on $(Get-DeviceName $device) did not open." }
         }
     }
-    if (-not $DryRun) { $env:KESTREL_AGENT_SESSION = "sitting 2, $stamp" }
     # A dry run sets the record's rule and branch on kestrel-api37 only for its own run, and puts back the emulator's.
     Register-TouchSourceRestore $a71
     $rule = if ($record.touchRule) { $record.touchRule } else { (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 agent-touch-source))['rule'] }
@@ -1997,13 +1990,13 @@ function Invoke-A71RunsStep {
     foreach ($task in @(@{ Task = 'telegram-late'; Name = $testNames.Ana }, @{ Task = 'telegram-photos'; Name = $testNames.John })) {
         if ($task.Name) { Invoke-TaskRuns a71-runs $a71 $task.Task 3 @{ Name = $task.Name } | Out-Null } else { Add-Result a71-runs "$($task.Task): skipped, because every test name has a row in the owner's Telegram" }
     }
-    if ($gmailChecked -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'read-email' 3 @{ Mail = "$($config.gmailAddress)" } | Out-Null } else { Add-Result a71-runs 'read-email: skipped, because Gmail on the A71 does not show the address of gmailAddress' }
+    if ($gmailChecked -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'read-email' | Out-Null } else { Add-Result a71-runs 'read-email: skipped, because Gmail on the A71 does not show the address of gmailAddress' }
     if ($record.hotspot -eq 'ok' -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'hotspot' | Out-Null } else { Add-Result a71-runs 'hotspot: skipped, a limit of the device (sitting 1''s probe)' }
     if (-not (Test-WazeDevice $a71 a71-runs 'waze-home')) {
         Write-Verbose 'Waze does not run on kestrel-api37.'
     } elseif ($record.wazeA71 -eq 'ok') {
-        $restore = Start-TestLocation $a71
-        try { Invoke-TaskRuns a71-runs $a71 'waze-home' | Out-Null } finally { Complete-Restore $restore }
+        # :tools:eval's waze-home sets the A71's test location itself (design D4 of sub-project 6).
+        Invoke-TaskRuns a71-runs $a71 'waze-home' | Out-Null
     } else {
         Add-Result a71-runs 'waze-home: skipped, because Waze did not show the test location in sitting 1'
     }
@@ -2020,7 +2013,7 @@ function Invoke-EmulatorTasks([string]$StepName, [hashtable]$With = @{}, [switch
     if ($WithMail) {
         $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)".Trim() } else { '' }
         if ($address -and (Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) -gt 0) {
-            Invoke-TaskRuns $StepName $EmulatorSerial 'read-email' 3 (@{ Mail = $address } + $With) | Out-Null
+            Invoke-TaskRuns $StepName $EmulatorSerial 'read-email' 3 $With | Out-Null
         } else {
             Add-Result $StepName 'read-email: skipped, because kestrel-api37 has no Google account, or emulatorGmailAddress does not give its address'
         }
@@ -2096,7 +2089,7 @@ function Invoke-LookCloserStep {
 }
 
 # Design D30 step 21 (spec 16.6): the 14 injection fixtures on kestrel-api37, 3 runs each, in Standard mode, with the
-# answers and the check (beforeTestMode=0, no press in presses.log) of task-check.ps1's table.
+# answers and the check (beforeTestMode=0, no press in presses.log) of :tools:eval's fixtures.
 function Invoke-InjectionStep {
     foreach ($number in 1..14) { Invoke-TaskRuns injection $EmulatorSerial ('inject-{0:D2}' -f $number) | Out-Null }
 }
@@ -2286,8 +2279,6 @@ try {
                 try { Invoke-Device $Serial 'input keyevent KEYCODE_SLEEP' | Out-Null } catch { Write-Warning "Could not lock $Serial. Press its power button." }
             }
             if ($lockTaken) { Remove-Item -LiteralPath $lockFile -ErrorAction SilentlyContinue }
-            # The live session of this process ends with the sitting (design D28).
-            Remove-Item -Path Env:KESTREL_AGENT_SESSION -ErrorAction SilentlyContinue
             foreach ($restore in $pending) { Write-Warning "Could not put back $($restore.What) ($($restore.Reason)). $($restore.ByHand)" }
         }
     }
