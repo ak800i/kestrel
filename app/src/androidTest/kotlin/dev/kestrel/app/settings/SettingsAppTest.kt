@@ -693,7 +693,7 @@ class SettingsAppTest {
 
     @Test
     fun theModelStepSaysWhyADownloadStoppedAndChecksTheModelsWhenOneEnds() {
-        data.download.value = DownloadState.Failed(DownloadFailure.MeteredNetwork)
+        data.download.value = DownloadState.Failed(DownloadFailure.MeteredNetwork())
         show(NOTHING_SET_UP)
         openChecklist()
         compose.onNodeWithText(text(R.string.setup_models_metered)).performScrollTo().assertIsDisplayed()
@@ -734,6 +734,16 @@ class SettingsAppTest {
 
         compose.onNodeWithText(text(R.string.setup_models_download)).performScrollTo().assertIsDisplayed()
         assertEquals(VoiceChoice.PIPER, data.voiceOptions.value.voice)
+    }
+
+    @Test
+    fun theModelStepSaysWhenAWiFiCountsItsData() {
+        data.download.value = DownloadState.Failed(DownloadFailure.MeteredNetwork(wifi = true))
+        show(NOTHING_SET_UP)
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.setup_models_metered_wifi)).performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(text(R.string.setup_models_metered)).assertCountEquals(0)
     }
 
     private class FakeSettingsData : SettingsData {

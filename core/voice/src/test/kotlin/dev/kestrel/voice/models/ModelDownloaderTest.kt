@@ -159,10 +159,10 @@ class ModelDownloaderTest {
     @Test
     fun stopsBeforeAnyRequestWhenTheNetworkMayNotBeUsed() = runTest {
         val error = runCatching {
-            downloader(manifest()).download(kokoro = false, gate = { DownloadFailure.MeteredNetwork })
+            downloader(manifest()).download(kokoro = false, gate = { DownloadFailure.MeteredNetwork() })
         }.exceptionOrNull()
 
-        assertEquals(DownloadFailure.MeteredNetwork, (error as ModelDownloadException).failure)
+        assertEquals(DownloadFailure.MeteredNetwork(), (error as ModelDownloadException).failure)
         assertEquals(0, server.requestCount)
     }
 

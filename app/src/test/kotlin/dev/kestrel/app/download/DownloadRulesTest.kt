@@ -10,8 +10,11 @@ class DownloadRulesTest {
     @Test
     fun withoutMobileDataOnlyANetworkThatDoesNotCountItsDataMayDownload() {
         assertEquals(DownloadFailure.NoNetwork, downloadBlockedBy(NetworkKind.NONE, mobileData = true))
-        assertEquals(DownloadFailure.MeteredNetwork, downloadBlockedBy(NetworkKind.METERED, mobileData = false))
+        assertEquals(DownloadFailure.MeteredNetwork(), downloadBlockedBy(NetworkKind.METERED, mobileData = false))
         assertNull(downloadBlockedBy(NetworkKind.METERED, mobileData = true))
+        // A Wi-Fi that Android rates as metered, such as a phone's hotspot, gets a reason of its own.
+        assertEquals(DownloadFailure.MeteredNetwork(wifi = true), downloadBlockedBy(NetworkKind.METERED_WIFI, mobileData = false))
+        assertNull(downloadBlockedBy(NetworkKind.METERED_WIFI, mobileData = true))
         assertNull(downloadBlockedBy(NetworkKind.UNMETERED, mobileData = false))
     }
 

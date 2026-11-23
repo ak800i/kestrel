@@ -61,7 +61,7 @@ class ModelDownloads(
     fun start(kokoro: Boolean, mobileData: Boolean, onDone: suspend () -> Unit = {}) {
         if (job?.isCompleted == false) return
         states.value = DownloadState.Running(0, 0)
-        job = scope.launch {
+        val launched = scope.launch {
             try {
                 download(kokoro, mobileData) { states.value = DownloadState.Running(it.doneBytes, it.totalBytes) }
                 onDone()
@@ -76,6 +76,15 @@ class ModelDownloads(
                 states.value = DownloadState.Failed(DownloadFailure.Unexpected)
             }
         }
+        job = launched
+        // A job that is cancelled before its body runs, or that ends with an Error, passes none of the catch blocks above.
+        launched.invokeOnCompletion { cause -> ended(launched, cause) }
+    }
+
+    @Synchronized
+    private fun ended(launched: Job, cause: Throwable?) {
+        if (job !== launched || states.value !is DownloadState.Running) return
+        states.value = if (cause is CancellationException) DownloadState.Cancelled else DownloadState.Failed(DownloadFailure.Unexpected)
     }
 
     /** Stops the download; its part files stay for the next one. */

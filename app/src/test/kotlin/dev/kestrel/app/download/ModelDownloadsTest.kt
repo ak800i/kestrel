@@ -3,8 +3,12 @@ package dev.kestrel.app.download
 import dev.kestrel.voice.models.DownloadFailure
 import dev.kestrel.voice.models.DownloadProgress
 import dev.kestrel.voice.models.ModelDownloadException
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -35,7 +39,7 @@ class ModelDownloadsTest {
 
     @Test
     fun aDownloadThatStopsSaysWhyAndOnlyAnUnexpectedFailureIsReported() = runTest {
-        val metered = ModelDownloads(this, { _, _, _ -> throw ModelDownloadException(DownloadFailure.MeteredNetwork) }) { _, error ->
+        val metered = ModelDownloads(this, { _, _, _ -> throw ModelDownloadException(DownloadFailure.MeteredNetwork()) }) { _, error ->
             reported += error
         }
         val broken = ModelDownloads(this, { _, _, _ -> throw IllegalStateException("broken") }) { _, error -> reported += error }
@@ -44,7 +48,7 @@ class ModelDownloadsTest {
         broken.start(kokoro = false, mobileData = false)
         advanceUntilIdle()
 
-        assertEquals(DownloadState.Failed(DownloadFailure.MeteredNetwork), metered.state.value)
+        assertEquals(DownloadState.Failed(DownloadFailure.MeteredNetwork()), metered.state.value)
         assertEquals(DownloadState.Failed(DownloadFailure.Unexpected), broken.state.value)
         assertEquals(listOf("IllegalStateException"), reported.map { it.javaClass.simpleName })
     }
@@ -69,5 +73,31 @@ class ModelDownloadsTest {
         advanceUntilIdle()
         assertEquals(DownloadState.Cancelled, downloads.state.value)
         assertTrue(reported.isEmpty())
+    }
+
+    @Test
+    fun aDownloadThatEndsBeforeItsBodyRunsOrWithAnErrorDoesNotStayRunning() = runTest {
+        val cancelledEarly = ModelDownloads(this, { _, _, _ -> }) { _, error -> reported += error }
+
+        cancelledEarly.start(kokoro = false, mobileData = false)
+        cancelledEarly.cancel()
+        advanceUntilIdle()
+
+        assertEquals(DownloadState.Cancelled, cancelledEarly.state.value)
+        cancelledEarly.start(kokoro = false, mobileData = false)
+        advanceUntilIdle()
+        assertEquals(DownloadState.Done, cancelledEarly.state.value)
+
+        val crashes = mutableListOf<Throwable>()
+        val crashing = CoroutineScope(
+            StandardTestDispatcher(testScheduler) + SupervisorJob() + CoroutineExceptionHandler { _, e -> crashes += e },
+        )
+        val broken = ModelDownloads(crashing, { _, _, _ -> throw OutOfMemoryError("unpacking") }) { _, error -> reported += error }
+
+        broken.start(kokoro = false, mobileData = false)
+        advanceUntilIdle()
+
+        assertEquals(DownloadState.Failed(DownloadFailure.Unexpected), broken.state.value)
+        assertEquals(listOf("OutOfMemoryError"), crashes.map { it.javaClass.simpleName })
     }
 }

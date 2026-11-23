@@ -124,7 +124,8 @@ private fun stoppedText(state: DownloadState): String? = when (state) {
     DownloadState.Cancelled -> stringResource(R.string.setup_models_cancelled)
     is DownloadState.Failed -> when (val failure = state.failure) {
         DownloadFailure.NoNetwork -> stringResource(R.string.setup_models_no_network)
-        DownloadFailure.MeteredNetwork -> stringResource(R.string.setup_models_metered)
+        is DownloadFailure.MeteredNetwork ->
+            stringResource(if (failure.wifi) R.string.setup_models_metered_wifi else R.string.setup_models_metered)
         is DownloadFailure.NotEnoughSpace -> stringResource(R.string.setup_models_no_space, failure.neededBytes / MB, failure.freeBytes / MB)
         is DownloadFailure.Server -> stringResource(R.string.setup_models_server, failure.file, failure.status)
         is DownloadFailure.Refused -> stringResource(R.string.setup_models_refused, failure.file)

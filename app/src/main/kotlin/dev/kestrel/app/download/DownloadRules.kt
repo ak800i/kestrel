@@ -10,8 +10,11 @@ import dev.kestrel.voice.models.DownloadFailure
 import java.io.File
 import java.io.IOException
 
-/** The network that the phone uses now, for the model download (release plan). */
-enum class NetworkKind { NONE, UNMETERED, METERED }
+/**
+ * The network that the phone uses now, for the model download (release plan). [METERED_WIFI] is a Wi-Fi that Android rates
+ * as metered, such as a phone's hotspot or a network that the owner marked as metered.
+ */
+enum class NetworkKind { NONE, UNMETERED, METERED, METERED_WIFI }
 
 /**
  * Why a download of the models may not use a network of [kind] now, or null when it may: it needs a network, and one that
@@ -19,7 +22,8 @@ enum class NetworkKind { NONE, UNMETERED, METERED }
  */
 fun downloadBlockedBy(kind: NetworkKind, mobileData: Boolean): DownloadFailure? = when {
     kind == NetworkKind.NONE -> DownloadFailure.NoNetwork
-    kind == NetworkKind.METERED && !mobileData -> DownloadFailure.MeteredNetwork
+    kind == NetworkKind.METERED && !mobileData -> DownloadFailure.MeteredNetwork()
+    kind == NetworkKind.METERED_WIFI && !mobileData -> DownloadFailure.MeteredNetwork(wifi = true)
     else -> null
 }
 
@@ -28,7 +32,11 @@ fun networkKind(context: Context): NetworkKind {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return NetworkKind.NONE
     if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return NetworkKind.NONE
-    return if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) NetworkKind.UNMETERED else NetworkKind.METERED
+    return when {
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) -> NetworkKind.UNMETERED
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkKind.METERED_WIFI
+        else -> NetworkKind.METERED
+    }
 }
 
 /** What the voice's suggestion knows of the phone: its ABIs, its memory as Android reports it, and its fastest CPU core. */

@@ -29,8 +29,11 @@ sealed interface DownloadFailure {
     /** The phone has no network. */
     data object NoNetwork : DownloadFailure
 
-    /** The network counts its data, such as mobile data, and the owner allowed only networks that do not. */
-    data object MeteredNetwork : DownloadFailure
+    /**
+     * The network counts its data, such as mobile data, and the owner allowed only networks that do not. [wifi]: the
+     * network is a Wi-Fi that Android rates as metered, such as a phone's hotspot.
+     */
+    data class MeteredNetwork(val wifi: Boolean = false) : DownloadFailure
 
     /** The download needs [neededBytes] of space, and the folder of the models has [freeBytes]. */
     data class NotEnoughSpace(val neededBytes: Long, val freeBytes: Long) : DownloadFailure

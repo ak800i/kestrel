@@ -95,6 +95,7 @@
     <string name="setup_models_cancelled">You cancelled the download. Tap Download, and it goes on where it stopped.</string>
     <string name="setup_models_no_network">The phone has no network connection. Connect it, and tap Download again.</string>
     <string name="setup_models_metered">Kestrel downloads only on Wi-Fi or another network that does not count its data. Connect to Wi-Fi, or turn on \"Use mobile data\", and tap Download again.</string>
+    <string name="setup_models_metered_wifi">This Wi-Fi counts its data: Android rates it as metered, as it does a phone\'s hotspot, and Kestrel downloads only on a network that does not count its data. Connect to another Wi-Fi, or turn on \"Use mobile data\", which allows any network that counts its data, and tap Download again.</string>
     <string name="setup_models_no_space" tools:ignore="PluralsCandidate">The download needs %1$d MB of free space, and the phone has %2$d MB. Free some space, and tap Download again.</string>
     <string name="setup_models_server" tools:ignore="PluralsCandidate">The server answered %2$d for %1$s. Tap Download to try again later.</string>
     <string name="setup_models_refused">Kestrel\'s network allowlist refused a server for %1$s, so Kestrel downloaded nothing more.</string>
