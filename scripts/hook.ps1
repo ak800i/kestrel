@@ -242,8 +242,10 @@
 #                                           the touch watcher's rule and branch for this device, after storing them
 #   agent-settings [-OwnerEmails 'a,b'] [-ViberSelfChatName name] [-WhatsappOwnName name] [-SelfChatAliases 'pkg=pkg']
 #                                           test mode's names and the debug aliases of the fixtures; answers counts only
-#   agent-memory -Add -Key k -Text value | -Remove -Key k
-#                                           adds or removes a test alias; answers the count of facts and the key
+#   agent-memory -Add -Key k -Text value | -Remove -Key k | -Has -Key k
+#                                           adds or removes a test alias, and answers the count of facts and the key;
+#                                           -Has answers has=yes or has=no: whether a fact with the key exists, never its
+#                                           value (sub-project 6: :tools:eval never touches a fact of the owner's)
 #   agent-data -Tool list_sms|list_calls|find_media|list_notifications [-Text argument]
 #                                           runs one data tool and answers its result's kind and number of items
 #   selfchat-check                          whether test mode's recogniser takes the chat on the screen for a self-chat
@@ -350,6 +352,7 @@ param(
     [string]$SelfChatAliases,
     [switch]$Add,
     [switch]$Remove,
+    [switch]$Has,
     [ValidateSet('list_sms', 'list_calls', 'find_media', 'list_notifications')][string]$Tool,
     # sub-project 5C: live parameters
     [string]$Revoke,
@@ -363,6 +366,7 @@ if ($PSBoundParameters.ContainsKey('Threshold') -and $Threshold -lt 0) {
 }
 if ($Command -eq 'voice-expect' -and -not $Tag) { throw 'voice-expect needs -Tag; give each expectation a new tag.' }
 if ($Template -and -not $Tag) { throw 'screen-has -Template needs -Tag; give the transcript a new tag.' }
+if ($Has -and -not $Key) { throw 'agent-memory -Has needs -Key; give the key to look for.' }
 if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { $_ }).Count -ne 1) {
     throw 'clipboard needs exactly one of -Save, -Restore and -Clear.'
 }
@@ -464,6 +468,7 @@ if ($PSBoundParameters.ContainsKey('WhatsappOwnName')) { $extras += "--es whatsa
 if ($PSBoundParameters.ContainsKey('SelfChatAliases')) { $extras += "--es selfChatAliases $(ConvertTo-ShellText $SelfChatAliases)" }
 if ($Add) { $extras += '--ez add true' }
 if ($Remove) { $extras += '--ez remove true' }
+if ($Has) { $extras += '--ez has true' }
 if ($Tool) { $extras += "--es tool $($Tool.ToLowerInvariant())" }
 # sub-project 5C: live extras
 if ($Revoke) { $extras += "--es revoke $(ConvertTo-ShellText $Revoke)" }

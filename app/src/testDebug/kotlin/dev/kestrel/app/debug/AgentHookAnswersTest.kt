@@ -57,6 +57,14 @@ class AgentHookAnswersTest {
     }
 
     @Test
+    fun hasAnswersOnlyWhetherAKeyExistsComparedAsTheMemoryStoreDoes() {
+        assertEquals("yes", AgentHookAnswers.has(listOf("Home", "Ana"), "ana"))
+        assertEquals("yes", AgentHookAnswers.has(listOf("Ana Petrović"), "ana petrovic"))
+        assertEquals("no", AgentHookAnswers.has(listOf("Home"), "Ana"))
+        assertEquals("no", AgentHookAnswers.has(emptyList(), "Ana"))
+    }
+
+    @Test
     fun aliasesMapPackagesAndRefuseAnythingElse() {
         assertEquals(mapOf("dev.kestrel.testapp" to "org.telegram.messenger"), AgentHookAnswers.aliases("dev.kestrel.testapp=org.telegram.messenger"))
         assertEquals(emptyMap<String, String>(), AgentHookAnswers.aliases(""))

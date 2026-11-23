@@ -96,6 +96,17 @@ Describe 'hook.ps1' {
         $output | Should -BeLike '*clipboard -Clear was refused on no-such-phone: only the emulator kestrel-api37 may empty the clipboard.*'
     }
 
+    It 'refuses agent-memory -Has without -Key before it reaches a device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-memory -Has 2>&1) -join "`n"
+        $exit = $LASTEXITCODE
+
+        $exit | Should -Not -Be 0
+        $output | Should -BeLike '*agent-memory -Has needs -Key; give the key to look for.*'
+    }
+
     It 'accepts agent-live, which opens and closes the live session of sitting 2, and reaches the argument checks' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'

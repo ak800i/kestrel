@@ -181,7 +181,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
             "whatsappOwnName=${if (safety.whatsappOwnName != null) "set" else "unset"} selfChatAliases=${graph.agent.selfChatAliases.size}"
     }
 
-    // agent-memory --ez add true --es key k --es text v | --ez remove true --es key k: a test alias, answered by keys only.
+    // agent-memory --ez add true --es key k --es text v | --ez remove true --es key k | --ez has true --es key k: a test alias,
+    // answered by keys only; has answers only whether a fact with the key exists (design D17 of sub-project 6).
     suspend fun memory(intent: Intent): String {
         val key = intent.getStringExtra(EXTRA_KEY)?.trim()?.takeIf { it.isNotEmpty() } ?: throw HookError("add --es key <key>")
         val memory = graph.memory
@@ -195,7 +196,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
                 memory.deleteFact(key)
                 "keys=${memory.facts().size}"
             }
-            else -> throw HookError("add --ez add true or --ez remove true")
+            intent.getBooleanExtra(EXTRA_HAS, false) -> "has=${AgentHookAnswers.has(memory.facts().map { it.key }, key)}"
+            else -> throw HookError("add --ez add true, --ez remove true or --ez has true")
         }
     }
 
@@ -355,6 +357,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         private const val EXTRA_TEXT = "text"
         private const val EXTRA_ADD = "add"
         private const val EXTRA_REMOVE = "remove"
+        private const val EXTRA_HAS = "has"
         private const val EXTRA_TOOL = "tool"
         private const val EXTRA_LABEL = "label"
         private const val KEY_EMAILS = "ownerEmails"

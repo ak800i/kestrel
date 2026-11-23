@@ -65,6 +65,12 @@ internal object AgentHookAnswers {
         else -> null
     }
 
+    /**
+     * agent-memory -Has's answer: yes when one of the facts' [keys] is [key], compared folded as the memory store compares
+     * keys, else no; never a value (design D17 of sub-project 6).
+     */
+    fun has(keys: List<String>, key: String): String = if (keys.any { Normalizer.normalize(it) == Normalizer.normalize(key) }) "yes" else "no"
+
     /** The aliases of agent-settings' `pkg=pkg,pkg=pkg`, which map a fixture's package to an app's self-chat rule. */
     fun aliases(text: String): Map<String, String> = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }.associate { pair ->
         val parts = pair.split('=')
