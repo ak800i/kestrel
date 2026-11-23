@@ -1,7 +1,0 @@
-[
-  {"tool": "tap", "target": {"label": "Saved Messages · Bread and milk"}, "arguments": {"reason": "open the chat", "category": "reading"}},
-  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the chat open"}},
-  {"tool": "type_text", "target": {"label": "Message"}, "arguments": {"text": "I'm running 10 minutes late for {marker}", "reason": "write the message", "category": "typing_request"}},
-  {"tool": "tap", "target": {"label": "Send", "class": "Button"}, "arguments": {"reason": "send it", "category": "sending"}},
-  {"tool": "finish", "arguments": {"summary": "I told {name} that you're 10 minutes late.", "evidence": [{"target": {"label": "I'm running 10 minutes late for {marker}"}}]}}
-]

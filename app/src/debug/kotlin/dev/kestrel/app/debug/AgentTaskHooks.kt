@@ -38,7 +38,7 @@ import java.time.LocalDate
 
 /**
  * The agent's debug hooks of plan 5B (design D28 of sub-project 5; plan-5b-interfaces.md, section 4), which
- * scripts\task-check.ps1 and plan 5C's sittings use: a tagged task's result and state, its answers, the scripted model,
+ * :tools:eval (sub-project 6) and plan 5C's sittings use: a tagged task's result and state, its answers, the scripted model,
  * the cache fields, the touch rule, test mode's names, test aliases, one data tool's counts, test mode's recogniser, the
  * screen's structure and a script's own tap. Each answers one line of `name=value` pairs, never screen text, a prompt,
  * a reply, a name or a tool's arguments; [AgentHookAnswers] builds the lines.
@@ -115,7 +115,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         }
         val asking = state.taskAsking?.takeIf { current }?.let(::kind) ?: "none"
         val handOver = graph.agent.handOver(number)?.takeIf { current }?.name ?: "none"
-        // The category of the open confirmation, so that task-check.ps1 confirms only the kind that its task names (design D28).
+        // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
         val confirming = graph.agent.confirming(number)?.takeIf { current }?.wire ?: "none"
         return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming"
     }

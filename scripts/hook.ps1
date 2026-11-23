@@ -217,9 +217,10 @@
 #   clipboard -Clear                        empties the clipboard, only on the emulator kestrel-api37: it is refused on
 #                                           every other device, so that it never empties the owner's clipboard
 # sub-project 5B: agent hooks
-# The agent's checks (sub-project 5's design D28; scripts\task-check.ps1 runs these). A tagged task is given with
-# voice -Send heard -Text 'Kestrel, <task>' -Tag k [-Model id] [-Live]; in a debug build it runs only with a script from
-# agent-script, or live in a sitting. No answer holds screen text, a prompt, a reply or a name:
+# The agent's checks (sub-project 5's design D28; :tools:eval, which scripts\eval.ps1 starts, runs these). A tagged task
+# is given with voice -Send heard -Text 'Kestrel, <task>' -Tag k [-Model id] [-Live]; in a debug build it runs only with
+# a script from agent-script, or live while the device's live session is open. No answer holds screen text, a prompt, a
+# reply or a name:
 #   agent-task -Result -Tag k [-Marker 'words'] [-Recipient 'name']
 #                                           state=running, or state=done with the task's end, steps, time, credits, counts
 #                                           of confirmed and unconfirmed sends, calls and deletes, shared items, whether the
@@ -233,7 +234,7 @@
 #                                           is a confirmation of that category; without it, a confirmation takes only no
 #                                           and cancel
 #   agent-script -File name.json | -Clear   installs plan 5A's scripted model from files/agent-scripts/name.json in
-#                                           Kestrel's files folder (scripts\task-check.ps1 copies it there), or removes it
+#                                           Kestrel's files folder (:tools:eval copies it there), or removes it
 #   agent-state -Tag k                      the task's phase, its open question's kind, Kestrel's work, the hand-over and
 #                                           the category of the open confirmation
 #   agent-cache [-Field anthropicMarks|responsesExplicit|chatCopilotMarks -On true|false]
@@ -256,9 +257,10 @@
 #                                           never press without the owner: anything in Kestrel's own app, a phone app or
 #                                           a contacts app, and in any app a call, emergency or SOS control
 # sub-project 5C: live hooks
-#   agent-live [-On true|false] [-Model id] opens (true) or closes (false) the device's live session of sitting 2 of
-#                                           scripts\a71-agent.ps1 (design D28), in which a task sent with -Live may call
-#                                           the owner's provider, and answers live=on|off; only a71-agent.ps1 opens it;
+#   agent-live [-On true|false] [-Model id] opens (true) or closes (false) the device's live session (design D28 of
+#                                           sub-project 5), in which a task sent with -Live may call the owner's provider,
+#                                           and answers live=on|off; scripts\eval.ps1 --live opens it for its runs, and
+#                                           scripts\a71-agent.ps1's sitting 2 for the sitting;
 #                                           with -Model it adds model=listed|unlisted: whether the default profile's own
 #                                           model list holds that ID
 #   agent-approvals [-Revoke package]       the number of stored screenshot approvals, after revoking every one of that

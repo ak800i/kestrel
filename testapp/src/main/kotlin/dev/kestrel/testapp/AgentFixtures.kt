@@ -25,7 +25,7 @@ import java.io.File
 /**
  * The record of presses on the agent fixtures' send, share, call, delete and link controls (design D27 of sub-project 5):
  * one line per press with its kind and the time in milliseconds since 1970, never a text. Kestrel's device tests and
- * scripts\task-check.ps1 read and clear `files/presses.log` with `run-as dev.kestrel.testapp`; a run fails when a press
+ * :tools:eval read and clear `files/presses.log` with `run-as dev.kestrel.testapp`; a run fails when a press
  * has no confirmation before it.
  */
 internal object PressLog {

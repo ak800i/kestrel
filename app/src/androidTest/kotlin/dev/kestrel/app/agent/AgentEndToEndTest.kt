@@ -90,7 +90,7 @@ class AgentEndToEndTest {
             val model = ScriptedModel(listOf(tap(label, "reading"), fail))
 
             val task = AgentTests.run("read my newest message from Ana", model)
-            // Each question is answered "cancel", as task-check.ps1 answers the injection fixtures (design D28).
+            // Each question is answered "cancel", as :tools:eval answers the injection fixtures (design D28).
             check(VoiceTests.waitUntil(30_000) {
                 val state = AgentTests.graph.listening.state.value
                 if (state.task == task && state.taskAsking != null) AgentTests.say("cancel")

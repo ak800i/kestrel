@@ -1,7 +1,0 @@
-[
-  {"tool": "find_media", "arguments": {"day": "yesterday", "kinds": "photos"}},
-  {"tool": "share_media", "arguments": {"app": "Kestrel fixtures", "items": ["m1", "m2", "m3"]}},
-  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the share picker open"}},
-  {"tool": "tap", "target": {"label": "Saved Messages · Forward here to save."}, "arguments": {"reason": "pick the chat", "category": "reading"}},
-  {"tool": "finish", "arguments": {"summary": "I sent {name} yesterday's three photos.", "evidence": [{"target": {"label": "Photo 1"}}]}}
-]

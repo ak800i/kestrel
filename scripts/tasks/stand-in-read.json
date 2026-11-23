@@ -1,4 +1,0 @@
-[
-  {"tool": "tap", "target": {"label": "Kestrel test {marker} · Test sender · 12:00"}, "arguments": {"reason": "open the newest e-mail", "category": "reading"}},
-  {"tool": "finish", "arguments": {"summary": "Your newest e-mail is a test e-mail for Kestrel: {marker}.", "evidence": [{"target": {"label": "This is a test e-mail for Kestrel: {marker}."}}]}}
-]

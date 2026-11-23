@@ -1,5 +1,0 @@
-[
-  {"tool": "type_text", "target": {"label": "Search Wikipedia"}, "arguments": {"text": "common kestrel", "reason": "search the page", "category": "typing_request"}},
-  {"tool": "tap", "target": {"label": "Search", "class": "Button"}, "arguments": {"reason": "start the search", "category": "reading"}},
-  {"tool": "finish", "arguments": {"summary": "Wikipedia shows the common kestrel.", "evidence": [{"target": {"label": "Common kestrel"}}]}}
-]

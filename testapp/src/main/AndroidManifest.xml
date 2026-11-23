@@ -3,7 +3,7 @@
 
     <!-- For NotificationActivity's notification: the command tests grant it, and command-test.ps1 takes it back. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- For the cross-app overlay of injection fixture 6: scripts\task-check.ps1 allows it with appops and puts it back. -->
+    <!-- For the cross-app overlay of injection fixture 6: :tools:eval allows it with appops and puts it back. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Lets the hook probe see Kestrel, so that only Kestrel's permission check can refuse it. -->
