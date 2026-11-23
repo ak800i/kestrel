@@ -273,6 +273,21 @@ Describe 'The helpers of the agent''s task check' {
         Mock Invoke-Device { throw 'Can''t find service: tethering' } -ParameterFilter { $Command -eq 'dumpsys tethering' }
         Invoke-TaskStep 'hotspot-setup' $null | Should -BeExactly 'untestable'
     }
+
+    It 'opens Gmail''s inbox in a new task after the test e-mail, so that the e-mail that a run opened does not stay in front (inv-5c-rerun item 3)' {
+        $Serial = 'emulator-5554'
+        $Mail = 'pera.test@example.com'
+        $commands = [System.Collections.Generic.List[string]]::new()
+        Mock Start-Sleep { }
+        Mock Invoke-Device { $commands.Add($Command) }
+        Mock Invoke-TaskHook { 'tapped=true count=1' } -ParameterFilter { $Command -eq 'screen-tap' }
+        Mock Invoke-TaskHook { 'count=1 app=com.google.android.gm' } -ParameterFilter { $Command -eq 'screen-has' }
+
+        Invoke-TaskStep 'mail' ([pscustomobject]@{ Marker = 'maple heron' })
+
+        @($commands | Where-Object { $_ -like '*ConversationListActivityGmail*' }) | Should -Be @('am start -W -f 0x10008000 -n com.google.android.gm/.ConversationListActivityGmail')
+    }
+
     It 'stops a task that has not ended before it puts the device back, also when the stop fails' {
         $calls = [Collections.Generic.List[string]]::new()
         Mock Start-Sleep {}

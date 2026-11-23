@@ -224,19 +224,22 @@ function Select-TestName([string]$Default, [hashtable]$Rows, [string[]]$Taken = 
 }
 
 # The share of input tokens that each model read from the cache (design D5), from the runs' lines: one text per model,
-# with the model's ID, its tokens and the share in percent.
+# with the model's ID, its whole input, the tokens read from and written to the cache, and the share in percent. A run
+# line's in= counts only the input that was neither read from nor written to a cache (Usage.input), so the whole input
+# is in + cacheRead + cacheWrite (inv-5c-rerun item 5).
 function Get-CacheShares([object[]]$Runs) {
     $models = [ordered]@{}
     foreach ($run in $Runs) {
         if (-not $run -or "$($run['model'])" -in '', 'none') { continue }
         $model = "$($run['model'])"
-        if (-not $models.Contains($model)) { $models[$model] = [pscustomobject]@{ Model = $model; Input = 0L; CacheRead = 0L } }
-        $models[$model].Input += [long]$run['in']
+        if (-not $models.Contains($model)) { $models[$model] = [pscustomobject]@{ Model = $model; Input = 0L; CacheRead = 0L; CacheWrite = 0L } }
+        $models[$model].Input += [long]$run['in'] + [long]$run['cacheRead'] + [long]$run['cacheWrite']
         $models[$model].CacheRead += [long]$run['cacheRead']
+        $models[$model].CacheWrite += [long]$run['cacheWrite']
     }
     foreach ($entry in $models.Values) {
         $share = if ($entry.Input -gt 0) { [math]::Round(100.0 * $entry.CacheRead / $entry.Input, 1) } else { 0 }
-        [pscustomobject]@{ Model = $entry.Model; Input = $entry.Input; CacheRead = $entry.CacheRead; Share = $share }
+        [pscustomobject]@{ Model = $entry.Model; Input = $entry.Input; CacheRead = $entry.CacheRead; CacheWrite = $entry.CacheWrite; Share = $share }
     }
 }
 
@@ -1263,28 +1266,60 @@ function Invoke-HotspotStep {
     Set-AgentRecord $recordFile 'wifiSharing' $sharing
     Add-Result hotspot "the A71's hotspot: $(if ($result -eq 'ok') { 'testable' } else { 'a limit of the device; its runs are skipped' })"
 }
-# Telegram's chat list, its Saved Messages chat (found by search) and its share picker, through agent-tree. A tap that
-# misses writes its own line, and the record's telegramSelfChat says whether Saved Messages was recorded, from which the
-# controller pins Telegram's self-chat rule (task-5c-9-review M1). Returns the lines for the results.
+# Starts the package's launcher activity in a new task (-f 0x10008000: NEW_TASK and CLEAR_TASK), so that a screen that an
+# earlier run left in the app's task, such as Telegram's share picker, does not come back (inv-5c-rerun item 2). Returns
+# whether the device named a launcher activity of the package.
+function Start-AppNewTask([string]$Device, [string]$Package) {
+    $pattern = "^$([regex]::Escape($Package))/\S+$"
+    $component = @(Invoke-Device $Device "cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER $Package") |
+        ForEach-Object { "$_".Trim() } | Where-Object { $_ -match $pattern } | Select-Object -Last 1
+    if (-not $component) { return $false }
+    Invoke-Device $Device "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10008000 -n $component" | Out-Null
+    $true
+}
+
+# Opens Telegram's Saved Messages from the chat list that Start-AppNewTask showed, without typing (inv-5c-rerun item 2):
+# through the chat list's own element "Saved Messages" when it shows one, else through the search page that a tap on the
+# chat list's search field opens with nothing typed, which lists Saved Messages in Telegram 13.3.1 on the A71. Nothing is
+# tapped while the screen shows another app, a check box or a switch of a share picker's rows, or another text field
+# than the search; and a tap that selected a row (a check box shows) does not count. Returns $null when Saved Messages
+# opened, else the reason for the results.
+function Open-TelegramSavedMessages([string]$Device, [string]$Package) {
+    $search = ConvertFrom-HookPairs (Invoke-DeviceHook $Device screen-has @{ Package = $Package; ClassName = 'EditText'; State = 'editable' })
+    if ($search['app'] -ne $Package) { return 'Telegram''s chat list did not show' }
+    $rows = (Get-ScreenCount $Device @{ Package = $Package; ClassName = 'CheckBox' }) + (Get-ScreenCount $Device @{ Package = $Package; ClassName = 'Switch' })
+    if ($rows -gt 0 -or [int]$search['count'] -ne 1) { return 'Telegram showed another screen than its chat list, so the script tapped nothing' }
+    if ((Get-ScreenCount $Device @{ Package = $Package; Label = 'Saved Messages' }) -eq 0) {
+        $field = Get-BoundsCentre $search['bounds']
+        if (-not $field) { return 'Telegram''s search field has no bounds' }
+        Invoke-Device $Device "input tap $field" | Out-Null
+        Start-Sleep -Seconds 3
+    }
+    if (-not (Invoke-ScreenTap $Device 'Saved Messages')) { return 'neither Telegram''s chat list nor its search page shows an element "Saved Messages"' }
+    if ((Get-ScreenCount $Device @{ Package = $Package; ClassName = 'CheckBox' }) -gt 0) { return 'the tap on "Saved Messages" selected a row instead of opening the chat' }
+    $null
+}
+
+# Telegram's chat list, its Saved Messages chat (Open-TelegramSavedMessages) and its share picker, through agent-tree.
+# Telegram starts in a new task, and the record's telegramSelfChat says whether Saved Messages was recorded, from which
+# the controller pins Telegram's self-chat rule (task-5c-9-review M1). Returns the lines for the results.
 function Invoke-TelegramRecording([string]$Device) {
     $notes = @()
     $telegram = Get-TelegramPackage $Device
-    Open-App $Device $telegram
-    Start-Sleep -Seconds 4
-    $notes += Save-AgentTree $Device 'telegram-chats'
     $saved = 'not shown'
-    if (Invoke-ScreenTap $Device 'Search') {
-        Invoke-Device $Device 'input text Saved\ Messages' | Out-Null
-        Start-Sleep -Seconds 3
-        if (Invoke-ScreenTap $Device 'Saved Messages') {
+    if (Start-AppNewTask $Device $telegram) {
+        Start-Sleep -Seconds 4
+        $notes += Save-AgentTree $Device 'telegram-chats'
+        $missed = Open-TelegramSavedMessages $Device $telegram
+        if ($missed) {
+            $notes += "Telegram's Saved Messages is not recorded: $missed"
+        } else {
             $notes += Save-AgentTree $Device 'telegram-saved'
             $notes += "Telegram's Saved Messages: $(Invoke-DeviceHook $Device selfchat-check)"
             $saved = 'recorded'
-        } else {
-            $notes += 'Telegram shows no element "Saved Messages", so it is not recorded'
         }
     } else {
-        $notes += 'Telegram''s search did not open, so Saved Messages is not recorded'
+        $notes += 'Telegram''s launcher activity was not found, so its chat list and Saved Messages are not recorded'
     }
     Set-AgentRecord $recordFile 'telegramSelfChat' $saved
     Invoke-Device $Device "am force-stop $telegram" | Out-Null
@@ -2070,7 +2105,7 @@ function Invoke-InjectionStep {
 # fields whose share is 0, two runs of the Firefox task with those fields switched off (agent-cache), then on again.
 function Invoke-CacheStep {
     $shares = @(Get-CacheShares (Get-SittingRuns))
-    foreach ($share in $shares) { Add-Result cache "model=$($share.Model) in=$($share.Input) cacheRead=$($share.CacheRead) share=$(Format-Number $share.Share) %" }
+    foreach ($share in $shares) { Add-Result cache "model=$($share.Model) in=$($share.Input) cacheRead=$($share.CacheRead) cacheWrite=$($share.CacheWrite) share=$(Format-Number $share.Share) %" }
     foreach ($share in @($shares | Where-Object { $_.Share -eq 0 -and $_.Input -gt 0 })) {
         $fields = @(Get-CacheFields $share.Model)
         if (-not $fields) { continue }

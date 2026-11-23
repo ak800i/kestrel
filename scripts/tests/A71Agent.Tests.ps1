@@ -32,6 +32,8 @@ BeforeAll {
         'Invoke-RecordingsStep', 'Invoke-EmulatorTasks', 'Invoke-EmulatorRunsStep', 'Invoke-CompareStep')
     # The Telegram build that a device has, and the reset of the live sessions at the start of a sitting (fix-5c-telegram).
     $helpers += @('Get-TelegramPackage', 'Get-AuthenticatorPackage', 'Close-LiveSession', 'Close-LiveSessionsAtStart')
+    # Telegram's Saved Messages, reached from a new task without typing (fix-5c-final).
+    $helpers += @('Start-AppNewTask', 'Open-TelegramSavedMessages')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -165,15 +167,19 @@ Describe 'The helpers of the sittings of sub-project 5' {
 
     It 'gives each model''s share of cached input, the fields to switch off, and a summary per task and model' {
         $runs = @(
-            [ordered]@{ task = 'firefox-wiki'; result = 'pass'; steps = '6'; workMs = '40000'; credits = '0.80'; model = 'gpt-6-luna'; in = '30000'; cacheRead = '12000' }
-            [ordered]@{ task = 'firefox-wiki'; result = 'fail'; steps = '10'; workMs = '80000'; credits = '1.20'; model = 'gpt-6-luna'; in = '50000'; cacheRead = '20000' }
+            [ordered]@{ task = 'firefox-wiki'; result = 'pass'; steps = '6'; workMs = '40000'; credits = '0.80'; model = 'gpt-6-luna'; in = '30000'; cacheRead = '12000'; cacheWrite = '0' }
+            [ordered]@{ task = 'firefox-wiki'; result = 'fail'; steps = '10'; workMs = '80000'; credits = '1.20'; model = 'gpt-6-luna'; in = '50000'; cacheRead = '20000'; cacheWrite = '8000' }
             [ordered]@{ task = 'firefox-wiki'; result = 'pass'; steps = '7'; workMs = '50000'; credits = '1.00'; model = 'claude-haiku-5.5'; in = '40000'; cacheRead = '0' }
             [ordered]@{ task = 'hotspot'; result = 'skipped'; steps = '0'; workMs = '0'; credits = '0.00'; model = 'none'; in = '0'; cacheRead = '0' }
         )
 
+        # The share divides by the whole input, in + cacheRead + cacheWrite, because in= counts only the uncached input
+        # (inv-5c-rerun item 5): 32,000 of 120,000.
         $shares = @(Get-CacheShares $runs)
         $shares.Count | Should -Be 2
-        $shares[0].Share | Should -Be 40
+        $shares[0].Input | Should -Be 120000
+        $shares[0].CacheWrite | Should -Be 8000
+        $shares[0].Share | Should -Be 26.7
         $shares[1].Share | Should -Be 0
         Get-CacheFields 'gpt-6-luna' | Should -Be @('responsesExplicit')
         Get-CacheFields 'claude-haiku-5.5' | Should -Be @('chatCopilotMarks', 'anthropicMarks')
@@ -215,26 +221,62 @@ Describe 'The steps of the sittings on the owner''s A71 (the fix round before th
         Mock Start-Sleep { }
     }
 
-    It 'writes a line and a record key when Telegram''s Saved Messages does not open (task-5c-9-review M1)' {
+    It 'records Telegram''s Saved Messages from a new task, through the chat list or its empty search page, without typing or a share picker (inv-5c-rerun item 2)' {
+        $commands = [System.Collections.Generic.List[string]]::new()
+        $taps = [System.Collections.Generic.List[string]]::new()
+        $screen = @{ Rows = 0; Field = 1; Saved = 0; Selected = 0; Tapped = 0; App = 'org.telegram.messenger.web' }
+        Mock Test-Installed { $Package -eq 'org.telegram.messenger.web' }
         Mock Open-App { }
-        Mock Invoke-Device { }
-        Mock Save-AgentTree { "$Name recorded (1 windows, 2 elements)" }
-        Mock Invoke-DeviceHook { 'selfchat=yes rule=telegram' } -ParameterFilter { $Command -eq 'selfchat-check' }
-        Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Search' }
+        Mock Invoke-Device { $commands.Add($Command) }
+        Mock Invoke-Device { $commands.Add($Command); $screen.Tapped = 0; 'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false'; 'org.telegram.messenger.web/org.telegram.messenger.DefaultIcon' } -ParameterFilter { $Command -like 'cmd package resolve-activity *' }
+        Mock Invoke-Device { $commands.Add($Command); if ($Command -eq 'input tap 540 296') { $screen.Saved = 1 } } -ParameterFilter { $Command -like 'input *' }
+        Mock Save-AgentTree { "$Name recorded (3 windows, 30 elements)" }
+        Mock Invoke-DeviceHook { 'selfchat=no signs=none' } -ParameterFilter { $Command -eq 'selfchat-check' }
+        Mock Invoke-DeviceHook { "count=$($screen.Field) bounds=30,244,1050,348 app=$($screen.App)" } -ParameterFilter { $Command -eq 'screen-has' -and $With.ClassName -eq 'EditText' }
+        Mock Invoke-DeviceHook { "count=$($screen.Rows + $screen.Selected * $screen.Tapped) app=$($screen.App)" } -ParameterFilter { $Command -eq 'screen-has' -and $With.ClassName -eq 'CheckBox' }
+        Mock Invoke-DeviceHook { "count=$($screen.Rows) app=$($screen.App)" } -ParameterFilter { $Command -eq 'screen-has' -and $With.ClassName -eq 'Switch' }
+        Mock Invoke-DeviceHook { "count=$($screen.Saved) app=$($screen.App)" } -ParameterFilter { $Command -eq 'screen-has' -and $With.Label -eq 'Saved Messages' }
+        Mock Invoke-ScreenTap { $taps.Add($Label); $screen.Tapped = 1; $screen.Saved -gt 0 }
 
+        # No row on the chat list: the empty search page shows it.
         $notes = @(Invoke-TelegramRecording $A71)
-
-        $notes | Should -Contain 'Telegram''s search did not open, so Saved Messages is not recorded'
-        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'not shown'
-
-        Mock Invoke-ScreenTap { $true } -ParameterFilter { $Label -eq 'Search' }
-        Mock Invoke-ScreenTap { $false } -ParameterFilter { $Label -eq 'Saved Messages' }
-        @(Invoke-TelegramRecording $A71) | Should -Contain 'Telegram shows no element "Saved Messages", so it is not recorded'
-        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'not shown'
-
-        Mock Invoke-ScreenTap { $true } -ParameterFilter { $Label -eq 'Saved Messages' }
-        @(Invoke-TelegramRecording $A71) | Should -Contain 'telegram-saved recorded (1 windows, 2 elements)'
+        $notes | Should -Contain 'telegram-saved recorded (3 windows, 30 elements)'
+        $notes | Should -Contain 'Telegram''s Saved Messages: selfchat=no signs=none'
         (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'recorded'
+        $commands | Should -Contain 'am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10008000 -n org.telegram.messenger.web/org.telegram.messenger.DefaultIcon'
+        $commands | Should -Contain 'input tap 540 296'
+        @($taps) | Should -Be @('Saved Messages')
+        Should -Invoke Open-App -Times 0 -Exactly
+
+        # The chat list's own row: no tap on the search field.
+        $commands.Clear()
+        $taps.Clear()
+        $screen.Saved = 1
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'telegram-saved recorded (3 windows, 30 elements)'
+        $commands | Should -Not -Contain 'input tap 540 296'
+        @($taps) | Should -Be @('Saved Messages')
+
+        # A share picker's rows, another app or a tap that selected a row: nothing recorded, and no tap on a picker.
+        $taps.Clear()
+        $screen.Saved = 0
+        $screen.Rows = 1
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'Telegram''s Saved Messages is not recorded: Telegram showed another screen than its chat list, so the script tapped nothing'
+        $screen.Rows = 0
+        $screen.App = 'com.sec.android.app.launcher'
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'Telegram''s Saved Messages is not recorded: Telegram''s chat list did not show'
+        @($taps) | Should -BeNullOrEmpty
+        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'not shown'
+        $screen.App = 'org.telegram.messenger.web'
+        $screen.Selected = 1
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'Telegram''s Saved Messages is not recorded: the tap on "Saved Messages" selected a row instead of opening the chat'
+        $screen.Selected = 0
+        Mock Invoke-ScreenTap { $false }
+        @(Invoke-TelegramRecording $A71) | Should -Contain 'Telegram''s Saved Messages is not recorded: neither Telegram''s chat list nor its search page shows an element "Saved Messages"'
+        (Read-AgentRecord $recordFile).telegramSelfChat | Should -Be 'not shown'
+
+        # Nothing is ever typed or sent.
+        @($commands | Where-Object { $_ -like 'input text*' -or $_ -like 'input keyevent KEYCODE_ENTER*' }) | Should -BeNullOrEmpty
+        Should -Invoke Invoke-ScreenTap -Times 0 -Exactly -ParameterFilter { $Label -ne 'Saved Messages' }
     }
 
     It 'reads a recorded tree from the device as UTF-8 (task-5c-9-review M2)' {
@@ -842,7 +884,8 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Mock Invoke-ScreenTap { $false }
         $commands.Clear()
         Invoke-TelegramRecording $A71 | Out-Null
-        Should -Invoke Open-App -Times 2 -Exactly -ParameterFilter { $Package -eq 'org.telegram.messenger.web' -and $Device -eq $A71 }
+        Should -Invoke Open-App -Times 1 -Exactly -ParameterFilter { $Package -eq 'org.telegram.messenger.web' -and $Device -eq $A71 }
+        $commands | Should -Contain "$A71 cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER org.telegram.messenger.web"
         $commands | Should -Contain "$A71 am force-stop org.telegram.messenger.web"
         @($commands | Where-Object { $_ -match '-p org\.telegram\.messenger\.web$' }).Count | Should -Be 1
         @($commands | Where-Object { $_ -match 'org\.telegram\.messenger(\s|$)' }) | Should -BeNullOrEmpty

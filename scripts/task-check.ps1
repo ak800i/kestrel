@@ -526,7 +526,9 @@ function Invoke-TaskStep([string]$Step, $Run) {
             Start-Sleep -Seconds 2
             if ((ConvertFrom-HookPairs (Invoke-TaskHook screen-tap @{ Label = 'Send' }))['tapped'] -ne 'true') { throw 'Gmail''s Send was not tapped.' }
             $deadline = (Get-Date).AddSeconds(120)
-            Invoke-Device 'am start -W -n com.google.android.gm/.ConversationListActivityGmail' | Out-Null
+            # In a new task (NEW_TASK and CLEAR_TASK), because after a run Gmail's task still shows the e-mail that
+            # Kestrel opened, and Android would only deliver the intent to it (inv-5c-rerun item 3).
+            Invoke-Device 'am start -W -f 0x10008000 -n com.google.android.gm/.ConversationListActivityGmail' | Out-Null
             $elsewhere = 0
             while ($true) {
                 $found = ConvertFrom-HookPairs (Invoke-TaskHook screen-has @{ Package = 'com.google.android.gm'; Contains = $Run.Marker })
