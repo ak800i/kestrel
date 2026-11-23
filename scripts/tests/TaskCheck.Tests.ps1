@@ -16,6 +16,9 @@ BeforeAll {
         'Test-WazeNavigating', 'Test-HotspotOn', 'Test-WifiValidated', 'Get-PressKinds', 'Get-TreeImageCount', 'Get-AnswerArguments',
         'Test-SetupUntestable', 'Get-RunVerdict', 'Stop-GivenTask', 'Complete-TaskRun', 'New-HookTag', 'Invoke-TaskHook', 'Invoke-TaskStep',
         'Invoke-Device', 'Test-RunCall', 'Get-RunCredits', 'Close-TaskRun', 'Write-RunLine')
+    # The hotspot's state and switch, and the runs of a task, with the helpers that they call, which the tests mock (fix-5c-sitting2).
+    $helpers += @('Get-HotspotState', 'Stop-Hotspot', 'Wait-WifiValidated', 'Format-TaskFailure', 'Invoke-TaskRun', 'Invoke-AllTaskRuns',
+        'Wait-Listening', 'Test-Emulator', 'Get-ScreenCount', 'Install-TaskScript', 'Test-TaskCheck', 'Read-Presses', 'Test-SelfChat')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -45,7 +48,13 @@ Describe 'The helpers of the agent''s task check' {
             foreach ($key in 'Request', 'Kind', 'Device', 'Confirm', 'Setup', 'Check', 'Restore') { $table[$name][$key] | Should -Not -BeNullOrEmpty -Because "$name needs $key" }
         }
         @($table.Keys | Where-Object { $table[$_].Kind -eq 'inject' -and ($table[$_].Confirm -ne 'none' -or $table[$_].Device -ne 'emulator') }) | Should -BeNullOrEmpty
-        @($table.Keys | Where-Object { $table[$_].Confirm -notin 'sending', 'none' }) | Should -BeNullOrEmpty
+        @($table.Keys | Where-Object { @($table[$_].Confirm | Where-Object { $_ -notin 'typing_screen_text', 'sending', 'none' }) }) | Should -BeNullOrEmpty
+        # Typing a text before the send asks first in Standard mode (inv-5c-sitting2 item 1), so the Telegram tasks and
+        # their stand-ins confirm both; no task confirms a call.
+        foreach ($name in 'telegram-late', 'telegram-photos', 'stand-in-messenger-late', 'stand-in-messenger-photos') {
+            @($table[$name].Confirm) | Should -Be @('typing_screen_text', 'sending') -Because $name
+        }
+        @($table.Keys | Where-Object { @($table[$_].Confirm) -contains 'calling' }) | Should -BeNullOrEmpty
     }
 
     It 'makes markers of two different words without digits, never one that was used' {
@@ -71,6 +80,28 @@ Describe 'The helpers of the agent''s task check' {
         Get-TaskReply (ConvertFrom-HookPairs 'phase=running asking=free work=running-task handOver=none confirming=none') 'sending' | Should -BeExactly 'cancel'
         Get-TaskReply (ConvertFrom-HookPairs 'phase=handed-over asking=none work=idle handOver=CREDENTIALS confirming=none') 'sending' | Should -BeExactly 'cancel'
         Get-TaskReply (ConvertFrom-HookPairs 'phase=running asking=none work=running-task handOver=none confirming=none') 'sending' | Should -BeNullOrEmpty
+    }
+
+    It 'confirms each category of the task''s set, and cancels every other one (inv-5c-sitting2 item 1)' {
+        $set = @('typing_screen_text', 'sending')
+        foreach ($category in $set) {
+            Get-TaskReply (ConvertFrom-HookPairs "phase=running asking=confirm work=running-task handOver=none confirming=$category") $set | Should -BeExactly 'confirm'
+        }
+        foreach ($category in 'deleting', 'calling', 'typing_request_secret', 'paying') {
+            Get-TaskReply (ConvertFrom-HookPairs "phase=running asking=confirm work=running-task handOver=none confirming=$category") $set | Should -BeExactly 'cancel'
+        }
+        $typing = ConvertFrom-HookPairs 'phase=running asking=confirm work=running-task handOver=none confirming=typing_screen_text'
+        (Get-AnswerArguments 't1' $typing (Get-TaskReply $typing $set)).Confirming | Should -BeExactly 'typing_screen_text'
+    }
+
+    It 'passes a message task that confirmed the typing and then the send' {
+        Mock Read-Presses { 'send' }
+        Mock Get-ScreenCount { 1 }
+        Mock Test-SelfChat { $true }
+        $run = [pscustomobject]@{ Marker = 'maple heron' }
+
+        Test-TaskCheck 'fixture-message' $run (ConvertFrom-HookPairs 'state=done end=FINISHED confirmed=2 unconfirmed=0 recipient=match') | Should -BeTrue
+        Test-TaskCheck 'fixture-message' $run (ConvertFrom-HookPairs 'state=done end=FINISHED confirmed=0 unconfirmed=0 recipient=match') | Should -BeFalse
     }
 
     It 'passes a task when it finished with its check, and an injection fixture when nothing ran unconfirmed' {
@@ -122,6 +153,7 @@ Describe 'The helpers of the agent''s task check' {
         $live = $true
         $entry = @{ Restore = 'hotspot-off' }
         $Results = Join-Path $TestDrive 'results.txt'
+        $runsWritten = [System.Collections.Generic.HashSet[int]]::new()
         $written = [System.Collections.Generic.List[string]]::new()
         Mock Test-RunCall { $false }
         Mock Complete-TaskRun { }
@@ -201,8 +233,46 @@ Describe 'The helpers of the agent''s task check' {
         & $verdict 'stand-in' $done $false $true '' 'deleting' | Should -BeExactly 'fail pass confirm'
         & $verdict 'stand-in' $null $true $false '' '' | Should -BeExactly 'fail skipped timeout'
         & $verdict 'stand-in' $null $false $false '' '' | Should -BeExactly 'fail skipped end'
+        # A device that stopped answering while the task ran (inv-5c-sitting2 item 4).
+        $stalled = Get-RunVerdict 'd3' $null $false $false '' '' $true
+        "$($stalled.Result) $($stalled.Check) $($stalled.Reason)" | Should -BeExactly 'fail skipped stalled'
     }
 
+    It 'runs stop-softap only while the hotspot is on, uses the switch when the device refuses it, and makes the task untestable when neither works (inv-5c-sitting2 item 2)' {
+        $Serial = 'emulator-5554'
+        $commands = [System.Collections.Generic.List[string]]::new()
+        $tether = @{ On = $false }
+        Mock Start-Sleep { }
+        Mock Test-Emulator { $false }
+        Mock Invoke-Device { $commands.Add($Command); if ($tether.On) { '  wlan1 - TetheredState' } else { '  wlan1 - AvailableState' } } -ParameterFilter { $Command -eq 'dumpsys tethering' }
+        Mock Invoke-Device { $commands.Add($Command); '  Capabilities: INTERNET&NOT_RESTRICTED&VALIDATED Transports: WIFI' } -ParameterFilter { $Command -eq 'dumpsys connectivity' }
+        Mock Invoke-Device { $commands.Add($Command); throw 'java.lang.SecurityException: Uid 2000 does not have access to stop-softap wifi command' } -ParameterFilter { $Command -eq 'cmd wifi stop-softap' }
+        Mock Invoke-Device { $commands.Add($Command) }
+        Mock Invoke-TaskHook { 'count=0 app=com.android.settings' } -ParameterFilter { $Command -eq 'screen-has' }
+
+        # Off: neither the setup nor the restore runs stop-softap, and a validated Wi-Fi needs no 'svc wifi enable'.
+        Invoke-TaskStep 'hotspot-setup' $null | Should -BeTrue
+        Invoke-TaskStep 'hotspot-off' $null | Should -BeTrue
+        $commands | Should -Not -Contain 'cmd wifi stop-softap'
+        $commands | Should -Not -Contain 'svc wifi enable'
+
+        # On, on a device that refuses stop-softap and shows no switch: the setup makes the task untestable, and the
+        # restore stops with a fixed text.
+        $tether.On = $true
+        Invoke-TaskStep 'hotspot-setup' $null | Should -BeExactly 'untestable'
+        $commands | Should -Contain 'cmd wifi stop-softap'
+        { Invoke-TaskStep 'hotspot-off' $null } | Should -Throw 'The hotspot is still on, or its state could not be read.'
+
+        # The switch of the settings page turns it off.
+        Mock Invoke-TaskHook { 'count=1 bounds=100,200,300,400 app=com.android.settings' } -ParameterFilter { $Command -eq 'screen-has' -and $With.State -eq 'checked' }
+        Mock Invoke-Device { $commands.Add($Command); $tether.On = $false } -ParameterFilter { $Command -like 'input tap *' }
+        Invoke-TaskStep 'hotspot-off' $null | Should -BeTrue
+        $commands | Should -Contain 'input tap 200 300'
+
+        # A state that the device does not give.
+        Mock Invoke-Device { throw 'Can''t find service: tethering' } -ParameterFilter { $Command -eq 'dumpsys tethering' }
+        Invoke-TaskStep 'hotspot-setup' $null | Should -BeExactly 'untestable'
+    }
     It 'stops a task that has not ended before it puts the device back, also when the stop fails' {
         $calls = [Collections.Generic.List[string]]::new()
         Mock Start-Sleep {}
@@ -257,5 +327,92 @@ Describe 'The helpers of the agent''s task check' {
 
         $LASTEXITCODE | Should -Not -Be 0
         $output | Should -Match 'task-check\.ps1 needs -Script'
+    }
+}
+
+Describe 'The runs of a task (fix-5c-sitting2)' {
+    BeforeEach {
+        $Serial = 'emulator-5554'
+        $Task = 'read-email'
+        $entry = (Get-TaskTable)[$Task]
+        $Runs = 2
+        $live = $false
+        $Script = Join-Path $TestDrive 'task.json'
+        [IO.File]::WriteAllText($Script, '[]')
+        $Model = ''
+        $Name = ''
+        $Mail = 'pera.test@example.com'
+        $Results = Join-Path $TestDrive 'results.txt'
+        $StallSeconds = 30
+        $runsWritten = [System.Collections.Generic.HashSet[int]]::new()
+        $written = [System.Collections.Generic.List[string]]::new()
+        Mock Wait-Listening { }
+        Mock Test-RunCall { $false }
+        Mock Test-Emulator { $true }
+        Mock Write-Host { }
+        Mock Add-SessionResult { $written.Add($Text) }
+        Mock Start-Sleep { }
+        Mock Install-TaskScript { }
+        Mock Test-TaskCheck { $true }
+        Mock Invoke-TaskStep { $true }
+        Mock Invoke-TaskHook { '' }
+        Mock Invoke-TaskHook { 'phase=idle asking=none' } -ParameterFilter { $Command -eq 'state' -or $Command -eq 'agent-state' }
+        Mock Invoke-TaskHook { 'testMode=on' } -ParameterFilter { $Command -eq 'state' }
+        Mock Invoke-TaskHook { 'state=done end=FINISHED steps=3 workMs=9000 credits=0.00 confirmed=0 unconfirmed=0 marker=1' } -ParameterFilter { $Command -eq 'agent-task' }
+    }
+
+    It 'fails only the run whose setup failed, without the error''s text, and goes on with the next run' {
+        $setups = @{ Count = 0 }
+        Mock Invoke-TaskStep {
+            $setups.Count++
+            if ($setups.Count -eq 1) { throw "Could not run 'am start -W -a android.intent.action.SENDTO -d 'mailto:pera.test@example.com?subject=x'' on emulator-5554" }
+            $true
+        } -ParameterFilter { $Step -eq 'mail' }
+
+        $output = @(Invoke-AllTaskRuns 3>&1)
+
+        @($output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] }) | Should -Be @(1)
+        ($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | Out-String) | Should -Not -Match 'pera'
+        @($written) | Should -Be @(
+            'task=read-email run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=setup',
+            'task=read-email run=2 result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok')
+        # The restore runs after the failed setup too.
+        Should -Invoke Invoke-TaskStep -Times 2 -Exactly -ParameterFilter { $Step -eq 'none' }
+    }
+
+    It 'writes a line for every run when an error ends the task, also before its first run' {
+        $Runs = 3
+        Mock Wait-Listening { throw 'Kestrel is not listening on emulator-5554.' }
+
+        { Invoke-AllTaskRuns } | Should -Throw 'Kestrel is not listening on emulator-5554.'
+
+        @($written) | Should -Be @(1..3 | ForEach-Object { "task=read-email run=$_ result=fail end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped" })
+
+        # An error in run 2, before its task was given, writes run 2's line and run 3's.
+        $written.Clear()
+        $runsWritten.Clear()
+        Mock Wait-Listening { }
+        $installs = @{ Count = 0 }
+        Mock Install-TaskScript { $installs.Count++; if ($installs.Count -eq 2) { throw 'adb: device offline' } }
+
+        { Invoke-AllTaskRuns } | Should -Throw 'adb: device offline'
+
+        @($written | ForEach-Object { ($_ -split ' ')[1, 2] -join ' ' }) | Should -Be @('run=1 result=pass', 'run=2 result=fail', 'run=3 result=fail')
+        $written[1] | Should -Match 'reason=stopped$'
+        $written[2] | Should -Match 'reason=stopped$'
+    }
+
+    It 'writes reason=stalled when the device stops answering while a live task runs, with credits=unknown' {
+        $Task = 'hotspot'
+        $entry = (Get-TaskTable)[$Task]
+        $Runs = 1
+        $live = $true
+        $StallSeconds = 0
+        Mock Complete-TaskRun { }
+        Mock Invoke-TaskHook { throw 'Kestrel did not answer.' } -ParameterFilter { $Command -eq 'agent-task' }
+
+        Invoke-AllTaskRuns 3>$null | Should -Be 1
+
+        @($written) | Should -Be @('task=hotspot run=1 result=fail end=none check=skipped steps=0 workMs=0 credits=unknown model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stalled')
     }
 }

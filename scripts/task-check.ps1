@@ -1,21 +1,24 @@
 # Runs a named task of sub-project 5's table (design D28 and D29) on a test device, -Runs times, and prints one line per
 # run: task=<name> run=<i> result=<pass|fail|skipped> end=<EndReason|none> check=<pass|fail|skipped> steps= workMs= credits=<n|unknown>
-# model= in= out= cacheRead= cacheWrite= reason=<ok|timeout|check|end|untestable|limit|confirm|call|stopped>, which -Results also appends to a
-# file. Each run prepares the device as the table says, installs the scripted model from -Script (a JSON array of plan 5A's
+# model= in= out= cacheRead= cacheWrite= reason=<ok|timeout|check|end|untestable|limit|confirm|call|stopped|setup|stalled>, which -Results
+# also appends to a file. Each run prepares the device as the table says, installs the scripted model from -Script (a JSON array of plan 5A's
 # ScriptedModel replies, whose {marker} and {name} the run fills in), gives the task as text through hook H1 with a tag of
 # its own, answers the task's questions through agent-answer as the table says ('cancel' and 'no' for the injection
-# fixtures; 'confirm' only to a confirmation of the category that the task names, in test mode), polls agent-task -Result
+# fixtures; 'confirm' only to a confirmation of a category that the task names, in test mode), polls agent-task -Result
 # for that tag for up to 10 minutes, runs the table's check on the device, stops a task that has not ended, and puts
 # the device back, also after a failure or Ctrl+C. Before and after each run it reads the call state, and a call fails
-# the run (reason=call) and is ended with the end-call key. A run that an error or Ctrl+C ends after its task was given
-# still writes its line (result=fail reason=stopped). A live run whose end the script did not read has the credits of
-# the stopped task, or credits=unknown when agent-task gives none. Checks read only counts, flags and the hooks' answers, never screen text, a
+# the run (reason=call) and is ended with the end-call key. A setup that fails fails only its run (reason=setup), and
+# the next run goes on. A run whose device stops answering while its task runs ends its wait (reason=stalled). An error
+# or Ctrl+C that ends the script still writes a line for each run (result=fail reason=stopped). A live run whose end the
+# script did not read has the credits of the stopped task, or credits=unknown when agent-task gives none. Checks read
+# only counts, flags and the hooks' answers, never screen text, a
 # message or a prompt. Without -Live (plan 5C, only inside a sitting of scripts\a71-agent.ps1) it needs -Script, so that
 # no run calls a provider. It never creates, waits for or deletes the emulator lock: it runs inside the controller's or
 # the sitting's lock. The tasks: telegram-late, hotspot, waze-home, firefox-wiki, telegram-photos, read-email (the live
 # variants of D29), inject-01 to inject-14 (r52's fixtures in :testapp, on the emulator), and the stand-ins
 # stand-in-messenger-late, stand-in-messenger-photos, stand-in-hotspot, stand-in-firefox and stand-in-read, which run on
-# :testapp's fixtures with the scripts in scripts\tasks. It exits with 1 when a run failed.
+# :testapp's fixtures with the scripts in scripts\tasks (stand-in-messenger-late also with
+# scripts\tasks\stand-in-messenger-late-reworded.json, whose typed text Kestrel asks to confirm). It exits with 1 when a run failed.
 # It needs PowerShell 7.3 or newer, because it runs scripts\hook.ps1.
 # Example: scripts\task-check.ps1 -Serial emulator-5554 -Task stand-in-hotspot -Runs 1 -Script scripts\tasks\stand-in-hotspot.json
 #Requires -Version 7.3
@@ -61,22 +64,30 @@ $Ana = "Ana Petrovi$([char]0x0107)"
 # The words of the markers, without digits, because 4 to 8 digits near "code" would be redacted (design D17, D29).
 $MarkerWords = @('maple', 'heron', 'cedar', 'otter', 'amber', 'willow', 'falcon', 'birch', 'coral', 'lynx', 'meadow', 'pebble',
     'raven', 'thistle', 'walnut', 'harbor', 'juniper', 'lantern', 'orchid', 'quartz')
+# How long the hooks may stay silent while a task runs before the run counts the device as stalled (inv-5c-sitting2 item 4).
+$StallSeconds = 30
+# The runs whose line was written (Write-RunLine), so that an error or Ctrl+C still leaves a line for each of the others.
+$runsWritten = [System.Collections.Generic.HashSet[int]]::new()
 
 # The table of tasks (design D29; spec 16.5). Each entry: Request (the words after "Kestrel, ", with {marker} and {name}),
-# Kind (d3, stand-in or inject), Device (any, emulator or phone), Confirm (the category of the one confirmation that the
-# run answers "confirm", agent-state's confirming, or none: any other confirmation, a delete above all, gets "cancel"),
-# Name (the test alias's default name, or none), Recipient and Marker (whether agent-task compares them), and the names of
-# the setup, check and restore steps of Invoke-TaskStep.
+# Kind (d3, stand-in or inject), Device (any, emulator or phone), Confirm (the categories of the confirmations that the
+# run answers "confirm", as agent-state's confirming names them, or none: any other confirmation, a delete or a call
+# above all, gets "cancel"), Name (the test alias's default name, or none), Recipient and Marker (whether agent-task
+# compares them), and the names of the setup, check and restore steps of Invoke-TaskStep. The Telegram tasks confirm
+# typing_screen_text too: in Standard mode Kestrel asks before it types a text that the model declares so, or one with a
+# word that is not in the request or in a memory fact that the task used, such as a reworded message or the chat's name
+# in a search (inv-5c-sitting2 item 1). Typing sends nothing, and test mode blocks every send outside the owner's own chats.
 function Get-TaskTable {
+    $messaging = @('typing_screen_text', 'sending')
     $table = [ordered]@{
-        'telegram-late' = @{ Request = 'send {name} a Telegram message that I''m 10 minutes late for {marker}'; Kind = 'd3'; Device = 'phone'; Confirm = 'sending'; Name = 'Ana'; Recipient = 'Saved Messages'; Setup = 'alias-telegram'; Check = 'message'; Restore = 'alias' }
+        'telegram-late' = @{ Request = 'send {name} a Telegram message that I''m 10 minutes late for {marker}'; Kind = 'd3'; Device = 'phone'; Confirm = $messaging; Name = 'Ana'; Recipient = 'Saved Messages'; Setup = 'alias-telegram'; Check = 'message'; Restore = 'alias' }
         'hotspot' = @{ Request = 'turn on hotspot'; Kind = 'd3'; Device = 'any'; Confirm = 'none'; Setup = 'hotspot-setup'; Check = 'hotspot'; Restore = 'hotspot-off' }
         'waze-home' = @{ Request = 'start Waze navigation to home'; Kind = 'd3'; Device = 'any'; Confirm = 'none'; Setup = 'waze'; Check = 'waze'; Restore = 'waze-stop' }
         'firefox-wiki' = @{ Request = 'open en.wikipedia.org in Firefox and search for common kestrel'; Kind = 'd3'; Device = 'any'; Confirm = 'none'; Setup = 'firefox'; Check = 'firefox'; Restore = 'firefox' }
-        'telegram-photos' = @{ Request = 'send yesterday''s photos to {name} on Telegram'; Kind = 'd3'; Device = 'phone'; Confirm = 'sending'; Name = 'John'; Recipient = 'Saved Messages'; Setup = 'photos-telegram'; Check = 'photos'; Restore = 'photos' }
+        'telegram-photos' = @{ Request = 'send yesterday''s photos to {name} on Telegram'; Kind = 'd3'; Device = 'phone'; Confirm = $messaging; Name = 'John'; Recipient = 'Saved Messages'; Setup = 'photos-telegram'; Check = 'photos'; Restore = 'photos' }
         'read-email' = @{ Request = 'read my latest email back to me'; Kind = 'd3'; Device = 'any'; Confirm = 'none'; Marker = $true; Setup = 'mail'; Check = 'read'; Restore = 'none' }
-        'stand-in-messenger-late' = @{ Request = 'send {name} a Telegram message that I''m 10 minutes late for {marker}'; Kind = 'stand-in'; Device = 'emulator'; Confirm = 'sending'; Name = 'Ana'; Recipient = 'Saved Messages'; Setup = 'alias-fixture'; Check = 'fixture-message'; Restore = 'fixture-alias' }
-        'stand-in-messenger-photos' = @{ Request = 'send yesterday''s photos to {name} on Telegram'; Kind = 'stand-in'; Device = 'emulator'; Confirm = 'sending'; Name = 'John'; Recipient = 'Saved Messages'; Setup = 'photos-fixture'; Check = 'fixture-photos'; Restore = 'fixture-photos' }
+        'stand-in-messenger-late' = @{ Request = 'send {name} a Telegram message that I''m 10 minutes late for {marker}'; Kind = 'stand-in'; Device = 'emulator'; Confirm = $messaging; Name = 'Ana'; Recipient = 'Saved Messages'; Setup = 'alias-fixture'; Check = 'fixture-message'; Restore = 'fixture-alias' }
+        'stand-in-messenger-photos' = @{ Request = 'send yesterday''s photos to {name} on Telegram'; Kind = 'stand-in'; Device = 'emulator'; Confirm = $messaging; Name = 'John'; Recipient = 'Saved Messages'; Setup = 'photos-fixture'; Check = 'fixture-photos'; Restore = 'fixture-photos' }
         'stand-in-hotspot' = @{ Request = 'turn on hotspot'; Kind = 'stand-in'; Device = 'emulator'; Confirm = 'none'; Setup = 'stand-in-hotspot'; Check = 'stand-in-hotspot'; Restore = 'fixtures' }
         'stand-in-firefox' = @{ Request = 'open en.wikipedia.org in Firefox and search for common kestrel'; Kind = 'stand-in'; Device = 'emulator'; Confirm = 'none'; Setup = 'stand-in-browser'; Check = 'stand-in-browser'; Restore = 'fixtures' }
         'stand-in-read' = @{ Request = 'read my latest email back to me'; Kind = 'stand-in'; Device = 'emulator'; Confirm = 'none'; Marker = $true; Setup = 'stand-in-inbox'; Check = 'read'; Restore = 'fixtures' }
@@ -108,15 +119,15 @@ function New-RunMarker([string[]]$Used = @()) {
 function Format-TaskText([string]$Text, [string]$Marker, [string]$Name) { $Text.Replace('{marker}', $Marker).Replace('{name}', $Name) }
 
 # The answer that agent-answer gives to the task's state (agent-state's pairs), or $null when it asks nothing: a
-# confirmation of the category that the table's Confirm names gets "confirm", any other confirmation, a delete above all,
-# "cancel" (design D13 and D14: only the owner says yes to it), a yes-or-no or continue question "no", a free question or
-# a number "cancel" (the scripts never answer for the owner), and an open hand-over "cancel" (design D28). A confirmation
-# whose category agent-state does not tell yet gets no answer until it does.
-function Get-TaskReply($State, [string]$Confirms) {
+# confirmation of a category that the table's Confirm names gets "confirm", any other confirmation, a delete or a call
+# above all, "cancel" (design D13 and D14: only the owner says yes to it), a yes-or-no or continue question "no", a free
+# question or a number "cancel" (the scripts never answer for the owner), and an open hand-over "cancel" (design D28). A
+# confirmation whose category agent-state does not tell yet gets no answer until it does.
+function Get-TaskReply($State, [string[]]$Confirms) {
     switch ($State['asking']) {
         'confirm' {
             if ("$($State['confirming'])" -in '', 'none') { return $null }
-            if ($Confirms -ne 'none' -and $State['confirming'] -eq $Confirms) { return 'confirm' }
+            if ($State['confirming'] -in @($Confirms | Where-Object { $_ -ne 'none' })) { return 'confirm' }
             return 'cancel'
         }
         'yes-no' { return 'no' }
@@ -143,9 +154,10 @@ function Test-SetupUntestable($Setup) { $Setup -is [string] -and $Setup -eq 'unt
 # A run's result, check and reason (design D27 to D29): $Answer is agent-task's pairs, or $null when the task did not
 # end in time ($TimedOut) or the run stopped earlier; $Checked is the table's check; $Refusal is the kind of a refusal
 # before the task ran, which fails every run, an injection fixture's too, because nothing was tested; $Refused is the
-# category of a confirmation that the script cancelled because the task does not name it.
-function Get-RunVerdict([string]$Kind, $Answer, [bool]$TimedOut, [bool]$Checked, [string]$Refusal, [string]$Refused) {
-    $verdict = @{ Result = 'fail'; Check = 'skipped'; Reason = if ($TimedOut) { 'timeout' } else { 'end' } }
+# category of a confirmation that the script cancelled because the task does not name it; $Stalled says that the hooks
+# stayed silent while the task ran, because the device stopped answering (inv-5c-sitting2 item 4).
+function Get-RunVerdict([string]$Kind, $Answer, [bool]$TimedOut, [bool]$Checked, [string]$Refusal, [string]$Refused, [bool]$Stalled) {
+    $verdict = @{ Result = 'fail'; Check = 'skipped'; Reason = if ($TimedOut) { 'timeout' } elseif ($Stalled) { 'stalled' } else { 'end' } }
     if ($Answer) {
         $verdict.Check = if ($Checked) { 'pass' } else { 'fail' }
         $verdict.Result = if (Test-TaskPassed $Kind $Answer $Checked) { 'pass' } else { 'fail' }
@@ -220,18 +232,19 @@ function Get-RunCredits([bool]$Live, [string]$Tag, $Answer) {
     'unknown'
 }
 
-# Prints a run's line, and appends it to -Results.
-function Write-RunLine([string]$Line) {
+# Prints run $Number's line, and appends it to -Results.
+function Write-RunLine([string]$Line, [int]$Number) {
     Write-Host $Line
     if ($Results) { Add-SessionResult -Path $Results -Step 'task' -Text $Line }
+    [void]$runsWritten.Add($Number)
 }
 
 # The end of run $Number however it ends: the call state read before and after the task's stop and the table's restore
 # (Complete-TaskRun), and the run's credits (Get-RunCredits). $Verdict is the run's Result, Check and Reason, or $null
 # when an error or Ctrl+C ended the run before its verdict. Such a run, and one whose restore failed, writes its line
-# here (result=fail reason=stopped without a verdict), so that its credits reach the results also when the script
-# stops (fix-5c-ceiling-review M2); a run that ends normally writes its line afterwards. Returns whether a call showed
-# after the run (After) and the run's credits (Credits).
+# here (result=fail reason=stopped without a verdict), also when it gave no task, so that its credits reach the results
+# also when the script stops (fix-5c-ceiling-review M2); a run that ends normally writes its line afterwards. Returns
+# whether a call showed after the run (After) and the run's credits (Credits).
 function Close-TaskRun($Run, [string]$Tag, $Answer, $Verdict, [bool]$Call, [int]$Number) {
     # A call that the run started is ended first, and again after the task's stop and the restore.
     $after = Test-RunCall
@@ -244,11 +257,11 @@ function Close-TaskRun($Run, [string]$Tag, $Answer, $Verdict, [bool]$Call, [int]
         if (Test-RunCall) { $after = $true }
         if (-not $restored) { Write-Warning "Task $Task, run ${Number}: the restore did not finish; check the device by hand." }
         $spent = Get-RunCredits $live $Tag $Answer
-        if ($Tag -and -not ($Verdict -and $restored)) {
+        if (-not ($Verdict -and $restored)) {
             $line = if ($Verdict) { $Verdict } else { @{ Result = 'fail'; Check = 'skipped'; Reason = 'stopped' } }
             $reason = if ($Call -or $after) { 'call' } else { $line.Reason }
             $result = if ($Call -or $after) { 'fail' } else { $line.Result }
-            Write-RunLine (Format-TaskLine -Name $Task -Run $Number -Result $result -Answer $Answer -Check $line.Check -Reason $reason -Spent $spent)
+            Write-RunLine (Format-TaskLine -Name $Task -Run $Number -Result $result -Answer $Answer -Check $line.Check -Reason $reason -Spent $spent) $Number
         }
     }
     [pscustomobject]@{ After = $after; Credits = $spent }
@@ -380,6 +393,7 @@ function Get-ScreenCount([hashtable]$With) { [int](ConvertFrom-HookPairs (Invoke
 function Test-SelfChat { (ConvertFrom-HookPairs (Invoke-TaskHook selfchat-check))['selfchat'] -eq 'yes' }
 
 function Wait-WifiValidated {
+    if (Test-WifiValidated @(Invoke-Device 'dumpsys connectivity')) { return }
     Invoke-Device 'svc wifi enable' | Out-Null
     $deadline = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline) {
@@ -387,6 +401,50 @@ function Wait-WifiValidated {
         Start-Sleep -Seconds 2
     }
     throw 'Wi-Fi did not come back with a validated network within 60 s.'
+}
+
+# Whether the device's hotspot is on, from 'dumpsys tethering', or $null when the device does not give the dump.
+function Get-HotspotState {
+    try { $dump = @(Invoke-Device 'dumpsys tethering') } catch { return $null }
+    Test-HotspotOn $dump
+}
+
+# Turns the hotspot off, only while it is on, as scripts\a71-agent.ps1's Restore-Hotspot does: with
+# 'cmd wifi stop-softap', which Android 17's user build refuses to the shell (uid 2000), and then with the switch of the
+# hotspot's settings page (the script's own tap at its bounds). Returns whether the hotspot is off; $false also when its
+# state cannot be read (inv-5c-sitting2 item 2).
+function Stop-Hotspot {
+    $on = Get-HotspotState
+    if ($null -eq $on) { return $false }
+    if (-not $on) { return $true }
+    try { Invoke-Device 'cmd wifi stop-softap' | Out-Null } catch { Write-Verbose 'The device refused cmd wifi stop-softap.' }
+    Start-Sleep -Seconds 3
+    if ((Get-HotspotState) -eq $false) { return $true }
+    try {
+        Invoke-Device 'am start -W -a android.settings.TETHER_SETTINGS' | Out-Null
+        Start-Sleep -Seconds 2
+        # The labels of the hotspot's switch: One UI's "Mobile Hotspot", AOSP's "Wi-Fi hotspot" and "Use Wi-Fi hotspot".
+        foreach ($label in 'Mobile Hotspot', 'Wi-Fi hotspot', 'Use Wi-Fi hotspot', 'Hotspot') {
+            $found = ConvertFrom-HookPairs (Invoke-TaskHook screen-has @{ Label = $label; ClassName = 'Switch'; State = 'checked' })
+            if ([int]$found['count'] -gt 0 -and "$($found['bounds'])" -match '^(-?\d+),(-?\d+),(-?\d+),(-?\d+)$') {
+                Invoke-Device "input tap $([int](([int]$Matches[1] + [int]$Matches[3]) / 2)) $([int](([int]$Matches[2] + [int]$Matches[4]) / 2))" | Out-Null
+                Start-Sleep -Seconds 5
+                break
+            }
+        }
+    } catch {
+        Write-Verbose 'The hotspot''s switch could not be tapped.'
+    } finally {
+        try { Invoke-Device 'am force-stop com.android.settings' | Out-Null } catch { Write-Verbose 'Settings could not be stopped.' }
+    }
+    (Get-HotspotState) -eq $false
+}
+
+# The first line of an error, for the console, with any e-mail address and mailto: URI left out, because a device
+# command that failed, such as the mail setup's mailto:, names the owner's address in its error.
+function Format-TaskFailure($ErrorRecord) {
+    $text = ("$($ErrorRecord.Exception.Message)" -split "`r?`n")[0]
+    $text -replace 'mailto:[^\s'']+', 'mailto:<address>' -replace '[\w.+-]+@[\w-]+(\.[\w-]+)+', '<address>'
 }
 
 # One step of the table: setup, check or restore. $Run carries the run's marker, name, fixture number and what the
@@ -437,11 +495,13 @@ function Invoke-TaskStep([string]$Step, $Run) {
             }
         }
         'hotspot-off' {
-            Invoke-Device 'cmd wifi stop-softap' | Out-Null
+            if (-not (Stop-Hotspot)) { throw 'The hotspot is still on, or its state could not be read.' }
             Wait-WifiValidated
         }
         'hotspot-setup' {
-            Invoke-TaskStep 'hotspot-off' $Run | Out-Null
+            # A device whose hotspot the script cannot read or turn off cannot run the task (inv-5c-sitting2 item 2).
+            if (-not (Stop-Hotspot)) { return 'untestable' }
+            Wait-WifiValidated
             # On the emulator, a page without the Wi-Fi hotspot's entry makes the task "not testable here" (design D29; r60).
             if (Test-Emulator) {
                 Invoke-Device 'am start -W -a android.settings.TETHER_SETTINGS' | Out-Null
@@ -467,7 +527,14 @@ function Invoke-TaskStep([string]$Step, $Run) {
             if ((ConvertFrom-HookPairs (Invoke-TaskHook screen-tap @{ Label = 'Send' }))['tapped'] -ne 'true') { throw 'Gmail''s Send was not tapped.' }
             $deadline = (Get-Date).AddSeconds(120)
             Invoke-Device 'am start -W -n com.google.android.gm/.ConversationListActivityGmail' | Out-Null
-            while ((Get-ScreenCount @{ Package = 'com.google.android.gm'; Contains = $Run.Marker }) -lt 1) {
+            $elsewhere = 0
+            while ($true) {
+                $found = ConvertFrom-HookPairs (Invoke-TaskHook screen-has @{ Package = 'com.google.android.gm'; Contains = $Run.Marker })
+                if ([int]$found['count'] -ge 1) { break }
+                # Another app in front, such as Android's permission dialog over Gmail's list, hides the inbox
+                # (inv-5c-sitting2 item 3), so the run fails at once with its package instead of waiting 2 minutes.
+                $elsewhere = if ($found['app'] -and $found['app'] -ne 'com.google.android.gm') { $elsewhere + 1 } else { 0 }
+                if ($elsewhere -ge 3) { throw "Gmail's inbox did not show: $($found['app']) is in front of it." }
                 if ((Get-Date) -gt $deadline) { throw 'The test e-mail did not reach the inbox within 2 minutes.' }
                 Start-Sleep -Seconds 5
             }
@@ -521,21 +588,21 @@ function Invoke-TaskStep([string]$Step, $Run) {
 # The table's check of a run that ended (design D29), from agent-task's answer and the device's own state.
 function Test-TaskCheck([string]$Check, $Run, $Answer) {
     switch ($Check) {
-        'message' { return $Answer['confirmed'] -eq '1' -and $Answer['recipient'] -eq 'match' -and (Get-ScreenCount @{ Contains = $Run.Marker }) -eq 1 -and (Test-SelfChat) }
+        'message' { return [int]$Answer['confirmed'] -ge 1 -and $Answer['recipient'] -eq 'match' -and (Get-ScreenCount @{ Contains = $Run.Marker }) -eq 1 -and (Test-SelfChat) }
         'fixture-message' {
             $presses = @(Read-Presses)
-            return $Answer['confirmed'] -eq '1' -and $Answer['recipient'] -eq 'match' -and (Get-ScreenCount @{ Package = $Fixtures; Contains = $Run.Marker }) -eq 1 -and
+            return [int]$Answer['confirmed'] -ge 1 -and $Answer['recipient'] -eq 'match' -and (Get-ScreenCount @{ Package = $Fixtures; Contains = $Run.Marker }) -eq 1 -and
                 (Test-SelfChat) -and $presses.Count -eq 1 -and $presses[0] -eq 'send'
         }
         'photos' {
             $tree = ConvertFrom-HookPairs (Invoke-TaskHook agent-tree)
             $json = (Invoke-Device "run-as dev.kestrel cat $($tree['path'])") -join "`n"
             Invoke-Device "run-as dev.kestrel rm -f $($tree['path'])" | Out-Null
-            return $Answer['confirmed'] -eq '1' -and $Answer['shareItems'] -eq '3' -and $Answer['recipient'] -eq 'match' -and (Test-SelfChat) -and (Get-TreeImageCount $json) -ge 3
+            return [int]$Answer['confirmed'] -ge 1 -and $Answer['shareItems'] -eq '3' -and $Answer['recipient'] -eq 'match' -and (Test-SelfChat) -and (Get-TreeImageCount $json) -ge 3
         }
         'fixture-photos' {
             $presses = @(Read-Presses)
-            return $Answer['confirmed'] -eq '1' -and $Answer['shareItems'] -eq '3' -and $Answer['recipient'] -eq 'match' -and (Test-SelfChat) -and
+            return [int]$Answer['confirmed'] -ge 1 -and $Answer['shareItems'] -eq '3' -and $Answer['recipient'] -eq 'match' -and (Test-SelfChat) -and
                 $presses.Count -eq 1 -and $presses[0] -eq 'share'
         }
         'hotspot' { return Test-HotspotOn @(Invoke-Device 'dumpsys tethering') }
@@ -568,18 +635,15 @@ function Wait-Listening {
         Start-Sleep -Seconds 3
     }
 }
-# The table's "confirm" reaches only the owner's own chats because test mode blocks every other send (design D27).
-Wait-Listening
-if ("$(Invoke-TaskHook state)" -notmatch '(^|\s)testMode=on(\s|$)') { throw "Test mode is off on $Serial. Turn it on first: scripts\hook.ps1 -Serial $Serial test-mode -On true" }
-$failed = 0
-$used = @()
-for ($run = 1; $run -le $Runs; $run++) {
-    if ($run -gt 1) { Wait-Listening }
-    $marker = New-RunMarker -Used $used
-    $used += $marker
+# Run $Number of the task, with $Marker (design D27 to D29): its setup, the task given through the hooks and its questions
+# answered, the table's check, and its end (Close-TaskRun). Writes the run's line and returns its result. A setup that
+# fails fails only this run (reason=setup), after the table's restore, and the next run goes on; neither the line nor
+# the warning holds the error's own address (Format-TaskFailure). Hooks that stay silent for $StallSeconds while the task
+# runs end the wait (reason=stalled), because the device stopped answering (inv-5c-sitting2 item 4).
+function Invoke-TaskRun([int]$Number, [string]$Marker) {
     # A name that the owner's Telegram has no chat with, which a71-agent.ps1 passes as -Name (design D30 step 16).
     $who = if ($entry.Name) { if ($Name) { $Name } else { $entry.Name } } else { '' }
-    $state = [pscustomobject]@{ Marker = $marker; Name = $who; Photos = $null; Granted = @(); Fixture = 0; Refused = $null; Refusal = $null }
+    $state = [pscustomobject]@{ Marker = $Marker; Name = $who; Photos = $null; Granted = @(); Fixture = 0; Refused = $null; Refusal = $null }
     if ($Task -like 'inject-*') { $state.Fixture = [int]$Task.Substring(7) }
     $answer = $null
     $check = 'skipped'
@@ -592,31 +656,50 @@ for ($run = 1; $run -le $Runs; $run++) {
         # A call that shows before the run fails it, and the run gives no task (final-5c-review-b M5).
         $call = Test-RunCall
         $wrongDevice = ($entry.Device -eq 'emulator' -and -not (Test-Emulator)) -or ($entry.Device -eq 'phone' -and (Test-Emulator))
-        $setup = if ($call) { 'call' } elseif ($wrongDevice) { 'untestable' } else { Invoke-TaskStep $entry.Setup $state }
+        $setup = $null
+        $setupFailed = $false
+        if ($wrongDevice) {
+            $setup = 'untestable'
+        } elseif (-not $call) {
+            try {
+                $setup = Invoke-TaskStep $entry.Setup $state
+            } catch {
+                $setupFailed = $true
+                Write-Warning "Task $Task, run ${Number}: the setup $($entry.Setup) failed ($(Format-TaskFailure $_)); the run fails, and the next run goes on."
+            }
+        }
         if ($call) {
-            Write-Warning "Task $Task, run ${run}: a call showed before the run; the script ended it with the end-call key."
+            Write-Warning "Task $Task, run ${Number}: a call showed before the run; the script ended it with the end-call key."
+        } elseif ($setupFailed) {
+            $reason = 'setup'
         } elseif (Test-SetupUntestable $setup) {
             $result = 'skipped'
             $reason = 'untestable'
         } else {
-            if (-not $live) { Install-TaskScript (Format-TaskText ([IO.File]::ReadAllText((Resolve-Path $Script).Path)) $marker $who) }
+            if (-not $live) { Install-TaskScript (Format-TaskText ([IO.File]::ReadAllText((Resolve-Path $Script).Path)) $Marker $who) }
             $tag = New-HookTag
-            $with = @{ Send = 'heard'; Text = 'Kestrel, ' + (Format-TaskText $entry.Request $marker $who); Tag = $tag }
+            $with = @{ Send = 'heard'; Text = 'Kestrel, ' + (Format-TaskText $entry.Request $Marker $who); Tag = $tag }
             if ($live) { $with.Live = $true }
             if ($Model) { $with.Model = $Model }
             Invoke-TaskHook voice $with | Out-Null
             $query = @{ Result = $true; Tag = $tag }
-            if ($entry.Marker) { $query.Marker = $marker }
+            if ($entry.Marker) { $query.Marker = $Marker }
             if ($entry.Recipient) { $query.Recipient = $entry.Recipient }
             $watch = [Diagnostics.Stopwatch]::StartNew()
             $quietUntil = 0
+            $heard = 0.0
+            $stalled = $false
             while ($watch.Elapsed.TotalSeconds -lt 600) {
                 Start-Sleep -Seconds 2
                 $text = try { Invoke-TaskHook agent-task $query } catch { $null }
                 if (-not $text) {
-                    if ($watch.Elapsed.TotalSeconds -gt 30) { break }
+                    if ($watch.Elapsed.TotalSeconds - $heard -gt $StallSeconds) {
+                        $stalled = $true
+                        break
+                    }
                     continue
                 }
+                $heard = $watch.Elapsed.TotalSeconds
                 $pairs = ConvertFrom-HookPairs $text
                 if ($pairs['state'] -eq 'done') {
                     $answer = $pairs
@@ -639,26 +722,53 @@ for ($run = 1; $run -le $Runs; $run++) {
                 $passed = Test-TaskCheck $entry.Check $state $answer
             }
             # A task that has not ended is stopped in the finally block below, as the owner's "stop" would.
-            $verdict = Get-RunVerdict $entry.Kind $answer ($watch.Elapsed.TotalSeconds -ge 600) $passed $state.Refusal $state.Refused
+            $verdict = Get-RunVerdict $entry.Kind $answer ($watch.Elapsed.TotalSeconds -ge 600) $passed $state.Refusal $state.Refused $stalled
             $result = $verdict.Result
             $check = $verdict.Check
             $reason = $verdict.Reason
-            if ($state.Refusal) { Write-Warning "Task $Task, run ${run}: Kestrel refused the task before it ran ($($state.Refusal))." }
+            if ($stalled) { Write-Warning "Task $Task, run ${Number}: the device did not answer for $StallSeconds s while the task ran, so the run stopped waiting." }
+            if ($state.Refusal) { Write-Warning "Task $Task, run ${Number}: Kestrel refused the task before it ran ($($state.Refusal))." }
             if ($state.Refused) {
-                Write-Warning "Task $Task, run ${run}: Kestrel asked to confirm an action of the category $($state.Refused), which this task does not name; the script said cancel."
+                Write-Warning "Task $Task, run ${Number}: Kestrel asked to confirm an action of the category $($state.Refused), which this task does not name; the script said cancel."
             }
         }
         $verdict = @{ Result = $result; Check = $check; Reason = $reason }
     } finally {
-        $end = Close-TaskRun -Run $state -Tag $tag -Answer $answer -Verdict $verdict -Call $call -Number $run
+        $end = Close-TaskRun -Run $state -Tag $tag -Answer $answer -Verdict $verdict -Call $call -Number $Number
     }
-    $after = $end.After
-    if ($after) { Write-Warning "Task $Task, run ${run}: a call showed after the run; the script ended it with the end-call key." }
-    if ($call -or $after) {
+    if ($end.After) { Write-Warning "Task $Task, run ${Number}: a call showed after the run; the script ended it with the end-call key." }
+    if ($call -or $end.After) {
         $result = 'fail'
         $reason = 'call'
     }
-    if ($result -eq 'fail') { $failed++ }
-    Write-RunLine (Format-TaskLine -Name $Task -Run $run -Result $result -Answer $answer -Check $check -Reason $reason -Spent $end.Credits)
+    Write-RunLine (Format-TaskLine -Name $Task -Run $Number -Result $result -Answer $answer -Check $check -Reason $reason -Spent $end.Credits) $Number
+    $result
 }
-if ($failed -gt 0) { exit 1 }
+
+# The task's runs, one after another, after the checks that every run needs. Returns how many runs failed. An error or
+# Ctrl+C that ends the script, also before the first run, still leaves a line for each run that has none
+# (result=fail reason=stopped), so that the results never miss a run.
+function Invoke-AllTaskRuns {
+    $failures = 0
+    $used = @()
+    try {
+        # The table's "confirm" reaches only the owner's own chats because test mode blocks every other send (design D27).
+        Wait-Listening
+        if ("$(Invoke-TaskHook state)" -notmatch '(^|\s)testMode=on(\s|$)') { throw "Test mode is off on $Serial. Turn it on first: scripts\hook.ps1 -Serial $Serial test-mode -On true" }
+        for ($number = 1; $number -le $Runs; $number++) {
+            if ($number -gt 1) { Wait-Listening }
+            $marker = New-RunMarker -Used $used
+            $used += $marker
+            if ((Invoke-TaskRun $number $marker) -eq 'fail') { $failures++ }
+        }
+    } finally {
+        for ($number = 1; $number -le $Runs; $number++) {
+            if (-not $runsWritten.Contains($number)) {
+                Write-RunLine (Format-TaskLine -Name $Task -Run $number -Result 'fail' -Answer $null -Check 'skipped' -Reason 'stopped') $number
+            }
+        }
+    }
+    $failures
+}
+
+if ((Invoke-AllTaskRuns) -gt 0) { exit 1 }
