@@ -18,9 +18,10 @@ class TestPhotos(private val device: Device, private val work: Path) {
     /**
      * Puts [count] cards for noon of [day] ("today" or "yesterday", on the device's clock) into the folder and indexes
      * them. It refuses when the device already has an image of that day, which a task would share too, and it removes
-     * what it copied when Android does not date every card on that day.
+     * what it copied when Android does not date every card on that day. Each change on the device (the folder, and each
+     * card's copy, date and index) runs inside [change], through which the caller can refuse it once its restore runs.
      */
-    fun add(day: String, count: Int) {
+    fun add(day: String, count: Int, change: (() -> Unit) -> Unit = { it() }) {
         require(count in 1..10) { "A test may add 1 to 10 photos." }
         val offset = PhotoCard.exifOffset(device.read("date +%z").joinToString("").trim())
         val today = LocalDate.parse(device.read("date +%Y-%m-%d").joinToString("").trim())
@@ -37,15 +38,17 @@ class TestPhotos(private val device: Device, private val work: Path) {
         val before = imageCount()
         val taken = date.atTime(12, 0)
         try {
-            device.idempotent("mkdir -p $FOLDER")
+            change { device.idempotent("mkdir -p $FOLDER") }
             Files.createDirectories(work)
             for (number in 1..count) {
                 val local = work.resolve("kestrel_test_$number.jpg")
                 Files.write(local, PhotoCard.jpeg(number, taken, offset))
                 val remote = "$FOLDER/kestrel_test_$number.jpg"
-                device.push(local, remote)
-                device.idempotent("touch -m -d '${taken.format(TOUCH)}' $remote")
-                device.idempotent("content call --uri content://media/ --method scan_file --arg $remote")
+                change {
+                    device.push(local, remote)
+                    device.idempotent("touch -m -d '${taken.format(TOUCH)}' $remote")
+                    device.idempotent("content call --uri content://media/ --method scan_file --arg $remote")
+                }
             }
             val test = rows(" --where $WHERE")
             val dated = test.count { it.taken != null && it.taken in start until end }
@@ -53,7 +56,12 @@ class TestPhotos(private val device: Device, private val work: Path) {
                 throw IllegalStateException("Android indexed ${test.size} of the $count test photos and dated $dated of them on $date.")
             }
         } catch (e: Exception) {
-            remove(before)
+            // A failed removal must not hide why the copy stopped, such as the caller's refusal after Ctrl+C.
+            try {
+                remove(before)
+            } catch (cleanup: Exception) {
+                e.addSuppressed(cleanup)
+            }
             throw e
         }
     }

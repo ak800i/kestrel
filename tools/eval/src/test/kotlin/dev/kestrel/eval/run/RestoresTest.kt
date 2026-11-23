@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
 import kotlin.time.Duration.Companion.milliseconds
@@ -104,6 +105,58 @@ class RestoresTest {
 
         assertFalse(hook.isAlive)
         assertEquals(listOf("Not put back: the task stopped (the task did not stop). By hand: Say 'Kestrel, stop'."), console.warnings)
+    }
+
+    @Test
+    fun theShutdownHookWaitsForAChangeUnderWayBeforeItRunsTheRestoresAndNoChangeStartsAfterIt() {
+        val events = Collections.synchronizedList(mutableListOf<String>())
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        restores.push("the test photos", "Delete the folder.") { events.add("restore") }
+        val main = thread {
+            restores.change("the test photos", "Delete the folder.") {
+                started.countDown()
+                release.await()
+                events.add("card 1")
+            }
+        }
+        started.await()
+
+        val hook = hooks.single().apply { start() }
+        hook.join(300)
+        assertTrue(hook.isAlive)
+        assertEquals(emptyList<String>(), events.toList())
+        release.countDown()
+        hook.join(5_000)
+        main.join(5_000)
+
+        assertEquals(listOf("card 1", "restore"), events.toList())
+        assertThrows(Stopping::class.java) { restores.change("the test photos", "Delete the folder.") { events.add("card 2") } }
+        assertEquals(listOf("card 1", "restore"), events.toList())
+    }
+
+    @Test
+    fun aChangeStillUnderWayWhenTheHookStopsWaitingIsNotPutBack() {
+        val bounded = Restores(console, Redactions(LocalConfig.EMPTY), 100.milliseconds) { hooks.add(it) }
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        bounded.push("the permissions", "Take back READ_MEDIA_VIDEO.") {}
+        val main = thread {
+            bounded.change("READ_MEDIA_VIDEO granted", "Take back READ_MEDIA_VIDEO.") {
+                started.countDown()
+                release.await()
+            }
+        }
+        started.await()
+
+        hooks.single().run()
+        release.countDown()
+        main.join(5_000)
+
+        assertEquals(
+            listOf("Not put back: READ_MEDIA_VIDEO granted (it was still being made when :tools:eval stopped). By hand: Take back READ_MEDIA_VIDEO."),
+            console.warnings,
+        )
     }
 
     @Test

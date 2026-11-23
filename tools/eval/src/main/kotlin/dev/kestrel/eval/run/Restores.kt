@@ -23,10 +23,11 @@ class Stopping(message: String) : Exception(message)
  * back; the stack is shared by the main thread and the hook, and a restore leaves it before it runs, so that no restore
  * runs twice. A run puts back only its own changes with [mark] and [runDownTo].
  *
- * The JVM does not stop the main thread while the hook runs. So the hook first sets [stopping], after which [push] throws
- * [Stopping] and no new change starts; then it waits, for at most [stopWait], for the restores that the main thread is
- * running, and reports one that is still running at the bound as not put back. While [stopping], a failure is reported
- * as soon as it happens, because the main thread may never reach its [report].
+ * The JVM does not stop the main thread while the hook runs. So the hook first sets [stopping], after which [push] and
+ * [change] throw [Stopping] and no new change starts; then it waits for the [change] under way, runs the restores, and
+ * waits for the restores that the main thread is running, each wait for at most [stopWait]. A change or a restore that is
+ * still under way at the bound is reported as not put back. While [stopping], a failure is reported as soon as it
+ * happens, because the main thread may never reach its [report].
  */
 class Restores internal constructor(
     private val console: Console,
@@ -44,6 +45,7 @@ class Restores internal constructor(
     private val idle = lock.newCondition()
     private val stack = ArrayList<Restore>()
     private val running = LinkedHashSet<Restore>()
+    private val changing: MutableSet<Change> = Collections.newSetFromMap(IdentityHashMap())
     private val unreported = ArrayList<RestoreFailure>()
     private val reported: MutableSet<RestoreFailure> = Collections.newSetFromMap(IdentityHashMap())
     private var hooked = false
@@ -62,6 +64,28 @@ class Restores internal constructor(
             addShutdownHook(Thread(::stop, "eval-restores"))
         }
         Restore(what, byHand, action).also { stack.add(it) }
+    }
+
+    /**
+     * Makes a change that a restore already on the stack puts back: [block] does not start once the hook began ([Stopping]),
+     * and the hook waits for a change under way before it runs any restore, so that no change is made after the restore
+     * that covers it has run. A step whose one restore covers several device commands makes each of them through it; a
+     * restore never calls it. [what] and [byHand] name the change when the hook stops waiting for it.
+     */
+    fun <T> change(what: String, byHand: String, block: () -> T): T {
+        val change = Change(what, byHand)
+        lock.withLock {
+            if (stopping) throw Stopping("The restores are running because :tools:eval is stopping; no change may start.")
+            changing.add(change)
+        }
+        try {
+            return block()
+        } finally {
+            lock.withLock {
+                changing.remove(change)
+                idle.signalAll()
+            }
+        }
     }
 
     /** The stack's height now, so that [runDownTo] later runs only what was pushed after it. */
@@ -106,19 +130,36 @@ class Restores internal constructor(
         }
     }
 
-    /** The shutdown hook: no new change, every restore left, the main thread's restore awaited, and every failure reported. */
+    /**
+     * The shutdown hook: no new change, the change under way awaited, every restore left, the main thread's restore
+     * awaited, and every failure reported.
+     */
     private fun stop() {
         stopping = true
+        val unfinished = lock.withLock {
+            await { changing.isEmpty() }
+            changing.toList()
+        }
         runAll()
         lock.withLock {
-            var left = stopWait.inWholeNanoseconds
-            while (running.isNotEmpty() && left > 0) left = idle.awaitNanos(left)
+            await { running.isEmpty() }
             warn(unreported.toList())
+            for (change in unfinished) {
+                console.warn("Not put back: ${change.what} (it was still being made when :tools:eval stopped). By hand: ${change.byHand}")
+            }
             for (restore in running) {
                 console.warn("Not put back: ${restore.what} (it was still running when :tools:eval stopped). By hand: ${restore.byHand}")
             }
         }
     }
+
+    /** Waits on [idle], with the lock held, until [done] or for at most [stopWait]. */
+    private fun await(done: () -> Boolean) {
+        var left = stopWait.inWholeNanoseconds
+        while (!done() && left > 0) left = idle.awaitNanos(left)
+    }
+
+    private class Change(val what: String, val byHand: String)
 
     private companion object {
         val STOP_WAIT = 30.seconds

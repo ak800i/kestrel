@@ -53,10 +53,13 @@ data class Grant(val packageName: String, val permissions: List<String>) : Setup
         val granted = granted(scope)
         val missing = permissions.filter { it !in granted && (scope.device.test.sdk >= 34 || it != VISUAL_USER_SELECTED) }
         if (missing.isEmpty()) return SetupResult.Ready
-        scope.restores.push("the permissions that the run granted $packageName", "Settings > Apps > $packageName > Permissions: take back ${missing.joinToString()}.") {
+        val byHand = "Settings > Apps > $packageName > Permissions: take back ${missing.joinToString()}."
+        scope.restores.push("the permissions that the run granted $packageName", byHand) {
             for (permission in missing) scope.device.idempotent("pm revoke $packageName $permission")
         }
-        for (permission in missing) scope.device.idempotent("pm grant $packageName $permission")
+        for (permission in missing) {
+            scope.restores.change("$permission granted to $packageName", byHand) { scope.device.idempotent("pm grant $packageName $permission") }
+        }
         return SetupResult.Ready
     }
 

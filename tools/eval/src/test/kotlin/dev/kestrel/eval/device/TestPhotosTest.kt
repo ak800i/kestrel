@@ -1,5 +1,6 @@
 package dev.kestrel.eval.device
 
+import dev.kestrel.eval.run.Stopping
 import dev.kestrel.eval.task.FakeRun
 import dev.kestrel.eval.task.Photos
 import dev.kestrel.eval.task.SetupFailed
@@ -66,4 +67,23 @@ class TestPhotosTest {
         assertTrue(run.restores.runAll().isEmpty())
     }
 
+    @Test
+    fun afterCtrlCNoCardIsCopiedOnceTheRestoreRanAndTheCopiedCardIsRemoved() {
+        val run = FakeRun()
+        val media = FakeMedia(run.adb)
+        var hook: Thread? = null
+        run.adb.on("^content call --uri content://media/ --method scan_file") {
+            media.test.add("Row: 0 _id=100, datetaken=1795345200000, date_added=1795345300")
+            if (hook == null) hook = run.ctrlC()
+            ""
+        }
+
+        assertThrows(Stopping::class.java) { Photos("yesterday", 3).apply(run.scope) }
+        hook!!.join(5_000)
+
+        assertEquals(1, run.adb.hostCommands.count { it.first() == "push" })
+        assertEquals(0, media.test.size)
+        assertEquals("rm -rf ${TestPhotos.FOLDER}", run.adb.commands.last { !it.startsWith("content query") })
+        assertEquals(emptyList<String>(), run.console.warnings)
+    }
 }

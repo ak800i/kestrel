@@ -54,6 +54,8 @@ class FakeAdb(
     /** The extras of each broadcast of [action], in their order. */
     fun hookCalls(action: String): List<Map<String, String>> = broadcasts.filter { it.first == action }.map { it.second }
 
+    // Synchronized, because a test's shutdown hook may run restores while the main thread still sends commands.
+    @Synchronized
     override fun shell(command: String, timeout: Duration): ShellResult {
         val guard = GUARD.matchEntire(command)
         if (guard == null) {
@@ -77,6 +79,7 @@ class FakeAdb(
         return ShellResult(0, "$text\nkestrel-end\n", "")
     }
 
+    @Synchronized
     override fun host(args: List<String>, timeout: Duration): ShellResult {
         hostCommands.add(args)
         return when {

@@ -2,6 +2,7 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.run.Stopping
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -38,6 +39,28 @@ class StepsTest {
                 "pm revoke dev.kestrel android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
             ),
             run.adb.commands,
+        )
+    }
+
+    @Test
+    fun afterCtrlCNoPermissionIsGrantedOnceTheRestoreThatTakesItBackRan() {
+        run.adb.on("^dumpsys package dev.kestrel$") { "        android.permission.READ_MEDIA_IMAGES: granted=true, flags=[ USER_SET ]" }
+        var hook: Thread? = null
+        run.adb.on("^pm grant ") {
+            if (hook == null) hook = run.ctrlC()
+            ""
+        }
+
+        assertThrows(Stopping::class.java) { Grant("dev.kestrel", Grant.MEDIA).apply(run.scope) }
+        hook!!.join(5_000)
+
+        assertEquals(
+            listOf(
+                "pm grant dev.kestrel android.permission.READ_MEDIA_VIDEO",
+                "pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO",
+                "pm revoke dev.kestrel android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+            ),
+            run.adb.commands.filter { it.startsWith("pm ") },
         )
     }
 

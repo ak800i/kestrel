@@ -20,6 +20,15 @@ class FakeRun(kind: DeviceKind = DeviceKind.EMULATOR, marker: String = "maple he
     val console = FakeConsole()
     val device = Device(adb, TestDevice(adb.serial, kind, if (kind == DeviceKind.EMULATOR) 37 else 33), clock)
     val hooks = Hooks(HookClient(device))
-    val restores = Restores(console, Redactions(config)) {}
+    val shutdownHooks = mutableListOf<Thread>()
+    val restores = Restores(console, Redactions(config)) { shutdownHooks.add(it) }
     val scope = RunScope(device, hooks, restores, clock, console, config, Files.createTempDirectory("eval-run"), RunValues(marker))
+
+    /** Starts the restores' shutdown hook, as Ctrl+C does, and returns it once it has begun to stop new changes. */
+    fun ctrlC(): Thread {
+        val hook = shutdownHooks.single().apply { start() }
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (!restores.stopping && System.nanoTime() < deadline) Thread.sleep(1)
+        return hook
+    }
 }
