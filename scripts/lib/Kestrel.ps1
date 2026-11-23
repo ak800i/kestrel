@@ -471,12 +471,26 @@ function Stop-DeviceCall([string]$Serial) {
     $false
 }
 
-# Returns the Android user folder, which holds the debug keystore, in the order in which the Android Gradle plugin looks
-# for it, so that a release build signed by Get-DebugSigningEnvironment has the debug build's key.
+# Returns the Android user folder, which holds the debug keystore, as the Android Gradle plugin finds it, so that a release
+# build signed by Get-DebugSigningEnvironment has the debug build's key. The plugin takes ANDROID_USER_HOME itself, and
+# the folder .android in the deprecated ANDROID_PREFS_ROOT and ANDROID_SDK_HOME, but only when their own folder exists. It
+# refuses to build when these name different folders, and so does this function. Without any of them, the folder is the
+# user profile's .android.
 function Get-AndroidUserHome {
-    if ($env:ANDROID_USER_HOME) { return $env:ANDROID_USER_HOME }
-    if ($env:ANDROID_SDK_HOME) { return (Join-Path $env:ANDROID_SDK_HOME '.android') }
-    if ($env:ANDROID_PREFS_ROOT) { return (Join-Path $env:ANDROID_PREFS_ROOT '.android') }
+    $folders = @(
+        if ($env:ANDROID_USER_HOME) { $env:ANDROID_USER_HOME }
+        foreach ($name in 'ANDROID_PREFS_ROOT', 'ANDROID_SDK_HOME') {
+            $parent = [Environment]::GetEnvironmentVariable($name)
+            if ($parent -and (Test-Path -LiteralPath $parent -PathType Container)) { Join-Path $parent '.android' }
+        }
+    )
+    # Windows compares paths without case, and Sort-Object -Unique does too.
+    $distinct = @($folders | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') } | Sort-Object -Unique)
+    if ($distinct.Count -gt 1) {
+        throw ("ANDROID_USER_HOME, ANDROID_PREFS_ROOT and ANDROID_SDK_HOME name different Android user folders ($($distinct -join ', ')), " +
+            'so the Android Gradle plugin refuses to build. Keep only ANDROID_USER_HOME.')
+    }
+    if ($folders.Count -gt 0) { return $folders[0] }
     Join-Path $env:USERPROFILE '.android'
 }
 
