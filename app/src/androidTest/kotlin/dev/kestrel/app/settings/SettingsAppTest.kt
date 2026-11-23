@@ -706,6 +706,36 @@ class SettingsAppTest {
         assertEquals(before + 1, checks)
     }
 
+    @Test
+    fun aVoiceChosenInTheDoneModelStepCountsAtOnceWhenItsFilesAreThere() {
+        data.choice.value = DownloadChoice(VoiceChoice.KOKORO, VoiceChoice.KOKORO, mobileData = false)
+        data.voiceOptions.value = VoiceOptionsSetting(voice = VoiceChoice.KOKORO)
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, READY_KOKORO))))
+        openChecklist()
+
+        compose.onNodeWithText(text(R.string.voice_piper)).performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(VoiceChoice.PIPER, data.voiceOptions.value.voice)
+
+        compose.onNodeWithText(text(R.string.voice_kokoro)).performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(VoiceChoice.KOKORO, data.voiceOptions.value.voice)
+        compose.onAllNodesWithText(text(R.string.setup_models_download)).assertCountEquals(0)
+        assertEquals(emptyList<DownloadChoice>(), data.downloads)
+    }
+
+    @Test
+    fun kokoroChosenInTheDoneModelStepWaitsForItsDownload() {
+        show(NOTHING_SET_UP.copy(models = ModelCheck.Done(listOf(READY_VOICE, ABSENT_KOKORO))))
+        openChecklist()
+        compose.onAllNodesWithText(text(R.string.setup_models_download)).assertCountEquals(0)
+
+        compose.onNodeWithText(text(R.string.voice_kokoro)).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.setup_models_download)).performScrollTo().assertIsDisplayed()
+        assertEquals(VoiceChoice.PIPER, data.voiceOptions.value.voice)
+    }
+
     private class FakeSettingsData : SettingsData {
         override val testMode = MutableStateFlow(true)
         override val listening = MutableStateFlow(ListeningOptions())

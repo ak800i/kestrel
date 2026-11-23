@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
 import dev.kestrel.app.download.DownloadChoice
 import dev.kestrel.app.download.DownloadState
+import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.models.DownloadFailure
 import kotlinx.coroutines.CoroutineStart
@@ -39,15 +40,19 @@ private const val MB = 1_000_000L
  * The download of step 2 of the setup checklist (design spec, sections 8.10 and 15; release plan): the voice, Kokoro or
  * Piper, with the one that suits this phone chosen first; whether the download may use mobile data; Download while
  * [needsAction], the progress with Cancel while a download runs, and why the last download stopped. The screen stays on
- * while the step shows a running download, and [onCheckModels] checks the model files again when a download ends.
+ * while the step shows a running download, and [onCheckModels] checks the model files again when a download ends. A voice
+ * that the owner chooses while [models] says that its files are on the phone becomes Kestrel's voice at once; otherwise
+ * the download that brings its files makes it so.
  */
 @Composable
-internal fun ModelDownloadStep(data: SettingsData, needsAction: Boolean, onCheckModels: () -> Unit) {
+internal fun ModelDownloadStep(data: SettingsData, models: ModelCheck, needsAction: Boolean, onCheckModels: () -> Unit) {
     val stored by data.downloadChoice.collectAsState(initial = null)
+    val voiceOptions by data.voiceOptions.collectAsState(initial = null)
     val download by data.modelDownload.collectAsState(initial = DownloadState.Idle)
     val scope = rememberCoroutineScope()
     // The choice as this step wrote it last, so that a second change builds on the first before the store reports it.
     var written by remember { mutableStateOf<DownloadChoice?>(null) }
+    var writtenOptions by remember { mutableStateOf<VoiceOptionsSetting?>(null) }
     val running = download is DownloadState.Running
     val view = LocalView.current
     DisposableEffect(running) {
@@ -63,12 +68,22 @@ internal fun ModelDownloadStep(data: SettingsData, needsAction: Boolean, onCheck
         scope.launch(start = CoroutineStart.UNDISPATCHED) { data.setDownloadChoice(next) }
     }
 
+    fun choose(voice: VoiceChoice) {
+        change(choice.copy(voice = voice))
+        val options = writtenOptions ?: voiceOptions ?: return
+        if (options.voice != voice && SetupChecklist.voiceReady(models, voice)) {
+            val next = options.copy(voice = voice)
+            writtenOptions = next
+            scope.launch(start = CoroutineStart.UNDISPATCHED) { data.setVoiceOptions(next) }
+        }
+    }
+
     Text(stringResource(R.string.voice_choice), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall)
     VoiceRow(stringResource(R.string.voice_kokoro), choice.voice == VoiceChoice.KOKORO, enabled = !running) {
-        change(choice.copy(voice = VoiceChoice.KOKORO))
+        choose(VoiceChoice.KOKORO)
     }
     VoiceRow(stringResource(R.string.voice_piper), choice.voice == VoiceChoice.PIPER, enabled = !running) {
-        change(choice.copy(voice = VoiceChoice.PIPER))
+        choose(VoiceChoice.PIPER)
     }
     val suggestion = if (choice.suggested == VoiceChoice.KOKORO) R.string.setup_models_suggest_kokoro else R.string.setup_models_suggest_piper
     Text(stringResource(suggestion), style = small)

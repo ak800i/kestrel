@@ -1,5 +1,6 @@
 package dev.kestrel.app.settings
 
+import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.models.ModelDownloader
 import dev.kestrel.voice.models.ModelStatus
 import kotlinx.coroutines.CancellationException
@@ -117,11 +118,16 @@ object SetupChecklist {
 
     private fun doneIf(done: Boolean) = if (done) StepState.DONE else StepState.TO_DO
 
-    // An optional model that is not on the phone, such as the Kokoro voice, is no problem, unless the owner chose Kokoro for
-    // the download (release plan).
-    private fun modelsReady(status: SetupStatus): Boolean {
-        val statuses = (status.models as? ModelCheck.Done)?.statuses ?: return false
-        return statuses.all { it.ready || (it.absent && !(status.kokoroWanted && it.model.id == ModelDownloader.KOKORO_ID)) }
+    // An optional model that the owner did not choose, such as the Kokoro voice, is no problem, also when a download stopped
+    // between its files; Kokoro counts when the owner chose it for the download (release plan).
+    private fun modelsReady(status: SetupStatus): Boolean = modelsReady(status.models, status.kokoroWanted)
+
+    /** Whether the files that [voice] needs, and every model that is not optional, are on the phone and intact. */
+    fun voiceReady(models: ModelCheck, voice: VoiceChoice): Boolean = modelsReady(models, kokoroWanted = voice == VoiceChoice.KOKORO)
+
+    private fun modelsReady(models: ModelCheck, kokoroWanted: Boolean): Boolean {
+        val statuses = (models as? ModelCheck.Done)?.statuses ?: return false
+        return statuses.all { it.ready || (it.model.optional && !(kokoroWanted && it.model.id == ModelDownloader.KOKORO_ID)) }
     }
 }
 

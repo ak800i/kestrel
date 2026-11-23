@@ -38,7 +38,7 @@ internal fun ChecklistPage(
         val state = states.getValue(step)
         StepCard(step, state, samsung, onAction) {
             if (step == SetupStep.COPY_MODELS) {
-                ModelDownloadStep(data, state in NEEDS_ACTION, onCheckModels)
+                ModelDownloadStep(data, models, state in NEEDS_ACTION, onCheckModels)
                 ModelProblems(models)
             }
             if (step == SetupStep.PROVIDER && state in NEEDS_ACTION) {

@@ -1,5 +1,6 @@
 package dev.kestrel.app.settings
 
+import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.models.Model
 import dev.kestrel.voice.models.ModelFile
@@ -7,6 +8,7 @@ import dev.kestrel.voice.models.ModelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -155,6 +157,34 @@ class SetupChecklistTest {
 
         assertEquals(StepState.DONE, state(nothingSetUp.copy(models = models)))
         assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = models, kokoroWanted = true)))
+
+        // A Kokoro download that stopped between Kokoro's files, after which the owner chose Piper.
+        val twoFiles = kokoro.copy(files = kokoro.files + ModelFile("tts-kokoro/voices.bin", 1, "0".repeat(64)))
+        val partial = ModelCheck.Done(
+            listOf(ModelStatus(voice, emptyList(), emptyList()), ModelStatus(twoFiles, listOf("tts-kokoro/voices.bin"), emptyList())),
+        )
+        assertEquals(StepState.DONE, state(nothingSetUp.copy(models = partial)))
+        assertEquals(StepState.TO_DO, state(nothingSetUp.copy(models = partial, kokoroWanted = true)))
+    }
+
+    @Test
+    fun aVoiceIsReadyWhenTheModelsThatItNeedsAreOnThePhone() {
+        val voice = Model("tts", Engine.TTS, "Voice", "MIT", "https://example.org", listOf(ModelFile("tts/a.onnx", 1, "0".repeat(64))))
+        val kokoro = Model(
+            "tts-kokoro", Engine.TTS, "Kokoro", "Apache-2.0", "https://example.org",
+            listOf(ModelFile("tts-kokoro/model.onnx", 1, "0".repeat(64))), optional = true,
+        )
+        val readyVoice = ModelStatus(voice, emptyList(), emptyList())
+        val missingVoice = ModelStatus(voice, listOf("tts/a.onnx"), emptyList())
+        val readyKokoro = ModelStatus(kokoro, emptyList(), emptyList())
+        val absentKokoro = ModelStatus(kokoro, listOf("tts-kokoro/model.onnx"), emptyList())
+
+        assertTrue(SetupChecklist.voiceReady(ModelCheck.Done(listOf(readyVoice, absentKokoro)), VoiceChoice.PIPER))
+        assertFalse(SetupChecklist.voiceReady(ModelCheck.Done(listOf(readyVoice, absentKokoro)), VoiceChoice.KOKORO))
+        assertTrue(SetupChecklist.voiceReady(ModelCheck.Done(listOf(readyVoice, readyKokoro)), VoiceChoice.KOKORO))
+        assertFalse(SetupChecklist.voiceReady(ModelCheck.Done(listOf(missingVoice, readyKokoro)), VoiceChoice.PIPER))
+        assertFalse(SetupChecklist.voiceReady(ModelCheck.Done(listOf(missingVoice, readyKokoro)), VoiceChoice.KOKORO))
+        assertFalse(SetupChecklist.voiceReady(ModelCheck.Checking, VoiceChoice.PIPER))
     }
 
     @Test
