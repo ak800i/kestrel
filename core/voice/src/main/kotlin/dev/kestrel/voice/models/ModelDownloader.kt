@@ -1,8 +1,11 @@
 package dev.kestrel.voice.models
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -82,13 +85,32 @@ class ModelDownloader(
     /**
      * Downloads every file of the [wanted] models that is missing or damaged. [gate] says before each file whether the
      * network may be used now, and [progress] hears the bytes fetched so far, also those of part files from earlier
-     * downloads. Throws [ModelDownloadException]; a cancellation stops before the next 64 KB and keeps the part files.
+     * downloads. Throws [ModelDownloadException]; a cancellation cancels the request that runs, also while it waits for
+     * the server, and keeps the part files.
      */
     suspend fun download(
         kokoro: Boolean,
         gate: () -> DownloadFailure? = { null },
         progress: (DownloadProgress) -> Unit = {},
     ): Unit = withContext(Dispatchers.IO) {
+        val cancellable = CancellableCalls(calls)
+        // A blocking request or read does not see the coroutine's cancellation, so the cancellation cancels the call.
+        val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            suspendCancellableCoroutine<Unit> { it.invokeOnCancellation { cancellable.cancel() } }
+        }
+        try {
+            download(kokoro, gate, progress, cancellable)
+        } finally {
+            watcher.cancel()
+        }
+    }
+
+    private suspend fun download(
+        kokoro: Boolean,
+        gate: () -> DownloadFailure?,
+        progress: (DownloadProgress) -> Unit,
+        calls: Call.Factory,
+    ) {
         val wantedIds = wanted(kokoro).map { it.id }.toSet()
         val needed = files.check().filter { it.model.id in wantedIds }.flatMap { it.missing + it.damaged }.toSet()
         val entries = files.manifest.models.flatMap { it.files }.filter { it.path in needed }
@@ -113,17 +135,17 @@ class ModelDownloader(
             progress(DownloadProgress(done, total))
         }
         for (download in direct) {
-            fetch(download, gate, count)
+            fetch(download, gate, count, calls)
             place(download.part, files.file(download.name), download.name)
         }
         for (download in packed) {
-            fetch(download, gate, count)
+            fetch(download, gate, count, calls)
             unpack(download, members.getValue(download.name), parts)
         }
     }
 
     /** Brings [download]'s part file to its full size and checks its hash, or throws. */
-    private suspend fun fetch(download: Download, gate: () -> DownloadFailure?, count: (Long) -> Unit) {
+    private suspend fun fetch(download: Download, gate: () -> DownloadFailure?, count: (Long) -> Unit, calls: Call.Factory) {
         val part = download.part
         part.parentFile?.mkdirs()
         if (part.length() > download.size) {
@@ -133,7 +155,7 @@ class ModelDownloader(
         if (part.length() < download.size) {
             gate()?.let { throw ModelDownloadException(it) }
             val start = part.length()
-            open(download, start).use { response ->
+            open(download, start, calls).use { response ->
                 // A server that ignores the range sends the whole file again.
                 val append = start > 0 && response.code == 206
                 if (start > 0 && !append) count(-start)
@@ -158,7 +180,7 @@ class ModelDownloader(
     }
 
     /** The response with the file's bytes from [start] on, after at most [MAX_REDIRECTS] redirects. */
-    private fun open(download: Download, start: Long): Response {
+    private suspend fun open(download: Download, start: Long, calls: Call.Factory): Response {
         var url = download.url.toHttpUrl()
         var status = 0
         repeat(MAX_REDIRECTS + 1) {
@@ -167,6 +189,8 @@ class ModelDownloader(
             val response = try {
                 calls.newCall(decorate(builder).build()).execute()
             } catch (e: IOException) {
+                // A call that the cancellation cancelled fails with an IOException, which is the cancellation.
+                currentCoroutineContext().ensureActive()
                 val failure = if (refused(e)) DownloadFailure.Refused(download.name) else DownloadFailure.Connection(download.name)
                 throw ModelDownloadException(failure, e)
             }
@@ -189,6 +213,7 @@ class ModelDownloader(
             val read = try {
                 input.read(buffer)
             } catch (e: IOException) {
+                currentCoroutineContext().ensureActive()
                 throw ModelDownloadException(DownloadFailure.Connection(name), e)
             }
             if (read < 0) return
@@ -243,6 +268,21 @@ class ModelDownloader(
             Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         } catch (e: IOException) {
             throw ModelDownloadException(DownloadFailure.Storage(name), e)
+        }
+    }
+
+    /** Makes [calls]' calls, and [cancel] cancels those that it made and every later one. */
+    private class CancellableCalls(private val calls: Call.Factory) : Call.Factory {
+        private val made = mutableListOf<Call>()
+        private var cancelled = false
+
+        @Synchronized
+        override fun newCall(request: Request): Call = calls.newCall(request).also { if (cancelled) it.cancel() else made += it }
+
+        @Synchronized
+        fun cancel() {
+            cancelled = true
+            made.forEach(Call::cancel)
         }
     }
 

@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -25,6 +26,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetAddress
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class ModelDownloaderTest {
     @get:Rule
@@ -195,6 +198,44 @@ class ModelDownloaderTest {
         val part = File(root, ".download/vad/a.onnx.part")
         assertTrue(part.length() in 1 until large.size)
         assertFalse(File(root, "vad/a.onnx").exists())
+    }
+
+    @Test
+    fun cancelStopsARequestThatWaitsForTheServerAtOnce() = runTest {
+        server.enqueue(MockResponse.Builder().body(Buffer().write(model)).headersDelay(30, TimeUnit.SECONDS).build())
+        val download = launch(Dispatchers.IO) { downloader(manifest()).download(kokoro = false) }
+        server.takeRequest()
+
+        assertEndsAtOnceWhenCancelled(download)
+        assertFalse(File(root, "vad/a.onnx").exists())
+    }
+
+    @Test
+    fun cancelStopsAReadThatWaitsForTheServerAtOnceAndKeepsThePart() = runTest {
+        val large = ByteArray(4_000_000) { (it % 13).toByte() }
+        // 100 000 bytes, then nothing for 30 s.
+        server.enqueue(MockResponse.Builder().body(Buffer().write(large)).throttleBody(100_000, 30, TimeUnit.SECONDS).build())
+        val manifest = manifest(ModelFile("vad/a.onnx", large.size.toLong(), sha256(large), url = url("/a")))
+        val received = CountDownLatch(1)
+        val download = launch(Dispatchers.IO) {
+            downloader(manifest).download(kokoro = false) { if (it.doneBytes >= 100_000) received.countDown() }
+        }
+        assertTrue(received.await(10, TimeUnit.SECONDS))
+
+        assertEndsAtOnceWhenCancelled(download)
+        assertEquals(100_000L, File(root, ".download/vad/a.onnx.part").length())
+    }
+
+    // The test's client waits 10 s for a read, so a cancellation that waited for the read would take that long.
+    private fun assertEndsAtOnceWhenCancelled(download: Job) = runBlocking {
+        // Long enough for the download to block in the request or the read.
+        Thread.sleep(300)
+        val started = System.nanoTime()
+        download.cancel()
+        download.join()
+        val millis = (System.nanoTime() - started) / 1_000_000
+        assertTrue("The download ended $millis ms after the cancellation", millis < 2_000)
+        assertTrue(download.isCancelled)
     }
 
     private fun tarBz2(entries: Map<String, ByteArray>): ByteArray {
