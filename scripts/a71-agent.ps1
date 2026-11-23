@@ -641,6 +641,14 @@ function Test-TelegramDevice([string]$Device, [string]$StepName, [string]$What) 
     $false
 }
 
+# Whether Waze's part of a step runs on the device: Waze does not work on kestrel-api37 (the owner's choice), so there
+# the part is written as not run, as in a dry run, whose A71 steps run there, and the owner is never asked about it.
+function Test-WazeDevice([string]$Device, [string]$StepName, [string]$What) {
+    if ($Device -ne $EmulatorSerial) { return $true }
+    Add-Result $StepName "${What}: not run on kestrel-api37 (the owner's choice: Waze does not work there)"
+    $false
+}
+
 # Whether Telegram is signed in on the device: a signed-in Telegram adds an Android account of its own type, which
 # 'dumpsys account' lists (counted by type only, never a name).
 function Test-TelegramSignedIn([string]$Device) { (Get-AccountCount @(Invoke-Device $Device 'dumpsys account') 'org.telegram.messenger') -gt 0 }
@@ -867,8 +875,8 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
 # kestrel-api37's Google account and its apps for the owner's step of sitting 1. The emulator holds the owner's own
 # account (emulatorGmailAddress equals gmailAddress), which the script never signs in or out, so he is asked for nothing
 # there; only for a test account of another address, when the emulator has no Google account, does he sign it in, as
-# before (it then leaves at the end of sitting 2). With an account, and without the owner, the script installs Waze and
-# Gmail from Play when they are missing, turns Gmail's notifications off and disables the Play Store, so that no mail
+# before (it then leaves at the end of sitting 2). With an account, and without the owner, the script installs Gmail
+# from Play when it is missing (not Waze, which does not work there), turns Gmail's notifications off and disables the Play Store, so that no mail
 # shows in the shade and Play updates neither Chrome nor WebView, until the end of sitting 2, which puts both back. A
 # dry run changes nothing there.
 function Invoke-EmulatorAccountItem {
@@ -898,7 +906,8 @@ function Invoke-EmulatorAccountItem {
         Add-Result owner 'kestrel-api37: the Play Store is missing or disabled, so the script installs nothing there'
         return
     }
-    $installedEmulator = @(foreach ($package in 'com.waze', 'com.google.android.gm') {
+    # Waze does not work on kestrel-api37 (the owner's choice), so only Gmail is installed there.
+    $installedEmulator = @(foreach ($package in @('com.google.android.gm')) {
             if (-not (Test-Installed $EmulatorSerial $package) -and (Install-FromPlay $EmulatorSerial $package)) { $package }
         })
     Set-AgentRecord $recordFile 'installedEmulator' $installedEmulator
@@ -915,7 +924,8 @@ function Invoke-EmulatorAccountItem {
 # The owner's step at the start of sitting 1 (design D30 steps 2 to 7, with the owner's decisions of 2026-11-22): the
 # A71 unlocked and awake; then each item only when it is not done yet: the missing apps from Play while he watches,
 # Telegram's sign-in on the A71 (never on kestrel-api37), kestrel-api37's account and apps (Invoke-EmulatorAccountItem),
-# and Waze's Home on each device where Waze's deep link to Home starts no navigation; WhatsApp is skipped. The real finger
+# and Waze's Home on the A71 when Waze's deep link to Home starts no navigation (never on kestrel-api37, where Waze does
+# not work); WhatsApp is skipped. The real finger
 # touch always comes, because only a finger can make it.
 function Invoke-OwnerStep {
     $a71 = Get-A71
@@ -954,12 +964,8 @@ function Invoke-OwnerStep {
     }
     Invoke-OwnerItem 'Item 3' { Invoke-EmulatorAccountItem }
     Invoke-OwnerItem 'Item 4' {
-        if ($DryRun) {
-            Add-Result owner 'Waze''s Home: not checked in a dry run'
-            return
-        }
-        $unset = @(foreach ($device in @($a71, $EmulatorSerial)) {
-                if (-not (Test-Installed $device 'com.waze')) { continue }
+        $unset = @(foreach ($device in @($a71, $EmulatorSerial) | Select-Object -Unique) {
+                if (-not (Test-WazeDevice $device owner 'Waze''s Home') -or -not (Test-Installed $device 'com.waze')) { continue }
                 if (Test-WazeHome $device) {
                     Add-Result owner "Waze's Home on $(Get-DeviceName $device): already set, so the owner is not asked (the script cannot read its place, which must be the public place of homePlace)"
                 } else {
@@ -967,9 +973,8 @@ function Invoke-OwnerStep {
                 }
             })
         if (-not $unset) { return }
-        $where = (@($unset | ForEach-Object { if ($_ -eq $EmulatorSerial) { 'the emulator''s window, with the mouse' } else { 'the A71' } })) -join ', then in '
-        if ((Request-OwnerItem "Item 4, about 2 minutes for each device: open Waze on $where, pass its first screens, allow the location, and set Home to $($config.homePlace). Press Enter when Waze shows its map (s skips)." 'skip') -eq 'go') {
-            Add-Result owner "Waze's Home set by the owner on $(@($unset | ForEach-Object { Get-DeviceName $_ }) -join ' and ')"
+        if ((Request-OwnerItem "Item 4, about 2 minutes: open Waze on the A71, pass its first screens, allow the location, and set Home to $($config.homePlace). Press Enter when Waze shows its map (s skips)." 'skip') -eq 'go') {
+            Add-Result owner "Waze's Home set by the owner on the A71"
             foreach ($device in $unset) { Invoke-Device $device 'am force-stop com.waze' | Out-Null }
         }
     }
@@ -995,6 +1000,10 @@ function Invoke-SetupStep {
         $toolbar = Get-ScreenCount $device @{ Package = 'org.mozilla.firefox'; ViewId = 'toolbar' }
         Invoke-Device $device 'am force-stop org.mozilla.firefox' | Out-Null
         Add-Result setup "$(Get-DeviceName $device): runtime permissions granted, notification access on, Firefox $(if ($toolbar -gt 0) { 'shows its toolbar' } else { 'shows no toolbar, maybe its first screens; finish them by hand before sitting 2' })"
+    }
+    if (-not (Test-WazeDevice $a71 setup 'the test location in Waze')) {
+        Set-AgentRecord $recordFile 'wazeA71' 'skipped'
+        return
     }
     if ($DryRun -or -not (Test-Installed $a71 'com.waze')) {
         Set-AgentRecord $recordFile 'wazeA71' 'skipped'
@@ -1863,7 +1872,9 @@ function Invoke-A71RunsStep {
     }
     if ($gmailChecked -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'read-email' 3 @{ Mail = "$($config.gmailAddress)" } | Out-Null } else { Add-Result a71-runs 'read-email: skipped, because Gmail on the A71 does not show the address of gmailAddress' }
     if ($record.hotspot -eq 'ok' -or $DryRun) { Invoke-TaskRuns a71-runs $a71 'hotspot' | Out-Null } else { Add-Result a71-runs 'hotspot: skipped, a limit of the device (sitting 1''s probe)' }
-    if ($record.wazeA71 -eq 'ok') {
+    if (-not (Test-WazeDevice $a71 a71-runs 'waze-home')) {
+        Write-Verbose 'Waze does not run on kestrel-api37.'
+    } elseif ($record.wazeA71 -eq 'ok') {
         $restore = Start-TestLocation $a71
         try { Invoke-TaskRuns a71-runs $a71 'waze-home' | Out-Null } finally { Complete-Restore $restore }
     } else {
@@ -1872,12 +1883,12 @@ function Invoke-A71RunsStep {
     Invoke-TaskRuns a71-runs $a71 'firefox-wiki' | Out-Null
 }
 
-# The emulator's tasks (design D29): the hotspot, Waze when it is installed, Firefox, and the e-mail with the emulator's
+# The emulator's tasks (design D29): the hotspot, Firefox (Waze does not work there: the owner's choice), and the e-mail with the emulator's
 # Google account, the owner's own when emulatorGmailAddress is gmailAddress; none of them needs Telegram or WhatsApp.
 # $With goes to each, as the comparison's model.
 function Invoke-EmulatorTasks([string]$StepName, [hashtable]$With = @{}, [switch]$WithMail) {
     Invoke-TaskRuns $StepName $EmulatorSerial 'hotspot' 3 $With | Out-Null
-    if (Test-Installed $EmulatorSerial 'com.waze') { Invoke-TaskRuns $StepName $EmulatorSerial 'waze-home' 3 $With | Out-Null } else { Add-Result $StepName 'waze-home: skipped, because Waze is not installed on kestrel-api37' }
+    Test-WazeDevice $EmulatorSerial $StepName 'waze-home' | Out-Null
     Invoke-TaskRuns $StepName $EmulatorSerial 'firefox-wiki' 3 $With | Out-Null
     if ($WithMail) {
         $address = if ($config.PSObject.Properties['emulatorGmailAddress']) { "$($config.emulatorGmailAddress)".Trim() } else { '' }
@@ -1897,12 +1908,13 @@ function Invoke-EmulatorRunsStep {
 }
 
 # Design D30 step 19 and D32 item 35: the emulator's three tasks again with -CompareModel as the lightweight model, and a
-# summary per task and model of both. The three tasks need neither Telegram nor WhatsApp (the owner's choices).
+# summary per task and model of both: the hotspot and Firefox, which need neither Telegram nor WhatsApp, because Waze
+# does not work on kestrel-api37 (the owner's choices).
 function Invoke-CompareStep {
     if (-not $DryRun -and -not (Test-CompareModel)) { throw $compareRefused }
-    Add-Result compare 'the comparison runs hotspot, waze-home and firefox-wiki, which need neither Telegram nor WhatsApp'
+    Add-Result compare 'the comparison runs hotspot and firefox-wiki, which need neither Telegram nor WhatsApp; Waze does not work on kestrel-api37'
     Invoke-EmulatorTasks compare @{ Model = $CompareModel }
-    $runs = @(Get-SittingRuns | Where-Object { $_['device'] -eq 'kestrel-api37' -and $_['task'] -in 'hotspot', 'waze-home', 'firefox-wiki', 'stand-in-hotspot', 'stand-in-firefox' })
+    $runs = @(Get-SittingRuns | Where-Object { $_['device'] -eq 'kestrel-api37' -and $_['task'] -in 'hotspot', 'firefox-wiki', 'stand-in-hotspot', 'stand-in-firefox' })
     foreach ($line in Get-RunSummary $runs) { Add-Result compare $line }
 }
 

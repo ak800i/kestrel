@@ -26,7 +26,7 @@ BeforeAll {
         'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
         'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown')
     # The owner's decisions for the sittings (fix-5c-owner), and the helpers that their steps call, which the tests mock.
-    $helpers += @('Get-AccountCount', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
+    $helpers += @('Test-WazeDevice', 'Invoke-SetupStep', 'Invoke-A71RunsStep', 'Grant-AgentPermissions', 'Enable-NotificationAccess', 'Get-AccountCount', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
         'Test-WazeHome', 'Set-EmulatorFix', 'Start-TestLocation', 'Invoke-EmulatorAccountItem', 'Invoke-OwnerItem', 'Invoke-OwnerStep', 'Set-OwnerNames',
         'Request-OwnerItem', 'Install-FromPlay', 'Start-Listening', 'Invoke-FingerCheck', 'Invoke-OwnerStep2', 'Get-DefaultProfileKind', 'Test-CompareModel',
         'Invoke-RecordingsStep', 'Invoke-EmulatorTasks', 'Invoke-EmulatorRunsStep', 'Invoke-CompareStep')
@@ -792,6 +792,10 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Should -Invoke Request-OwnerItem -Times 0 -Exactly
         Should -Invoke Install-FromPlay -Times 0 -Exactly
         Should -Invoke Invoke-FingerCheck -Times 1 -Exactly
+        # Waze does not work on kestrel-api37 (the owner's choice): only the A71's Home is checked.
+        Should -Invoke Test-WazeHome -Times 1 -Exactly -ParameterFilter { $Device -eq $A71 }
+        Should -Invoke Test-WazeHome -Times 0 -Exactly -ParameterFilter { $Device -eq $EmulatorSerial }
+        $results | Should -Contain 'owner: Waze''s Home: not run on kestrel-api37 (the owner''s choice: Waze does not work there)'
         $commands | Should -Contain "$EmulatorSerial pm revoke com.google.android.gm android.permission.POST_NOTIFICATIONS"
         $commands | Should -Contain "$EmulatorSerial pm disable-user --user 0 com.android.vending"
         $record = Read-AgentRecord $recordFile
@@ -902,13 +906,45 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Invoke-EmulatorRunsStep
 
         Should -Invoke Invoke-TaskRuns -Times 1 -Exactly -ParameterFilter { $Task -eq 'read-email' -and $Device -eq $EmulatorSerial -and $With.Mail -eq 'Pera.Test@example.com' }
+        Should -Invoke Invoke-TaskRuns -Times 0 -Exactly -ParameterFilter { $Task -eq 'waze-home' }
+        $results | Should -Contain 'emulator-runs: waze-home: not run on kestrel-api37 (the owner''s choice: Waze does not work there)'
         $results | Should -Contain 'emulator-runs: telegram-late and telegram-photos: not run on kestrel-api37 (the owner''s choice)'
 
         Mock Get-SittingRuns { @() }
         Mock Test-CompareModel { $true }
         Invoke-CompareStep
-        $results | Should -Contain 'compare: the comparison runs hotspot, waze-home and firefox-wiki, which need neither Telegram nor WhatsApp'
-        Should -Invoke Invoke-TaskRuns -Times 3 -Exactly -ParameterFilter { $StepName -eq 'compare' }
+        $results | Should -Contain 'compare: the comparison runs hotspot and firefox-wiki, which need neither Telegram nor WhatsApp; Waze does not work on kestrel-api37'
+        Should -Invoke Invoke-TaskRuns -Times 2 -Exactly -ParameterFilter { $StepName -eq 'compare' }
         Should -Invoke Invoke-TaskRuns -Times 0 -Exactly -ParameterFilter { $StepName -eq 'compare' -and $Task -in 'telegram-late', 'telegram-photos', 'read-email' }
+    }
+
+    It 'skips every Waze step and run on kestrel-api37, also in a dry run whose A71 steps run there, and never installs Waze there (the owner''s choice: Waze does not work there)' {
+        Mock Test-Installed { $true }
+        Mock Grant-AgentPermissions { }
+        Mock Enable-NotificationAccess { }
+        Mock Get-ScreenCount { 1 }
+        Mock Start-TestLocation { [pscustomobject]@{ What = 'the test location' } }
+        Mock Open-App { }
+        Mock Invoke-TaskRuns { @() }
+        Mock Unlock-Device { $true }
+        $DryRun = $true
+        $Serial = $EmulatorSerial
+
+        Invoke-SetupStep
+        Invoke-A71RunsStep
+
+        Should -Invoke Start-TestLocation -Times 0 -Exactly
+        Should -Invoke Open-App -Times 0 -Exactly -ParameterFilter { $Package -eq 'com.waze' }
+        Should -Invoke Invoke-TaskRuns -Times 0 -Exactly -ParameterFilter { $Task -eq 'waze-home' }
+        $results | Should -Contain 'setup: the test location in Waze: not run on kestrel-api37 (the owner''s choice: Waze does not work there)'
+        $results | Should -Contain 'a71-runs: waze-home: not run on kestrel-api37 (the owner''s choice: Waze does not work there)'
+
+        Set-AgentRecord $recordFile 'emulatorPlay' $true
+        $DryRun = $false
+        Mock Test-Installed { $false } -ParameterFilter { $Device -eq $EmulatorSerial }
+        Mock Install-FromPlay { $true }
+        Invoke-EmulatorAccountItem
+        Should -Invoke Install-FromPlay -Times 0 -Exactly -ParameterFilter { $Package -eq 'com.waze' }
+        Should -Invoke Install-FromPlay -Times 1 -Exactly -ParameterFilter { $Package -eq 'com.google.android.gm' }
     }
 }
