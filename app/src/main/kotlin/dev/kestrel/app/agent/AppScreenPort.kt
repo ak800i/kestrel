@@ -76,8 +76,8 @@ internal class AppScreenPort(
     private suspend fun perform(screen: ScreenSession, action: ScreenAction): ActionResult {
         val actions = screen.actions
         return when (action) {
-            is ScreenAction.Tap -> actions.tap(action.key, AgentScreenChecks.expected(action.expect), policy(action.press))
-            is ScreenAction.LongPress -> actions.longPress(action.key, AgentScreenChecks.expected(action.expect), policy(action.press))
+            is ScreenAction.Tap -> actions.tap(action.key, AgentScreenChecks.expected(action.expect), policy(action.press), action.guard)
+            is ScreenAction.LongPress -> actions.longPress(action.key, AgentScreenChecks.expected(action.expect), policy(action.press), action.guard)
             is ScreenAction.TapAt -> actions.tapAt(action.x, action.y)
             is ScreenAction.SetText -> actions.setText(action.key, action.text, AgentScreenChecks.expected(action.expect))
             is ScreenAction.Scroll -> actions.scroll(direction(action.direction), action.key, action.expect?.let(AgentScreenChecks::expected))

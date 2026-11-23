@@ -17,6 +17,7 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.SafetySettings
+import dev.kestrel.safety.SelfChats
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
@@ -636,6 +637,35 @@ class AgentTest {
         assertTrue(harness.screen.actions.isEmpty())
         assertTrue(harness.model.requests.single().context.orEmpty().contains(TaskRun.TEST_MODE_NOTE))
         assertTrue(harness.log.texts(TaskLog.Kind.SAFETY).single().contains("beforeTestMode=Confirm decision=Block"))
+    }
+
+    @Test
+    fun aSendInTestModeIsPressedOnlyOnAScreenThatStillShowsTheOwnersOwnChat() = runTest {
+        // Telegram's Saved Messages and another chat whose Send has the same key, label and class (fix-5c-selfchats-review M1).
+        fun telegram(title: String, subtitle: String?) = ScreenBuilder.screen(SelfChats.TELEGRAM_WEB, "Telegram") {
+            val bar = group("action_bar", 0, 240)
+            icon("Navigate up", 100, parent = bar)
+            val block = icon(listOfNotNull(title, subtitle).joinToString(" "), 0, parent = bar, left = 137, right = 838)
+            text(title, 40, parent = block)
+            if (subtitle != null) text(subtitle, 160, parent = block)
+            val list = list("Messages", 300, 2000)
+            text("Bread and milk", 320, parent = list)
+            field("Message", "I'm late", 2100)
+            button("Send", 2250, left = 900)
+        }
+        val saved = telegram("Saved Messages", null)
+        val harness = Harness(saved, listOf(
+            call("tap", "Send", "Button", null, "reason" to "send it", "category" to "sending"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ), settings = AgentSettings(safety = SafetySettings(testMode = true)))
+        harness.owner.confirms += ConfirmEnd.YES
+
+        harness.run("Send a message to my Saved Messages that I'm late")
+
+        val press = harness.screen.actions.filterIsInstance<ScreenAction.Tap>().single()
+        val guard = press.guard
+        assertTrue(guard != null && guard(saved))
+        assertFalse(guard!!(telegram("Ana Petrović", "online")))
     }
 
     @Test

@@ -121,20 +121,26 @@ object SelfChats {
     }
 
     /**
-     * Telegram's Saved Messages as Telegram 13.3.1 shows it: the toolbar's only text is the title "Saved Messages", which
-     * its title block repeats, with no second line. Every other chat has a second line that its owner cannot remove: a
-     * person's "last seen", "online" or "bot", a group's members or a channel's subscribers. The toolbar is what lies
-     * wholly inside the top part of the window, outside the messages (238 of 2400 pixels on the A71), so that a pinned
-     * message just below it is not read; a field there means that a search has taken the title's place.
+     * Telegram's Saved Messages as Telegram 13.3.1 shows it, read from the tree alone, so that the window's size never
+     * decides (fix-5c-selfchats-review I1): the one text "Saved Messages" outside the messages lies in a title block whose
+     * own description is exactly "Saved Messages", and that block lies in a toolbar. Telegram adds the line below the title
+     * to that description, and every other chat has such a line, which its owner cannot remove: a person's "last seen",
+     * "online" or "bot", a group's members or a channel's subscribers. Above the toolbar's bottom, outside the messages, the
+     * window holds no other text and no field, so a line below the title outside its block, a second toolbar (Telegram
+     * moving from one chat to another) or a search in the title's place fails too.
      */
     private fun telegramChat(snapshot: ScreenSnapshot, window: WindowSummary): Boolean {
-        val bottom = window.bounds.top + window.bounds.height * HEADER
-        val toolbar = snapshot.elements.indices.filter {
-            val element = snapshot.elements[it]
-            element.windowId == window.id && element.bounds.bottom <= bottom && !ScreenTree.insideScrollable(snapshot, it)
-        }
-        val texts = toolbar.mapNotNull { snapshot.elements[it].text?.trim()?.takeIf(String::isNotEmpty) }.distinct()
-        return toolbar.none { snapshot.elements[it].editable } && texts == listOf(SAVED_MESSAGES)
+        val elements = snapshot.elements
+        val outside = elements.indices.filter { elements[it].windowId == window.id && !ScreenTree.insideScrollable(snapshot, it) }
+        val title = outside.singleOrNull { elements[it].text?.trim() == SAVED_MESSAGES } ?: return false
+        val block = elements[title].parent ?: return false
+        val toolbar = elements[block].parent ?: return false
+        if (elements[block].contentDescription?.trim() != SAVED_MESSAGES || !elements[block].text.isNullOrBlank()) return false
+        if (elements[toolbar].scrollable || ScreenTree.insideScrollable(snapshot, toolbar)) return false
+        val bottom = elements[toolbar].bounds.bottom
+        val above = outside.filter { elements[it].bounds.top < bottom }
+        val texts = above.mapNotNull { elements[it].text?.trim()?.takeIf(String::isNotEmpty) }
+        return texts == listOf(SAVED_MESSAGES) && above.none { elements[it].editable }
     }
 
     /** One sign of Viber's notes chat: a note's checkbox in the messages, the "Reminders list" icon or "Hide completed notes". */

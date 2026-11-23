@@ -55,6 +55,28 @@ Describe 'The helpers of the agent''s task check' {
             @($table[$name].Confirm) | Should -Be @('typing_screen_text', 'sending') -Because $name
         }
         @($table.Keys | Where-Object { @($table[$_].Confirm) -contains 'calling' }) | Should -BeNullOrEmpty
+        # Test mode blocks Telegram's share picker, so the photo tasks are known gaps of v1, for v1.1 (fix-5c-selfchats-review).
+        @($table.Keys | Where-Object { $table[$_].Gap }) | Should -Be @('telegram-photos', 'stand-in-messenger-photos')
+        @($table.Keys | Where-Object { $table[$_].Gap } | ForEach-Object { $table[$_].Gap }) | Should -Be @('v1.1', 'v1.1')
+    }
+
+    It 'passes a known gap of v1 only when test mode ended it, nothing ran unconfirmed and no photo was shared (fix-5c-selfchats-review)' {
+        $blocked = ConvertFrom-HookPairs 'state=done end=TEST_MODE steps=4 confirmed=1 unconfirmed=0 beforeTestMode=0 shareItems=0'
+        $finished = ConvertFrom-HookPairs 'state=done end=FINISHED steps=5 confirmed=2 unconfirmed=0 beforeTestMode=0 shareItems=3'
+        $ran = ConvertFrom-HookPairs 'state=done end=TEST_MODE steps=4 confirmed=0 unconfirmed=1 beforeTestMode=1 shareItems=0'
+        Mock Read-Presses { }
+
+        Test-TaskPassed 'gap' $blocked $true | Should -BeTrue
+        Test-TaskPassed 'gap' $finished $true | Should -BeFalse
+        Test-TaskPassed 'gap' $ran $true | Should -BeFalse
+        Test-TaskPassed 'gap' $blocked $false | Should -BeFalse
+        $verdict = Get-RunVerdict 'gap' $finished $false $true '' ''
+        "$($verdict.Result) $($verdict.Reason)" | Should -BeExactly 'fail end'
+        Test-TaskCheck 'gap-photos' $null $blocked | Should -BeTrue
+        Test-TaskCheck 'gap-photos' $null $finished | Should -BeFalse
+        Test-TaskCheck 'gap-fixture-photos' $null $blocked | Should -BeTrue
+        Mock Read-Presses { 'share' }
+        Test-TaskCheck 'gap-fixture-photos' $null $blocked | Should -BeFalse
     }
 
     It 'makes markers of two different words without digits, never one that was used' {
@@ -415,6 +437,19 @@ Describe 'The runs of a task (fix-5c-sitting2)' {
         @($written | ForEach-Object { ($_ -split ' ')[1, 2] -join ' ' }) | Should -Be @('run=1 result=pass', 'run=2 result=fail', 'run=3 result=fail')
         $written[1] | Should -Match 'reason=stopped$'
         $written[2] | Should -Match 'reason=stopped$'
+    }
+
+    It 'runs a known gap of v1 once, whatever -Runs says, and judges it by test mode''s end (fix-5c-selfchats-review)' {
+        $Task = 'stand-in-messenger-photos'
+        $entry = (Get-TaskTable)[$Task]
+        $Runs = 3
+        Mock Invoke-TaskHook { 'state=done end=TEST_MODE steps=4 workMs=9000 credits=0.00 confirmed=1 unconfirmed=0 beforeTestMode=0 shareItems=0' } -ParameterFilter { $Command -eq 'agent-task' }
+
+        $output = @(Invoke-AllTaskRuns 3>&1)
+
+        @($output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] }) | Should -Be @(0)
+        ($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | Out-String) | Should -Match 'known gap of v1, for v1\.1'
+        @($written) | Should -Be @('task=stand-in-messenger-photos run=1 result=pass end=TEST_MODE check=pass steps=4 workMs=9000 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok')
     }
 
     It 'writes reason=stalled when the device stops answering while a live task runs, with credits=unknown' {

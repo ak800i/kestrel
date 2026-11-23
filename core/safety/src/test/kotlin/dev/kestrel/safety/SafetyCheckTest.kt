@@ -505,11 +505,16 @@ class SafetyCheckTest {
         assertEquals(listOf(TypedText(field, "Message", "com.example.chat", "I'm late")), typed.typed)
     }
 
-    /** A Telegram-like chat of [packageName] with [title] and [subtitle], if any, in its header and a Send button. */
+    /**
+     * A Telegram-like chat of [packageName]: a toolbar whose title block is described by [title] and [subtitle], if any, and
+     * holds them, as Telegram draws it, and a Send button.
+     */
     private fun telegramChat(packageName: String, title: String, subtitle: String?): Pair<TestScreen, String> {
         val screen = TestScreen(packageName)
-        screen.add(80, title, id = "chat_title", left = 150, height = 50, clickable = false)
-        if (subtitle != null) screen.add(140, subtitle, left = 150, height = 40, clickable = false)
+        val bar = screen.add(0, null, height = 200)
+        val block = screen.add(0, null, parent = bar, left = 150, right = 800, height = 200, description = listOfNotNull(title, subtitle).joinToString(" "))
+        screen.add(80, title, id = "chat_title", parent = block, left = 150, height = 50, clickable = false)
+        if (subtitle != null) screen.add(140, subtitle, parent = block, left = 150, height = 40, clickable = false)
         screen.add(1800, null, editable = true, focused = true, hint = "Message", text = "Test", right = 850)
         return screen to screen.add(1800, "Send", left = 850)
     }

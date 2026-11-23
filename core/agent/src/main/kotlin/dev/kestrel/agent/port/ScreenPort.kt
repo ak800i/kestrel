@@ -66,14 +66,17 @@ data class IntentSpec(
         "IntentSpec(action=$action, data=${data?.length ?: 0} chars, package=${packageName != null}, browsable=$browsable, extras=${extras.size})"
 }
 
-/** One action of the agent on the screen (design D1, D10). */
+/**
+ * One action of the agent on the screen (design D1, D10). A press's [Tap.guard] is test mode's check, which `:app` runs
+ * again on every snapshot that the press acts on, and the press does nothing when it says no (fix-5c-selfchats-review M1).
+ */
 sealed interface ScreenAction {
-    data class Tap(val key: String, val expect: Expect, val press: Press) : ScreenAction {
-        override fun toString(): String = "Tap(key=${key.length} chars, press=$press)"
+    data class Tap(val key: String, val expect: Expect, val press: Press, val guard: ((ScreenSnapshot) -> Boolean)? = null) : ScreenAction {
+        override fun toString(): String = "Tap(key=${key.length} chars, press=$press, guard=${guard != null})"
     }
 
-    data class LongPress(val key: String, val expect: Expect, val press: Press) : ScreenAction {
-        override fun toString(): String = "LongPress(key=${key.length} chars, press=$press)"
+    data class LongPress(val key: String, val expect: Expect, val press: Press, val guard: ((ScreenSnapshot) -> Boolean)? = null) : ScreenAction {
+        override fun toString(): String = "LongPress(key=${key.length} chars, press=$press, guard=${guard != null})"
     }
 
     /** A tap at a point, for an OCR line (design D20). */

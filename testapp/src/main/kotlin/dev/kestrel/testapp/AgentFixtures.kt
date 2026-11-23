@@ -72,13 +72,16 @@ internal fun Activity.agentPage(): LinearLayout {
 /**
  * A chat's toolbar (view ID `toolbar`): Back (`up`), the title (`chat_title`) and the subtitle (`chat_subtitle`), and icon
  * buttons that carry only a description, so that the header's texts are the title and the subtitle alone, as test mode's
- * recogniser reads them (design D18).
+ * recogniser reads them (design D18). With [titleBlock], as a chat's toolbar in Telegram 13.3.1: the toolbar can be
+ * tapped, and the block that holds the title and the subtitle is described by them, one per line, so that both are
+ * elements of Kestrel's snapshot (fix-5c-selfchats-review I1).
  */
-internal fun LinearLayout.addToolbar(title: String, subtitle: String?, onBack: () -> Unit, icons: List<View> = emptyList()) {
+internal fun LinearLayout.addToolbar(title: String, subtitle: String?, onBack: () -> Unit, icons: List<View> = emptyList(), titleBlock: Boolean = false) {
     val bar = LinearLayout(context).apply {
         id = R.id.toolbar
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
+        isClickable = titleBlock
     }
     bar.addView(ImageButton(context).apply {
         id = R.id.up
@@ -86,7 +89,10 @@ internal fun LinearLayout.addToolbar(title: String, subtitle: String?, onBack: (
         contentDescription = "Navigate up"
         setOnClickListener { onBack() }
     })
-    val texts = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    val texts = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        if (titleBlock) contentDescription = listOfNotNull(title, subtitle).joinToString("\n")
+    }
     texts.addView(TextView(context).apply {
         id = R.id.chat_title
         text = title
@@ -142,7 +148,7 @@ internal class ChatScreen(
             list.removeAllViews()
             report("Chat deleted")
         }
-        page.addToolbar(chat.name, chat.subtitle, { activity.finish() }, icons)
+        page.addToolbar(chat.name, chat.subtitle, { activity.finish() }, icons, titleBlock = true)
         list = RowList(activity, "Messages").apply { id = R.id.messages }
         page.addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         for (message in messages) addBubble(message)

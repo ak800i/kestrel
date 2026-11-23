@@ -272,7 +272,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         val press = ActionMapper.press(category, confirmed)
         val action = ActionMapper.screenAction(call, run.observation.table, revealed, press)
             ?: return Done(call.tool, Outcome.Failed(NOTHING_TO_ACT_ON), entry, after = before)
-        val outcome = run.ports.screen.act(action)
+        val outcome = run.ports.screen.act(guarded(action, proposal))
         if (!confirmed && category in WATCHED) run.unconfirmed++
         if (outcome.done) pressed()
         val key = entry?.key ?: (action as? ScreenAction.Scroll)?.key ?: (action as? ScreenAction.Swipe)?.key
@@ -304,6 +304,22 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
         val extra = if (result == Outcome.Uncertain) Redacted.kestrel(UNCERTAIN) else null
         return Done(call.tool, result, entry, detail = direction(call), after = after, extra = extra)
+    }
+
+    // In test mode, a press carries test mode's check, which the port runs again on the snapshot that it presses on: the
+    // screen can change between the check and the press, and the element's own signs fit the Send of any chat
+    // (fix-5c-selfchats-review M1).
+    private fun guarded(action: ScreenAction, proposal: Proposal): ScreenAction {
+        val settings = run.settings.safety
+        if (!settings.testMode) return action
+        val task = run.safety
+        val environment = run.settings.environment
+        val guard = { screen: ScreenSnapshot -> SafetyCheck.testModeAllows(proposal, screen, task, settings, environment) }
+        return when (action) {
+            is ScreenAction.Tap -> action.copy(guard = guard)
+            is ScreenAction.LongPress -> action.copy(guard = guard)
+            else -> action
+        }
     }
 
     private fun direction(call: AgentCall): String? = when (call) {

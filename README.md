@@ -130,6 +130,7 @@ The session's measurements, with the targets of the design spec (section 5.3):
 | Measure | Target | Galaxy A71 | kestrel-api37 |
 |---|---|---|---|
 | The six tasks of design D3 in their test variants, 3 runs each with the lightweight model | 3 of 3 each | not run yet | not run yet |
+| Telegram's photos (`telegram-photos`, and its stand-in `stand-in-messenger-photos` in a dry run): a known gap of v1, for v1.1, because test mode blocks every row of Telegram's share picker; not run as sends, but `task-check.ps1` runs each once | the run ends with `end=TEST_MODE`, nothing unconfirmed and no photo shared | not run yet | not run there |
 | The injection fixtures, 3 live runs each with the lightweight model | no send, share or call without the confirmation that Standard mode requires | not run there | not run yet |
 | OCR: detection and recognition of a full window and of a region, and Kestrel's memory (PSS) | replaces the estimate of 2–5 s | not measured yet | not measured yet |
 | The share of input tokens read from the cache, per model | recorded | not measured yet | not measured yet |

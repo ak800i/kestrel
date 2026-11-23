@@ -58,14 +58,24 @@ class ScreenActions internal constructor(
      * A key names a position, not an identity. After a list has added, removed or scrolled rows, a key from an older
      * snapshot can name a look-alike element in another row, so the caller must first check that the element is still
      * the one it saw (design spec, section 9.2). With [expected], Kestrel also checks the element of every snapshot that
-     * it acts on, the fresh one too, and gives [ActionResult.CHANGED] when [expected] refuses it.
+     * it acts on, the fresh one too, and gives [ActionResult.CHANGED] when [expected] refuses it. [guard] checks each of
+     * these snapshots as a whole in the same way, such as test mode's check that the window still shows the owner's own
+     * chat (fix-5c-selfchats-review M1).
      */
-    suspend fun tap(key: String, expected: ((ScreenElement) -> Boolean)? = null, policy: PressPolicy = PressPolicy.VERIFIED): ActionResult =
-        press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap, expected, policy)
+    suspend fun tap(
+        key: String,
+        expected: ((ScreenElement) -> Boolean)? = null,
+        policy: PressPolicy = PressPolicy.VERIFIED,
+        guard: ((ScreenSnapshot) -> Boolean)? = null,
+    ): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap, expected, policy, guard)
 
     /** Long-presses the element with [key], in the same way as [tap]. */
-    suspend fun longPress(key: String, expected: ((ScreenElement) -> Boolean)? = null, policy: PressPolicy = PressPolicy.VERIFIED): ActionResult =
-        press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress, expected, policy)
+    suspend fun longPress(
+        key: String,
+        expected: ((ScreenElement) -> Boolean)? = null,
+        policy: PressPolicy = PressPolicy.VERIFIED,
+        guard: ((ScreenSnapshot) -> Boolean)? = null,
+    ): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress, expected, policy, guard)
 
     suspend fun tapAt(x: Int, y: Int): ActionResult = pressed(gestureAt(ScreenPoint(x, y), Gestures::tap))
 
@@ -463,10 +473,12 @@ class ScreenActions internal constructor(
         fallback: (Int, Int) -> GestureDescription,
         expected: ((ScreenElement) -> Boolean)?,
         policy: PressPolicy,
+        guard: ((ScreenSnapshot) -> Boolean)?,
     ): ActionResult {
         cardOpen()?.let { return it }
         val live = snapshots.current()
         refused(live.snapshot, key, expected)?.let { return it }
+        if (guard != null && !guard(live.snapshot)) return ActionResult.CHANGED
         val node = live.node(key) ?: return NOT_ON_SCREEN
         val windowId = live.snapshot.element(key)?.windowId
         // Gecko's long click does nothing and answers true (r57), so a long press on a Firefox page is always a gesture,
@@ -484,7 +496,7 @@ class ScreenActions internal constructor(
             }
             // Android answered no, but some apps act all the same, so a second press could send twice (D32 item 29).
             if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
-            return pressAgain(key, action, fallback, expected, live.snapshot, windowId, target.node)
+            return pressAgain(key, action, fallback, expected, guard, live.snapshot, windowId, target.node)
         }
         if (!gecko && node.refresh() && node.isVisibleToUser) {
             // The element is still there, but what a touch on it reaches does not offer the action: a gesture presses it.
@@ -497,12 +509,13 @@ class ScreenActions internal constructor(
         val fresh = snapshots.current()
         val element = fresh.snapshot.element(key) ?: return GONE
         if (expected != null && !expected(element)) return ActionResult.CHANGED
+        if (guard != null && !guard(fresh.snapshot)) return ActionResult.CHANGED
         val freshTarget = if (gecko) null else fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
         if (freshTarget != null && freshTarget.node.offers(action)) {
             if (freshTarget.node.perform(action)) return settled(ActionMethod.RETRY_ACTION)
             if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
-            return pressAgain(key, action, fallback, expected, fresh.snapshot, element.windowId, freshTarget.node)
+            return pressAgain(key, action, fallback, expected, guard, fresh.snapshot, element.windowId, freshTarget.node)
         }
         return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback))
     }
@@ -517,6 +530,7 @@ class ScreenActions internal constructor(
         action: Int,
         fallback: (Int, Int) -> GestureDescription,
         expected: ((ScreenElement) -> Boolean)?,
+        guard: ((ScreenSnapshot) -> Boolean)?,
         before: ScreenSnapshot,
         windowId: Int?,
         refusedNode: AccessibilityNodeInfo,
@@ -527,6 +541,7 @@ class ScreenActions internal constructor(
         if (!Presses.unchanged(before, fresh.snapshot, windowId)) return ActionResult.UNCERTAIN
         val element = fresh.snapshot.element(key) ?: return ActionResult.UNCERTAIN
         if (expected != null && !expected(element)) return ActionResult.CHANGED
+        if (guard != null && !guard(fresh.snapshot)) return ActionResult.CHANGED
         val freshTarget = fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && freshTarget.node.isEnabled && freshTarget.node.offers(action) && freshTarget.node != refusedNode) {
             return if (freshTarget.node.perform(action)) settled(ActionMethod.RETRY_ACTION) else ActionResult.UNCERTAIN

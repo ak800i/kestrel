@@ -54,83 +54,97 @@ class SelfChatsTest {
         return screen to keys
     }
 
-    private val telegram = setOf(SelfChats.TELEGRAM)
-
-    private fun recognise(pair: Pair<TestScreen, String?>, active: Set<String> = telegram, aliases: Map<String, String> = emptyMap(), flow: ShareFlow? = null, owner: SafetySettings = settings) =
+    private fun recognise(pair: Pair<TestScreen, String?>, active: Set<String> = SelfChats.ACTIVE, aliases: Map<String, String> = emptyMap(), flow: ShareFlow? = null, owner: SafetySettings = settings) =
         SelfChats.recognise(pair.first.snapshot(), pair.second, owner, flow, aliases, active)
 
     /**
-     * A Telegram chat in the structure that sitting 1 recorded from Telegram 13.3.1's Saved Messages on the A71 (1080 × 2400
-     * pixels): the messages behind everything; the toolbar with Back, the title block that repeats its texts, the title
-     * and, for any other chat, the line below it, and two icons; a pinned message just below the toolbar; the message field
-     * and Send. Returns the snapshot and Send.
+     * A Telegram chat in the structure that sitting 1 recorded from Telegram 13.3.1's Saved Messages on the A71, in [window]
+     * (the A71's full screen unless the test gives a split screen, a pop-up window or a bubble), with [inset] pixels of the
+     * status bar at its top: the messages behind everything; the toolbar with Back, the title block, whose own description
+     * is the title and, for any other chat, the line below it ([description] unless the test gives another), the title and
+     * that line, and two icons; a pinned message just below the toolbar; the message field and Send. The toolbar is 147
+     * pixels tall below the inset in every window, because Telegram sizes it in dp. Returns the snapshot and Send.
      */
-    private fun telegram(title: String, subtitle: String? = null, packageName: String = SelfChats.TELEGRAM_WEB, extra: TestScreen.() -> Unit = {}): Pair<TestScreen, String?> {
-        val screen = TestScreen(packageName, bounds = IntRect(0, 0, 1080, 2400))
-        val messages = screen.add(0, null, className = RECYCLER, scrollable = true, axis = ScrollAxis.VERTICAL, right = 1080, height = 2400, clickable = false)
-        screen.add(0, "Note", parent = messages, className = VIEW_GROUP, right = 1080, height = 833, clickable = false)
-        screen.add(913, "Note", parent = messages, className = VIEW_GROUP, right = 1080, height = 226, clickable = false)
-        val bar = screen.add(0, null, className = FRAME, right = 1080, height = 238)
-        screen.add(91, null, parent = bar, className = IMAGE, left = 6, right = 148, height = 147, description = "Go back")
-        val block = screen.add(0, null, parent = bar, className = FRAME, left = 137, right = 838, height = 238, description = listOfNotNull(title, subtitle).joinToString(" "))
+    private fun telegram(
+        title: String,
+        subtitle: String? = null,
+        packageName: String = SelfChats.TELEGRAM_WEB,
+        window: IntRect = FULL_SCREEN,
+        inset: Int = STATUS_BAR,
+        description: String? = listOfNotNull(title, subtitle).joinToString(" "),
+        extra: TestScreen.(bar: String) -> Unit = {},
+    ): Pair<TestScreen, String?> {
+        val top = window.top
+        val left = window.left
+        val right = window.right
+        val screen = TestScreen(packageName, bounds = window)
+        val messages = screen.add(top, null, className = RECYCLER, scrollable = true, axis = ScrollAxis.VERTICAL, left = left, right = right, height = window.height, clickable = false)
+        screen.add(top + inset + 400, "Note", parent = messages, className = VIEW_GROUP, left = left, right = right, height = 200, clickable = false)
+        val bar = screen.add(top, null, className = FRAME, left = left, right = right, height = inset + 147)
+        screen.add(top + inset, null, parent = bar, className = IMAGE, left = left + 6, right = left + 148, height = 147, description = "Go back")
+        val block = screen.add(top, null, parent = bar, className = FRAME, left = left + 137, right = left + 700, height = inset + 147, description = description)
         if (subtitle == null) {
-            screen.add(122, title, parent = block, className = TEXT, left = 289, right = 806, height = 86, clickable = false)
+            screen.add(top + inset + 31, title, parent = block, className = TEXT, left = left + 289, right = left + 680, height = 86, clickable = false)
         } else {
-            screen.add(105, title, parent = block, className = TEXT, left = 289, right = 806, height = 60, clickable = false)
-            screen.add(165, subtitle, parent = block, className = TEXT, left = 289, right = 806, height = 48, clickable = false)
+            screen.add(top + inset + 14, title, parent = block, className = TEXT, left = left + 289, right = left + 680, height = 60, clickable = false)
+            screen.add(top + inset + 74, subtitle, parent = block, className = TEXT, left = left + 289, right = left + 680, height = 48, clickable = false)
         }
-        screen.add(91, null, parent = bar, className = IMAGE_BUTTON, left = 857, right = 969, height = 147, description = "Search")
-        screen.add(91, null, parent = bar, className = IMAGE_BUTTON, left = 941, right = 1053, height = 147, description = "More options")
-        val pinned = screen.add(243, null, className = FRAME, left = 19, right = 1061, height = 126)
-        screen.add(263, "Pinned Message", parent = pinned, className = TEXT, left = 80, right = 945, height = 48, clickable = false)
-        screen.add(310, "Note", parent = pinned, className = TEXT, left = 80, right = 945, height = 48, clickable = false)
-        screen.add(2221, null, className = IMAGE, left = 27, right = 143, height = 116, description = "Emoji")
-        screen.add(2226, null, className = EDIT, editable = true, hint = "Message", text = "Test", left = 151, right = 939, height = 107)
-        val send = screen.add(2221, null, className = VIEW, left = 798, right = 1061, height = 116, description = "Send")
-        screen.extra()
+        screen.add(top + inset, null, parent = bar, className = IMAGE_BUTTON, left = right - 223, right = right - 111, height = 147, description = "Search")
+        screen.add(top + inset, null, parent = bar, className = IMAGE_BUTTON, left = right - 139, right = right - 27, height = 147, description = "More options")
+        val pinned = screen.add(top + inset + 152, null, className = FRAME, left = left + 19, right = right - 19, height = 126)
+        screen.add(top + inset + 172, "Pinned Message", parent = pinned, className = TEXT, left = left + 80, right = right - 135, height = 48, clickable = false)
+        screen.add(top + inset + 219, "Note", parent = pinned, className = TEXT, left = left + 80, right = right - 135, height = 48, clickable = false)
+        screen.add(window.bottom - 179, null, className = IMAGE, left = left + 27, right = left + 143, height = 116, description = "Emoji")
+        screen.add(window.bottom - 174, null, className = EDIT, editable = true, hint = "Message", text = "Test", left = left + 151, right = right - 141, height = 107)
+        val send = screen.add(window.bottom - 179, null, className = VIEW, left = right - 282, right = right - 19, height = 116, description = "Send")
+        screen.extra(bar)
         return screen to send
     }
 
     @Test
-    fun telegramsSavedMessagesIsTheRecordedToolbarInBothPackagesAndItsRuleIsActive() {
+    fun telegramsSavedMessagesIsTheRecordedToolbarInBothPackagesInEveryWindowAndItsRuleIsActive() {
         assertEquals(setOf(SelfChats.TELEGRAM, SelfChats.TELEGRAM_WEB), SelfChats.ACTIVE)
-        assertTrue(recognise(telegram("Saved Messages"), active = SelfChats.ACTIVE))
-        assertTrue(recognise(telegram("Saved Messages", packageName = SelfChats.TELEGRAM), active = SelfChats.ACTIVE))
+        assertTrue(recognise(telegram("Saved Messages")))
+        assertTrue(recognise(telegram("Saved Messages", packageName = SelfChats.TELEGRAM)))
         // The check without a target, as the hook selfchat-check makes it.
-        assertTrue(recognise(telegram("Saved Messages").first to null, active = SelfChats.ACTIVE))
-        assertFalse(recognise(telegram("Saved Messages", packageName = "com.example.messenger"), active = SelfChats.ACTIVE))
+        assertTrue(recognise(telegram("Saved Messages").first to null))
+        assertFalse(recognise(telegram("Saved Messages", packageName = "com.example.messenger")))
+        for ((window, inset) in WINDOWS) assertTrue("$window", recognise(telegram("Saved Messages", window = window, inset = inset)))
     }
 
     @Test
     fun anAliasAppliesTelegramsRuleOnlyToTheFixtures() {
-        val fixture = chat("dev.kestrel.testapp", "Saved Messages", null)
+        val fixture = telegram("Saved Messages", packageName = "dev.kestrel.testapp")
 
         assertTrue(recognise(fixture, active = emptySet(), aliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM)))
         // An alias never turns on a rule for a real app's package (review 2 n2).
-        val lookAlike = chat("com.example.messenger", "Saved Messages", null)
+        val lookAlike = telegram("Saved Messages", packageName = "com.example.messenger")
         assertFalse(recognise(lookAlike, active = emptySet(), aliases = mapOf("com.example.messenger" to SelfChats.TELEGRAM)))
         assertFalse(recognise(fixture, active = emptySet()))
         assertTrue(SafetyEnvironment().selfChatAliases.isEmpty())
     }
 
     @Test
-    fun aChatWithAPersonAGroupOrAChannelIsNoSelfChat() {
-        assertFalse(recognise(telegram("Ana", "last seen recently")))
-        assertFalse(recognise(telegram("Ana", "online")))
-        assertFalse(recognise(telegram("Close friends", "12 members")))
-        assertFalse(recognise(telegram("News", "1,024 subscribers")))
-        assertFalse(recognise(telegram("Helper", "bot")))
+    fun aChatWithAPersonAGroupOrAChannelIsNoSelfChatInAnyWindow() {
+        for ((window, inset) in WINDOWS) {
+            assertFalse("$window", recognise(telegram("Ana", "last seen recently", window = window, inset = inset)))
+            assertFalse("$window", recognise(telegram("Ana", "online", window = window, inset = inset)))
+            assertFalse("$window", recognise(telegram("Close friends", "12 members", window = window, inset = inset)))
+            assertFalse("$window", recognise(telegram("News", "1,024 subscribers", window = window, inset = inset)))
+            assertFalse("$window", recognise(telegram("Helper", "bot", window = window, inset = inset)))
+        }
         // A person's chat with a message that names the self-chat.
         assertFalse(recognise(telegram("Ana", "online") { add(1300, "Saved Messages", parent = "${SelfChats.TELEGRAM_WEB}|0|", clickable = false) }))
     }
 
     @Test
-    fun aChatThatTheOwnerNamedSavedMessagesIsNoSelfChat() {
-        // Telegram shows a line below the name of every other chat, which its owner cannot remove.
-        for (line in listOf("last seen recently", "last seen a long time ago", "online", "typing…", "3 members", "15 subscribers", "bot")) {
-            assertFalse(line, recognise(telegram("Saved Messages", line)))
+    fun aContactGroupChannelOrBotNamedSavedMessagesIsNoSelfChatInAnyWindow() {
+        // Telegram shows a line below the name of every other chat, which its owner cannot remove, and adds it to the title
+        // block's description; in a split screen, a pop-up window or a bubble, the toolbar keeps its size in dp.
+        val lines = listOf("last seen recently", "last seen a long time ago", "online", "typing…", "3 members", "15 subscribers", "bot", "Saved Messages")
+        for ((window, inset) in WINDOWS) {
+            for (line in lines) assertFalse("$window $line", recognise(telegram("Saved Messages", line, window = window, inset = inset)))
         }
-        assertFalse(recognise(telegram("Saved Messages", "Saved Messages")))
     }
 
     @Test
@@ -141,6 +155,22 @@ class SelfChatsTest {
         // Another text in the toolbar, such as a state of the connection in the title's place.
         assertFalse(recognise(telegram("Saved Messages") { add(91, "Connecting…", left = 300, right = 800, height = 60, className = TEXT, clickable = false) }))
         assertFalse(recognise(telegram("Connecting…")))
+        for ((window, inset) in WINDOWS) {
+            // A line below the title outside its block, or a title block whose description is not the title alone or is missing.
+            val outside = telegram("Saved Messages", window = window, inset = inset) { bar ->
+                add(window.top + inset + 100, "last seen recently", parent = bar, className = TEXT, left = window.left + 289, right = window.left + 680, height = 48, clickable = false)
+            }
+            assertFalse("$window", recognise(outside))
+            assertFalse("$window", recognise(telegram("Saved Messages", window = window, inset = inset, description = "Saved Messages last seen recently")))
+            assertFalse("$window", recognise(telegram("Saved Messages", window = window, inset = inset, description = null)))
+            // Two toolbars, as while Telegram moves from one chat to the next, each with a title "Saved Messages".
+            val twice = telegram("Saved Messages", window = window, inset = inset) {
+                val other = add(window.top, null, className = FRAME, left = window.left, right = window.right, height = inset + 147)
+                val block = add(window.top, null, parent = other, className = FRAME, left = window.left + 137, right = window.left + 700, height = inset + 147, description = "Saved Messages")
+                add(window.top + inset + 31, "Saved Messages", parent = block, className = TEXT, left = window.left + 289, right = window.left + 680, height = 86, clickable = false)
+            }
+            assertFalse("$window", recognise(twice))
+        }
         // No toolbar at all, or a title below the toolbar's part of the window.
         val low = TestScreen(SelfChats.TELEGRAM_WEB, bounds = IntRect(0, 0, 1080, 2400))
         low.add(300, "Saved Messages", className = TEXT, left = 289, right = 806, height = 86, clickable = false)
@@ -153,7 +183,12 @@ class SelfChatsTest {
     @Test
     fun aSearchIsNoSelfChat() {
         // A search in the chat takes the title's place with its field.
-        assertFalse(recognise(telegram("Saved Messages") { add(91, null, className = EDIT, editable = true, hint = "Search", left = 150, right = 850, height = 147) }))
+        for ((window, inset) in WINDOWS) {
+            val search = telegram("Saved Messages", window = window, inset = inset) { bar ->
+                add(window.top + inset, null, parent = bar, className = EDIT, editable = true, hint = "Search", left = window.left + 150, right = window.left + 700, height = 147)
+            }
+            assertFalse("$window", recognise(search))
+        }
         // The search page of the chat list or the share picker, as the investigation recorded it: the row "Saved Messages",
         // named by itself, with its check box, whether or not it lies in a list.
         for (inList in listOf(false, true)) {
@@ -304,6 +339,16 @@ class SelfChatsTest {
     }
 
     private companion object {
+        val FULL_SCREEN = IntRect(0, 0, 1080, 2400)
+        const val STATUS_BAR = 91
+
+        /**
+         * The A71's full screen and the windows in which a share of the window's height would cut the toolbar between the
+         * title and the line below it (fix-5c-selfchats-review I1): the upper app of a split screen with the status bar, and a
+         * pop-up window and a bubble without it.
+         */
+        val WINDOWS = listOf(FULL_SCREEN to STATUS_BAR, IntRect(0, 0, 1080, 1600) to STATUS_BAR, IntRect(0, 700, 1080, 1700) to 0, IntRect(90, 1200, 990, 2000) to 0)
+
         const val RECYCLER = "androidx.recyclerview.widget.RecyclerView"
         const val VIEW_GROUP = "android.view.ViewGroup"
         const val VIEW = "android.view.View"
