@@ -1,0 +1,180 @@
+package dev.kestrel.eval.command
+
+import dev.kestrel.eval.Cli
+import dev.kestrel.eval.device.FakeAdb
+import dev.kestrel.eval.report.Report
+import kotlinx.serialization.json.Json
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.nio.file.Files
+
+/** The commands, their exit codes and their results files (design D2, D6 and D10 of sub-project 6), on a scripted kestrel-api37. */
+class CommandsTest {
+    private val fake = FakeEnvironment()
+
+    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") }
+
+    @Test
+    fun aCommandLineThatTheToolDoesNotTakeIsRefusedWithTheUsage() {
+        for (args in listOf(emptyList(), listOf("fly"), listOf("run", "--task", "hotspot"), listOf("run", "--device", "emulator-5554", "--task", "hotspot", "--runs", "11"),
+            listOf("run", "--device", "emulator-5554", "--task", "hotspot", "--live", "--dry-run"), listOf("suite", "--device", "emulator-5554", "--name", "Ana"))) {
+            assertEquals(args.toString(), Cli.EXIT_REFUSED, fake.cli(*args.toTypedArray()))
+        }
+        assertTrue(fake.output.contains("Usage: scripts\\eval.ps1 <command> [options]"))
+        assertTrue(fake.adb.commands.isEmpty())
+    }
+
+    @Test
+    fun theS23PlusAndAnUnknownTaskAreRefusedBeforeAnyRun() {
+        fake.devices["R5CW00000000"] = FakeAdb(serial = "R5CW00000000", model = "SM-S916B", avd = "", sdk = 36)
+
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("run", "--device", "R5CW00000000", "--task", "hotspot", "--dry-run"))
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("run", "--device", "emulator-5554", "--task", "no-such-task"))
+
+        assertTrue(fake.output.contains("REFUSED: Refusing R5CW00000000: it is the owner's Galaxy S23+ (SM-S916B), which :tools:eval never uses."))
+        assertTrue(runLines().isEmpty())
+    }
+
+    @Test
+    fun aDryRunOfAD3TaskRunsItsStandInOnceIntoTheResultsFile() {
+        val results = fake.root.resolve("corpus").resolve("owner").resolve("agent-sitting2-dry-run.txt")
+
+        val code = fake.cli("run", "--device", "emulator-5554", "--task", "hotspot", "--runs", "3", "--dry-run", "--results", results.toString())
+
+        assertEquals(Cli.EXIT_PASSED, code)
+        val line = Files.readAllLines(results).single()
+        assertTrue(Regex("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\ttask\\t").containsMatchIn(line))
+        assertTrue(line.endsWith("\ttask\ttask=stand-in-hotspot run=1 result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=scripted in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok"))
+        assertTrue(fake.adb.commands.contains("am start -W -S -n dev.kestrel.testapp/.StandInActivity --es screen 'hotspot'"))
+        assertEquals("off", fake.live)
+    }
+
+    @Test
+    fun aTaskWithoutAFormWithoutAModelIsSkippedWithItsReason() {
+        assertEquals(Cli.EXIT_PASSED, fake.cli("run", "--device", "emulator-5554", "--task", "waze-home", "--dry-run"))
+
+        assertEquals(listOf("task=waze-home run=1 result=skipped end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=untestable"), runLines())
+    }
+
+    @Test
+    fun aFailedRunEndsWithExitCode1() {
+        fake.adb.hook("SCREEN_HAS") { "count=0 app=dev.kestrel.testapp" }
+
+        assertEquals(Cli.EXIT_FAILED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "2"))
+        assertEquals(2, runLines().size)
+    }
+
+    @Test
+    fun aLiveRunOpensTheLiveSessionAndClosesItAgainAndALiveSessionLeftOnIsTurnedOffWithoutLive() {
+        assertEquals(Cli.EXIT_PASSED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1", "--live", "--model", "gpt-6-luna"))
+        assertEquals(listOf(emptyMap(), mapOf("on" to "true"), mapOf("on" to "false")), fake.adb.hookCalls("AGENT_LIVE"))
+        assertEquals("true", fake.adb.hookCalls("VOICE").first()["live"])
+        assertEquals("gpt-6-luna", fake.adb.hookCalls("VOICE").first()["model"])
+        assertTrue(fake.adb.hookCalls("AGENT_SCRIPT").isEmpty())
+
+        fake.live = "on"
+        assertEquals(Cli.EXIT_PASSED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1"))
+        assertEquals("off", fake.live)
+        assertTrue(fake.output.contains("WARNING: The live session on emulator-5554 was on"))
+    }
+
+    @Test
+    fun aSuiteWritesItsRunsAndItsReportIntoANewFolderThatA71AgentPs1CanRead() {
+        val code = fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", "stand-in-hotspot,stand-in-firefox")
+
+        assertEquals(Cli.EXIT_PASSED, code)
+        val folder = fake.root.resolve("eval-results").resolve("kestrel-api37-20261123-120000")
+        val runs = Files.readAllLines(folder.resolve("runs.txt"))
+        assertEquals(6, runs.size)
+        // a71-agent.ps1's Get-SittingRuns reads the device from these lines, and ConvertFrom-TaskLine the runs.
+        assertTrue(Regex("\tstand-in-hotspot on (the A71|kestrel-api37), \\d+ runs$").containsMatchIn(runs[0]))
+        assertTrue(runs[0].contains("\tsuite\tstand-in-hotspot on kestrel-api37, 2 runs"))
+        assertTrue(runs[1].split('\t').last().startsWith("task=stand-in-hotspot run=1 "))
+        val report = Json.decodeFromString(Report.serializer(), Files.readString(folder.resolve("report.json")))
+        assertEquals("kestrel-api37", report.device)
+        assertEquals("0123456789abcdef0123456789abcdef01234567", report.commit)
+        assertEquals(listOf("stand-in-hotspot", "stand-in-firefox"), report.tasks.map { it.task })
+        assertEquals(2, report.tasks[0].passes)
+        assertEquals(3.0, report.tasks[0].meanSteps, 0.0)
+        assertEquals(4, report.totals.runs)
+        assertFalse(report.live)
+    }
+
+    @Test
+    fun theInjectionFixturesRunOnTheEmulatorOnlyOnceEachWithoutAModel() {
+        fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("injection", "--device", "R58N66RVD7Z"))
+
+        assertEquals(Cli.EXIT_PASSED, fake.cli("injection", "--device", "emulator-5554"))
+        assertEquals((1..14).map { "inject-%02d".format(it) }, runLines().map { it.substringAfter("task=").substringBefore(' ') })
+        assertTrue(Files.isRegularFile(fake.root.resolve("eval-results").resolve("kestrel-api37-injection-20261123-120000").resolve("report.json")))
+    }
+
+    @Test
+    fun aRehearsalPassesWhenItsChecksPassAndEveryValueIsBackAndFailsOtherwise() {
+        var overlay = "default"
+        fake.adb.on("^appops get dev.kestrel.testapp SYSTEM_ALERT_WINDOW$") { if (overlay == "default") "No operations." else "SYSTEM_ALERT_WINDOW: $overlay" }
+        fake.adb.on("^appops set dev.kestrel.testapp SYSTEM_ALERT_WINDOW allow$") { overlay = "allow"; "" }
+
+        val code = fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "stand-in-hotspot,stand-in-read,inject-06")
+
+        assertEquals(Cli.EXIT_FAILED, code)
+        val lines = fake.output.lines().filter { it.startsWith("rehearse=") }
+        assertEquals(
+            listOf("rehearse=stand-in-hotspot result=pass reason=ok", "rehearse=stand-in-read result=pass reason=setup-only", "rehearse=inject-06 result=fail reason=changed"),
+            lines,
+        )
+        assertTrue(fake.output.contains("not as before: app-op:SYSTEM_ALERT_WINDOW"))
+    }
+
+    @Test
+    fun aChangeOfTheEmulatorsGoogleAccountsStopsTheCommandWithAnError() {
+        fake.adb.hook("VOICE") { fake.accounts = 0; "sent" }
+
+        assertEquals(Cli.EXIT_FAILED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1"))
+        assertTrue(fake.output.contains("ERROR: kestrel-api37's Google accounts (1 before, 0 now)"))
+    }
+
+    @Test
+    fun aMalformedLocalConfigurationIsARefusalThatQuotesNoneOfIt() {
+        val config = fake.root.resolve("corpus").resolve("owner").resolve("a71-config.json")
+        Files.createDirectories(config.parent)
+        Files.writeString(config, "{ \"gmailAddress\": \"owner@example.com\", }")
+
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1"))
+
+        assertTrue(fake.output.contains("REFUSED: corpus\\owner\\a71-config.json is not valid JSON"))
+        assertFalse(fake.output.contains("owner@example.com"))
+        assertTrue(fake.adb.commands.isEmpty())
+    }
+
+    @Test
+    fun aCommandThatCtrlCEndsIsNoErrorAndItsShutdownHookWritesTheRunsLeft() {
+        var hook: Thread? = null
+        val environment = fake.environment.let { Environment(it.root, it.adb, it.processes, it.clock, it.out, { thread -> hook = thread }) }
+        // Ctrl+C while run 1's task is being given: the JVM runs the shutdown hook, here on this thread.
+        fake.adb.hook("VOICE") { hook?.run(); "sent" }
+
+        assertEquals(Cli.EXIT_REFUSED, Cli(environment).run(listOf("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "2")))
+
+        assertEquals(listOf("result=fail", "result=fail"), runLines().map { it.split(' ')[2] })
+        assertTrue(runLines().all { it.endsWith(" reason=stopped") })
+        assertFalse(fake.output.contains("ERROR:"))
+        assertFalse(fake.output.contains("Exception"))
+    }
+
+    @Test
+    fun listShowsEveryTaskOrThoseOfADevice() {
+        assertEquals(Cli.EXIT_PASSED, fake.cli("list"))
+        assertEquals(26, fake.output.lines().count { it.startsWith("task=") })
+        assertTrue(fake.output.contains("task=hotspot kind=d3 devices=kestrel-api37 dryRun=stand-in-hotspot.json_on_stand-in-hotspot rehearsal=setup-only"))
+
+        fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
+        val before = fake.output.lines().size
+        assertEquals(Cli.EXIT_PASSED, fake.cli("list", "--device", "R58N66RVD7Z"))
+        val names = fake.output.lines().drop(before - 1).filter { it.startsWith("task=") }.map { it.substringAfter("task=").substringBefore(' ') }
+        assertEquals(listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), names)
+    }
+}
