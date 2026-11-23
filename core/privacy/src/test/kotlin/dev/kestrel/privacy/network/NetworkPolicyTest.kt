@@ -122,4 +122,32 @@ class NetworkPolicyTest {
             policy.check("https://other.example.com/".toHttpUrl()),
         )
     }
+
+    @Test
+    fun theModelHostsAreAllowedOnlyToTheModelDownloadAndOnlyOverHttps() {
+        policy.setModelHosts(listOf("huggingface.co", "*.hf.co"))
+
+        assertEquals(PolicyDecision.Allowed, policy.check("https://huggingface.co/x/resolve/1/model.onnx".toHttpUrl(), modelDownload = true))
+        assertEquals(PolicyDecision.Allowed, policy.check("https://us.aws.cdn.hf.co/xet-bridge-us/abc".toHttpUrl(), modelDownload = true))
+        assertEquals(PolicyDecision.Blocked("huggingface.co is not on the allowlist"), policy.check("https://huggingface.co/".toHttpUrl()))
+        assertEquals(PolicyDecision.Blocked("hf.co is not on the allowlist"), policy.check("https://hf.co/".toHttpUrl(), modelDownload = true))
+        assertEquals(
+            PolicyDecision.Blocked("hf.co.example.net is not on the allowlist"),
+            policy.check("https://hf.co.example.net/".toHttpUrl(), modelDownload = true),
+        )
+        assertEquals(
+            PolicyDecision.Blocked("HTTPS is required for huggingface.co"),
+            policy.check("http://huggingface.co/".toHttpUrl(), modelDownload = true),
+        )
+    }
+
+    @Test
+    fun aModelHostMustBeAHostNameOrADomainPattern() {
+        policy.setModelHosts(listOf("github.com"))
+
+        assertThrows(IllegalArgumentException::class.java) { policy.setModelHosts(listOf("*")) }
+        assertThrows(IllegalArgumentException::class.java) { policy.setModelHosts(listOf("github.com", "*.co.*")) }
+        // A refused list keeps the hosts that the policy had.
+        assertEquals(PolicyDecision.Allowed, policy.check("https://github.com/a".toHttpUrl(), modelDownload = true))
+    }
 }

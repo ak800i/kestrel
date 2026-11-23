@@ -22,6 +22,15 @@ data class TaskTag(val taskId: String)
  */
 data class LogPathTag(val path: String)
 
+/**
+ * Marks a request of the model download (release plan): only such a request may reach the hosts of
+ * [NetworkPolicy.setModelHosts], and the network log records it with the path [LOG_PATH] instead of the real one,
+ * because a download server's path is a signed address that tells the owner nothing.
+ */
+data object ModelDownloadTag {
+    const val LOG_PATH = "/model-download"
+}
+
 class BlockedRequestException(val url: HttpUrl, reason: String) : IOException(reason)
 
 /**
@@ -49,7 +58,8 @@ class NetworkGateway(
 private class AllowlistInterceptor(private val policy: NetworkPolicy) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val url = chain.request().url
-        return when (val decision = policy.check(url)) {
+        val modelDownload = chain.request().tag(ModelDownloadTag::class.java) != null
+        return when (val decision = policy.check(url, modelDownload)) {
             PolicyDecision.Allowed -> chain.proceed(chain.request())
             is PolicyDecision.Blocked -> throw BlockedRequestException(url, decision.reason)
         }
@@ -91,7 +101,11 @@ private class NetworkLogListener(private val record: (NetworkEvent) -> Unit) : E
             NetworkEvent(
                 method = request.method,
                 host = request.url.host,
-                path = request.tag(LogPathTag::class.java)?.path?.substringBefore('?') ?: request.url.encodedPath,
+                path = if (request.tag(ModelDownloadTag::class.java) != null) {
+                    ModelDownloadTag.LOG_PATH
+                } else {
+                    request.tag(LogPathTag::class.java)?.path?.substringBefore('?') ?: request.url.encodedPath
+                },
                 requestBytes = requestBytes,
                 responseBytes = responseBytes,
                 status = status,

@@ -30,6 +30,13 @@ class AuditPlugin : Plugin<Project> {
         }
         project.pluginManager.withPlugin("com.android.application") {
             configureAndroid(project, rules, audit, isApplication = true)
+            // The model download's hosts (release plan): once for the app, because every variant ships the same manifest.
+            val modelHosts = project.tasks.register("kestrelCheckModelHosts", CheckModelHostsTask::class.java) {
+                rulesFile.set(rules)
+                manifestFile.set(project.rootProject.layout.projectDirectory.file("models/manifest.json"))
+                report.set(project.layout.buildDirectory.file("reports/kestrel-audit/model-hosts.txt"))
+            }
+            audit.configure { dependsOn(modelHosts) }
         }
         project.pluginManager.withPlugin("com.android.library") {
             configureAndroid(project, rules, audit, isApplication = false)

@@ -113,4 +113,49 @@ class AuditRulesTest {
         val error = runCatching { AuditRules.parse("permit androidx.*:* Apache-2.0") }.exceptionOrNull()
         assertEquals("audit/rules.txt line 1: unknown rule 'permit'", error?.message)
     }
+
+    @Test
+    fun modelHostsNeedARuleAndMustCoverEveryAddress() {
+        val withHosts = AuditRules.parse(
+            """
+            allow-model-host huggingface.co Hugging Face holds the speech models
+            allow-model-host *.hf.co Hugging Face's download servers
+            """.trimIndent(),
+        )
+        val manifest = """{"format":1,"downloadHosts":["huggingface.co","*.hf.co","github.com"],"models":[""" +
+            """{"files":[{"url":"https://huggingface.co/a/resolve/1/x.onnx"},{"url":"https://cdn.example.org/y.onnx"}]}]}"""
+
+        assertEquals(
+            listOf(
+                "The download host github.com has no allow-model-host rule in audit/rules.txt",
+                "The models' manifest downloads from cdn.example.org, which its downloadHosts do not cover",
+            ),
+            withHosts.checkModelHosts(manifest),
+        )
+    }
+
+    @Test
+    fun aDomainPatternCoversOnlyTheHostsBelowIt() {
+        assertTrue(hostMatches("*.hf.co", "us.aws.cdn.hf.co"))
+        assertFalse(hostMatches("*.hf.co", "hf.co"))
+        assertFalse(hostMatches("*.hf.co", "evilhf.co"))
+        assertTrue(hostMatches("github.com", "github.com"))
+        assertFalse(hostMatches("github.com", "api.github.com"))
+    }
+
+    @Test
+    fun theProjectsModelHostsAreAllowed() {
+        // Gradle runs the tests in build-logic/convention.
+        val projectRules = AuditRules.parse(File("../../audit/rules.txt").readText())
+
+        assertEquals(emptyList<String>(), projectRules.checkModelHosts(File("../../models/manifest.json").readText()))
+    }
+
+    @Test
+    fun aModelHostRuleNeedsAHostOrADomainPatternAndAJustification() {
+        for (line in listOf("allow-model-host * Anything", "allow-model-host github.com")) {
+            val error = runCatching { AuditRules.parse(line) }.exceptionOrNull()
+            assertEquals("audit/rules.txt line 1: expected 'allow-model-host <host or *.domain> <justification>'", error?.message)
+        }
+    }
 }

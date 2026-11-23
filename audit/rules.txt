@@ -5,6 +5,7 @@
 #   allow <group:name> <SPDX licence>
 #   allow-network-class <module path> <internal class prefix> <justification>
 #   allow-native-symbol <library.so> <symbol> <justification>
+#   allow-model-host <host or *.domain> <justification>
 # "*" matches any run of characters. Deny rules win over allow rules.
 # Every exception needs a written justification.
 
@@ -43,6 +44,19 @@ pin com.k2fsa.sherpa.onnx:* 1.13.8
 
 # Network API exceptions
 allow-network-class :core:privacy dev/kestrel/privacy/network/ The network gateway is the only HTTP client in Kestrel (design spec, section 13.1).
+
+# Model downloads (release plan): the downloadHosts of models/manifest.json, which only the app's model download may
+# reach, over HTTPS, after the owner taps Download in the setup checklist (design spec, sections 8.10 and 13.1). A pattern
+# *.domain covers every host below the domain. kestrelCheckModelHosts checks that each downloadHosts entry has a rule
+# here and that the entries cover every address of the manifest.
+allow-model-host github.com sherpa-onnx's GitHub releases hold Silero VAD, the keyword model and Piper's voice
+allow-model-host release-assets.githubusercontent.com GitHub's download server for release assets, to which github.com redirects
+allow-model-host objects.githubusercontent.com GitHub's older download server for release assets, to which github.com may redirect
+allow-model-host raw.githubusercontent.com PaddleOCR's repository on GitHub holds the OCR dictionaries
+allow-model-host huggingface.co Hugging Face holds Parakeet, Kokoro and the Latin OCR recogniser
+allow-model-host *.huggingface.co Hugging Face's older download servers, such as cdn-lfs-us-1.huggingface.co
+allow-model-host *.hf.co Hugging Face's download servers, such as us.aws.cdn.hf.co, to which huggingface.co redirects
+allow-model-host *.modelscope.cn ModelScope (www.modelscope.cn) holds the OCR detector and the Cyrillic recogniser, and its download servers, such as cdn-lfs-cn-1.modelscope.cn
 
 # Reviewed licences
 allow androidx.*:* Apache-2.0

@@ -151,4 +151,30 @@ class NetworkGatewayTest {
         assertEquals(null, event.status)
         assertEquals(0, server.requestCount)
     }
+
+    @Test
+    fun aModelDownloadIsLoggedWithAFixedPath() {
+        policy.setLocalServers(listOf("127.0.0.1"))
+        server.enqueue(MockResponse.Builder().body("model").build())
+
+        val request = Request.Builder()
+            .url(serverUrl("/xet-bridge-us/abc?signature=secret"))
+            .tag(ModelDownloadTag::class.java, ModelDownloadTag)
+            .build()
+
+        assertEquals(200 to "model", execute(request))
+        assertEquals(ModelDownloadTag.LOG_PATH, events.single().path)
+    }
+
+    @Test
+    fun aRequestWithoutTheModelDownloadTagCannotReachAModelHost() {
+        policy.setModelHosts(listOf("models.example.org"))
+
+        val error = assertThrows(BlockedRequestException::class.java) {
+            execute(Request.Builder().url("https://models.example.org/a.onnx".toHttpUrl()).build())
+        }
+
+        assertEquals("models.example.org is not on the allowlist", error.message)
+        assertEquals(NetworkOutcome.BLOCKED, events.single().outcome)
+    }
 }

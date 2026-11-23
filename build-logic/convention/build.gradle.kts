@@ -23,8 +23,9 @@ dependencies {
 }
 
 tasks.test {
-    // AuditRulesTest also reads the project's own rules.
+    // AuditRulesTest also reads the project's own rules and the models' manifest.
     inputs.file("../../audit/rules.txt").withPathSensitivity(PathSensitivity.NONE).withPropertyName("auditRules")
+    inputs.file("../../models/manifest.json").withPathSensitivity(PathSensitivity.NONE).withPropertyName("modelManifest")
 }
 
 gradlePlugin {

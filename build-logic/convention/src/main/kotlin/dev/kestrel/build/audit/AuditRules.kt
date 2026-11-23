@@ -38,6 +38,7 @@ class AuditRules(
     val pins: List<PinRule>,
     val networkClassExceptions: List<NetworkClassException>,
     val nativeSymbolExceptions: List<NativeSymbolException>,
+    val modelHosts: List<ModelHostRule> = emptyList(),
 ) {
     /** Returns one message per problem. An empty list means that every dependency passed. */
     fun checkDependencies(dependencies: Collection<Coordinates>): List<String> {
@@ -69,6 +70,27 @@ class AuditRules(
     fun isNativeSymbolExcepted(libraryName: String, symbol: String): Boolean =
         nativeSymbolExceptions.any { it.libraryName == libraryName && it.symbol == symbol }
 
+    /**
+     * Returns one message per problem with the model hosts of [manifest], the text of `models/manifest.json` (release
+     * plan): each of its `downloadHosts` needs an `allow-model-host` rule, and each address of a file or an archive needs
+     * a host that its `downloadHosts` cover. An empty list means that every host passed.
+     */
+    fun checkModelHosts(manifest: String): List<String> {
+        val listed = ManifestHosts.downloadHosts(manifest)
+        val problems = mutableListOf<String>()
+        for (pattern in listed) {
+            if (modelHosts.none { it.pattern == pattern }) {
+                problems += "The download host $pattern has no allow-model-host rule in audit/rules.txt"
+            }
+        }
+        for (host in ManifestHosts.urlHosts(manifest)) {
+            if (listed.none { hostMatches(it, host) }) {
+                problems += "The models' manifest downloads from $host, which its downloadHosts do not cover"
+            }
+        }
+        return problems
+    }
+
     companion object {
         val GPL3_COMPATIBLE_LICENSES = setOf(
             "Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "CC0-1.0",
@@ -82,6 +104,7 @@ class AuditRules(
             val pins = mutableListOf<PinRule>()
             val networkClasses = mutableListOf<NetworkClassException>()
             val nativeSymbols = mutableListOf<NativeSymbolException>()
+            val modelHostRules = mutableListOf<ModelHostRule>()
             text.lineSequence().forEachIndexed { index, rawLine ->
                 val line = rawLine.substringBefore('#').trim()
                 if (line.isEmpty()) return@forEachIndexed
@@ -112,10 +135,16 @@ class AuditRules(
                         if (parts.size < 4) fail("expected 'allow-native-symbol <library.so> <symbol> <justification>'")
                         nativeSymbols += NativeSymbolException(parts[1], parts[2], rest(3))
                     }
+                    "allow-model-host" -> {
+                        if (parts.size < 3 || !MODEL_HOST_PATTERN.matches(parts[1])) {
+                            fail("expected 'allow-model-host <host or *.domain> <justification>'")
+                        }
+                        modelHostRules += ModelHostRule(parts[1], rest(2))
+                    }
                     else -> fail("unknown rule '${parts[0]}'")
                 }
             }
-            return AuditRules(allows, denies, pins, networkClasses, nativeSymbols)
+            return AuditRules(allows, denies, pins, networkClasses, nativeSymbols, modelHostRules)
         }
     }
 }

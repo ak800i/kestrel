@@ -53,9 +53,19 @@ data class Model(
 @Serializable
 data class Archive(val id: String, val url: String, val size: Long, val sha256: String)
 
-/** The repository's `models/manifest.json`, which the build copies into the app's assets (design spec, section 8.10). */
+/**
+ * The repository's `models/manifest.json`, which the build copies into the app's assets (design spec, section 8.10).
+ * [downloadHosts] are the hosts from which the app's model download may fetch the files, the addresses' hosts and those
+ * of the download servers to which they redirect, as host names or `*.domain` (release plan); the build-time audit
+ * allows each of them.
+ */
 @Serializable
-data class ModelManifest(val format: Int, val archives: List<Archive> = emptyList(), val models: List<Model>) {
+data class ModelManifest(
+    val format: Int,
+    val archives: List<Archive> = emptyList(),
+    val models: List<Model>,
+    val downloadHosts: List<String> = emptyList(),
+) {
     companion object {
         /** The manifest's path in the app's assets. */
         const val ASSET = "models/manifest.json"
