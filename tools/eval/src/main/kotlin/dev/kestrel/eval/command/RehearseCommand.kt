@@ -4,6 +4,7 @@ import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.run.Markers
+import dev.kestrel.eval.run.Stopping
 import dev.kestrel.eval.task.Catalogue
 import dev.kestrel.eval.task.Rehearsal
 import dev.kestrel.eval.task.RunScope
@@ -64,6 +65,8 @@ class RehearseCommand(private val environment: Environment, private val command:
                 }
             }
         } catch (e: DeviceChanged) {
+            throw e
+        } catch (e: Stopping) {
             throw e
         } catch (e: Exception) {
             session.console.warn("Rehearsal of ${task.name}: ${e.message ?: e.javaClass.simpleName}")

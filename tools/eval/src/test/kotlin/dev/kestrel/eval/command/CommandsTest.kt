@@ -166,6 +166,19 @@ class CommandsTest {
     }
 
     @Test
+    fun aRehearsalThatCtrlCEndsRehearsesNoFurtherTask() {
+        var hook: Thread? = null
+        val environment = fake.environment.let { Environment(it.root, it.adb, it.processes, it.clock, it.out, { thread -> hook = thread }) }
+        // Ctrl+C during stand-in-hotspot's check: the JVM runs the shutdown hook, here on this thread.
+        fake.adb.hook("SCREEN_HAS") { hook?.run(); "count=1 app=dev.kestrel.testapp" }
+
+        assertEquals(Cli.EXIT_REFUSED, Cli(environment).run(listOf("rehearse", "--device", "emulator-5554", "--tasks", "stand-in-hotspot,inject-06")))
+
+        assertFalse(fake.output.contains("rehearse=inject-06"))
+        assertFalse(fake.output.contains("Rehearsal of inject-06"))
+    }
+
+    @Test
     fun listShowsEveryTaskOrThoseOfADevice() {
         assertEquals(Cli.EXIT_PASSED, fake.cli("list"))
         assertEquals(26, fake.output.lines().count { it.startsWith("task=") })
