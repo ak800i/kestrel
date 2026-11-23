@@ -1,0 +1,131 @@
+name: Release
+
+# Builds the signed release APK for a pushed tag v<version> and publishes it with its SHA-256 hash as a GitHub release
+# (design spec, section 17; README, "Releasing"). A tag with a hyphen, such as v1.0.0-rc.1, makes a pre-release.
+# The job never caches the project's .gradle folder or the build output: the configuration cache there stores the
+# signing passwords.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # The first eight steps are those of ci.yml's job build, so that a release passes the same checks.
+      - uses: actions/checkout@v7
+        with:
+          # The job's write token stays out of .git/config, where the build's plugins could read it.
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          # As in ci.yml: the next step saves only the downloaded dependencies and the Gradle distributions.
+          cache-provider: external
+      - name: Restore Gradle's downloads
+        # As in ci.yml, with the same key, so that a release reuses CI's downloads.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/verification-metadata.xml', 'gradle/wrapper/gradle-wrapper.properties', 'gradle/gradle-daemon-jvm.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+      - name: Resolve the build's plugins
+        # As in ci.yml: Maven Central sometimes answers GitHub's runners HTTP 429, so the build is configured up to five
+        # times.
+        run: |
+          refresh=""
+          wait=30
+          for attempt in 1 2 3 4 5; do
+            if ./gradlew help --info --console=plain $refresh > "$RUNNER_TEMP/resolve.log" 2>&1; then
+              exit 0
+            fi
+            echo "Attempt $attempt to configure the build failed:"
+            grep -iE "HTTP [0-9]{3}|could not|status code|not found|timed out|refused|reset" "$RUNNER_TEMP/resolve.log" | head -n 40 || true
+            refresh="--refresh-dependencies"
+            if [ "$attempt" -lt 5 ]; then sleep "$wait"; wait=$((wait * 2)); fi
+          done
+          tail -n 80 "$RUNNER_TEMP/resolve.log"
+          exit 1
+      - name: Unit tests, lint and the privacy audit
+        run: ./gradlew :build-logic:convention:check check kestrelAudit --console=plain
+      - name: Check that generated files are committed
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+      - name: Decode the release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KESTREL_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "The repository has no secret KESTREL_KEYSTORE_BASE64."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kestrel-release.p12"
+      - name: Build the signed release APK
+        env:
+          KESTREL_KEYSTORE: ${{ runner.temp }}/kestrel-release.p12
+          KESTREL_KEYSTORE_PASSWORD: ${{ secrets.KESTREL_KEYSTORE_PASSWORD }}
+          KESTREL_KEY_ALIAS: ${{ secrets.KESTREL_KEY_ALIAS }}
+          KESTREL_KEY_PASSWORD: ${{ secrets.KESTREL_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --console=plain
+      - name: Check the APK's version and signature
+        run: |
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          apk=app/build/outputs/apk/release/app-release.apk
+          version="${GITHUB_REF_NAME#v}"
+          # Without all four signing variables, Gradle writes app-release-unsigned.apk instead.
+          if [ ! -f "$apk" ]; then
+            echo "The build wrote no signed $apk; check the four KESTREL_ secrets."
+            exit 1
+          fi
+          if ! certificates="$("$tools/apksigner" verify --print-certs "$apk")"; then
+            echo "apksigner cannot verify the APK's signature."
+            exit 1
+          fi
+          badging="$("$tools/aapt2" dump badging "$apk" | head -n 1)"
+          echo "$badging"
+          case "$badging" in
+            *"versionName='${version%%-*}'"*) ;;
+            *) echo "The APK's versionName differs from ${version%%-*}, the version of the tag $GITHUB_REF_NAME."; exit 1 ;;
+          esac
+          echo "$certificates"
+          if printf '%s\n' "$certificates" | grep -q 'CN=Android Debug'; then
+            echo "The APK carries a debug key."
+            exit 1
+          fi
+      - name: Write the APK and its SHA-256 hash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p "$RUNNER_TEMP/release"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/release/kestrel-$version.apk"
+          cd "$RUNNER_TEMP/release"
+          sha256sum "kestrel-$version.apk" > "kestrel-$version.apk.sha256"
+          cat "kestrel-$version.apk.sha256"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cd "$RUNNER_TEMP/release"
+          prerelease=()
+          case "$GITHUB_REF_NAME" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" "kestrel-$version.apk" "kestrel-$version.apk.sha256" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "Kestrel $version" "${prerelease[@]}" \
+            --notes "Kestrel $version, signed with Kestrel's release key. Compare the SHA-256 hash of kestrel-$version.apk with kestrel-$version.apk.sha256 before you install it. How to install it and set it up: https://github.com/$GITHUB_REPOSITORY#installing-from-a-release"
+      - name: Delete the release key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/kestrel-release.p12"
