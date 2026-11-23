@@ -96,15 +96,17 @@ Describe 'hook.ps1' {
         $output | Should -BeLike '*clipboard -Clear was refused on no-such-phone: only the emulator kestrel-api37 may empty the clipboard.*'
     }
 
-    It 'accepts agent-live, which opens and closes the live session of sitting 2, and reaches the device check' {
+    It 'accepts agent-live, which opens and closes the live session of sitting 2, and reaches the argument checks' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
 
-        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-live -On false 2>&1) -join "`n"
+        # A refused argument ends the hook before its device check, which would start adb's server under this pipe
+        # and hang where no server runs yet, as on CI.
+        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-live -On false -Boost -1 2>&1) -join "`n"
         $exit = $LASTEXITCODE
 
         $exit | Should -Not -Be 0
         $output | Should -Not -BeLike "*Cannot validate argument on parameter 'Command'*"
-        $output | Should -BeLike '*Device no-such-device is not connected.*'
+        $output | Should -BeLike '*-Boost -1 is negative*'
     }
 }
