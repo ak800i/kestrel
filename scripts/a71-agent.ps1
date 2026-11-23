@@ -553,6 +553,25 @@ function Close-LiveSession([string]$Device) {
     Invoke-Device $Device 'input keyevent KEYCODE_HOME' | Out-Null
 }
 
+# The reset at the start of every sitting: an earlier run that ended without its finally block, such as when its window
+# closed, can have left a live session open (design D28), so the sitting closes it first on each device that has
+# Kestrel. An installed build that does not know the hook agent-live never opened one, so that is no error; any other
+# failure is replaced by the step prepare, which installs the fix and closes the session again after its install.
+function Close-LiveSessionsAtStart {
+    foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
+        try {
+            Close-LiveSession $device
+        } catch {
+            if ("$($_.Exception.Message)" -match "unknown command 'AGENT_LIVE'") {
+                Add-Result session "$(Get-DeviceName $device): no live session to close (the installed build has no agent-live)"
+                continue
+            }
+            if ($Step -and 'prepare' -notin $Step) { throw }
+            Add-Result session "$(Get-DeviceName $device): the live session could not be closed before the step prepare: $(Format-Failure $_)"
+        }
+    }
+}
+
 # Whether the package is installed on the device.
 function Test-Installed([string]$Device, [string]$Package) { Test-PackageListed @(Invoke-Device $Device "pm list packages $Package") $Package }
 
@@ -653,10 +672,34 @@ function Test-WazeDevice([string]$Device, [string]$StepName, [string]$What) {
 # 'dumpsys account' lists (counted by type only, never a name).
 function Test-TelegramSignedIn([string]$Device) { (Get-AccountCount @(Invoke-Device $Device 'dumpsys account') 'org.telegram.messenger') -gt 0 }
 
+# The package of the authenticator of the account type in 'dumpsys account' (its line 'ServiceInfo:
+# AuthenticatorDescription {type=...}, ComponentInfo{package/class}'), or '' when no app declares the type.
+function Get-AuthenticatorPackage([string[]]$Dump, [string]$Type) {
+    foreach ($line in $Dump) {
+        if ($line -match "AuthenticatorDescription \{type=$([regex]::Escape($Type))\}, ComponentInfo\{([^/}]+)/") { return $Matches[1] }
+    }
+    ''
+}
+
+# The package of the Telegram that the device has: Telegram's website build org.telegram.messenger.web (the owner's A71)
+# or Play's org.telegram.messenger. When both are installed, the one that owns the signed-in account wins (both declare
+# the account type org.telegram.messenger, and Android gives the type to one of them); when neither is installed, Play's
+# package, which the owner's step installs.
+function Get-TelegramPackage([string]$Device) {
+    $installed = @(foreach ($package in 'org.telegram.messenger.web', 'org.telegram.messenger') { if (Test-Installed $Device $package) { $package } })
+    if (-not $installed) { return 'org.telegram.messenger' }
+    if ($installed.Count -gt 1) {
+        $accounts = @(Invoke-Device $Device 'dumpsys account')
+        $owner = Get-AuthenticatorPackage $accounts 'org.telegram.messenger'
+        if ((Get-AccountCount $accounts 'org.telegram.messenger') -gt 0 -and $owner -in $installed) { return $owner }
+    }
+    $installed[0]
+}
+
 # The apps that the owner's step installs from Play on the A71 when they are missing: Telegram, Waze and Gmail. WhatsApp
 # is skipped on both devices (the owner's choice).
 function Get-MissingApps([string]$Device) {
-    @(foreach ($package in 'org.telegram.messenger', 'com.waze', 'com.google.android.gm') { if (-not (Test-Installed $Device $package)) { $package } })
+    @(foreach ($package in (Get-TelegramPackage $Device), 'com.waze', 'com.google.android.gm') { if (-not (Test-Installed $Device $package)) { $package } })
 }
 
 # The emulator's location at the test location (adb emu geo fix takes the longitude first), as task-check.ps1's Waze
@@ -946,7 +989,8 @@ function Invoke-OwnerStep {
     }
     Invoke-OwnerItem 'Item 2' {
         if (-not (Test-TelegramDevice $a71 owner 'Telegram''s sign-in')) { return }
-        if (-not (Test-Installed $a71 'org.telegram.messenger')) {
+        $telegram = Get-TelegramPackage $a71
+        if (-not (Test-Installed $a71 $telegram)) {
             Add-Result owner 'Telegram is not installed on the A71, so its recordings and runs are skipped'
             return
         }
@@ -955,10 +999,10 @@ function Invoke-OwnerStep {
             return
         }
         if ((Request-OwnerItem 'Item 2, about 4 minutes: on the A71, open Telegram and sign in with your number and the code that Telegram shows on the S23+ (never "Send SMS"), and your Two-Step Verification password if it asks. Press Enter when Telegram shows its chat list (s skips).' 'skip') -eq 'go') {
-            Open-App $a71 'org.telegram.messenger'
+            Open-App $a71 $telegram
             Start-Sleep -Seconds 5
-            $front = (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 screen-has @{ Package = 'org.telegram.messenger' }))['app'] -eq 'org.telegram.messenger'
-            $login = Get-ScreenCount $a71 @{ Package = 'org.telegram.messenger'; Contains = 'phone number' }
+            $front = (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 screen-has @{ Package = $telegram }))['app'] -eq $telegram
+            $login = Get-ScreenCount $a71 @{ Package = $telegram; Contains = 'phone number' }
             Add-Result owner "Telegram on the A71: $(if ((Test-TelegramSignedIn $a71) -or ($front -and $login -eq 0)) { 'signed in' } else { 'not signed in' })"
         }
     }
@@ -1215,7 +1259,8 @@ function Invoke-HotspotStep {
 # controller pins Telegram's self-chat rule (task-5c-9-review M1). Returns the lines for the results.
 function Invoke-TelegramRecording([string]$Device) {
     $notes = @()
-    Open-App $Device 'org.telegram.messenger'
+    $telegram = Get-TelegramPackage $Device
+    Open-App $Device $telegram
     Start-Sleep -Seconds 4
     $notes += Save-AgentTree $Device 'telegram-chats'
     $saved = 'not shown'
@@ -1233,13 +1278,13 @@ function Invoke-TelegramRecording([string]$Device) {
         $notes += 'Telegram''s search did not open, so Saved Messages is not recorded'
     }
     Set-AgentRecord $recordFile 'telegramSelfChat' $saved
-    Invoke-Device $Device 'am force-stop org.telegram.messenger' | Out-Null
+    Invoke-Device $Device "am force-stop $telegram" | Out-Null
     # Telegram's share picker, opened by a text share from the shell and closed with back, without sending.
-    Invoke-Device $Device "am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'Kestrel test' -p org.telegram.messenger" | Out-Null
+    Invoke-Device $Device "am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'Kestrel test' -p $telegram" | Out-Null
     Start-Sleep -Seconds 4
     $notes += Save-AgentTree $Device 'telegram-share'
     Invoke-Device $Device 'input keyevent KEYCODE_BACK' | Out-Null
-    Invoke-Device $Device 'am force-stop org.telegram.messenger' | Out-Null
+    Invoke-Device $Device "am force-stop $telegram" | Out-Null
     $notes
 }
 
@@ -1312,7 +1357,7 @@ function Invoke-RecordingsStep {
     $a71 = Get-A71
     if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
     $notes = @()
-    if ((Test-TelegramDevice $a71 recordings 'Telegram''s recordings') -and (Test-Installed $a71 'org.telegram.messenger')) { $notes += Invoke-TelegramRecording $a71 }
+    if ((Test-TelegramDevice $a71 recordings 'Telegram''s recordings') -and (Test-Installed $a71 (Get-TelegramPackage $a71))) { $notes += Invoke-TelegramRecording $a71 }
     Set-AgentRecord $recordFile 'whatsappSelfChat' 'skipped'
     $notes += 'WhatsApp''s recordings: skipped on both devices (the owner''s choice)'
     # The emulator comes first; the A71's compose screen opens only when the discard worked there. The emulator's Gmail
@@ -1850,12 +1895,13 @@ function Invoke-PrepareStep2 {
     } elseif (Test-Installed $a71 'com.google.android.gm') {
         $script:gmailChecked = Test-GmailAccount $a71 $record
     }
-    if ((Test-TelegramDevice $a71 prepare 'Telegram''s test names') -and (Test-Installed $a71 'org.telegram.messenger')) {
-        Open-App $a71 'org.telegram.messenger'
+    $telegram = if (Test-TelegramDevice $a71 prepare 'Telegram''s test names') { Get-TelegramPackage $a71 }
+    if ($telegram -and (Test-Installed $a71 $telegram)) {
+        Open-App $a71 $telegram
         Start-Sleep -Seconds 4
         $rows = @{}
-        foreach ($name in 'Ana', 'John', 'Mira', 'Zora', 'Ivo', 'Teo') { $rows[$name] = Get-ScreenCount $a71 @{ Package = 'org.telegram.messenger'; Contains = $name } }
-        Invoke-Device $a71 'am force-stop org.telegram.messenger' | Out-Null
+        foreach ($name in 'Ana', 'John', 'Mira', 'Zora', 'Ivo', 'Teo') { $rows[$name] = Get-ScreenCount $a71 @{ Package = $telegram; Contains = $name } }
+        Invoke-Device $a71 "am force-stop $telegram" | Out-Null
         $testNames.Ana = Select-TestName 'Ana' $rows
         $testNames.John = Select-TestName 'John' $rows @($testNames.Ana)
     }
@@ -2123,17 +2169,7 @@ try {
         Register-ListeningRestore $device
     }
     if (-not (Unlock-Device $Serial)) { Add-Result session 'the A71 stays locked' }
-    # An earlier run that ended without its finally block, such as when its window closed, can have left a live session
-    # open (design D28), so every sitting closes it first on each device that has Kestrel. A build without the hook is
-    # replaced by the step prepare, which closes it again after its install.
-    foreach ($device in @($EmulatorSerial, $Serial) | Select-Object -Unique) {
-        try {
-            Close-LiveSession $device
-        } catch {
-            if ($Step -and 'prepare' -notin $Step) { throw }
-            Add-Result session "$(Get-DeviceName $device): the live session could not be closed before the step prepare: $(Format-Failure $_)"
-        }
-    }
+    Close-LiveSessionsAtStart
     Invoke-SittingSteps $plans[$Sitting]
     $completed = $true
 } catch {

@@ -30,6 +30,8 @@ BeforeAll {
         'Test-WazeHome', 'Set-EmulatorFix', 'Start-TestLocation', 'Invoke-EmulatorAccountItem', 'Invoke-OwnerItem', 'Invoke-OwnerStep', 'Set-OwnerNames',
         'Request-OwnerItem', 'Install-FromPlay', 'Start-Listening', 'Invoke-FingerCheck', 'Invoke-OwnerStep2', 'Get-DefaultProfileKind', 'Test-CompareModel',
         'Invoke-RecordingsStep', 'Invoke-EmulatorTasks', 'Invoke-EmulatorRunsStep', 'Invoke-CompareStep')
+    # The Telegram build that a device has, and the reset of the live sessions at the start of a sitting (fix-5c-telegram).
+    $helpers += @('Get-TelegramPackage', 'Get-AuthenticatorPackage', 'Close-LiveSession', 'Close-LiveSessionsAtStart')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -754,6 +756,69 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
 
         Mock Test-Installed { $false }
         @(Get-MissingApps $A71) | Should -Be @('org.telegram.messenger', 'com.waze', 'com.google.android.gm')
+    }
+
+    It 'records no live session at the start of a sitting when the installed build has no agent-live, while prepare''s own reset still fails on it (fix-5c-telegram)' {
+        $Step = @('owner')
+        Mock Test-Installed { $true }
+        Mock Invoke-DeviceHook { 'live=off' } -ParameterFilter { $Command -eq 'agent-live' -and $Device -eq $EmulatorSerial }
+        Mock Invoke-DeviceHook { throw "error: unknown command 'AGENT_LIVE'" } -ParameterFilter { $Command -eq 'agent-live' -and $Device -eq $A71 }
+
+        Close-LiveSessionsAtStart
+
+        $results | Should -Be @('session: the A71: no live session to close (the installed build has no agent-live)')
+        { Close-LiveSession $A71 } | Should -Throw "*unknown command 'AGENT_LIVE'*"
+
+        Mock Invoke-DeviceHook { 'live=on' } -ParameterFilter { $Command -eq 'agent-live' -and $Device -eq $A71 }
+        { Close-LiveSessionsAtStart } | Should -Throw 'The live session is still open on the A71.'
+    }
+
+    It 'uses Telegram''s website build when the A71 has only that: nothing to install, and the sign-in and the recordings open it (fix-5c-telegram)' {
+        Mock Test-Installed { $Package -ne 'org.telegram.messenger' }
+        Get-TelegramPackage $A71 | Should -Be 'org.telegram.messenger.web'
+        @(Get-MissingApps $A71) | Should -BeNullOrEmpty
+
+        Set-AgentRecord $recordFile 'emulatorPlay' $true
+        Mock Unlock-Device { $true }
+        Mock Test-TelegramSignedIn { $false }
+        Mock Test-WazeHome { $true }
+        Mock Request-OwnerItem { 'go' }
+        Mock Install-FromPlay { $true }
+        Mock Start-Listening { }
+        Mock Invoke-FingerCheck { 'A' }
+        Mock Open-App { }
+        Mock Invoke-DeviceHook { 'count=0 app=org.telegram.messenger.web' } -ParameterFilter { $Command -eq 'screen-has' }
+
+        Invoke-OwnerStep
+
+        Should -Invoke Install-FromPlay -Times 0 -Exactly
+        Should -Invoke Open-App -Times 1 -Exactly -ParameterFilter { $Device -eq $A71 -and $Package -eq 'org.telegram.messenger.web' }
+        Should -Invoke Invoke-DeviceHook -Times 0 -Exactly -ParameterFilter { $Command -eq 'screen-has' -and $With.Package -ne 'org.telegram.messenger.web' }
+        Should -Invoke Invoke-DeviceHook -Times 2 -Exactly -ParameterFilter { $Command -eq 'screen-has' -and $With.Package -eq 'org.telegram.messenger.web' }
+        $results | Should -Contain 'owner: Telegram on the A71: signed in'
+
+        Mock Save-AgentTree { "$Name recorded" }
+        Mock Invoke-ScreenTap { $false }
+        $commands.Clear()
+        Invoke-TelegramRecording $A71 | Out-Null
+        Should -Invoke Open-App -Times 2 -Exactly -ParameterFilter { $Package -eq 'org.telegram.messenger.web' -and $Device -eq $A71 }
+        $commands | Should -Contain "$A71 am force-stop org.telegram.messenger.web"
+        @($commands | Where-Object { $_ -match '-p org\.telegram\.messenger\.web$' }).Count | Should -Be 1
+        @($commands | Where-Object { $_ -match 'org\.telegram\.messenger(\s|$)' }) | Should -BeNullOrEmpty
+    }
+
+    It 'offers Telegram''s Play package when the device has no Telegram, and takes the signed-in build when it has both (fix-5c-telegram)' {
+        Mock Test-Installed { $Package -notlike 'org.telegram.*' }
+        Get-TelegramPackage $A71 | Should -Be 'org.telegram.messenger'
+        @(Get-MissingApps $A71) | Should -Be @('org.telegram.messenger')
+
+        Mock Test-Installed { $true }
+        $authenticator = '    ServiceInfo: AuthenticatorDescription {type=org.telegram.messenger}, ComponentInfo{org.telegram.messenger/org.telegram.messenger.AuthenticatorService}, uid 10321'
+        Mock Invoke-Device { @('    Account {name=+381601234567, type=org.telegram.messenger}', $authenticator) } -ParameterFilter { $Command -eq 'dumpsys account' }
+        Get-TelegramPackage $A71 | Should -Be 'org.telegram.messenger'
+        Mock Invoke-Device { @('    Account {name=+381601234567, type=org.telegram.messenger}', ($authenticator -replace 'ComponentInfo\{org\.telegram\.messenger/', 'ComponentInfo{org.telegram.messenger.web/')) } -ParameterFilter { $Command -eq 'dumpsys account' }
+        Get-TelegramPackage $A71 | Should -Be 'org.telegram.messenger.web'
+        @(Get-MissingApps $A71) | Should -BeNullOrEmpty
     }
 
     It 'checks Waze''s Home with its deep link to Home and its navigation notification, and stops Waze afterwards' {
