@@ -156,14 +156,14 @@ The session's measurements, with the targets of the design spec (section 5.3):
 
 | Measure | Target | Galaxy A71 | kestrel-api37 |
 |---|---|---|---|
-| The six tasks of design D3 in their test variants, 3 runs each with the lightweight model | 3 of 3 each | not run yet | not run yet |
-| Telegram's photos (`telegram-photos`, and its stand-in `stand-in-messenger-photos` in a dry run): a known gap of v1, for v1.1, because test mode blocks every row of Telegram's share picker; not run as sends, but `task-check.ps1` runs each once | the run ends with `end=TEST_MODE`, nothing unconfirmed and no photo shared | not run yet | not run there |
-| The injection fixtures, 3 live runs each with the lightweight model | no send, share or call without the confirmation that Standard mode requires | not run there | not run yet |
-| OCR: detection and recognition of a full window and of a region, and Kestrel's memory (PSS) | replaces the estimate of 2–5 s | not measured yet | not measured yet |
-| The share of input tokens read from the cache, per model | recorded | not measured yet | not measured yet |
-| The lightweight models compared on the emulator's three tasks | recorded | not run there | not run yet |
-| The agent's phrases through the air, both voices | recorded; they do not gate | not run yet | not run yet |
-| The hotspot probe | recorded | not run yet | not run there |
+| The six tasks of design D3 in their test variants, 3 runs each with the lightweight model | 3 of 3 each | Telegram message 3 of 3, e-mail 2 of 3, Firefox 3 of 3 (2 of 3 in a third call); the hotspot a limit of the device and Waze without the test location, so both skipped | the hotspot 3 of 3, Firefox 3 of 3, e-mail 1 of 3; Waze and Telegram not run there (your choice) |
+| Telegram's photos (`telegram-photos`, and its stand-in `stand-in-messenger-photos` in a dry run): a known gap of v1, for v1.1, because test mode blocks every row of Telegram's share picker; not run as sends, but `task-check.ps1` runs each once | the run ends with `end=TEST_MODE`, nothing unconfirmed and no photo shared | passed: `end=TEST_MODE`, no photo shared | not run there |
+| The injection fixtures, 3 live runs each with the lightweight model | no send, share or call without the confirmation that Standard mode requires | not run there | 14 of 14 fixtures, 42 of 42 runs: none |
+| OCR: detection and recognition of a full window and of a region, and Kestrel's memory (PSS) | replaces the estimate of 2–5 s | 960 pixels, 2 threads: full window 462 ms + 526 ms, region 152 ms + 125 ms; about 311 MB | 228 ms + 165 ms, region 65 ms + 32 ms; about 323 MB (dry run) |
+| The share of input tokens read from the cache, per model | recorded | `gpt-6-luna` 81.3 % and `gemini-3.8-flash` 10.5 %, both devices counted together | the same count |
+| The lightweight models compared on the emulator's three tasks | recorded | not run there | `gemini-3.8-flash`: the hotspot 3 of 3, Firefox 5 of 5 (a sixth run's end not read), about 13 times the AI Credits per run of `gpt-6-luna`; Waze not run there |
+| The agent's phrases through the air, both voices | recorded; they do not gate | 24 of 30 (Kokoro 12 of 15, Piper 12 of 15) | 23 of 30 (Kokoro 12 of 15, Piper 11 of 15) |
+| The hotspot probe | recorded | a limit of the device | not run there |
 
 ### The automatic A71 run
 
