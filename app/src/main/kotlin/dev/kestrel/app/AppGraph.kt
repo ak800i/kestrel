@@ -59,6 +59,7 @@ import dev.kestrel.app.listen.realTimeFactor
 import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.ModelDownloads
 import dev.kestrel.app.download.downloadBlockedBy
+import dev.kestrel.app.download.gatewayDownloader
 import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.providers.ProviderAllowlist
@@ -67,7 +68,6 @@ import dev.kestrel.privacy.PrivacyStore
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.BlockedRequestException
 import dev.kestrel.privacy.network.LogPathTag
-import dev.kestrel.privacy.network.ModelDownloadTag
 import dev.kestrel.privacy.network.NetworkGateway
 import dev.kestrel.privacy.network.NetworkPolicy
 import dev.kestrel.privacy.network.TaskTag
@@ -92,7 +92,6 @@ import dev.kestrel.voice.listen.Microphone
 import dev.kestrel.voice.models.ModelFiles
 import dev.kestrel.voice.models.ModelManifest
 import dev.kestrel.voice.models.DownloadProgress
-import dev.kestrel.voice.models.ModelDownloader
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -431,10 +430,8 @@ class AppGraph(context: Context) {
      */
     private suspend fun downloadModels(kokoro: Boolean, mobileData: Boolean, progress: (DownloadProgress) -> Unit) {
         networkPolicy.setModelHosts(models.manifest.downloadHosts)
-        val downloader = ModelDownloader(models, network.callFactory, refused = { it is BlockedRequestException }) {
-            it.tag(ModelDownloadTag::class.java, ModelDownloadTag)
-        }
-        downloader.download(kokoro, gate = { downloadBlockedBy(networkKind(appContext), mobileData) }, progress = progress)
+        val gate = { downloadBlockedBy(networkKind(appContext), mobileData) }
+        gatewayDownloader(models, network).download(kokoro, gate, progress)
     }
 
     private val kokoroFallback = MutableStateFlow(false)

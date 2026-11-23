@@ -6,6 +6,7 @@
 #   allow-network-class <module path> <internal class prefix> <justification>
 #   allow-native-symbol <library.so> <symbol> <justification>
 #   allow-model-host <host or *.domain> <justification>
+#   allow-model-download-tag <module path> <internal class prefix> <justification>
 # "*" matches any run of characters. Deny rules win over allow rules.
 # Every exception needs a written justification.
 
@@ -57,6 +58,10 @@ allow-model-host huggingface.co Hugging Face holds Parakeet, Kokoro and the Lati
 allow-model-host *.huggingface.co Hugging Face's older download servers, such as cdn-lfs-us-1.huggingface.co
 allow-model-host *.hf.co Hugging Face's download servers, such as us.aws.cdn.hf.co, to which huggingface.co redirects
 allow-model-host *.modelscope.cn ModelScope (www.modelscope.cn) holds the OCR detector and the Cyrillic recogniser, and its download servers, such as cdn-lfs-cn-1.modelscope.cn
+# Only a request with the model download's tag (dev.kestrel.privacy.network.ModelDownloadTag) may reach these hosts, so
+# kestrelAudit fails when a class outside these prefixes uses the tag.
+allow-model-download-tag :core:privacy dev/kestrel/privacy/network/ The network gateway reads the tag for its allowlist and its network log.
+allow-model-download-tag :app dev/kestrel/app/download/GatewayDownloaderKt The model download of step 2 of the setup checklist tags its requests here and nowhere else.
 
 # Reviewed licences
 allow androidx.*:* Apache-2.0

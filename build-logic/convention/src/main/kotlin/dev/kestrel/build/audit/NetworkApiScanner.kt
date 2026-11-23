@@ -62,8 +62,25 @@ object NetworkApiRules {
             typeInDescriptor.findAll(descriptor).any { isNetworkType(it.groupValues[1]) }
 }
 
-/** Finds references to network APIs in compiled JVM classes. */
-class NetworkApiScanner {
+/**
+ * The model download's tag lets a request reach the model hosts (release plan), so only the classes that an
+ * `allow-model-download-tag` rule names may use it.
+ */
+object ModelDownloadTagRules {
+    const val TAG = "dev/kestrel/privacy/network/ModelDownloadTag"
+
+    /** Finds every reference to the tag. Its constant LOG_PATH is copied into the classes that use it, so it counts as none. */
+    fun scanner() = NetworkApiScanner(isType = { it == TAG }) { owner, _, descriptor -> owner == TAG || descriptor.contains("L$TAG;") }
+}
+
+/**
+ * Finds references to network APIs in compiled JVM classes: to the types that [isType] names, and to the calls that
+ * [isCall] names by their owner, name and descriptor.
+ */
+class NetworkApiScanner(
+    private val isType: (String) -> Boolean = NetworkApiRules::isNetworkType,
+    private val isCall: (String, String, String) -> Boolean = NetworkApiRules::isNetworkCall,
+) {
     fun scan(classBytes: ByteArray): List<NetworkFinding> {
         val findings = mutableListOf<NetworkFinding>()
         val reader = ClassReader(classBytes)
@@ -79,21 +96,21 @@ class NetworkApiScanner {
                 val methodName = name
                 return object : MethodVisitor(Opcodes.ASM9) {
                     override fun visitMethodInsn(opcode: Int, owner: String, name: String, descriptor: String, isInterface: Boolean) {
-                        if (NetworkApiRules.isNetworkCall(owner, name, descriptor)) {
+                        if (isCall(owner, name, descriptor)) {
                             findings += NetworkFinding(className, methodName, "$owner.$name")
                         }
                     }
 
                     override fun visitTypeInsn(opcode: Int, type: String) {
-                        if (NetworkApiRules.isNetworkType(type)) findings += NetworkFinding(className, methodName, type)
+                        if (isType(type)) findings += NetworkFinding(className, methodName, type)
                     }
 
                     override fun visitFieldInsn(opcode: Int, owner: String, name: String, descriptor: String) {
-                        if (NetworkApiRules.isNetworkType(owner)) findings += NetworkFinding(className, methodName, "$owner.$name")
+                        if (isType(owner)) findings += NetworkFinding(className, methodName, "$owner.$name")
                     }
 
                     override fun visitLdcInsn(value: Any?) {
-                        if (value is Type && value.sort == Type.OBJECT && NetworkApiRules.isNetworkType(value.internalName)) {
+                        if (value is Type && value.sort == Type.OBJECT && isType(value.internalName)) {
                             findings += NetworkFinding(className, methodName, value.internalName)
                         }
                     }
@@ -105,7 +122,7 @@ class NetworkApiScanner {
                         vararg bootstrapMethodArguments: Any?,
                     ) {
                         bootstrapMethodArguments.filterIsInstance<Handle>().forEach { handle ->
-                            if (NetworkApiRules.isNetworkCall(handle.owner, handle.name, handle.desc)) {
+                            if (isCall(handle.owner, handle.name, handle.desc)) {
                                 findings += NetworkFinding(className, methodName, "${handle.owner}.${handle.name}")
                             }
                         }

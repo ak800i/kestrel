@@ -61,6 +61,27 @@ class AuditRulesTest {
     }
 
     @Test
+    fun projectRulesLetOnlyTheGatewayAndTheModelDownloadUseTheModelDownloadTag() {
+        val projectRules = AuditRules.parse(File("../../audit/rules.txt").readText())
+
+        assertTrue(projectRules.isModelDownloadTagExcepted(":core:privacy", "dev/kestrel/privacy/network/AllowlistInterceptor"))
+        assertTrue(projectRules.isModelDownloadTagExcepted(":app", "dev/kestrel/app/download/GatewayDownloaderKt"))
+        assertFalse(projectRules.isModelDownloadTagExcepted(":app", "dev/kestrel/app/AppGraph"))
+        assertFalse(projectRules.isModelDownloadTagExcepted(":core:voice", "dev/kestrel/app/download/GatewayDownloaderKt"))
+        assertFalse(projectRules.isModelDownloadTagExcepted(":core:providers", "dev/kestrel/privacy/network/AllowlistInterceptor"))
+    }
+
+    @Test
+    fun aModelDownloadTagRuleNeedsAModuleAClassPrefixAndAJustification() {
+        val error = runCatching { AuditRules.parse("allow-model-download-tag dev/kestrel/app/ Downloads\n") }.exceptionOrNull()
+
+        assertEquals(
+            "audit/rules.txt line 1: expected 'allow-model-download-tag <module path> <class prefix> <justification>'",
+            error?.message,
+        )
+    }
+
+    @Test
     fun dependencyWithoutAllowRuleFails() {
         val problems = rules.checkDependencies(listOf(Coordinates("org.unknown", "lib", "1.0")))
         assertEquals(

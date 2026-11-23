@@ -17,6 +17,8 @@ class ScanNetworkApisTaskTest {
 
     private val gateway = "dev/kestrel/privacy/network/Gateway"
     private val other = "dev/kestrel/privacy/Other"
+    private val tag = "dev/kestrel/privacy/network/ModelDownloadTag"
+    private val download = "dev/kestrel/app/download/GatewayDownloaderKt"
 
     /** A class whose one method creates a java.net.Socket. The scanner only reads it, so it need not verify. */
     private fun classUsingASocket(internalName: String): ByteArray {
@@ -33,14 +35,36 @@ class ScanNetworkApisTaskTest {
         return writer.toByteArray()
     }
 
+    /** A class whose one method reads the model download's tag, as `request.tag(ModelDownloadTag::class.java, ModelDownloadTag)` does. */
+    private fun classUsingTheTag(internalName: String): ByteArray {
+        val writer = ClassWriter(0)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "tag", "()Ljava/lang/Object;", null, null).apply {
+            visitCode()
+            visitFieldInsn(Opcodes.GETSTATIC, tag, "INSTANCE", "L$tag;")
+            visitInsn(Opcodes.ARETURN)
+            visitMaxs(1, 0)
+            visitEnd()
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
     /** Runs the task over [classes] as the module [modulePath]: the task's failure, if any, and its report. */
-    private fun scan(modulePath: String, vararg classes: String): Pair<GradleException?, String> {
+    private fun scan(modulePath: String, vararg classes: String): Pair<GradleException?, String> =
+        scanClasses(modulePath, classes.associateWith(::classUsingASocket))
+
+    private fun scanClasses(modulePath: String, classes: Map<String, ByteArray>): Pair<GradleException?, String> {
         val classDirectory = temporary.newFolder()
-        for (name in classes) {
-            File(classDirectory, "$name.class").apply { parentFile.mkdirs() }.writeBytes(classUsingASocket(name))
+        for ((name, bytes) in classes) {
+            File(classDirectory, "$name.class").apply { parentFile.mkdirs() }.writeBytes(bytes)
         }
         val rules = temporary.newFile().apply {
-            writeText("allow-network-class :core:privacy dev/kestrel/privacy/network/ The gateway\n")
+            writeText(
+                "allow-network-class :core:privacy dev/kestrel/privacy/network/ The gateway\n" +
+                    "allow-model-download-tag :core:privacy dev/kestrel/privacy/network/ The gateway\n" +
+                    "allow-model-download-tag :app $download The model download\n",
+            )
         }
         val report = File(temporary.newFolder(), "network-apis.txt")
         val project = ProjectBuilder.builder().withProjectDir(temporary.newFolder()).build()
@@ -81,5 +105,25 @@ class ScanNetworkApisTaskTest {
 
         assertEquals("$gateway.open uses java/net/Socket", failure?.message?.substringAfter("\n"))
         assertEquals("Violations:\n$gateway.open uses java/net/Socket\n", report)
+    }
+
+    @Test
+    fun onlyTheClassesThatTheRulesNameMayUseTheModelDownloadTag() {
+        val graph = "dev/kestrel/app/AppGraph"
+        val (failure, report) = scanClasses(":app", mapOf(download to classUsingTheTag(download), graph to classUsingTheTag(graph)))
+
+        assertEquals("$graph.tag uses $tag.INSTANCE", failure?.message?.substringAfter("\n"))
+        assertEquals(
+            "No network API use outside the exceptions.\n\n" +
+                "The model download's tag is used outside the exceptions:\n$graph.tag uses $tag.INSTANCE\n\n" +
+                "The model download's tag, allowed by audit/rules.txt:\n$download.tag uses $tag.INSTANCE\n",
+            report,
+        )
+        assertEquals(null, scanClasses(":core:privacy", mapOf("$tag\$User" to classUsingTheTag("$tag\$User"))).first)
+        // A rule holds in its own module only.
+        assertEquals(
+            "$download.tag uses $tag.INSTANCE",
+            scanClasses(":core:voice", mapOf(download to classUsingTheTag(download))).first?.message?.substringAfter("\n"),
+        )
     }
 }

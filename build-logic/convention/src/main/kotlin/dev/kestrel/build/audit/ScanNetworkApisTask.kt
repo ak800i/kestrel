@@ -17,7 +17,10 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import java.util.zip.ZipFile
 
-/** Fails when compiled project code uses network APIs outside the exceptions in `audit/rules.txt` (design spec, section 13.2). */
+/**
+ * Fails when compiled project code uses network APIs, or the model download's tag (release plan), outside the exceptions
+ * in `audit/rules.txt` (design spec, section 13.2).
+ */
 abstract class ScanNetworkApisTask : DefaultTask() {
     /** Android modules: the classes that AGP compiled for the variant. */
     @get:InputFiles
@@ -55,22 +58,29 @@ abstract class ScanNetworkApisTask : DefaultTask() {
         reportFile.parentFile.mkdirs()
         val rules = AuditRules.parse(rulesFile.get().asFile.readText())
         val scanner = NetworkApiScanner()
+        val tagScanner = ModelDownloadTagRules.scanner()
         val findings = mutableListOf<NetworkFinding>()
+        val tagFindings = mutableListOf<NetworkFinding>()
+        fun scan(bytes: ByteArray) {
+            findings += scanner.scan(bytes)
+            tagFindings += tagScanner.scan(bytes)
+        }
         val directories = classDirectories.get().map { it.asFile } + extraClassDirectories.files
         directories.filter { it.isDirectory }.forEach { directory ->
             directory.walkTopDown()
                 .filter { it.isFile && it.name.endsWith(".class") }
-                .forEach { findings += scanner.scan(it.readBytes()) }
+                .forEach { scan(it.readBytes()) }
         }
         classJars.get().map { it.asFile }.filter { it.isFile }.forEach { jar ->
             ZipFile(jar).use { zip ->
                 zip.entries().asSequence()
                     .filter { !it.isDirectory && it.name.endsWith(".class") }
-                    .forEach { entry -> findings += scanner.scan(zip.getInputStream(entry).use { it.readBytes() }) }
+                    .forEach { entry -> scan(zip.getInputStream(entry).use { it.readBytes() }) }
             }
         }
         val module = modulePath.get()
         val (excepted, violations) = findings.distinct().partition { rules.isNetworkClassExcepted(module, it.className) }
+        val (taggers, tagViolations) = tagFindings.distinct().partition { rules.isModelDownloadTagExcepted(module, it.className) }
         reportFile.writeText(
             buildString {
                 appendLine(if (violations.isEmpty()) "No network API use outside the exceptions." else "Violations:")
@@ -80,12 +90,29 @@ abstract class ScanNetworkApisTask : DefaultTask() {
                     appendLine("Allowed by audit/rules.txt:")
                     excepted.forEach { appendLine(it.toString()) }
                 }
+                if (tagViolations.isNotEmpty()) {
+                    appendLine()
+                    appendLine("The model download's tag is used outside the exceptions:")
+                    tagViolations.forEach { appendLine(it.toString()) }
+                }
+                if (taggers.isNotEmpty()) {
+                    appendLine()
+                    appendLine("The model download's tag, allowed by audit/rules.txt:")
+                    taggers.forEach { appendLine(it.toString()) }
+                }
             },
         )
-        if (violations.isNotEmpty()) {
-            throw GradleException(
-                "Network APIs are used outside the network gateway (report: $reportFile):\n" + violations.joinToString("\n"),
-            )
+        val failures = buildList {
+            if (violations.isNotEmpty()) {
+                add("Network APIs are used outside the network gateway (report: $reportFile):\n" + violations.joinToString("\n"))
+            }
+            if (tagViolations.isNotEmpty()) {
+                add(
+                    "The model download's tag is used outside the classes that audit/rules.txt allows (report: $reportFile):\n" +
+                        tagViolations.joinToString("\n"),
+                )
+            }
         }
+        if (failures.isNotEmpty()) throw GradleException(failures.joinToString("\n"))
     }
 }

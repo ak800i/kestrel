@@ -39,6 +39,7 @@ class AuditRules(
     val networkClassExceptions: List<NetworkClassException>,
     val nativeSymbolExceptions: List<NativeSymbolException>,
     val modelHosts: List<ModelHostRule> = emptyList(),
+    val modelDownloadTagExceptions: List<NetworkClassException> = emptyList(),
 ) {
     /** Returns one message per problem. An empty list means that every dependency passed. */
     fun checkDependencies(dependencies: Collection<Coordinates>): List<String> {
@@ -66,6 +67,10 @@ class AuditRules(
 
     fun isNetworkClassExcepted(modulePath: String, internalClassName: String): Boolean =
         networkClassExceptions.any { it.modulePath == modulePath && internalClassName.startsWith(it.classPrefix) }
+
+    /** Whether the class may use the model download's tag, which lets a request reach the model hosts (release plan). */
+    fun isModelDownloadTagExcepted(modulePath: String, internalClassName: String): Boolean =
+        modelDownloadTagExceptions.any { it.modulePath == modulePath && internalClassName.startsWith(it.classPrefix) }
 
     fun isNativeSymbolExcepted(libraryName: String, symbol: String): Boolean =
         nativeSymbolExceptions.any { it.libraryName == libraryName && it.symbol == symbol }
@@ -105,6 +110,7 @@ class AuditRules(
             val networkClasses = mutableListOf<NetworkClassException>()
             val nativeSymbols = mutableListOf<NativeSymbolException>()
             val modelHostRules = mutableListOf<ModelHostRule>()
+            val modelDownloadTags = mutableListOf<NetworkClassException>()
             text.lineSequence().forEachIndexed { index, rawLine ->
                 val line = rawLine.substringBefore('#').trim()
                 if (line.isEmpty()) return@forEachIndexed
@@ -141,10 +147,16 @@ class AuditRules(
                         }
                         modelHostRules += ModelHostRule(parts[1], rest(2))
                     }
+                    "allow-model-download-tag" -> {
+                        if (parts.size < 4 || !parts[1].startsWith(":")) {
+                            fail("expected 'allow-model-download-tag <module path> <class prefix> <justification>'")
+                        }
+                        modelDownloadTags += NetworkClassException(parts[1], parts[2], rest(3))
+                    }
                     else -> fail("unknown rule '${parts[0]}'")
                 }
             }
-            return AuditRules(allows, denies, pins, networkClasses, nativeSymbols, modelHostRules)
+            return AuditRules(allows, denies, pins, networkClasses, nativeSymbols, modelHostRules, modelDownloadTags)
         }
     }
 }

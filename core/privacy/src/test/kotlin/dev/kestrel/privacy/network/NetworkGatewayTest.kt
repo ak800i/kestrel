@@ -12,12 +12,16 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
 import java.net.InetAddress
+import java.net.ServerSocket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 class NetworkGatewayTest {
     private val server = MockWebServer()
@@ -176,5 +180,43 @@ class NetworkGatewayTest {
 
         assertEquals("models.example.org is not on the allowlist", error.message)
         assertEquals(NetworkOutcome.BLOCKED, events.single().outcome)
+    }
+
+    @Test
+    fun theGatewayLetsOnlyATaggedRequestReachAModelHost() {
+        policy.setModelHosts(listOf("127.0.0.1"))
+        // A model host that takes each connection and closes it, so that a request that the allowlist lets through ends in
+        // its TLS handshake.
+        val connections = AtomicInteger()
+        val host = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val accepting = thread {
+            while (!host.isClosed) {
+                try {
+                    val connection = host.accept()
+                    connections.incrementAndGet()
+                    connection.close()
+                } catch (e: IOException) {
+                    break
+                }
+            }
+        }
+        val url = "https://127.0.0.1:${host.localPort}/a.onnx".toHttpUrl()
+        try {
+            val tagged = Request.Builder().url(url).tag(ModelDownloadTag::class.java, ModelDownloadTag).build()
+            val failure = assertThrows(IOException::class.java) { execute(tagged) }
+
+            assertFalse(failure is BlockedRequestException)
+            assertEquals(1, connections.get())
+            assertEquals(NetworkOutcome.FAILED, events.single().outcome)
+
+            val blocked = assertThrows(BlockedRequestException::class.java) { execute(Request.Builder().url(url).build()) }
+
+            assertEquals("127.0.0.1 is not on the allowlist", blocked.message)
+            assertEquals(1, connections.get())
+            assertEquals(NetworkOutcome.BLOCKED, events.last().outcome)
+        } finally {
+            host.close()
+            accepting.join()
+        }
     }
 }
