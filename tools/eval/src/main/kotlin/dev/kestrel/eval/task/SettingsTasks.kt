@@ -51,9 +51,15 @@ object SettingsTasks {
         Rehearsal.Steps(listOf(Shell("cmd bluetooth_manager disable", "cmd bluetooth_manager enable", settle = 5.seconds))),
     )
 
+    // The display page's other size controls are kept too, each as Android applies it, because a run may change them
+    // instead of the font scale (T6).
     val FONT_SIZE = task(
         "font-size", "make the text bigger",
-        listOf(SettingsValue("system", "font_scale", "1.0")),
+        listOf(
+            KeepDisplayDensity,
+            KeepStoredSettings(KeepStoredSettings.DISPLAY_SIZE, except = setOf(SettingKey("system", "font_scale"), SettingKey("secure", "display_density_forced"))),
+            SettingsValue("system", "font_scale", "1.0"),
+        ),
         listOf(SettingsIs("system", "font_scale", Wanted.Above(1.0))),
         Rehearsal.Steps(listOf(Shell("settings put system font_scale 1.15", "settings put system font_scale 1.0"))),
     )

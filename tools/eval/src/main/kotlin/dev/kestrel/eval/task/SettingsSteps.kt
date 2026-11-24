@@ -57,6 +57,97 @@ data class SettingsIs(val namespace: String, val key: String, val wanted: Wanted
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean = wanted.accepts(scope.setting(namespace, key))
 }
 
+/** A setting by its namespace (`system`, `secure` or `global`) and its key. */
+data class SettingKey(val namespace: String, val key: String) {
+    override fun toString(): String = "$namespace/$key"
+}
+
+/**
+ * Keeps the display's density (Display size, One UI's Screen zoom) as it was before the run (plan 6B-basefix T6): it
+ * reads the override that `wm density` prints and changes nothing; its restore applies the old override again with `wm
+ * density <n>`, or removes the run's with `wm density reset`, and checks `wm density` again. Android applies the density
+ * only through the window manager, which also stores it in `secure display_density_forced`; a write of that key alone
+ * shows nothing until a reboot. A density that the restore put back is named [NAME] in [RunScope.putBack]'s applied list.
+ */
+object KeepDisplayDensity : Setup {
+    const val NAME = "wm/density"
+    private val OVERRIDE = Regex("^Override density: (\\d+)$")
+
+    override fun apply(scope: RunScope): SetupResult {
+        val before = override(scope)
+        val undo = before?.let { "wm density $it" } ?: "wm density reset"
+        scope.restores.push("the display density as before", "Run: adb -s ${scope.device.serial} shell $undo") {
+            if (override(scope) != before) {
+                scope.device.idempotent(undo)
+                check(override(scope) == before) { "The display density is still not as before." }
+                scope.putBack.recordApplied(NAME)
+            }
+        }
+        return SetupResult.Ready
+    }
+
+    override fun probe(scope: RunScope): Map<String, String> = mapOf(NAME to (override(scope) ?: "none"))
+
+    /** The override density that `wm density` prints, or null when the display has none. */
+    fun override(scope: RunScope): String? = scope.device.read("wm density").firstNotNullOfOrNull { OVERRIDE.find(it.trim())?.groupValues?.get(1) }
+
+    override fun toString(): String = "KeepDisplayDensity"
+}
+
+/**
+ * Keeps the stored settings of [NAMESPACES] whose keys [matching] finds, but [except], as they were before the run (plan
+ * 6B-basefix T6): it changes nothing, and its one restore writes back each one that the run changed and deletes each one
+ * that the run added. These are a vendor's keys, such as One UI's font size index and font style, whose effect only their
+ * own Settings page applies, so the restore names each in [RunScope.putBack]'s stored list and warns that the screen may
+ * still show the run's choice until it is set again by hand. Settings whose restore Android applies itself keep their own
+ * steps, so they are [except]: the font scale ([SettingsValue]) and the display density ([KeepDisplayDensity]).
+ */
+data class KeepStoredSettings(val matching: Regex, val except: Set<SettingKey> = emptySet()) : Setup {
+    override fun apply(scope: RunScope): SetupResult {
+        val before = read(scope)
+        val values = before.entries.joinToString { "${it.key}=${it.value}" }.ifEmpty { "none" }
+        val byHand = "Run: adb -s ${scope.device.serial} shell settings list system (and secure, global), and set the keys that the warning names back to: $values"
+        scope.restores.push("the stored display settings as before", byHand) {
+            val after = read(scope)
+            val changed = (before.keys + after.keys).filter { before[it] != after[it] }
+            for (setting in changed) {
+                val old = before[setting]
+                scope.device.idempotent(
+                    if (old == null) "settings delete ${setting.namespace} ${setting.key}" else "settings put ${setting.namespace} ${setting.key} ${shellQuoted(old)}",
+                )
+                scope.putBack.recordStored(setting.toString())
+            }
+            if (changed.isNotEmpty()) {
+                scope.console.warn(
+                    "The run changed ${changed.joinToString()}; the restore wrote them back, and the screen may show them only after " +
+                        "a reboot or when they are set again in Settings > Display.",
+                )
+            }
+        }
+        return SetupResult.Ready
+    }
+
+    override fun probe(scope: RunScope): Map<String, String> = read(scope).mapKeys { it.key.toString() }
+
+    private fun read(scope: RunScope): Map<SettingKey, String> = buildMap {
+        for (namespace in NAMESPACES) {
+            for (line in scope.device.read("settings list $namespace")) {
+                val key = line.substringBefore('=', "").trim()
+                val setting = SettingKey(namespace, key)
+                if (key.isEmpty() || setting in except || !matching.containsMatchIn(key)) continue
+                put(setting, line.substringAfter('=').trim())
+            }
+        }
+    }
+
+    companion object {
+        val NAMESPACES = listOf("system", "secure", "global")
+
+        /** The keys of a display page's size controls: the font scale, the display density, and the vendor's font and zoom keys. */
+        val DISPLAY_SIZE = Regex("font|density|zoom", RegexOption.IGNORE_CASE)
+    }
+}
+
 /** Dark theme's mode from `cmd uimode night`, which answers "Night mode: yes". */
 object Night {
     /** The modes that `cmd uimode night <mode>` puts back as they were; a custom schedule is not among them. */

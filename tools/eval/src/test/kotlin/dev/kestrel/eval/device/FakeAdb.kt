@@ -28,6 +28,13 @@ class FakeAdb(
     /** The output of a host command other than `get-state` and `emu avd name`, such as `exec-out uiautomator dump /dev/tty`. */
     var hostOut: (List<String>) -> String = { "" }
     val settings = mutableMapOf<String, String>()
+
+    /**
+     * The display's override density that `wm density` prints, which Android applies at once; null without one. `wm density
+     * <n>|reset` sets it and its stored key `secure/display_density_forced`, as Android does, while `settings put` changes
+     * only the stored key, which Android applies only at boot.
+     */
+    var density: String? = null
     val files = mutableMapOf<String, String>()
     private val handlers = mutableListOf<Pair<Regex, (MatchResult) -> String?>>()
     private val hooks = mutableMapOf<String, (Map<String, String>) -> Pair<Int, String>>()
@@ -98,6 +105,17 @@ class FakeAdb(
             return reply(match)
         }
         GETPROP.matchEntire(command)?.let { return props[it.groupValues[1]].orEmpty() }
+        if (command == "wm density") return "Physical density: 420" + (density?.let { "\nOverride density: $it" } ?: "")
+        WM_DENSITY.matchEntire(command)?.let { match ->
+            val value = match.groupValues[1].takeIf { it != "reset" }
+            density = value
+            if (value == null) settings.remove("secure/display_density_forced") else settings["secure/display_density_forced"] = value
+            return ""
+        }
+        SETTINGS_LIST.matchEntire(command)?.let { match ->
+            val prefix = "${match.groupValues[1]}/"
+            return settings.filterKeys { it.startsWith(prefix) }.entries.joinToString("\n") { "${it.key.removePrefix(prefix)}=${it.value}" }
+        }
         SETTINGS_GET.matchEntire(command)?.let { return settings["${it.groupValues[1]}/${it.groupValues[2]}"] ?: "null" }
         SETTINGS_PUT.matchEntire(command)?.let {
             settings["${it.groupValues[1]}/${it.groupValues[2]}"] = it.groupValues[3].removeSurrounding("'")
@@ -119,6 +137,8 @@ class FakeAdb(
     companion object {
         private val GUARD = Regex("case \\$\\(getprop (\\S+)\\) in (\\S+)\\) (.*) && echo && echo kestrel-end;; \\*\\) echo kestrel-refused;; esac", RegexOption.DOT_MATCHES_ALL)
         private val GETPROP = Regex("getprop (\\S+)")
+        private val WM_DENSITY = Regex("wm density (\\d+|reset)")
+        private val SETTINGS_LIST = Regex("settings list (\\S+)")
         private val SETTINGS_GET = Regex("settings get (\\S+) (\\S+)")
         private val SETTINGS_PUT = Regex("settings put (\\S+) (\\S+) (.+)")
         private val RUN_AS_CAT = Regex("run-as dev\\.kestrel cat (\\S+)")

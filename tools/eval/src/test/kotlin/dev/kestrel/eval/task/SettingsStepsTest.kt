@@ -343,6 +343,52 @@ class SettingsStepsTest {
         assertFalse(ReplyHasDigits("{number}").passes(run.scope, none))
         assertTrue(ReplyHasDigits("2025550143").passes(run.scope, none))
     }
+
+    @Test
+    fun theDisplayDensityThatARunChangedIsAppliedAgainNotOnlyWrittenBack() {
+        val run = FakeRun(DeviceKind.A71)
+
+        assertEquals(mapOf(KeepDisplayDensity.NAME to "none"), KeepDisplayDensity.probe(run.scope))
+        assertEquals(SetupResult.Ready, KeepDisplayDensity.apply(run.scope))
+        // The run's Screen zoom: Android applies it at once and stores it.
+        run.adb.density = "480"
+        run.adb.settings["secure/display_density_forced"] = "480"
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertNull(run.adb.density)
+        assertNull(run.adb.settings["secure/display_density_forced"])
+        assertEquals(listOf(KeepDisplayDensity.NAME), run.scope.putBack.applied)
+
+        // The owner's own override comes back as it was.
+        run.adb.density = "400"
+        assertEquals(SetupResult.Ready, KeepDisplayDensity.apply(run.scope))
+        run.adb.density = "480"
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals("400", run.adb.density)
+    }
+
+    @Test
+    fun theStoredFontKeysThatARunChangedGoBackAndAreNamedForTheHand() {
+        val run = FakeRun(DeviceKind.A71)
+        run.adb.on("^settings delete (\\S+) (\\S+)$") {
+            run.adb.settings.remove("${it.groupValues[1]}/${it.groupValues[2]}")
+            ""
+        }
+        run.adb.settings.putAll(mapOf("system/font_scale" to "1.1", "system/font_size" to "3", "secure/android_id" to "x"))
+        val keep = KeepStoredSettings(KeepStoredSettings.DISPLAY_SIZE, except = setOf(SettingKey("system", "font_scale")))
+
+        assertEquals(mapOf("system/font_size" to "3"), keep.probe(run.scope))
+        assertEquals(SetupResult.Ready, keep.apply(run.scope))
+        // The run changed One UI's font size index and chose a font style, which One UI stores in a key of its own.
+        run.adb.settings["system/font_size"] = "5"
+        run.adb.settings["system/flip_font_style"] = "2"
+        run.adb.settings["system/font_scale"] = "1.3"
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(mapOf("system/font_scale" to "1.3", "system/font_size" to "3", "secure/android_id" to "x"), run.adb.settings.toMap())
+        assertEquals(listOf("system/font_size", "system/flip_font_style"), run.scope.putBack.stored)
+        assertTrue(run.console.warnings.toString(), run.console.warnings.any { it.contains("system/font_size, system/flip_font_style") })
+    }
 }
 
 /**
