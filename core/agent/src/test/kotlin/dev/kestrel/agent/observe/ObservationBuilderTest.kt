@@ -68,12 +68,17 @@ class ObservationBuilderTest {
         tree.window(2, "com.android.systemui", IntRect(0, 800, 1080, 1400), active = true)
         tree.add(900, "Brightness", window = 2)
         tree.add(1000, description = "Display brightness", className = "android.widget.SeekBar", slider = true, sliderPercent = 80, window = 2)
+        val row = tree.add(1150, id = "expandableNotificationRow", className = "android.widget.FrameLayout", height = 200, window = 2)
+        tree.add(1250, description = "Song progress", className = "android.widget.SeekBar", slider = true, sliderPercent = 20, parent = row, window = 2)
 
         val observation = builder.build(ObservationInput(1, tree.snapshot(), "Settings"))
 
         assertTrue(observation.text, observation.text.contains("SeekBar \"Font size\" value 40%"))
         assertTrue(observation.text, observation.text.contains("SeekBar \"Display brightness\" value 80%"))
         assertFalse(observation.text, observation.text.contains("\"Brightness\""))
+        // A slider inside a notification, such as a media notification's, stays out; the notification is only counted.
+        assertFalse(observation.text, observation.text.contains("Song progress"))
+        assertEquals(1, observation.notifications)
         val brightness = observation.table.entries.single { it.label == "Display brightness" }
         assertTrue(brightness.slider)
         assertEquals(80, brightness.sliderPercent)

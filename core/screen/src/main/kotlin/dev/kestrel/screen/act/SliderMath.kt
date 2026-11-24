@@ -1,5 +1,6 @@
 package dev.kestrel.screen.act
 
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -21,4 +22,30 @@ object SliderMath {
         val value = min + percent.coerceIn(0, 100) / 100f * (max - min)
         return if (integer) value.roundToInt().toFloat().coerceIn(min, max) else value
     }
+
+    /** A slider's range as Android reports it: its ends, its value, and whether it holds only whole numbers. */
+    data class Range(val min: Float, val max: Float, val current: Float, val integer: Boolean)
+
+    /**
+     * set_slider's answer from the slider read back after its action: [ActionResult.GONE] when the slider has left the
+     * screen ([gone]), "It isn't a slider." without a range ([after]) that has width, and [ActionResult.Done] when it counts
+     * as set to [percent]: within [TOLERANCE] points of it, or, for a range of whole numbers, at the whole number nearest
+     * to it ([value]), as close as such a slider can come (Settings' Font size has 7 positions, 16.7 points apart).
+     * Otherwise "The slider didn't move." when the action was refused ([moved] false; a View SeekBar and a Compose Slider
+     * refuse set-progress to the value that they already hold, which counts as set above), else "The slider stopped at N %.".
+     */
+    fun readBack(gone: Boolean, after: Range?, percent: Int, moved: Boolean): ActionResult {
+        if (gone) return ActionResult.GONE
+        val shown = after?.let { percent(it.min, it.max, it.current) } ?: return NOT_A_SLIDER
+        val asked = percent.coerceIn(0, 100)
+        val nearest = after.integer && after.current == value(after.min, after.max, asked, integer = true)
+        return when {
+            abs(shown - asked) <= TOLERANCE || nearest -> ActionResult.Done(ActionMethod.ACTION)
+            !moved -> ActionResult.Failed("The slider didn't move.")
+            else -> ActionResult.Failed("The slider stopped at $shown %.")
+        }
+    }
+
+    /** What set_slider answers for an element without a range, which is no slider. */
+    val NOT_A_SLIDER = ActionResult.Failed("It isn't a slider.")
 }

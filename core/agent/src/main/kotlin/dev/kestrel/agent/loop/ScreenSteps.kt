@@ -101,6 +101,8 @@ internal class ScreenSteps(private val run: TaskRun) {
             sharing?.let { run.shareTapped(it, yes, ended = false) }
         }
         when {
+            // A slider sends and deletes nothing, whatever its category; its ledger line comes from its own result (D24).
+            call is AgentCall.SetSlider -> Unit
             // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press
             // of the share flow needs a new yes.
             done.outcome == Outcome.Uncertain -> {
@@ -303,8 +305,10 @@ internal class ScreenSteps(private val run: TaskRun) {
             outcome.uncertain && changed == Outcome.NothingChanged -> Outcome.Uncertain
             // A slider's result is the value that it shows now, which the completion check compares (design D19 of sub-project 6).
             call is AgentCall.SetSlider -> {
-                key?.let { run.lastSlider[it] = call.percent }
-                Outcome.SliderAt(key?.let { after.element(it) }?.sliderPercent)
+                // The value read back, which for a slider of few positions is the nearest one to the percent asked for.
+                val shown = key?.let { after.element(it) }?.sliderPercent
+                key?.let { run.lastSlider[it] = shown ?: call.percent }
+                Outcome.SliderAt(shown, moved = key?.let { before.element(it) }?.sliderPercent != shown)
             }
             else -> changed
         }

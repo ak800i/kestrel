@@ -156,7 +156,10 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private val ownerSteps = mutableSetOf<Int>()
     val lastChecked = mutableMapOf<String, Boolean>()
 
-    /** The percent that the task's last set_slider asked of each slider, by key (design D19 of sub-project 6). */
+    /**
+     * The percent that each slider showed after the task's last set_slider on it, or else the percent asked for, by key
+     * (design D19 of sub-project 6).
+     */
     val lastSlider = mutableMapOf<String, Int>()
     var confirmed = 0
     var unconfirmed = 0

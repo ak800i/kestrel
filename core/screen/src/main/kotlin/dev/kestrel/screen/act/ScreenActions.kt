@@ -236,10 +236,12 @@ class ScreenActions internal constructor(
      * Puts the slider with [key] at [percent] of its range (design D19 of sub-project 6): with its set-progress action at
      * `min + percent ÷ 100 × (max − min)`, rounded for a range of whole numbers, or else with its scroll-forward and
      * scroll-backward steps toward that value, reading the range again after each step, at most [MAX_SLIDER_STEPS] steps,
-     * stopping at the step that comes closest. It then reads the value back: [ActionResult.Done] within
-     * [SliderMath.TOLERANCE] points, else "The slider stopped at N %.". Its actions are Kestrel's own, which the touch
-     * watcher's rules cover as they cover a tap. [expected] checks the element with [key] as [tap] does. The instant
-     * commands' [adjust] stays as it is.
+     * stopping at the step that comes closest. It then reads the value back, also after Android refused the action, and
+     * answers as [SliderMath.readBack] says: [ActionResult.Done] within [SliderMath.TOLERANCE] points or at the whole
+     * number nearest to [percent], "The slider stopped at N %." or "The slider didn't move." otherwise, and
+     * [ActionResult.GONE] when the slider left the screen. Its actions are Kestrel's own, which the touch watcher's rules
+     * cover as they cover a tap. [expected] checks the element with [key] as [tap] does. The instant commands' [adjust]
+     * stays as it is.
      */
     suspend fun setSlider(key: String, percent: Int, expected: ((ScreenElement) -> Boolean)? = null): ActionResult {
         cardOpen()?.let { return it }
@@ -247,18 +249,18 @@ class ScreenActions internal constructor(
         refused(live.snapshot, key, expected)?.let { return it }
         val node = live.node(key) ?: return NOT_ON_SCREEN
         if (!node.isEnabled) return DISABLED
-        val range = node.rangeInfo ?: return ActionResult.Failed("It isn't a slider.")
+        val range = node.rangeInfo ?: return SliderMath.NOT_A_SLIDER
         val target = SliderMath.value(range.min, range.max, percent, range.type == AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT)
-        if (node.offers(SET_PROGRESS)) {
+        val moved = if (node.offers(SET_PROGRESS)) {
             val arguments = Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target) }
-            if (!node.perform(SET_PROGRESS, arguments)) return ActionResult.Failed("The slider didn't move.")
-        } else if (!stepToward(node, target)) {
-            return ActionResult.Failed("The slider didn't move.")
+            node.perform(SET_PROGRESS, arguments)
+        } else {
+            stepToward(node, target)
         }
-        settled(ActionMethod.ACTION)
-        val now = if (node.refresh()) node.rangeInfo else null
-        val shown = now?.let { SliderMath.percent(it.min, it.max, it.current) } ?: return ActionResult.Failed("It isn't a slider.")
-        return if (abs(shown - percent.coerceIn(0, 100)) <= SliderMath.TOLERANCE) ActionResult.Done(ActionMethod.ACTION) else ActionResult.Failed("The slider stopped at $shown %.")
+        if (moved) settled(ActionMethod.ACTION)
+        val gone = !node.refresh()
+        val after = if (gone) null else node.rangeInfo?.let { SliderMath.Range(it.min, it.max, it.current, it.type == AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT) }
+        return SliderMath.readBack(gone, after, percent, moved)
     }
 
     /**
@@ -797,7 +799,7 @@ class ScreenActions internal constructor(
         const val MAX_LABEL_NODES = 2_000
         val NOT_ON_SCREEN = ActionResult.Failed("It isn't on the screen.")
         val DISABLED = ActionResult.Failed("It's disabled.")
-        val GONE = ActionResult.Failed("It's no longer on the screen.")
+        val GONE = ActionResult.GONE
         val OFF_SCREEN = ActionResult.Failed("The point is outside the screen.")
         val NOT_DISMISSIBLE = ActionResult.Failed("I can't dismiss it.")
         val GESTURE_TIMED_OUT = ActionResult.Failed("Android did not report the end of the gesture.")

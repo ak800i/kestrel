@@ -29,6 +29,8 @@ class SetSliderTest {
         val seekBar = element { it.viewId == "$FIXTURES:id/seek_bar" }
         val speed = element { it.slider && it.packageName == FIXTURES && it.key != seekBar.key }
         assertEquals(50, seekBar.sliderPercent)
+        // Set-progress answers false for the value that the SeekBar already holds, which is set all the same.
+        assertEquals(ActionResult.Done(dev.kestrel.screen.act.ActionMethod.ACTION), screen.session.actions.setSlider(seekBar.key, 50))
 
         for ((percent, status) in listOf(30 to "Seek bar 30", 0 to "Seek bar 0", 100 to "Seek bar 100")) {
             assertEquals(ActionResult.Done(dev.kestrel.screen.act.ActionMethod.ACTION), screen.session.actions.setSlider(seekBar.key, percent))

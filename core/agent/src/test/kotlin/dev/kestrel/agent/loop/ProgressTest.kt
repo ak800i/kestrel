@@ -54,6 +54,13 @@ class ProgressTest {
     }
 
     @Test
+    fun aSliderThatMovedIsProgressAndOneThatStayedIsNot() {
+        val progress = Progress()
+        assertFalse(progress.record(Tools.SET_SLIDER, Outcome.SliderAt(50, moved = false)))
+        assertTrue(progress.record(Tools.SET_SLIDER, Outcome.SliderAt(50, moved = true)))
+    }
+
+    @Test
     fun aScrollWithoutAToolbarTitleChangesTheTargetNotTheScreen() {
         // Review A3-M1: on a screen without a toolbar title, rule 3 would pick the first visible row, which a scroll
         // changes; D6 compares titles without rule 3, so the scroll is progress on the target.

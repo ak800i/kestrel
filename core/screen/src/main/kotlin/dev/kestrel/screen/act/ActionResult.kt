@@ -46,5 +46,8 @@ sealed interface ActionResult {
 
         /** Kestrel performs no gesture and no node action while its confirmation card shows (design D32 item 20 of sub-project 5). */
         val CARD_OPEN = Failed("A confirmation question is open.")
+
+        /** The element's node has left the screen during the action. */
+        val GONE = Failed("It's no longer on the screen.")
     }
 }

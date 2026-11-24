@@ -47,8 +47,11 @@ sealed interface Outcome {
         override val words: String get() = "uncertain"
     }
 
-    /** What a slider shows after set_slider read it back, in percent of its range (design D19 of sub-project 6). */
-    data class SliderAt(val percent: Int?) : Outcome {
+    /**
+     * What a slider shows after set_slider read it back, in percent of its range, and whether it [moved] (design D19 of
+     * sub-project 6): only a slider that moved is progress.
+     */
+    data class SliderAt(val percent: Int?, val moved: Boolean) : Outcome {
         override val words: String get() = percent?.let { "it shows $it %" } ?: "it shows no value"
     }
 
