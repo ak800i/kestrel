@@ -8,6 +8,8 @@ import dev.kestrel.agent.AgentSettings
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.NoGoal
+import dev.kestrel.agent.goal.NoHistory
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.AnswerKind
@@ -96,7 +98,7 @@ class LookCloserTest {
         var numbersShown = 0
         owner.onAsk = { question -> if (question == "Which number should I use?") numbersShown = session.numberBadges.size }
         val eyes = AppEyes({ session }, { VoiceTests.graph.models }, { emptySet() }) { _, _ -> }
-        val ports = AgentPorts(SessionScreen(session), eyes, FakeData(), owner, model, FakeApps(), FakeMemory(), FakeLog(), FakeClock())
+        val ports = AgentPorts(SessionScreen(session), eyes, FakeData(), owner, model, FakeApps(), FakeMemory(), FakeLog(), FakeClock(), NoGoal, NoHistory)
         var report: TaskReport? = null
 
         Agent(ports, AgentSettings()).run(TaskRequest("task-1-0c0ffee0", "Show the details on the test canvas")) { report = it }

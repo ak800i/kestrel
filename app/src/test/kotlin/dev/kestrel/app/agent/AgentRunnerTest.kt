@@ -75,7 +75,7 @@ class AgentRunnerTest {
         starts += start
         val chosen = (start.model as? ModelChoice.Override)?.port ?: model
         val ports = AgentPorts(
-            FakeScreen(Fixtures.screen("scenario-home")), NoEyes, FakeData(), owner, chosen, FakeApps(), memory, log, FakeClock(),
+            FakeScreen(Fixtures.screen("scenario-home")), NoEyes, FakeData(), owner, chosen, FakeApps(), memory, log, FakeClock(), start.goal, start.history,
         )
         Prepared.Ready(ports, AgentSettings(), owner, emptySet(), touches, "Copilot") {}
     }
@@ -326,7 +326,7 @@ class AgentRunnerTest {
         environment = AgentEnvironment { start ->
             order += "prepare ${start.task}"
             val ports = AgentPorts(
-                FakeScreen(Fixtures.screen("scenario-home")), NoEyes, FakeData(), owner, model, FakeApps(), memory, log, FakeClock(),
+                FakeScreen(Fixtures.screen("scenario-home")), NoEyes, FakeData(), owner, model, FakeApps(), memory, log, FakeClock(), start.goal, start.history,
             )
             Prepared.Ready(ports, AgentSettings(), owner, emptySet(), touches, "Copilot") {
                 yield()

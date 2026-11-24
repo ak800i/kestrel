@@ -2,6 +2,8 @@ package dev.kestrel.app.agent
 
 import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.AgentSettings
+import dev.kestrel.agent.goal.GoalPort
+import dev.kestrel.agent.goal.HistoryPort
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ModelPort
 import dev.kestrel.agent.port.OwnerPort
@@ -23,15 +25,19 @@ internal sealed interface ModelChoice {
 
 /**
  * What the agent needs to start task number [task] (design D1 and D2 of sub-project 5): its ID for the logs, the owner's
- * words, the model choice (null for Kestrel's own memory requests that call no model), the debug-only self-chat aliases,
- * [acted], which the screen port calls after each action for the call backstop (design D13), and [local] for a memory
- * request, which needs neither the screen nor the touch watcher. toString prints no words.
+ * words, the model choice (null for Kestrel's own memory requests that call no model), the goal around the run and the
+ * search over past conversations ([goal] and [history], which the caller chooses; today `NoGoal` and `NoHistory`, plan
+ * 7A), the debug-only self-chat aliases, [acted], which the screen port calls after each action for the call backstop
+ * (design D13), and [local] for a memory request, which needs neither the screen nor the touch watcher. toString prints no
+ * words.
  */
 internal class TaskStart(
     val task: Int,
     val id: String,
     val text: String,
     val model: ModelChoice?,
+    val goal: GoalPort,
+    val history: HistoryPort,
     val selfChatAliases: Map<String, String> = emptyMap(),
     val acted: () -> Unit = {},
     val local: Boolean = false,

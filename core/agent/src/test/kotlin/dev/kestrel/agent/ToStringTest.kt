@@ -1,5 +1,17 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.goal.Checklist
+import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.HistoryData
+import dev.kestrel.agent.goal.HistoryMatch
+import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.goal.HistoryResult
+import dev.kestrel.agent.goal.ItemState
+import dev.kestrel.agent.goal.ResumeCause
+import dev.kestrel.agent.goal.ResumeNote
+import dev.kestrel.agent.goal.Steer
+import dev.kestrel.agent.goal.SteerChannel
+import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.loop.ConfirmedSend
 import dev.kestrel.agent.loop.Conversation
 import dev.kestrel.agent.loop.Outcome
@@ -60,6 +72,8 @@ class ToStringTest {
         val reply = ChatMessage.Assistant(listOf(AssistantPart.ToolCall("c", Tools.SAY, buildJsonObject { put("text", marker) })))
         val step = RoutineStep(Tools.TYPE_TEXT, key = marker, label = marker, title = marker, text = marker)
         val routine = Routine(marker, listOf(marker), listOf(Slot("text", SlotType.TEXT)), listOf(step))
+        val checklist = Checklist(listOf(ChecklistItem("c1", marker, ItemState.FAILED, why = marker)))
+        val match = HistoryMatch(0, 1, marker, marker, listOf(marker), listOf(HistoryData(Tools.LIST_SMS, marker)))
         val values = listOf(
             TaskRequest(marker, marker, setOf(marker)),
             TaskReport(EndReason.FINISHED, detail = marker, summary = marker, ledger = listOf(marker), sends = listOf(marker), recipients = listOf(marker)),
@@ -101,6 +115,23 @@ class ToStringTest {
             StepResult(1, Tools.TAP, Outcome.AnotherScreen(marker), observation.table.entries.first(), marker, marker),
             Outcome.AnotherScreen(marker),
             Outcome.CheckFailed(marker),
+            // Plan 7A's types, which carry the owner's words, Kestrel's lines, data and the model's checklist.
+            TaskRequest(marker, marker, setOf(marker), Redacted.kestrel(marker), listOf(marker), setOf(Category.SENDING), checklist, ResumeNote(ResumeCause.RESTART, listOf(marker))),
+            Steer(marker, SteerChannel.TYPED),
+            TraceEntry.Requested(marker),
+            TraceEntry.Said(marker),
+            TraceEntry.Asked(marker),
+            TraceEntry.Answered(marker),
+            TraceEntry.Data(Tools.LIST_SMS, 2, marker),
+            TraceEntry.AppUsed(marker, marker),
+            TraceEntry.Did(marker),
+            checklist,
+            checklist.items.single(),
+            ResumeNote(ResumeCause.LIMIT, listOf(marker)),
+            HistoryQuery(marker),
+            HistoryData(Tools.LIST_SMS, marker),
+            match,
+            HistoryResult(listOf(match)),
         )
 
         for (value in values) assertFalse(value.toString(), value.toString().contains("MARKER") || value.toString().contains("@example"))

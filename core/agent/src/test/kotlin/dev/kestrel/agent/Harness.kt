@@ -6,6 +6,8 @@ import dev.kestrel.agent.testing.FakeApps
 import dev.kestrel.agent.testing.FakeClock
 import dev.kestrel.agent.testing.FakeData
 import dev.kestrel.agent.testing.FakeEyes
+import dev.kestrel.agent.testing.FakeGoal
+import dev.kestrel.agent.testing.FakeHistory
 import dev.kestrel.agent.testing.FakeLog
 import dev.kestrel.agent.testing.FakeMemory
 import dev.kestrel.agent.testing.FakeOwner
@@ -36,14 +38,19 @@ class Harness(
     val log = FakeLog()
     val clock = FakeClock()
     val eyes = FakeEyes()
+    val goal = FakeGoal()
+    val history = FakeHistory()
     val model = ScriptedModel(replies, model)
     val reports = mutableListOf<TaskReport>()
 
-    val agent: Agent get() = Agent(AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock), settings)
+    val agent: Agent get() = Agent(AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal, history), settings)
 
     /** Runs [text] as a task to its end and returns its one report. */
-    suspend fun run(text: String, knownNames: Set<String> = emptySet()): TaskReport {
-        agent.run(TaskRequest("task-1-0a1b2c3d", text, knownNames)) { reports += it }
+    suspend fun run(text: String, knownNames: Set<String> = emptySet()): TaskReport = run(TaskRequest(ID, text, knownNames))
+
+    /** Runs [request] to its end and returns its one report. */
+    suspend fun run(request: TaskRequest): TaskReport {
+        agent.run(request) { reports += it }
         return reports.single()
     }
 
@@ -62,4 +69,8 @@ class Harness(
     }
 
     override fun toString(): String = "Harness"
+
+    companion object {
+        const val ID = "task-1-0a1b2c3d"
+    }
 }

@@ -5,6 +5,8 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskCancellation
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.NoGoal
+import dev.kestrel.agent.goal.NoHistory
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
 import dev.kestrel.agent.memory.Recording
@@ -223,7 +225,7 @@ internal class AgentRunner(
         try {
             val choice = choose(options) ?: return refuse(task, witness, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD))
             backstop.forget()
-            val start = TaskStart(task, newId(task), text, choice, selfChatAliases, backstop::acted, witness = witness)
+            val start = TaskStart(task, newId(task), text, choice, NoGoal, NoHistory, selfChatAliases, backstop::acted, witness = witness)
             val prepared = environment.prepare(start)
             if (prepared is Prepared.Refused) return refuse(task, witness, prepared.sentence)
             val ports = prepared as Prepared.Ready
@@ -277,7 +279,7 @@ internal class AgentRunner(
         try {
             val choice = if (request is Request.SaveRoutine) choose(emptyMap()) ?: return refuse(task, witness, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD)) else null
             val id = newId(task)
-            val prepared = environment.prepare(TaskStart(task, id, "", choice, local = true, witness = witness))
+            val prepared = environment.prepare(TaskStart(task, id, "", choice, NoGoal, NoHistory, local = true, witness = witness))
             if (prepared is Prepared.Refused) return refuse(task, witness, prepared.sentence)
             val ports = prepared as Prepared.Ready
             ready = ports

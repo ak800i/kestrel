@@ -114,6 +114,8 @@ internal class AppAgentEnvironment(
             memory,
             LogTaskLog(start.id, appendLog, report),
             AndroidAgentClock,
+            start.goal,
+            start.history,
         )
         val provider = model.model.providerName
         if (start.local || screen == null) return Prepared.Ready(ports, agentSettings, owner, emptySet(), emptyFlow(), provider) {}

@@ -609,7 +609,7 @@ class AgentTest {
         harness.screen.outcome = { action ->
             ActionOutcome(done = true, uncertain = action is ScreenAction.Tap, method = "fake")
         }
-        val ports = with(harness) { AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock) }
+        val ports = with(harness) { AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal, history) }
         val run = TaskRun(ports, harness.settings, TaskRequest("task-1-0a1b2c3d", "Send Ana a message that I'm late", emptySet()))
 
         val report = try {

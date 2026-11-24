@@ -259,7 +259,7 @@ class MemoryTest {
 
     private suspend fun Harness.runWith(store: MemoryStore, text: String): TaskReport {
         val reports = mutableListOf<TaskReport>()
-        Agent(AgentPorts(screen, eyes, data, owner, model, apps, store, log, clock), settings).run(TaskRequest("task-1-0a1b2c3d", text, emptySet())) { reports += it }
+        Agent(AgentPorts(screen, eyes, data, owner, model, apps, store, log, clock, goal, history), settings).run(TaskRequest(Harness.ID, text, emptySet())) { reports += it }
         return reports.single()
     }
 }

@@ -1,5 +1,12 @@
 package dev.kestrel.agent.testing
 
+import dev.kestrel.agent.goal.Checklist
+import dev.kestrel.agent.goal.GoalPort
+import dev.kestrel.agent.goal.HistoryPort
+import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.goal.HistoryResult
+import dev.kestrel.agent.goal.Steer
+import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.agent.memory.Routine
@@ -379,4 +386,50 @@ class FakeEyes(var lines: List<OcrLine>? = emptyList(), var capture: Capture? = 
     }
 
     override fun toString(): String = "FakeEyes"
+}
+
+/**
+ * The goal around a run as the tests script it (design 5.4 of sub-project 7): [steering] waits until the loop drains it,
+ * and the steps that started and the checklists and traces that the run reported are kept in order. [onTake] runs each
+ * time the loop drains.
+ */
+class FakeGoal : GoalPort {
+    val steering = ArrayDeque<Steer>()
+    val steps = mutableListOf<Int>()
+    val checklists = mutableListOf<Checklist>()
+    val traces = mutableListOf<TraceEntry>()
+    var onTake: () -> Unit = {}
+
+    override fun takeSteering(): List<Steer> {
+        onTake()
+        return steering.toList().also { steering.clear() }
+    }
+
+    override fun stepStarted(step: Int) {
+        steps += step
+    }
+
+    override suspend fun checklistChanged(checklist: Checklist) {
+        checklists += checklist
+    }
+
+    override suspend fun traced(entry: TraceEntry) {
+        traces += entry
+    }
+
+    override fun toString(): String = "FakeGoal(steering=${steering.size}, steps=${steps.size}, checklists=${checklists.size}, traces=${traces.size})"
+}
+
+/** The search over past conversations as the tests script it: [result] for every query, or a failure with [fails]. */
+class FakeHistory(var result: HistoryResult = HistoryResult(emptyList())) : HistoryPort {
+    val queries = mutableListOf<HistoryQuery>()
+    var fails = false
+
+    override suspend fun search(query: HistoryQuery): HistoryResult {
+        queries += query
+        if (fails) throw IllegalStateException("The test's archive failed")
+        return result
+    }
+
+    override fun toString(): String = "FakeHistory(queries=${queries.size})"
 }
