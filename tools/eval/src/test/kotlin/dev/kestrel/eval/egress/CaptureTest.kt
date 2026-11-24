@@ -2,6 +2,7 @@ package dev.kestrel.eval.egress
 
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.command.FakeEnvironment
+import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.report.EgressSummary
@@ -45,6 +46,8 @@ class CaptureTest {
         assertTrue(Files.isRegularFile(folder.resolve("capture.pcap")))
         assertTrue(run.adb.commands.contains("rm -f /sdcard/Download/PCAPdroid/kestrel-20261124-100000.pcap"))
         assertTrue(run.restores.runAll().isEmpty())
+        // Android 17 names the UID appId= in dumpsys package.
+        assertEquals(10350, Dumps.userId(listOf("    installerPackageUid=-1", "    appId=10350")))
 
         val dry = FakeRun()
         pcapdroid(dry.adb) { PcapBuilder().apply { tcp("10.215.173.1", 40002, "140.82.112.3", 443, PcapBuilder.clientHello("api.githubcopilot.com"), kestrel) }.bytes() }

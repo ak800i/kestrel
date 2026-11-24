@@ -70,8 +70,8 @@ object Dumps {
         return (values[2] - values[0]).toLong() * (values[3] - values[1])
     }
 
-    /** The app's UID, from `dumpsys package <package>`'s `userId=`, or null without one. */
-    fun userId(dump: List<String>): Int? = dump.firstNotNullOfOrNull { Regex("\\buserId=(\\d+)").find(it)?.groupValues?.get(1)?.toInt() }
+    /** The app's UID, from `dumpsys package <package>`'s `userId=` (or Android 17's `appId=`), or null without one. */
+    fun userId(dump: List<String>): Int? = dump.firstNotNullOfOrNull { Regex("\\b(?:userId|appId)=(\\d+)").find(it)?.groupValues?.get(1)?.toInt() }
 
     /** The package of the activity in front, from `dumpsys activity activities`, or null when none is resumed. */
     fun resumedPackage(dump: List<String>): String? =
