@@ -42,20 +42,59 @@ class PeopleStepsTest {
     }
 
     @Test
-    fun calendarAddsCheckFindsTheEventAtThreeTomorrowAndItsRestoreDeletesEveryEventWithTheMarker() {
+    fun calendarAddsCheckFindsTheEventAtThreeTomorrowAndItsRestoreDeletesTheRunsOwnEventsInAnyCalendar() {
         val run = FakeRun(config = config)
         val providers = FakeProviders(run.adb)
         providers.events.add(FakeProviders.Event(1, 1, "Dentist", providers.at(24, 15)))
+        // An event with the marker's title from before the setup is not the run's.
+        providers.events.add(FakeProviders.Event(2, 1, "maple heron", providers.at(24, 9)))
         Tomorrow.apply(run.scope)
         CalendarCleanup.apply(run.scope)
 
         assertFalse(EventAt.passes(run.scope, none))
-        providers.events.add(FakeProviders.Event(2, 1, "Maple Heron", providers.at(24, 14)))
+        providers.events.add(FakeProviders.Event(3, 3, "Maple Heron", providers.at(24, 14)))
         assertFalse(EventAt.passes(run.scope, none))
-        providers.events.add(FakeProviders.Event(3, 1, "maple heron", providers.at(24, 15)))
+        providers.events.add(FakeProviders.Event(4, 1, "maple heron", providers.at(24, 15)))
         assertTrue(EventAt.passes(run.scope, none))
         assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(listOf(false, true, true), providers.events.map { it.deleted })
+        assertEquals(listOf(false, false, true, true), providers.events.map { it.deleted })
+        assertTrue(run.console.warnings.isEmpty())
+    }
+
+    @Test
+    fun anEventThatTheCalendarsSyncWritesBackAfterItsDeleteIsDeletedAgain() {
+        val run = FakeRun(config = config)
+        val providers = FakeProviders(run.adb)
+        Tomorrow.apply(run.scope)
+        CalendarCleanup.apply(run.scope)
+        providers.events.add(FakeProviders.Event(1, 1, "maple heron", providers.at(24, 15)))
+        // Google Calendar's sync, which was uploading the event, writes it back once (the A71, 2026-11-24).
+        providers.afterEventDelete = {
+            providers.afterEventDelete = {}
+            it.deleted = false
+        }
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertTrue(providers.events.single().deleted)
+        assertEquals(2, run.adb.commands.count { it.startsWith("content delete --uri content://com.android.calendar/events") })
+
+        val rehearsal = FakeRun(config = config)
+        val other = FakeProviders(rehearsal.adb)
+        val event = CalendarEvent("{marker}", LocalTime.of(15, 0), LocalTime.of(16, 0))
+        Tomorrow.apply(rehearsal.scope)
+        event.apply(rehearsal.scope)
+        other.afterEventDelete = {
+            other.afterEventDelete = {}
+            it.deleted = false
+        }
+        assertTrue(rehearsal.restores.runAll().isEmpty())
+        assertTrue(other.events.single().deleted)
+
+        // A sync that keeps writing the event back fails the restore, which says so.
+        event.apply(rehearsal.scope)
+        other.afterEventDelete = { it.deleted = false }
+        val failures = rehearsal.restores.runAll()
+        assertTrue(failures.single().reason, failures.single().reason.contains("still in the calendar"))
     }
 
     @Test
@@ -141,7 +180,7 @@ class PeopleStepsTest {
     }
 
     @Test
-    fun anEventThatKestrelSavedWithoutTheMarkerIsReportedAndNotDeleted() {
+    fun anEventThatKestrelSavedUnderAnotherTitleOrOnAnotherDayIsReportedAndNotDeleted() {
         val run = FakeRun(config = config)
         val providers = FakeProviders(run.adb)
         providers.events.add(FakeProviders.Event(1, 1, "Dentist", providers.at(24, 9)))
@@ -149,14 +188,15 @@ class PeopleStepsTest {
         CalendarCleanup.apply(run.scope)
         providers.events.add(FakeProviders.Event(2, 1, "maple heron", providers.at(24, 15)))
         providers.events.add(FakeProviders.Event(3, 1, "Meeting", providers.at(24, 15)))
-        // Events of another calendar or of another day are not the run's.
-        providers.events.add(FakeProviders.Event(4, 2, "Holiday", providers.at(24, 0)))
-        providers.events.add(FakeProviders.Event(5, 1, "Lunch", providers.at(25, 12)))
+        providers.events.add(FakeProviders.Event(4, 1, "maple heron", providers.at(25, 15)))
+        providers.events.add(FakeProviders.Event(5, 3, "maple heron at 3", providers.at(24, 15)))
+        // Kestrel cannot save into a read-only calendar, whose sync adds its own events.
+        providers.events.add(FakeProviders.Event(6, 2, "Holiday", providers.at(24, 0)))
 
         assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(listOf(false, true, false, false, false), providers.events.map { it.deleted })
+        assertEquals(listOf(false, true, false, false, false, false), providers.events.map { it.deleted })
         assertEquals(1, run.console.warnings.size)
-        assertTrue(run.console.warnings.single(), run.console.warnings.single().contains("1 event"))
+        assertTrue(run.console.warnings.single(), run.console.warnings.single().contains("3 event"))
 
         val clean = FakeRun(config = config)
         FakeProviders(clean.adb).events.add(FakeProviders.Event(1, 1, "Dentist", providers.at(24, 9)))
