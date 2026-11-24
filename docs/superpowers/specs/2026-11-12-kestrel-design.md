@@ -174,21 +174,23 @@ All components run in one process.
 | `AssistActivity` | A transparent activity for `VOICE_COMMAND` and `VOICE_SEARCH_HANDS_FREE` | The earbuds' and headsets' assistant buttons, which Android sends through its chooser with or without the role (section 8.6). |
 | `KestrelNotificationListener` | `NotificationListenerService` | Reads notifications for the notification data tool (D14). |
 | `KestrelTileService` | `TileService` | A Quick Settings tile that toggles listening. |
-| Settings UI | Activities built with Jetpack Compose | The setup checklist, profiles, lists and logs (section 15). |
+| `ConversationActivity` | The launcher activity, built with Jetpack Compose (`singleTask`) | The conversation screen: the transcript, the text field and the microphone button, Stop, Continue and Cancel, "New conversation" and the past conversations (section 15). It works with listening off, holds no state of its own, and opens the settings from its gear button. |
+| `GoalService` | Foreground service of the type `specialUse` (Android 14 and later), with `mediaPlayback` added while it speaks with listening off | Runs for every open goal, in every phase, with listening on or off, and shows the goal's notification: its progress with Stop and Open, or Continue and Cancel while the goal is held (sections 13.6 and 15). |
+| Settings UI | `MainActivity` and its pages, built with Jetpack Compose | The setup checklist, profiles, lists and logs (section 15). It opens from the conversation screen's gear button, from "Kestrel, open settings" and from the intents that name a page. |
 
-### 7.3 Orchestrator
+### 7.3 Orchestrator, conversation and screen turns
 
-A single `Orchestrator` coordinates everything, so that two parts of Kestrel never drive the screen at the same time. Every input becomes an event for it: speech results, keyword hits, screen events, touches, locking and unlocking, calls, button presses and LLM results.
+Three parts share the coordination, so that two parts of Kestrel never drive the screen at the same time. The `Orchestrator` owns the voice: every spoken input becomes an event for it, and so do keyword hits, screen events, touches, locking and unlocking, calls and button presses. The `ConversationEngine` of `:core:conversation` owns the conversation and its goal (section 11.1): the Orchestrator hands it the owner's spoken commands, the conversation screen hands it the typed ones, and `PhoneSignals` in `:app` hands it the locks, the unlocks and the calls, also while listening is off. `ScreenTurns` in `:app` lets one actor at a time use the screen: an instant command, a goal or the settings.
 
 The Orchestrator tracks three things:
 
 1. **The listening mode:** off, listening, paused, ringing or in a call (section 8.5).
-2. **The current activity:** idle, running an instant command, running a task (agent or routine), or waiting for the owner. Waiting covers a confirmation, an answer to Kestrel's question, and a hand-over.
+2. **The current activity:** idle, running an instant command, waiting for a command (after "Kestrel" alone, the side key or the microphone button), the follow-up window (section 8.3), or the conversation's goal as the engine's view shows it: acting, asking, handed over or held.
 3. **Whether Kestrel is speaking.**
 
-Each transition is defined in one place and covered by unit tests: the Orchestrator lives in `:app`, and its rules are one pure function from the state and an event to the new state and a list of effects, such as speaking or running a task. The microphone and recognition are not effects; they follow from the state, so they cannot drift from it. Section 11.10 describes which speech Kestrel accepts while a task runs.
+Each transition is defined in one place and covered by unit tests. The Orchestrator lives in `:app`, and its rules are one pure function from the state and an event to the new state and a list of effects, such as speaking or handing a command to the conversation. Its state holds the conversation's view, which the engine sends it at every change. The conversation's rules are a pure function of the same kind, `ConversationMachine`; the engine applies it to one event at a time and performs its effects in order. The microphone and recognition are not effects; they follow from the state, so they cannot drift from it. Section 11.10 describes which speech Kestrel accepts while a goal runs.
 
-An instant command runs as one job, which gets the next number, so that the end of an older command changes nothing. Kestrel cancels it on "stop" or "cancel" (also a transcript that starts with either, after a word such as "okay"), on a change of mode, when the screen turns off, and before its own requests, which then run; two exceptions are a "lock screen" command that turns the screen off and the call that a command placed, because the command caused them. A cancelled job must complete, for at most 3 s, before a new command, a task or the settings may act; after that, Kestrel goes on without it. The call commands of section 8.7, such as "answer" and "decline", do not wait for it, because a ringing call must not wait 3 s. A command may ask a question, such as "Which one?": the next transcript that is not Kestrel's own request is the answer, and the owner has 15 s from the end of the question to start answering, and 35 s once speaking. A call's countdown (section 13.6) holds while the owner speaks, so that a "cancel" whose transcript comes late still counts, and the keyword spotter's "stop" or "cancel" ends it at once; the transcript of that same word then names no button. The same holds when the spotter's "stop" or "cancel" stops a reply while no command runs, such as a command's spoken result. During a countdown, "no" also cancels it, with or without the name and also when other words follow it, as in "No, not her"; Kestrel's other requests and the assistant gesture are ignored, and the holds give up after 30 s in total. A "no" whose transcript comes only after the countdown has run out is too late, because the spotter does not listen for "no".
+An instant command runs as one job, which gets the next number, so that the end of an older command changes nothing. Kestrel cancels it on "stop" or "cancel" (also a transcript that starts with either, after a word such as "okay"), on a change of mode, when the screen turns off, and before its own requests, which then run; two exceptions are a "lock screen" command that turns the screen off and the call that a command placed, because the command caused them. A cancelled job must complete, for at most 3 s, before a new command, a goal or the settings may take the screen through `ScreenTurns`; after that, Kestrel goes on without it. The call commands of section 8.7, such as "answer" and "decline", do not wait for it, because a ringing call must not wait 3 s. A command may ask a question, such as "Which one?": the next transcript that is not Kestrel's own request is the answer, and the owner has 15 s from the end of the question to start answering, and 35 s once speaking. A call's countdown (section 13.6) holds while the owner speaks, so that a "cancel" whose transcript comes late still counts, and the keyword spotter's "stop" or "cancel" ends it at once; the transcript of that same word then names no button. The same holds when the spotter's "stop" or "cancel" stops a reply while no command runs, such as a command's spoken result. During a countdown, "no" also cancels it, with or without the name and also when other words follow it, as in "No, not her"; Kestrel's other requests and the assistant gesture are ignored, and the holds give up after 30 s in total. A "no" whose transcript comes only after the countdown has run out is too late, because the spotter does not listen for "no".
 
 ### 7.4 Modules
 
@@ -196,15 +198,16 @@ Each Gradle module has one job. Most of them are plain Kotlin, so their tests ru
 
 | Module | Job | Plain Kotlin? |
 |---|---|---|
-| `:app` | Wiring, Android services and the Compose settings UI | No |
+| `:app` | Wiring, Android services, the voice and text channels, the conversation screen and the Compose settings UI | No |
 | `:core:screen` | Screen snapshots, actions and the overlays (numbers, labels, grid, feedback bar, touch watcher) | No |
 | `:core:screen-model` | The snapshot model (`ScreenSnapshot`, its elements and windows, `ScreenJson`) and the plain rules over it that the agent and the safety check share: a screen's title and its signature | Yes |
 | `:core:voice` | Audio capture, voice activity detection, keyword spotting, speech recognition and voice output, through sherpa-onnx | No |
 | `:core:commands` | The instant-command grammar, the parser, the matching of spoken words to screen elements, apps and contacts, the editing model and dictation, and the phone-number rules. The contacts themselves are read in `:core:datatools` | Yes |
 | `:core:providers` | The generated catalog, the internal request format, the request adapters, the sign-in methods, model discovery, profiles, credentials as data and cost estimation; it uses OkHttp only through the network gateway's `Call.Factory` | Yes |
-| `:core:agent` | The agent loop, its observation, its tools, memory and routines. It reaches the rest of Kestrel only through its ports (`ScreenPort`, `EyesPort`, `DataPort`, `OwnerPort`, `ModelPort`, `AppsPort`, `MemoryStore`, `TaskLog`, `AgentClock`), which `:app` and `:core:datatools` implement, so that the whole loop runs in JVM tests with a scripted model | Yes |
+| `:core:agent` | The agent loop, its observation, its tools, memory and routines. It reaches the rest of Kestrel only through its ports (`ScreenPort`, `EyesPort`, `DataPort`, `OwnerPort`, `ModelPort`, `AppsPort`, `MemoryStore`, `TaskLog`, `AgentClock`, and `GoalPort` and `HistoryPort` for the goal around a task run and for the search of past conversations), which `:app`, `:core:datatools` and `:core:conversation` implement, so that the whole loop runs in JVM tests with a scripted model. It knows nothing about conversations: one call runs one task run | Yes |
+| `:core:conversation` | The conversation: its state machine and engine, the quiet time, the goal runner with steering, limits, interruption and resume, the records and the context block built from them, the owner's channels behind one port, Kestrel's own requests without a model, and the store of past conversations with its retention and its search on the phone. It depends on `:core:agent`, `:core:safety` and `:core:commands`, never on `:app`, `:core:voice`, `:core:screen` or `:core:privacy`, so that the whole conversation runs in JVM tests with the scripted model (decision D12 of sub-project 7) | Yes |
 | `:core:safety` | The safety check, agent-free apps, redaction and test mode | Yes |
-| `:core:privacy` | The network gateway and its allowlist, the network log, the activity log and encrypted storage, including the credential store and the loopback server for browser sign-in | No |
+| `:core:privacy` | The network gateway and its allowlist, the network log, the activity log and encrypted storage, including the credential store, the archive of past conversations with its own key (section 13.4) and the loopback server for browser sign-in | No |
 | `:core:perception` | On-device OCR through ONNX Runtime | No |
 | `:core:datatools` | Contacts, photos and videos, calendar, SMS, call history, notifications, location and intents | No |
 | `:testapp` | Fixture screens for instrumented tests | No |
@@ -221,7 +224,10 @@ flowchart TD
     KWS --> ORC
     ORC -->|instant command| CMD[":core:commands"]
     CMD --> SCR[":core:screen"]
-    ORC -->|task| AGT[":core:agent"]
+    ORC -->|spoken command| CONV[":core:conversation"]
+    TXT[Conversation screen] -->|typed command| CONV
+    CONV -->|goal as task runs| AGT[":core:agent"]
+    CONV -->|records| ARC["Archive of past conversations (:core:privacy)"]
     AGT -->|proposed action| SAF[":core:safety"]
     SAF -->|allowed| SCR
     SAF -->|allowed| DATA[":core:datatools"]
@@ -230,9 +236,12 @@ flowchart TD
     PROV --> NET["Network gateway (:core:privacy)"] --> LLM[(LLM provider)]
     SCR -->|screen events and touches| ORC
     ORC --> TTS[Voice output]
+    CONV -->|spoken replies| ORC
+    CONV -->|written replies| TXT
+    AGT -->|search_conversations| CONV
 ```
 
-- Speech becomes text, and the Orchestrator routes it. Instant commands go through `:core:commands` straight to `:core:screen`. Tasks go to `:core:agent`, which first looks for a matching routine and otherwise runs the LLM loop.
+- Speech becomes text, and the Orchestrator routes it. Instant commands go through `:core:commands` straight to `:core:screen`. Commands of the conversation go to `:core:conversation`, and so does the text that the owner types on the conversation screen. For a command, the conversation starts a goal and runs it as task runs of `:core:agent`, which first looks for a matching routine and otherwise runs the LLM loop. The conversation answers the owner over the channel of his latest input (section 11.1).
 - Every action that the agent or a routine proposes passes `:core:safety` before `:core:screen` or `:core:datatools` executes it.
 - All network traffic from Kotlin code goes through the single gateway in `:core:privacy`.
 
@@ -955,7 +964,7 @@ The agent's device tests (the package `dev.kestrel.app.agent`) run tasks through
 ```
 kestrel/
   app/                     :app
-  core/screen/ voice/ commands/ providers/ agent/ safety/ privacy/ perception/ datatools/
+  core/screen/ voice/ commands/ providers/ agent/ conversation/ safety/ privacy/ perception/ datatools/
   testapp/                 :testapp
   tools/catalog-sync/ eval/
   catalog/                 providers.json, overrides.json, openclaw.lock
