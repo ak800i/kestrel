@@ -20,7 +20,7 @@ object MessageTasks {
         devices = setOf(DeviceKind.EMULATOR),
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
-        setup = listOf(Grant("dev.kestrel", listOf("android.permission.READ_SMS")), EmuSms("+1 202 555 0177", "Kestrel test {marker}")),
+        setup = listOf(KeptPermissions(listOf("android.permission.READ_SMS")), EmuSms("+1 202 555 0177", "Kestrel test {marker}")),
         check = listOf(ReplyHas),
         dryRun = DryRun("sms-read.json"),
         rehearsal = Rehearsal.SetupOnly("its check reads Kestrel's spoken reply"),

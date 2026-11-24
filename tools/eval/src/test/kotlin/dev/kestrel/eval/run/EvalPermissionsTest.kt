@@ -4,6 +4,7 @@ import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.task.FakeRun
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,12 +14,7 @@ class EvalPermissionsTest {
     @Test
     fun theSetIsGrantedReadBackAndKeptAndAMissingOneStopsTheSeries() {
         val run = FakeRun(DeviceKind.A71)
-        val granted = mutableSetOf("android.permission.READ_CONTACTS")
-        var refused: String? = null
-        run.adb.on("^dumpsys package dev\\.kestrel$") {
-            "  Package [dev.kestrel] (316e119):\n    runtime permissions:\n" + granted.joinToString("\n") { "      $it: granted=true, flags=[ USER_SET ]" }
-        }
-        run.adb.on("^pm grant dev\\.kestrel (\\S+)$") { match -> match.groupValues[1].takeIf { it != refused }?.let { granted.add(it); "" } }
+        run.adb.granted["dev.kestrel"] = mutableSetOf("android.permission.READ_CONTACTS")
 
         val states = EvalPermissions.grant(run.device)
 
@@ -29,11 +25,16 @@ class EvalPermissionsTest {
         )
         assertTrue(run.adb.commands.none { it.startsWith("pm revoke") })
 
-        // A grant that Android refuses stops the series before any run, and names what is missing.
-        granted.remove("android.permission.READ_SMS")
-        refused = "android.permission.READ_SMS"
-        val refusal = assertThrows(Refusal::class.java) { EvalPermissions.grant(run.device) }
-        assertTrue(refusal.message, refusal.message!!.contains("android.permission.READ_SMS"))
+        // A grant that Android leaves undone without an error, as with a hard-restricted permission of a Kestrel that was
+        // installed without the installer's exemption, or a grant that fails, stops the series before any run; the refusal
+        // names them and the install that exempts them, because Settings does not offer such a permission either.
+        run.adb.granted.getValue("dev.kestrel").removeAll(listOf("android.permission.READ_SMS", "android.permission.READ_CALL_LOG"))
+        run.adb.refusedGrants += "android.permission.READ_SMS"
+        run.adb.on("^pm grant dev\\.kestrel android\\.permission\\.READ_CALL_LOG$") { null }
+        val message = assertThrows(Refusal::class.java) { EvalPermissions.grant(run.device) }.message!!
+        assertTrue(message, message.contains("android.permission.READ_SMS, android.permission.READ_CALL_LOG"))
+        assertTrue(message, message.contains("scripts\\install.ps1"))
+        assertFalse(message, message.contains("Settings"))
         assertTrue(run.adb.commands.none { it.startsWith("pm revoke") })
     }
 }

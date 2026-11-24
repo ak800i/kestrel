@@ -39,7 +39,7 @@ object StandIns {
         answers = Answers.MESSAGING,
         verdict = VerdictRule.KnownGap,
         setup = listOf(
-            TestName("John", telegram = false), FixturePresses, Photos("yesterday", 3), Grant("dev.kestrel", Grant.MEDIA), SelfChatAliases.TELEGRAM,
+            TestName("John", telegram = false), FixturePresses, Photos("yesterday", 3), KeptPermissions.MEDIA, SelfChatAliases.TELEGRAM,
             MemoryAlias("{name}", FIXTURE_ALIAS), FixtureScreen("MessengerActivity", mapOf("shareForm" to "tap")),
         ),
         check = listOf(ShareItems(0), Presses(emptyList())),

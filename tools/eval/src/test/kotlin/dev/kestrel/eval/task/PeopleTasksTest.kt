@@ -13,7 +13,7 @@ class PeopleTasksTest {
 
     private fun bench(): Pair<TaskBench, FakeProviders> {
         val bench = TaskBench(config = config)
-        bench.adb.on("^dumpsys package dev\\.kestrel$") { "      android.permission.READ_CONTACTS: granted=true" }
+        bench.adb.granted["dev.kestrel"] = mutableSetOf("android.permission.READ_CONTACTS")
         bench.adb.hook("AGENT_ANSWER") { "answered" }
         return bench to FakeProviders(bench.adb)
     }
@@ -35,14 +35,14 @@ class PeopleTasksTest {
         bench.replyMarker = "0"
         assertEquals(Reason.CHECK, bench.run(PeopleTasks.CALENDAR_READ).reason)
         assertTrue(providers.events.all { it.deleted })
-        // list_events would ask for the permission, a hand-over that no script answers.
+        // list_events would ask for the permission, a hand-over that no script answers; it stays granted, in the kept set.
         assertTrue(bench.adb.commands.contains("pm grant dev.kestrel android.permission.READ_CALENDAR"))
-        assertTrue(bench.adb.commands.contains("pm revoke dev.kestrel android.permission.READ_CALENDAR"))
+        assertTrue(bench.adb.commands.none { it.startsWith("pm revoke") })
         bench.assertPutBack()
     }
 
     @Test
-    fun contactAddAndContactNumberLeaveNoTestContactAndTakeBackOnlyTheGrantedPermission() {
+    fun contactAddAndContactNumberLeaveNoTestContactAndKeepTheGrantedPermission() {
         val (bench, providers) = bench()
         var works = true
         bench.adb.hook("VOICE") { extras ->
@@ -57,8 +57,7 @@ class PeopleTasksTest {
         assertEquals(Reason.CHECK, bench.run(PeopleTasks.CONTACT_ADD).reason)
         assertTrue(providers.live().isEmpty())
         assertTrue(bench.adb.commands.contains("pm grant dev.kestrel android.permission.WRITE_CONTACTS"))
-        assertTrue(bench.adb.commands.contains("pm revoke dev.kestrel android.permission.WRITE_CONTACTS"))
-        assertTrue(bench.adb.commands.none { it == "pm revoke dev.kestrel android.permission.READ_CONTACTS" })
+        assertTrue(bench.adb.commands.none { it.startsWith("pm revoke") })
 
         var digits = "1"
         bench.adb.hook("AGENT_TASK") { extras -> if (extras["digits"] != null) "state=done digits=$digits" else bench.end }

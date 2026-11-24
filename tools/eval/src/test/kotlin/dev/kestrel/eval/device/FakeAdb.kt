@@ -35,6 +35,15 @@ class FakeAdb(
      * only the stored key, which Android applies only at boot.
      */
     var density: String? = null
+
+    /** Each package's granted runtime permissions, which `pm grant` and `pm revoke` change and `dumpsys package` prints. */
+    val granted = mutableMapOf<String, MutableSet<String>>()
+
+    /**
+     * The permissions that `pm grant` leaves ungranted with no error, as Android does with a hard-restricted permission,
+     * such as READ_SMS, of an app that was installed without the installer's exemption.
+     */
+    val refusedGrants = mutableSetOf<String>()
     val files = mutableMapOf<String, String>()
     private val handlers = mutableListOf<Pair<Regex, (MatchResult) -> String?>>()
     private val hooks = mutableMapOf<String, (Map<String, String>) -> Pair<Int, String>>()
@@ -121,10 +130,21 @@ class FakeAdb(
             settings["${it.groupValues[1]}/${it.groupValues[2]}"] = it.groupValues[3].removeSurrounding("'")
             return ""
         }
+        PM_PERMISSION.matchEntire(command)?.let { match ->
+            val (change, packageName, permission) = match.destructured
+            val permissions = granted.getOrPut(packageName) { mutableSetOf() }
+            if (change == "revoke") permissions.remove(permission) else if (permission !in refusedGrants) permissions.add(permission)
+            return ""
+        }
+        DUMPSYS_PACKAGE.matchEntire(command)?.let { match -> return if (match.groupValues[1] in granted) runtimePermissions(match.groupValues[1]) else "" }
         RUN_AS_CAT.matchEntire(command)?.let { return files[it.groupValues[1]] }
         BROADCAST.matchEntire(command)?.let { return broadcast(it.groupValues[1], it.groupValues[2]) }
         return ""
     }
+
+    /** The runtime permissions' part of `dumpsys package` for [packageName], as Android prints the granted ones. */
+    fun runtimePermissions(packageName: String): String =
+        "    runtime permissions:\n" + granted[packageName].orEmpty().joinToString("\n") { "      $it: granted=true, flags=[ USER_SET ]" }
 
     private fun broadcast(action: String, extras: String): String {
         val parsed = parseExtras(extras)
@@ -141,6 +161,8 @@ class FakeAdb(
         private val SETTINGS_LIST = Regex("settings list (\\S+)")
         private val SETTINGS_GET = Regex("settings get (\\S+) (\\S+)")
         private val SETTINGS_PUT = Regex("settings put (\\S+) (\\S+) (.+)")
+        private val PM_PERMISSION = Regex("pm (grant|revoke) (\\S+) (\\S+)")
+        private val DUMPSYS_PACKAGE = Regex("dumpsys package (\\S+)")
         private val RUN_AS_CAT = Regex("run-as dev\\.kestrel cat (\\S+)")
         private val BROADCAST = Regex("am broadcast -n dev\\.kestrel/dev\\.kestrel\\.app\\.debug\\.TestHookReceiver -a dev\\.kestrel\\.hook\\.(\\S+)(.*)", RegexOption.DOT_MATCHES_ALL)
 

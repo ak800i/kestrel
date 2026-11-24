@@ -28,60 +28,68 @@ class StepsTest {
 
     @Test
     fun grantGivesOnlyTheMissingPermissionsAndTakesBackOnlyThose() {
-        run.adb.on("^dumpsys package dev.kestrel$") { "        android.permission.READ_MEDIA_IMAGES: granted=true, flags=[ USER_SET ]" }
+        run.adb.granted[TEST_APP] = mutableSetOf(NOTIFICATIONS)
 
-        Grant("dev.kestrel", Grant.MEDIA).apply(run.scope)
+        Grant(TEST_APP, listOf(NOTIFICATIONS, CAMERA)).apply(run.scope)
         run.restores.runAll()
 
-        assertEquals(
-            listOf(
-                "dumpsys package dev.kestrel",
-                "pm grant dev.kestrel android.permission.READ_MEDIA_VIDEO",
-                "pm grant dev.kestrel android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-                "pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO",
-                "pm revoke dev.kestrel android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-            ),
-            run.adb.commands.filterNot { it.startsWith("am broadcast") },
-        )
+        assertEquals(listOf("dumpsys package $TEST_APP", "pm grant $TEST_APP $CAMERA", "pm revoke $TEST_APP $CAMERA"), run.adb.commands)
     }
 
     @Test
     fun afterCtrlCNoPermissionIsGrantedOnceTheRestoreThatTakesItBackRan() {
-        run.adb.on("^dumpsys package dev.kestrel$") { "        android.permission.READ_MEDIA_IMAGES: granted=true, flags=[ USER_SET ]" }
         var hook: Thread? = null
         run.adb.on("^pm grant ") {
             if (hook == null) hook = run.ctrlC()
             ""
         }
 
-        assertThrows(Stopping::class.java) { Grant("dev.kestrel", Grant.MEDIA).apply(run.scope) }
+        assertThrows(Stopping::class.java) { Grant(TEST_APP, listOf(NOTIFICATIONS, CAMERA)).apply(run.scope) }
         hook!!.join(5_000)
 
-        assertEquals(
-            listOf(
-                "pm grant dev.kestrel android.permission.READ_MEDIA_VIDEO",
-                "pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO",
-            ),
-            run.adb.commands.filter { it.startsWith("pm ") },
-        )
+        assertEquals(listOf("pm grant $TEST_APP $NOTIFICATIONS", "pm revoke $TEST_APP $NOTIFICATIONS"), run.adb.commands.filter { it.startsWith("pm ") })
     }
 
     @Test
     fun aGrantThatFailedIsTakenBackOnlyWhenItReachedTheDevice() {
-        val granted = mutableListOf("android.permission.READ_MEDIA_IMAGES")
-        run.adb.on("^dumpsys package dev.kestrel$") { granted.joinToString("\n") { "        $it: granted=true, flags=[ USER_SET ]" } }
-        // The grant of READ_MEDIA_VIDEO takes effect, but adb loses every answer; the next grant never starts.
-        run.adb.on("^pm grant dev.kestrel (\\S+)$") {
+        val granted = mutableListOf(NOTIFICATIONS)
+        run.adb.on("^dumpsys package dev\\.kestrel\\.testapp$") { granted.joinToString("\n") { "        $it: granted=true, flags=[ USER_SET ]" } }
+        // The grant of CAMERA takes effect, but adb loses every answer; the next grant never starts.
+        run.adb.on("^pm grant dev\\.kestrel\\.testapp (\\S+)$") {
             granted.add(it.groupValues[1])
             null
         }
 
-        assertThrows(DeviceCommandFailed::class.java) { Grant("dev.kestrel", Grant.MEDIA).apply(run.scope) }
+        assertThrows(DeviceCommandFailed::class.java) { Grant(TEST_APP, listOf(NOTIFICATIONS, CAMERA, CONTACTS)).apply(run.scope) }
         assertTrue(run.restores.runAll().isEmpty())
 
-        assertEquals(listOf("pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO"), run.adb.commands.filter { it.startsWith("pm revoke") })
+        assertEquals(listOf("pm revoke $TEST_APP $CAMERA"), run.adb.commands.filter { it.startsWith("pm revoke") })
     }
 
+    @Test
+    fun kestrelsPermissionsAreTheKeptSetGrantedWhenMissingAndNeverTakenBack() {
+        for (device in listOf(run, FakeRun(DeviceKind.A71))) {
+            device.adb.granted["dev.kestrel"] = mutableSetOf(IMAGES)
+
+            assertEquals(SetupResult.Ready, KeptPermissions.MEDIA.apply(device.scope))
+            assertEquals(SetupResult.Ready, KeptPermissions.MEDIA.apply(device.scope))
+
+            // Only the owner's set: no READ_MEDIA_VISUAL_USER_SELECTED on API 37 either, and no restore, whose revoke would end Kestrel's process.
+            assertEquals(0, device.restores.size)
+            assertEquals(listOf("pm grant dev.kestrel $VIDEO"), device.adb.commands.filter { it.startsWith("pm ") })
+            assertEquals(setOf(IMAGES, VIDEO), device.adb.granted["dev.kestrel"])
+        }
+
+        // A kept permission that Android does not grant fails the run's setup, with the install that exempts it.
+        run.adb.refusedGrants += SMS
+        val message = assertThrows(IllegalStateException::class.java) { KeptPermissions(listOf(SMS)).apply(run.scope) }.message!!
+        assertTrue(message, message.contains(SMS) && message.contains("scripts\\install.ps1"))
+        assertEquals(0, run.restores.size)
+
+        // Kestrel's permissions are only the kept set's, and only through KeptPermissions.
+        assertThrows(IllegalArgumentException::class.java) { KeptPermissions(listOf("android.permission.ACCESS_FINE_LOCATION")) }
+        assertThrows(IllegalArgumentException::class.java) { Grant("dev.kestrel", listOf(SMS)) }
+    }
     @Test
     fun afterCtrlCNoMemoryAliasIsAddedOnceTheRestoreThatRemovesItRan() {
         val keys = mutableSetOf<String>()
@@ -131,15 +139,6 @@ class StepsTest {
         }
         val scope = RunScope(run.device, run.hooks, restores, run.clock, run.console, config, run.scope.work, RunValues("maple heron"))
         return scope to { hook!! }
-    }
-
-    @Test
-    fun grantLeavesOutThePermissionThatAndroid13DoesNotKnow() {
-        val a71 = FakeRun(DeviceKind.A71)
-
-        Grant("dev.kestrel", Grant.MEDIA).apply(a71.scope)
-
-        assertFalse(a71.adb.commands.any { it.endsWith("READ_MEDIA_VISUAL_USER_SELECTED") })
     }
 
     @Test
@@ -265,5 +264,15 @@ class StepsTest {
         assertEquals(mapOf("result" to "true", "tag" to "t1", "marker" to "maple heron"), run.adb.hookCalls("AGENT_TASK").last())
         assertTrue(ReplyHas.needsTask && Recipient("x").needsTask && Confirmed().needsTask && ShareItems(0).needsTask)
         assertFalse(ScreenHas().needsTask || Foreground(emptySet()).needsTask || SelfChat.needsTask || Presses(emptyList()).needsTask)
+    }
+
+    private companion object {
+        const val TEST_APP = "dev.kestrel.testapp"
+        const val NOTIFICATIONS = "android.permission.POST_NOTIFICATIONS"
+        const val CAMERA = "android.permission.CAMERA"
+        const val CONTACTS = "android.permission.READ_CONTACTS"
+        const val IMAGES = "android.permission.READ_MEDIA_IMAGES"
+        const val VIDEO = "android.permission.READ_MEDIA_VIDEO"
+        const val SMS = "android.permission.READ_SMS"
     }
 }

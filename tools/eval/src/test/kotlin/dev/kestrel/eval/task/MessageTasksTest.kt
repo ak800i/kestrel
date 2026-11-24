@@ -29,7 +29,8 @@ class MessageTasksTest {
         assertEquals(Reason.CHECK, bench.run(MessageTasks.SMS_READ).reason)
         assertEquals(2, deletes)
         bench.assertPutBack()
-        assertTrue(bench.adb.commands.contains("pm revoke dev.kestrel android.permission.READ_SMS"))
+        assertTrue(bench.adb.commands.contains("pm grant dev.kestrel android.permission.READ_SMS"))
+        assertTrue(bench.adb.commands.none { it.startsWith("pm revoke") })
     }
 
     @Test

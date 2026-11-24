@@ -63,7 +63,7 @@ object AppTasks {
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
-        setup = listOf(HomeScreen, Installed(Gallery.PACKAGES), ForceStop(Gallery.SAMSUNG), ForceStop(Gallery.PHOTOS), NewestPhoto, Grant("dev.kestrel", Grant.MEDIA)),
+        setup = listOf(HomeScreen, Installed(Gallery.PACKAGES), ForceStop(Gallery.SAMSUNG), ForceStop(Gallery.PHOTOS), NewestPhoto, KeptPermissions.MEDIA),
         check = listOf(PhotoViewer),
         dryRun = DryRun("photo-latest.json"),
         rehearsal = Rehearsal.Steps(listOf(ViewNewestPhoto)),

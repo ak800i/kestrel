@@ -4,6 +4,7 @@ import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.HookSilent
+import dev.kestrel.eval.run.EvalPermissions
 import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -102,22 +103,22 @@ data class ScreenTap(val label: String) : Setup {
 }
 
 /**
- * Grants [packageName] the runtime [permissions] that it lacks, and takes back after the run only those that the run
- * granted, as task-check.ps1 did with Kestrel's media permissions: a grant that succeeded, or one that failed but that
- * the grant state read after it shows (the answer of a grant that took effect may be lost). A grant that fails, such as
- * of a permission that the app does not request, fails the run's setup without a restore that would fail too. Android 13
- * does not know READ_MEDIA_VISUAL_USER_SELECTED, which exists from API 34. Taking a permission back ends the app's
- * process; Kestrel's may come back with listening off, so [Listening] turns it on again after the restore, and the runner
- * also waits for Kestrel to listen before the next run.
+ * Grants a test app, [packageName], the runtime [permissions] that it lacks, and takes back after the run only those that
+ * the run granted: a grant that succeeded, or one that failed but that the grant state read after it shows (the answer
+ * of a grant that took effect may be lost). A grant that fails, such as of a permission that the app does not request,
+ * fails the run's setup without a restore that would fail too. Taking a permission back ends the app's process, so
+ * Kestrel's own permissions are never granted here: they are the evaluation's kept set, which [KeptPermissions] grants.
  */
 data class Grant(val packageName: String, val permissions: List<String>) : Setup {
+    init {
+        require(packageName != EvalPermissions.KESTREL) { "Kestrel's permissions are the evaluation's kept set: declare them with KeptPermissions." }
+    }
+
     override fun apply(scope: RunScope): SetupResult {
         val granted = granted(scope)
-        val missing = permissions.filter { it !in granted && (scope.device.test.sdk >= 34 || it != VISUAL_USER_SELECTED) }
+        val missing = permissions.filter { it !in granted }
         if (missing.isEmpty()) return SetupResult.Ready
         val byHand = "Settings > Apps > $packageName > Permissions: take back ${missing.joinToString()}."
-        // Taking back one of Kestrel's permissions ends its process.
-        if (packageName == Listening.KESTREL) Listening.keep(scope)
         // Written inside each change, which the shutdown hook awaits before it runs the restore.
         val byRun = Collections.synchronizedSet(LinkedHashSet<String>())
         scope.restores.push("the permissions that the run granted $packageName", byHand) {
@@ -141,21 +142,43 @@ data class Grant(val packageName: String, val permissions: List<String>) : Setup
     override fun probe(scope: RunScope): Map<String, String> = mapOf("granted:$packageName" to granted(scope).sorted().joinToString(","))
 
     private fun granted(scope: RunScope): List<String> = Dumps.grantedPermissions(scope.device.read("dumpsys package $packageName"), permissions)
+}
+
+/**
+ * The runtime [permissions] of Kestrel that a task needs, all of them in the evaluation's kept set
+ * ([EvalPermissions.SET], the owner's decision of 2026-11-24): the ones that Kestrel lacks are granted and kept, with no
+ * restore, because the set stays granted on both test devices and taking a permission back would end Kestrel's process.
+ * A live series has granted the whole set before its first run, so this step then only reads it; a dry series or a
+ * single run grants what its task needs. One that is still missing fails the run's setup. A task that needs a state of
+ * Kestrel's permissions other than the kept set would need a step of its own that says so and restores the kept set;
+ * no task does.
+ */
+data class KeptPermissions(val permissions: List<String>) : Setup {
+    init {
+        require(permissions.isNotEmpty() && permissions.all { it in EvalPermissions.SET }) {
+            "Kestrel's permissions in a task are only those of the evaluation's kept set: ${permissions - EvalPermissions.SET.toSet()} is not in it."
+        }
+    }
+
+    override fun apply(scope: RunScope): SetupResult {
+        val missing = EvalPermissions.keep(scope.device, permissions).filterValues { !it }.keys
+        check(missing.isEmpty()) { EvalPermissions.lacks(scope.device, missing) }
+        return SetupResult.Ready
+    }
 
     companion object {
-        const val VISUAL_USER_SELECTED = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
-        val MEDIA = listOf("android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO", VISUAL_USER_SELECTED)
+        /** Photos and videos with full access, which makes the partial access (READ_MEDIA_VISUAL_USER_SELECTED) needless. */
+        val MEDIA = KeptPermissions(listOf("android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"))
     }
 }
 
 /**
- * Kestrel's listening, which a restore that ends Kestrel's process can leave off: taking back one of its permissions or
- * its notification access ends the process, and the process does not always come back listening. [keep], called before
+ * Kestrel's listening, which a restore that ends Kestrel's process can leave off: taking back its notification access
+ * ends the process, and the process does not always come back listening. [keep], called before
  * such a change, pushes a restore that runs after the change's own restore and turns listening on again, when Kestrel
  * listened before the change.
  */
 object Listening {
-    const val KESTREL = "dev.kestrel"
     private const val QUIET_READS = 3
     private const val LISTENING_READS = 2
     private val BACK = 90.seconds

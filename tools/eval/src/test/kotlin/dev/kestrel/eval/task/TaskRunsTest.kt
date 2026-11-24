@@ -87,7 +87,8 @@ class TaskRunsTest {
         bench.end = "state=done end=FINISHED steps=6 credits=0.00 confirmed=2 unconfirmed=0 shareItems=3 beforeTestMode=0"
         assertEquals(Reason.END, bench.run(StandIns.MESSENGER_PHOTOS).reason)
         bench.assertPutBack()
-        assertTrue(bench.adb.commands.contains("pm revoke dev.kestrel android.permission.READ_MEDIA_IMAGES"))
+        assertTrue(bench.adb.commands.contains("pm grant dev.kestrel android.permission.READ_MEDIA_IMAGES"))
+        assertTrue(bench.adb.commands.none { it.startsWith("pm revoke") })
     }
 
     @Test

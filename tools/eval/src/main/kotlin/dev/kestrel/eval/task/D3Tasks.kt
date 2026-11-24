@@ -76,7 +76,7 @@ object D3Tasks {
         devices = A71,
         answers = Answers.MESSAGING,
         verdict = VerdictRule.KnownGap,
-        setup = listOf(TestName("John", telegram = true), Photos("yesterday", 3), Grant("dev.kestrel", Grant.MEDIA), MemoryAlias("{name}", TELEGRAM_ALIAS)),
+        setup = listOf(TestName("John", telegram = true), Photos("yesterday", 3), KeptPermissions.MEDIA, MemoryAlias("{name}", TELEGRAM_ALIAS)),
         check = listOf(ShareItems(0)),
         dryRun = DryRun("stand-in-messenger-photos.json", standIn = "stand-in-messenger-photos"),
         rehearsal = Rehearsal.SetupOnly("its check reads what Kestrel shared, which only a task does"),

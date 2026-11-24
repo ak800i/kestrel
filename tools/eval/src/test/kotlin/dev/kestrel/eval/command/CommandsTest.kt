@@ -310,13 +310,13 @@ class CommandsTest {
 
     @Test
     fun aLiveSeriesGrantsTheEvaluationsPermissionsFirstAndStopsBeforeAnyRunWhenOneIsMissing() {
-        fake.refusedGrant = "android.permission.READ_CALL_LOG"
+        fake.adb.refusedGrants += "android.permission.READ_CALL_LOG"
 
         assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--live", "--runs", "1", "--tasks", "hotspot"))
 
         assertTrue(fake.output, fake.output.contains("android.permission.READ_CALL_LOG"))
         assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
-        assertEquals(EvalPermissions.SET.toSet() - "android.permission.READ_CALL_LOG", fake.granted.toSet())
+        assertEquals(EvalPermissions.SET.toSet() - "android.permission.READ_CALL_LOG", fake.adb.granted.getValue("dev.kestrel").toSet())
         // A series without a model grants nothing.
         val dry = FakeEnvironment()
         assertEquals(Cli.EXIT_PASSED, dry.cli("suite", "--device", "emulator-5554", "--runs", "1", "--tasks", "stand-in-hotspot"))
