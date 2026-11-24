@@ -14,7 +14,16 @@ import java.time.format.DateTimeFormatter
 
 /** What a suite was asked for, in its folder's `suite.json`, which `suite --resume` compares with its own call, and the Kestrel build that ran it. */
 @Serializable
-data class SuiteCall(val device: String, val live: Boolean, val runs: Int, val tasks: List<String>, val commit: String, val kestrel: KestrelBuild? = null) {
+data class SuiteCall(
+    val device: String,
+    val live: Boolean,
+    val runs: Int,
+    val tasks: List<String>,
+    val commit: String,
+    val kestrel: KestrelBuild? = null,
+    /** The evaluation's permission set and each one's state when the live series began (plan 6B-basefix); null without a model. */
+    val permissions: Map<String, Boolean>? = null,
+) {
     fun write(folder: Path) {
         Files.createDirectories(folder)
         Files.writeString(folder.resolve(FILE), JSON.encodeToString(serializer(), this) + "\n")

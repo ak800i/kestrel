@@ -11,6 +11,7 @@ import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.ResultsFile
 import dev.kestrel.eval.report.SuiteCall
 import dev.kestrel.eval.report.SuiteFolder
+import dev.kestrel.eval.run.EvalPermissions
 import dev.kestrel.eval.run.LineWriter
 import dev.kestrel.eval.run.RunOptions
 import dev.kestrel.eval.run.RunResult
@@ -128,9 +129,11 @@ class SeriesCommand(
         }
         return session.guarded {
             session.prepare(todo.map { byName.getValue(it.first) }, live)
+            // The owner's permission set for the evaluation, granted and kept before a live series (2026-11-24).
+            val permissions = if (live) EvalPermissions.grant(session.device) else null
             val build = KestrelBuild.installed(session.device)?.let { KestrelBuild.withState(it, session.hooks.state()) }
             if (recorded != null && !recorded.sameInstall(build)) throw Refusal("Kestrel was installed again during the preflight; run a new suite.")
-            call.copy(kestrel = build).write(folder)
+            call.copy(kestrel = build, permissions = permissions).write(folder)
             if (recordBaseline) checkBaselineBuild(build, head)
             val keys = PcapdroidKeys(environment.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json"))
             if (capturing) {

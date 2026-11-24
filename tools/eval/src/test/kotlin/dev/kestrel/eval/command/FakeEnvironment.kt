@@ -28,6 +28,10 @@ class FakeEnvironment {
     var installed = "2026-11-24 09:18:59"
     var build = "commit=$COMMIT dirty=0"
     var end = "state=done end=FINISHED steps=3 workMs=9000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 model=scripted"
+
+    /** Kestrel's runtime permissions on the fake device, which `pm grant` adds to, except [refusedGrant]. */
+    val granted = mutableSetOf<String>()
+    var refusedGrant: String? = null
     val devices = mutableMapOf(adb.serial to adb)
     val environment = Environment(
         root,
@@ -53,7 +57,11 @@ class FakeEnvironment {
         adb.on("^pm list packages dev.kestrel.testapp$") { "package:dev.kestrel.testapp" }
         adb.on("^dumpsys account$") { (1..accounts).joinToString("\n") { "    Account {name=account$it@example.com, type=com.google}" } }
         adb.hook("STATE") { "screen=on testMode=on numbers=0 $build" }
-        adb.on("^dumpsys package dev\\.kestrel$") { "  Package [dev.kestrel] (316e119):\n    userId=$KESTREL_UID\n    versionCode=100 minSdk=33 targetSdk=37\n    versionName=1.0.0\n    lastUpdateTime=$installed" }
+        adb.on("^dumpsys package dev\\.kestrel$") {
+            "  Package [dev.kestrel] (316e119):\n    userId=$KESTREL_UID\n    versionCode=100 minSdk=33 targetSdk=37\n    versionName=1.0.0\n    lastUpdateTime=$installed\n" +
+                "    runtime permissions:\n" + granted.joinToString("\n") { "      $it: granted=true, flags=[ USER_SET ]" }
+        }
+        adb.on("^pm grant dev\\.kestrel (\\S+)$") { match -> match.groupValues[1].takeIf { it != refusedGrant }?.let { granted.add(it); "" } }
         adb.hook("VOICE_STATE") { "mode=listening work=idle session=open clips=off" }
         adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
         adb.hook("AGENT_LIVE") { extras -> extras["on"]?.let { live = if (it == "true") "on" else "off" }; "live=$live" }
