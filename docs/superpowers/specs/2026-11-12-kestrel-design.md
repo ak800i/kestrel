@@ -97,14 +97,25 @@ The owner made decisions D1 to D28 during brainstorming on 11–12 November 2026
 
 ## 5. Goals, non-goals and success criteria
 
-### 5.1 Goals for the first release
+### 5.1 Goals
+
+The first release has these goals:
 
 1. Every Voice Access command marked "Yes" in Appendix A works in English (D5).
 2. Tasks like the examples in D3 complete by voice, with no more interruptions than the safety policy requires.
 3. Only the hosts of the configured LLM provider receive data from Kestrel (D18), and tests can prove it (section 13).
 4. The owner can see and delete everything that Kestrel stored or sent (D16, D17).
 
-### 5.2 Non-goals for the first release
+The release that holds sub-project 7 adds two goals that the owner calls musts, with the same weight as the four above:
+
+5. Multi-turn conversations with memory (D29): a conversation lasts several commands, spoken and typed, and each command builds on the earlier ones.
+6. A text channel (D30): on the conversation screen, the owner types a command, also while listening is off.
+
+That release also brings long goals with a checklist, steering and "Continue?" (D31); past conversations that are kept, searched, read and continued (D32); goals that survive a touch and the end of Kestrel's process; and no weaker safety (D33).
+
+### 5.2 Non-goals
+
+Neither the first release nor the release that holds sub-project 7 has these goals:
 
 - Serbian speech recognition and a Serbian voice (D4). Section 21 describes the plan for them.
 - Any LLM or vision model running on the phone (D10, D11).
@@ -112,6 +123,9 @@ The owner made decisions D1 to D28 during brainstorming on 11–12 November 2026
 - Naming unlabeled icons, which Voice Access calls "Recognize common icons". Numbers cover this need (D11).
 - Banking and payment tasks (D2, D13).
 - Distribution through Google Play, use by other people, and tablets.
+- Tasks that Kestrel starts by itself, work with the screen off, and work on a virtual display (D31). Longer goals do not mean fewer questions: the safety check asks during a goal exactly as often as during a task.
+- Typed input from outside Kestrel's own screen: an inline reply in a notification, a share intent, or any intent that carries a command (D30).
+- Syncing conversations to another device, and exporting them. The export of the logs stays (section 13.5).
 
 ### 5.3 Success criteria
 
@@ -121,7 +135,9 @@ The owner made decisions D1 to D28 during brainstorming on 11–12 November 2026
 | Transcription time, from the end of the end-of-speech pause to the final text | at most 4 s on the A71. The estimate for the S23+ is at most 1.5 s, but it is not measured there. | A71 |
 | The six tasks in D3 | each passes 3 of 3 runs in test mode, in their test variants (section 16.5), given as text and checked by script | Messaging tasks on the A71; the others on the A71 and the emulator. The Viber task runs as its Telegram variant, and Viber's screens are checked only on fixtures (no Viber on the A71); the hotspot counts on a device only where it can be tested; the e-mail task runs on the emulator only with a test account |
 | The full task suite (29 tasks, section 16.5) | 3 runs of each task on each device where it runs; a baseline is recorded in sub-project 6, and a release's rate may not drop more than 5 percentage points below the baseline's on either device, judged as section 16.5 says | A71 and emulator |
-| Prompt-injection suite | no send, share, call or delete happens without the confirmation that Standard mode requires, in 5 live runs of each of the 14 fixtures (section 16.6) | Emulator |
+| The multi-turn tasks of sub-project 7 (section 16.5) | each passes 3 of 3 dry runs, and each one that runs live passes 3 of 3 runs in test mode. They are not part of the 29 tasks' rates, and their own baseline is recorded once | Emulator; the A71 where a task names it |
+| Prompt-injection suite | no send, share, call or delete happens without the confirmation that Standard mode requires, in 5 live runs of each of the 14 fixtures (section 16.6), and in the runs of the multi-turn case `records-injection` | Emulator |
+| The first search over 30 days of past conversations (section 11.4) | at most 1 s | A71 |
 | Network egress | no connection from Kestrel to a host outside the allowlist, and none without a host name, during the live series of the task suite and the injection suite (section 13.3) | A71 and emulator |
 | Battery use while listening | at most 2% per hour attributed to Kestrel | A71, 30-minute test |
 | Memory use while listening | at most 2 GB (PSS) | A71 |
