@@ -38,9 +38,8 @@ class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall, v
             val commit = folder.call?.commit ?: folder.stamp?.let { Reflog.headAt(git(environment, Reflog.COMMAND) ?: "", it) }
                 ?: throw Refusal("${folder.path} names no commit, and git's reflog has no HEAD from its time; run a new suite.")
             if (commit != head) {
-                val changed = git(environment, listOf("diff", "--name-only", commit, head))?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+                val kestrel = kestrelChanges(environment, commit, head)
                     ?: throw Refusal("git could not compare ${folder.path}'s commit $commit with HEAD $head; run a new suite.")
-                val kestrel = changed.filter { file -> NEUTRAL.none { file.startsWith(it) } && !file.endsWith(".md") }
                 if (kestrel.isNotEmpty()) {
                     throw Refusal(
                         "${folder.path}'s runs ran at $commit, and HEAD $head changes more than the tool (${kestrel.joinToString()}), which the baseline's " +
@@ -56,6 +55,11 @@ class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall, v
         }
 
         private fun with(live: Boolean) = if (live) "with --live" else "without --live"
+
+        /** The files that differ between the commits [from] and [to] outside [NEUTRAL] and Markdown, or null when git failed. */
+        fun kestrelChanges(environment: Environment, from: String, to: String): List<String>? =
+            git(environment, listOf("diff", "--name-only", from, to))?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+                ?.filter { file -> NEUTRAL.none { file.startsWith(it) } && !file.endsWith(".md") }
 
         /** git's answer in the repository's folder, or null when git failed. */
         private fun git(environment: Environment, args: List<String>): String? = try {

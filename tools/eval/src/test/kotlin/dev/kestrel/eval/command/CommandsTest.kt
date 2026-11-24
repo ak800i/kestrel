@@ -116,6 +116,23 @@ class CommandsTest {
     }
 
     @Test
+    fun recordBaselineIsRefusedBeforeAnyRunWhenKestrelsBuildIsNotHeadsKestrel() {
+        val older = "b".repeat(40)
+        // A build of another commit whose changes reach Kestrel, and a build of HEAD with uncommitted changes.
+        for ((build, diff) in listOf("commit=$older dirty=0" to "app/src/main/kotlin/dev/kestrel/app/MainActivity.kt\ntools/eval/build.gradle.kts\n", "commit=${FakeEnvironment.COMMIT} dirty=1" to "")) {
+            val fake = FakeEnvironment()
+            fake.build = build
+            fake.gitDiff = diff
+
+            assertEquals(build, Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--live", "--record-baseline"))
+
+            assertTrue(fake.output, fake.output.contains("--record-baseline records only HEAD's Kestrel"))
+            assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
+            assertFalse(Files.exists(fake.root.resolve("eval").resolve("baseline.json")))
+        }
+    }
+
+    @Test
     fun theInjectionFixturesRunOnTheEmulatorOnlyOnceEachWithoutAModel() {
         fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
         assertEquals(Cli.EXIT_REFUSED, fake.cli("injection", "--device", "R58N66RVD7Z"))

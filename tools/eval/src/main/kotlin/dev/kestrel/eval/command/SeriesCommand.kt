@@ -2,6 +2,7 @@ package dev.kestrel.eval.command
 
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Refusal
+import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.ResultsFile
 import dev.kestrel.eval.report.SuiteCall
@@ -19,15 +20,17 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * A series of tasks into a new results folder `eval-results\<device>[-injection]-<yyyyMMdd-HHmmss>\` (design D6 and D10
- * of sub-project 6): `suite.json` with what the series was asked for ([SuiteCall]), `runs.txt` in `Add-SessionResult`'s
- * form, with the line `<task> on <the A71|kestrel-api37>, <n> runs` before each task's run lines, which a71-agent.ps1's
- * `Get-SittingRuns` and `ConvertFrom-TaskLine` read, and `report.json`. `suite` runs the suite of the device (3 runs each
- * by default); `injection` the 14 fixtures on kestrel-api37 (once without a model, 5 times live, by default). With
- * [resume], a suite goes on in the folder of one that stopped ([Resume]): it keeps the tasks whose runs all have a line
- * that is not `reason=stopped`, runs the rest of the last task that was cut short (all of it, and names the kept tasks,
- * when HEAD changed the tool since the folder's runs), then every other task whole after its
+ * of sub-project 6): `suite.json` with what the series was asked for ([SuiteCall]) and the Kestrel build that ran it
+ * ([KestrelBuild]), `runs.txt` in `Add-SessionResult`'s form, with the line `<task> on <the A71|kestrel-api37>, <n> runs`
+ * before each task's run lines, which a71-agent.ps1's `Get-SittingRuns` and `ConvertFrom-TaskLine` read, and
+ * `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures on
+ * kestrel-api37 (once without a model, 5 times live, by default). With [resume], a suite goes on in the folder of one
+ * that stopped ([Resume]), and only while the Kestrel install that ran it is still the device's: it keeps the tasks
+ * whose runs all have a line that is not `reason=stopped`, runs the rest of the last task that was cut short (all of it,
+ * and names the kept tasks, when HEAD changed the tool since the folder's runs), then every other task whole after its
  * earlier lines were dropped, and stops when a task's runs name another model than the folder's, whose lines it takes out
- * again; its report is of the whole folder. Returns 0 when no run failed (with [resume], of the whole folder), else 1.
+ * again; its report is of the whole folder. With [recordBaseline], it runs only HEAD's Kestrel ([checkBaselineBuild]).
+ * Returns 0 when no run failed (with [resume], of the whole folder), else 1.
  */
 class SeriesCommand(
     private val environment: Environment,
@@ -54,6 +57,11 @@ class SeriesCommand(
         val suite = pick(kind)
         val head = commit()
         val resumed = resume?.let { Resume.open(environment, it, kind, live, suite, head, recordBaseline) }
+        val recorded = resumed?.folder?.call?.kestrel
+        if (recorded != null && !recorded.sameInstall(KestrelBuild.installed(session.device))) {
+            throw Refusal("Kestrel was installed again since the folder's runs, which ran its ${recorded.label}; run a new suite.")
+        }
+        if (resumed != null && recorded == null) session.console.warn("${resumed.folder.path} names no Kestrel build, so its runs are taken as those of the build installed now.")
         val tasks = resumed?.let { r -> suite.filter { it.name in r.call.tasks } } ?: suite
         if (tasks.isEmpty()) throw Refusal("The command $name has no task for ${kind.label}.")
         val runs = resumed?.call?.runs ?: runs
@@ -68,7 +76,8 @@ class SeriesCommand(
                     "results still hold before --record-baseline, or remove their blocks from runs.txt and resume again.",
             )
         }
-        (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head)).write(folder)
+        val call = (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head)).copy(kestrel = recorded ?: KestrelBuild.installed(session.device))
+        call.write(folder)
         val runsFile = ResultsFile(folder.resolve(SuiteFolder.RUNS), environment.clock)
         val writer = LineWriter(session.console, runsFile)
         lines(writer)
@@ -87,9 +96,16 @@ class SeriesCommand(
             return if (failed) 1 else 0
         }
         // A folder whose tasks all ended needs nothing of the device.
-        if (todo.isEmpty()) return finish(0)
+        if (todo.isEmpty()) {
+            if (recordBaseline) checkBaselineBuild(call.kestrel, head, session)
+            return finish(0)
+        }
         return session.guarded {
             session.prepare(todo.map { byName.getValue(it.first) }, live)
+            val build = KestrelBuild.installed(session.device)?.let { KestrelBuild.withState(it, session.hooks.state()) }
+            if (recorded != null && !recorded.sameInstall(build)) throw Refusal("Kestrel was installed again during the preflight; run a new suite.")
+            call.copy(kestrel = build).write(folder)
+            if (recordBaseline) checkBaselineBuild(build, head, session)
             val runner = session.runner(RunOptions(live), writer)
             var failures = 0
             var model = resumed?.folder?.models?.singleOrNull()
@@ -112,6 +128,29 @@ class SeriesCommand(
                 model = expected
             }
             finish(failures)
+        }
+    }
+
+    /**
+     * `--record-baseline` records only HEAD's Kestrel (review I2 of plan 6B): the installed debug build must come from a
+     * worktree without changes outside the tool and the documentation, at a commit that differs from HEAD at most there
+     * ([Resume.NEUTRAL]). A build that reports no commit, from before its debug build wrote one, gets a warning instead.
+     */
+    private fun checkBaselineBuild(build: KestrelBuild?, head: String, session: Session) {
+        val commit = build?.commit
+        if (commit == null) {
+            session.console.warn("Kestrel's installed build reports no commit, so nothing checks that eval\\baseline.json's commit $head is the Kestrel that ran.")
+            return
+        }
+        val fix = "install HEAD's build with scripts\\install.ps1 and run a new suite."
+        if (build.dirty == true) {
+            throw Refusal("--record-baseline records only HEAD's Kestrel, and the installed build was built at $commit with changes outside tools/eval and docs; $fix")
+        }
+        if (commit == head) return
+        val changed = Resume.kestrelChanges(environment, commit, head)
+            ?: throw Refusal("--record-baseline records only HEAD's Kestrel, and git could not compare the installed build's commit $commit with HEAD $head; $fix")
+        if (changed.isNotEmpty()) {
+            throw Refusal("--record-baseline records only HEAD's Kestrel, and the installed build's commit $commit differs from HEAD $head in ${changed.joinToString()}; $fix")
         }
     }
 

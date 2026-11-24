@@ -12,7 +12,8 @@ import java.nio.file.Files
  * This computer and a scripted kestrel-api37 for the tests of the commands: Kestrel and `:testapp` installed, its
  * accessibility service on, listening, test mode on, a Copilot profile and one Google account, and a task that ends
  * FINISHED; [processes] records the local programs, `git rev-parse HEAD` answers a fixed commit, `git diff` answers
- * [gitDiff] and `git log -g` answers [reflog].
+ * [gitDiff] and `git log -g` answers [reflog]. Kestrel's build was installed at [installed], and the `state` hook names
+ * its commit and dirty flag in [build].
  */
 class FakeEnvironment {
     val adb = FakeAdb()
@@ -24,6 +25,8 @@ class FakeEnvironment {
     var accounts = 1
     var gitDiff = ""
     var reflog = ""
+    var installed = "2026-11-24 09:18:59"
+    var build = "commit=$COMMIT dirty=0"
     var end = "state=done end=FINISHED steps=3 workMs=9000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 model=scripted"
     val devices = mutableMapOf(adb.serial to adb)
     val environment = Environment(
@@ -49,7 +52,8 @@ class FakeEnvironment {
         adb.on("^pm list packages dev.kestrel$") { "package:dev.kestrel" }
         adb.on("^pm list packages dev.kestrel.testapp$") { "package:dev.kestrel.testapp" }
         adb.on("^dumpsys account$") { (1..accounts).joinToString("\n") { "    Account {name=account$it@example.com, type=com.google}" } }
-        adb.hook("STATE") { "screen=on testMode=on numbers=0" }
+        adb.hook("STATE") { "screen=on testMode=on numbers=0 $build" }
+        adb.on("^dumpsys package dev\\.kestrel$") { "  Package [dev.kestrel] (316e119):\n    versionCode=100 minSdk=33 targetSdk=37\n    versionName=1.0.0\n    lastUpdateTime=$installed" }
         adb.hook("VOICE_STATE") { "mode=listening work=idle session=open clips=off" }
         adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
         adb.hook("AGENT_LIVE") { extras -> extras["on"]?.let { live = if (it == "true") "on" else "off" }; "live=$live" }

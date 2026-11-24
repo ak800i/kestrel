@@ -11,9 +11,9 @@ import java.nio.file.StandardCopyOption
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-/** What a suite was asked for, in its folder's `suite.json`, which `suite --resume` compares with its own call. */
+/** What a suite was asked for, in its folder's `suite.json`, which `suite --resume` compares with its own call, and the Kestrel build that ran it. */
 @Serializable
-data class SuiteCall(val device: String, val live: Boolean, val runs: Int, val tasks: List<String>, val commit: String) {
+data class SuiteCall(val device: String, val live: Boolean, val runs: Int, val tasks: List<String>, val commit: String, val kestrel: KestrelBuild? = null) {
     fun write(folder: Path) {
         Files.createDirectories(folder)
         Files.writeString(folder.resolve(FILE), JSON.encodeToString(serializer(), this) + "\n")

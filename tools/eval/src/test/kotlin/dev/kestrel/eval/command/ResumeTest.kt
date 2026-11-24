@@ -3,6 +3,7 @@ package dev.kestrel.eval.command
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.report.Baseline
+import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.SuiteCall
 import dev.kestrel.eval.task.Catalogue
@@ -19,6 +20,7 @@ class ResumeTest {
     private val fake = FakeEnvironment()
     private val commit = FakeEnvironment.COMMIT
     private val pair = listOf("stand-in-hotspot", "stand-in-firefox")
+    private val build = KestrelBuild(versionCode = 100, versionName = "1.0.0", lastUpdateTime = "2026-11-24 09:18:59", commit = commit, dirty = false)
 
     private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") }
 
@@ -43,7 +45,7 @@ class ResumeTest {
     fun aSuiteThatStoppedGoesOnInItsFolderWithOnlyTheRunsThatHadNoLine() {
         assertEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", pair.joinToString(",")))
         val folder = fake.root.resolve("eval-results").resolve("kestrel-api37-20261123-120000")
-        assertEquals(SuiteCall("kestrel-api37", live = false, runs = 2, tasks = pair, commit = commit), SuiteCall.read(folder))
+        assertEquals(SuiteCall("kestrel-api37", live = false, runs = 2, tasks = pair, commit = commit, kestrel = build), SuiteCall.read(folder))
         // As after Ctrl+C in run 2 of the first task: that run's line says stopped, and the second task never began.
         val runs = Files.readAllLines(folder.resolve("runs.txt"))
         val stopped = runs[2].replace(Regex("result=pass .*"), "result=fail end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=stopped")
@@ -127,6 +129,22 @@ class ResumeTest {
             after,
         )
         assertTrue(fake.output.contains("stand-in-hotspot ran at $older"))
+    }
+
+    @Test
+    fun aResumeIsRefusedWhenKestrelWasInstalledAgainSinceTheFoldersRuns() {
+        val folder = folder(
+            "kestrel-api37-20261124-100000", SuiteCall("kestrel-api37", live = false, runs = 2, tasks = pair, commit = commit, kestrel = build),
+            "2026-11-24 10:00:00\tsuite\tstand-in-hotspot on kestrel-api37, 2 runs", line("stand-in-hotspot", 1), line("stand-in-hotspot", 2),
+        )
+        val kept = Files.readAllLines(folder.resolve("runs.txt"))
+        fake.installed = "2026-11-24 12:30:00"
+
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--resume", folder.toString()))
+
+        assertTrue(fake.output.contains("Kestrel was installed again since the folder's runs"))
+        assertEquals(kept, Files.readAllLines(folder.resolve("runs.txt")))
+        assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
     }
 
     @Test
