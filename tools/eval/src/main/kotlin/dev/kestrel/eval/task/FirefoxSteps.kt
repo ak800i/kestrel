@@ -125,6 +125,14 @@ object Firefox {
     /** Whether the tab counter shows [tabs] tabs; for 0, also an empty counter. */
     fun showsTabs(scope: RunScope, tabs: Int): Boolean = COUNTS.any { shows(scope, it.second(tabs)) } || tabs == 0 && tabs(scope) == 0
 
+    /**
+     * Whether Firefox counts [tabs] non-private tabs, "Non-private Tabs Open: 1.", in its toolbar, on its homepage or in
+     * its tabs tray. Unlike [showsTabs], it never reads the tray's count of private tabs, "Private Tabs Open: 0.".
+     */
+    fun showsNonPrivateTabs(scope: RunScope, tabs: Int): Boolean = shows(scope, "$NON_PRIVATE $tabs")
+
+    private const val NON_PRIVATE = "Non-private Tabs Open"
+
     fun shows(scope: RunScope, text: String): Boolean = scope.hooks.screenHas(packageName = D3Tasks.FIREFOX, contains = text).int("count") >= 1
 
     /**
@@ -146,22 +154,31 @@ object Firefox {
 
 /**
  * firefox-url's tab (design D8 and D9 of sub-project 6). Before the run, Firefox's tabs tray must show no tab of [page],
- * so that the restore closes only the run's own; Firefox is stopped again. After the run, the restore opens the tray,
- * closes the one tab titled [title] by its close button, and checks that the tray no longer shows the page. [title] is
- * the title that GitHub gives the repository's page, which holds the repository's description.
+ * so that the restore closes only the run's own; the setup counts Firefox's tabs, and Firefox is stopped again. After the
+ * run, the restore opens the tray and, when it shows a tab of the page and Firefox has exactly one tab more than before,
+ * closes the one tab titled [title] by its close button, and checks that Firefox has as many tabs as before. It does not
+ * look for the page outside the tray: once its last tab closed, the A71's Firefox shows its homepage, whose top sites
+ * hold the page from earlier runs. [title] is the title that GitHub gives the repository's page, which holds the
+ * repository's description.
  */
 data class FirefoxTab(val page: String = "ak800i", val title: String = GITHUB) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         scope.restores.push("Firefox stopped", "Close Firefox, also in Recents.") { Firefox.stop(scope) }
-        val opened = scope.restores.change("Firefox's tabs tray opened", "Close Firefox.") { Firefox.openTray(scope) }
+        var tabs: Int? = null
+        val opened = scope.restores.change("Firefox's tabs tray opened", "Close Firefox.") {
+            Firefox.start(scope) && Firefox.tabs(scope).also { tabs = it } != null && AppTaps(scope, D3Tasks.FIREFOX).run(listOf(Firefox.COUNTER))
+        }
         val before = opened && Firefox.shows(scope, page)
         scope.restores.change("Firefox stopped again", "Close Firefox, also in Recents.") { Firefox.stop(scope) }
-        if (!opened) return Firefox.untestable(scope, "Firefox's tabs tray did not open")
+        val counted = tabs
+        if (!opened || counted == null) return Firefox.untestable(scope, "Firefox's tabs tray did not open")
         if (before) return SetupResult.Untestable("Firefox already has a tab of $page, which the run would not tell from its own")
         scope.restores.push("the run's tab in Firefox", "Firefox: close the tab of $page.") {
             check(Firefox.openTray(scope)) { "Firefox's tabs tray did not open." }
-            if (Firefox.shows(scope, page)) AppTaps(scope, D3Tasks.FIREFOX).run(listOf(Firefox.closeTaps(title)))
-            check(!Firefox.shows(scope, page)) { "The run's tab is still open in Firefox." }
+            if (!Firefox.shows(scope, page)) return@push
+            check(Firefox.showsNonPrivateTabs(scope, counted + 1)) { "Firefox does not have the one tab more that the run would have opened, so no tab was closed." }
+            check(AppTaps(scope, D3Tasks.FIREFOX).run(listOf(Firefox.closeTaps(title)))) { "The close button of the run's tab was not tapped." }
+            check(Firefox.showsNonPrivateTabs(scope, counted)) { "Firefox does not have the $counted tabs that it had before the run, so the run's tab may still be open." }
         }
         return SetupResult.Ready
     }

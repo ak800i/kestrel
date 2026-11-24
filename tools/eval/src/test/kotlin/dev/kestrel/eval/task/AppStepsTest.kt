@@ -20,7 +20,8 @@ import java.time.LocalDateTime
  * counter, a clickable element with an inner copy of its label, "Non-private Tabs Open: 2. Tap to switch tabs.", which
  * opens the tray, and whose long press opens a menu with "Close tab", which closes the selected tab and shows "Tab
  * closed". The tray shows each tab's card, whose label holds its title and "Close tab <title>", its title, and its close
- * button, "Close tab <title>", and then the tray's own counters. The hooks match them as [FakeScreen] says.
+ * button, "Close tab <title>", and then the tray's own counters; closing its last tab closes the tray, and Firefox shows
+ * its homepage with the counter and the [topSites]. The hooks match them as [FakeScreen] says.
  */
 class FakeFirefox(adb: FakeAdb) {
     class Tab(val title: String, val address: String)
@@ -31,6 +32,9 @@ class FakeFirefox(adb: FakeAdb) {
     var tray = false
     var menu = false
     var closed = false
+
+    /** The titles of the homepage's top sites, which it shows while Firefox has no tab, as the A71's shows pages of earlier runs. */
+    var topSites: List<String> = emptyList()
 
     /** What a tap on the tab counter does after it opened the tray. */
     var onTrayTap: () -> Unit = {}
@@ -63,7 +67,7 @@ class FakeFirefox(adb: FakeAdb) {
             tabs.lastOrNull()?.let { Element("${it.address}. Search or enter address", "android.view.View", false, "150,153,800,279") },
             Element(counter(), "android.view.View", true, "828,153,954,279"),
             Element(counter(), "android.view.View", false, "860,185,923,248"),
-        ) + (if (menu) listOf("New tab", "New private tab", "Close tab").map { Element(it, "android.widget.Button", true, "0,1800,1080,1900") } else emptyList()) +
+        ) + (if (tabs.isEmpty()) topSites.map { Element(it, "android.widget.TextView", false, "68,801,289,895") } else emptyList()) + (if (menu) listOf("New tab", "New private tab", "Close tab").map { Element(it, "android.widget.Button", true, "0,1800,1080,1900") } else emptyList()) +
             (if (closed) listOf(Element("Tab closed", "android.widget.TextView", false, "63,2000,843,2100"), Element("UNDO", "android.view.View", true, "864,2000,1038,2100")) else emptyList())
     }
 
@@ -88,7 +92,10 @@ class FakeFirefox(adb: FakeAdb) {
                 menu = false
                 closed = true
             }
-            label.startsWith("Close tab ") && element.className.endsWith("Button") -> tabs.remove(element.tab)
+            label.startsWith("Close tab ") && element.className.endsWith("Button") -> {
+                tabs.remove(element.tab)
+                if (tabs.isEmpty()) tray = false
+            }
             label.startsWith("Non-private Tabs Open") && !tray && extras["long"] == "true" -> menu = true
             label.startsWith("Non-private Tabs Open") && !tray -> {
                 tray = true
@@ -156,6 +163,32 @@ class AppStepsTest {
         firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
         assertTrue(FirefoxTab().apply(run.scope) is SetupResult.Untestable)
         assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(2, firefox.tabs.size)
+    }
+
+    @Test
+    fun firefoxsTabOfThePageIsClosedOnTheA71WhoseHomepageShowsThePageOnceItsLastTabClosedAndNoOtherTabIsClosed() {
+        val run = FakeRun(DeviceKind.A71)
+        val firefox = FakeFirefox(run.adb)
+        // The A71's Firefox has no tab before the run, and its homepage's top sites hold the page, from earlier runs.
+        firefox.tabs.clear()
+        firefox.topSites = listOf(FakeFirefox.GITHUB)
+
+        assertEquals(SetupResult.Ready, FirefoxTab().apply(run.scope))
+        firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
+        assertTrue(run.restores.runAll().isEmpty())
+        assertTrue(firefox.tabs.isEmpty())
+
+        // A run that opened no tab: nothing is closed, and nothing is left to put back.
+        assertEquals(SetupResult.Ready, FirefoxTab().apply(run.scope))
+        val taps = run.adb.hookCalls("SCREEN_TAP").size
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(taps + 1, run.adb.hookCalls("SCREEN_TAP").size)
+
+        // Two tabs of the page, of which the run would have opened at most one: none is closed, and the restore says so.
+        assertEquals(SetupResult.Ready, FirefoxTab().apply(run.scope))
+        repeat(2) { firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS) }
+        assertEquals(listOf("the run's tab in Firefox"), run.restores.runAll().map { it.what })
         assertEquals(2, firefox.tabs.size)
     }
 
