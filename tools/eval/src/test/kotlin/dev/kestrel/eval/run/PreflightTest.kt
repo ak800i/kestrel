@@ -69,10 +69,19 @@ class PreflightTest {
         a71.adb.hook("VOICE_STATE") { "mode=listening session=open" }
         val installer = Installer(Paths.get("repo")) { command, _ -> if ("-TestApp" in command) testApp = true; ShellResult(0, "", "") }
 
+        var uninstalls = true
+        a71.adb.on("^pm uninstall dev\\.kestrel\\.testapp$") {
+            if (uninstalls) testApp = false
+            "Success"
+        }
+
         Preflight(a71.device, a71.hooks, a71.restores, a71.clock, installer).prepare(needsTestApp = true)
-        a71.restores.runAll()
+        assertTrue(a71.restores.runAll().isEmpty())
 
         assertTrue(a71.adb.commands.contains("pm uninstall dev.kestrel.testapp"))
+        uninstalls = false
+        Preflight(a71.device, a71.hooks, a71.restores, a71.clock, installer).prepare(needsTestApp = true)
+        assertEquals(listOf(":testapp removed from the A71"), a71.restores.runAll().map { it.what })
     }
 
     @Test

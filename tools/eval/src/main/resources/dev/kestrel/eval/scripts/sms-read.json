@@ -1,0 +1,4 @@
+[
+  {"tool": "list_sms", "arguments": {"limit": 1}},
+  {"tool": "finish", "arguments": {"summary": "Your latest text message says: Kestrel test {marker}.", "evidence": [{"step": 1}]}}
+]

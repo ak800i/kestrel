@@ -1,7 +1,9 @@
 package dev.kestrel.eval.task
 
+import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.HookLost
+import dev.kestrel.eval.run.Markers
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -12,7 +14,7 @@ import kotlin.time.Duration.Companion.seconds
  * only when Gmail is in front (else the setup fails), and Gmail's inbox, opened in a new task, until it shows the e-mail,
  * at most 2 minutes. When another app is in front of
  * the inbox at three polls in a row, such as Android's permission dialog, the setup fails at once with that app's
- * package. Plan 6B adds the e-mail's deletion after the run (design D9 of sub-project 6).
+ * package. [GmailTrash], pushed before the e-mail exists, deletes it after the run (design D9 of sub-project 6).
  */
 data object MailToSelf : Setup {
     const val GMAIL = "com.google.android.gm"
@@ -21,6 +23,7 @@ data object MailToSelf : Setup {
         val address = scope.config.address(scope.device.kind)
             ?: return SetupResult.Untestable("corpus\\owner\\a71-config.json gives no address of this device's Gmail account")
         val marker = scope.values.marker
+        GmailTrash.push(scope)
         // once answers null for a failed command as for a lost answer, so Gmail must be in front before the tap: the hook
         // would tap the Send of whatever app is. A lost answer of the tap is read back by the inbox below.
         scope.device.once("am start -W -a android.intent.action.SENDTO -d 'mailto:$address?subject=${encode("Kestrel test $marker")}&body=${encode(marker)}' -p $GMAIL")
@@ -51,4 +54,54 @@ data object MailToSelf : Setup {
 
     /** As PowerShell's `[uri]::EscapeDataString`, which writes a space as %20. */
     private fun encode(text: String): String = URLEncoder.encode(text, Charsets.UTF_8).replace("+", "%20")
+}
+
+/**
+ * Gmail's own deletion of a test e-mail (design D9 of sub-project 6): the inbox opened in a new task, a long press on the
+ * one conversation whose row holds the run's marker, and Delete, which moves it to Gmail's Trash, where Gmail deletes it
+ * after 30 days; then a check that the inbox no longer shows the marker. On kestrel-api37 it then deletes up to three
+ * other conversations whose rows hold "Kestrel test" and a word of the markers, the subject that only [MailToSelf]
+ * writes, so that a test e-mail that an earlier run left goes too; on the A71 it touches only the run's own conversation. The labels are candidates
+ * that Task 10 of plan 6B confirms on kestrel-api37 and Task 12 on the A71.
+ */
+object GmailTrash {
+    const val SUBJECT = "Kestrel test"
+    private val DELETE = listOf(listOf(TapCandidate(label = "Delete"), TapCandidate(contains = "Delete")))
+
+    fun push(scope: RunScope) {
+        val marker = scope.values.marker
+        scope.restores.push("the test e-mail in Gmail", "Gmail: delete the conversation \"$marker\".") { delete(scope, marker) }
+    }
+
+    fun delete(scope: RunScope, marker: String) {
+        openInbox(scope)
+        if (shows(scope, marker)) {
+            AppTaps(scope, MailToSelf.GMAIL).run(listOf(listOf(TapCandidate(contains = marker, long = true))) + DELETE)
+            check(!shows(scope, marker)) { "The test e-mail is still in Gmail's inbox." }
+        }
+        if (scope.device.kind == DeviceKind.EMULATOR) sweep(scope)
+        scope.device.idempotent("input keyevent KEYCODE_HOME")
+    }
+
+    fun openInbox(scope: RunScope) {
+        // In a new task (NEW_TASK and CLEAR_TASK), because Gmail's task may still show an e-mail.
+        scope.device.idempotent("am start -W -f 0x10008000 -n ${MailToSelf.GMAIL}/.ConversationListActivityGmail")
+        scope.clock.sleep(3.seconds)
+    }
+
+    fun shows(scope: RunScope, text: String): Boolean = scope.hooks.screenHas(packageName = MailToSelf.GMAIL, contains = text).int("count") >= 1
+
+    /**
+     * Only a row that holds "Kestrel test" and a word of the markers right after it, as [MailToSelf]'s subjects do, and
+     * that the inbox shows once, is long-pressed, so that a real conversation about Kestrel's tests stays.
+     */
+    private fun sweep(scope: RunScope) {
+        var deleted = 0
+        for (word in Markers.WORDS) {
+            if (deleted >= 3) return
+            val subject = "$SUBJECT $word"
+            if (scope.hooks.screenHas(packageName = MailToSelf.GMAIL, contains = subject).int("count") != 1) continue
+            if (AppTaps(scope, MailToSelf.GMAIL).run(listOf(listOf(TapCandidate(contains = subject, long = true))) + DELETE)) deleted++
+        }
+    }
 }

@@ -19,7 +19,6 @@ import dev.kestrel.eval.run.Restores
 import dev.kestrel.eval.run.RunOptions
 import dev.kestrel.eval.run.Runner
 import dev.kestrel.eval.task.Task
-import dev.kestrel.eval.task.TaskKind
 import java.nio.file.Path
 
 /**
@@ -40,7 +39,7 @@ class Session(private val environment: Environment, serial: String) {
     /** Before the first run: a live session left on goes off without `--live`, the preflight, and with `--live` the live gate. */
     fun prepare(tasks: List<Task>, live: Boolean) {
         if (!live) LiveSession(hooks, console, device.serial).ensureOff()
-        preflight.prepare(needsTestApp = tasks.any { it.kind == TaskKind.STAND_IN || it.kind == TaskKind.INJECTION })
+        preflight.prepare(needsTestApp = tasks.any { it.needsTestApp })
         if (live) LiveGate(hooks, restores, device.serial).open()
     }
 

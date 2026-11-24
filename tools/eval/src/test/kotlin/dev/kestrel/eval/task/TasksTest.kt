@@ -62,9 +62,9 @@ class TasksTest {
 
     @Test
     fun theSuitesAreTheSuiteAndD3TasksLiveAndTheScriptsAndStandInsWithoutAModel() {
-        val suite = (SettingsTasks.ALL + ClockTasks.ALL + PeopleTasks.ALL).map { it.name }
+        val suite = (SettingsTasks.ALL + ClockTasks.ALL + PeopleTasks.ALL + MessageTasks.ALL).map { it.name }
         assertEquals(suite + listOf("hotspot", "firefox-wiki", "read-email"), Catalogue.suite(DeviceKind.EMULATOR, live = true).map { it.name })
-        assertEquals(suite + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), Catalogue.suite(DeviceKind.A71, live = true).map { it.name })
+        assertEquals(suite - "sms-read" + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), Catalogue.suite(DeviceKind.A71, live = true).map { it.name })
         assertEquals(
             suite + listOf("stand-in-messenger-late", "stand-in-messenger-late-reworded", "stand-in-messenger-photos", "stand-in-hotspot", "stand-in-firefox", "stand-in-read"),
             Catalogue.suite(DeviceKind.EMULATOR, live = false).map { it.name },

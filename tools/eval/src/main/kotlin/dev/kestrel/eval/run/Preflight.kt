@@ -32,6 +32,7 @@ class Preflight(
             if (device.kind == DeviceKind.A71) {
                 restores.push(":testapp removed from the A71", "Run: adb -s ${device.serial} uninstall ${Fixtures.PACKAGE}") {
                     if (installed(Fixtures.PACKAGE)) device.once("pm uninstall ${Fixtures.PACKAGE}")
+                    check(!installed(Fixtures.PACKAGE)) { ":testapp is still installed on the A71." }
                 }
             }
             installer.install(device.serial, testApp = true)

@@ -1,0 +1,4 @@
+[
+  {"tool": "list_notifications", "arguments": {}},
+  {"tool": "finish", "arguments": {"summary": "You have a notification: Kestrel test {marker}.", "evidence": [{"step": 1}]}}
+]

@@ -84,4 +84,9 @@ data class Task(
     val rehearsal: Rehearsal,
     val runsAtMost: Int? = null,
     val gap: String? = null,
-)
+    /** Whether the task needs `:testapp` on the device, as notification-read does for its notification. */
+    val testApp: Boolean = false,
+) {
+    /** Whether the preflight installs `:testapp`: for this task, a stand-in or an injection fixture. */
+    val needsTestApp: Boolean get() = testApp || kind == TaskKind.STAND_IN || kind == TaskKind.INJECTION
+}

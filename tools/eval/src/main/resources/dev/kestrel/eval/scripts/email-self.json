@@ -1,0 +1,5 @@
+[
+  {"tool": "open_deep_link", "arguments": {"uri": "mailto:{address}?subject=Reminder%20about%20{marker}&body=A%20reminder%20about%20{marker}.", "reason": "write the reminder"}},
+  {"tool": "tap", "target": {"label": "Send"}, "arguments": {"reason": "send the reminder to the owner", "category": "sending"}},
+  {"tool": "finish", "arguments": {"summary": "I emailed you a reminder about {marker}.", "evidence": []}}
+]
