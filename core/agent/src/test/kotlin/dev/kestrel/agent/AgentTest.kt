@@ -2,6 +2,7 @@ package dev.kestrel.agent
 
 import dev.kestrel.agent.loop.ScreenSteps
 import dev.kestrel.agent.loop.TaskRun
+import dev.kestrel.agent.loop.TaskText
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
@@ -635,7 +636,7 @@ class AgentTest {
         assertEquals(EndReason.TEST_MODE, report.end)
         assertTrue(harness.owner.confirmations.isEmpty())
         assertTrue(harness.screen.actions.isEmpty())
-        assertTrue(harness.model.requests.single().context.orEmpty().contains(TaskRun.TEST_MODE_NOTE))
+        assertTrue(harness.model.requests.single().context.orEmpty().contains(TaskText.TEST_MODE_NOTE))
         assertTrue(harness.log.texts(TaskLog.Kind.SAFETY).single().contains("beforeTestMode=Confirm decision=Block"))
     }
 

@@ -152,6 +152,9 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private var pausedAtFinish = false
 
     var safety = TaskSafety(TaskAllowance.NONE)
+
+    // The names that the allowance reads: the request's known contact names and memory's aliases (D13).
+    private var names: Set<String> = emptySet()
     lateinit var conversation: Conversation
     lateinit var observation: Observation
     lateinit var snapshot: ScreenSnapshot
@@ -203,12 +206,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         val first = checkFront(fresh())
         remembering { memory.load() }
         val context = recalled(null) { memory.context(task.text) }
-        safety = TaskSafety(
-            allowance = TaskAllowance.from(task.text, task.knownNames + memory.aliasKeys),
-            ownerWords = Normalizer.words(task.text).toSet(),
-            memoryValues = memory.usedValues,
-            ownerDigits = listOf(TaskSafety.digitsOf(task.text)).filter { it.isNotEmpty() },
-        )
+        names = task.knownNames + memory.aliasKeys
+        safety = OwnerWords.seeded(task, names, memory.usedValues)
         observation = observe(first, last = null, targetKey = null)
         RoutineMatcher.match(task.text, recalled(emptyList()) { ports.memory.routines() }, memory.aliasKeys, task.knownNames)?.let { match ->
             log(TaskLog.Kind.START, "routine matched")
@@ -221,8 +220,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         conversation = Conversation(
             system = SystemPrompt.TEXT,
             tools = Tools.ALL,
-            context = contextText(context),
-            task = taskMessage(),
+            context = TaskText.context(task, settings.safety.testMode, context, redactor),
+            task = TaskText.message(task, today(), safety.allowance, routineNote, redactor),
             first = observation,
             taskId = task.id,
             signedThinking = model.lightweight.signedThinking || model.versatile.signedThinking,
@@ -231,24 +230,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         pendingPrompt = observation.text
     }
 
-    // The task message (D3): the owner's words, the local date and time, what the task may do, and a failed routine's
-    // note (D23); it never changes.
-    private fun taskMessage(): Redacted {
-        val now = ports.clock.now()
-        val date = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", Locale.ENGLISH).format(now)
-        // Only the owner's words are redacted here, so that the year is never read as a code; a routine's note is built
-        // from parts that were redacted already.
-        val owner = Redacted.of(redactor, "The owner's task: ${task.text}").text
-        val lines = listOfNotNull(owner, "Today is $date.", safety.allowance.describe(), routineNote)
-        return Redacted.kestrel(lines.joinToString("\n"))
-    }
-
-    // The per-task context (D3): the memory that the task needs and the test-mode note; it never names the owner's
-    // agent-free apps (review B M6).
-    private fun contextText(memoryText: String?): Redacted? {
-        val parts = listOfNotNull(memoryText, TEST_MODE_NOTE.takeIf { settings.safety.testMode })
-        return parts.takeIf { it.isNotEmpty() }?.let { Redacted.of(redactor, it.joinToString("\n\n")) }
-    }
+    // The local date and time of the task message (D3).
+    private fun today(): String = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy, HH:mm", Locale.ENGLISH).format(ports.clock.now())
 
     private suspend fun turn() {
         if (gate() || resumePending) resumed()
@@ -882,7 +865,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
 
     companion object {
         const val SPOKEN_LIMIT = 600
-        const val TEST_MODE_NOTE = "Test mode is on: Kestrel sends only to the owner's own chats, and it never calls anyone."
         const val TEST_MODE_BLOCK = "Test mode: Kestrel only sends to your own chats."
         const val RESUMED = "The task was paused and has resumed; this is the screen now. Check it before you act."
         const val APP_STOPPED = "The app stopped; Kestrel went back."

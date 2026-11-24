@@ -26,6 +26,12 @@ class TaskAllowance(val categories: Set<Category>) {
         return "This task may ${parts.joinToString(" and ")} after the owner confirms." + calls
     }
 
+    /**
+     * This allowance with [other]'s categories too: the allowance of a conversation's earlier commands (D16 of
+     * sub-project 7), or the owner's steering (design 7.3 of sub-project 7).
+     */
+    operator fun plus(other: TaskAllowance): TaskAllowance = TaskAllowance(categories + other.categories)
+
     override fun equals(other: Any?): Boolean = other is TaskAllowance && other.categories == categories
 
     override fun hashCode(): Int = categories.hashCode()

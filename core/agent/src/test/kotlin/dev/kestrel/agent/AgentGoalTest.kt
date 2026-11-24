@@ -1,12 +1,21 @@
 package dev.kestrel.agent
 
 import dev.kestrel.agent.goal.TraceEntry
+import dev.kestrel.agent.loop.Redacted
+import dev.kestrel.agent.loop.TaskText
+import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.agent.tools.Tools
+import dev.kestrel.providers.chat.ChatMessage
+import dev.kestrel.providers.chat.Part
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.HandOverKind
+import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -76,5 +85,55 @@ class AgentGoalTest {
 
         assertEquals(listOf(1), whileSaying)
         assertEquals(listOf(1, 2), harness.goal.steps)
+    }
+
+    private fun firstMessage(harness: Harness): String =
+        (harness.model.requests.first().messages.first() as ChatMessage.User).parts.filterIsInstance<Part.Text>().single().text
+
+    @Test
+    fun theContextHoldsTheTestModeNoteThenTheConversationThenTheMemory() = runTest {
+        val harness = Harness(Screens.chats(), listOf(fail()), settings = AgentSettings(safety = SafetySettings(testMode = true)))
+        harness.memory.facts += Fact("gate code", "blue")
+        val records = Redacted.kestrel("This conversation so far:\nCommand 1: The owner said: \"Turn on Wi-Fi\"")
+
+        harness.run(TaskRequest(Harness.ID, "What is the gate code?", conversation = records))
+
+        assertEquals("${TaskText.TEST_MODE_NOTE}\n\n${records.text}\n\nFacts the owner saved:\n- gate code = blue", harness.model.requests.single().context)
+        assertTrue(firstMessage(harness), firstMessage(harness).startsWith("The owner's new command: What is the gate code?\nToday is "))
+    }
+
+    @Test
+    fun theOwnersWordsOfEarlierCommandsCountAsHisOwnText() = runTest {
+        fun typing() = Harness(Screens.chat("Ana Petrović", "Hi"), listOf(
+            call("type_text", "Type a message…", null, null, "text" to "I'm late", "reason" to "write it", "category" to "typing_request"),
+            fail(),
+        ))
+        val earlier = typing()
+        val alone = typing()
+
+        earlier.run(TaskRequest(Harness.ID, "And to Mila too", ownerHistory = listOf("Tell Ana that I'm late")))
+        alone.run(TaskRequest(Harness.ID, "And to Mila too"))
+
+        assertTrue(earlier.owner.confirmations.isEmpty())
+        assertEquals("I'm late", earlier.screen.actions.filterIsInstance<ScreenAction.SetText>().single().text)
+        assertEquals(1, alone.owner.confirmations.size)
+    }
+
+    @Test
+    fun aCarriedSendIsStillConfirmedInStandardModeAndACarriedCallIsHandedOver() = runTest {
+        fun sending() = Harness(Screens.chat("Mila Ilić", "Hi", typed = "I'm late"), listOf(call("tap", "Send", "Button", null, "reason" to "send it", "category" to "sending")))
+        val carried = sending()
+        val alone = sending()
+        val calling = Harness(Screens.chat("Mila Ilić", "Hi", call = true), listOf(call("tap", "Call", "Button", null, "reason" to "call her", "category" to "calls")))
+
+        carried.run(TaskRequest(Harness.ID, "And to Mila too", carried = setOf(Category.SENDING)))
+        alone.run(TaskRequest(Harness.ID, "And to Mila too"))
+        calling.run(TaskRequest(Harness.ID, "And Mila too", carried = setOf(Category.CALLS)))
+
+        val asked = carried.owner.confirmations.single().question
+        assertFalse(asked, asked.contains("You didn't ask me to send anything."))
+        assertTrue(alone.owner.confirmations.single().question.contains("You didn't ask me to send anything."))
+        assertEquals(HandOverKind.CALL, calling.owner.handOvers.single().kind)
+        assertTrue(calling.screen.actions.isEmpty())
     }
 }
