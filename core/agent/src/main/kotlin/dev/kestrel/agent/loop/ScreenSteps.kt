@@ -390,9 +390,12 @@ internal class ScreenSteps(private val run: TaskRun) {
         data class Missing(val reason: String) : LinkApp
     }
 
-    // The app that `open_deep_link`'s `app` names (spec 11.4): an installed package, or a launcher label that names exactly
-    // one app that opens the link. The link then goes to that app alone, so Android shows no chooser, and the safety check
-    // judges that app as the link's target.
+    // The app that `open_deep_link`'s `app` names (spec 11.4): an installed package, or a name of exactly one of the
+    // launcher apps that open the link: its package's words ([packageWords]) when the name is exactly them, so that "Google
+    // Maps" finds Google Maps, whose label is only "Maps" (plan 6B-basefix B1'), else its label as the launcher's matcher
+    // reads it. The link then goes to that app alone, so Android shows no chooser, and the safety check judges that app as
+    // the link's target. A name that no such app has gets the launcher's errors: no app of that name, or the app of that
+    // name does not open the link.
     private suspend fun linkApp(name: String, link: String): LinkApp {
         suspend fun opens(packageName: String) = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true)) == packageName
         val wanted = name.trim()
@@ -403,17 +406,22 @@ internal class ScreenSteps(private val run: TaskRun) {
         if (PACKAGE_NAME.matches(wanted)) {
             return if (opens(wanted)) LinkApp.Found(wanted) else LinkApp.Missing("no installed app ${quoted(wanted)} opens this link")
         }
-        val named = when (val pick = NamePick.pick(wanted, apps, { it.label }, { false })) {
-            Pick.None -> return LinkApp.Missing("no app named ${quoted(wanted)}")
-            is Pick.One -> listOf(pick.item)
-            is Pick.Several -> pick.items
+        val handlers = apps.filter { opens(it.packageName) }
+        val folded = Normalizer.normalize(wanted)
+        val byPackage = handlers.filter { app -> packageWords(app.packageName)?.let(Normalizer::normalize) == folded }
+        val matched = byPackage.ifEmpty {
+            when (val pick = NamePick.pick(wanted, handlers, { it.label }, { false })) {
+                Pick.None -> emptyList()
+                is Pick.One -> listOf(pick.item)
+                is Pick.Several -> pick.items
+            }
         }
-        val handlers = named.filter { opens(it.packageName) }
-        return when {
-            handlers.size == 1 -> LinkApp.Found(handlers.single().packageName)
-            handlers.size > 1 -> LinkApp.Missing("several apps match: " + handlers.joinToString(", ") { quoted(it.label) })
-            named.size == 1 -> LinkApp.Missing("${quoted(named.single().label)} doesn't open this link")
-            else -> LinkApp.Missing("none of the apps named ${quoted(wanted)} opens this link")
+        if (matched.size == 1) return LinkApp.Found(matched.single().packageName)
+        if (matched.size > 1) return LinkApp.Missing("several apps match: " + matched.take(NamePick.MAX_CHOICES).joinToString(", ") { quoted(it.label) })
+        return when (val pick = NamePick.pick(wanted, apps, { it.label }, { false })) {
+            Pick.None -> LinkApp.Missing("no app named ${quoted(wanted)}")
+            is Pick.One -> LinkApp.Missing("${quoted(pick.item.label)} doesn't open this link")
+            is Pick.Several -> LinkApp.Missing("none of the apps named ${quoted(wanted)} opens this link")
         }
     }
 
@@ -551,6 +559,15 @@ internal class ScreenSteps(private val run: TaskRun) {
         private const val WAIT_POLLS = 10
         private const val VIEW = "android.intent.action.VIEW"
         private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+
+        /**
+         * The words of [packageName] without its generic parts, as a second name of the app for `open_deep_link`'s `app`:
+         * "google maps" for com.google.android.apps.maps, "settings" for com.android.settings; null when nothing is left.
+         */
+        internal fun packageWords(packageName: String): String? =
+            packageName.split('.').filter { it.isNotEmpty() && it.lowercase() !in GENERIC_PACKAGE_PARTS }.joinToString(" ").ifEmpty { null }
+
+        private val GENERIC_PACKAGE_PARTS = setOf("com", "org", "net", "io", "android", "apps", "app")
         private const val HTTPS = "https"
         private const val WEB_VIEW = "android.webkit.WebView"
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)

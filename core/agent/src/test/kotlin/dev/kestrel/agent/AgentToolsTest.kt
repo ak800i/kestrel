@@ -433,20 +433,21 @@ class AgentToolsTest {
     private val maps = "com.google.android.apps.maps"
 
     // A deep link with the app that the owner named; Android would ask which app opens a geo: link, so without a package
-    // it resolves to none, and each app opens only the links of [handles]. Two apps are called Google Maps, and by default
-    // only one of them opens the link.
+    // it resolves to none, and each app opens only the links of [handles]. As on real phones, Google Maps' launcher label
+    // is "Maps"; Maps Go is called Maps too, and by default only Google Maps opens the link. The Google app opens none.
     private fun namedApp(app: String, link: String = "geo:0,0?q=Kalemegdan", handles: Map<String, String> = mapOf("geo:" to maps)): Harness =
         Harness(
             Screens.app("com.android.launcher3", "Home"),
             listOf(call("open_deep_link", null, null, null, "uri" to link, "reason" to "show the place", "app" to app), stop),
-            launcher = FakeApps.DEFAULT + LauncherApp("Google Maps", maps, "11.150") + LauncherApp("Google Maps", "com.google.android.apps.mapslite", "1.0"),
+            launcher = FakeApps.DEFAULT + LauncherApp("Maps", maps, "11.150") + LauncherApp("Maps", "com.google.android.apps.mapslite", "1.0") +
+                LauncherApp("Google", "com.google.android.googlequicksearchbox", "17.0"),
         ).apply {
             screen.resolver = { spec -> spec.packageName?.takeIf { handles.any { (scheme, app) -> spec.data.orEmpty().startsWith(scheme) && app == spec.packageName } } }
         }
 
     @Test
     fun aDeepLinkOpensInTheAppThatTheOwnerNamedWithoutAChooser() = runTest {
-        for (app in listOf("Google Maps", maps)) {
+        for (app in listOf("Google Maps", "Maps", maps)) {
             val harness = namedApp(app)
 
             harness.run("Show Kalemegdan on Google Maps")
@@ -471,12 +472,34 @@ class AgentToolsTest {
             assertTrue(app, harness.screen.actions.isEmpty())
             assertTrue(harness.lastRequestText(), harness.lastRequestText().contains(error))
         }
-        // Two apps with the name, and both open the link: the model has to name one.
-        val both = namedApp("Google Maps")
+        // Two apps with the label, and both open the link: the model has to name one.
+        val both = namedApp("Maps")
         both.screen.resolver = { spec -> spec.packageName }
-        both.run("Show Kalemegdan on Google Maps")
+        both.run("Show Kalemegdan on Maps")
         assertTrue(both.screen.actions.isEmpty())
         assertTrue(both.lastRequestText(), both.lastRequestText().contains("several apps match"))
+    }
+
+    @Test
+    fun anAppThatOpensTheLinkIsFoundByItsLabelOrByItsPackagesWords() = runTest {
+        // Every launcher app opens the link here: "Google Maps" is exactly Google Maps' package words, and no other app's.
+        val every = namedApp("Google Maps")
+        every.screen.resolver = { spec -> spec.packageName }
+
+        every.run("Show Kalemegdan on Google Maps")
+
+        assertEquals(every.lastRequestText(), listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), every.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+        assertEquals("google maps", ScreenSteps.packageWords(maps))
+        assertEquals("google mapslite", ScreenSteps.packageWords("com.google.android.apps.mapslite"))
+        assertEquals("settings", ScreenSteps.packageWords("com.android.settings"))
+        assertEquals("telegram messenger", ScreenSteps.packageWords("org.telegram.messenger"))
+        assertEquals(null, ScreenSteps.packageWords("com.android.app"))
+
+        // A vendor's word alone is no name: only Google Maps opens the link, and the Google app, which does not, is "Google".
+        val vendor = namedApp("Google")
+        vendor.run("Show Kalemegdan on Google")
+        assertTrue(vendor.screen.actions.isEmpty())
+        assertTrue(vendor.lastRequestText(), vendor.lastRequestText().contains("\"Google\" doesn't open this link"))
     }
 
     @Test
