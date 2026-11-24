@@ -2,6 +2,7 @@ package dev.kestrel.agent
 
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.ChecklistState
 import dev.kestrel.agent.goal.HistoryData
 import dev.kestrel.agent.goal.HistoryMatch
 import dev.kestrel.agent.goal.HistoryQuery
@@ -127,6 +128,7 @@ class ToStringTest {
             TraceEntry.Did(marker),
             checklist,
             checklist.items.single(),
+            ChecklistState.atStart(checklist),
             ResumeNote(ResumeCause.LIMIT, listOf(marker)),
             HistoryQuery(marker),
             HistoryData(Tools.LIST_SMS, marker),

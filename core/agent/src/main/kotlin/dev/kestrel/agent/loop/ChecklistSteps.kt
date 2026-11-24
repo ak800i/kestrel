@@ -3,6 +3,7 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistCheck
 import dev.kestrel.agent.goal.ChecklistRules
+import dev.kestrel.agent.goal.ChecklistState
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.agent.tools.Tools
 
@@ -14,12 +15,10 @@ import dev.kestrel.agent.tools.Tools
  * the run.
  */
 internal class ChecklistSteps(private val run: TaskRun, started: Checklist?) {
-    var checklist: Checklist? = started
-        private set
+    // With the checklist, the next new id and the step at which the run added each item; null before the first checklist.
+    private var state: ChecklistState? = started?.let(ChecklistState::atStart)
 
-    // The number of the next new item's id: after every id that the run has seen, so that no id is given twice.
-    private var nextId = (started?.items.orEmpty().maxOfOrNull { it.id.removePrefix("c").toInt() } ?: 0) + 1
-
+    val checklist: Checklist? get() = state?.checklist
     // Whether the newest step saved the checklist.
     private var savedLast = false
 
@@ -38,18 +37,18 @@ internal class ChecklistSteps(private val run: TaskRun, started: Checklist?) {
         if (tool != Tools.UPDATE_CHECKLIST) savedLast = false
     }
 
-    /** Checks [call] against the rules, with [steps] the steps of this run that an item may be done by. */
+    /** Checks [call], the run's current step, against the rules, with [steps] the steps of this run that an item may be done by. */
     suspend fun update(call: AgentCall.UpdateChecklist, steps: Set<Int>): Done {
         if (savedLast) return refused(call, TWICE)
         val drafts = call.items.map { it.copy(text = run.vault.spoken(it.text), why = it.why?.let(run.vault::spoken)) }
-        return when (val check = ChecklistRules.check(drafts, checklist, steps, nextId)) {
+        return when (val check = ChecklistRules.check(drafts, state, steps, run.replies)) {
             is ChecklistCheck.Refused -> refused(call, check.reason)
             is ChecklistCheck.Saved -> {
-                checklist = check.checklist
-                nextId = check.nextId
+                state = check.state
                 savedLast = true
-                run.trace.checklist(check.checklist)
-                val saved = "checklist saved, ${check.checklist.done} of ${check.checklist.items.size} done (${check.sent.joinToString(", ")})"
+                val checklist = check.state.checklist
+                run.trace.checklist(checklist)
+                val saved = "checklist saved, ${checklist.done} of ${checklist.items.size} done (${check.sent.joinToString(", ")})"
                 Done(call.tool, text = "Result: $saved.", summary = "Step ${run.replies}: $saved.", last = saved, counted = false)
             }
         }

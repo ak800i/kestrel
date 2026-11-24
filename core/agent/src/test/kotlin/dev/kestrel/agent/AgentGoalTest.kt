@@ -217,18 +217,36 @@ class AgentGoalTest {
     @Test
     fun aChecklistThatKeepsTheRulesIsSavedReportedAndNamedInItsResult() = runTest {
         val harness = Harness(Screens.chats(), listOf(
+            checklist(item("Read the SMS", "doing"), item("Tell the owner", "todo")),
             call("list_sms"),
-            checklist(item("Read the SMS", "done", "step" to 1), item("Tell the owner", "todo")),
+            checklist(item("Read the SMS", "done", "id" to "c1", "step" to 2), item("Tell the owner", "todo", "id" to "c2")),
             fail(),
         ))
         harness.data.answer(Tools.LIST_SMS, sms("Hi"))
 
         val report = harness.run("Read my newest SMS")
 
-        val saved = Checklist(listOf(ChecklistItem("c1", "Read the SMS", ItemState.DONE, step = 1), ChecklistItem("c2", "Tell the owner", ItemState.TODO)))
-        assertEquals(listOf(saved), harness.goal.checklists)
-        assertTrue(harness.requestText(2).contains("Result: checklist saved, 1 of 2 done (c1, c2)."))
+        val planned = Checklist(listOf(ChecklistItem("c1", "Read the SMS", ItemState.DOING), ChecklistItem("c2", "Tell the owner", ItemState.TODO)))
+        val saved = Checklist(listOf(ChecklistItem("c1", "Read the SMS", ItemState.DONE, step = 2), ChecklistItem("c2", "Tell the owner", ItemState.TODO)))
+        assertEquals(listOf(planned, saved), harness.goal.checklists)
+        assertTrue(harness.requestText(3).contains("Result: checklist saved, 1 of 2 done (c1, c2)."))
         assertEquals(saved, report.checklist)
+    }
+
+    // An item comes into the checklist at the step of its update, so no earlier step can have done it.
+    @Test
+    fun aStepBeforeTheUpdateThatAddedAnItemCannotMarkItDone() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("list_sms"),
+            checklist(item("Read the SMS", "done", "step" to 1)),
+            fail(),
+        ))
+        harness.data.answer(Tools.LIST_SMS, sms("Hi"))
+
+        harness.run("Read my newest SMS")
+
+        assertTrue(harness.requestText(2).contains("Result: update_checklist failed: Step 1 cannot mark c1 done: c1 was added at step 2, after it."))
+        assertEquals(emptyList<Checklist>(), harness.goal.checklists)
     }
 
     // A step that only talked did nothing that an item could be done by (design 7.2 of sub-project 7).
