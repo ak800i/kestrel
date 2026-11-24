@@ -53,7 +53,7 @@ class FakeEnvironment {
         adb.on("^pm list packages dev.kestrel.testapp$") { "package:dev.kestrel.testapp" }
         adb.on("^dumpsys account$") { (1..accounts).joinToString("\n") { "    Account {name=account$it@example.com, type=com.google}" } }
         adb.hook("STATE") { "screen=on testMode=on numbers=0 $build" }
-        adb.on("^dumpsys package dev\\.kestrel$") { "  Package [dev.kestrel] (316e119):\n    versionCode=100 minSdk=33 targetSdk=37\n    versionName=1.0.0\n    lastUpdateTime=$installed" }
+        adb.on("^dumpsys package dev\\.kestrel$") { "  Package [dev.kestrel] (316e119):\n    userId=$KESTREL_UID\n    versionCode=100 minSdk=33 targetSdk=37\n    versionName=1.0.0\n    lastUpdateTime=$installed" }
         adb.hook("VOICE_STATE") { "mode=listening work=idle session=open clips=off" }
         adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
         adb.hook("AGENT_LIVE") { extras -> extras["on"]?.let { live = if (it == "true") "on" else "off" }; "live=$live" }
@@ -69,5 +69,6 @@ class FakeEnvironment {
 
     companion object {
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
+        const val KESTREL_UID = 10234
     }
 }

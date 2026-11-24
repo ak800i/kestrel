@@ -122,7 +122,7 @@ class SeriesCommand(
         }
         // A folder whose tasks all ended needs nothing of the device.
         if (todo.isEmpty()) {
-            if (recordBaseline) checkBaselineBuild(call.kestrel, head, session)
+            if (recordBaseline) checkBaselineBuild(call.kestrel, head)
             return finish(0)
         }
         return session.guarded {
@@ -130,7 +130,7 @@ class SeriesCommand(
             val build = KestrelBuild.installed(session.device)?.let { KestrelBuild.withState(it, session.hooks.state()) }
             if (recorded != null && !recorded.sameInstall(build)) throw Refusal("Kestrel was installed again during the preflight; run a new suite.")
             call.copy(kestrel = build).write(folder)
-            if (recordBaseline) checkBaselineBuild(build, head, session)
+            if (recordBaseline) checkBaselineBuild(build, head)
             val keys = PcapdroidKeys(environment.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json"))
             if (capturing) {
                 if (EgressParts.read(folder).isEmpty() && resumption?.kept.orEmpty().any { it.runs.isNotEmpty() }) {
@@ -166,15 +166,12 @@ class SeriesCommand(
     /**
      * `--record-baseline` records only HEAD's Kestrel (review I2 of plan 6B): the installed debug build must come from a
      * worktree without changes in paths that can change a run of Kestrel, at a commit that differs from HEAD at most
-     * outside them ([Resume.KESTREL_PATHS]). A build that reports no commit, from before its debug build wrote one, gets a warning instead.
+     * outside them ([Resume.KESTREL_PATHS]). A build that reports no commit, from before its debug build wrote one, is
+     * refused too, because nothing would show that it is HEAD's.
      */
-    private fun checkBaselineBuild(build: KestrelBuild?, head: String, session: Session) {
-        val commit = build?.commit
-        if (commit == null) {
-            session.console.warn("Kestrel's installed build reports no commit, so nothing checks that eval\\baseline.json's commit $head is the Kestrel that ran.")
-            return
-        }
+    private fun checkBaselineBuild(build: KestrelBuild?, head: String) {
         val fix = "install HEAD's build with scripts\\install.ps1 and run a new suite."
+        val commit = build?.commit ?: throw Refusal("--record-baseline records only HEAD's Kestrel, and the installed build reports no commit; $fix")
         if (build.dirty == true) {
             throw Refusal("--record-baseline records only HEAD's Kestrel, and the installed build was built at $commit with changes that can change its runs; $fix")
         }

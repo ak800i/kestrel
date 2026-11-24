@@ -21,8 +21,13 @@ class CaptureTest {
     private val kestrel = 10234
     private val folder = Files.createTempDirectory("eval-capture")
 
-    /** PCAPdroid on [adb]: set up, its capture service run by its control, its file growing twice and then pulled as [pcap]. */
-    private fun pcapdroid(adb: FakeAdb, pcap: () -> ByteArray): () -> Boolean = fakePcapdroid(adb, kestrel, pcap)
+    /**
+     * PCAPdroid on a [FakeRun]'s [adb]: set up, its capture service run by its control, its file growing twice and then
+     * pulled as [pcap], and Kestrel's package with the UID [kestrel].
+     */
+    private fun pcapdroid(adb: FakeAdb, pcap: () -> ByteArray): () -> Boolean = fakePcapdroid(adb, pcap).also {
+        adb.on("^dumpsys package dev\\.kestrel$") { "  Package [dev.kestrel] (316e119):\n    userId=$kestrel" }
+    }
 
     @Test
     fun theCaptureRunsDuringTheSeriesAndIsPulledDeletedAndJudged() {
@@ -94,7 +99,7 @@ class CaptureTest {
     @Test
     fun aCaptureThatCannotBeJudgedFailsTheSuiteWithItsReportAndAResumeKeepsTheResult() {
         val fake = FakeEnvironment()
-        pcapdroid(fake.adb) { PcapBuilder().bytes() }
+        fakePcapdroid(fake.adb) { PcapBuilder().bytes() }
         var size = 1000
         fake.adb.on("^stat -c %s /sdcard/Download/PCAPdroid/kestrel-") { "${size++}" }
         PcapdroidKeys(fake.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json")).put("emulator-5554", KEY)
@@ -117,7 +122,7 @@ class CaptureTest {
     @Test
     fun aSuiteWithTheEgressCheckWritesEgressTxtAndTheReportsResult() {
         val fake = FakeEnvironment()
-        pcapdroid(fake.adb) { PcapBuilder().bytes() }
+        fakePcapdroid(fake.adb) { PcapBuilder().bytes() }
         PcapdroidKeys(fake.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json")).put("emulator-5554", KEY)
 
         assertEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--runs", "1", "--tasks", "stand-in-hotspot", "--egress"))

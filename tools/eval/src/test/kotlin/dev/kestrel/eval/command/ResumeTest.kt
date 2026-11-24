@@ -221,7 +221,7 @@ class ResumeTest {
         assertTrue(fake.output.contains("--record-baseline records a suite of every task"))
 
         // A live suite captures its traffic with PCAPdroid (design D11 of sub-project 6).
-        fakePcapdroid(fake.adb, 10234) { PcapBuilder().bytes() }
+        fakePcapdroid(fake.adb) { PcapBuilder().bytes() }
         PcapdroidKeys(fake.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json")).put("emulator-5554", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6")
         fake.cli("suite", "--device", "emulator-5554", "--live", "--record-baseline", "--resume", folder.toString())
 
