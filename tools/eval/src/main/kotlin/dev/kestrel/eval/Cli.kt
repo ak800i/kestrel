@@ -3,6 +3,7 @@ package dev.kestrel.eval
 import dev.kestrel.eval.command.Arguments
 import dev.kestrel.eval.command.Command
 import dev.kestrel.eval.command.CompareCommand
+import dev.kestrel.eval.command.EgressSetupCommand
 import dev.kestrel.eval.command.Environment
 import dev.kestrel.eval.command.ListCommand
 import dev.kestrel.eval.command.RehearseCommand
@@ -51,6 +52,7 @@ class Cli(private val environment: Environment) {
                 is Command.Compare -> CompareCommand(environment, command).execute()
                 is Command.Injection -> SeriesCommand.injection(environment, command).execute(command.device, keep)
                 is Command.Rehearse -> RehearseCommand(environment, command).execute()
+                is Command.EgressSetup -> EgressSetupCommand(environment, command).execute()
                 is Command.ListTasks -> ListCommand(environment, command).execute(out)
             }
         } catch (e: Stopping) {
@@ -109,6 +111,7 @@ class Cli(private val environment: Environment) {
             |  compare <results folder>... [--rerun --device <serial>]
             |  injection --device <serial> [--live] [--runs n]
             |  rehearse --device <serial> [--tasks a,b]
+            |  egress-setup --device <serial>
             |  list [--device <serial>]
         """.trimMargin()
     }

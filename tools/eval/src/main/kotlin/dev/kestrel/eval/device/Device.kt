@@ -68,6 +68,19 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
         throw DeviceCommandFailed("adb push failed on $serial: $reason")
     }
 
+    /** The output of `adb exec-out <args>` after the guard's check, for a read that is no shell's, such as `uiautomator dump /dev/tty`. */
+    fun execOut(args: List<String>, timeout: Duration = TIMEOUT): String {
+        read("true")
+        return adb.host(listOf("exec-out") + args, timeout).out
+    }
+
+    /** Installs [apk] with `adb install -r` after the guard's check; a second install of the same file does the same. */
+    fun install(apk: Path) {
+        read("true")
+        val result = adb.host(listOf("install", "-r", apk.toString()), PUSH_TIMEOUT)
+        if (result.exitCode != 0) throw DeviceCommandFailed("adb install failed on $serial: ${complaint(result)}")
+    }
+
     /** The command inside the guard's check, as `Format-TestDeviceCommand` writes it. */
     fun guarded(command: String): String = "case \$(getprop $property) in $pattern) $command && echo && echo $END;; *) echo $REFUSED;; esac"
 

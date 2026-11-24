@@ -37,6 +37,8 @@ sealed interface Command {
 
     data class Rehearse(val device: String, val tasks: List<String>? = null) : Command
 
+    data class EgressSetup(val device: String) : Command
+
     data class ListTasks(val device: String? = null) : Command
 }
 
@@ -50,6 +52,7 @@ object Arguments {
         "compare" to setOf("--rerun", "--device"),
         "injection" to setOf("--device", "--live", "--runs"),
         "rehearse" to setOf("--device", "--tasks"),
+        "egress-setup" to setOf("--device"),
         "list" to setOf("--device"),
     )
 
@@ -102,6 +105,7 @@ object Arguments {
             }
             "injection" -> Command.Injection(device(), live, runs)
             "rehearse" -> Command.Rehearse(device(), tasks)
+            "egress-setup" -> Command.EgressSetup(device())
             else -> Command.ListTasks(options["--device"])
         }
     }

@@ -24,6 +24,9 @@ class FakeAdb(
     /** The guarded commands as they went to adb. */
     val raw = mutableListOf<String>()
     val hostCommands = mutableListOf<List<String>>()
+
+    /** The output of a host command other than `get-state` and `emu avd name`, such as `exec-out uiautomator dump /dev/tty`. */
+    var hostOut: (List<String>) -> String = { "" }
     val settings = mutableMapOf<String, String>()
     val files = mutableMapOf<String, String>()
     private val handlers = mutableListOf<Pair<Regex, (MatchResult) -> String?>>()
@@ -85,7 +88,7 @@ class FakeAdb(
         return when {
             args == listOf("get-state") -> ShellResult(0, "$state\n", "")
             args == listOf("emu", "avd", "name") -> ShellResult(0, "$consoleName\r\nOK\r\n", "")
-            else -> ShellResult(0, "", "")
+            else -> ShellResult(0, hostOut(args), "")
         }
     }
 

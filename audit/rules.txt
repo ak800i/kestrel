@@ -45,6 +45,7 @@ pin com.k2fsa.sherpa.onnx:* 1.13.8
 
 # Network API exceptions
 allow-network-class :core:privacy dev/kestrel/privacy/network/ The network gateway is the only HTTP client in Kestrel (design spec, section 13.1).
+allow-network-class :tools:eval dev/kestrel/eval/egress/ReleaseDownload The PC tool downloads PCAPdroid's pinned release; it never ships in the app
 
 # Model downloads (release plan): the downloadHosts of models/manifest.json, which only the app's model download may
 # reach, over HTTPS, after the owner taps Download in the setup checklist (design spec, sections 8.10 and 13.1). A pattern
