@@ -1,17 +1,25 @@
-# Runs Gradle's connected (on-device) tests on one test device only, and keeps Kestrel and its data on it.
-# It runs only connected test tasks, and it always passes the Gradle properties with which the Android Gradle plugin
-# leaves Kestrel installed after the tests and clears none of its data ($KestrelDataProperties in scripts\lib\Kestrel.ps1).
-# It refuses a caller's argument that sets one of these properties otherwise, Gradle's --serial option, and every other
-# task.
-# Afterwards, also when the tests fail or Ctrl+C interrupts them, it checks that the serial still names the test device,
-# puts back the device's accessibility settings, and uninstalls each package that Gradle installs for the tests (the
-# fixture app dev.kestrel.testapp and the test APKs, such as dev.kestrel.test) that was not installed before. Then it
-# checks that Kestrel kept its data: when Kestrel was installed before the tests and is now missing, or was installed
-# again, which its first-install time in 'dumpsys package' shows, it writes an error that names the loss and ends with
-# exit code 1, also when the tests passed. It does not try to bring the data back. If the device check fails, or Ctrl+C
-# interrupts the script while it puts these back, it warns with the commands that do it by hand. If the device check
-# fails, it puts nothing back and ends with exit code 1, also when the tests passed. After Ctrl+C, it ends with exit
-# code 1.
+# Runs Gradle's connected (on-device) tests on one test device only, and keeps Kestrel and the owner's data on it.
+# It accepts only connected test tasks, instrumentation arguments, '-x <task>' and a few flags that change only what
+# Gradle prints and caches, and it always passes the Gradle properties with which the Android Gradle plugin leaves
+# Kestrel installed after the tests and clears none of its data (Get-ConnectedTestArguments and $KestrelDataProperties
+# in scripts\lib\DeviceGuard.ps1). It refuses every other argument.
+# Before the tests it reads the device's state; afterwards, also when the tests fail or Ctrl+C interrupts them, it checks
+# that the serial still names the test device, and then:
+#   - it puts back the device's accessibility settings;
+#   - it checks that Kestrel was not uninstalled or installed again, either of which deletes Kestrel's data. Kestrel's
+#     first-install time in 'dumpsys package' shows both, and nothing else: a 'pm clear', or a test that deletes
+#     Kestrel's stores in its process, leaves the time as it was;
+#   - it uninstalls each package that Gradle installed for the tests (the fixture app dev.kestrel.testapp and the test
+#     APKs, such as dev.kestrel.test) and that was not installed before;
+#   - on kestrel-api37, it checks what AGENTS.md asks for there: that the number of Google accounts in 'dumpsys account'
+#     and Kestrel's profiles, as scripts\hook.ps1 provider-standin answers (the default profile's kind and the number of
+#     Copilot profiles), did not change. When Kestrel does not answer before the tests, for example because it is not
+#     installed, the script says so and compares only the accounts.
+# A change of Kestrel's install or of the owner's data is written as an error that names it; the script does not try to
+# bring data back. Every failed check ends the script with exit code 1, also when the tests passed. If the device check
+# fails, or Ctrl+C interrupts the script while it puts the device back, it warns with the commands that do it by hand;
+# if the device check fails, it puts nothing back. After Ctrl+C, it ends with exit code 1. ANDROID_SERIAL, which names
+# the device for Gradle, gets the caller's value back at the end.
 # Example: scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
@@ -19,18 +27,22 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\Session.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 $gradleArguments = Get-ConnectedTestArguments -Arguments $Tasks
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
-# The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
-$env:ANDROID_SERIAL = $Serial
 # The device tests replace the list of enabled accessibility services, and Android then clears the shortcuts of the
 # services that it turns off. So the accessibility settings are put back afterwards, even when the tests fail or are
 # interrupted. If they cannot be read, the tests do not start.
 $saved = Get-AccessibilitySettings -Serial $Serial
-# Kestrel's first-install time and the test packages that the device has before the tests. If they cannot be read, the
-# tests do not start, because the script could then not tell afterwards whether Kestrel kept its data.
+# Kestrel's first-install time and the test packages before the tests, and on kestrel-api37 the owner's data. If they
+# cannot be read, the tests do not start, because the script could then not compare them afterwards.
 $packagesBefore = Get-KestrelPackageState -Serial $Serial
+$ownerBefore = if (Test-OwnerDataDevice -Serial $Serial) { Get-OwnerDataState -Serial $Serial } else { $null }
+if ($ownerBefore -and -not $ownerBefore.Profiles) {
+    Write-Warning "Could not read Kestrel's profiles on $Serial before the tests ($($ownerBefore.ProfilesUnread)), so the script compares only the Google accounts there."
+}
 # The commands that put the device back by hand. As Restore-AccessibilitySettings does, they put back the list of
 # services first, and they delete the list and the switch if these were not there before.
 $byHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($saved.Keys) | Select-Object -Unique) {
@@ -42,12 +54,16 @@ $byHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibil
         }
     })
 $byHand += Format-TestPackageRemoval -Keep $packagesBefore.TestPackages
+# The script runs in the caller's PowerShell, so ANDROID_SERIAL is put back afterwards.
+$callerSerial = $env:ANDROID_SERIAL
 $code = 1
 $testsEnded = $false
 $failed = $false
 $restored = $false
 $refusal = $null
 try {
+    # The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
+    $env:ANDROID_SERIAL = $Serial
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @gradleArguments
     $code = $LASTEXITCODE
     $testsEnded = $true
@@ -55,6 +71,7 @@ try {
     $failed = $true
     throw
 } finally {
+    $env:ANDROID_SERIAL = $callerSerial
     # A stop, such as Ctrl+C, that comes while a finally block runs ends that block at once, and PowerShell then runs
     # the finally blocks around it in full. So the restore runs in a try block of its own, whose finally block warns
     # when the restore did not finish.
@@ -73,26 +90,14 @@ try {
             if ($null -ne $services -and $services -notlike '*dev.kestrel/*') { break }
             Start-Sleep -Milliseconds 500
         }
-        # A run whose tests passed still fails when the device keeps changed settings.
+        # A run whose tests passed still fails when the device keeps changed settings, when Kestrel was uninstalled or
+        # installed again, when a test package stays, or when the owner's data changed.
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $saved) -and $code -eq 0) { $code = 1 }
-        $packagesAfter = try {
-            Get-KestrelPackageState -Serial $Serial
-        } catch {
-            Write-Warning ("Could not read the packages of $Serial ($($_.Exception.Message)), so the script could not check that Kestrel " +
-                "kept its data, nor uninstall the test packages. Run: & '$((Get-Adb) -replace "'", "''")' -s $Serial shell " +
-                "'$((Format-TestPackageRemoval -Keep $packagesBefore.TestPackages) -replace "'", "''")'")
-            $null
-        }
-        if ($null -eq $packagesAfter) {
-            if ($code -eq 0) { $code = 1 }
-        } else {
-            $loss = Get-KestrelDataLoss -Before $packagesBefore -After $packagesAfter -Serial $Serial
-            if ($loss) {
-                Write-Error -Message $loss -ErrorAction Continue
-                $code = 1
-            }
-            $installed = @($packagesAfter.TestPackages | Where-Object { $packagesBefore.TestPackages -notcontains $_ })
-            if (-not (Remove-TestPackages -Serial $Serial -Packages $installed) -and $code -eq 0) { $code = 1 }
+        if (-not (Complete-TestPackages -Serial $Serial -Before $packagesBefore) -and $code -eq 0) { $code = 1 }
+        if ($ownerBefore) {
+            $problems = @(Compare-OwnerData -Serial $Serial -Before $ownerBefore -During 'the tests')
+            foreach ($problem in $problems) { Write-Error -Message $problem -ErrorAction Continue }
+            if ($problems.Count -gt 0 -and $code -eq 0) { $code = 1 }
         }
         $restored = $true
     } finally {

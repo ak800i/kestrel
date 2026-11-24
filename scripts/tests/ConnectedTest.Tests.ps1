@@ -1,177 +1,177 @@
-# Tests of the helpers in scripts\lib\Kestrel.ps1 with which scripts\connected-test.ps1 keeps Kestrel and its data on the
-# test device. The package helpers run with fake-adb.cmd instead of a device. scripts\test-scripts.ps1 runs these tests
+# Tests of scripts\connected-test.ps1 as a whole. The script runs in the test's PowerShell from a copy of the scripts
+# folder in the test drive, next to a fake gradlew.bat, which writes down its arguments and ANDROID_SERIAL and changes
+# the fake device as a run of the tests could. adb is fake-adb.cmd, and Kestrel's profiles, which the script reads through
+# scripts\hook.ps1, come from a mock, so the tests need no build and no device. scripts\test-scripts.ps1 runs these tests
 # in Windows PowerShell 5.1 and in PowerShell 7.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '',
     Justification = 'Pester shares the variables of BeforeAll with the It blocks.')]
 param()
 
-Describe 'Get-ConnectedTestArguments' {
+Describe 'connected-test.ps1' {
     BeforeAll {
+        $ErrorActionPreference = 'Stop'
         . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        . "$PSScriptRoot\..\lib\Session.ps1"
+        . "$PSScriptRoot\..\lib\DeviceGuard.ps1"
+        $root = Join-Path $TestDrive 'repository'
+        New-Item -ItemType Directory -Path (Join-Path $root 'scripts\lib') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\connected-test.ps1') -Destination (Join-Path $root 'scripts')
+        foreach ($library in 'Kestrel.ps1', 'Session.ps1', 'DeviceGuard.ps1') {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\lib\$library") -Destination (Join-Path $root 'scripts\lib')
+        }
+        $connectedTest = Join-Path $root 'scripts\connected-test.ps1'
+        $arguments = Join-Path $root 'gradlew-arguments.txt'
+        $gradleSerial = Join-Path $root 'gradlew-serial.txt'
+        Set-Content -LiteralPath (Join-Path $root 'gradlew.bat') -Encoding Ascii -Value @(
+            '@echo off'
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-gradlew.ps1" %*'
+            'exit /b %ERRORLEVEL%'
+        )
+        # The fake Gradle: KESTREL_FAKE_GRADLE says what the run does to the fake device.
+        Set-Content -LiteralPath (Join-Path $root 'fake-gradlew.ps1') -Value @(
+            '[IO.File]::WriteAllText((Join-Path $PSScriptRoot ''gradlew-arguments.txt''), ($args -join [char]10))'
+            '[IO.File]::WriteAllText((Join-Path $PSScriptRoot ''gradlew-serial.txt''), "$env:ANDROID_SERIAL")'
+            '$state = [IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json'
+            'switch ($env:KESTREL_FAKE_GRADLE) {'
+            '    ''uninstall'' { $state.packages.PSObject.Properties.Remove(''dev.kestrel'') }'
+            '    ''reinstall'' { $state.packages.''dev.kestrel'' = ''2026-11-24 17:00:00'' }'
+            '    ''test-apk'' { $state.packages | Add-Member -NotePropertyName ''dev.kestrel.test'' -NotePropertyValue ''2026-11-24 17:00:00'' }'
+            '    ''account'' { $state.accounts = 0 }'
+            '}'
+            '[IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))'
+            'exit 0'
+        )
+        $fakeAdb = Join-Path $PSScriptRoot 'fake-adb.cmd'
         $keep = @(
             '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
             '-Pandroid.experimental.testOptions.uninstallIncompatibleApks=false'
             '-Pandroid.testInstrumentationRunnerArguments.clearPackageData=false'
         )
-    }
-
-    It 'always passes the properties that keep Kestrel installed with its data, after the caller''s arguments' {
-        Get-ConnectedTestArguments -Arguments @(':app:connectedDebugAndroidTest') | Should -BeExactly (@(':app:connectedDebugAndroidTest') + $keep)
-
-        $arguments = @(':core:privacy:connectedDebugAndroidTest', ':app:connectedDebugAndroidTest', 'connectedCheck',
-            '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest', '--no-configuration-cache')
-        Get-ConnectedTestArguments -Arguments $arguments | Should -BeExactly ($arguments + $keep)
-    }
-
-    It 'passes a property once when the caller sets it as the script does' {
-        Get-ConnectedTestArguments -Arguments @(':app:connectedDebugAndroidTest', '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true') |
-            Should -BeExactly (@(':app:connectedDebugAndroidTest') + $keep)
-    }
-
-    It 'refuses an argument that sets one of these properties otherwise: <_>' -ForEach @(
-        '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=false'
-        '--project-prop=android.injected.androidTest.leaveApksInstalledAfterRun=false'
-        '-Dorg.gradle.project.android.injected.androidTest.leaveApksInstalledAfterRun=false'
-        'android.injected.androidTest.leaveApksInstalledAfterRun=false'
-        '-Pandroid.experimental.testOptions.uninstallIncompatibleApks=true'
-        '-Pandroid.testInstrumentationRunnerArguments.clearPackageData=true'
-    ) {
-        $thrown = { Get-ConnectedTestArguments -Arguments @(':app:connectedDebugAndroidTest', $_) } | Should -Throw -PassThru
-        $thrown.Exception.Message | Should -BeLike "Refusing the Gradle argument '$_'. connected-test.ps1 itself sets *, so that the run keeps Kestrel and its data."
-    }
-
-    It 'refuses a task that is not a connected test, such as one that uninstalls Kestrel: <_>' -ForEach @(
-        'uninstallAll', ':app:uninstallDebug', 'uA', ':app:installDebug', 'cDAT', 'check'
-    ) {
-        { Get-ConnectedTestArguments -Arguments @(':app:connectedDebugAndroidTest', $_) } |
-            Should -Throw -ExpectedMessage "Refusing the Gradle argument '$_'. connected-test.ps1 runs only connected test tasks, such as :app:connectedDebugAndroidTest."
-    }
-
-    It 'refuses Gradle''s --serial option' {
-        { Get-ConnectedTestArguments -Arguments @(':app:connectedDebugAndroidTest', '--serial=emulator-5556') } |
-            Should -Throw -ExpectedMessage "Refusing the Gradle argument '--serial=emulator-5556'. Choose the device with -Serial."
-    }
-}
-
-Describe 'Get-KestrelDataLoss' {
-    BeforeAll {
-        . "$PSScriptRoot\..\lib\Kestrel.ps1"
-        function New-PackageState($InstallTimes) { [pscustomobject]@{ KestrelInstallTimes = $InstallTimes; TestPackages = @() } }
-        $installed = New-PackageState @('2026-11-20 10:11:12')
-        $lost = 'so its data there is gone: its AI profiles, permissions, settings and the agent''s memory.'
-    }
-
-    It 'finds no loss when Kestrel keeps its first-install time' {
-        Get-KestrelDataLoss -Before $installed -After (New-PackageState @('2026-11-20 10:11:12')) -Serial emulator-5554 | Should -BeNullOrEmpty
-    }
-
-    It 'names the loss when Kestrel was installed again, with a new first-install time' {
-        Get-KestrelDataLoss -Before $installed -After (New-PackageState @('2026-11-24 16:20:00')) -Serial emulator-5554 | Should -BeExactly (
-            'Kestrel (dev.kestrel) was installed again on emulator-5554 during the tests (first installed 2026-11-20 10:11:12 ' +
-            "before them, 2026-11-24 16:20:00 now), $lost")
-    }
-
-    It 'names the loss when Kestrel was uninstalled' {
-        Get-KestrelDataLoss -Before $installed -After (New-PackageState $null) -Serial emulator-5554 |
-            Should -BeExactly "Kestrel (dev.kestrel) was uninstalled from emulator-5554 during the tests, $lost"
-    }
-
-    It 'finds no loss when Kestrel was not installed before the tests' {
-        Get-KestrelDataLoss -Before (New-PackageState $null) -After $installed -Serial emulator-5554 | Should -BeNullOrEmpty
-    }
-}
-
-Describe 'Kestrel''s packages on the device' {
-    BeforeAll {
-        # The scripts run with 'Stop', so the tests run with it too.
-        $ErrorActionPreference = 'Stop'
-        . "$PSScriptRoot\..\lib\Kestrel.ps1"
-        $fakeAdb = Join-Path $PSScriptRoot 'fake-adb.cmd'
+        $saved = @{}
+        foreach ($name in 'JAVA_HOME', 'ANDROID_HOME', 'ANDROID_AVD_HOME', 'ANDROID_SERIAL', 'KESTREL_FAKE_ADB', 'KESTREL_FAKE_GRADLE') {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+        }
+        # Use-KestrelToolchain needs a JDK and an Android SDK folder, which the fakes do not use.
+        $env:JAVA_HOME = $TestDrive
+        $env:ANDROID_HOME = $TestDrive
+        $env:KESTREL_FAKE_ADB = Join-Path $TestDrive 'device.json'
         Mock Get-Adb { $fakeAdb }
         Mock Start-Sleep {}
 
-        # Gives the fake kestrel-api37 these packages, each with its first-install time, and makes its next commands fail
-        # as often as -Failures says.
-        function Set-FakeDevice([System.Collections.IDictionary]$Packages, [int]$Failures = 0) {
+        # Gives the fake device Kestrel, the fixture app and one Google account; it is kestrel-api37, or the A71 with -A71.
+        function Set-FakeDevice([switch]$A71) {
             $state = [ordered]@{
-                avd = 'kestrel-api37'; model = 'sdk_gphone64_x86_64'; settings = @{}; packages = $Packages; keepsTiles = $false
-                failures = $Failures; calls = @(); refused = @()
+                avd = $(if ($A71) { '' } else { 'kestrel-api37' }); model = $(if ($A71) { 'SM-A715F' } else { 'sdk_gphone64_x86_64' })
+                settings = @{}; packages = [ordered]@{ 'dev.kestrel' = '2026-11-20 10:11:12'; 'dev.kestrel.testapp' = '2026-11-21 09:00:00' }
+                accounts = 1; keepsTiles = $false; failures = 0; calls = @(); refused = @()
             }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
         }
 
-        function Get-FakePackage {
-            @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).packages.PSObject.Properties.Name)
+        # Runs the copy of the script with the arguments, after the fake Gradle's -Change, and returns its exit code, its
+        # errors and its warnings.
+        function Invoke-ConnectedTest([string[]]$Arguments, [string]$Change = '', [string]$Serial = 'emulator-5554') {
+            $env:KESTREL_FAKE_GRADLE = $Change
+            $output = @(& $connectedTest -Serial $Serial @Arguments 2>&1 3>&1)
+            [pscustomobject]@{
+                Code = $LASTEXITCODE
+                Errors = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+                Warnings = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { "$_" })
+            }
         }
     }
 
     BeforeEach {
-        $env:KESTREL_FAKE_ADB = Join-Path $TestDrive 'device.json'
-        Set-FakeDevice -Packages @{}
+        Set-FakeDevice
         $KestrelTestDevices.Clear()
-        Assert-TestDevice -Serial emulator-5554
+        Remove-Item -LiteralPath $arguments, $gradleSerial -ErrorAction SilentlyContinue
+        $env:ANDROID_SERIAL = 'caller-serial'
+        Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1 } }
     }
 
     AfterAll {
-        Remove-Item Env:\KESTREL_FAKE_ADB -ErrorAction SilentlyContinue
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
     }
 
-    It 'reads Kestrel''s first-install time and the test packages, of which Kestrel is none' {
-        Set-FakeDevice -Packages ([ordered]@{
-                'dev.kestrel' = '2026-11-20 10:11:12'; 'dev.kestrel.testapp' = '2026-11-21 09:00:00'
-                'dev.kestrel.privacy.test' = '2026-11-21 09:01:00'; 'com.android.vending' = '2026-01-01 00:00:00'
-            })
+    It 'passes the caller''s arguments and then the properties that keep Kestrel to Gradle, for the device only, and puts ANDROID_SERIAL back' {
+        $caller = @(':app:connectedDebugAndroidTest', '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest', '--no-configuration-cache')
 
-        $state = Get-KestrelPackageState -Serial emulator-5554
+        $run = Invoke-ConnectedTest -Arguments $caller
 
-        $state.KestrelInstallTimes | Should -BeExactly @('2026-11-20 10:11:12')
-        $state.TestPackages | Should -BeExactly @('dev.kestrel.privacy.test', 'dev.kestrel.testapp')
+        $run.Code | Should -Be 0
+        $run.Errors | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $arguments) | Should -BeExactly (@('--console=plain') + $caller + $keep)
+        (Get-Content -LiteralPath $gradleSerial) | Should -BeExactly 'emulator-5554'
+        $env:ANDROID_SERIAL | Should -BeExactly 'caller-serial'
+        Should -Invoke Get-KestrelProfiles -Times 2 -Exactly
     }
 
-    It 'reads no first-install time when Kestrel is not installed' {
-        Set-FakeDevice -Packages @{ 'dev.kestrel.testapp' = '2026-11-21 09:00:00' }
+    It 'refuses an argument before any command reaches the device or Gradle' {
+        { & $connectedTest -Serial emulator-5554 ':app:connectedDebugAndroidTest' '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=false' } |
+            Should -Throw -ExpectedMessage "Refusing the Gradle argument '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=false'. *"
 
-        $state = Get-KestrelPackageState -Serial emulator-5554
-
-        $state.KestrelInstallTimes | Should -BeNullOrEmpty
-        $state.TestPackages | Should -BeExactly @('dev.kestrel.testapp')
+        $arguments | Should -Not -Exist
+        ([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).calls | Should -BeNullOrEmpty
     }
 
-    It 'uninstalls the test APKs that the tests installed, and keeps Kestrel and the test packages that were there before' {
-        Set-FakeDevice -Packages @{ 'dev.kestrel' = '2026-11-20 10:11:12'; 'dev.kestrel.testapp' = '2026-11-21 09:00:00' }
-        $before = Get-KestrelPackageState -Serial emulator-5554
-        # Gradle installs the test APKs of :app and :core:voice.
-        Set-FakeDevice -Packages @{
-            'dev.kestrel' = '2026-11-20 10:11:12'; 'dev.kestrel.testapp' = '2026-11-21 09:00:00'
-            'dev.kestrel.test' = '2026-11-24 16:00:00'; 'dev.kestrel.voice.test' = '2026-11-24 16:00:01'
+    It 'uninstalls a test APK that the run installed, and keeps the fixture app that was there before' {
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') -Change 'test-apk'
+
+        $run.Code | Should -Be 0
+        @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).packages.PSObject.Properties.Name) | Sort-Object |
+            Should -BeExactly @('dev.kestrel', 'dev.kestrel.testapp')
+    }
+
+    It 'ends with exit code 1 and names the loss when Kestrel was <Name>, although Gradle passed' -ForEach @(
+        @{ Name = 'uninstalled'; Change = 'uninstall'; Message = 'Kestrel (dev.kestrel) was uninstalled from emulator-5554 during the tests, which deleted its data there*' }
+        @{ Name = 'installed again'; Change = 'reinstall'; Message = 'Kestrel (dev.kestrel) was installed again on emulator-5554 during the tests (first installed user 0: 2026-11-20 10:11:12 before them, user 0: 2026-11-24 17:00:00 now)*' }
+    ) {
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') -Change $Change
+
+        $run.Code | Should -Be 1
+        $run.Errors | Should -HaveCount 1
+        $run.Errors[0] | Should -BeLike $Message
+    }
+
+    It 'ends with exit code 1 and names the change when a Google account of kestrel-api37 went' {
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') -Change 'account'
+
+        $run.Code | Should -Be 1
+        $run.Errors | Should -BeExactly @('The number of Google accounts on emulator-5554 changed during the tests: 1 before, 0 now.')
+    }
+
+    It 'ends with exit code 1 and names the change when Kestrel''s Copilot profile on kestrel-api37 went' {
+        $script:reads = 0
+        Mock Get-KestrelProfiles {
+            $script:reads++
+            if ($script:reads -eq 1) { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1 } } else { [pscustomobject]@{ Profile = 'none'; Copilot = 0 } }
         }
-        $after = Get-KestrelPackageState -Serial emulator-5554
-        $installed = @($after.TestPackages | Where-Object { $before.TestPackages -notcontains $_ })
 
-        Remove-TestPackages -Serial emulator-5554 -Packages $installed | Should -BeTrue
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest')
 
-        Get-FakePackage | Sort-Object | Should -BeExactly @('dev.kestrel', 'dev.kestrel.testapp')
-        Get-KestrelDataLoss -Before $before -After $after -Serial emulator-5554 | Should -BeNullOrEmpty
+        $run.Code | Should -Be 1
+        $run.Errors | Should -BeExactly @(
+            'Kestrel''s default profile on emulator-5554 changed during the tests: copilot before, none now.'
+            'The number of Kestrel''s Copilot profiles on emulator-5554 changed during the tests: 1 before, 0 now.'
+        )
     }
 
-    It 'refuses to uninstall Kestrel itself' {
-        Set-FakeDevice -Packages @{ 'dev.kestrel' = '2026-11-20 10:11:12' }
+    It 'says so when Kestrel''s profiles cannot be read before the tests, and then compares only the accounts' {
+        Mock Get-KestrelProfiles { throw 'scripts\hook.ps1 provider-standin ended with exit code 1' }
 
-        { Remove-TestPackages -Serial emulator-5554 -Packages @('dev.kestrel') } | Should -Throw -ExpectedMessage 'dev.kestrel is not a test package of Kestrel.'
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest')
 
-        Get-FakePackage | Should -BeExactly @('dev.kestrel')
+        $run.Code | Should -Be 0
+        $run.Warnings | Should -Contain ("Could not read Kestrel's profiles on emulator-5554 before the tests (scripts\hook.ps1 provider-standin ended " +
+            'with exit code 1), so the script compares only the Google accounts there.')
     }
 
-    It 'returns $false and warns with the command that uninstalls a test APK by hand when the device fails' {
-        Set-FakeDevice -Packages @{ 'dev.kestrel.test' = '2026-11-24 16:00:00' } -Failures 10
-        Mock Write-Warning {}
+    It 'reads no owner''s data on the A71' {
+        Set-FakeDevice -A71
 
-        Remove-TestPackages -Serial emulator-5554 -Packages @('dev.kestrel.test') | Should -BeFalse
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') -Serial R58N66RVD7Z -Change 'account'
 
-        Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter {
-            $Message -eq ("Could not uninstall dev.kestrel.test from emulator-5554 (Could not run 'pm uninstall dev.kestrel.test' on " +
-                "emulator-5554: Bad arguments). Run: & '$fakeAdb' -s emulator-5554 uninstall dev.kestrel.test")
-        }
-        Get-FakePackage | Should -BeExactly @('dev.kestrel.test')
+        $run.Code | Should -Be 0
+        Should -Invoke Get-KestrelProfiles -Times 0 -Exactly
     }
 }

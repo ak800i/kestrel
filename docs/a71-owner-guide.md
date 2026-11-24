@@ -1,6 +1,6 @@
 # The A71 run: what you do
 
-Since plan 4D, the three A71 scripts give Kestrel each command themselves and check the result on the phone. They need you for about 8 minutes with your hands, and you are near this computer for about 30. The whole run takes about 7 hours: `a71-commands.ps1` about 2 hours, `a71-session.ps1` about 4 hours and `a71-providers.ps1` about 45 minutes.
+Since plan 4D, the three A71 scripts give Kestrel each command themselves and check the result on the phone. They need you for about 6 minutes with your hands, and you are near this computer for about 30. The whole run takes about 7 hours: `a71-commands.ps1` about 2 hours, `a71-session.ps1` about 4 hours and `a71-providers.ps1` about 41 minutes.
 
 ## Once, before the first run (about 2 minutes)
 
@@ -20,14 +20,13 @@ Write `corpus\owner\a71-config.json`, for example as below. Git ignores the fold
 
 Put this computer's speakers next to the A71, and turn their volume up. The scripts set the loudness themselves, but they cannot make the speakers louder than Windows lets them.
 
-## At the run (about 30 minutes near this computer, about 8 with your hands)
+## At the run (about 30 minutes near this computer, about 6 with your hands)
 
 The controller installs everything first, with each script's step `install`, and then, with you there, locks the A71 once and lets the scripts unlock it with your PIN, to see that it works. Then you do three things, one after the other. Each one beeps and says what you do and what the screens show.
 
 1. **Your finger** (`a71-commands.ps1 -Serial <A71> -Step owner`, about 3 minutes, 1 with your hands). Press Enter. Kestrel calls the test contact "Ana Test" and counts down 4 seconds on its bar. When this computer beeps, touch the clock at the top of the A71's screen with one finger, never a button of the phone app. The bar should say "Cancelled". Then stay by the A71 for about 2 minutes without touching it: Kestrel counts down three more times, and the script stops each countdown itself.
 2. **Your Galaxy Buds** (`a71-session.ps1 -Serial <A71> -Step earbuds`, about 8 minutes, 2 with your hands). Take the Buds out of their case, check that the A71 shows them as connected, lay them next to this computer's speaker and press Enter. The phone plays a quiet tone and the speaker says "Kestrel". When this computer beeps again, put the Buds back into their case.
-3. **Your two Copilot approvals** (`a71-providers.ps1 -Serial <A71> -EmulatorSerial emulator-5554 -LockHeld` without its step `install`, about 5 minutes with your hands):
-   - For kestrel-api37, the script puts the sign-in code on this computer's clipboard and opens github.com/login/device in its browser. Sign in to GitHub if it asks, paste the code with Ctrl+V, and approve. Afterwards the script puts back the text that was on the clipboard; a picture or a file there is lost.
+3. **Your Copilot approval on the A71** (`a71-providers.ps1 -Serial <A71> -EmulatorSerial emulator-5554 -LockHeld` without its step `install`, about 3 minutes with your hands). kestrel-api37 keeps the Copilot profile that you signed in there yourself; the script only reads it, and its live cases there use it.
    - On the A71, Chrome opens github.com/login/device inside Kestrel. Sign in to GitHub if it asks, touch and hold the code field, tap "Paste", and tap Continue and Authorize. Do not tap Chrome's X. If Chrome offers to save your password, answer it yourself; the script never taps Chrome's buttons. Kestrel's page should come back by itself. You have 10 minutes from when Chrome opens; if Kestrel's page has not come back by then, the script brings it back.
    - The script saves both profiles itself, and then says that you may leave. The live cases spend about 4 to 8 of your GitHub AI Credits.
 
@@ -35,7 +34,7 @@ After that, `a71-providers.ps1` goes on by itself, and then the controller runs 
 
 ## What stays afterwards
 
-- The A71 keeps its Copilot profile, as you decided on 2026-11-20. The emulator's Copilot profile is deleted.
+- The A71 keeps its Copilot profile, as you decided on 2026-11-20. kestrel-api37 keeps its Copilot profile and your Google account: the script never signs in, deletes or replaces a profile there, and it fails, naming the change, when the number of Google accounts or Kestrel's profiles there changed during the session.
 - The scripts put back every setting that they change, also after a failure or Ctrl+C, and they put back your clipboard around the checks that copy and around the sign-in on the A71. When Android does not let Kestrel read the clipboard first, the result says so, and the clipboard keeps the check's text. Each script's last lines name anything that it could not put back, and how to put it back by hand.
 - The battery measures reset the A71's battery statistics. That cannot be undone.
 - The results are in `corpus\owner`. They hold no words that Kestrel heard and no text of your screen.

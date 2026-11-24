@@ -8,60 +8,6 @@
     Justification = 'Pester shares the variables of BeforeAll with the It blocks.')]
 param()
 
-Describe 'Get-GradleTaskKind' {
-    BeforeAll {
-        . "$PSScriptRoot\..\lib\Kestrel.ps1"
-    }
-
-    It 'knows a connected test by its full name: <_>' -ForEach @(
-        'connectedCheck', 'connectedAndroidTest', ':app:connectedDebugAndroidTest', ':core:privacy:connectedDebugAndroidTest'
-    ) {
-        Get-GradleTaskKind $_ | Should -BeExactly 'ConnectedTest'
-    }
-
-    It 'counts every other name that can reach a device task as a device task, also an abbreviated one: <_>' -ForEach @(
-        'installDebug', ':app:installDebug', ':testapp:installDebug', 'installDebugAndroidTest', 'uninstallAll',
-        ':app:uninstallDebug', 'deviceCheck', 'deviceAndroidTest', 'connectedcheck', 'UNINSTALLALL', 'iD', ':app:iD', 'inst',
-        'i', 'uA', 'unA', 'cDAT', 'CDAT', 'cC', 'c-d-a-t', 'dC', 'de'
-    ) {
-        Get-GradleTaskKind $_ | Should -BeExactly 'Device'
-    }
-
-    It 'counts a task that cannot reach a device as a build: <_>' -ForEach @(
-        'check', 'assembleDebug', 'kestrelAudit', ':app:assembleDebugAndroidTest', 'testDebugUnitTest', 'lint', 'clean',
-        'compileDebugKotlin', 'dependencies', 'init', 'help', ':build-logic:convention:check', ':tools:eval:installDist',
-        ':tools:catalog-sync:syncCatalog'
-    ) {
-        Get-GradleTaskKind $_ | Should -BeExactly 'Build'
-    }
-}
-
-Describe 'Get-GradleArgumentKinds' {
-    BeforeAll {
-        . "$PSScriptRoot\..\lib\Kestrel.ps1"
-    }
-
-    It 'reads <Name>' -ForEach @(
-        @{ Name = 'a value of --tests'; Arguments = @(':app:testDebugUnitTest', '--tests', 'dev.kestrel.app.X'); Kinds = @('Build', 'Option', 'Value') }
-        @{ Name = 'a value attached to --tests'; Arguments = @(':app:testDebugUnitTest', '--tests=dev.kestrel.app.X'); Kinds = @('Build', 'Option') }
-        @{ Name = 'a task that -x excludes'; Arguments = @('check', '-x', 'connectedCheck'); Kinds = @('Build', 'Option', 'ExcludedTask') }
-        @{ Name = 'a task that --exclude-task excludes'; Arguments = @('check', '--exclude-task', 'installDebug'); Kinds = @('Build', 'Option', 'ExcludedTask') }
-        @{ Name = 'a task attached to -x'; Arguments = @('check', '-xconnectedCheck', '-x=installDebug'); Kinds = @('Build', 'Option', 'Option') }
-        @{ Name = 'values of -p, -P and -D'; Arguments = @('-p', 'device-folder', '-P', 'name=value', '-D', 'device.name=x', 'check'); Kinds = @('Option', 'Value', 'Option', 'Value', 'Option', 'Value', 'Build') }
-        @{ Name = 'a long option after one dash'; Arguments = @('-console', 'plain', 'check'); Kinds = @('Option', 'Value', 'Build') }
-        @{ Name = 'a device task after an option''s value'; Arguments = @('--warning-mode', 'all', 'installDebug', '--console=plain', 'cDAT'); Kinds = @('Option', 'Value', 'Device', 'Option', 'Device') }
-        @{ Name = 'a device task after an option that takes no value'; Arguments = @('--rerun-tasks', 'installDebug', '-qs', 'uA'); Kinds = @('Option', 'Device', 'Option', 'Device') }
-        @{ Name = 'a device task after an option that Gradle does not know'; Arguments = @('--unknown', 'installDebug'); Kinds = @('Option', 'Device') }
-        @{ Name = 'a device task after -x when -x follows --, where it is no option of Gradle''s'; Arguments = @('--', 'check', '-x', 'installDebug'); Kinds = @('Option', 'Build', 'Option', 'Device') }
-        @{ Name = 'a value of --tests after --'; Arguments = @('--', 'testDebugUnitTest', '--tests', 'dev.kestrel.app.X'); Kinds = @('Option', 'Build', 'Option', 'Value') }
-        @{ Name = 'an option instead of a value'; Arguments = @('--project-dir', '--offline', 'installDebug'); Kinds = @('Option', 'Option', 'Device') }
-        @{ Name = '--serial'; Arguments = @('--serial=emulator-5554', '--serial', 'check'); Kinds = @('Serial', 'Serial', 'Build') }
-    ) {
-        $parsed = @(Get-GradleArgumentKinds -Arguments $Arguments)
-        $parsed.Argument | Should -BeExactly $Arguments
-        $parsed.Kind | Should -BeExactly $Kinds
-    }
-}
 Describe 'The settings helpers' {
     BeforeAll {
         # The scripts run with 'Stop', under which Windows PowerShell 5.1 stops at adb's first error line unless the

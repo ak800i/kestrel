@@ -8,12 +8,13 @@ param()
 BeforeAll {
     . "$PSScriptRoot\..\lib\Kestrel.ps1"
     . "$PSScriptRoot\..\lib\Session.ps1"
+    . "$PSScriptRoot\..\lib\DeviceGuard.ps1"
     . "$PSScriptRoot\..\lib\AutoCheck.ps1"
     . "$PSScriptRoot\..\lib\AgentChecks.ps1"
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-agent.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Get-AgentConfig', 'Read-AgentRecord', 'Set-AgentRecord', 'Get-GoogleAccountCount', 'Get-VersionName',
+    $helpers = @('Get-SessionSteps', 'Get-AgentConfig', 'Read-AgentRecord', 'Set-AgentRecord', 'Get-VersionName',
         'Test-PackageListed', 'Test-NetworkValidated', 'Test-HotspotOn', 'Get-TouchRuleFromProbe', 'Get-OcrMeasures', 'Get-BoundsCentre',
         'ConvertFrom-TaskLine', 'Get-CreditTotal', 'Select-TestName', 'Get-CacheShares', 'Get-CacheFields', 'Format-Number', 'Get-RunSummary',
         'Get-SittingRuns')
@@ -26,7 +27,7 @@ BeforeAll {
         'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
         'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown', 'Get-UnknownRunCount', 'Get-AssumedUnknownCount', 'Add-AssumedCreditsResult')
     # The owner's decisions for the sittings (fix-5c-owner), and the helpers that their steps call, which the tests mock.
-    $helpers += @('Test-WazeDevice', 'Invoke-SetupStep', 'Invoke-A71RunsStep', 'Grant-AgentPermissions', 'Enable-NotificationAccess', 'Get-AccountCount', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
+    $helpers += @('Test-WazeDevice', 'Invoke-SetupStep', 'Invoke-A71RunsStep', 'Grant-AgentPermissions', 'Enable-NotificationAccess', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
         'Test-WazeHome', 'Set-EmulatorFix', 'Start-TestLocation', 'Invoke-EmulatorAccountItem', 'Invoke-OwnerItem', 'Invoke-OwnerStep', 'Set-OwnerNames',
         'Request-OwnerItem', 'Install-FromPlay', 'Start-Listening', 'Invoke-FingerCheck', 'Invoke-OwnerStep2', 'Get-DefaultProfileKind', 'Test-CompareModel',
         'Invoke-RecordingsStep', 'Invoke-EmulatorTasks', 'Invoke-EmulatorRunsStep', 'Invoke-CompareStep')

@@ -67,6 +67,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 . "$PSScriptRoot\lib\Session.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 . "$PSScriptRoot\lib\Oracle.ps1"
 . "$PSScriptRoot\lib\Corpus.ps1"
 . "$PSScriptRoot\lib\Speaker.ps1"
@@ -119,15 +120,6 @@ function Set-AgentRecord([string]$Path, [string]$Name, $Value) {
     $record | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
     [IO.File]::WriteAllText($Path, ($record | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
 }
-
-# The number of accounts of the type in 'dumpsys account', such as com.google or Telegram's org.telegram.messenger, which
-# Telegram adds while it is signed in; from the type only, never a name.
-function Get-AccountCount([string[]]$Dump, [string]$Type) {
-    @($Dump | Where-Object { $_ -match "^\s*Account \{.*type=$([regex]::Escape($Type))\}" }).Count
-}
-
-# The number of Google accounts in 'dumpsys account', from the type only, never a name.
-function Get-GoogleAccountCount([string[]]$Dump) { Get-AccountCount $Dump 'com.google' }
 
 # The first versionName in 'dumpsys package <package>', or 'none'.
 function Get-VersionName([string[]]$Dump) {

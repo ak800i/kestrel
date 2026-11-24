@@ -10,7 +10,9 @@ Describe 'gradle.ps1' {
         $root = Join-Path $TestDrive 'repository'
         New-Item -ItemType Directory -Path (Join-Path $root 'scripts\lib') | Out-Null
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\gradle.ps1') -Destination (Join-Path $root 'scripts')
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\lib\Kestrel.ps1') -Destination (Join-Path $root 'scripts\lib')
+        foreach ($library in 'Kestrel.ps1', 'DeviceGuard.ps1') {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\lib\$library") -Destination (Join-Path $root 'scripts\lib')
+        }
         $arguments = Join-Path $root 'gradlew-arguments.txt'
         $serial = Join-Path $root 'gradlew-serial.txt'
         Set-Content -LiteralPath (Join-Path $root 'gradlew.bat') -Encoding Ascii -Value @(
@@ -96,6 +98,9 @@ Describe 'gradle.ps1' {
         , @(':app:testDebugUnitTest', '--tests', 'dev.kestrel.app.X')
         , @(':app:testDebugUnitTest', '--tests=dev.kestrel.app.X')
         , @('check', '-x', 'connectedCheck')
+        # The foundation plan's update of the wrapper (plan 1A), whose checksum starts like 'device'.
+        , @('wrapper', '--gradle-version', '9.9.1', '--distribution-type', 'bin', '--gradle-distribution-sha256-sum', 'd8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228')
+        , @('help', '--task', 'connectedCheck')
     ) {
         $run = Invoke-Gradle -Arguments $_ -Serial ''
 

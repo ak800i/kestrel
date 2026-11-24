@@ -6,17 +6,25 @@
 param()
 
 BeforeAll {
+    . "$PSScriptRoot\..\lib\Kestrel.ps1"
     . "$PSScriptRoot\..\lib\Session.ps1"
+    . "$PSScriptRoot\..\lib\DeviceGuard.ps1"
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-providers.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'ConvertFrom-StandInAnswer', 'ConvertFrom-DeleteAnswer', 'Get-DeviceCode', 'Get-BoundsCentre', 'Get-LiveSkipReason', 'Test-KestrelInFront',
+    $helpers = @('Get-SessionSteps', 'Get-RetryOverride', 'Get-BoundsCentre', 'Get-LiveSkipReason', 'Test-KestrelInFront',
         'Get-DeviceName', 'Wait-ServiceBound')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
         }, $true)
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
+    # The script's lists of steps.
+    $lists = $tree.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and "$($node.Left)" -in '$stepNames', '$refusedSteps'
+        }, $false)
+    foreach ($list in $lists) { . ([scriptblock]::Create($list.Extent.Text)) }
     # Wait-ServiceBound asks Kestrel through this, which the tests mock.
     function Invoke-Hook([string]$Device, [string]$Command, [hashtable]$With = @{}) { }
 }
@@ -45,30 +53,21 @@ Describe 'The helpers of the owner''s session of sub-project 4' {
         Get-RetryOverride -Overrides $null -ErrorText 'Malformed' | Should -BeNullOrEmpty
     }
 
-    It 'reads the stand-in''s answer with the kind of the default profile and the number of Copilot profiles' {
-        $state = ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1'
-
-        $state['standin'] | Should -Be 'off'
-        $state['profile'] | Should -Be 'copilot'
-        $state['copilot'] | Should -Be '1'
-        { ConvertFrom-StandInAnswer 'standin=on' } | Should -Throw 'Not an answer of provider-standin*'
-        # An older build answers without the count, which the end step needs.
-        { ConvertFrom-StandInAnswer 'standin=off profile=none' } | Should -Throw 'Not an answer of provider-standin*install.ps1*'
+    It 'refuses the step emulator-signin, because kestrel-api37 keeps the owner''s Copilot profile' {
+        $stepNames | Should -Not -Contain 'emulator-signin'
+        { Get-SessionSteps -Step @('install,emulator-signin') -Names $stepNames -Refused $refusedSteps } |
+            Should -Throw 'The step emulator-signin was refused: kestrel-api37 keeps the owner''s Copilot profile, and no script signs Kestrel in there (AGENTS.md)*'
     }
 
-    It 'reads the answer of provider-delete, and refuses another text' {
-        $answer = ConvertFrom-DeleteAnswer 'deleted=1 failed=0 copilot=0'
-
-        $answer['deleted'] | Should -Be '1'
-        $answer['copilot'] | Should -Be '0'
-        { ConvertFrom-DeleteAnswer 'deleted=1' } | Should -Throw 'Not an answer of provider-delete*'
-        { ConvertFrom-DeleteAnswer 'error: unknown command' } | Should -Throw
+    It 'never deletes a profile and never signs Kestrel in on kestrel-api37' {
+        # Outside its comments, the script names no hook that deletes a profile, and starts no sign-in on the emulator.
+        $code = @($tokens | Where-Object { $_.Kind -ne 'Comment' } | ForEach-Object { $_.Text }) -join ' '
+        $code | Should -Not -Match 'provider-delete'
+        $code | Should -Not -Match 'Delete profile'
+        $tree.Extent.Text | Should -Not -Match 'Open-CopilotSignIn \$EmulatorSerial'
     }
 
-    It 'finds the device code on Kestrel''s page, and the centre of an element''s bounds' {
-        Get-DeviceCode '{"elements":[{"text":"Enter this code"},{"text":"WDJB-MJHT"},{"text":"14:59"}]}' | Should -BeExactly 'WDJB-MJHT'
-        Get-DeviceCode '{"elements":[{"text":"ABCD-EFGH-IJKL"}]}' | Should -BeNullOrEmpty
-        Get-DeviceCode '{}' | Should -BeNullOrEmpty
+    It 'finds the centre of an element''s bounds' {
         Get-BoundsCentre '100,200,300,400' | Should -BeExactly '200 300'
         Get-BoundsCentre 'none' | Should -BeNullOrEmpty
     }

@@ -182,7 +182,8 @@
 #                                           request off the device
 #   provider-delete                         deletes every Copilot profile with its credential, as the profile page's
 #                                           "Delete profile" does, and answers how many it deleted, how many deletions
-#                                           failed and how many Copilot profiles are left
+#                                           failed and how many Copilot profiles are left; refused on kestrel-api37,
+#                                           which keeps the owner's Copilot profile
 # Spike S1's location check (scripts\spike-s1.ps1 runs these):
 #   location [-Source name] [-DelaySeconds n]
 #                                           asks Android for the current location
@@ -400,9 +401,12 @@ if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { 
 $clipboardClearRefused = "clipboard -Clear was refused on ${Serial}: only the emulator kestrel-api37 may empty the clipboard."
 if ($Command -eq 'clipboard' -and $Clear -and $Serial -notlike 'emulator-*') { throw $clipboardClearRefused }
 . "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
 if ($Command -eq 'clipboard' -and $Clear -and $KestrelTestDevices[$Serial].Property -ne 'ro.boot.qemu.avd_name') { throw $clipboardClearRefused }
+# kestrel-api37 keeps Kestrel's Copilot profile, so provider-delete never runs there.
+Assert-OwnerDataCommand -Serial $Serial -Command $Command
 
 # The device's shell reads the command line, so every text value is quoted for it.
 function ConvertTo-ShellText([string]$Value) { "'" + $Value.Replace("'", "'\''") + "'" }
