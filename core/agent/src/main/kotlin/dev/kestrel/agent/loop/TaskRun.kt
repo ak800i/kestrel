@@ -502,17 +502,16 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     val currentModel: RoleModel get() = escalation.current
 
     /**
-     * Checks the app in front of [snapshot] before it is observed (D16, D24): Kestrel's own screen is waited for at the
-     * owner port until it leaves, and ends the task as interrupted when it stays (design 10.2 of sub-project 7); another
-     * agent-free app ends the task; a Play services screen is handed over; a crashed app is closed with back. Returns the
-     * snapshot to observe.
+     * Checks the app in front of [snapshot] before it is observed (D16, D24): Kestrel's own screen is waited for through
+     * [pastKestrel]; another agent-free app ends the task; a Play services screen is handed over; a crashed app is closed
+     * with back. Returns the snapshot to observe.
      */
     suspend fun checkFront(snapshot: ScreenSnapshot): ScreenSnapshot {
         var current = snapshot
         repeat(FRONT_CHECKS) {
+            current = pastKestrel(current) { fresh() }
             val front = ScreenTree.frontWindow(current)?.packageName
             when {
-                front == AgentFreeApps.KESTREL -> leaveKestrel()
                 settings.agentFree.isAgentFree(front) -> throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
                 PlayServices.handsOver(current) -> handOverOnly(HandOver.of(HandOverKind.PLAY_SERVICES))
                 crashed(current) -> {
@@ -524,30 +523,29 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
             current = fresh()
         }
         // The screen after the last round is checked too: it is never observed while it shows one of these.
+        current = pastKestrel(current) { fresh() }
         val front = ScreenTree.frontWindow(current)?.packageName
-        if (front == AgentFreeApps.KESTREL) throw kestrelStayed()
         if (settings.agentFree.isAgentFree(front)) throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
         if (PlayServices.handsOver(current) || crashed(current)) throw Ended(EndReason.STUCK)
         return current
     }
 
-    // Kestrel's own screen is in front: the owner port waits until it has left, a wait that does not count as work, or
-    // the task ends as interrupted (design 10.2 of sub-project 7).
-    private suspend fun leaveKestrel() {
-        if (!limits.waiting { ports.owner.leaveKestrel() }) throw kestrelStayed()
-    }
-
     /**
-     * [snapshot], or when Kestrel's own screen is in front of it, the screen behind it after the owner port's wait, as
-     * [checkFront] waits; null when no screen can be read after the wait. The task ends as interrupted when Kestrel's own
-     * screen stays, or is in front again after the wait (design 10.2 of sub-project 7).
+     * The screen behind Kestrel's own (design 10.2 of sub-project 7), the one rule for every look at the screen: [snapshot]
+     * when Kestrel's own screen is not in front of it; otherwise the owner port waits until that screen has left, a wait
+     * that does not count as work, and [read] reads the screen again, at most [FRONT_CHECKS] times, since the screen may
+     * come back. The task ends as interrupted when Kestrel's own screen stays through a wait or is still in front after
+     * the last one. A null screen, which [read] may give, is returned as it is.
      */
-    private suspend fun pastKestrel(snapshot: ScreenSnapshot): ScreenSnapshot? {
-        if (!kestrelInFront(snapshot)) return snapshot
-        leaveKestrel()
-        val behind = ports.screen.snapshot() ?: return null
-        if (kestrelInFront(behind)) throw kestrelStayed()
-        return behind
+    private suspend fun <S : ScreenSnapshot?> pastKestrel(snapshot: S, read: suspend () -> S): S {
+        var current = snapshot
+        repeat(FRONT_CHECKS) {
+            if (current?.let(::kestrelInFront) != true) return current
+            if (!limits.waiting { ports.owner.leaveKestrel() }) throw kestrelStayed()
+            current = read()
+        }
+        if (current?.let(::kestrelInFront) == true) throw kestrelStayed()
+        return current
     }
 
     private fun kestrelInFront(snapshot: ScreenSnapshot): Boolean = ScreenTree.frontWindow(snapshot)?.packageName == AgentFreeApps.KESTREL
@@ -817,7 +815,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         }
         // Kestrel's own screen in front is waited for as before every observation; when it stays, the task ends as
         // interrupted, which is no failure of the route notes and gives them no strike (design 10.2 of sub-project 7).
-        val fresh = ports.screen.snapshot()?.let { pastKestrel(it) }
+        val fresh = pastKestrel(ports.screen.snapshot()) { ports.screen.snapshot() }
         val front = fresh?.let { ScreenTree.frontWindow(it)?.packageName }
         if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
             throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))

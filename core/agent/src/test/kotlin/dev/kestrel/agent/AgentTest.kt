@@ -700,13 +700,18 @@ class AgentTest {
         assertTrue(bank.model.requests.isEmpty())
     }
 
-    // Kestrel's own screen in front of the finish's fresh look is waited for as before every observation: when it stays, or
-    // is still in front after the wait, the task stops as interrupted, not unverified, and its route notes get no strike;
-    // when it leaves, the finish is checked on the screen behind it (design 10.2 of sub-project 7).
+    // Kestrel's own screen in front of the finish's fresh look is waited for as before every observation, also again when it
+    // comes back, at most three times: when it stays, or is still in front after the last wait, the task stops as
+    // interrupted, not unverified, and its route notes get no strike; when it leaves, the finish is checked on the screen
+    // behind it (design 10.2 of sub-project 7).
     @Test
     fun kestrelsOwnScreenAtTheFinishIsWaitedForAndInterruptsTheTaskWithoutAStrike() = runTest {
         val note = RouteNote(Screens.MESSENGER, "tap \"Ana Petrović\"", "0.9", "en", proposals = 2)
-        suspend fun finishBehindKestrel(vararg leaves: Boolean, behind: ScreenSnapshot? = null): Pair<TaskReport, Int> {
+
+        // The run's report, the route note's strikes and the waits, when the screen behind Kestrel's own shows after the
+        // wait numbered [leftAt] (none: Kestrel's own screen stays in front) and [leaves] are the port's answers.
+        data class Finished(val report: TaskReport, val strikes: Int, val waits: Int)
+        suspend fun finishBehindKestrel(vararg leaves: Boolean, leftAt: Int? = null): Finished {
             val harness = Harness(Screens.chats(), listOf(
                 call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
                 call("say", null, null, null, "text" to "Almost done."),
@@ -716,23 +721,31 @@ class AgentTest {
             harness.memory.notes[Screens.MESSENGER] = listOf(note)
             harness.owner.onSay = { harness.screen.current = Screens.app(AgentFreeApps.KESTREL, "Safety") }
             harness.owner.leaves += leaves.toList()
-            harness.owner.onLeave = { behind?.let { harness.screen.current = it } }
+            var waits = 0
+            harness.owner.onLeave = { if (++waits == leftAt) harness.screen.current = Screens.chat("Ana Petrović", "Hi") }
             val report = harness.run("Open Ana's chat in Kestrel fixtures")
-            return report to harness.memory.notes[Screens.MESSENGER]!!.single().strikes
+            return Finished(report, harness.memory.notes[Screens.MESSENGER]!!.single().strikes, waits)
         }
 
-        val (stayed, stayedStrikes) = finishBehindKestrel()
-        assertEquals(EndReason.INTERRUPTED, stayed.end)
-        assertEquals(Interruption.KESTREL_SCREEN, stayed.interruption)
-        assertEquals(0, stayedStrikes)
+        val stayed = finishBehindKestrel()
+        assertEquals(EndReason.INTERRUPTED, stayed.report.end)
+        assertEquals(Interruption.KESTREL_SCREEN, stayed.report.interruption)
+        assertEquals(0, stayed.strikes)
+        assertEquals(1, stayed.waits)
 
-        val (cameBack, cameBackStrikes) = finishBehindKestrel(true)
-        assertEquals(EndReason.INTERRUPTED, cameBack.end)
-        assertEquals(Interruption.KESTREL_SCREEN, cameBack.interruption)
-        assertEquals(0, cameBackStrikes)
+        val keptComingBack = finishBehindKestrel(true, true, true)
+        assertEquals(EndReason.INTERRUPTED, keptComingBack.report.end)
+        assertEquals(Interruption.KESTREL_SCREEN, keptComingBack.report.interruption)
+        assertEquals(0, keptComingBack.strikes)
+        assertEquals(3, keptComingBack.waits)
 
-        val (left, _) = finishBehindKestrel(true, behind = Screens.chat("Ana Petrović", "Hi"))
-        assertEquals(EndReason.FINISHED, left.end)
+        val cameBackOnce = finishBehindKestrel(true, true, leftAt = 2)
+        assertEquals(EndReason.FINISHED, cameBackOnce.report.end)
+        assertEquals(2, cameBackOnce.waits)
+
+        val left = finishBehindKestrel(true, leftAt = 1)
+        assertEquals(EndReason.FINISHED, left.report.end)
+        assertEquals(1, left.waits)
     }
 
     @Test
