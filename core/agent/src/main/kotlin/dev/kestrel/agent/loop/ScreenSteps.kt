@@ -375,15 +375,41 @@ internal class ScreenSteps(private val run: TaskRun) {
             is LinkApp.Found -> app.packageName
             is LinkApp.Missing -> return Done(call.tool, Outcome.Failed(app.reason))
         }
-        val target = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true))
-        val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency, phonePackages = run.settings.phonePackages)
-        if (verdict is LinkVerdict.Refused) return Done(call.tool, Outcome.Refused(verdict.reason))
+        val checked = when (val clearance = CheckedLink.check(run, link, kind, packageName, fromOwner(link))) {
+            is LinkClearance.Blocked -> return Done(call.tool, clearance.outcome)
+            is LinkClearance.Cleared -> clearance.link
+        }
         sentLink = false
-        val done = open(call, ScreenAction.OpenUri(link, packageName, browsable = true), target, null, linkTarget = target)
+        val done = open(call, checked.action, checked.target, null, linkTarget = checked.target)
         // The retry is Firefox's, also when Firefox is the default browser that the link resolved to (r57); only after the
         // first intent was sent, never after a pause, a refusal or a hand-over, so the link never opens unchecked (D2, D12).
-        if (!sentLink || target == null || target !in Browser.FIREFOX.packages || done.after == null) return done
-        return firefox(call, done, link, packageName, target)
+        if (!sentLink || checked.target == null || checked.target !in Browser.FIREFOX.packages || done.after == null) return done
+        return firefox(call, done, checked, checked.target)
+    }
+
+    // A link that Kestrel may send now (D2, D12; plan 6B-basefix): [target] is the app that Android resolves it to, with
+    // [packageName] when the tool names one, and LinkCheck allowed that app. A link's intent exists only here, and only
+    // [check] makes one, so no link opens without both.
+    private class CheckedLink private constructor(val link: String, val kind: ActionKind, val packageName: String?, val target: String?) {
+        val action: ScreenAction get() = ScreenAction.OpenUri(link, packageName, browsable = true)
+
+        companion object {
+            // Resolves [link] as it will be sent, and judges the app that opens it. A link that names a package goes only to
+            // that package, so when Android no longer resolves it there, no app could be judged and nothing is sent.
+            suspend fun check(run: TaskRun, link: String, kind: ActionKind, packageName: String?, fromOwner: Boolean): LinkClearance {
+                val target = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true))
+                if (packageName != null && target != packageName) return LinkClearance.Blocked(Outcome.Failed(NOT_RESOLVED))
+                val verdict = LinkCheck.check(link, kind, fromOwner, target, run.settings::closed, run.settings.emergency, phonePackages = run.settings.phonePackages)
+                if (verdict is LinkVerdict.Refused) return LinkClearance.Blocked(Outcome.Refused(verdict.reason))
+                return LinkClearance.Cleared(CheckedLink(link, kind, packageName, target))
+            }
+        }
+    }
+
+    private sealed interface LinkClearance {
+        class Cleared(val link: CheckedLink) : LinkClearance
+
+        class Blocked(val outcome: Outcome) : LinkClearance
     }
 
     private sealed interface LinkApp {
@@ -416,7 +442,7 @@ internal class ScreenSteps(private val run: TaskRun) {
 
     // Which of the launcher [apps] the name [wanted] means for a link that [handlers] open (plan 6B-basefix B1'). A name that
     // could mean two apps is a question for the model, never a guess:
-    // 1. the apps whose label ([LabelMatcher.exact]) or whose package words ([packageWords]) are exactly the name, among all
+    // 1. the apps whose label or whose package words ([packageWords]) are exactly the name ([LabelMatcher.exact]), among all
     //    apps, with the same weight, because an app's author chooses both: "Google Maps" finds Google Maps, whose label is
     //    "Maps", and an app labelled "Google Maps" too. The one of them that opens the link is the app; two that open it
     //    are a question; when none opens it, the name names no app that opens the link, also when a near miss would;
@@ -426,9 +452,8 @@ internal class ScreenSteps(private val run: TaskRun) {
         fun only(found: List<LauncherApp>): LinkApp =
             if (found.size == 1) LinkApp.Found(found.single().packageName)
             else LinkApp.Missing("several apps match: " + found.take(NamePick.MAX_CHOICES).joinToString(", ") { quoted(it.label) })
-        val folded = Normalizer.normalize(wanted)
         val exact = apps.filter { app ->
-            LabelMatcher.exact(wanted, app.label) || (folded.isNotEmpty() && packageWords(app.packageName)?.let(Normalizer::normalize) == folded)
+            LabelMatcher.exact(wanted, app.label) || packageWords(app.packageName)?.let { LabelMatcher.exact(wanted, it) } == true
         }
         if (exact.isNotEmpty()) {
             val opening = exact.filter { it.packageName in handlers }
@@ -447,7 +472,7 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     // Firefox's web area can stay empty (r57's bug 2023734): wait for it, send the intent once more, then say so (D11).
-    private suspend fun firefox(call: AgentCall, done: Done, link: String, browserPackage: String?, firefox: String): Done {
+    private suspend fun firefox(call: AgentCall, done: Done, first: CheckedLink, firefox: String): Done {
         for (attempt in 0..1) {
             repeat(WAIT_POLLS) {
                 val now = run.fresh()
@@ -456,9 +481,14 @@ internal class ScreenSteps(private val run: TaskRun) {
             }
             if (attempt == 0) {
                 // The second intent is an action, so it waits at the pause gate; after a pause it is not sent, because the
-                // owner may have changed the screen (D2).
+                // owner may have changed the screen (D2). It is checked again as it is sent, and goes only to Firefox.
                 if (run.gate()) break
-                run.ports.screen.act(ScreenAction.OpenUri(link, browserPackage, browsable = true))
+                val again = when (val clearance = CheckedLink.check(run, first.link, first.kind, first.packageName, fromOwner(first.link))) {
+                    is LinkClearance.Blocked -> return Done(call.tool, clearance.outcome, after = run.fresh())
+                    is LinkClearance.Cleared -> clearance.link
+                }
+                if (again.target != firefox) return Done(call.tool, Outcome.Failed(NOT_RESOLVED), after = run.fresh())
+                run.ports.screen.act(again.action)
             }
         }
         val now = run.fresh()
@@ -572,6 +602,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         const val UNCERTAIN = "The tap may not have worked; check the screen before trying again."
         const val PAUSED = "The task was paused before this action, so nothing was done."
         const val EMPTY_PAGE = "the page shows no content to Kestrel"
+        const val NOT_RESOLVED = "Android no longer opens this link in that app, so Kestrel did not send it"
         const val ACTION_FAILED = "the action failed"
         const val NOTHING_TO_ACT_ON = "there is nothing to act on"
         const val FRONT_WAIT_MILLIS = 5_000L

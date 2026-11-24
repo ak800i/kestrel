@@ -529,6 +529,21 @@ class AgentToolsTest {
     }
 
     @Test
+    fun packageWordsAreExactInTheSameWaysAsALabel() = runTest {
+        // The words joined, or with an article before them, are still exactly the lookalike's label and Google Maps' words.
+        val lookalike = "com.example.atlas"
+        for (name in listOf("GoogleMaps", "the Google Maps")) {
+            val harness = namedApp(name, extra = listOf(LauncherApp("Google Maps", lookalike, "1.0")))
+            harness.screen.resolver = { spec -> spec.packageName?.takeIf { it == maps || it == lookalike } }
+
+            harness.run("Show Kalemegdan on Google Maps")
+
+            assertTrue(name, harness.screen.actions.isEmpty())
+            assertTrue(harness.lastRequestText(), harness.lastRequestText().contains("several apps match"))
+        }
+    }
+
+    @Test
     fun anotherAppsPackageWordsThatAreTheLabelMakeTheNameAQuestion() = runTest {
         // A hostile app opens geo: links too, and its package's words are "maps", which is Google Maps' label: both names
         // are exact, so "Maps" means two apps.
@@ -638,6 +653,26 @@ class AgentToolsTest {
         pausedFirst.owner.gates += listOf(Gate.GO, Gate.RESUMED)
         pausedFirst.run("Open en.wikipedia.org")
         assertEquals(0, opens(pausedFirst))
+
+        // The retry is judged again: when the link now resolves to an app that the agent may not use, it is not sent.
+        val moved = firefox()
+        moved.screen.resolver = { if (opens(moved) == 0) "org.mozilla.firefox" else "dev.kestrel" }
+        moved.run("Open en.wikipedia.org")
+        assertEquals(1, opens(moved))
+        assertTrue(moved.lastRequestText(), moved.lastRequestText().contains("The link opens an app that the agent may not use."))
+    }
+
+    @Test
+    fun aLinkIsNotSentToTheChosenAppWhenAndroidNoLongerResolvesItThere() = runTest {
+        // Google Maps opens the link when it is chosen, and no longer when the link is checked before it opens.
+        val harness = namedApp("Google Maps")
+        harness.screen.resolver = { spec -> spec.packageName?.takeIf { it == maps && harness.screen.resolves <= 1 } }
+
+        harness.run("Show Kalemegdan on Google Maps")
+
+        assertTrue(harness.screen.actions.isEmpty())
+        assertTrue(harness.owner.confirmations.isEmpty())
+        assertTrue(harness.lastRequestText(), harness.lastRequestText().contains(ScreenSteps.NOT_RESOLVED))
     }
 
     @Test
