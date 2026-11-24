@@ -178,4 +178,32 @@ object SelfChats {
         val hint = (element.hint ?: element.label)?.trim()?.lowercase()
         return element.editable && (id in RECIPIENT_FIELDS || hint in RECIPIENT_FIELDS)
     }
+
+    /**
+     * Whether a `mailto:` link writes only to the owner, as Gmail's Send to his own address does (spec 12.7): every
+     * recipient in its path and in its `to`, `cc` and `bcc` parameters, decoded, is one of [SafetySettings.ownerEmails],
+     * there is at least one, and it has no fragment and no parameter but those, `subject` and `body`, so that nothing that
+     * an app could read as a recipient goes unchecked.
+     */
+    fun mailtoToOwner(link: String, settings: SafetySettings): Boolean {
+        val text = link.trim()
+        if (!text.startsWith("mailto:", ignoreCase = true) || '#' in text) return false
+        val rest = text.substring("mailto:".length)
+        val recipients = LinkCheck.decode(rest.substringBefore('?'), plusIsSpace = false)?.split(',')?.toMutableList() ?: return false
+        val query = rest.substringAfter('?', "")
+        if (query.isNotEmpty()) {
+            for (parameter in query.split('&')) {
+                val name = LinkCheck.decode(parameter.substringBefore('='), plusIsSpace = false)?.lowercase() ?: return false
+                val value = LinkCheck.decode(parameter.substringAfter('=', ""), plusIsSpace = false) ?: return false
+                when (name) {
+                    in RECIPIENT_FIELDS -> recipients += value.split(',')
+                    "subject", "body" -> Unit
+                    else -> return false
+                }
+            }
+        }
+        val addresses = recipients.map { it.trim() }.filter { it.isNotEmpty() }
+        val mine = settings.ownerEmails.map { it.trim().lowercase() }.toSet()
+        return addresses.isNotEmpty() && addresses.all { EMAIL.matches(it) && it.lowercase() in mine }
+    }
 }

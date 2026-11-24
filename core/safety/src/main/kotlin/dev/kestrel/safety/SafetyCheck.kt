@@ -115,7 +115,7 @@ object SafetyCheck {
 
         // Links.
         if (proposal.kind == ActionKind.OPEN_URL || proposal.kind == ActionKind.OPEN_DEEP_LINK) {
-            when (val verdict = LinkCheck.check(proposal.link.orEmpty(), proposal.kind, proposal.linkFromOwner, proposal.linkTargetPackage, env.isAgentFree, env.emergency)) {
+            when (val verdict = LinkCheck.check(proposal.link.orEmpty(), proposal.kind, proposal.linkFromOwner, proposal.linkTargetPackage, env.isAgentFree, env.emergency, known(task))) {
                 is LinkVerdict.Refused -> {
                     sources += Source.LINK
                     return ending(Decision.Block(verdict.reason))
@@ -152,7 +152,8 @@ object SafetyCheck {
 
     /**
      * Test mode's block: every call, every text message, and every action that any source rates as sending, whatever its
-     * final category ("Send and delete"), unless it sends to the owner's own chat (review 2 I2).
+     * final category ("Send and delete"), unless it sends to the owner's own chat (review 2 I2), or it is a `mailto:` link
+     * to his own addresses alone, which opens a compose screen whose Send test mode checks again.
      */
     private fun testModeBlock(
         proposal: Proposal,
@@ -166,7 +167,8 @@ object SafetyCheck {
         when {
             category == Category.CALLS -> "Test mode: Kestrel makes no calls."
             proposal.kind == ActionKind.COMPOSE_SMS -> "Test mode: Kestrel sends no text messages."
-            (sends || category == Category.SENDING) && !SelfChats.recognise(screen, pressedKey(proposal, screen), settings, task.shareFlow, env.selfChatAliases) ->
+            (sends || category == Category.SENDING) && !SelfChats.recognise(screen, pressedKey(proposal, screen), settings, task.shareFlow, env.selfChatAliases) &&
+                !(proposal.kind == ActionKind.OPEN_DEEP_LINK && SelfChats.mailtoToOwner(proposal.link.orEmpty(), settings)) ->
                 "Test mode: Kestrel only sends to your own chats."
             else -> null
         }
@@ -258,7 +260,7 @@ object SafetyCheck {
      */
     private fun contactTyping(name: String, number: String, task: TaskSafety): Category {
         val words = Normalizer.words(name)
-        val known = task.ownerWords + task.memoryValues.flatMap { Normalizer.words(it) }
+        val known = known(task)
         val digits = TaskSafety.digitsOf(number)
         val sources = task.ownerDigits + task.memoryValues.map(TaskSafety::digitsOf)
         val named = words.isNotEmpty() && words.all { it in known }
@@ -273,9 +275,12 @@ object SafetyCheck {
     private fun typing(text: String, task: TaskSafety): Category {
         if (text.isBlank()) return Category.TYPING_REQUEST
         val words = Normalizer.words(text)
-        val known = task.ownerWords + task.memoryValues.flatMap { Normalizer.words(it) }
+        val known = known(task)
         return if (words.isNotEmpty() && words.all { it in known } && !Placeholders.holdsOne(text)) Category.TYPING_REQUEST else Category.TYPING_SCREEN_TEXT
     }
+
+    /** The words that the owner gave the task: those of his request and answers, and of the memory values that it used. */
+    private fun known(task: TaskSafety): Set<String> = task.ownerWords + task.memoryValues.flatMap { Normalizer.words(it) }
 
     /**
      * The mode's answer for [category], then the floor, the allowance and the placeholder rule. An action that [sends] and

