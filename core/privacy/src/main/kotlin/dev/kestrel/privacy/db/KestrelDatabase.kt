@@ -6,12 +6,15 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-/** Version 2 adds the table `credentials` (sub-project 4); Room migrates version 1 by itself. */
+/**
+ * Version 2 adds the table `credentials` (sub-project 4), and version 3 the table `conversations` (plan 7C of sub-project
+ * 7). Room migrates each earlier version by itself.
+ */
 @Database(
-    entities = [LogEntryRow::class, SettingRow::class, CredentialRow::class],
-    version = 2,
+    entities = [LogEntryRow::class, SettingRow::class, CredentialRow::class, ConversationRow::class],
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class KestrelDatabase : RoomDatabase() {
     abstract fun logDao(): LogDao
@@ -19,6 +22,8 @@ abstract class KestrelDatabase : RoomDatabase() {
     abstract fun settingsDao(): SettingsDao
 
     abstract fun credentialsDao(): CredentialsDao
+
+    abstract fun conversationDao(): ConversationDao
 
     companion object {
         const val FILE_NAME = "kestrel.db"

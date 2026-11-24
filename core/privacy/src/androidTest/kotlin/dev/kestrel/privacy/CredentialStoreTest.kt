@@ -4,7 +4,6 @@ import android.content.pm.PackageManager
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import androidx.room.Room
-import androidx.room.testing.MigrationTestHelper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.credentials.CredentialStore
@@ -18,33 +17,27 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.security.KeyStore
 import javax.crypto.SecretKeyFactory
 
 /**
- * The credential store with the device's Keystore (design spec, section 10.7). Every test uses its own key alias and an
- * in-memory or test-named database, so the owner's credentials are never touched.
+ * The credential store with the device's Keystore (design spec, section 10.7). Every test uses its own key alias and a
+ * database in memory, so the owner's credentials are never touched. KestrelDatabaseMigrationTest checks the migrations.
  */
 @RunWith(AndroidJUnit4::class)
 class CredentialStoreTest {
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val context = instrumentation.targetContext
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val alias = "kestrel.test.credentials.${System.nanoTime()}"
     private val database = Room.inMemoryDatabaseBuilder(context, KestrelDatabase::class.java).build()
     private val unreadable = mutableListOf<String>()
     private val store = CredentialStore(database.credentialsDao(), AesGcmFieldCipher { KeystoreKeys.getOrCreate(alias) }, onUnreadable = { unreadable += it })
 
-    @get:Rule
-    val migrations = MigrationTestHelper(instrumentation, KestrelDatabase::class.java)
-
     @After
     fun cleanUp() {
         database.close()
         KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
-        context.deleteDatabase(MIGRATED)
     }
 
     @Test
@@ -84,28 +77,5 @@ class CredentialStoreTest {
             assertNotEquals(KeyProperties.SECURITY_LEVEL_STRONGBOX, info.securityLevel)
         }
         assertEquals(256, info.keySize)
-    }
-
-    @Test
-    fun version1MigratesToVersion2WithItsSettingsAndAnEmptyCredentialsTable() {
-        migrations.createDatabase(MIGRATED, 1).apply {
-            execSQL("INSERT INTO settings (name, payload) VALUES ('test-volume', X'07')")
-            close()
-        }
-
-        val migrated = migrations.runMigrationsAndValidate(MIGRATED, 2, true)
-
-        migrated.query("SELECT payload FROM settings WHERE name = 'test-volume'").use { rows ->
-            rows.moveToFirst()
-            assertArrayEquals(byteArrayOf(7), rows.getBlob(0))
-        }
-        migrated.query("SELECT COUNT(*) FROM credentials").use { rows ->
-            rows.moveToFirst()
-            assertEquals(0, rows.getInt(0))
-        }
-    }
-
-    private companion object {
-        const val MIGRATED = "test-migration.db"
     }
 }

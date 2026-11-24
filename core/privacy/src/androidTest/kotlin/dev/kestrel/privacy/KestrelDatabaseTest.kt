@@ -3,6 +3,8 @@ package dev.kestrel.privacy
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.kestrel.privacy.db.ConversationHeader
+import dev.kestrel.privacy.db.ConversationRow
 import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.db.LogEntryRow
 import dev.kestrel.privacy.db.SettingRow
@@ -80,4 +82,48 @@ class KestrelDatabaseTest {
         val rest = dao.oldestAfter("activity", first.last().timestampMillis, first.last().id, 2)
         assertEquals(listOf(sameTime), rest.map { it.id })
     }
+
+    // Design 6.1 of sub-project 7: at most one conversation is open, whatever the caller writes.
+    @Test
+    fun writingAnOpenConversationClosesTheOpenOne() = runBlocking {
+        val dao = db.conversationDao()
+        dao.write(listOf(conversation("a", last = 1, open = true)))
+        dao.write(listOf(conversation("b", last = 2, open = true)))
+
+        assertEquals(listOf("b" to true, "a" to false), dao.headers().map { it.id to it.open })
+    }
+
+    // Design 9.6 of sub-project 7: a switch writes the closed and the opened conversation in one transaction.
+    @Test
+    fun oneWriteStoresEveryRowAndLeavesOnlyItsOpenRowOpen() = runBlocking {
+        val dao = db.conversationDao()
+        dao.write(listOf(conversation("a", last = 1, open = false), conversation("b", last = 2, open = true)))
+
+        dao.write(listOf(conversation("b", last = 3, open = false), conversation("a", last = 3, open = true)))
+
+        assertEquals(setOf("a" to true, "b" to false), dao.headers().map { it.id to it.open }.toSet())
+        assertEquals(3L, dao.get("b")!!.lastMillis)
+    }
+
+    // Design 9.3 of sub-project 7: the open conversation is never purged, however old it is.
+    @Test
+    fun deleteOutsideKeepsTheOpenConversationAndBothLimits() = runBlocking {
+        val dao = db.conversationDao()
+        dao.write(
+            listOf(
+                conversation("before", last = 99, open = false),
+                conversation("first", last = 100, open = false),
+                conversation("last", last = 200, open = false),
+                conversation("after", last = 201, open = false),
+                conversation("open", last = 1, open = true),
+            ),
+        )
+
+        assertEquals(2, dao.deleteOutside(oldest = 100, newest = 200))
+        assertEquals(listOf("last", "first", "open"), dao.headers().map { it.id })
+        assertEquals(ConversationHeader("last", openedMillis = 199, lastMillis = 200, open = false, commands = 2), dao.headers().first())
+    }
+
+    private fun conversation(id: String, last: Long, open: Boolean) =
+        ConversationRow(id, openedMillis = last - 1, lastMillis = last, open = open, commands = 2, payload = byteArrayOf(1))
 }
