@@ -15,7 +15,8 @@ import java.util.Locale
  * its time and its command's number; what the owner said then and what Kestrel answered, in quotes; the apps that it acted
  * in; and its data notes as the model saw them then, so that everything in it stays data (design 12.1). Every text was
  * redacted once, when it entered its run, so nothing is redacted here. A data note that would pass the budget is left out
- * with a line that says so, and a match that would pass it is left out whole and counted.
+ * with a line that says so; a note whose line would pass it too, and a match that would pass it, are left out whole, and
+ * the result's last line counts them, so that nothing leaves the result without a word.
  */
 internal object HistoryText {
     const val TOKEN_BUDGET = 1_500
@@ -34,25 +35,28 @@ internal object HistoryText {
         if (result.matches.isEmpty()) return Shown(Redacted.kestrel(NO_MATCH), 0)
         val offered = result.matches.take(HistoryPort.MAX_MATCHES)
         val more = result.more || result.matches.size > offered.size
-        // Room for the end line, whichever it becomes.
-        val reserve = maxOf(ScreenText.tokens(MORE), ScreenText.tokens(leftOut(offered.size)))
+        // Room for the end line, whichever it becomes: its longest form counts every match and every note.
+        val reserve = maxOf(ScreenText.tokens(MORE), ScreenText.tokens(leftOut(offered.size, offered.sumOf { it.data.size })))
         val blocks = mutableListOf<String>()
         var used = 0
+        var droppedNotes = 0
+        // A block is measured with the newline that follows it, so the blocks and the end line together stay within the budget.
+        fun fits(block: String) = used + ScreenText.tokens(block + "\n") + reserve <= TOKEN_BUDGET
         for ((index, match) in offered.withIndex()) {
             var block = head(index + 1, match, zone)
-            if (used + ScreenText.tokens(block) + reserve > TOKEN_BUDGET) break
+            if (!fits(block)) break
             for (note in match.data) {
                 val full = "  Data: ${note.tool}: " + note.text.replace("\n", "\n    ")
                 val short = "  Data: ${note.tool}: left out, because the result would be too long."
-                val line = listOf(full, short).firstOrNull { used + ScreenText.tokens(block + "\n" + it) + reserve <= TOKEN_BUDGET } ?: continue
-                block += "\n" + line
+                val line = listOf(full, short).firstOrNull { fits(block + "\n" + it) }
+                if (line == null) droppedNotes++ else block += "\n" + line
             }
             blocks += block
             used += ScreenText.tokens(block + "\n")
         }
-        val left = offered.size - blocks.size
+        val droppedMatches = offered.size - blocks.size
         val end = when {
-            left > 0 -> leftOut(left)
+            droppedMatches > 0 || droppedNotes > 0 -> leftOut(droppedMatches, droppedNotes)
             more -> MORE
             else -> NO_OTHER
         }
@@ -68,6 +72,13 @@ internal object HistoryText {
         return lines.joinToString("\n")
     }
 
-    private fun leftOut(count: Int): String =
-        "$count more ${if (count == 1) "match is" else "matches are"} left out, because the result would be too long; search with other words or a date range."
+    /** The end line that counts what the budget left out: [matches] whole matches and [notes] data notes of the matches shown. */
+    private fun leftOut(matches: Int, notes: Int): String {
+        val parts = listOfNotNull(
+            if (matches > 0) "$matches more ${if (matches == 1) "match" else "matches"}" else null,
+            if (notes > 0) "$notes data ${if (notes == 1) "note" else "notes"}" else null,
+        )
+        val verb = if (parts.size == 1 && (matches == 1 || notes == 1)) "is" else "are"
+        return "${parts.joinToString(" and ")} $verb left out, because the result would be too long; search with other words or a date range."
+    }
 }

@@ -61,4 +61,19 @@ class HistoryTextTest {
         assertTrue(ScreenText.tokens(shown.text.text) <= HistoryText.TOKEN_BUDGET)
         assertTrue(shown.text.text.contains("  Data: list_sms: left out, because the result would be too long."))
     }
+
+    @Test
+    fun dataNotesThatFitNotEvenAsTheirShortLineAreCountedAtTheEnd() {
+        val tooLong = HistoryData("list_sms", "body: \"" + "x".repeat(6_000) + "\"")
+        val match = HistoryMatch(thursday, 1, "Read my SMS", null, emptyList(), List(100) { tooLong })
+
+        val shown = HistoryText.of(HistoryResult(listOf(match)), zone)
+
+        val text = shown.text.text
+        val short = text.lines().count { it == "  Data: list_sms: left out, because the result would be too long." }
+        assertEquals(1, shown.count)
+        assertTrue(short in 1 until 100)
+        assertTrue(text.endsWith("\n${100 - short} data notes are left out, because the result would be too long; search with other words or a date range."))
+        assertTrue(ScreenText.tokens(text) <= HistoryText.TOKEN_BUDGET)
+    }
 }

@@ -15,6 +15,7 @@ import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.loop.ConfirmedSend
 import dev.kestrel.agent.loop.Conversation
+import dev.kestrel.agent.loop.HistoryText
 import dev.kestrel.agent.loop.Outcome
 import dev.kestrel.agent.loop.Redacted
 import dev.kestrel.agent.loop.Reply
@@ -58,6 +59,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import java.time.LocalDate
 
 /**
  * The types of `:core:agent` that can carry the owner's words, screen text, prompts, replies, tool arguments or settings
@@ -134,8 +136,18 @@ class ToStringTest {
             HistoryData(Tools.LIST_SMS, marker),
             match,
             HistoryResult(listOf(match)),
+            AgentCall.SearchConversations(marker, null, null),
+            HistoryText.Shown(Redacted.kestrel(marker), 1),
         )
 
         for (value in values) assertFalse(value.toString(), value.toString().contains("MARKER") || value.toString().contains("@example"))
+    }
+
+    // A search's days say when the owner did something, so they are arguments that no print shows.
+    @Test
+    fun aSearchPrintsWhetherItHasDaysNotTheDays() {
+        val call = AgentCall.SearchConversations(marker, LocalDate.of(2026, 11, 13), LocalDate.of(2026, 11, 20))
+
+        assertFalse(call.toString(), call.toString().contains("2026") || call.toString().contains("MARKER"))
     }
 }

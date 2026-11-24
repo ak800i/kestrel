@@ -241,7 +241,7 @@ sealed interface AgentCall {
     data class SearchConversations(val query: String, val from: LocalDate?, val to: LocalDate?) : AgentCall {
         override val tool: String get() = Tools.SEARCH_CONVERSATIONS
 
-        override fun toString(): String = "SearchConversations(query=${query.length} chars, from=$from, to=$to)"
+        override fun toString(): String = "SearchConversations(query=${query.length} chars, from=${from != null}, to=${to != null})"
     }
 }
 
