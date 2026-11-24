@@ -414,37 +414,31 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
     }
 
-    // Which of the launcher [apps] the name [wanted] means for a link that [handlers] open (plan 6B-basefix B1'). Each step
-    // decides only when it finds one app, and two apps are a question for the model, never a guess:
-    // 1. an app whose label is exactly the name, among all apps, so that a near miss never wins over the app that the
-    //    owner named, also when that app does not open the link;
-    // 2. among the apps that open the link, the one whose label the launcher's matcher finds, or whose package words
-    //    ([packageWords]) are exactly the name, so that "Google Maps" finds Google Maps, whose label is "Maps". An app's
-    //    author chooses its package name, so the package words never win over a label: a label that comes close to the
-    //    name and package words that name another app are two apps. They never match near.
+    // Which of the launcher [apps] the name [wanted] means for a link that [handlers] open (plan 6B-basefix B1'). A name that
+    // could mean two apps is a question for the model, never a guess:
+    // 1. the apps whose label ([LabelMatcher.exact]) or whose package words ([packageWords]) are exactly the name, among all
+    //    apps, with the same weight, because an app's author chooses both: "Google Maps" finds Google Maps, whose label is
+    //    "Maps", and an app labelled "Google Maps" too. The one of them that opens the link is the app; two that open it
+    //    are a question; when none opens it, the name names no app that opens the link, also when a near miss would;
+    // 2. only when no app has the name exactly, the launcher's matcher over the labels of the apps that open the link.
+    //    Package words never match near.
     private fun appNamed(wanted: String, apps: List<LauncherApp>, handlers: Set<String>): LinkApp {
         fun only(found: List<LauncherApp>): LinkApp =
             if (found.size == 1) LinkApp.Found(found.single().packageName)
             else LinkApp.Missing("several apps match: " + found.take(NamePick.MAX_CHOICES).joinToString(", ") { quoted(it.label) })
-        val exact = apps.filter { LabelMatcher.exact(wanted, it.label) }
-        if (exact.isNotEmpty()) {
-            val exactOpening = exact.filter { it.packageName in handlers }
-            return when {
-                exactOpening.isNotEmpty() -> only(exactOpening)
-                exact.size == 1 -> LinkApp.Missing("${quoted(exact.single().label)} doesn't open this link")
-                else -> LinkApp.Missing("none of the apps named ${quoted(wanted)} opens this link")
-            }
-        }
-        val opening = apps.filter { it.packageName in handlers }
-        val byLabel = when (val pick = NamePick.pick(wanted, opening, { it.label }, { false })) {
-            is Pick.One -> listOf(pick.item)
-            is Pick.Several -> pick.items
-            Pick.None -> emptyList()
-        }
         val folded = Normalizer.normalize(wanted)
-        val byPackage = opening.filter { app -> folded.isNotEmpty() && packageWords(app.packageName)?.let(Normalizer::normalize) == folded }
-        val named = (byLabel + byPackage).distinctBy { it.packageName }
-        if (named.isNotEmpty()) return only(named)
+        val exact = apps.filter { app ->
+            LabelMatcher.exact(wanted, app.label) || (folded.isNotEmpty() && packageWords(app.packageName)?.let(Normalizer::normalize) == folded)
+        }
+        if (exact.isNotEmpty()) {
+            val opening = exact.filter { it.packageName in handlers }
+            return if (opening.isEmpty()) LinkApp.Missing("${quoted(wanted)} doesn't open this link") else only(opening)
+        }
+        when (val pick = NamePick.pick(wanted, apps.filter { it.packageName in handlers }, { it.label }, { false })) {
+            is Pick.One -> return LinkApp.Found(pick.item.packageName)
+            is Pick.Several -> return only(pick.items)
+            Pick.None -> Unit
+        }
         return when (val pick = NamePick.pick(wanted, apps, { it.label }, { false })) {
             Pick.None -> LinkApp.Missing("no app named ${quoted(wanted)}")
             is Pick.One -> LinkApp.Missing("${quoted(pick.item.label)} doesn't open this link")

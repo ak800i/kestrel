@@ -487,11 +487,10 @@ class AgentToolsTest {
 
     @Test
     fun anAppThatOpensTheLinkIsFoundByItsLabelOrByItsPackagesWords() = runTest {
-        // Every launcher app but the Google app opens the link here: "Google Maps" is exactly Google Maps' package words, and
-        // no other app's, and no label of them comes close.
-        val google = "com.google.android.googlequicksearchbox"
+        // Every launcher app opens the link here: "Google Maps" is exactly Google Maps' package words, and no other app's.
+        // The Google app's label only comes close, and an exact name wins over a near one.
         val every = namedApp("Google Maps")
-        every.screen.resolver = { spec -> spec.packageName?.takeIf { it != google } }
+        every.screen.resolver = { spec -> spec.packageName }
 
         every.run("Show Kalemegdan on Google Maps")
 
@@ -502,13 +501,6 @@ class AgentToolsTest {
         assertEquals("telegram messenger", ScreenSteps.packageWords("org.telegram.messenger"))
         assertEquals(null, ScreenSteps.packageWords("com.android.app"))
 
-        // When the Google app opens it too, its label comes close to the name, so the name could mean either app.
-        val near = namedApp("Google Maps")
-        near.screen.resolver = { spec -> spec.packageName }
-        near.run("Show Kalemegdan on Google Maps")
-        assertTrue(near.screen.actions.isEmpty())
-        assertTrue(near.lastRequestText(), near.lastRequestText().contains("several apps match: \"Google\", \"Maps\""))
-
         // A vendor's word alone is no name: only Google Maps opens the link, and the Google app, which does not, is "Google".
         val vendor = namedApp("Google")
         vendor.run("Show Kalemegdan on Google")
@@ -517,15 +509,37 @@ class AgentToolsTest {
     }
 
     @Test
-    fun theLabelThatTheOwnerSeesWinsOverAnotherAppsPackageWords() = runTest {
-        // A hostile app opens geo: links too, and its package's words are "maps", which is Google Maps' label.
+    fun aLookalikeLabelAndTheRealAppsPackageWordsAreTwoAppsWhenBothOpenTheLink() = runTest {
+        // An app that calls itself Google Maps opens geo: links too; the real Google Maps is labelled "Maps".
+        val lookalike = "com.example.atlas"
+        val both = namedApp("Google Maps", extra = listOf(LauncherApp("Google Maps", lookalike, "1.0")))
+        both.screen.resolver = { spec -> spec.packageName?.takeIf { it == maps || it == lookalike } }
+
+        both.run("Show Kalemegdan on Google Maps")
+
+        assertTrue(both.screen.actions.isEmpty())
+        assertTrue(both.lastRequestText(), both.lastRequestText().contains("several apps match"))
+
+        // When the lookalike does not open the link, its exact label does not hide the real app's exact package words.
+        val real = namedApp("Google Maps", extra = listOf(LauncherApp("Google Maps", lookalike, "1.0")))
+
+        real.run("Show Kalemegdan on Google Maps")
+
+        assertEquals(real.lastRequestText(), listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), real.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+    }
+
+    @Test
+    fun anotherAppsPackageWordsThatAreTheLabelMakeTheNameAQuestion() = runTest {
+        // A hostile app opens geo: links too, and its package's words are "maps", which is Google Maps' label: both names
+        // are exact, so "Maps" means two apps.
         val hostile = "com.maps"
         val harness = namedApp("Maps", extra = listOf(LauncherApp("Weather", hostile, "1.0")))
         harness.screen.resolver = { spec -> spec.packageName?.takeIf { it == maps || it == hostile } }
 
         harness.run("Show Kalemegdan on Maps")
 
-        assertEquals(harness.lastRequestText(), listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), harness.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+        assertTrue(harness.screen.actions.isEmpty())
+        assertTrue(harness.lastRequestText(), harness.lastRequestText().contains("several apps match"))
     }
 
     @Test
