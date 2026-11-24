@@ -5,10 +5,12 @@ import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
 import dev.kestrel.agent.port.Capture
 import dev.kestrel.agent.port.IntentSpec
+import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.tools.ActionMapper
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.agent.tools.Browser
+import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.NamePick
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Pick
@@ -391,11 +393,9 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     // The app that `open_deep_link`'s `app` names (spec 11.4): an installed package, or a name of exactly one of the
-    // launcher apps that open the link: its package's words ([packageWords]) when the name is exactly them, so that "Google
-    // Maps" finds Google Maps, whose label is only "Maps" (plan 6B-basefix B1'), else its label as the launcher's matcher
-    // reads it. The link then goes to that app alone, so Android shows no chooser, and the safety check judges that app as
-    // the link's target. A name that no such app has gets the launcher's errors: no app of that name, or the app of that
-    // name does not open the link.
+    // launcher apps that open the link ([appNamed]). The link then goes to that app alone, so Android shows no chooser, and
+    // the safety check judges that app as the link's target. One query finds the apps that open the link, and `resolve`
+    // confirms the chosen one, because an app with two activities for the link would still leave it to Android's chooser.
     private suspend fun linkApp(name: String, link: String): LinkApp {
         suspend fun opens(packageName: String) = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true)) == packageName
         val wanted = name.trim()
@@ -406,18 +406,45 @@ internal class ScreenSteps(private val run: TaskRun) {
         if (PACKAGE_NAME.matches(wanted)) {
             return if (opens(wanted)) LinkApp.Found(wanted) else LinkApp.Missing("no installed app ${quoted(wanted)} opens this link")
         }
-        val handlers = apps.filter { opens(it.packageName) }
-        val folded = Normalizer.normalize(wanted)
-        val byPackage = handlers.filter { app -> packageWords(app.packageName)?.let(Normalizer::normalize) == folded }
-        val matched = byPackage.ifEmpty {
-            when (val pick = NamePick.pick(wanted, handlers, { it.label }, { false })) {
-                Pick.None -> emptyList()
-                is Pick.One -> listOf(pick.item)
-                is Pick.Several -> pick.items
+        val handlers = run.ports.screen.handlers(IntentSpec(VIEW, link, browsable = true))
+        return when (val named = appNamed(wanted, apps, handlers)) {
+            is LinkApp.Found -> named.takeIf { opens(it.packageName) }
+                ?: LinkApp.Missing("${quoted(apps.first { it.packageName == named.packageName }.label)} doesn't open this link")
+            is LinkApp.Missing -> named
+        }
+    }
+
+    // Which of the launcher [apps] the name [wanted] means for a link that [handlers] open (plan 6B-basefix B1'). Each step
+    // decides only when it finds one app, and two apps are a question for the model, never a guess:
+    // 1. an app whose label is exactly the name, among all apps, so that a near miss never wins over the app that the
+    //    owner named, also when that app does not open the link;
+    // 2. among the apps that open the link, the one whose label the launcher's matcher finds, or whose package words
+    //    ([packageWords]) are exactly the name, so that "Google Maps" finds Google Maps, whose label is "Maps". An app's
+    //    author chooses its package name, so the package words never win over a label: a label that comes close to the
+    //    name and package words that name another app are two apps. They never match near.
+    private fun appNamed(wanted: String, apps: List<LauncherApp>, handlers: Set<String>): LinkApp {
+        fun only(found: List<LauncherApp>): LinkApp =
+            if (found.size == 1) LinkApp.Found(found.single().packageName)
+            else LinkApp.Missing("several apps match: " + found.take(NamePick.MAX_CHOICES).joinToString(", ") { quoted(it.label) })
+        val exact = apps.filter { LabelMatcher.exact(wanted, it.label) }
+        if (exact.isNotEmpty()) {
+            val exactOpening = exact.filter { it.packageName in handlers }
+            return when {
+                exactOpening.isNotEmpty() -> only(exactOpening)
+                exact.size == 1 -> LinkApp.Missing("${quoted(exact.single().label)} doesn't open this link")
+                else -> LinkApp.Missing("none of the apps named ${quoted(wanted)} opens this link")
             }
         }
-        if (matched.size == 1) return LinkApp.Found(matched.single().packageName)
-        if (matched.size > 1) return LinkApp.Missing("several apps match: " + matched.take(NamePick.MAX_CHOICES).joinToString(", ") { quoted(it.label) })
+        val opening = apps.filter { it.packageName in handlers }
+        val byLabel = when (val pick = NamePick.pick(wanted, opening, { it.label }, { false })) {
+            is Pick.One -> listOf(pick.item)
+            is Pick.Several -> pick.items
+            Pick.None -> emptyList()
+        }
+        val folded = Normalizer.normalize(wanted)
+        val byPackage = opening.filter { app -> folded.isNotEmpty() && packageWords(app.packageName)?.let(Normalizer::normalize) == folded }
+        val named = (byLabel + byPackage).distinctBy { it.packageName }
+        if (named.isNotEmpty()) return only(named)
         return when (val pick = NamePick.pick(wanted, apps, { it.label }, { false })) {
             Pick.None -> LinkApp.Missing("no app named ${quoted(wanted)}")
             is Pick.One -> LinkApp.Missing("${quoted(pick.item.label)} doesn't open this link")

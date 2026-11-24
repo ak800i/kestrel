@@ -30,4 +30,10 @@ object IntentSpecs {
         val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
         return packageManager.resolveActivity(intent, flags)?.activityInfo?.packageName?.takeIf { it !in CHOOSERS }
     }
+
+    /** The packages of the activities that could open [spec], from one query, without Android's chooser. Off the main thread. */
+    fun handlers(packageManager: PackageManager, spec: IntentSpec): Set<String> {
+        val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+        return packageManager.queryIntentActivities(toIntent(spec), flags).mapNotNullTo(mutableSetOf()) { it.activityInfo?.packageName } - CHOOSERS
+    }
 }

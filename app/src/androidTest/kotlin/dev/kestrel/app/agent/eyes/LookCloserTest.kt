@@ -68,6 +68,8 @@ class LookCloserTest {
 
         override suspend fun resolve(intent: IntentSpec): String? = null
 
+        override suspend fun handlers(intent: IntentSpec): Set<String> = emptySet()
+
         override suspend fun showBadges(badges: List<Badge>) =
             session.showBadges(badges.map { dev.kestrel.screen.overlay.Badge(it.number, "", it.bounds) })
 

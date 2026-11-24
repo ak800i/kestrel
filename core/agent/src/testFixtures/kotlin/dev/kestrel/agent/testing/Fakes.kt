@@ -54,6 +54,13 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
     val actions = mutableListOf<ScreenAction>()
     val badges = mutableListOf<List<Badge>>()
     var resolver: (IntentSpec) -> String? = { it.packageName }
+
+    /** The installed packages: [handlers] names those of them that [resolver] resolves as their own, as Android's query does. */
+    var installed: Set<String> = emptySet()
+
+    /** How often [resolve] and [handlers] asked the package manager. */
+    var resolves = 0
+    var handlerQueries = 0
     var outcome: (ScreenAction) -> ActionOutcome = { ActionOutcome(done = true, method = "fake") }
 
     /** Runs before each snapshot is read: a test may change the screen here, as an app that draws its next window late. */
@@ -95,7 +102,15 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
         return result
     }
 
-    override suspend fun resolve(intent: IntentSpec): String? = resolver(intent)
+    override suspend fun resolve(intent: IntentSpec): String? {
+        resolves++
+        return resolver(intent)
+    }
+
+    override suspend fun handlers(intent: IntentSpec): Set<String> {
+        handlerQueries++
+        return installed.filterTo(mutableSetOf()) { resolver(intent.copy(packageName = it)) == it }
+    }
 
     override suspend fun showBadges(badges: List<Badge>) {
         this.badges += badges

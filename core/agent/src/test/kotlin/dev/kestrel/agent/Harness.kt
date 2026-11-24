@@ -28,7 +28,7 @@ class Harness(
     model: ModelInfo = ScriptedModel.INFO,
     launcher: List<LauncherApp> = FakeApps.DEFAULT,
 ) {
-    val screen = FakeScreen(first)
+    val screen = FakeScreen(first).apply { installed = launcher.mapTo(mutableSetOf()) { it.packageName } }
     val owner = FakeOwner()
     val data = FakeData()
     val apps = FakeApps(launcher)

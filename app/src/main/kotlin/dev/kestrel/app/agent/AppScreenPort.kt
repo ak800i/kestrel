@@ -57,6 +57,8 @@ internal class AppScreenPort(
 
     override suspend fun resolve(intent: IntentSpec): String? = withContext(Dispatchers.IO) { IntentSpecs.resolve(packageManager, intent) }
 
+    override suspend fun handlers(intent: IntentSpec): Set<String> = withContext(Dispatchers.IO) { IntentSpecs.handlers(packageManager, intent) }
+
     override suspend fun showBadges(badges: List<Badge>) {
         session()?.let { showBadges(it, badges) }
     }

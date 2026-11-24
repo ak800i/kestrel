@@ -54,6 +54,9 @@ object LabelMatcher {
         return if (prefix) maxOf(total, MatchRules.PREFIX_SCORE) else total
     }
 
+    /** Whether [spoken] names [name] exactly, as [decide] counts an exact match: the same words after folding, also joined. */
+    fun exact(spoken: String, name: String): Boolean = score(spoken, name) == EXACT
+
     /**
      * Decides which of [candidates] [spoken] names: [MatchDecision.Found] for the only exact match or else a clear winner,
      * [MatchDecision.Ambiguous] for two or more exact matches or else the close ones, and [MatchDecision.NotFound] when no

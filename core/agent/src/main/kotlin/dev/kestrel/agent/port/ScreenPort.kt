@@ -16,6 +16,13 @@ interface ScreenPort {
     /** The package of the activity that would handle [intent] (`PackageManager.resolveActivity`), or null when none would. */
     suspend fun resolve(intent: IntentSpec): String?
 
+    /**
+     * The packages whose activities could handle [intent], from one query (`PackageManager.queryIntentActivities`);
+     * Android's chooser is none of them. A package here may still resolve to the chooser on its own, when two of its
+     * activities take [intent], so [resolve] with the package is what confirms one.
+     */
+    suspend fun handlers(intent: IntentSpec): Set<String>
+
     suspend fun showBadges(badges: List<Badge>)
 
     suspend fun hideBadges()
