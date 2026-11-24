@@ -174,6 +174,127 @@ function Get-DeviceTaskArgument([string[]]$Arguments) {
     @($Arguments | Where-Object { $_ -notlike '-*' -and ($_ -split ':')[-1] -match 'install|connected|devicecheck' -and ($_ -split ':')[-1] -ne 'installDist' })
 }
 
+# The Gradle properties with which scripts\connected-test.ps1 runs every connected test, so that a run keeps Kestrel
+# and its data: its AI profiles, permissions, settings and the agent's memory. One run without the first property
+# uninstalled Kestrel at its end, which wiped all of these on kestrel-api37. A value on Gradle's command line overrides
+# the same property in any gradle.properties file and in ORG_GRADLE_PROJECT_ variables. The Android Gradle plugin 9.5:
+$KestrelDataProperties = [ordered]@{
+    # uninstalls every APK that it installed for the tests, Kestrel among them, at the end of the run, unless this is true;
+    'android.injected.androidTest.leaveApksInstalledAfterRun' = 'true'
+    # with this true, uninstalls an installed APK whose signature differs from the one that it built, before the tests;
+    'android.experimental.testOptions.uninstallIncompatibleApks' = 'false'
+    # passes the instrumentation arguments of the command line after those of the build files, so this value overrides
+    # theirs. With clearPackageData true, the test orchestrator, which Kestrel's build does not use, clears the data of
+    # the app under test after each test.
+    'android.testInstrumentationRunnerArguments.clearPackageData' = 'false'
+}
+
+# Returns the Gradle arguments of scripts\connected-test.ps1: the caller's arguments, then the properties of
+# $KestrelDataProperties. The script decides alone which device the tests use and what happens to the apps on it, so
+# it refuses an argument that names one of these properties in any other way than it passes the property itself (such
+# as another value, --project-prop or -Dorg.gradle.project.), Gradle's --serial option, which would override
+# ANDROID_SERIAL and so pass by the device guard, and every task but a connected test, such as uninstallAll or an
+# abbreviated task name. A caller's argument that is the same as one of the script's is passed once.
+function Get-ConnectedTestArguments([string[]]$Arguments) {
+    $own = @(foreach ($name in $KestrelDataProperties.Keys) { "-P$name=$($KestrelDataProperties[$name])" })
+    $passed = @(foreach ($argument in $Arguments) {
+        if ($argument -like '--serial*') { throw "Refusing the Gradle argument '$argument'. Choose the device with -Serial." }
+        if ($own -ccontains $argument) { continue }
+        foreach ($name in $KestrelDataProperties.Keys) {
+            if ($argument -like "*$name*") {
+                throw ("Refusing the Gradle argument '$argument'. connected-test.ps1 itself sets $name=$($KestrelDataProperties[$name]), " +
+                    'so that the run keeps Kestrel and its data.')
+            }
+        }
+        if ($argument -notlike '-*' -and ($argument -split ':')[-1] -notmatch '^connected(\w*AndroidTest|Check)$') {
+            throw "Refusing the Gradle argument '$argument'. connected-test.ps1 runs only connected test tasks, such as :app:connectedDebugAndroidTest."
+        }
+        $argument
+    })
+    $passed + $own
+}
+
+# The packages that Gradle installs for connected tests besides Kestrel (dev.kestrel), which matches none of them: the
+# fixture app of :testapp, and the test APKs, which Gradle names after the app or the library module that they test,
+# such as dev.kestrel.test and dev.kestrel.privacy.test. Each is a pattern of PowerShell's -like, in which '*' stands for
+# any text, as it does in a 'case' of the device's shell.
+$KestrelTestPackages = @('dev.kestrel.testapp', 'dev.kestrel.test', 'dev.kestrel.*.test')
+
+function Test-KestrelTestPackage([string]$Name) {
+    @($KestrelTestPackages | Where-Object { $Name -like $_ }).Count -gt 0
+}
+
+# Returns the names of the installed packages whose names contain 'dev.kestrel', as 'pm list packages' lists them.
+function Get-KestrelPackageNames([string]$Serial) {
+    @(Invoke-SettingsCommand -Serial $Serial -Command 'pm list packages dev.kestrel' | ForEach-Object { "$_".Trim() -replace '^package:', '' } | Where-Object { $_ })
+}
+
+# Returns the first-install times in a dump of 'dumpsys package', one for each user that the dump shows.
+function Get-FirstInstallTime([string[]]$Dump) {
+    @(foreach ($line in $Dump) { if ($line -match '^\s*firstInstallTime=(.+)$') { $Matches[1].Trim() } })
+}
+
+# Reads what scripts\connected-test.ps1 compares before and after the tests: Kestrel's first-install times, which stay
+# the same while Kestrel keeps its data, or $null when Kestrel is not installed, and the installed packages that match
+# $KestrelTestPackages. It throws when it cannot read them.
+function Get-KestrelPackageState([string]$Serial) {
+    $names = Get-KestrelPackageNames -Serial $Serial
+    $installTimes = $null
+    if ($names -contains 'dev.kestrel') {
+        $installTimes = @(Get-FirstInstallTime -Dump (Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys package dev.kestrel'))
+        if ($installTimes.Count -eq 0) { throw "dumpsys package dev.kestrel on $Serial shows no firstInstallTime." }
+    }
+    [pscustomobject]@{
+        KestrelInstallTimes = $installTimes
+        TestPackages = @($names | Where-Object { Test-KestrelTestPackage $_ })
+    }
+}
+
+# Returns a message that names the loss when Kestrel was installed before the tests (-Before) and is now missing or was
+# installed again (-After), both from Get-KestrelPackageState: Android deletes an app's data when it uninstalls it, and an
+# app that is installed again gets a new first-install time. Returns $null when Kestrel kept its data or was not installed.
+function Get-KestrelDataLoss($Before, $After, [string]$Serial) {
+    if ($null -eq $Before.KestrelInstallTimes) { return $null }
+    $lost = 'so its data there is gone: its AI profiles, permissions, settings and the agent''s memory.'
+    if ($null -eq $After.KestrelInstallTimes) { return "Kestrel (dev.kestrel) was uninstalled from $Serial during the tests, $lost" }
+    $then = $Before.KestrelInstallTimes -join ', '
+    $now = $After.KestrelInstallTimes -join ', '
+    if ($then -cne $now) {
+        return "Kestrel (dev.kestrel) was installed again on $Serial during the tests (first installed $then before them, $now now), $lost"
+    }
+    $null
+}
+
+# Uninstalls each package of -Packages, which must match $KestrelTestPackages, and returns whether none of them is still
+# installed. For each one that stays, it warns with the reason and the command that uninstalls it by hand.
+function Remove-TestPackages([string]$Serial, [string[]]$Packages) {
+    $gone = $true
+    foreach ($package in $Packages) {
+        if (-not (Test-KestrelTestPackage $package)) { throw "$package is not a test package of Kestrel." }
+        $reason = ''
+        $removed = try {
+            Invoke-SettingsCommand -Serial $Serial -Command "pm uninstall $package" | Out-Null
+            (Get-KestrelPackageNames -Serial $Serial) -notcontains $package
+        } catch {
+            $reason = " ($($_.Exception.Message))"
+            $false
+        }
+        if (-not $removed) {
+            Write-Warning "Could not uninstall $package from $Serial$reason. Run: & '$((Get-Adb) -replace "'", "''")' -s $Serial uninstall $package"
+            $gone = $false
+        }
+    }
+    $gone
+}
+
+# Returns a command for the device's shell that uninstalls every package of $KestrelTestPackages but those of -Keep, the
+# ones that were installed before the tests. scripts\connected-test.ps1 gives it in its warning when it could not do that
+# itself, because it then does not know which packages the tests installed.
+function Format-TestPackageRemoval([string[]]$Keep) {
+    $kept = if ($Keep) { "$($Keep -join '|')) ;; " } else { '' }
+    'for p in $(pm list packages dev.kestrel); do case ${p#package:} in ' + $kept + "$($KestrelTestPackages -join '|')) pm uninstall `${p#package:};; esac; done"
+}
+
 function Find-EmulatorSerial([string]$AvdName) {
     $adb = Get-Adb
     # Windows PowerShell 5.1 would stop at adb's first error line.

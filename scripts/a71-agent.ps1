@@ -1082,7 +1082,7 @@ function Invoke-DeviceTestsStep {
     Grant-AgentPermissions $a71
     Register-TouchSourceRestore $a71
     Invoke-Device $a71 'logcat -c' | Out-Null
-    & "$PSScriptRoot\connected-test.ps1" -Serial $a71 ':app:connectedDebugAndroidTest' "-Pandroid.testInstrumentationRunnerArguments.class=$($classes -join ',')" '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
+    & "$PSScriptRoot\connected-test.ps1" -Serial $a71 ':app:connectedDebugAndroidTest' "-Pandroid.testInstrumentationRunnerArguments.class=$($classes -join ',')"
     $failed = @(Get-UnpassedTests $folder)
     foreach ($class in $classes) {
         $name = ($class -split '\.')[-1]

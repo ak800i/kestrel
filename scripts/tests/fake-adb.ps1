@@ -1,7 +1,8 @@
 # A stand-in for adb in the tests of scripts\lib\Kestrel.ps1; fake-adb.cmd runs it in its own process, as adb runs.
 # It understands 'adb -s <serial> get-state', 'adb -s <serial> shell getprop <property>' for the properties that
-# Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands and the 'cmd statusbar
-# set-tiles' that the helpers send, also inside the check of Format-TestDeviceCommand. It keeps the device's state in the
+# Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands, the 'cmd statusbar
+# set-tiles' and the package commands ('pm list packages', 'dumpsys package' and 'pm uninstall') that the helpers send,
+# also inside the check of Format-TestDeviceCommand. It keeps the device's state in the
 # JSON file whose path is in the environment variable KESTREL_FAKE_ADB:
 #   avd         the device's ro.boot.qemu.avd_name, empty for a phone
 #   model       the device's ro.product.model
@@ -9,6 +10,7 @@
 #   keepsTiles  whether SystemUI keeps the list of Quick Settings tiles itself, as on Android 17 (observed): set-tiles
 #               writes the list to sysui_qs_tiles, and SystemUI writes its own list back over a 'settings put' of that
 #               setting. Otherwise SystemUI follows the setting, and set-tiles changes nothing.
+#   packages    the installed packages, each with its first-install time, which 'dumpsys package' shows for user 0
 #   failures    how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
 #   calls       every settings command that it received and did not refuse, in order, without the check
 #   refused     every settings command that the check kept from running, in order
@@ -45,6 +47,8 @@ if ($command -match '^getprop (\S+)$') {
 }
 $settings = [ordered]@{}
 foreach ($property in $state.settings.PSObject.Properties) { $settings[$property.Name] = [string]$property.Value }
+$packages = [ordered]@{}
+if ($state.packages) { foreach ($property in $state.packages.PSObject.Properties) { $packages[$property.Name] = [string]$property.Value } }
 $keepsTiles = [bool]$state.keepsTiles
 $failures = [int]$state.failures
 $calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
@@ -52,8 +56,8 @@ $refused = @(@($state.refused) | Where-Object { $null -ne $_ } | ForEach-Object 
 
 function Save-State {
     $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{
-            avd = $avd; model = $model; settings = $settings; keepsTiles = $keepsTiles; failures = $failures; calls = [string[]]$calls
-            refused = [string[]]$refused
+            avd = $avd; model = $model; settings = $settings; packages = $packages; keepsTiles = $keepsTiles; failures = $failures
+            calls = [string[]]$calls; refused = [string[]]$refused
         })
     [IO.File]::WriteAllText($statePath, $json)
 }
@@ -110,6 +114,25 @@ if ($deviceCommand -match '^printf %s (\S+)$') {
 } elseif ($deviceCommand -match '^settings delete secure (\S+)$') {
     $lines = @("Deleted $(if ($settings.Contains($Matches[1])) { 1 } else { 0 }) rows")
     $settings.Remove($Matches[1])
+} elseif ($deviceCommand -match '^pm list packages (\S+)$') {
+    # As on the device, every package whose name contains the text.
+    $text = $Matches[1]
+    $lines = @($packages.Keys | Where-Object { $_.Contains($text) } | Sort-Object | ForEach-Object { "package:$_" })
+} elseif ($deviceCommand -match '^dumpsys package (\S+)$') {
+    if ($packages.Contains($Matches[1])) {
+        $lines = @('Packages:', "  Package [$($Matches[1])] (1a2b3c):", '    versionCode=1 minSdk=31 targetSdk=37',
+            '    User 0: ceDataInode=4242 installed=true hidden=false suspended=false stopped=false', '      installReason=0',
+            "      firstInstallTime=$($packages[$Matches[1]])", '      uninstallReason=0')
+    }
+} elseif ($deviceCommand -match '^pm uninstall (\S+)$') {
+    if (-not $packages.Contains($Matches[1])) {
+        # The device's shell then skips the marker.
+        Save-State
+        [Console]::Out.WriteLine('Failure [DELETE_FAILED_INTERNAL_ERROR]')
+        exit 1
+    }
+    $packages.Remove($Matches[1])
+    $lines = @('Success')
 } elseif ($deviceCommand -eq 'settings list secure') {
     $lines = @($settings.Keys | ForEach-Object { "$_=$($settings[$_])" })
 } else {

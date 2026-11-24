@@ -13,9 +13,10 @@
 # Kestrel's own settings: the tests store the default options of the instant commands and Off as the listening mode, so
 # a run leaves Kestrel off with the default command options.
 # It passes the instrumentation argument kestrelCommands=true, without which every command test skips itself, so a run
-# with a skipped test, or without tests, fails. Kestrel and its test APK stay installed. After Ctrl+C, it ends with exit
-# code 1. Each command at the end runs only if the serial still names the emulator that the script accepted at the start;
-# if one cannot run, the script warns with the command that does it by hand and ends with exit code 1.
+# with a skipped test, or without tests, fails. Kestrel stays installed, as after every run of connected-test.ps1. After
+# Ctrl+C, it ends with exit code 1. Each command at the end runs only if the serial still names the emulator that the
+# script accepted at the start; if one cannot run, the script warns with the command that does it by hand and ends with
+# exit code 1.
 # Example: scripts\command-test.ps1 -Serial emulator-5554
 #          scripts\command-test.ps1 -Serial emulator-5554 -Class TouchCommandsTest,GestureCommandsTest#swipeUpOnANumber
 param(
@@ -102,7 +103,6 @@ try {
         ':app:connectedDebugAndroidTest'
         "-Pandroid.testInstrumentationRunnerArguments.$selection"
         '-Pandroid.testInstrumentationRunnerArguments.kestrelCommands=true'
-        '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
         # As in voice-test.ps1: no instrumentation argument of an earlier run may be reused by mistake.
         '--no-configuration-cache'
     )

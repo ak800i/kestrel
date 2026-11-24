@@ -1,19 +1,25 @@
-# Runs Gradle's connected (on-device) tests on one test device only.
+# Runs Gradle's connected (on-device) tests on one test device only, and keeps Kestrel and its data on it.
+# It runs only connected test tasks, and it always passes the Gradle properties with which the Android Gradle plugin
+# leaves Kestrel installed after the tests and clears none of its data ($KestrelDataProperties in scripts\lib\Kestrel.ps1).
+# It refuses a caller's argument that sets one of these properties otherwise, Gradle's --serial option, and every other
+# task.
 # Afterwards, also when the tests fail or Ctrl+C interrupts them, it checks that the serial still names the test device,
-# puts back the device's accessibility settings, and uninstalls the fixture app dev.kestrel.testapp if it was not
-# installed before. If the check fails, or Ctrl+C interrupts it while it puts these back, it warns with the commands that
-# do it by hand. If the check fails, it puts nothing back and ends with exit code 1, also when the tests passed. After
-# Ctrl+C, it ends with exit code 1.
+# puts back the device's accessibility settings, and uninstalls each package that Gradle installs for the tests (the
+# fixture app dev.kestrel.testapp and the test APKs, such as dev.kestrel.test) that was not installed before. Then it
+# checks that Kestrel kept its data: when Kestrel was installed before the tests and is now missing, or was installed
+# again, which its first-install time in 'dumpsys package' shows, it writes an error that names the loss and ends with
+# exit code 1, also when the tests passed. It does not try to bring the data back. If the device check fails, or Ctrl+C
+# interrupts the script while it puts these back, it warns with the commands that do it by hand. If the device check
+# fails, it puts nothing back and ends with exit code 1, also when the tests passed. After Ctrl+C, it ends with exit
+# code 1.
 # Example: scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest
 param(
     [Parameter(Mandatory = $true)][string]$Serial,
     [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)][string[]]$Tasks
 )
 $ErrorActionPreference = 'Stop'
-# Gradle's --serial option would override ANDROID_SERIAL and bypass the device guard.
-$serialOption = $Tasks | Where-Object { $_ -like '--serial*' } | Select-Object -First 1
-if ($serialOption) { throw "Refusing the Gradle argument '$serialOption'. Choose the device with -Serial." }
 . "$PSScriptRoot\lib\Kestrel.ps1"
+$gradleArguments = Get-ConnectedTestArguments -Arguments $Tasks
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
 # The Android Gradle plugin runs connected tests only on the devices listed in ANDROID_SERIAL.
@@ -22,9 +28,9 @@ $env:ANDROID_SERIAL = $Serial
 # services that it turns off. So the accessibility settings are put back afterwards, even when the tests fail or are
 # interrupted. If they cannot be read, the tests do not start.
 $saved = Get-AccessibilitySettings -Serial $Serial
-# Gradle installs the fixture app before the tests of :app and leaves it installed.
-$testApp = 'dev.kestrel.testapp'
-$testAppBefore = @(Invoke-SettingsCommand -Serial $Serial -Command "pm list packages $testApp") -contains "package:$testApp"
+# Kestrel's first-install time and the test packages that the device has before the tests. If they cannot be read, the
+# tests do not start, because the script could then not tell afterwards whether Kestrel kept its data.
+$packagesBefore = Get-KestrelPackageState -Serial $Serial
 # The commands that put the device back by hand. As Restore-AccessibilitySettings does, they put back the list of
 # services first, and they delete the list and the switch if these were not there before.
 $byHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($saved.Keys) | Select-Object -Unique) {
@@ -35,14 +41,14 @@ $byHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibil
             "settings delete secure $setting"
         }
     })
-if (-not $testAppBefore) { $byHand += "pm uninstall $testApp" }
+$byHand += Format-TestPackageRemoval -Keep $packagesBefore.TestPackages
 $code = 1
 $testsEnded = $false
 $failed = $false
 $restored = $false
 $refusal = $null
 try {
-    & "$PSScriptRoot\..\gradlew.bat" --console=plain @Tasks
+    & "$PSScriptRoot\..\gradlew.bat" --console=plain @gradleArguments
     $code = $LASTEXITCODE
     $testsEnded = $true
 } catch {
@@ -69,20 +75,24 @@ try {
         }
         # A run whose tests passed still fails when the device keeps changed settings.
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $saved) -and $code -eq 0) { $code = 1 }
-        if (-not $testAppBefore) {
-            $reason = ''
-            $gone = try {
-                $installed = @(Invoke-SettingsCommand -Serial $Serial -Command "pm list packages $testApp") -contains "package:$testApp"
-                if ($installed) { Invoke-SettingsCommand -Serial $Serial -Command "pm uninstall $testApp" | Out-Null }
-                -not (@(Invoke-SettingsCommand -Serial $Serial -Command "pm list packages $testApp") -contains "package:$testApp")
-            } catch {
-                $reason = " ($($_.Exception.Message))"
-                $false
+        $packagesAfter = try {
+            Get-KestrelPackageState -Serial $Serial
+        } catch {
+            Write-Warning ("Could not read the packages of $Serial ($($_.Exception.Message)), so the script could not check that Kestrel " +
+                "kept its data, nor uninstall the test packages. Run: & '$((Get-Adb) -replace "'", "''")' -s $Serial shell " +
+                "'$((Format-TestPackageRemoval -Keep $packagesBefore.TestPackages) -replace "'", "''")'")
+            $null
+        }
+        if ($null -eq $packagesAfter) {
+            if ($code -eq 0) { $code = 1 }
+        } else {
+            $loss = Get-KestrelDataLoss -Before $packagesBefore -After $packagesAfter -Serial $Serial
+            if ($loss) {
+                Write-Error -Message $loss -ErrorAction Continue
+                $code = 1
             }
-            if (-not $gone) {
-                Write-Warning "Could not uninstall $testApp from $Serial$reason. Run: & '$((Get-Adb) -replace "'", "''")' -s $Serial uninstall $testApp"
-                if ($code -eq 0) { $code = 1 }
-            }
+            $installed = @($packagesAfter.TestPackages | Where-Object { $packagesBefore.TestPackages -notcontains $_ })
+            if (-not (Remove-TestPackages -Serial $Serial -Packages $installed) -and $code -eq 0) { $code = 1 }
         }
         $restored = $true
     } finally {

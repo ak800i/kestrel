@@ -1,9 +1,9 @@
 # Runs the device tests of Kestrel's speech engines (the package dev.kestrel.app.voice) on one test device (design spec,
 # section 16.4). They need the speech models, so the script installs Kestrel, copies the models with
-# scripts\push-models.ps1 -Kokoro, also the optional Kokoro voice, whose tests run too, and keeps Kestrel and its test APK
-# installed afterwards, because uninstalling Kestrel deletes the models. The tests skip themselves when the models are
-# missing, so a run with a skipped test fails. Afterwards the script prints the timings and memory use that the tests
-# logged. After Ctrl+C, it ends with exit code 1.
+# scripts\push-models.ps1 -Kokoro, also the optional Kokoro voice, whose tests run too. Kestrel stays installed afterwards,
+# as after every run of scripts\connected-test.ps1, and keeps the models, which uninstalling it would delete. The tests
+# skip themselves when the models are missing, so a run with a skipped test fails. Afterwards the script prints the
+# timings and memory use that the tests logged. After Ctrl+C, it ends with exit code 1.
 # The test MicCaptureTest#silencedFollowsTheMicrophonesPrivacyToggle switches the device's microphone privacy toggle on
 # and off. If the test process dies in between, every app on the device hears only silence. So on a phone (a serial that
 # does not start with 'emulator-') the script leaves that test out, and on an emulator it switches the toggle off at the
@@ -100,7 +100,6 @@ try {
         $tasks = @(
             ':app:connectedDebugAndroidTest'
             '-Pandroid.testInstrumentationRunnerArguments.package=dev.kestrel.app.voice'
-            '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true'
             # The configuration cache is off for this run, so that no instrumentation argument of an earlier run, such as
             # the notClass of a run on a phone, can be reused by mistake.
             '--no-configuration-cache'
