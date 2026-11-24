@@ -1,5 +1,6 @@
 package dev.kestrel.eval.task
 
+import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.run.Reason
 import org.junit.Assert.assertEquals
@@ -12,34 +13,48 @@ class ClockTasksTest {
     fun alarmPassesWithTheNewAlarmAndLeavesNoTestAlarm() {
         val bench = TaskBench()
         val phone = ClockPhone(bench.run)
-        phone.shown.add("Delete")
-        bench.adb.hook("SCREEN_TAP") { extras ->
-            if (extras["label"] == "Delete") phone.alarms.clear()
-            "tapped=true count=1"
-        }
         var works = true
         bench.adb.hook("VOICE") { extras ->
-            if (works && extras["text"] == "Kestrel, set an alarm for 6:45 tomorrow morning") phone.alarmAt(6, 45)
+            if (works && extras["text"] == "Kestrel, set an alarm for 6:45 tomorrow morning") phone.setAlarm(6, 45)
             "sent"
         }
 
         assertEquals(Reason.OK, bench.run(ClockTasks.ALARM).reason)
         assertTrue(phone.alarms.isEmpty())
+        assertTrue(phone.rows.isEmpty())
         works = false
         assertEquals(Reason.CHECK, bench.run(ClockTasks.ALARM).reason)
         bench.assertPutBack()
     }
 
     @Test
+    fun alarmIsUntestableOnTheA71BeforeAnyChangeOrRestore() {
+        val bench = TaskBench(DeviceKind.A71)
+        val phone = ClockPhone(bench.run, ClockApp.SAMSUNG)
+        phone.row("6:45")
+        bench.adb.hook("VOICE") {
+            phone.setAlarm(6, 45)
+            "sent"
+        }
+
+        assertEquals(Reason.UNTESTABLE, bench.run(ClockTasks.ALARM).reason)
+        assertTrue(bench.run.console.lines.toString(), bench.run.console.lines.any { it.endsWith(": the owner's real alarms are on this phone.") })
+        assertTrue(bench.adb.commands.toString(), bench.adb.commands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("dumpsys alarm") || it.startsWith("cmd package") })
+        assertTrue(bench.adb.hookCalls("SCREEN_HAS").isEmpty() && bench.adb.hookCalls("SCREEN_TAP").isEmpty() && bench.adb.hookCalls("VOICE").isEmpty())
+        assertEquals(listOf("6:45"), phone.rows.map { it.time })
+        bench.assertPutBack()
+
+        val run = FakeRun(DeviceKind.A71)
+        ClockPhone(run, ClockApp.SAMSUNG)
+        assertEquals(SetupResult.Untestable("the owner's real alarms are on this phone"), ClockFree().apply(run.scope))
+        assertTrue(run.adb.commands.isEmpty())
+        assertEquals(0, run.restores.size)
+    }
+
+    @Test
     fun timerPassesWithARunningTimerAndLeavesNone() {
         val bench = TaskBench()
         val phone = ClockPhone(bench.run)
-        phone.shown.add("Delete")
-        bench.adb.hook("SCREEN_TAP") {
-            phone.alarms.clear()
-            phone.ongoing = false
-            "tapped=true count=1"
-        }
         var works = true
         bench.adb.hook("VOICE") { extras ->
             if (works && extras["text"] == "Kestrel, start a 5 minute timer") {
@@ -60,20 +75,14 @@ class ClockTasksTest {
     fun eachRehearsalSetsItsItemThroughAndroidsIntentAndTheRestoreDeletesIt() {
         val bench = TaskBench()
         val phone = ClockPhone(bench.run)
-        phone.shown.add("Delete")
         bench.adb.on("^am start -W -a android.intent.action.SET_ALARM --ei android.intent.extra.alarm.HOUR (\\d+) --ei android.intent.extra.alarm.MINUTES (\\d+) ") {
-            phone.alarmAt(it.groupValues[1].toInt(), it.groupValues[2].toInt())
+            phone.setAlarm(it.groupValues[1].toInt(), it.groupValues[2].toInt())
             ""
         }
         bench.adb.on("^am start -W -a android.intent.action.SET_TIMER --ei android.intent.extra.alarm.LENGTH 300 ") {
             phone.timerIn(299)
             phone.ongoing = true
             ""
-        }
-        bench.adb.hook("SCREEN_TAP") {
-            phone.alarms.clear()
-            phone.ongoing = false
-            "tapped=true count=1"
         }
 
         for (task in ClockTasks.ALL) {

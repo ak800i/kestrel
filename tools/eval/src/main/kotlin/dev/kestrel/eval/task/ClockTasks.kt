@@ -3,8 +3,9 @@ package dev.kestrel.eval.task
 import dev.kestrel.eval.device.DeviceKind
 
 /**
- * The suite's clock tasks (design D8 of sub-project 6), on both devices: an alarm at a time that the owner has no alarm
- * at, and a 5-minute timer, each deleted after the run by the clock's own taps and checked in `dumpsys alarm`. A
+ * The suite's clock tasks (design D8 of sub-project 6): an alarm at a time that the clock has no alarm at, which runs
+ * only on kestrel-api37 and is untestable on the A71, where the owner's real alarms are ([NoOwnerAlarms]), and a
+ * 5-minute timer on both devices, each deleted after the run by the clock's own taps and checked in `dumpsys alarm`. A
  * rehearsal sets its item through Android's intent, without the clock's screen.
  */
 object ClockTasks {
@@ -17,7 +18,7 @@ object ClockTasks {
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
-        setup = listOf(HomeScreen, ClockFree()),
+        setup = listOf(NoOwnerAlarms, HomeScreen, ClockFree()),
         check = listOf(NextAlarmAt),
         dryRun = DryRun("alarm.json"),
         rehearsal = Rehearsal.Steps(listOf(AlarmIntent)),
