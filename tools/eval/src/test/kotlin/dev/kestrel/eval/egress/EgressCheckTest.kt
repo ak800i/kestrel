@@ -184,6 +184,37 @@ class EgressCheckTest {
         assertEquals(listOf("tcp 2620:fe:0:0:0:0:0:10 port 853 has no name"), judge { tcp(vpn, 38300, Pcapdroid.DNS_V6, 853, byteArrayOf(1), kestrel) }.failures)
     }
 
+    @Test
+    fun theNamesThatKestrelsOwnDnsQueriesAskForMustBeAllowedAndTheResolversStayExempt() {
+        val packets = PcapReader.read(
+            PcapBuilder().apply {
+                udp("10.215.173.1", 33000, Pcapdroid.DNS_V4, 53, PcapBuilder.dnsQuery("api.githubcopilot.com"), kestrel)
+                udp("10.215.173.1", 33001, Pcapdroid.DNS_V4, 53, PcapBuilder.dnsQuery("API.githubcopilot.com"), kestrel)
+                udp("fd00:2:fd00:1:fd00:1:fd00:1", 33002, Pcapdroid.DNS_V6, 53, PcapBuilder.dnsQuery("cdn-lfs.hf.co"), null)
+                // Data in a name reaches that domain's name server, whether or not a connection follows.
+                udp("10.215.173.1", 33003, Pcapdroid.DNS_V4, 53, PcapBuilder.dnsQuery("c2VjcmV0.evil.example"), kestrel)
+                udp("10.215.173.1", 33004, Pcapdroid.DNS_V4, 53, byteArrayOf(0x43, 0x21, 1), kestrel)
+                // One label that holds dots, which would read as an allowed name.
+                val dotted = byteArrayOf(0x43, 0x21, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 21) + "api.githubcopilot.com".toByteArray() + byteArrayOf(0, 0, 1, 0, 1)
+                udp("10.215.173.1", 33006, Pcapdroid.DNS_V4, 53, dotted, kestrel)
+                // Android's resolver asks under its own UID for every app, so its queries are no data of Kestrel's.
+                udp("10.215.173.1", 33005, Pcapdroid.DNS_V4, 53, PcapBuilder.dnsQuery("evil.example"), 1051)
+                udp(Pcapdroid.DNS_V4, 53, "10.215.173.1", 33000, PcapBuilder.dnsAnswer("api.githubcopilot.com", null, "140.82.112.3"), kestrel)
+            }.bytes(),
+        )
+
+        val result = EgressCheck.judge(packets, kestrel, listOf("api.githubcopilot.com"), listOf("*.hf.co"))
+
+        assertEquals(
+            listOf("a DNS query of Kestrel's for c2vjcmv0.evil.example, which is not on the allowlist", "2 DNS queries of Kestrel's that the check cannot read"),
+            result.failures,
+        )
+        assertEquals(emptyList<Connection>(), result.connections)
+        assertEquals(mapOf("api.githubcopilot.com" to 2, "c2vjcmv0.evil.example" to 1, "cdn-lfs.hf.co" to 1), result.queries)
+        assertTrue(result.text(), result.text().startsWith("dns api.githubcopilot.com queries=2\ndns c2vjcmv0.evil.example queries=1\ndns cdn-lfs.hf.co queries=1\n"))
+        assertTrue(EgressCheck.judge(packets.take(3), kestrel, listOf("api.githubcopilot.com"), listOf("*.hf.co")).passed)
+    }
+
     @Test(timeout = 10_000)
     fun theParsersFollowDnsPointersStopAtACycleAndReadTcpOptionsRawIpAndMalformedClientHellos() {
         assertEquals(mapOf("18.66.1.1" to "cdn-lfs.hf.co"), Names.dnsAnswers(PcapBuilder.dnsAnswer("cdn-lfs.hf.co", null, "18.66.1.1", compressed = true)))

@@ -77,6 +77,9 @@ class PcapBuilder(private val link: Int = 1) {
             return byteArrayOf(22) + u16(0x0301) + u16(handshake.size) + handshake
         }
 
+        /** A DNS query, as a stub resolver sends it: one question for [name], of type A, with recursion desired. */
+        fun dnsQuery(name: String): ByteArray = u16(0x4321) + u16(0x0100) + u16(1) + u16(0) + u16(0) + u16(0) + dnsName(name) + u16(1) + u16(1)
+
         /**
          * A DNS answer to [asked], through the CNAME [alias] when given, with the A or AAAA record [address]. When
          * [compressed], as real answers are, each record names its owner with a pointer: to the question, or to the alias.
