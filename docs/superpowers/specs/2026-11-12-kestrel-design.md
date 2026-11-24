@@ -1047,7 +1047,7 @@ kestrel/
 
 ## 18. Delivery plan
 
-Kestrel is built as six sub-projects, in this order. Each one gets its own implementation plan in `docs/superpowers/plans/`, and each plan starts by re-reading this spec and the results of the spikes in section 19. The first release for daily use needs all six. After sub-project 3, Kestrel can already replace Voice Access.
+Kestrel is built as seven sub-projects, in this order. Each one gets its own implementation plan in `docs/superpowers/plans/`, and each plan starts by re-reading this spec and the results of the spikes in section 19. The first release for daily use needs the first six; sub-project 7 comes in a later release. After sub-project 3, Kestrel can already replace Voice Access.
 
 ### 18.1 Sub-project 1: Foundation
 
@@ -1081,6 +1081,12 @@ Kestrel is built as six sub-projects, in this order. Each one gets its own imple
 - **Release checklist:** `docs/release-checklist.md`, which the README links: CI passes; the suite with `--compare` passes on the emulator, and on the A71 when it is connected; the egress list is clean; no injection run failed; the voice evaluation meets section 16.4; then the `v*` tag (section 17).
 - **Done when:** the task suite, the injection suite and the egress check run end to end on both test devices (on kestrel-api37 alone while the A71 is away, with the A71's runs added when it is back), the baseline is recorded and committed, datamarking's default is set by section 16.6's rule, the network log's changes pass their tests, and a release candidate is ready for the owner to install on the S23+ whenever they decide to.
 
+### 18.7 Sub-project 7: Conversations
+
+- **Scope:** multi-turn conversations with memory and the conversation screen, the owner's two musts (D29, D30); long goals with a checklist, steering, limits per round and "Continue?" (D31); past conversations that are kept, searched, read and continued (D32); safety across a conversation (D33); the new module `:core:conversation`, the goal service, the encrypted archive, the Conversations page and the multi-turn tasks of the suite. Its design is `docs/superpowers/specs/2026-11-24-conversations-design.md`.
+- **Plans:** 7.0 writes the design into this spec. 7A lays the agent's groundwork in `:core:agent`: the goal and history ports, the checklist, the limits and their question, the new ends, the context's order, steering and the wait for Kestrel's own screen. 7B builds `:core:conversation` alone, on the JVM. 7C adds the encrypted archive in `:core:privacy` with its adapter, and can run beside 7B. 7D moves the voice path onto the conversation, deletes `AgentRunner`, `AppOwnerPort` and the task parts of the Orchestrator's rules in the same plan, so that there is never a time with two task paths, and switches the owner's limits on. 7E adds the goal service and the resilience to locks, calls and restarts with listening off. 7F adds the conversation screen as the launcher, the past conversations, the question card with "Reply…", the typed-input boundary, the speech rules and the Conversations page. 7G adds the multi-turn tasks to `:tools:eval`. The order is 7.0, 7A, 7B (with 7C beside it), 7D, 7E, 7F and 7G, and each plan ends green on its own.
+- **Done when:** the suite's 29 tasks show no drop against their baseline of sub-project 6, judged as section 16.5 says, on kestrel-api37 and the A71; each multi-turn task passes 3 of 3 dry runs, and the live ones 3 of 3 runs in test mode; the injection suite, with `records-injection`, has no send, share, call or delete without the confirmation that Standard mode requires; the egress check is unchanged; the first search over 30 days of conversations takes at most 1 s on the A71 (section 5.3); the voice path passes its gate: the task cases of the Orchestrator's rules moved one for one to the conversation's tests, the device tests of `dev.kestrel.app.agent` and `dev.kestrel.app.commands` pass, and the eval dry suite gives sub-project 6's result on kestrel-api37; and the results of the spikes S9 and S10 are in section 19.1.
+
 ## 19. Early verification spikes
 
 These spikes check assumptions that could change the design. Each has a fallback that keeps the design working.
@@ -1095,6 +1101,8 @@ These spikes check assumptions that could change the design. Each has a fallback
 | S6 | Does browser sign-in with a redirect to a loopback address work from a Custom Tab (OpenRouter and Sign in with ChatGPT)? | Emulator, A71 | An API key for both |
 | S7 | Does `adb push` into `Android/data/dev.kestrel/files` work on Android 13 and 17? | A71, emulator | Importing the models from a folder that the owner picks with the system file picker |
 | S8 | Can the sherpa-onnx library (with ONNX Runtime linked statically) and onnxruntime-android load together without conflicts? | Emulator | A sherpa-onnx build that shares the same ONNX Runtime library |
+| S9 | Can the goal service start as a foreground service of the type `specialUse` from the conversation screen, from the voice path while `ListeningService` runs, and from the goal notification's Continue? Can it add `mediaPlayback` while it speaks with listening off? Plan 7E checks it. | A71, emulator | Kestrel holds the goal as interrupted and says "Android didn't let me start working in the background. Open Kestrel and tap Continue." |
+| S10 | Does the first search over 30 days of past conversations take at most 1 s on the A71, where each row is decrypted through the Keystore? Plan 7C measures it. | A71 | The search's index stored encrypted in a row of its own |
 
 ### 19.1 Results
 
@@ -1136,6 +1144,12 @@ These spikes check assumptions that could change the design. Each has a fallback
 10. **Developer verification.** Google's developer verification, rolling out globally in 2027, will make it harder to share APKs with other people. `adb install` stays exempt (B8).
 11. **One UI 9 behaviour,** such as the side key and battery management, is verified only when the owner allows tests on the S23+.
 12. **Unverified research.** Some facts in Appendix B came from research agents and were not re-read (marked †). They must be checked before a design decision relies on them.
+13. **The voice path's rewrite (sub-project 7).** Moving the task rules of the Orchestrator, `AgentRunner` and `AppOwnerPort` into the conversation may lose a rule from sub-project 5's reviews. The one-for-one move of their tests, the unchanged device suites and the eval dry suite are the gate (section 18.7).
+14. **The cost of long goals.** 1,000 AI Credits are $10 per round, and each yes to "Continue?" allows as much again. A goal that makes slow progress, such as scrolling a long list, stops only at a limit; stuck detection still ends a goal without progress.
+15. **Steering lands one step late.** A step that started before a correction runs to its end, also a confirmed send. "Stop" and a touch still stop at once.
+16. **The allowance across commands in full-auto.** With D33, a command such as "and to Mila too" may send in full-auto without the question "You didn't ask me to …", also in a conversation that was continued days later. Standard and Relaxed modes still confirm every send, and every call is still handed over.
+17. **Typed input on Android 13.** Android 13 cannot mark the conversation screen's window as sensitive for accessibility, so another app's accessibility service could set the field's text. The A71 is only a test device; the S23+ runs Android 17, where the window is protected.
+18. **Prompt size.** The records block adds up to 2,000 tokens to the first request of each later command, which the cache then holds for its later steps. The suite's token counts show the real effect.
 
 ## 21. Later milestones
 
@@ -1160,7 +1174,7 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | General | Again; Cancel | Yes |
 | General | Circle to Search | Yes, through Android's system action where the launcher offers it; otherwise Kestrel says that it isn't available on the phone. Kestrel makes no gesture on the navigation handle. |
 | General | Media play; Media pause | Yes |
-| General | "Hey Google, …" commands through Gemini | Not applicable; tasks start with "Kestrel" |
+| General | "Hey Google, …" commands through Gemini | Not applicable; Kestrel's commands start with "Kestrel", come inside the follow-up window or are typed |
 | Help | What can I say?; Show all commands; Open tutorial | Yes. Kestrel opens the list of commands on its settings page "Instant commands" and speaks a short summary; "Show commands" does the same. There is no separate tutorial, and "help" alone is a bare label. |
 | Help | Show numbers; Hide numbers; Show labels; Hide labels; What is [number]?; Show commands for [label or number] | Yes |
 | Help | Stop Voice Access; Voice Access settings | Yes, as "Stop Kestrel" and "Kestrel settings" |
@@ -1191,24 +1205,27 @@ This table follows Google's published Voice Access command list (B1). "Yes" mean
 | Keyboard | Show keyboard; Hide keyboard | Yes |
 | Magnification | Start magnification; Start zooming; Magnify; Zoom in; Enhance; Zoom out; Pan, move, go or scroll up, down, left or right; Stop magnification; Stop zooming; Cancel zooming | Yes, through the accessibility magnification controller |
 | Stopping | Stop listening; Touch to pause in the notification; screen off; time-out after no speech | Yes |
-| Options | Cancel on touch | Always on, for tasks and for an instant command's question or a call's countdown (section 14.1) |
+| Options | Cancel on touch | Always on: a touch interrupts a goal, which stays held with Continue and Cancel, and cancels an instant command's question or a call's countdown (section 14.1) |
 | Options | Require verbs; numbers for all items or only unlabeled ones; behaviour on screen wake-up; time-out after no speech | Yes (section 9.8) |
 | Options | Recognize common icons | Later (section 21) |
 | Options | Activation with a Bluetooth or wired switch | Later |
 
-Kestrel adds these commands, which use its name:
+Kestrel adds these commands, which use its name. Typed on the conversation screen, Kestrel's own requests need no name (section 12.1):
 
 | Command | Effect |
 |---|---|
-| Kestrel, [task] | Runs a task |
-| Kestrel | Answers "Yes?" and treats the next utterance as a task |
+| Kestrel, [command] | A command of the conversation: it starts a goal, steers the running one or resumes a held one (sections 11.1 and 11.10) |
+| [command] inside the follow-up window | The same, without the name (section 8.3) |
+| Kestrel | Answers "Yes?" and treats the next utterance as a command |
 | Kestrel, wake up | Resumes listening from the paused mode |
 | Kestrel, turn off | Turns Kestrel off, as "Stop Kestrel" does |
-| Kestrel, stop | Stops speech and cancels a running task |
-| Kestrel, continue | Resumes a task after a hand-over |
+| Kestrel, stop | Stops speech and ends a running goal with its report |
+| Kestrel, continue | Resumes a goal after a hand-over, a pause, a limit or an interruption |
+| Kestrel, new conversation; Kestrel, start a new conversation | Closes the open conversation; while a goal is open, Kestrel says "Stop the goal first." |
+| Kestrel, continue the conversation about [topic]; continue our conversation about [topic]; go back to the conversation about [topic] | Finds the past conversation and asks "Continue the conversation from <day> about <topic>?" before it switches; without a topic, it means the newest past conversation (section 11.1) |
 | Kestrel, save that as [name] | Saves the last task as a routine |
 | Kestrel, remember [fact]; Kestrel, forget [fact] | Adds or removes an alias or fact, after confirmation |
-| Kestrel, delete history | Wipes the activity log and the network log, after a spoken confirmation. It comes with the agent (sub-project 5); until then, the button on the settings pages of the logs does it. |
+| Kestrel, delete history | Wipes the activity log, the network log and the past conversations, after a confirmation (section 13.5) |
 | Kestrel, open settings; Kestrel settings | Opens Kestrel's settings |
 
 ### Coverage of the "Yes" rows on the emulator
