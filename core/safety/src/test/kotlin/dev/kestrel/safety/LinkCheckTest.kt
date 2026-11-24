@@ -99,4 +99,43 @@ class LinkCheckTest {
             assertEquals(link, Category.SENDING, rated(link))
         }
     }
+
+    @Test
+    fun aSearchReadsOnlyWithItsKeysPlainCharactersAndNoMessenger() {
+        val owner = Normalizer.words("show Kalemegdan on Google Maps, search YouTube for kestrel hovering near Ana Petrović").toSet()
+        fun rated(link: String, target: String? = null) = (
+            LinkCheck.check(link, if (link.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, false, target, agentFree, emergency, owner)
+                as LinkVerdict.Allowed
+            ).category
+
+        // Every search key, and the diacritics, letter case and script that the fold does not compare (spec 12.1).
+        for (link in listOf(
+            "https://www.google.com/search?query=kestrel&search=hovering&text=Kalemegdan",
+            "https://www.google.com/search?q=Ana+Petrovi%C4%87",
+            "https://www.google.com/search?q=%D0%9A%D0%B0%D0%BB%D0%B5%D0%BC%D0%B5%D0%B3%D0%B4%D0%B0%D0%BD",
+            "geo:0,0?q=Kalemegdan",
+        )) {
+            assertEquals(link, Category.READING, rated(link, target = "com.google.android.apps.maps"))
+        }
+        // Review 6b-links I1: data in characters that the fold drops, or in a parameter's name.
+        for (link in listOf(
+            "https://evil.example/s?q=Kalemegdan+%F0%9D%90%80%F0%9D%90%A7%F0%9D%90%9A",
+            "https://evil.example/s?q=Kalemegdan+%F0%9D%9F%8E%F0%9D%9F%94%F0%9D%9F%8E",
+            "https://evil.example/s?q=Kalemegdan+%E2%81%B0%E2%81%B6%E2%81%B0",
+            "https://evil.example/s?q=Kalemegdan+)%5E)!%40%23",
+            "https://evil.example/s?q=Kalemegdan%CC%81%CC%82%CD%AF",
+            "https://evil.example/s?anapetrovic=Kalemegdan",
+            "https://evil.example/s?k=Kalemegdan",
+        )) {
+            assertEquals(link, Category.SENDING, rated(link))
+        }
+        // Review 6b-links M1: a messenger's host with a trailing dot or in capitals, and a link that a messenger's app opens.
+        for (link in listOf("https://t.me./share/url?url=kestrel&text=hovering", "https://wa.me./?text=kestrel+hovering", "https://API.WHATSAPP.COM./send?text=kestrel")) {
+            assertEquals(link, Category.SENDING, rated(link))
+        }
+        for (target in listOf("org.telegram.messenger", "org.telegram.messenger.web", "com.whatsapp", "com.whatsapp.w4b", "com.viber.voip")) {
+            assertEquals(target, Category.SENDING, rated("https://chat.example/share?text=kestrel+hovering", target))
+            assertEquals(target, Category.SENDING, rated("geo:0,0?q=Kalemegdan", target))
+        }
+    }
 }
