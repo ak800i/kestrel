@@ -8,24 +8,41 @@
     Justification = 'Pester shares the variables of BeforeAll with the It blocks.')]
 param()
 
-Describe 'Get-DeviceTaskArgument' {
+Describe 'Get-GradleArgumentKind' {
     BeforeAll {
         . "$PSScriptRoot\..\lib\Kestrel.ps1"
     }
 
-    It 'returns the argument that names a device task: <_>' -ForEach @(
-        'installDebug', ':app:installDebug', ':testapp:installDebug', 'installDebugAndroidTest', 'uninstallAll',
-        ':app:uninstallDebug', 'connectedCheck', 'connectedAndroidTest', ':app:connectedDebugAndroidTest', 'deviceCheck',
-        ':core:privacy:connectedDebugAndroidTest'
+    It 'knows a connected test by its full name: <_>' -ForEach @(
+        'connectedCheck', 'connectedAndroidTest', ':app:connectedDebugAndroidTest', ':core:privacy:connectedDebugAndroidTest'
     ) {
-        Get-DeviceTaskArgument -Arguments @('check', $_, '--console=plain') | Should -BeExactly @($_)
+        Get-GradleArgumentKind $_ | Should -BeExactly 'ConnectedTest'
     }
 
-    It 'returns nothing for tasks and options that do not reach a device: <_>' -ForEach @(
-        'check', 'assembleDebug', 'kestrelAudit', ':app:assembleDebugAndroidTest', 'testDebugUnitTest', 'lint', '--stop',
-        '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest', ':tools:eval:installDist'
+    It 'counts every other name that can reach a device task as a device task, also an abbreviated one: <_>' -ForEach @(
+        'installDebug', ':app:installDebug', ':testapp:installDebug', 'installDebugAndroidTest', 'uninstallAll',
+        ':app:uninstallDebug', 'deviceCheck', 'deviceAndroidTest', 'connectedcheck', 'UNINSTALLALL', 'iD', ':app:iD', 'inst',
+        'i', 'uA', 'unA', 'cDAT', 'CDAT', 'cC', 'c-d-a-t', 'dC', 'de'
     ) {
-        Get-DeviceTaskArgument -Arguments @($_) | Should -BeNullOrEmpty
+        Get-GradleArgumentKind $_ | Should -BeExactly 'Device'
+    }
+
+    It 'counts a task that cannot reach a device as a build: <_>' -ForEach @(
+        'check', 'assembleDebug', 'kestrelAudit', ':app:assembleDebugAndroidTest', 'testDebugUnitTest', 'lint', 'clean',
+        'compileDebugKotlin', 'dependencies', 'init', 'help', ':build-logic:convention:check', ':tools:eval:installDist',
+        ':tools:catalog-sync:syncCatalog'
+    ) {
+        Get-GradleArgumentKind $_ | Should -BeExactly 'Build'
+    }
+
+    It 'tells Gradle''s --serial option from the other options: <Argument>' -ForEach @(
+        @{ Argument = '--serial=emulator-5554'; Kind = 'Serial' }
+        @{ Argument = '--serial'; Kind = 'Serial' }
+        @{ Argument = '--stop'; Kind = 'Option' }
+        @{ Argument = '--no-configuration-cache'; Kind = 'Option' }
+        @{ Argument = '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.InstallTest'; Kind = 'Option' }
+    ) {
+        Get-GradleArgumentKind $Argument | Should -BeExactly $Kind
     }
 }
 

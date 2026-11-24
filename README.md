@@ -64,7 +64,7 @@ The release checklist:
 
 ## Testing on a device
 
-Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The scripts refuse other devices. An emulator's serial can pass to another emulator that starts after it ended, so the commands with which the scripts read and change settings check, in the same `adb shell` call, that the device is still the one that the script accepted. Run the device tests with `connected-test.ps1` and install with `install.ps1`: `gradle.ps1` refuses tasks that install or test on a device unless the environment variable `ANDROID_SERIAL` names test devices, and for other tasks it hides every device from Gradle.
+Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The scripts refuse other devices. An emulator's serial can pass to another emulator that starts after it ended, so the commands with which the scripts read and change settings check, in the same `adb shell` call, that the device is still the one that the script accepted. Run the device tests with `connected-test.ps1` and install with `install.ps1`: `gradle.ps1` refuses every task that installs, uninstalls or runs tests on a device, also by an abbreviated name such as `cDAT`, whatever `ANDROID_SERIAL` says, and it hides every device from Gradle.
 
 ```powershell
 scripts\create-avd.ps1                    # once: installs Android 17 and creates kestrel-api37

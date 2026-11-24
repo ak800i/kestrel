@@ -1,26 +1,18 @@
-# Runs the Gradle wrapper with Android Studio's JDK and the shared Android SDK.
-# Tasks that act on a device, such as installs and connected tests, run only when ANDROID_SERIAL names test devices
-# (scripts\lib\Kestrel.ps1, Assert-TestDevice). Run device tests with scripts\connected-test.ps1 and install with
-# scripts\install.ps1, which also put the device back. For any other call, ANDROID_SERIAL names a device that cannot
-# exist, so that a device task that the name check misses, such as an abbreviated one, finds no device.
+# Runs the Gradle wrapper with Android Studio's JDK and the shared Android SDK, for builds and checks on this computer.
+# It refuses every task that can install, uninstall or run tests on a device, also by an abbreviated name, with or
+# without ANDROID_SERIAL, and Gradle's --serial option (Assert-GradleBuildArguments in scripts\lib\Kestrel.ps1). Run
+# device tests with scripts\connected-test.ps1, which keeps Kestrel and its data, and install with scripts\install.ps1.
+# While Gradle runs, ANDROID_SERIAL names a device that cannot exist, so that a device task that the check missed finds
+# no device.
 # Example: scripts\gradle.ps1 check kestrelAudit
 . "$PSScriptRoot\lib\Kestrel.ps1"
+Assert-GradleBuildArguments -Arguments $args
 Use-KestrelToolchain
-# Gradle's --serial option would override ANDROID_SERIAL and bypass the device guard.
-$serialOption = $args | Where-Object { $_ -like '--serial*' } | Select-Object -First 1
-if ($serialOption) { throw "Refusing the Gradle argument '$serialOption'. Choose the device with ANDROID_SERIAL." }
-$deviceTasks = @(Get-DeviceTaskArgument -Arguments $args)
-if ($deviceTasks.Count -gt 0) {
-    if (-not $env:ANDROID_SERIAL) {
-        throw "Refusing the device task '$($deviceTasks[0])' without ANDROID_SERIAL. Run device tests with scripts\connected-test.ps1 and install with scripts\install.ps1."
-    }
-    foreach ($serial in $env:ANDROID_SERIAL -split ',') { Assert-TestDevice -Serial $serial.Trim() }
-}
 # The script runs in the caller's PowerShell, so ANDROID_SERIAL is put back afterwards.
 $callerSerial = $env:ANDROID_SERIAL
 $code = 1
 try {
-    if ($deviceTasks.Count -eq 0) { $env:ANDROID_SERIAL = 'kestrel-no-device' }
+    $env:ANDROID_SERIAL = 'kestrel-no-device'
     & "$PSScriptRoot\..\gradlew.bat" --console=plain @args
     $code = $LASTEXITCODE
 } finally {

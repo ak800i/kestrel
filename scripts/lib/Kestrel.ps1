@@ -166,12 +166,51 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
     $back
 }
 
-# Returns the arguments of a Gradle call that name a task of the Android Gradle plugin that acts on a device: installs,
-# uninstalls, connected (on-device) tests and device checks. Options, which start with '-', are not tasks. installDist of
-# Gradle's application plugin, which scripts\eval.ps1 runs to build :tools:eval's copy on this computer, reaches no device.
-# Gradle also accepts abbreviated task names, which this check misses, so scripts\gradle.ps1 has a second guard.
-function Get-DeviceTaskArgument([string[]]$Arguments) {
-    @($Arguments | Where-Object { $_ -notlike '-*' -and ($_ -split ':')[-1] -match 'install|connected|devicecheck' -and ($_ -split ':')[-1] -ne 'installDist' })
+# The first words of the names of the Android Gradle plugin's tasks that act on a device: installs, uninstalls,
+# connected (on-device) tests and device checks.
+$DeviceTaskWords = @('install', 'uninstall', 'connected', 'device')
+
+# Tells what a Gradle argument can do to a device, for scripts\gradle.ps1 and scripts\connected-test.ps1:
+#   Serial         Gradle's --serial option, which would override ANDROID_SERIAL and so pass by the device guards
+#   Option         every other option, which starts with '-'
+#   ConnectedTest  a task that runs connected tests, by its full name: connected<...>AndroidTest or connectedCheck
+#   Device         every other task that can install, uninstall or run tests on a device
+#   Build          a task that cannot
+# Gradle also runs the task that a name abbreviates: it compares names without regard to letter case, and camel case by
+# camel case, each part of the name as the start of a word of the task's name (cDAT for connectedDebugAndroidTest, uA
+# for uninstallAll), always from the start of the task's name. So a name can reach a device task only when its first
+# part is the start of one of $DeviceTaskWords or the name starts with one of them, and every such name is a Device
+# task, also when it could name another task too. installDist of Gradle's application plugin, which scripts\eval.ps1
+# runs to build :tools:eval's copy on this computer, is a Build task.
+function Get-GradleArgumentKind([string]$Argument) {
+    if ($Argument -like '--serial*') { return 'Serial' }
+    if ($Argument -like '-*') { return 'Option' }
+    # The last part of a task's path is the task's name.
+    $task = ($Argument -split ':')[-1]
+    if ($task -cmatch '^connected(\w*AndroidTest|Check)$') { return 'ConnectedTest' }
+    if ($task -ceq 'installDist' -or -not $task) { return 'Build' }
+    # The first part ends before the next capital letter, digit or punctuation, as Gradle splits a name.
+    $first = ([regex]::Match($task, '^.[a-z]*')).Value.ToLowerInvariant()
+    $name = $task.ToLowerInvariant()
+    foreach ($word in $DeviceTaskWords) {
+        if ($word.StartsWith($first) -or $name.StartsWith($word)) { return 'Device' }
+    }
+    'Build'
+}
+
+# Refuses a call of scripts\gradle.ps1 that could install, uninstall or run tests on a device, also through an
+# abbreviated task name, or that names a device with --serial: such tasks run only through scripts\connected-test.ps1,
+# which keeps Kestrel and its data, and scripts\install.ps1.
+function Assert-GradleBuildArguments([string[]]$Arguments) {
+    foreach ($argument in $Arguments) {
+        switch (Get-GradleArgumentKind $argument) {
+            'Serial' { throw "Refusing the Gradle argument '$argument'. gradle.ps1 reaches no device." }
+            { $_ -in 'ConnectedTest', 'Device' } {
+                throw ("Refusing the Gradle task '$argument', which can install, uninstall or run tests on a device. Run device tests " +
+                    'with scripts\connected-test.ps1 and install with scripts\install.ps1.')
+            }
+        }
+    }
 }
 
 # The Gradle properties with which scripts\connected-test.ps1 runs every connected test, so that a run keeps Kestrel
@@ -198,7 +237,8 @@ $KestrelDataProperties = [ordered]@{
 function Get-ConnectedTestArguments([string[]]$Arguments) {
     $own = @(foreach ($name in $KestrelDataProperties.Keys) { "-P$name=$($KestrelDataProperties[$name])" })
     $passed = @(foreach ($argument in $Arguments) {
-        if ($argument -like '--serial*') { throw "Refusing the Gradle argument '$argument'. Choose the device with -Serial." }
+        $kind = Get-GradleArgumentKind $argument
+        if ($kind -eq 'Serial') { throw "Refusing the Gradle argument '$argument'. Choose the device with -Serial." }
         if ($own -ccontains $argument) { continue }
         foreach ($name in $KestrelDataProperties.Keys) {
             if ($argument -like "*$name*") {
@@ -206,7 +246,7 @@ function Get-ConnectedTestArguments([string[]]$Arguments) {
                     'so that the run keeps Kestrel and its data.')
             }
         }
-        if ($argument -notlike '-*' -and ($argument -split ':')[-1] -notmatch '^connected(\w*AndroidTest|Check)$') {
+        if ($kind -notin 'Option', 'ConnectedTest') {
             throw "Refusing the Gradle argument '$argument'. connected-test.ps1 runs only connected test tasks, such as :app:connectedDebugAndroidTest."
         }
         $argument
