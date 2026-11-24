@@ -71,6 +71,18 @@ Describe 'gradle.ps1' {
         $arguments | Should -Not -Exist
     }
 
+    It 'refuses a device task after the value of an option: <_>' -ForEach @(
+        , @(':app:testDebugUnitTest', '--tests', 'dev.kestrel.app.X', 'installDebug')
+        , @('--warning-mode', 'all', 'installDebug')
+    ) {
+        $run = Invoke-Gradle -Arguments $_ -Serial ''
+
+        $run.Code | Should -Be 1
+        $run.Output | Should -BeExactly ("refused: Refusing the Gradle task 'installDebug', which can install, uninstall or run tests on a device. " +
+            'Run device tests with scripts\connected-test.ps1 and install with scripts\install.ps1.')
+        $arguments | Should -Not -Exist
+    }
+
     It 'passes a build to Gradle, with an ANDROID_SERIAL that names no device' {
         $run = Invoke-Gradle -Arguments @('check', 'kestrelAudit', ':tools:eval:installDist', '--stop') -Serial 'emulator-5554'
 
@@ -78,5 +90,17 @@ Describe 'gradle.ps1' {
         $run.Output | Should -BeNullOrEmpty
         (Get-Content -LiteralPath $arguments) | Should -BeExactly '--console=plain check kestrelAudit :tools:eval:installDist --stop'
         (Get-Content -LiteralPath $serial) | Should -BeExactly 'kestrel-no-device'
+    }
+
+    It 'passes a build whose option values or excluded tasks look like device tasks: <_>' -ForEach @(
+        , @(':app:testDebugUnitTest', '--tests', 'dev.kestrel.app.X')
+        , @(':app:testDebugUnitTest', '--tests=dev.kestrel.app.X')
+        , @('check', '-x', 'connectedCheck')
+    ) {
+        $run = Invoke-Gradle -Arguments $_ -Serial ''
+
+        $run.Code | Should -Be 0
+        $run.Output | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $arguments) | Should -BeExactly "--console=plain $($_ -join ' ')"
     }
 }

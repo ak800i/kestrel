@@ -170,9 +170,7 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
 # connected (on-device) tests and device checks.
 $DeviceTaskWords = @('install', 'uninstall', 'connected', 'device')
 
-# Tells what a Gradle argument can do to a device, for scripts\gradle.ps1 and scripts\connected-test.ps1:
-#   Serial         Gradle's --serial option, which would override ANDROID_SERIAL and so pass by the device guards
-#   Option         every other option, which starts with '-'
+# Tells what the task that a name on Gradle's command line selects can do to a device:
 #   ConnectedTest  a task that runs connected tests, by its full name: connected<...>AndroidTest or connectedCheck
 #   Device         every other task that can install, uninstall or run tests on a device
 #   Build          a task that cannot
@@ -182,28 +180,85 @@ $DeviceTaskWords = @('install', 'uninstall', 'connected', 'device')
 # part is the start of one of $DeviceTaskWords or the name starts with one of them, and every such name is a Device
 # task, also when it could name another task too. installDist of Gradle's application plugin, which scripts\eval.ps1
 # runs to build :tools:eval's copy on this computer, is a Build task.
-function Get-GradleArgumentKind([string]$Argument) {
-    if ($Argument -like '--serial*') { return 'Serial' }
-    if ($Argument -like '-*') { return 'Option' }
+function Get-GradleTaskKind([string]$Name) {
     # The last part of a task's path is the task's name.
-    $task = ($Argument -split ':')[-1]
+    $task = ($Name -split ':')[-1]
     if ($task -cmatch '^connected(\w*AndroidTest|Check)$') { return 'ConnectedTest' }
     if ($task -ceq 'installDist' -or -not $task) { return 'Build' }
     # The first part ends before the next capital letter, digit or punctuation, as Gradle splits a name.
     $first = ([regex]::Match($task, '^.[a-z]*')).Value.ToLowerInvariant()
-    $name = $task.ToLowerInvariant()
+    $lower = $task.ToLowerInvariant()
     foreach ($word in $DeviceTaskWords) {
-        if ($word.StartsWith($first) -or $name.StartsWith($word)) { return 'Device' }
+        if ($word.StartsWith($first) -or $lower.StartsWith($word)) { return 'Device' }
     }
     'Build'
 }
 
+# The options of Gradle 9.9.1 (gradle\wrapper\gradle-wrapper.properties) that take a value, by their long and short
+# names. They are every StringBuildOption, EnumBuildOption, ListBuildOption and IntegerBuildOption that the distribution
+# gives a command-line name (StartParameterBuildOptions, LoggingConfigurationBuildOptions, DaemonBuildOptions,
+# ParallelismBuildOptions and BuildLayoutParametersBuildOptions), and -D and -P (SystemPropertiesCommandLineConverter
+# and ProjectPropertiesCommandLineConverter), as read from gradle-9.9.1-bin; Gradle's command-line reference lists them
+# too: https://docs.gradle.org/9.9.1/userguide/command_line_interface.html. Gradle 9 has no -b or -c.
+$GradleValueOptions = @(
+    'gradle-user-home', 'g', 'project-dir', 'p', 'project-cache-dir', 'init-script', 'I', 'include-build', 'exclude-task', 'x',
+    'system-prop', 'D', 'project-prop', 'P', 'console', 'console-unicode', 'warning-mode', 'max-workers', 'priority',
+    'configuration-cache-problems', 'update-locks', 'dependency-verification', 'F', 'write-verification-metadata', 'M',
+    'develocity-plugin-version', 'develocity-url'
+)
+
+# The task options that take a value and that Gradle gives to the task before them: --tests of Gradle's test tasks, which
+# Kestrel's unit tests use (https://docs.gradle.org/9.9.1/userguide/java_testing.html#test_filtering). A task that
+# has no such option fails the build before any task runs. The value of another task option counts as a task name,
+# which can only refuse more.
+$GradleTaskValueOptions = @('tests')
+
+# Reads Gradle's command line as Gradle 9.9.1's parser (org.gradle.cli.CommandLineParser) reads it, and returns each
+# argument with its kind, for scripts\gradle.ps1 and scripts\connected-test.ps1:
+#   Serial         --serial, which would override ANDROID_SERIAL and so pass by the device guards
+#   Option         every other option, with its value when the value is attached to it (--console=plain, -Pname=value)
+#   Value          the value of the option before it (--tests dev.kestrel.app.X, -P name=value)
+#   ExcludedTask   the task that the -x or --exclude-task before it keeps from running
+#   ConnectedTest, Device or Build   a task, as Get-GradleTaskKind tells
+# An option that takes a value takes the next argument unless that one starts with '-'; a short option also takes the
+# rest of its argument (-xcheck, -x=check). The parser also accepts a long option after one '-' (-console plain).
+# After '--', only tasks and their options follow. Where Gradle could read an argument as a task, it counts as one.
+function Get-GradleArgumentKinds([string[]]$Arguments) {
+    $afterOptions = $false
+    $valueOf = $null
+    foreach ($argument in $Arguments) {
+        $option = $valueOf
+        $valueOf = $null
+        $kind = 'Option'
+        if ($option -and $argument -notmatch '^-.') {
+            $kind = if ($option -cin 'exclude-task', 'x') { 'ExcludedTask' } else { 'Value' }
+        } elseif ($argument -like '--serial*') {
+            $kind = 'Serial'
+        } elseif ($argument -notmatch '^-.') {
+            $kind = Get-GradleTaskKind $argument
+        } elseif ($argument -eq '--') {
+            $afterOptions = $true
+        } elseif ($afterOptions) {
+            # A task's own option, which its task reads as Gradle reads its own.
+            if ($argument -cmatch '^--?([^=]+)$' -and $GradleTaskValueOptions -ccontains $Matches[1]) { $valueOf = $Matches[1] }
+        } elseif ($argument -cmatch '^--([^=]+)$') {
+            if ($GradleValueOptions + $GradleTaskValueOptions -ccontains $Matches[1]) { $valueOf = $Matches[1] }
+        } elseif ($argument -cmatch '^-([^-=][^=]*)$') {
+            # A long option after one '-', a short option that takes the next argument, or one whose value follows it.
+            $name = $Matches[1]
+            if ($GradleValueOptions -ccontains $name) { $valueOf = $name }
+        }
+        [pscustomobject]@{ Argument = $argument; Kind = $kind }
+    }
+}
+
 # Refuses a call of scripts\gradle.ps1 that could install, uninstall or run tests on a device, also through an
 # abbreviated task name, or that names a device with --serial: such tasks run only through scripts\connected-test.ps1,
-# which keeps Kestrel and its data, and scripts\install.ps1.
+# which keeps Kestrel and its data, and scripts\install.ps1. A task that -x excludes is no such call.
 function Assert-GradleBuildArguments([string[]]$Arguments) {
-    foreach ($argument in $Arguments) {
-        switch (Get-GradleArgumentKind $argument) {
+    foreach ($parsed in Get-GradleArgumentKinds -Arguments $Arguments) {
+        $argument = $parsed.Argument
+        switch ($parsed.Kind) {
             'Serial' { throw "Refusing the Gradle argument '$argument'. gradle.ps1 reaches no device." }
             { $_ -in 'ConnectedTest', 'Device' } {
                 throw ("Refusing the Gradle task '$argument', which can install, uninstall or run tests on a device. Run device tests " +
@@ -236,17 +291,17 @@ $KestrelDataProperties = [ordered]@{
 # abbreviated task name. A caller's argument that is the same as one of the script's is passed once.
 function Get-ConnectedTestArguments([string[]]$Arguments) {
     $own = @(foreach ($name in $KestrelDataProperties.Keys) { "-P$name=$($KestrelDataProperties[$name])" })
-    $passed = @(foreach ($argument in $Arguments) {
-        $kind = Get-GradleArgumentKind $argument
-        if ($kind -eq 'Serial') { throw "Refusing the Gradle argument '$argument'. Choose the device with -Serial." }
-        if ($own -ccontains $argument) { continue }
+    $passed = @(foreach ($parsed in Get-GradleArgumentKinds -Arguments $Arguments) {
+        $argument = $parsed.Argument
+        if ($parsed.Kind -eq 'Serial') { throw "Refusing the Gradle argument '$argument'. Choose the device with -Serial." }
+        if ($parsed.Kind -eq 'Option' -and $own -ccontains $argument) { continue }
         foreach ($name in $KestrelDataProperties.Keys) {
             if ($argument -like "*$name*") {
                 throw ("Refusing the Gradle argument '$argument'. connected-test.ps1 itself sets $name=$($KestrelDataProperties[$name]), " +
                     'so that the run keeps Kestrel and its data.')
             }
         }
-        if ($kind -notin 'Option', 'ConnectedTest') {
+        if ($parsed.Kind -in 'Device', 'Build') {
             throw "Refusing the Gradle argument '$argument'. connected-test.ps1 runs only connected test tasks, such as :app:connectedDebugAndroidTest."
         }
         $argument
