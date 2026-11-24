@@ -13,7 +13,7 @@
 - Package and application ID `dev.kestrel`; licence GPL-3.0-or-later. The new module's packages are `dev.kestrel.conversation.…`.
 - The owner's hard rule (AGENTS.md): no workarounds and no smallest-change fixes; clean code, good architecture and modularity, even when that means a larger change. A step that would patch a symptom at the nearest line is a fault of the plan: stop and ask the controller.
 - The approved design is `docs\superpowers\specs\2026-11-24-conversations-design.md` (commit `75dd098b`), called "the design" below; its decisions D1 to D24 bind this plan. This plan is the design's plan 7B (section 16): sections 5.1 to 5.3, 6, 7.1, 7.3, 7.6, 7.7, 8, 9.1 to 9.4, 9.6, 9.7, 11, 12.1, 12.4 and 13 as far as `:core:conversation` holds them, and section 15.1's JVM tests. The main spec is `docs\superpowers\specs\2026-11-12-kestrel-design.md`.
-- This plan consumes plan 7A (`.superpowers/sdd/plan-7a.md`, committed as `docs/superpowers/plans/2026-11-24-conversations-7a-agent.md`) exactly as its section "Interfaces for 7B" leaves `:core:agent`: `GoalPort` (with `takeSteering`, `stepStarted`, `checklistChanged` and `traced`), `Steer`, `SteerChannel`, `TraceEntry`, `HistoryPort` with its types, `Checklist`, `ChecklistItem`, `ItemState`, `ChecklistRules`, `ChecklistText`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `TaskRequest` with its new fields and `CONVERSATION_HEADER`, `AgentPorts(…, goal, history)`, `OwnerPort.leaveKestrel()`, `AnswerKind.LIMIT`, `EndReason.STOPPED_AT_LIMIT`, `PAUSED_AT_LIMIT` and `INTERRUPTED`, `Interruption`, `TaskCancellation(reason, interruption)`, `TaskReport.checklist` and `TaskReport.interruption`, and the fixtures `FakeOwner`, `FakeScreen`, `FakeData` and `ScriptedModel`.
+- This plan consumes plan 7A (`.superpowers/sdd/plan-7a.md`, committed as `docs/superpowers/plans/2026-11-24-conversations-7a-agent.md`) exactly as its section "Interfaces for 7B" leaves `:core:agent`: `GoalPort` (with `takeSteering`, `stepStarted`, `checklistChanged` and `traced`), `Steer`, `SteerChannel`, `TraceEntry`, `HistoryPort` with its types, `Checklist`, `ChecklistItem`, `ItemState`, `ChecklistRules`, `ChecklistText`, `GoalLimits`, `ResumeCause`, `ResumeNote` (with the field `steered`, which plan 7A's Task 10 adds at this plan's request: see "What plan 7A adds for this plan" below), `TaskRequest` with its new fields and `CONVERSATION_HEADER`, `AgentPorts(…, goal, history)`, `OwnerPort.leaveKestrel()`, `AnswerKind.LIMIT`, `EndReason.STOPPED_AT_LIMIT`, `PAUSED_AT_LIMIT` and `INTERRUPTED`, `Interruption`, `TaskCancellation(reason, interruption)`, `TaskReport.checklist` and `TaskReport.interruption`, and the fixtures `FakeOwner`, `FakeScreen`, `FakeData` and `ScriptedModel`.
 - `:core:conversation` is plain Kotlin and never depends on `:app`, `:core:voice`, `:core:screen` or `:core:privacy` (design 5.1). It depends on `:core:agent`, `:core:safety` and `:core:commands`. `:core:agent` learns nothing about conversations, and this plan does not change it.
 - The conversation never parses speech (design 5.3): the channels give it classified inputs, answers included.
 - Nothing in this plan calls a provider, runs `--live`, or uses a device. Every test is a JVM test with the scripted model.
@@ -29,11 +29,20 @@
 
 Code comments name this plan "plan 7B" and the design's sections as "design 6.2 of sub-project 7"; design numbers without a sub-project in existing comments stay those of sub-project 5.
 
+## What plan 7A adds for this plan
+
+A steering message that a run took and that an interruption then cut before the model acted on it would reach a resumed run only as the owner's words for safety (`ownerHistory`), not as an instruction, because a resumed run's task message names only the goal, its checklist and its ledger. So every steer that a goal received goes into its resumed rounds' task message, and plan 7A's Task 10 gives the message a place for them:
+- `data class ResumeNote(val after: ResumeCause, val done: List<String>, val steered: List<Steer> = emptyList())`, with `toString` printing `steered=${steered.size}`: the owner's steering that the goal's earlier rounds took, oldest first, in its record's form (redacted once, each vault value named by its kind's words).
+- The resumed task message gains one line per steer, after "What Kestrel did so far: …" and before "Look at the screen afresh; it may have changed.": `The owner added (<SteerChannel.wire>) in an earlier round: "<words>"`, its words redacted once, quoted and escaped as `TaskText.steered` does, never cut, and with no allowance sentence (the allowance reaches the run through `carried`).
+- A test in `AgentGoalTest`: a resume with two steers has both lines, in order, in its task message.
+
+Steering that still waits in the goal's inbox reaches the run through `GoalPort.takeSteering()` before its first step, as before, and is not in `steered`.
+
 ## Before you start
 
 - Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed, and this plan starts only after plan 7A is merged into `sp3`. This plan was written against `sp3` at `41d54522`, where plan 7A is committed but not yet carried out, so the controller rebases it first: it checks that every name that the bullet "This plan consumes plan 7A" of the Global Constraints lists exists as plan 7A's "Interfaces for 7B" says, changes this plan's code where plan 7A's review changed a name or a signature (keeping each change's meaning), and runs the checker until it is clean.
 - At the start of Task 1, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7b-core.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7b-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. The plan replaces one text of an existing file (`settings.gradle.kts`) and creates every other file; a `PROBLEM:` line that names a text that plan 6B-basefix or plan 7A moved or changed, or a file that already exists, stops the task: ask the controller, who rebases the plan as the bullet above says and runs the checker again until it is clean.
-- Check that plan 7A's interfaces are in, before the first change of Task 1: `Select-String -Path core\agent\src\main\kotlin\dev\kestrel\agent\goal\GoalPort.kt, core\agent\src\main\kotlin\dev\kestrel\agent\goal\HistoryPort.kt, core\agent\src\main\kotlin\dev\kestrel\agent\goal\ResumeNote.kt, core\agent\src\main\kotlin\dev\kestrel\agent\port\OwnerPort.kt, core\agent\src\main\kotlin\dev\kestrel\agent\TaskRequest.kt, core\agent\src\main\kotlin\dev\kestrel\agent\TaskReport.kt -Pattern 'fun takeSteering|fun stepStarted|class HistoryMatch|class ResumeNote|fun leaveKestrel|LIMIT \}|CONVERSATION_HEADER|enum class Interruption|val interruption: Interruption' | Measure-Object | Select-Object -ExpandProperty Count`. Expected: `9` or more. Otherwise stop and ask the controller.
+- Check that plan 7A's interfaces are in, before the first change of Task 1: `Select-String -Path core\agent\src\main\kotlin\dev\kestrel\agent\goal\GoalPort.kt, core\agent\src\main\kotlin\dev\kestrel\agent\goal\HistoryPort.kt, core\agent\src\main\kotlin\dev\kestrel\agent\goal\ResumeNote.kt, core\agent\src\main\kotlin\dev\kestrel\agent\port\OwnerPort.kt, core\agent\src\main\kotlin\dev\kestrel\agent\TaskRequest.kt, core\agent\src\main\kotlin\dev\kestrel\agent\TaskReport.kt -Pattern 'fun takeSteering|fun stepStarted|val steered: List<Steer>|class HistoryMatch|class ResumeNote|fun leaveKestrel|LIMIT \}|CONVERSATION_HEADER|enum class Interruption|val interruption: Interruption' | Measure-Object | Select-Object -ExpandProperty Count`. Expected: `10` or more. Otherwise stop and ask the controller.
 - Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :core:agent:test`, then `$n = 0; Get-ChildItem core\agent\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\agent $n"`, then `scripts\gradle.ps1 --stop`. This is G₀ (`:core:agent`), which this plan does not change; Task 10 runs it again. The new module starts at C₀ = 0. Each task gives its counts as "N + k", where N is the count before the task, and after each task count the module's tests the same way in `core\conversation\build\test-results\test`. If a count differs, stop and ask the controller.
 - Before each task, run `git status --short`. If a file that the task changes or creates shows changes that are not the task's own, stop and ask the controller.
 - No task uses a device.
@@ -5705,6 +5714,8 @@ import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.goal.ResumeCause
 import dev.kestrel.agent.goal.ResumeNote
+import dev.kestrel.agent.goal.Steer
+import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.context.ContextBlock
 import dev.kestrel.conversation.model.CommandRecord
@@ -5740,8 +5751,11 @@ class GoalRequestsTest {
         allowance = setOf("sending"),
     )
 
-    private fun plan(record: CommandRecord, earlier: List<CommandRecord>, resume: ResumeCause? = null, continuedAtWall: Long? = null, text: String = record.request) =
-        RoundPlan(record, earlier, text, resume, testMode = true, continuedAtWall = continuedAtWall, limits = limits, options = emptyMap(), self = RecordRef(id, record.number), zone = ManualConversationClock.BELGRADE)
+    private fun plan(record: CommandRecord, earlier: List<CommandRecord>, resume: ResumeCause? = null, continuedAtWall: Long? = null, text: String = record.request, waiting: Int = 0) =
+        RoundPlan(
+            record, earlier, text, resume, testMode = true, continuedAtWall = continuedAtWall, limits = limits, options = emptyMap(),
+            self = RecordRef(id, record.number), zone = ManualConversationClock.BELGRADE, waiting = waiting,
+        )
 
     @Test
     fun aFirstCommandHasNoBlockAndNoEarlierWords() {
@@ -5773,18 +5787,23 @@ class GoalRequestsTest {
             atWall = 0,
             channel = InputChannel.TEXT,
             request = "Archive my newsletters",
-            lines = listOf(RecordLine(LineKind.OWNER_STEERED, "only the ones from 2025", InputChannel.TEXT), RecordLine(LineKind.OWNER_CONTINUED, "continue", InputChannel.VOICE)),
+            lines = listOf(
+                RecordLine(LineKind.OWNER_STEERED, "only the ones from 2025", InputChannel.TEXT),
+                RecordLine(LineKind.OWNER_CONTINUED, "continue", InputChannel.VOICE),
+                RecordLine(LineKind.OWNER_STEERED, "and the ones from Mila", InputChannel.VOICE),
+            ),
             ledger = listOf("opened Gmail"),
             checklist = checklist,
             allowance = setOf("deleting"),
         )
 
-        val request = GoalRequests.request(plan(goal, listOf(earlier), resume = ResumeCause.INTERRUPTION), "task-3-0a1b2c3d", emptySet(), ContextBlock.BUDGET)
+        // The last steer still waits in the goal's inbox, which gives it to the run before its first step.
+        val request = GoalRequests.request(plan(goal, listOf(earlier), resume = ResumeCause.INTERRUPTION, waiting = 1), "task-3-0a1b2c3d", emptySet(), ContextBlock.BUDGET)
 
         assertEquals("Archive my newsletters", request.text)
-        assertEquals(ResumeNote(ResumeCause.INTERRUPTION, listOf("opened Gmail")), request.resume)
+        assertEquals(ResumeNote(ResumeCause.INTERRUPTION, listOf("opened Gmail"), listOf(Steer("only the ones from 2025", SteerChannel.TYPED))), request.resume)
         assertEquals(checklist, request.checklist)
-        assertEquals(listOf("Send Ana the photo", "Ana Jović", "and Mila too", "only the ones from 2025", "continue"), request.ownerHistory)
+        assertEquals(listOf("Send Ana the photo", "Ana Jović", "and Mila too", "only the ones from 2025", "continue", "and the ones from Mila"), request.ownerHistory)
         assertEquals(setOf(Category.SENDING, Category.DELETING), request.carried)
         assertTrue(!request.conversation!!.text.contains("Archive my newsletters"))
     }
@@ -6095,6 +6114,7 @@ import dev.kestrel.agent.TaskRequest
 import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.goal.ResumeCause
 import dev.kestrel.agent.goal.ResumeNote
+import dev.kestrel.agent.goal.Steer
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.context.ContextBlock
 import dev.kestrel.conversation.model.CommandRecord
@@ -6107,7 +6127,8 @@ import java.time.ZoneId
  * One round to run (design 7.1 and 7.6 of sub-project 7): the goal's [record] as it is now, the conversation's [earlier]
  * records (oldest first, the older ones condensed), the owner's [text] of a first round, the [resume] cause of a later
  * one, the conversation's fixed [testMode], when it was continued, the round's [limits], the debug hook's [options], the
- * goal's own record for the search ([self]) and the phone's [zone]. toString prints no words.
+ * goal's own record for the search ([self]), the phone's [zone], and how many of the record's steering lines still wait
+ * in the goal's inbox ([waiting]), which the run takes before its first step. toString prints no words.
  */
 class RoundPlan(
     val record: CommandRecord,
@@ -6120,15 +6141,18 @@ class RoundPlan(
     val options: Map<String, String>,
     val self: RecordRef,
     val zone: ZoneId,
+    val waiting: Int = 0,
 ) {
-    override fun toString(): String = "RoundPlan(record=${record.number}, earlier=${earlier.size}, resume=$resume, testMode=$testMode)"
+    override fun toString(): String = "RoundPlan(record=${record.number}, earlier=${earlier.size}, resume=$resume, testMode=$testMode, waiting=$waiting)"
 }
 
 /**
  * A round's `TaskRequest` (design 7.1, 7.6, 8.4 and 12.1 of sub-project 7; plan 7A's "Interfaces for 7B"). A first round
  * gets the owner's words, the records block of the earlier commands, their owner's words (requests, answers and steering)
  * and their allowance. A resumed round's text is the goal's first command as its record holds it, with its checklist and
- * its ledger in a `ResumeNote`; its owner's words and allowance add the goal's own inputs (answers, steering and
+ * its ledger in a `ResumeNote`, with every steer that the goal's earlier rounds took, so that a steer that an
+ * interruption cut before the model acted on it still reaches the model as an instruction; its owner's words and
+ * allowance add the goal's own inputs (answers, steering and
  * "continue") and its steering's allowance, because a new run starts a new `TaskSafety`. The block never holds the goal's
  * own record. A steering message that resumes the goal reaches the run through its inbox instead.
  */
@@ -6148,7 +6172,7 @@ object GoalRequests {
             ownerHistory = words + goalInputs(plan.record),
             carried = carried + categories(plan.record.allowance),
             checklist = plan.record.checklist,
-            resume = ResumeNote(resume, plan.record.ledger),
+            resume = ResumeNote(resume, plan.record.ledger, steered(plan.record, plan.waiting)),
             limits = plan.limits,
         )
     }
@@ -6157,6 +6181,12 @@ object GoalRequests {
     fun ownerWords(records: List<CommandRecord>): List<String> = records.flatMap { record ->
         listOf(record.request) + record.lines.filter { it.kind == LineKind.OWNER_ANSWERED || it.kind == LineKind.OWNER_STEERED }.map { it.text }
     }
+
+    /** The goal's steering that its earlier rounds took, oldest first: its record's steering but the last [waiting]. */
+    fun steered(record: CommandRecord, waiting: Int): List<Steer> =
+        record.lines.filter { it.kind == LineKind.OWNER_STEERED }.dropLast(waiting).map { line ->
+            Steer(line.text, requireNotNull(line.channel) { "A steering line names its channel" }.toSteer())
+        }
 
     /** A goal's own inputs after its first command: its answers, its steering and its "continue" inputs. */
     fun goalInputs(record: CommandRecord): List<String> = record.lines.filter { it.kind.owners }.map { it.text }
@@ -6727,7 +6757,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 125 + 13 = 138. `:core:agent`: G₀, unchanged.
+Counts: `:core:conversation` 125 + 14 = 139. `:core:agent`: G₀, unchanged.
 
 - [ ] **Step 1: Create the view**
 
@@ -7057,6 +7087,29 @@ class ConversationEngineTest {
         assertNull(engine.view.value.step)
         // The record names the data of the second round's first step as the goal's step 2, as the bar counted it.
         assertEquals(listOf(2), engine.view.value.records.single().data.map { it.step })
+    }
+
+    @Test
+    fun aSteerThatTheRunTookBeforeAnInterruptionReachesTheResumedRound() = runTest {
+        val environment = environment(say("On it."), listSms, listSms, finish(1))
+        val engine = engine(environment)
+        // The steer comes after the first reply; the step's traces wait for the engine, which takes the steer first, so the run
+        // takes it at its next turn; and a touch ends the round right after that turn's reply.
+        environment.afterCall = { calls ->
+            if (calls == 1) engine.submit(typed("Also check Ana's"))
+            if (calls == 2) engine.touched()
+        }
+        engine.restore()
+
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
+        assertTrue(environment.model.requests[1].text().contains("\"Also check Ana's\""))
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
+        runCurrent()
+        assertTrue(environment.model.requests[2].text().contains("The owner added (typed) in an earlier round: \"Also check Ana's\""))
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
     }
 
     @Test
@@ -7670,6 +7723,7 @@ class ConversationEngine(
         options = goal.options,
         self = RecordRef(id, goal.record),
         zone = clock.zone(),
+        waiting = goal.inbox.pending().size,
     )
 
     private fun load(snapshot: ConversationSnapshot) {
@@ -7795,12 +7849,12 @@ class ConversationEngine(
 - [ ] **Step 5: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 138` and `core\agent\build\test-results\test` G₀; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 139` and `core\agent\build\test-results\test` G₀; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -7813,7 +7867,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 138, from C₀ = 0 (Task 1: 7, Task 2: 10, Task 3: 9, Task 4: 12, Task 5: 9, Task 6: 14, Task 7: 43, Task 8: 13, Task 9: 8, Task 10: 13).
+- `:core:conversation`: C₀ + 139, from C₀ = 0 (Task 1: 7, Task 2: 10, Task 3: 9, Task 4: 12, Task 5: 9, Task 6: 14, Task 7: 43, Task 8: 13, Task 9: 8, Task 10: 14).
 - `:core:agent`: G₀, unchanged (Task 10, Step 6 runs it).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
 
@@ -7872,10 +7926,10 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 
 - **The design's plan 7B row.** The module and its build file (Task 1); `model` (Task 1); `ConversationMachine` with `QuietClock` and `GoalRules` (Task 7); `ConversationEngine` (Task 10); `GoalRunner`, `RunningGoal` and `SteeringInbox` (Task 8); `RecordBuilder` and `RecordCondenser` (Task 2) and `ContextBlock` (Task 3); `ConversationOwner` (Task 6); `LocalRequests` with "new conversation" (the machine, Task 7) and continuing a past conversation (Tasks 7, 9 and 10); `ConversationStore`, `ArchivedConversationStore`, `Retention` and the `RecordArchive` port (Task 4); `HistorySearch` (Task 5). JVM only, with `ScriptedModel`, fake channels and a fake archive.
 - **Every rule of the lifecycle has a JVM test.** The quiet clock's start, holds, end, older timers, signals and changes (`QuietClockTest`); every row of design 6.4 (`ConversationMachineTest`); touches, locks, calls, holds of 30 minutes, "Continue the goal?", the hand-over's 3 minutes, the backstop and the typed waits (`GoalRulesTest`); the follow-up window's interaction with the engine, which holds the quiet clock until the spoken reply ends (`ConversationEngineTest.theQuietClockWaitsUntilTheSpokenReplyHasEnded`); continuing a past conversation from none, from an open one, refused with a goal open, and gone (`ConversationMachineTest`, `LocalRequestsTest`, `ConversationEngineTest`); process-death restore without a goal inside and after the quiet time, with a goal inside and after 30 minutes (`ConversationMachineTest`), and end to end with its checklist and its steering (`ConversationEngineTest`); the moved `RulesTest` cases, by name, each with its test here or its rewrite in plan 7D (Task 7's table, which lists all 124 cases); the bar's step across rounds and a restart (`GoalRunnerTest`, `ConversationEngineTest`); a hand-over that a lock met as it opened (`GoalRulesTest`); a switch from an open conversation and "delete history" end to end (`ConversationEngineTest`).
-- **Plan 7A's interfaces, as consumed.** A record's final ledger is its rounds' reports' ledgers, which hold every line, also those of a step that a round's end cut and the shares that Kestrel could not see go; the `Did` traces are the live view while a round runs (`RecordBuilderTest`). A question that an interruption cut and the run asked again is a line each time (`RecordBuilderTest`). A data note names the goal's step, counted across its rounds as the bar counts it, or a replayed routine's own step as "routine step n", because plan 7A numbers a routine's steps and each run's from 1 (`RecordBuilderTest`, `ConversationEngineTest`). Late steering: kept for a held goal's next round, named in the final reply of a goal that ended for good (`GoalRunnerTest`). A resumed run's `ownerHistory` and `carried`: the earlier commands' words and allowance, then the goal's own inputs and steering's allowance, its first command as `text`, the block without the goal's own record (`GoalRequestsTest`). `TracingOwner`: `ConversationOwner` traces nothing of a run's dialogue; only the conversation's own lines ("Continue the goal?", a hold's sentence) and memory requests (`RecordedOwner`) enter records. `Interruption` chooses the hold (`TOUCH`, `KESTREL_SCREEN`), never a sentence. `GoalPort`, `HistoryPort`, `Checklist`, `GoalLimits`, `ResumeNote` and `TaskRequest`'s fields are used as plan 7A defines them.
+- **Plan 7A's interfaces, as consumed.** A record's final ledger is its rounds' reports' ledgers, which hold every line, also those of a step that a round's end cut and the shares that Kestrel could not see go; the `Did` traces are the live view while a round runs (`RecordBuilderTest`). A question that an interruption cut and the run asked again is a line each time (`RecordBuilderTest`). A data note names the goal's step, counted across its rounds as the bar counts it, or a replayed routine's own step as "routine step n", because plan 7A numbers a routine's steps and each run's from 1 (`RecordBuilderTest`, `ConversationEngineTest`). Late steering: kept for a held goal's next round, named in the final reply of a goal that ended for good (`GoalRunnerTest`). A resumed run's `ResumeNote.steered` carries every steer that the goal's earlier rounds took, also one that an interruption cut before the model acted on it (`GoalRequestsTest`, `ConversationEngineTest`). A resumed run's `ownerHistory` and `carried`: the earlier commands' words and allowance, then the goal's own inputs and steering's allowance, its first command as `text`, the block without the goal's own record (`GoalRequestsTest`). `TracingOwner`: `ConversationOwner` traces nothing of a run's dialogue; only the conversation's own lines ("Continue the goal?", a hold's sentence) and memory requests (`RecordedOwner`) enter records. `Interruption` chooses the hold (`TOUCH`, `KESTREL_SCREEN`), never a sentence. `GoalPort`, `HistoryPort`, `Checklist`, `GoalLimits`, `ResumeNote` and `TaskRequest`'s fields are used as plan 7A defines them.
 - **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what is left out; `ContextBlockTest` checks the order, the caps, the largest records in Latin and Cyrillic at three budgets, the Ollama budget and the condensed records' stability.
 - **Safety.** No record holds a value or a placeholder (`RecordText`, tested in Tasks 2 and 3); the owner's words are only the records' requests, answers, steering and "continue" lines; test mode is fixed per conversation and overrides the round's settings (`GoalRunnerTest`), and a change of test mode closes the conversation after its goal (`ConversationMachineTest`); confirmations never carry, because every round is a new run of plan 7A; every new type prints no words (`ToStringTest`, `GoalRulesTest`).
 - **The owner's hard rule.** Each concern is its own unit: the pure machine and the engine that performs its effects; the quiet clock's rules in one place; the goal's phases apart from the conversation's lifecycle; the owner over the channels apart from the channels; the records' building, condensing and block apart; the bytes-level archive apart from the JSON store and the search. The design's sketch changed where a cleaner form exists ("Changes to the design"), and the ones that the owner hears are in "Decisions for the controller".
-- **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 138.
+- **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 139.
 - **Type consistency.** `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `RunLocal(command, record, request, input)`, `SwitchTo(command, id, input)` and `Close(id, keep)` are built by the machine (Task 7) and read by the engine (Task 10) with the same fields; `ConversationEvent.GoalEnded(command, report, answer, reply)` and `RoundEnd(command, report, answer, reply)` in Tasks 7, 8 and 10; `GoalListener.stepStarted(step)` in Tasks 8 and 10; `RoundPlan(record, earlier, text, resume, testMode, continuedAtWall, limits, options, self, zone)` in Tasks 8 and 10; `GoalRunner(environment, screen, history, clock, report)` in Tasks 8 and 10; `LocalRequests(memory, store, search, deleteLogs, routines, clock, report)` and `run(request, owner, dialogue)` in Tasks 9 and 10; `ConversationOwner(channels, permissions, routing, events)` in Tasks 6 and 10; `HistorySearch(store, retentionDays, clock)` in Tasks 5, 8, 9 and 10; `RecordBuilder.traced(record, entry, channel)` in Tasks 2 and 10; `ContextBlock.build(earlier, budget, zone, note)` in Tasks 3 and 8.
 - **The checker.** `files\plan3x-check.py` ran on this plan against `sp3` at `41d54522` with the command of "Before you start"; its result is in the controller's report.
