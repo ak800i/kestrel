@@ -11,7 +11,8 @@ import java.nio.file.Files
 /**
  * This computer and a scripted kestrel-api37 for the tests of the commands: Kestrel and `:testapp` installed, its
  * accessibility service on, listening, test mode on, a Copilot profile and one Google account, and a task that ends
- * FINISHED; [processes] records the local programs, and `git rev-parse HEAD` answers a fixed commit.
+ * FINISHED; [processes] records the local programs, `git rev-parse HEAD` answers a fixed commit, `git diff` answers
+ * [gitDiff] and `git log -g` answers [reflog].
  */
 class FakeEnvironment {
     val adb = FakeAdb()
@@ -21,12 +22,23 @@ class FakeEnvironment {
     private val bytes = ByteArrayOutputStream()
     var live = "off"
     var accounts = 1
+    var gitDiff = ""
+    var reflog = ""
     var end = "state=done end=FINISHED steps=3 workMs=9000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 model=scripted"
     val devices = mutableMapOf(adb.serial to adb)
     val environment = Environment(
         root,
         { serial -> devices[serial] ?: FakeAdb(serial = serial, model = "unknown", avd = "") },
-        Processes { command, _ -> processes.add(command); ShellResult(0, if (command.first() == "git") "0123456789abcdef0123456789abcdef01234567\n" else "", "") },
+        Processes { command, _ ->
+            processes.add(command)
+            val out = when {
+                command.first() != "git" -> ""
+                "diff" in command -> gitDiff
+                "log" in command -> reflog
+                else -> "$COMMIT\n"
+            }
+            ShellResult(0, out, "")
+        },
         clock,
         PrintStream(bytes, true, Charsets.UTF_8),
         {},
@@ -50,4 +62,8 @@ class FakeEnvironment {
     }
 
     fun cli(vararg args: String): Int = dev.kestrel.eval.Cli(environment).run(args.toList())
+
+    companion object {
+        const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
+    }
 }

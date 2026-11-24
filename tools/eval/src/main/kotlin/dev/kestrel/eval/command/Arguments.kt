@@ -25,6 +25,8 @@ sealed interface Command {
         val tasks: List<String>? = null,
         val compare: Boolean = false,
         val recordBaseline: Boolean = false,
+        /** The results folder of a suite that stopped, which this call continues. */
+        val resume: String? = null,
     ) : Command
 
     /** [device] is the serial for `--rerun`'s live runs, which the folders cannot name for the emulator. */
@@ -41,10 +43,10 @@ sealed interface Command {
 /** Reads the command line: a command and its options, each option once, `--runs` from 1 to 10. */
 object Arguments {
     private val FLAGS = setOf("--live", "--dry-run", "--compare", "--record-baseline", "--rerun")
-    private val VALUES = setOf("--device", "--task", "--runs", "--model", "--name", "--results", "--tasks")
+    private val VALUES = setOf("--device", "--task", "--runs", "--model", "--name", "--results", "--tasks", "--resume")
     private val ALLOWED = mapOf(
         "run" to setOf("--device", "--task", "--runs", "--live", "--model", "--name", "--dry-run", "--results"),
-        "suite" to setOf("--device", "--live", "--runs", "--tasks", "--compare", "--record-baseline"),
+        "suite" to setOf("--device", "--live", "--runs", "--tasks", "--compare", "--record-baseline", "--resume"),
         "compare" to setOf("--rerun", "--device"),
         "injection" to setOf("--device", "--live", "--runs"),
         "rehearse" to setOf("--device", "--tasks"),
@@ -88,7 +90,9 @@ object Arguments {
                 if ((record || compare) && runs != null && runs != Comparison.RUNS) {
                     throw UsageError("--record-baseline and --compare take design D10's ${Comparison.RUNS} runs per task, not $runs: leave out --runs.")
                 }
-                Command.Suite(device(), live, runs ?: 3, tasks, compare, record)
+                val resume = options["--resume"]
+                if (resume != null && (tasks != null || runs != null)) throw UsageError("--resume runs the tasks and the runs of its folder's suite: give no --tasks and no --runs.")
+                Command.Suite(device(), live, runs ?: 3, tasks, compare, record, resume)
             }
             "compare" -> {
                 if (folders.isEmpty()) throw UsageError("compare needs one or more results folders.")

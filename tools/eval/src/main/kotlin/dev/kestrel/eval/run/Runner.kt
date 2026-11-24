@@ -64,16 +64,17 @@ class Runner(
      * returns how many runs failed. Its bottom restore writes `result=fail reason=stopped` for each run without a line, so
      * that an error or Ctrl+C never leaves a run out of the results: the run that was under way with its own credits (after
      * its stop, which runs first: `unknown` for a live task without credits, or when they cannot be read), the runs that
-     * never started with 0.00, as task-check.ps1's `Close-TaskRun` wrote them.
+     * never started with 0.00, as task-check.ps1's `Close-TaskRun` wrote them. A resumed suite runs only the runs from
+     * [first] on, whose earlier runs have their lines in its folder.
      */
-    fun runAll(task: Task, script: String?, runs: Int): Int {
+    fun runAll(task: Task, script: String?, runs: Int, first: Int = 1): Int {
         require(options.live || script != null) { "A run without a model needs the scripted model's script." }
         val count = task.runsAtMost?.let { minOf(it, runs) } ?: runs
         if (count < runs) console.warn("Task ${task.name} is a known gap of v1, for ${task.gap}: it runs once.")
         val mark = restores.mark()
         restores.push("the lines of ${task.name}'s runs that did not end", "None: the results lack these runs.") {
             val running = current
-            for (number in 1..count) {
+            for (number in first..count) {
                 if (writer.wrote(task.name, number)) continue
                 val spent = running?.takeIf { it.first == number }?.let {
                     try {
@@ -88,7 +89,7 @@ class Runner(
         var failures = 0
         try {
             val used = mutableListOf<String>()
-            for (number in 1..count) {
+            for (number in first..count) {
                 stopIfStopping()
                 listening()
                 val marker = markers.next(used).also { used.add(it) }

@@ -34,4 +34,16 @@ data class RunLine(
             "workMs=${field("workMs", "0")} credits=$spent model=${field("model", "none")} in=${field("in", "0")} " +
             "out=${field("out", "0")} cacheRead=${field("cacheRead", "0")} cacheWrite=${field("cacheWrite", "0")} reason=${reason.wire}"
     }
+
+    companion object {
+        /** The line of [text], as [text] wrote it, with its fields as the answer; null when it is no run's line. */
+        fun parse(text: String): RunLine? {
+            val fields = HookAnswer(text)
+            val result = RunResult.entries.firstOrNull { it.wire == fields["result"] } ?: return null
+            val check = CheckResult.entries.firstOrNull { it.wire == fields["check"] } ?: return null
+            val reason = Reason.entries.firstOrNull { it.wire == fields["reason"] } ?: return null
+            val run = fields["run"]?.toIntOrNull() ?: return null
+            return RunLine(fields["task"] ?: return null, run, result, fields, check, reason)
+        }
+    }
 }
