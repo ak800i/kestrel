@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import dev.kestrel.screen.act.GestureRunner
 import dev.kestrel.screen.act.OwnActions
 import dev.kestrel.screen.act.OwnerSignal
@@ -397,13 +399,22 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
 
     private val ownPackage: String = service.packageName
 
-    /** Branch B of D19: a click or a text change in another app's window that Kestrel did not cause is the owner's touch. */
+    /** Whether an input method's window is on the screen, as Kestrel's snapshots see it (WindowKind.INPUT_METHOD). */
+    private val keyboardShown: () -> Boolean = { service.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }
+
+    /**
+     * Branch B of D19: a click, or a text change while a keyboard shows, in another app's window that Kestrel did not
+     * cause is the owner's touch. The log names each signal, and each text change that does not count because no
+     * keyboard shows, by its event type, app and view class, never its text, so that a cancelled task shows its cause.
+     */
     private fun signalOwner(event: AccessibilityEvent) {
         if (ownActions.source.branch != TouchBranch.B || !watcher.running) return
         val focused = { event.source?.isFocused == true }
-        if (OwnerSignal.counts(event.eventType, event.packageName?.toString(), ownPackage, focused, ownActions.busy())) {
-            watcher.report(OwnActions.signal())
+        val verdict = OwnerSignal.judge(event.eventType, event.packageName?.toString(), ownPackage, ownActions.busy(), keyboardShown, focused)
+        if (verdict == OwnerSignal.Verdict.OWNER || verdict == OwnerSignal.Verdict.NO_KEYBOARD) {
+            Log.i("KestrelTouch", "branch B: ${AccessibilityEvent.eventTypeToString(event.eventType)} in ${event.packageName} (${event.className}): $verdict")
         }
+        if (verdict == OwnerSignal.Verdict.OWNER) watcher.report(OwnActions.signal())
     }
 
     // sub-project 5C
