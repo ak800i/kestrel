@@ -91,6 +91,23 @@ class OwnerSignalTest {
         assertEquals(Verdict.OWNER, judge(AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED, firefox, own.busy(), keyboard = { true }, focusedField = { true }))
     }
 
+    @Test
+    fun everyVerdictThatCouldHideACancelOrCauseOneIsLoggedWithoutText() {
+        // Samsung Notes keeps the input focus on the ScrollView around its editor (spec 9.7), so the owner's typing there
+        // is dropped as NOT_FOCUSED: the log must show that a cancel was missed, as it shows the false ones.
+        assertEquals(
+            "branch B: TYPE_VIEW_TEXT_CHANGED in com.samsung.android.app.notes (android.widget.EditText): NOT_FOCUSED",
+            OwnerSignal.logLine(Verdict.NOT_FOCUSED, "TYPE_VIEW_TEXT_CHANGED", "com.samsung.android.app.notes", "android.widget.EditText"),
+        )
+        for (verdict in listOf(Verdict.OWNER, Verdict.NO_KEYBOARD)) {
+            assertEquals("branch B: TYPE_VIEW_CLICKED in $firefox (android.view.View): $verdict", OwnerSignal.logLine(verdict, "TYPE_VIEW_CLICKED", firefox, "android.view.View"))
+        }
+        // Kestrel's own events and the events that are no signal are many, and say nothing about the owner.
+        for (verdict in listOf(Verdict.NOT_A_SIGNAL, Verdict.KESTRELS)) {
+            assertEquals(null, OwnerSignal.logLine(verdict, "TYPE_VIEW_SCROLLED", firefox, "android.view.View"))
+        }
+    }
+
     private fun branchB(clock: () -> Long) = OwnActions(clock, sdk = 33).also {
         it.source = TouchSource(TouchRule.CREDITS, TouchBranch.B)
         it.watching(true)

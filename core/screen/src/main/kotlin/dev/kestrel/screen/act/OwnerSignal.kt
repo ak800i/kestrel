@@ -28,4 +28,13 @@ internal object OwnerSignal {
             else -> Verdict.NOT_A_SIGNAL
         }
     }
+
+    /**
+     * The log line of [verdict] for an event of [eventType] in [packageName]'s view [className], or null for an event
+     * that is no signal or is Kestrel's own. Each other verdict is logged: a signal, so that a false cancel shows its
+     * cause, and a text change that did not count, without a keyboard or without the focus, so that a missed one does.
+     * It names the event's type, app and class, never its text.
+     */
+    fun logLine(verdict: Verdict, eventType: String, packageName: String?, className: String?): String? =
+        if (verdict == Verdict.NOT_A_SIGNAL || verdict == Verdict.KESTRELS) null else "branch B: $eventType in $packageName ($className): $verdict"
 }

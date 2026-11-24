@@ -405,15 +405,15 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     /**
      * Branch B of D19: a click, or a text change while a keyboard shows, in another app's window that Kestrel did not
      * cause is the owner's touch. The log names each signal, and each text change that does not count because no
-     * keyboard shows, by its event type, app and view class, never its text, so that a cancelled task shows its cause.
+     * keyboard shows or its field has no focus ([OwnerSignal.logLine]), by its event type, app and view class, never its
+     * text, so that a cancelled task shows its cause, and a task that went on after the owner typed shows why.
      */
     private fun signalOwner(event: AccessibilityEvent) {
         if (ownActions.source.branch != TouchBranch.B || !watcher.running) return
         val focused = { event.source?.isFocused == true }
         val verdict = OwnerSignal.judge(event.eventType, event.packageName?.toString(), ownPackage, ownActions.busy(), keyboardShown, focused)
-        if (verdict == OwnerSignal.Verdict.OWNER || verdict == OwnerSignal.Verdict.NO_KEYBOARD) {
-            Log.i("KestrelTouch", "branch B: ${AccessibilityEvent.eventTypeToString(event.eventType)} in ${event.packageName} (${event.className}): $verdict")
-        }
+        OwnerSignal.logLine(verdict, AccessibilityEvent.eventTypeToString(event.eventType), event.packageName?.toString(), event.className?.toString())
+            ?.let { Log.i("KestrelTouch", it) }
         if (verdict == OwnerSignal.Verdict.OWNER) watcher.report(OwnActions.signal())
     }
 
