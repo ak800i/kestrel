@@ -360,7 +360,7 @@ internal class AppOwnerPort(
         const val AUDIO_SETTLE_MILLIS = 500L
 
         fun asked(kind: AnswerKind): TaskAsk = when (kind) {
-            AnswerKind.YES_NO -> TaskAsk.YES_NO
+            AnswerKind.YES_NO, AnswerKind.LIMIT -> TaskAsk.YES_NO
             AnswerKind.PICK_NUMBER -> TaskAsk.PICK_NUMBER
             AnswerKind.FREE, AnswerKind.SCREENSHOT -> TaskAsk.FREE
         }
@@ -368,7 +368,7 @@ internal class AppOwnerPort(
         /** The agent's answer for the Rules' [answer] to a question of [kind]; null is silence. */
         fun answer(kind: AnswerKind, answer: String?): Answer = when {
             answer == null -> Answer.Silence
-            kind == AnswerKind.YES_NO -> if (answer == TaskAnswers.YES) Answer.Yes else Answer.No
+            kind == AnswerKind.YES_NO || kind == AnswerKind.LIMIT -> if (answer == TaskAnswers.YES) Answer.Yes else Answer.No
             kind == AnswerKind.PICK_NUMBER -> SpokenNumbers.answer(answer)?.let { Answer.Number(it) } ?: Answer.Silence
             else -> Answer.Text(answer)
         }

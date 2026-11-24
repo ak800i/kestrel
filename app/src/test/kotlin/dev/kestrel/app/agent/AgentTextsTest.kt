@@ -2,6 +2,9 @@ package dev.kestrel.app.agent
 
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.goal.Checklist
+import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.providers.http.ProviderError
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -17,10 +20,10 @@ class AgentTextsTest {
 
     @Test
     fun anyOtherEndSaysItsReasonAndWhatTheTaskDid() {
-        val stopped = TaskReport(EndReason.STEPS, ledger = listOf("opened Viber", "typed the message", "scrolled down"))
+        val stopped = TaskReport(EndReason.DECLINED, ledger = listOf("opened Viber", "typed the message", "scrolled down"))
         val failed = TaskReport(EndReason.PROVIDER, error = ProviderError.Timeout)
 
-        assertEquals("I stopped after 30 steps. I opened Viber, typed the message and scrolled down.", AgentTexts.sentence(stopped, "Copilot"))
+        assertEquals("I stopped because you said no. I opened Viber, typed the message and scrolled down.", AgentTexts.sentence(stopped, "Copilot"))
         assertEquals("Copilot did not answer in time. I didn't change anything.", AgentTexts.sentence(failed, "Copilot"))
         assertEquals(
             "Bank Intesa is on your list of agent-free apps, so I won't act in it. I didn't change anything.",
@@ -32,5 +35,20 @@ class AgentTextsTest {
     fun aReplacedTasksReportForTheBarStartsWithCancelled() {
         assertEquals("Cancelled: I opened Viber.", AgentTexts.replaced(TaskReport(EndReason.CANCELLED, ledger = listOf("opened Viber"))))
         assertEquals("I couldn't start the task: ${AgentTexts.NO_PROFILE}", AgentTexts.couldNotStart(AgentTexts.NO_PROFILE))
+    }
+
+    // Plan 7A: a round's limit says what is done and left from the checklist, and what the task did without one.
+    @Test
+    fun aLimitsEndSaysWhatIsDoneAndLeftFromTheChecklist() {
+        val checklist = Checklist(listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 2), ChecklistItem("c2", "Reply to Mila", ItemState.TODO)))
+
+        assertEquals(
+            "I stopped at the limit, as you said. Done: 1 of 2 steps. Left: Reply to Mila.",
+            AgentTexts.sentence(TaskReport(EndReason.STOPPED_AT_LIMIT, ledger = listOf("opened Viber"), checklist = checklist), "Copilot"),
+        )
+        assertEquals(
+            "I stopped at the limit because you didn't answer. I opened Viber.",
+            AgentTexts.sentence(TaskReport(EndReason.PAUSED_AT_LIMIT, ledger = listOf("opened Viber")), "Copilot"),
+        )
     }
 }

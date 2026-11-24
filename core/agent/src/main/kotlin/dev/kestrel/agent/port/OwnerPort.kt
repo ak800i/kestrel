@@ -29,9 +29,10 @@ interface OwnerPort {
 /**
  * What kind of answer a question wants. [SCREENSHOT] is the screenshot question of design D20, a free answer that `:app`
  * treats apart, because while another app's audio plays only the card's button may answer it (design D32 item 17;
- * review 4 m7).
+ * review 4 m7). [LIMIT] is a round's "Continue?" at a limit (design 7.4 of sub-project 7): yes gives another round, and
+ * silence, unlike no, leaves a goal open.
  */
-enum class AnswerKind { YES_NO, FREE, PICK_NUMBER, SCREENSHOT }
+enum class AnswerKind { YES_NO, FREE, PICK_NUMBER, SCREENSHOT, LIMIT }
 
 sealed interface Answer {
     data object Yes : Answer

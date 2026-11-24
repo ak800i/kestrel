@@ -17,6 +17,8 @@ import dev.kestrel.agent.observe.ObservationInput
 import dev.kestrel.agent.observe.ObservationTable
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
+import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.GlobalKind
@@ -135,7 +137,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     /** The given ports with the run's own owner port, which traces the dialogue (plan 7A). */
     val ports: AgentPorts = given.withOwner(TracingOwner(given.owner, trace))
     val ledger = Ledger()
-    val limits = Limits(ports.clock, ports.model.model.countsCredits)
+    val limits = Limits(ports.clock, ports.model.model.countsCredits, task.limits)
     val progress = Progress()
     val escalation = Escalation(ports.model.model)
     private val builder = ObservationBuilder(redactor, settings.agentFree)
@@ -246,7 +248,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private suspend fun turn() {
         if (gate() || resumePending) resumed()
         checkLimits()
-        // A resume during the cost question is observed before this turn's model call too (D2).
+        // A resume during the limit's question is observed before this turn's model call too (D2).
         if (resumePending) resumed()
         steer()
         // The step's number for the goal, once the waits before the step are over (design 10.5 of sub-project 7).
@@ -448,11 +450,17 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         )
     }
 
+    // At a round's first limit the owner is asked "Continue?" (design 7.4 of sub-project 7): yes gives the same again, no
+    // stops the goal, and no answer pauses it. The question is built by code, never by the model.
     private suspend fun checkLimits() {
-        if (limits.repliesUsed(replies)) throw Ended(EndReason.STEPS)
-        if (limits.timeUsed()) throw Ended(EndReason.TIME)
-        val question = limits.creditQuestion() ?: return
-        if (questions.yes(question)) limits.allowMoreCredits() else throw Ended(EndReason.COST)
+        val limit = limits.reached(replies) ?: return
+        val question = LimitQuestion.text(limit, replies, limits.workMillis, limits.credits, checklists.checklist, ledger.lines.map(vault::spoken))
+        // The third interruption in a row counts as no answer, which keeps a goal open.
+        when (questions.ask(question, AnswerKind.LIMIT)) {
+            Answer.Yes -> limits.nextRound(replies)
+            Answer.Silence -> throw Ended(EndReason.PAUSED_AT_LIMIT)
+            else -> throw Ended(EndReason.STOPPED_AT_LIMIT)
+        }
     }
 
     private suspend fun handle(escalate: Escalate) {

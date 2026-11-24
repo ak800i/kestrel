@@ -13,9 +13,12 @@ enum class EndReason {
     CANCELLED,
     DECLINED,
     HAND_OVER_EXPIRED,
-    STEPS,
-    TIME,
-    COST,
+
+    /** The owner said no to "Continue?" at a round's limit (design 7.4 of sub-project 7). */
+    STOPPED_AT_LIMIT,
+
+    /** "Continue?" at a round's limit got no answer; a goal stays open and is held (design 7.4 of sub-project 7). */
+    PAUSED_AT_LIMIT,
     STUCK,
     INVALID_CALLS,
     PROVIDER,

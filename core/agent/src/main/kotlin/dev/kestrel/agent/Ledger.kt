@@ -18,4 +18,13 @@ class Ledger {
     }
 
     override fun toString(): String = "Ledger(lines=${entries.size})"
+
+    companion object {
+        /** The owner's sentence for [lines]: "I opened Viber, typed the message and scrolled down."; null for none (D24). */
+        fun sentence(lines: List<String>): String? {
+            if (lines.isEmpty()) return null
+            val joined = if (lines.size == 1) lines.single() else lines.dropLast(1).joinToString(", ") + " and " + lines.last()
+            return "I $joined."
+        }
+    }
 }

@@ -5,6 +5,7 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskCancellation
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.goal.NoGoal
 import dev.kestrel.agent.goal.NoHistory
 import dev.kestrel.agent.memory.Fact
@@ -236,7 +237,7 @@ internal class AgentRunner(
             coroutineScope {
                 val touches = launch { ports.touches.collect { touched(running, ports, it) } }
                 try {
-                    Agent(ports.ports, ports.settings).run(TaskRequest(start.id, text, ports.knownNames)) { result ->
+                    Agent(ports.ports, ports.settings).run(TaskRequest(start.id, text, ports.knownNames, limits = TASK_LIMITS)) { result ->
                         val sentence = running.stopSentence?.let { "$it ${AgentTexts.ledger(result)}" }
                             ?: AgentTexts.sentence(result, ports.providerName)
                         result.recording?.let { kept = it to nowMillis() }
@@ -393,6 +394,12 @@ internal class AgentRunner(
         const val RECORDING_MILLIS = 10L * 60 * 1000
 
         const val MAX_ENDS = 16
+
+        /**
+         * Sub-project 5's limits of a task, which today's runner keeps until plan 7D gives goals the owner's (design 14.2
+         * of sub-project 7): 30 model replies, 5 minutes of work and 10 AI Credits, each with "Continue?" at its end.
+         */
+        val TASK_LIMITS = GoalLimits(replies = 30, workMinutes = 5, credits = 10)
 
         /** `task-<n>-<8 hexadecimal characters>` (design D25 of sub-project 5). */
         fun taskId(task: Int): String = "task-$task-%08x".format(Random.nextInt())

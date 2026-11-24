@@ -1,22 +1,28 @@
 package dev.kestrel.agent.loop
 
+import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.port.AgentClock
 import dev.kestrel.agent.port.ModelInfo
 import dev.kestrel.agent.port.RoleModel
 import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.profiles.ModelRole
-import kotlin.math.floor
+
+/** The limit that a round reached (design 7.4 of sub-project 7). */
+enum class Limit { REPLIES, TIME, CREDITS }
 
 /**
- * Spec 11.7's limits (design D7): at most [MAX_REPLIES] model replies per task, invalid ones included; at most
- * [MAX_WORK_MILLIS] of Kestrel's own working time, where the time spent waiting for the owner and a paused task do not
- * count; and for a profile whose spending counts credits, a question each time the task has used [CREDIT_STEP] more
- * credits since its start or the owner's last yes.
+ * One round's limits (design 7.4, D7 and D22 of sub-project 7): at most [GoalLimits.replies] model replies, invalid ones
+ * included; at most [GoalLimits.workMinutes] of Kestrel's own working time, where the time spent waiting for the owner and
+ * a paused task do not count; and for a profile whose spending counts credits, at most [GoalLimits.credits] AI Credits.
+ * At the first limit that a round reaches the loop asks "Continue?", and [nextRound] then allows the same again, counted
+ * from the current totals.
  */
-class Limits(private val clock: AgentClock, private val countsCredits: Boolean) {
+class Limits(private val clock: AgentClock, private val countsCredits: Boolean, private val round: GoalLimits) {
     private val started = clock.elapsedMillis()
     private var waited = 0L
-    private var allowedCredits = CREDIT_STEP
+    private var replyLimit = round.replies
+    private var workLimit = round.workMinutes * MINUTE_MILLIS
+    private var creditLimit = round.credits.toDouble()
 
     var credits = 0.0
         private set
@@ -37,25 +43,25 @@ class Limits(private val clock: AgentClock, private val countsCredits: Boolean) 
         this.credits += credits
     }
 
-    fun repliesUsed(replies: Int): Boolean = replies >= MAX_REPLIES
-
-    fun timeUsed(): Boolean = workMillis >= MAX_WORK_MILLIS
-
-    /** The cost question's text when the task has reached its allowance of credits, or null (review A N2). */
-    fun creditQuestion(): String? =
-        if (countsCredits && credits >= allowedCredits) "This task has used ${floor(credits).toLong()} credits. Continue?" else null
-
-    /** The owner said yes to the cost question: 10 more credits. */
-    fun allowMoreCredits() {
-        allowedCredits = credits + CREDIT_STEP
+    /** The first limit that the round has reached after [replies] model replies, or null. */
+    fun reached(replies: Int): Limit? = when {
+        replies >= replyLimit -> Limit.REPLIES
+        workMillis >= workLimit -> Limit.TIME
+        countsCredits && credits >= creditLimit -> Limit.CREDITS
+        else -> null
     }
 
-    override fun toString(): String = "Limits(workMillis=$workMillis, credits=$credits)"
+    /** The owner said yes to "Continue?": another round of the same size, from the current totals (D22). */
+    fun nextRound(replies: Int) {
+        replyLimit = replies + round.replies
+        workLimit = workMillis + round.workMinutes * MINUTE_MILLIS
+        creditLimit = credits + round.credits
+    }
+
+    override fun toString(): String = "Limits(workMillis=$workMillis, credits=$credits, round=$round)"
 
     companion object {
-        const val MAX_REPLIES = 30
-        const val MAX_WORK_MILLIS = 5 * 60_000L
-        const val CREDIT_STEP = 10.0
+        const val MINUTE_MILLIS = 60_000L
         const val STUCK_QUESTION = "I'm not getting anywhere. Should I keep trying?"
     }
 }

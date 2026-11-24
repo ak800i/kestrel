@@ -1,7 +1,9 @@
 package dev.kestrel.app.agent
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.goal.ChecklistText
 import dev.kestrel.app.providers.ProviderTexts
 import dev.kestrel.safety.AgentFreeApps
 
@@ -39,19 +41,21 @@ internal object AgentTexts {
         EndReason.FINISHED -> (report.sends + (report.summary ?: DONE)).joinToString(" ")
         EndReason.UNVERIFIED ->
             report.summary?.let { "I think it's done, but I couldn't check it: ${it.trimEnd('.')}." } ?: "I think it's done, but I couldn't check it."
-        else -> "${reason(report, provider)} ${ledger(report)}"
+        else -> "${reason(report, provider)} ${done(report)}"
     }
 
     /** "Cancelled: <what the task did>", for the bar when a newer task replaced it (D32 item 4). */
     fun replaced(report: TaskReport): String = "Cancelled: ${ledger(report)}"
 
     /** What the task did, in Kestrel's words: "I opened Viber, typed the message and sent it." */
-    fun ledger(report: TaskReport): String {
-        val lines = report.ledger
-        if (lines.isEmpty()) return NOTHING_CHANGED
-        val joined = if (lines.size == 1) lines.single() else lines.dropLast(1).joinToString(", ") + " and " + lines.last()
-        return "I $joined."
-    }
+    fun ledger(report: TaskReport): String = Ledger.sentence(report.ledger) ?: NOTHING_CHANGED
+
+    // A round's limit says what is done and left from the checklist when the model kept one (plan 7A; design 7.4 of
+    // sub-project 7); any other end says what the task did.
+    private fun done(report: TaskReport): String =
+        report.checklist?.takeIf { report.end in ROUND_LIMITS }?.let(ChecklistText::progress) ?: ledger(report)
+
+    private val ROUND_LIMITS = setOf(EndReason.STOPPED_AT_LIMIT, EndReason.PAUSED_AT_LIMIT)
 
     private fun reason(report: TaskReport, provider: String): String = when (report.end) {
         EndReason.FINISHED, EndReason.UNVERIFIED -> DONE
@@ -59,9 +63,9 @@ internal object AgentTexts {
         EndReason.FAILED_BY_MODEL -> report.detail?.let { "I couldn't do it: ${it.trimEnd('.')}." } ?: "I couldn't do it."
         EndReason.DECLINED -> "I stopped because you said no."
         EndReason.HAND_OVER_EXPIRED -> "I stopped because the step that I handed over to you took more than 3 minutes."
-        EndReason.STEPS -> "I stopped after 30 steps."
-        EndReason.TIME -> "I stopped because the task took too long."
-        EndReason.COST -> "I stopped at the task's cost limit."
+        EndReason.STOPPED_AT_LIMIT -> "I stopped at the limit, as you said."
+        // Today's runner holds no goal, so a run that paused at a limit has ended; plan 7D says that a goal is held.
+        EndReason.PAUSED_AT_LIMIT -> "I stopped at the limit because you didn't answer."
         EndReason.STUCK -> listOfNotNull("I stopped because I wasn't getting anywhere.", report.detail).joinToString(" ")
         EndReason.INVALID_CALLS -> "The model keeps giving answers that I can't use."
         EndReason.PROVIDER -> report.error?.let { ProviderTexts.spoken(it, provider) } ?: "$provider could not use the request."

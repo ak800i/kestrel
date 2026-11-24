@@ -3,7 +3,10 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Harness
 import dev.kestrel.agent.Screens
+import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.testing.FakeClock
 import dev.kestrel.agent.testing.ScreenBuilder
@@ -12,7 +15,9 @@ import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.providers.chat.ReasoningLevel
 import dev.kestrel.providers.chat.ToolChoice
 import dev.kestrel.providers.profiles.ModelRole
+import dev.kestrel.screen.model.ScreenSnapshot
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -20,73 +25,120 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** A round's limits with "Continue?" (design 7.4 of sub-project 7), and spec 11.7's escalation (design D7). */
 class LimitsTest {
-    private fun twoScreens(): Pair<dev.kestrel.screen.model.ScreenSnapshot, dev.kestrel.screen.model.ScreenSnapshot> {
+    private fun twoScreens(): Pair<ScreenSnapshot, ScreenSnapshot> {
         val a = ScreenBuilder.screen("com.example.app") { text("Page A", 100, viewId = "toolbar_title"); button("Go to B", 600) }
         val b = ScreenBuilder.screen("com.example.app") { text("Page B", 100, viewId = "toolbar_title"); button("Go to A", 900) }
         return a to b
     }
 
-    @Test
-    fun theThirtyFirstReplyIsNeverRequested() = runTest {
+    // Taps back and forth between the two pages: each of them is progress.
+    private fun goingOn(count: Int, credits: Double? = null): List<JsonObject> = (1..count).map {
+        if (it % 2 == 1) {
+            call("tap", "Go to B", null, credits, "reason" to "on", "category" to "reading")
+        } else {
+            call("tap", "Go to A", null, credits, "reason" to "back", "category" to "reading")
+        }
+    }
+
+    private fun harness(replies: List<JsonObject>): Harness {
         val (a, b) = twoScreens()
-        val taps = (1..40).map { if (it % 2 == 1) call("tap", "Go to B", null, null, "reason" to "on", "category" to "reading") else call("tap", "Go to A", null, null, "reason" to "back", "category" to "reading") }
-        val harness = Harness(a, taps)
-        harness.screen.onTap("Go to B", b)
-        harness.screen.onTap("Go to A", a)
+        return Harness(a, replies).apply {
+            screen.onTap("Go to B", b)
+            screen.onTap("Go to A", a)
+        }
+    }
 
-        val report = harness.run("Keep going")
+    private fun keepGoing(limits: GoalLimits) = TaskRequest(Harness.ID, "Keep going", limits = limits)
 
-        assertEquals(EndReason.STEPS, report.end)
-        assertEquals(Limits.MAX_REPLIES, harness.model.requests.size)
-        assertEquals(30, report.steps)
+    @Test
+    fun atTheReplyLimitKestrelAsksAndANoStopsTheGoal() = runTest {
+        val harness = harness(goingOn(10))
+        harness.owner.answers += Answer.No
+
+        val report = harness.run(keepGoing(GoalLimits(replies = 4)))
+
+        assertEquals(EndReason.STOPPED_AT_LIMIT, report.end)
+        assertEquals(4, harness.model.requests.size)
+        val (question, kind) = harness.owner.asked.single()
+        assertEquals(AnswerKind.LIMIT, kind)
+        assertTrue(question, question.startsWith("I've used 4 model replies on this. "))
+        assertTrue(question, question.endsWith(" Continue?"))
+    }
+
+    @Test
+    fun aYesGivesTheSameAgainAndNoAnswerPausesTheGoal() = runTest {
+        val harness = harness(goingOn(10))
+        harness.owner.answers += Answer.Yes
+
+        val report = harness.run(keepGoing(GoalLimits(replies = 3)))
+
+        assertEquals(EndReason.PAUSED_AT_LIMIT, report.end)
+        assertEquals(6, harness.model.requests.size)
+        val asked = harness.owner.asked.map { it.first }
+        assertEquals(2, asked.size)
+        assertTrue(asked[0], asked[0].startsWith("I've used 3 model replies on this. "))
+        assertTrue(asked[1], asked[1].startsWith("I've used 6 model replies on this. "))
     }
 
     @Test
     fun workingTimeLeavesOutTheOwnersWaits() = runTest {
         val clock = FakeClock()
-        val limits = Limits(clock, countsCredits = true)
+        val limits = Limits(clock, countsCredits = true, round = GoalLimits(workMinutes = 5))
         clock.elapsed = 60_000
         limits.waiting { clock.elapsed += 120_000 }
         clock.elapsed += 30_000
 
         assertEquals(90_000, limits.workMillis)
+        assertNull(limits.reached(0))
         clock.elapsed += 210_000
-        assertTrue(limits.timeUsed())
+        assertEquals(Limit.TIME, limits.reached(0))
     }
 
     @Test
-    fun theCostQuestionComesAtEachTenCreditsWithTheRealTotal() {
-        val limits = Limits(FakeClock(), countsCredits = true)
+    fun eachLimitIsReachedInItsOrderAndARoundGivesTheSameAgain() {
+        val limits = Limits(FakeClock(), countsCredits = true, round = GoalLimits(replies = 10, workMinutes = 5, credits = 10))
         limits.spent(9.5)
-        assertNull(limits.creditQuestion())
+        assertNull(limits.reached(9))
         limits.spent(3.2)
-        assertEquals("This task has used 12 credits. Continue?", limits.creditQuestion())
-        limits.allowMoreCredits()
-        assertNull(limits.creditQuestion())
+        assertEquals(Limit.CREDITS, limits.reached(9))
+        assertEquals(Limit.REPLIES, limits.reached(10))
+
+        limits.nextRound(10)
+
+        assertNull(limits.reached(19))
+        assertEquals(Limit.REPLIES, limits.reached(20))
         limits.spent(10.0)
-        assertEquals("This task has used 22 credits. Continue?", limits.creditQuestion())
-        val plan = Limits(FakeClock(), countsCredits = false).apply { spent(50.0) }
-        assertNull(plan.creditQuestion())
+        assertEquals(Limit.CREDITS, limits.reached(19))
+        val plan = Limits(FakeClock(), countsCredits = false, round = GoalLimits(credits = 10)).apply { spent(50.0) }
+        assertNull(plan.reached(0))
     }
 
     @Test
-    fun aNoToTheCostQuestionEndsTheTask() = runTest {
-        val (a, b) = twoScreens()
-        val harness = Harness(a, listOf(
-            call("tap", "Go to B", null, 6.0, "reason" to "on", "category" to "reading"),
-            call("tap", "Go to A", null, 6.0, "reason" to "back", "category" to "reading"),
-            call("tap", "Go to B", null, 6.0, "reason" to "on", "category" to "reading"),
-        ))
-        harness.screen.onTap("Go to B", b)
-        harness.screen.onTap("Go to A", a)
+    fun aNoAtTheCreditLimitStopsTheGoal() = runTest {
+        val harness = harness(goingOn(3, credits = 6.0))
         harness.owner.answers += Answer.No
 
-        val report = harness.run("Keep going")
+        val report = harness.run(keepGoing(GoalLimits(credits = 10)))
 
-        assertEquals(EndReason.COST, report.end)
-        assertEquals("This task has used 12 credits. Continue?", harness.owner.asked.single().first)
+        assertEquals(EndReason.STOPPED_AT_LIMIT, report.end)
+        assertTrue(harness.owner.asked.single().first.startsWith("This has used 12 AI Credits. "))
         assertEquals(2, harness.model.requests.size)
+    }
+
+    @Test
+    fun aResumeDuringTheLimitsQuestionIsObservedBeforeThatTurnsModelCall() = runTest {
+        val harness = harness(goingOn(2, credits = 6.0) + call("fail", null, null, null, "reason" to "Stop."))
+        // The gates of the first two turns and their taps, then the gate of the limit's question.
+        harness.owner.gates += listOf(Gate.GO, Gate.GO, Gate.GO, Gate.GO, Gate.GO, Gate.RESUMED)
+        harness.owner.answers += Answer.Yes
+
+        harness.run(keepGoing(GoalLimits(credits = 10)))
+
+        assertTrue(harness.owner.asked.single().first.startsWith("This has used 12 AI Credits. "))
+        assertEquals(3, harness.model.requests.size)
+        assertTrue(harness.requestText(2).contains(TaskRun.RESUMED))
     }
 
     @Test
@@ -102,27 +154,6 @@ class LimitsTest {
         assertEquals(ToolChoice.AUTO, versatile.toolChoice)
         assertNull(harness.model.requests[0].reasoning)
         assertEquals(ToolChoice.REQUIRED, harness.model.requests[0].toolChoice)
-    }
-
-    @Test
-    fun aResumeDuringTheCostQuestionIsObservedBeforeThatTurnsModelCall() = runTest {
-        val (a, b) = twoScreens()
-        val harness = Harness(a, listOf(
-            call("tap", "Go to B", null, 6.0, "reason" to "on", "category" to "reading"),
-            call("tap", "Go to A", null, 6.0, "reason" to "back", "category" to "reading"),
-            call("fail", null, null, null, "reason" to "Stop."),
-        ))
-        harness.screen.onTap("Go to B", b)
-        harness.screen.onTap("Go to A", a)
-        // The gates of the first two turns and their taps, then the gate of the cost question.
-        harness.owner.gates += listOf(Gate.GO, Gate.GO, Gate.GO, Gate.GO, Gate.GO, Gate.RESUMED)
-        harness.owner.answers += Answer.Yes
-
-        harness.run("Keep going")
-
-        assertEquals("This task has used 12 credits. Continue?", harness.owner.asked.single().first)
-        assertEquals(3, harness.model.requests.size)
-        assertTrue(harness.requestText(2).contains(TaskRun.RESUMED))
     }
 
     @Test

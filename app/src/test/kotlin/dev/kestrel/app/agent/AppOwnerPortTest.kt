@@ -350,4 +350,17 @@ class AppOwnerPortTest {
         assertEquals(listOf<Event>(Event.TaskSays(1, "Your battery is at 87 percent.")), sent)
         assertEquals(listOf("Your battery is at 87 percent."), heard)
     }
+
+    // Plan 7A: a round's "Continue?" is a yes-or-no question for the Orchestrator; its silence is no answer.
+    @Test
+    fun aLimitsQuestionIsAskedAsAYesOrNoQuestion() = runTest {
+        val asked = started { owner.ask("I've used 30 model replies on this. Continue?", AnswerKind.LIMIT) }
+
+        assertEquals(listOf<Event>(Event.TaskAsks(1, "I've used 30 model replies on this. Continue?", TaskAsk.YES_NO)), sent)
+        owner.answered("yes")
+        assertEquals(Answer.Yes, asked.await())
+        val silent = started { owner.ask("Continue?", AnswerKind.LIMIT) }
+        owner.answered(null)
+        assertEquals(Answer.Silence, silent.await())
+    }
 }

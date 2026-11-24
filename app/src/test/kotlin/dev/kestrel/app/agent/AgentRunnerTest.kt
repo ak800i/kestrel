@@ -490,4 +490,22 @@ class AgentRunnerTest {
 
         override val evidence: TaskEvidence get() = TaskEvidence(spoken = ends.lastOrNull())
     }
+
+    // Plan 7A: today's tasks keep sub-project 5's limits (30 replies, 5 minutes, 10 AI Credits), and a limit asks "Continue?".
+    @Test
+    fun aTaskKeepsTheLimitsOfSubProject5AndAsksAtTheirEnd() = runTest {
+        model = ScriptedModel(listOf(
+            ScriptedModel.call("say", null, null, 6.0, "text" to "One."),
+            ScriptedModel.call("say", null, null, 6.0, "text" to "Two."),
+            fail("Unreachable"),
+        ))
+        val runner = runner()
+
+        runner.run(1, "say something")
+        advanceUntilIdle()
+
+        assertEquals(listOf("This has used 12 AI Credits. I haven't changed anything yet. Continue?"), owner.owner.asked.map { it.first })
+        assertEquals(EndReason.PAUSED_AT_LIMIT, runner.ended(1)!!.report.end)
+        assertEquals(Event.TaskEnded(1, "I stopped at the limit because you didn't answer. I didn't change anything."), ended())
+    }
 }
