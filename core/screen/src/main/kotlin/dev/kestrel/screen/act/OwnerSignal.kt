@@ -6,10 +6,13 @@ import android.view.accessibility.AccessibilityEvent
  * Branch B of design D19 of sub-project 5 (spec 14.1's fallback for a device whose touch watcher misses a real finger):
  * a click or a long click of any element in another app's window, or a text change of a focused field there while a
  * keyboard shows, while Kestrel neither acts nor settles, is the owner's touch. A scroll never counts, because apps
- * scroll by themselves. A text change without a keyboard never counts either, because apps fill their own fields: on the
- * A71, Firefox's web view reports one each time it opens a page, with no finger on the screen; the owner types only
- * with a keyboard, and his tap on a field is a click. [keyboardShown] reads Android's windows and [focusedField] asks
- * the app over binder, so they run last, only for a text change that would otherwise count.
+ * scroll by themselves. A text change without an on-screen keyboard never counts either, because apps fill their own
+ * fields: on the A71, Firefox's web view reports one each time it opens a page, with no finger on the screen. The
+ * owner's typing still counts, because his tap on a field shows the keyboard; that tap is no click when it gives the
+ * field the focus. So branch B misses a text change that comes with neither a keyboard nor a click: typing on a
+ * hardware keyboard, which is no touch, and a keypad or a button inside an app that reports no click, as Compose
+ * reports none for a tap. [keyboardShown] reads Android's windows and [focusedField] asks the app over binder, so they
+ * run last, only for a text change that would otherwise count.
  */
 internal object OwnerSignal {
     /** Why an event is, or is not, the owner's touch. */
