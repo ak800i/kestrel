@@ -211,5 +211,6 @@ class ResumeTest {
         assertEquals(commit, part.commit)
         assertEquals("m1", part.model)
         assertTrue(fake.output.contains("eval\\baseline.json now holds the part of kestrel-api37"))
+        assertTrue(fake.output.contains("The egress check of the recorded runs failed (connections=0 failures=0 unknown=1); see egress.txt in $folder."))
     }
 }
