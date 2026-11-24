@@ -15,32 +15,44 @@ data class EgressResult(val connections: List<Connection>, val failures: List<St
 }
 
 /**
- * The egress check (design D11 of sub-project 6): a connection passes when its name, from its ClientHello or else from
- * the capture's DNS answers for its remote address, is on the device's allowlist or matches the model download's hosts
- * (`*.domain` covers every host below the domain); a connection without a name, one outside both, and any packet of
- * another UID than Kestrel's fail. DNS to and from PCAPdroid's DNS servers on port 53 is exempt from the UID rule,
- * because Android's resolver may send an app's queries under its own UID, and is read only for its answers.
+ * The egress check (design D11 of sub-project 6): a connection passes when its name is on the device's allowlist or
+ * matches the model download's hosts (`*.domain` covers every host below the domain). Its name is its ClientHello's
+ * server_name; without one, the capture's DNS answers for its remote address name it, and it passes only when every name
+ * that answered for that address is allowed. A connection without a name, one outside both lists, any packet of another
+ * UID than Kestrel's, and any record of Kestrel's or of no UID that the reader could not read (ICMP among them) fail.
+ * Two kinds of traffic to and from PCAPdroid's DNS servers are exempt from these rules, whatever their UID, because
+ * Android's resolver sends them under its own UID: UDP on port 53, which is read only for its answers, and a TCP
+ * connection on port 853 without a byte of payload in either direction, which is Android's probe for DNS over TLS that
+ * PCAPdroid's `auto_block_private_dns` resets. A port-853 connection that carries any payload is judged like any other.
  */
 object EgressCheck {
     fun judge(packets: List<Packet>, uid: Int, hosts: List<String>, modelHosts: List<String>): EgressResult {
-        val dns = packets.filter { dnsOfPcapdroid(it) }.toHashSet()
-        val names = mutableMapOf<String, String>()
-        for (packet in dns) if (packet.sourcePort == 53) names.putAll(Names.dnsAnswers(packet.payload))
-        val rest = packets.filter { it !in dns }
+        val patterns = hosts + modelHosts
+        val readable = packets.filter { it.problem == null }
+        val dns = readable.filter { dnsOfPcapdroid(it) }
+        val names = HashMap<String, java.util.SortedSet<String>>()
+        for (packet in dns) if (packet.sourcePort == 53) for ((address, name) in Names.dnsAnswers(packet.payload)) names.getOrPut(address) { sortedSetOf() }.add(name)
+        val probes = readable.filter { privateDnsProbe(it) }.groupBy { key(it) }.values.filter { flow -> flow.all { it.payload.isEmpty() } }.flatten()
+        val exempt = (dns + probes).toHashSet()
+        val rest = packets.filter { it !in exempt }
         val failures = mutableListOf<String>()
         for ((other, count) in rest.filter { it.uid != null && it.uid != uid }.groupingBy { it.uid }.eachCount()) failures.add("$count packet(s) of UID $other, not Kestrel's")
+        val kestrels = rest.filter { it.uid == null || it.uid == uid }
+        for ((problem, count) in kestrels.filter { it.problem != null }.groupingBy { it.problem }.eachCount()) failures.add("$count record(s) that the check cannot judge: $problem")
         val flows = LinkedHashMap<String, MutableList<Packet>>()
-        for (packet in rest.filter { it.uid == null || it.uid == uid }) flows.getOrPut(key(packet)) { mutableListOf() }.add(packet)
+        for (packet in kestrels.filter { it.problem == null }) flows.getOrPut(key(packet)) { mutableListOf() }.add(packet)
         val connections = flows.values.map { flow ->
             val first = flow.first()
             val hello = flow.filter { it.protocol == PcapReader.TCP && it.source == first.source }.firstNotNullOfOrNull { Names.sni(it.payload) }
-            Connection(if (first.protocol == PcapReader.TCP) "tcp" else "udp", first.destination, first.destinationPort, hello ?: names[first.destination], flow.size, flow.sumOf { it.size.toLong() })
+            val answered = names[first.destination].orEmpty()
+            val name = hello ?: answered.firstOrNull { !allowed(it, patterns) } ?: answered.firstOrNull()
+            Connection(if (first.protocol == PcapReader.TCP) "tcp" else "udp", first.destination, first.destinationPort, name, flow.size, flow.sumOf { it.size.toLong() })
         }
         for (connection in connections) {
             val name = connection.name
             when {
                 name == null -> failures.add("${connection.protocol} ${connection.remote} port ${connection.port} has no name")
-                !allowed(name, hosts + modelHosts) -> failures.add("$name is not on the allowlist")
+                !allowed(name, patterns) -> failures.add("$name is not on the allowlist")
             }
         }
         return EgressResult(connections, failures)
@@ -52,6 +64,9 @@ object EgressCheck {
 
     private fun dnsOfPcapdroid(packet: Packet): Boolean = packet.protocol == PcapReader.UDP &&
         ((packet.destinationPort == 53 && Pcapdroid.dnsServer(packet.destination)) || (packet.sourcePort == 53 && Pcapdroid.dnsServer(packet.source)))
+
+    private fun privateDnsProbe(packet: Packet): Boolean = packet.protocol == PcapReader.TCP &&
+        ((packet.destinationPort == 853 && Pcapdroid.dnsServer(packet.destination)) || (packet.sourcePort == 853 && Pcapdroid.dnsServer(packet.source)))
 
     /** The connection of [packet]: its protocol and its two ends, whatever its direction. */
     private fun key(packet: Packet): String {
