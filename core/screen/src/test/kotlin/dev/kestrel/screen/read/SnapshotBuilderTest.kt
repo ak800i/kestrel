@@ -49,6 +49,17 @@ class SnapshotBuilderTest {
     }
 
     @Test
+    fun aSliderKeepsItsValueAndAnElementThatIsNoSliderHasNone() {
+        val slider = FakeNode(className = "android.widget.SeekBar", contentDescription = "Display brightness", slider = true, sliderPercent = 80)
+        val text = FakeNode(text = "80%", sliderPercent = 80)
+        val root = FakeNode(className = "android.widget.LinearLayout", children = listOf(slider, text))
+
+        val elements = build(FakeWindow(root)).snapshot.elements
+
+        assertEquals(listOf(80, null), elements.map { it.sliderPercent })
+    }
+
+    @Test
     fun passwordTextNeverAppearsAndTheHintNamesTheField() {
         val field = FakeNode(text = "hunter2", hint = "Password", editable = true, password = true)
 

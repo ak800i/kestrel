@@ -83,6 +83,8 @@ class ObservationBuilder(
                 val chain = listOf(index) + ScreenTree.ancestors(snapshot, index)
                 if (parts.isNotification(element) && ScreenTree.ancestors(snapshot, index).none { parts.isNotification(elements[it]) }) notifications++
                 if (chain.any { parts.isTile(elements[it]) } && chain.none { parts.isNotification(elements[it]) }) visible[index] = true
+                // SystemUI's sliders, such as the brightness dialog's and the shade's, stay too (design D19 of sub-project 6).
+                if (element.slider && element.enabled && chain.none { parts.isNotification(elements[it]) }) visible[index] = true
                 continue
             }
             visible[index] = true
@@ -254,6 +256,8 @@ class ObservationBuilder(
                 scrollAxis = element?.scrollAxis,
                 ocr = element == null,
                 redacted = line.redacted,
+                slider = element?.slider ?: false,
+                sliderPercent = element?.sliderPercent,
             )
         }
         return Observation(
@@ -322,6 +326,7 @@ class ObservationBuilder(
     }
 
     private fun states(line: Line, element: ScreenElement, neighbours: List<String>): List<String> = buildList {
+        if (element.slider) element.sliderPercent?.let { add("value $it%") }
         if (element.checkable) add(if (element.checked) "checked" else "unchecked")
         if (element.selected) add("selected")
         if (!element.enabled) add("disabled")

@@ -49,6 +49,9 @@ data class TableEntry(
     val scrollAxis: ScrollAxis?,
     val ocr: Boolean,
     val redacted: Boolean = false,
+    /** Whether the element is a slider, which set_slider may move, and its value in percent (design D19 of sub-project 6). */
+    val slider: Boolean = false,
+    val sliderPercent: Int? = null,
 ) {
     /** What the element must still look like when the agent acts on it (design D32 item 27). */
     val expect: Expect get() = Expect(label, className, packageName, editable, password, checkable)

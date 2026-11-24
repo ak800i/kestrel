@@ -129,6 +129,7 @@ class SnapshotBuilder(private val clock: () -> Long = System::currentTimeMillis)
             slider = node.slider,
             tooltip = Labels.clean(node.tooltip),
             scrollAxis = node.scrollAxis,
+            sliderPercent = if (node.slider) node.sliderPercent else null,
         )
     }
 

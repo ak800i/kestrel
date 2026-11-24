@@ -52,6 +52,19 @@ class ScreenModelTest {
     }
 
     @Test
+    fun aSlidersValueReadsBackAndAnElementWithoutOneLeavesItOutOfTheJson() {
+        val slider = ScreenElement(key = "s", windowId = 7, label = "Display brightness", bounds = bounds, slider = true, sliderPercent = 30)
+        val plain = ScreenElement(key = "b", windowId = 7, label = "Send", bounds = bounds, clickable = true)
+        val snapshot = ScreenSnapshot(1, emptyList(), listOf(slider, plain))
+
+        val json = ScreenJson.encode(snapshot)
+
+        assertEquals(snapshot, ScreenJson.decode(json))
+        assertEquals(1, Regex("\"sliderPercent\"").findAll(json).count())
+        assertNull(ScreenJson.decode("""{"takenAtMillis":1,"windows":[],"elements":[{"key":"b","windowId":7,"bounds":{"left":0,"top":0,"right":100,"bottom":50}}]}""").elements.single().sliderPercent)
+    }
+
+    @Test
     fun aFingerReachesAnElementOutsideTheKeyboardThatNoWindowAboveCoversWhole() {
         val app = WindowSummary(id = 1, kind = WindowKind.APPLICATION, bounds = IntRect(0, 0, 1080, 2400), layer = 0)
         val dialog = WindowSummary(id = 2, kind = WindowKind.APPLICATION, bounds = IntRect(0, 800, 1080, 1400), layer = 1)

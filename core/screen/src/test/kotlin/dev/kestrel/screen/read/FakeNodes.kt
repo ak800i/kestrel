@@ -32,6 +32,7 @@ class FakeNode(
     override val actions: Set<ElementAction> = emptySet(),
     override val tooltip: String? = null,
     override val scrollAxis: ScrollAxis? = null,
+    override val sliderPercent: Int? = null,
     val children: List<FakeNode> = emptyList(),
 ) : NodeData {
     override val childCount: Int get() = children.size

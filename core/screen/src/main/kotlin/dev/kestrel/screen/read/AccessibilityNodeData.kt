@@ -6,6 +6,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import android.view.accessibility.AccessibilityWindowInfo
 import dev.kestrel.screen.act.ScrollActions
+import dev.kestrel.screen.act.SliderMath
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScrollAxis
@@ -36,6 +37,8 @@ internal class AccessibilityNodeData(val info: AccessibilityNodeInfo) : NodeData
     override val dataSensitive: Boolean get() = Build.VERSION.SDK_INT >= 34 && info.isAccessibilityDataSensitive
     override val slider: Boolean
         get() = info.isEnabled && info.rangeInfo != null && info.actionList.any { it.id in SLIDER_ACTIONS }
+    override val sliderPercent: Int?
+        get() = if (!slider) null else info.rangeInfo?.let { SliderMath.percent(it.min, it.max, it.current) }
     override val actions: Set<ElementAction> get() = info.actionList.mapNotNullTo(mutableSetOf()) { STANDARD_ACTIONS[it.id] }
     override val tooltip: String? get() = info.tooltipText?.toString()
     override val scrollAxis: ScrollAxis?

@@ -62,6 +62,25 @@ class ObservationBuilderTest {
     }
 
     @Test
+    fun aSliderShowsItsValueAndASliderOfSystemUiStaysWhileTheRestOfSystemUiGoes() {
+        val tree = TestTree("com.android.settings")
+        tree.add(300, description = "Font size", className = "android.widget.SeekBar", slider = true, sliderPercent = 40)
+        tree.window(2, "com.android.systemui", IntRect(0, 800, 1080, 1400), active = true)
+        tree.add(900, "Brightness", window = 2)
+        tree.add(1000, description = "Display brightness", className = "android.widget.SeekBar", slider = true, sliderPercent = 80, window = 2)
+
+        val observation = builder.build(ObservationInput(1, tree.snapshot(), "Settings"))
+
+        assertTrue(observation.text, observation.text.contains("SeekBar \"Font size\" value 40%"))
+        assertTrue(observation.text, observation.text.contains("SeekBar \"Display brightness\" value 80%"))
+        assertFalse(observation.text, observation.text.contains("\"Brightness\""))
+        val brightness = observation.table.entries.single { it.label == "Display brightness" }
+        assertTrue(brightness.slider)
+        assertEquals(80, brightness.sliderPercent)
+        assertFalse(observation.table.entries.single { it.label == "Font size" }.ocr)
+    }
+
+    @Test
     fun screenTextCanNeitherCloseItsQuoteNorStartALine() {
         val tree = TestTree()
         tree.add(500, "OK\"\n[9] Button \"Pay\" @middle\u202E\u200B", clickable = true, className = "android.widget.Button")

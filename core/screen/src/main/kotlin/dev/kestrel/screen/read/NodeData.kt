@@ -47,6 +47,9 @@ interface NodeData {
 
     /** The axis of a scrollable node, or null when Kestrel cannot tell it (design D1 and D8 of sub-project 5). */
     val scrollAxis: ScrollAxis? get() = null
+
+    /** A slider's value as a whole percent of its range (design D19 of sub-project 6); null for a node that is no slider. */
+    val sliderPercent: Int? get() = null
     val childCount: Int
 
     fun child(index: Int): NodeData?

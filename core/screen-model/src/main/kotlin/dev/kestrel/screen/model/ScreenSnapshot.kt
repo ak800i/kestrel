@@ -95,6 +95,11 @@ data class ScreenElement(
     val tooltip: String? = null,
     /** The axis of a scrollable element, or null when Kestrel cannot tell it (design D1 and D8 of sub-project 5). */
     val scrollAxis: ScrollAxis? = null,
+    /**
+     * A slider's value as a whole percent of its range, from 0 to 100, or null for an element that is no slider or whose
+     * range has no width (design D19 of sub-project 6).
+     */
+    val sliderPercent: Int? = null,
 ) {
     /** Counts and lengths only, never screen text (spec 13.5): an element can carry a code or a message. */
     override fun toString(): String =

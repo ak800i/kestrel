@@ -39,6 +39,8 @@ internal class TestTree(val packageName: String = "com.example.chat", title: Str
         suggested: String? = null,
         window: Int = 1,
         key: String? = null,
+        slider: Boolean = false,
+        sliderPercent: Int? = null,
     ): Int {
         val pkg = windows.first { it.id == window }.packageName
         elements += ScreenElement(
@@ -63,6 +65,8 @@ internal class TestTree(val packageName: String = "com.example.chat", title: Str
             focused = focused,
             password = password,
             scrollAxis = axis,
+            slider = slider,
+            sliderPercent = sliderPercent,
         )
         return elements.lastIndex
     }

@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 /**
  * Kestrel's actions on the screen. Each one has a fallback (design spec, sections 9.3 and 14.3). They query and act on
@@ -229,6 +230,63 @@ class ScreenActions internal constructor(
         }
         // Apps offer a step's action only while the slider can move that way.
         return ActionResult.Failed(if (increase) "The slider is at its highest." else "The slider is at its lowest.")
+    }
+
+    /**
+     * Puts the slider with [key] at [percent] of its range (design D19 of sub-project 6): with its set-progress action at
+     * `min + percent ÷ 100 × (max − min)`, rounded for a range of whole numbers, or else with its scroll-forward and
+     * scroll-backward steps toward that value, reading the range again after each step, at most [MAX_SLIDER_STEPS] steps,
+     * stopping at the step that comes closest. It then reads the value back: [ActionResult.Done] within
+     * [SliderMath.TOLERANCE] points, else "The slider stopped at N %.". Its actions are Kestrel's own, which the touch
+     * watcher's rules cover as they cover a tap. [expected] checks the element with [key] as [tap] does. The instant
+     * commands' [adjust] stays as it is.
+     */
+    suspend fun setSlider(key: String, percent: Int, expected: ((ScreenElement) -> Boolean)? = null): ActionResult {
+        cardOpen()?.let { return it }
+        val live = snapshots.current()
+        refused(live.snapshot, key, expected)?.let { return it }
+        val node = live.node(key) ?: return NOT_ON_SCREEN
+        if (!node.isEnabled) return DISABLED
+        val range = node.rangeInfo ?: return ActionResult.Failed("It isn't a slider.")
+        val target = SliderMath.value(range.min, range.max, percent, range.type == AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT)
+        if (node.offers(SET_PROGRESS)) {
+            val arguments = Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target) }
+            if (!node.perform(SET_PROGRESS, arguments)) return ActionResult.Failed("The slider didn't move.")
+        } else if (!stepToward(node, target)) {
+            return ActionResult.Failed("The slider didn't move.")
+        }
+        settled(ActionMethod.ACTION)
+        val now = if (node.refresh()) node.rangeInfo else null
+        val shown = now?.let { SliderMath.percent(it.min, it.max, it.current) } ?: return ActionResult.Failed("It isn't a slider.")
+        return if (abs(shown - percent.coerceIn(0, 100)) <= SliderMath.TOLERANCE) ActionResult.Done(ActionMethod.ACTION) else ActionResult.Failed("The slider stopped at $shown %.")
+    }
+
+    /**
+     * Moves a slider without set-progress one step at a time toward [target]; a step that went past it is taken back when
+     * that comes closer. False when it could not take a first step.
+     */
+    private suspend fun stepToward(node: AccessibilityNodeInfo, target: Float): Boolean {
+        var last = node.rangeInfo?.current ?: return false
+        var moved = false
+        repeat(MAX_SLIDER_STEPS) {
+            val step = when {
+                target > last -> AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                target < last -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                else -> return true
+            }
+            if (!node.offers(step) || !node.perform(step)) return moved
+            moved = true
+            delay(SLIDER_STEP_MILLIS)
+            if (!node.refresh()) return true
+            val now = node.rangeInfo?.current ?: return true
+            if (abs(now - target) >= abs(last - target)) {
+                val back = if (step == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                if (abs(now - target) > abs(last - target) && node.offers(back)) node.perform(back)
+                return true
+            }
+            last = now
+        }
+        return true
     }
 
     /**
@@ -745,6 +803,8 @@ class ScreenActions internal constructor(
         val GESTURE_TIMED_OUT = ActionResult.Failed("Android did not report the end of the gesture.")
         val SET_PROGRESS = AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id
         const val SLIDER_STEPS = 20f
+        const val MAX_SLIDER_STEPS = 100
+        const val SLIDER_STEP_MILLIS = 50L
         const val SYSTEM_UI = "com.android.systemui"
         const val INPUT_START_MILLIS = 2_000L
         const val READ_BACK_TRIES = 5
