@@ -580,10 +580,12 @@ A resumed goal starts a new task run whose task message starts with Kestrel's ow
 ```text
 The owner's goal: "<the goal's first command>"
 You are continuing this goal after <a pause at a limit | an interruption | a restart of Kestrel>.
-Its checklist: c1 [done] Open Viber … c4 [doing] Reply to Mila … c5 [todo] …
-What Kestrel did so far: opened Viber, sent the message to Ana.
+Its checklist: c1 [done] "Open Viber" · c4 [doing] "Reply to Mila" · c5 [todo] "…"
+What Kestrel did so far, in its own notes: "opened Viber" · "sent the message to Ana"
 Look at the screen afresh; it may have changed.
 ```
+
+The checklist's texts and Kestrel's notes are quoted and escaped as data, as screen text is: a note holds labels from the screen and contacts' names, so a line break in a chat's name cannot start a line that reads as Kestrel's or the owner's. Without notes the line is "What Kestrel did so far: nothing yet.".
 
 A steering command that resumed the goal follows as an owner message. The first observation is fresh. Kestrel's code repeats no earlier step; the checklist and the ledger tell the model what is done. A share that was confirmed but not seen sent is listed as "tried, not seen sent", as `pendingLines()` says today. Every confirmation is asked again (D8).
 

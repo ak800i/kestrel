@@ -68,6 +68,7 @@ object ScreenText {
 
     /**
      * [text] quoted and escaped, but never cut: the owner's own words, whose length his input bounds (design 7.3 of
+     * sub-project 7), and a resumed goal's notes of what Kestrel did, which a cut could make wrong (design 7.6 of
      * sub-project 7).
      */
     fun quoteWhole(text: String): String = "\"" + escape(text) + "\""

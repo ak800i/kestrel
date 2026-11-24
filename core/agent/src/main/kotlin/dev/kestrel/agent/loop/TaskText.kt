@@ -51,15 +51,21 @@ internal object TaskText {
     }
 
     // A resumed goal's own lines (design 7.6 of sub-project 7): the goal, why it resumes, its checklist, what Kestrel did,
-    // the owner's steering of its earlier rounds, and a fresh look. The checklist's texts came from the model, so they are
-    // quoted as data; Kestrel's lines are not, and the steering is the owner's own words, whole.
+    // the owner's steering of its earlier rounds, and a fresh look. The checklist's texts came from the model and the
+    // ledger's lines hold labels from the screen and contacts' names, so both are quoted as data, and no line break in
+    // them can start a line of Kestrel's own; the steering is the owner's own words, whole.
     private fun resumed(task: TaskRequest, resume: ResumeNote, redactor: Redactor): List<String> =
         listOfNotNull(
             Redacted.of(redactor, "The owner's goal: " + task.text).text,
             "You are continuing this goal after ${resume.after.words}.",
             task.checklist?.let(::checklistLine),
-            "What Kestrel did so far: ${resume.done.joinToString(", ").ifEmpty { "nothing yet" }}.",
+            doneLine(resume.done),
         ) + resume.steered.map { added(it, "in an earlier round", redactor) } + "Look at the screen afresh; it may have changed."
+
+    // Kestrel's notes of what it did, each quoted whole, because a cut note could name fewer recipients than it reached.
+    private fun doneLine(done: List<String>): String =
+        if (done.isEmpty()) "What Kestrel did so far: nothing yet."
+        else "What Kestrel did so far, in its own notes: " + done.joinToString(" · ") { ScreenText.quoteWhole(it) }
 
     // A checklist of more than 20 items names only its open items, at most 20, and counts its closed ones as a records
     // block does; they stay as they are and need no id from the model (design 7.2 and 8.3 of sub-project 7).
