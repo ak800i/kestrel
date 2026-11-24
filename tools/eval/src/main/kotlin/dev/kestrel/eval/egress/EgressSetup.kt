@@ -99,12 +99,16 @@ class EgressSetup(
         }
     }
 
-    /** Settings > Control permissions > its menu > "Show API key" or "Generate API key", by the script's own taps; a step that does not show is looked for 3 scrolls further. */
+    /**
+     * Settings > Control permissions > its menu > "Show API key" or "Generate API key", by the script's own taps; a step that
+     * does not show is looked for up to [MAX_SCROLLS] scrolls further, because PCAPdroid's Settings open at their top and
+     * "Control permissions" lies near their end.
+     */
     private fun generateKey(): String {
         for (step in KEY_STEPS) {
             var shown = step.firstOrNull { visible(it) }
             var scrolls = 0
-            while (shown == null && scrolls < 3) {
+            while (shown == null && scrolls < MAX_SCROLLS) {
                 device.once("input swipe 540 1600 540 600 300")
                 clock.sleep(1.seconds)
                 scrolls++
@@ -185,6 +189,7 @@ class EgressSetup(
         private val KEY_STEPS = listOf(listOf("Settings"), listOf("Control permissions"), listOf("More options"), listOf("Show API key", "Generate API key"))
         private val CLOSE = listOf("OK", "Close")
         private const val MAX_TAPS = 10
+        private const val MAX_SCROLLS = 10
         private val NODE = Regex("<node\\b[^>]*>")
         private val PACKAGE_OF = Regex("\\bpackage=\"([^\"]*)\"")
         private val TEXT_OF = Regex("\\btext=\"([^\"]*)\"")

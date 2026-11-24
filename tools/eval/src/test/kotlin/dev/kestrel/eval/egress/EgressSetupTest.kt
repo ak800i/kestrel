@@ -56,7 +56,7 @@ class EgressSetupTest {
             listOf(Shown("Next")),
             listOf(Shown("DONE")),
             listOf(Shown("Settings")),
-            listOf(Shown("Control permissions Allow apps to control PCAPdroid"), Shown("Control permissions", clickable = false)),
+            listOf(Shown("Control permissions Allow apps to control PCAPdroid", swipes = 6), Shown("Control permissions", clickable = false, swipes = 6)),
             listOf(Shown("More options")),
             listOf(Shown("Generate API key"), Shown("Generate API key", clickable = false)),
             listOf(Shown("OK")),
@@ -147,18 +147,19 @@ class EgressSetupTest {
         assertEquals("input keyevent KEYCODE_HOME", run.adb.commands.last())
     }
 
-    private class Shown(val label: String, val clickable: Boolean = true)
+    private class Shown(val label: String, val clickable: Boolean = true, val swipes: Int = 0)
 
     /**
      * PCAPdroid behind the hooks, page by page, on a device without it: screen-has compares labels without letter case, as
      * ScreenQuery does, and screen-tap presses only an exact label, as tapMatches does; a tap on a label in [refused] is
-     * answered as one in another window. A pressed label opens the next page.
+     * answered as one in another window. A pressed label opens the next page, and an element shows after its swipes.
      */
-    private inner class FakePcapdroid(vararg pages: List<Shown>, refused: Set<String> = emptySet()) {
+    private inner class FakePcapdroid(private vararg val pages: List<Shown>, refused: Set<String> = emptySet()) {
         val run = FakeRun()
         var running = false
         private var installed = false
         private var page = 0
+        private var swipes = 0
 
         init {
             run.adb.on("^pm list packages com\\.emanuelef\\.remote_capture$") { if (installed) "package:com.emanuelef.remote_capture" else "" }
@@ -173,16 +174,16 @@ class EgressSetupTest {
             }
             run.adb.hook("SCREEN_HAS") { extras ->
                 val label = extras["label"]
-                val shown = pages.getOrNull(page).orEmpty().filter { it.label.equals(label, ignoreCase = true) && (extras["state"] != "clickable" || it.clickable) }
+                val shown = showing().filter { it.label.equals(label, ignoreCase = true) && (extras["state"] != "clickable" || it.clickable) }
                 "count=${if (label == null) 1 else shown.size} app=com.emanuelef.remote_capture"
             }
             run.adb.hook("SCREEN_TAP") { extras ->
                 val label = extras["label"]
-                val matches = pages.getOrNull(page).orEmpty().count { it.label == label }
+                val matches = showing().count { it.label == label }
                 when {
                     label in refused -> "tapped=false error=elsewhere"
                     matches == 0 -> "tapped=false count=0"
-                    else -> "tapped=true count=$matches".also { page++ }
+                    else -> "tapped=true count=$matches".also { page++; swipes = 0 }
                 }
             }
             run.adb.on("^am start -n com\\.emanuelef\\.remote_capture/\\.activities\\.CaptureCtrl -e action (start|stop) ") {
@@ -192,7 +193,10 @@ class EgressSetupTest {
             run.adb.on("^dumpsys activity services com\\.emanuelef\\.remote_capture$") {
                 if (running) "  * ServiceRecord{1a2b u0 com.emanuelef.remote_capture/.CaptureService}" else "  (nothing)"
             }
+            run.adb.on("^input swipe ") { swipes++; "" }
         }
+
+        private fun showing(): List<Shown> = pages.getOrNull(page).orEmpty().filter { it.swipes <= swipes }
 
         fun setup(keys: PcapdroidKeys = PcapdroidKeys(folder.resolve("keys-${System.nanoTime()}.json")), apk: Path = folder.resolve("PCAPdroid_v2.0.4.apk")) =
             EgressSetup(run.device, run.hooks, run.clock, keys) { apk }
