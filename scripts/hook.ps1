@@ -176,8 +176,10 @@
 #                                           credits, whether the price was known and the time on the device; never a
 #                                           prompt, a reply or a token
 #   provider-standin [-On true|false]       answers whether the Copilot stand-in on the device runs, whether the default
-#                                           profile is a Copilot profile (profile=none|copilot|other), and how many
-#                                           Copilot profiles there are (copilot=n), after starting or ending the
+#                                           profile is a Copilot profile (profile=none|copilot|other), how many
+#                                           Copilot profiles there are (copilot=n), the default profile's random ID
+#                                           (id=<id>|none) and whether its credential is stored
+#                                           (credential=present|missing|none), after starting or ending the
 #                                           stand-in; while it runs, provider-live sends its cases to it and makes no
 #                                           request off the device
 #   provider-delete                         deletes every Copilot profile with its credential, as the profile page's

@@ -28,4 +28,6 @@ internal class StoredCredentials(private val store: CredentialStore) : Credentia
     override suspend fun delete(id: String) {
         store.delete(id)
     }
+
+    override suspend fun contains(id: String): Boolean = store.contains(id)
 }

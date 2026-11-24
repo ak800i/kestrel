@@ -61,8 +61,9 @@ import java.util.Locale
  * tests (spec D9). It answers at once, because a hook ends after 20 s, and `provider-live -Result` answers `running` until
  * the case has ended. `provider-standin` starts or ends a Copilot stand-in on the device; while it runs, `provider-live`
  * sends its cases there, with targets that it builds itself, and makes no request off the device. `provider-delete`
- * deletes every Copilot profile, as the owner's session does at its end. The answers hold only outcomes, the style,
- * token counts, credits, whether the price was known, counts of profiles, and times measured on the device; never a
+ * deletes every Copilot profile, as the owner's session did at its end on the A71; scripts\hook.ps1 refuses it on
+ * kestrel-api37. The answers hold only outcomes, the style, token counts, credits, whether the price was known, counts of
+ * profiles, the default profile's random ID, whether its credential is stored, and times measured on the device; never a
  * prompt, a reply, a code, a token or a key.
  */
 internal class ProviderHooks(private val graph: AppGraph) {
@@ -74,20 +75,16 @@ internal class ProviderHooks(private val graph: AppGraph) {
     }
 
     /**
-     * Starts or ends the stand-in with `--ez on`, and answers whether it runs, what the default profile is, and how many
-     * Copilot profiles there are.
+     * Starts or ends the stand-in with `--ez on`, and answers whether it runs, what the default profile is, how many
+     * Copilot profiles there are, the default profile's ID, and whether its credential is stored ([standInAnswer]).
      */
     private suspend fun standIn(intent: Intent): String {
         if (intent.hasExtra(EXTRA_ON)) switchStandIn(intent.getBooleanExtra(EXTRA_ON, false))
         val setting = stored()
-        val profile = setting.defaultProfile
-        val kind = when {
-            profile == null -> "none"
-            profile.providerId == CatalogLoader.COPILOT -> "copilot"
-            else -> "other"
-        }
+        val credentialId = setting.defaultProfile?.credentialId
+        val credentialStored = credentialId?.let { graph.credentialVault.contains(it) }
         val on = synchronized(lock) { standIn != null }
-        return "standin=${if (on) "on" else "off"} profile=$kind copilot=${setting.profiles.count { it.providerId == CatalogLoader.COPILOT }}"
+        return standInAnswer(on, setting, credentialStored)
     }
 
     /**
@@ -342,6 +339,28 @@ internal class ProviderHooks(private val graph: AppGraph) {
             val priceKnown = calls.all { it.cost.priceKnown }
             return "case=$case outcome=ok matched=$matched style=${calls.last().style} input=$input output=$output estimated=$estimated " +
                 "credits=$credits priceKnown=$priceKnown millis=$millis${if (standIn) " standin=on" else ""}"
+        }
+
+        /**
+         * The answer of `provider-standin`: whether the stand-in runs, the kind of the default profile (none, copilot or
+         * other), the number of Copilot profiles, the default profile's ID, which Kestrel makes at random and which holds
+         * nothing secret (`id=none` without a default profile), and whether its credential is stored: present, missing,
+         * or none for a profile that has no credential or for no default profile ([credentialStored] is null then).
+         */
+        internal fun standInAnswer(on: Boolean, setting: ProvidersSetting, credentialStored: Boolean?): String {
+            val profile = setting.defaultProfile
+            val kind = when {
+                profile == null -> "none"
+                profile.providerId == CatalogLoader.COPILOT -> "copilot"
+                else -> "other"
+            }
+            val credential = when (credentialStored) {
+                null -> "none"
+                true -> "present"
+                false -> "missing"
+            }
+            return "standin=${if (on) "on" else "off"} profile=$kind copilot=${setting.profiles.count { it.providerId == CatalogLoader.COPILOT }} " +
+                "id=${profile?.id ?: "none"} credential=$credential"
         }
 
         private val lock = Any()

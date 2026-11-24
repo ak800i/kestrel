@@ -56,5 +56,8 @@ class CredentialStore(
 
     suspend fun ids(): List<String> = withContext(dispatcher) { dao.ids() }
 
+    /** Whether a credential is stored under [id], without decrypting it. */
+    suspend fun contains(id: String): Boolean = withContext(dispatcher) { dao.get(id) != null }
+
     private fun associatedData(id: String) = "credentials/$id".encodeToByteArray()
 }

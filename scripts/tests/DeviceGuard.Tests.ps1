@@ -320,24 +320,30 @@ Describe 'The helpers that read and change the device' {
             { Assert-OwnerDataCommand -Serial R58N66RVD7Z -Command provider-delete } | Should -Not -Throw
         }
 
-        It 'reads the stand-in''s answer with the kind of the default profile and the number of Copilot profiles' {
-            $state = ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1'
+        It 'reads the stand-in''s answer with the default profile''s kind and ID, its credential and the number of Copilot profiles' {
+            $state = ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1 id=profile-1 credential=present'
 
             $state['standin'] | Should -Be 'off'
             $state['profile'] | Should -Be 'copilot'
             $state['copilot'] | Should -Be '1'
+            $state['id'] | Should -Be 'profile-1'
+            $state['credential'] | Should -Be 'present'
             { ConvertFrom-StandInAnswer 'standin=on' } | Should -Throw 'Not an answer of provider-standin*'
-            # An older build answers without the count.
+            { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1 id=profile-1 credential=maybe' } | Should -Throw 'Not an answer of provider-standin*'
+            # Older builds answer without the count, or without the ID and the credential.
             { ConvertFrom-StandInAnswer 'standin=off profile=none' } | Should -Throw 'Not an answer of provider-standin*install.ps1*'
+            { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1' } | Should -Throw 'Not an answer of provider-standin*install.ps1*'
         }
 
         It 'reads Kestrel''s profiles through hook.ps1 provider-standin, after it unstops Kestrel' {
-            Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "standin=off profile=copilot copilot=1`r`n"; Id = 1 } }
+            Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "standin=off profile=copilot copilot=1 id=profile-1 credential=present`r`n"; Id = 1 } }
 
             $profiles = Get-KestrelProfiles -Serial emulator-5554
 
             $profiles.Profile | Should -BeExactly 'copilot'
             $profiles.Copilot | Should -Be 1
+            $profiles.Id | Should -BeExactly 'profile-1'
+            $profiles.Credential | Should -BeExactly 'present'
             (Get-FakeDevice).calls | Should -Contain 'pm unstop dev.kestrel && echo && echo kestrel-end'
             Should -Invoke Invoke-TimedProcess -Times 1 -Exactly -ParameterFilter {
                 ($ArgumentList -join ' ') -like "-NoProfile -ExecutionPolicy Bypass -File *hook.ps1 -Serial emulator-5554 -Command provider-standin"
@@ -352,13 +358,14 @@ Describe 'The helpers that read and change the device' {
 
         It 'reads the Google accounts and Kestrel''s profiles, or why the profiles could not be read' {
             Set-FakeDevice -Accounts 2
-            Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1 } }
+            Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' } }
 
             $state = Get-OwnerDataState -Serial emulator-5554
 
             $state.GoogleAccounts | Should -Be 2
             $state.Profiles.Profile | Should -BeExactly 'copilot'
-            Format-OwnerDataState $state 'kestrel-api37' | Should -BeExactly 'kestrel-api37 has 2 Google accounts; Kestrel''s default profile is copilot, and it has 1 Copilot profiles'
+            Format-OwnerDataState $state 'kestrel-api37' |
+                Should -BeExactly 'kestrel-api37 has 2 Google accounts; Kestrel''s default profile is copilot with its credential present, and it has 1 Copilot profiles'
 
             Mock Get-KestrelProfiles { throw 'scripts\hook.ps1 provider-standin ended with exit code 1' }
             $unread = Get-OwnerDataState -Serial emulator-5554
@@ -378,8 +385,8 @@ Describe 'The helpers that read and change the device' {
 
 Describe 'Get-OwnerDataChange' {
     BeforeAll {
-        function New-OwnerData([int]$Accounts, [string]$Kind, [int]$Copilot, [string]$Unread) {
-            $profiles = if ($Kind) { [pscustomobject]@{ Profile = $Kind; Copilot = $Copilot } } else { $null }
+        function New-OwnerData([int]$Accounts, [string]$Kind, [int]$Copilot, [string]$Unread, [string]$Id = 'profile-1', [string]$Stored = 'present') {
+            $profiles = if ($Kind) { [pscustomobject]@{ Profile = $Kind; Copilot = $Copilot; Id = $Id; Credential = $Stored } } else { $null }
             [pscustomobject]@{ GoogleAccounts = $Accounts; Profiles = $profiles; ProfilesUnread = $Unread }
         }
         $before = New-OwnerData 1 'copilot' 1
@@ -390,11 +397,23 @@ Describe 'Get-OwnerDataChange' {
     }
 
     It 'names each change' {
-        Get-OwnerDataChange -Before $before -After (New-OwnerData 0 'none' 0) -Serial emulator-5554 -During 'the tests' | Should -BeExactly @(
+        Get-OwnerDataChange -Before $before -After (New-OwnerData 0 'none' 0 -Id 'none' -Stored 'none') -Serial emulator-5554 -During 'the tests' | Should -BeExactly @(
             'The number of Google accounts on emulator-5554 changed during the tests: 1 before, 0 now.'
             'Kestrel''s default profile on emulator-5554 changed during the tests: copilot before, none now.'
             'The number of Kestrel''s Copilot profiles on emulator-5554 changed during the tests: 1 before, 0 now.'
+            'Kestrel''s default profile on emulator-5554 was replaced during the tests: profile-1 before, none now.'
+            'The credential of Kestrel''s default profile on emulator-5554 changed during the tests: present before, none now.'
         )
+    }
+
+    It 'catches a Copilot profile that another Copilot profile replaced, although the kind and the count stay' {
+        Get-OwnerDataChange -Before $before -After (New-OwnerData 1 'copilot' 1 -Id 'profile-2') -Serial emulator-5554 -During 'the tests' |
+            Should -BeExactly 'Kestrel''s default profile on emulator-5554 was replaced during the tests: profile-1 before, profile-2 now.'
+    }
+
+    It 'catches a credential that was deleted while its profile stayed' {
+        Get-OwnerDataChange -Before $before -After (New-OwnerData 1 'copilot' 1 -Stored 'missing') -Serial emulator-5554 -During 'the tests' |
+            Should -BeExactly 'The credential of Kestrel''s default profile on emulator-5554 changed during the tests: present before, missing now.'
     }
 
     It 'counts profiles that cannot be read afterwards as a change' {

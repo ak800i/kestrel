@@ -5,16 +5,19 @@
 # in scripts\lib\DeviceGuard.ps1). It refuses every other argument.
 # Before the tests it reads the device's state; afterwards, also when the tests fail or Ctrl+C interrupts them, it checks
 # that the serial still names the test device, and then:
-#   - it puts back the device's accessibility settings;
+#   - on kestrel-api37, it checks what AGENTS.md asks for there: that the number of Google accounts in 'dumpsys account'
+#     and Kestrel's profiles, as scripts\hook.ps1 provider-standin answers (the default profile's kind and ID, whether
+#     its credential is stored, and the number of Copilot profiles), did not change, so that a profile that was
+#     removed or replaced, or a credential that was deleted, fails the run. When Kestrel does not answer before the
+#     tests, for example because it is not installed, the script says so and compares only the accounts. The hook starts
+#     Kestrel's process, so this comes before Kestrel is stopped;
+#   - it stops Kestrel ('am force-stop'), which stays stopped at the end, and puts back the device's accessibility
+#     settings;
 #   - it checks that Kestrel was not uninstalled or installed again, either of which deletes Kestrel's data. Kestrel's
 #     first-install time in 'dumpsys package' shows both, and nothing else: a 'pm clear', or a test that deletes
 #     Kestrel's stores in its process, leaves the time as it was;
 #   - it uninstalls each package that Gradle installed for the tests (the fixture app dev.kestrel.testapp and the test
-#     APKs, such as dev.kestrel.test) and that was not installed before;
-#   - on kestrel-api37, it checks what AGENTS.md asks for there: that the number of Google accounts in 'dumpsys account'
-#     and Kestrel's profiles, as scripts\hook.ps1 provider-standin answers (the default profile's kind and the number of
-#     Copilot profiles), did not change. When Kestrel does not answer before the tests, for example because it is not
-#     installed, the script says so and compares only the accounts.
+#     APKs, such as dev.kestrel.test) and that was not installed before.
 # A change of Kestrel's install or of the owner's data is written as an error that names it; the script does not try to
 # bring data back. Every failed check ends the script with exit code 1, also when the tests passed. If the device check
 # fails, or Ctrl+C interrupts the script while it puts the device back, it warns with the commands that do it by hand;
@@ -80,6 +83,13 @@ try {
         try { Assert-TestDevice -Serial $Serial } catch { $refusal = $_.Exception.Message; throw }
         # The restore must run even when a command before it fails.
         $ErrorActionPreference = 'Continue'
+        # A run fails when the owner's data changed. Reading Kestrel's profiles starts Kestrel's process, so it comes
+        # before the stop below, after which Kestrel stays stopped on every device.
+        if ($ownerBefore) {
+            $problems = @(Compare-OwnerData -Serial $Serial -Before $ownerBefore -During 'the tests')
+            foreach ($problem in $problems) { Write-Error -Message $problem -ErrorAction Continue }
+            if ($problems.Count -gt 0 -and $code -eq 0) { $code = 1 }
+        }
         # Tests that still run on the device after Gradle was interrupted would replace the list again, so they stop
         # first. Android then removes Kestrel's service from the list itself, and the restore waits for that, so that
         # Android's change does not overwrite it.
@@ -91,14 +101,9 @@ try {
             Start-Sleep -Milliseconds 500
         }
         # A run whose tests passed still fails when the device keeps changed settings, when Kestrel was uninstalled or
-        # installed again, when a test package stays, or when the owner's data changed.
+        # installed again, or when a test package stays.
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $saved) -and $code -eq 0) { $code = 1 }
         if (-not (Complete-TestPackages -Serial $Serial -Before $packagesBefore) -and $code -eq 0) { $code = 1 }
-        if ($ownerBefore) {
-            $problems = @(Compare-OwnerData -Serial $Serial -Before $ownerBefore -During 'the tests')
-            foreach ($problem in $problems) { Write-Error -Message $problem -ErrorAction Continue }
-            if ($problems.Count -gt 0 -and $code -eq 0) { $code = 1 }
-        }
         $restored = $true
     } finally {
         if (-not $restored) {

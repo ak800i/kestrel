@@ -8,7 +8,9 @@ import dev.kestrel.providers.credentials.Credential
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.crypto.KeyGenerator
 
@@ -34,6 +36,18 @@ class StoredCredentialsTest {
         store.put("test-1", "not a credential".encodeToByteArray())
 
         assertNull(vault.read("test-1"))
+        assertEquals(listOf("test-1"), dao.ids())
+    }
+
+    @Test
+    fun containsTellsWhetherACredentialIsStoredWithoutDecryptingIt() = runTest {
+        vault.write("test-1", Credential.ApiKey("test-key"))
+        // A store with another key cannot decrypt the row, and would delete it on a read.
+        val otherKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        val other = StoredCredentials(CredentialStore(dao, AesGcmFieldCipher { otherKey }, dispatcher = Dispatchers.Unconfined))
+
+        assertTrue(other.contains("test-1"))
+        assertFalse(other.contains("test-2"))
         assertEquals(listOf("test-1"), dao.ids())
     }
 

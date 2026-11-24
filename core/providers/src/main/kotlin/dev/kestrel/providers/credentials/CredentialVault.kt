@@ -13,4 +13,10 @@ interface CredentialVault {
     suspend fun write(id: String, credential: Credential)
 
     suspend fun delete(id: String)
+
+    /**
+     * Whether a credential is stored under [id]. An implementation that can tell it without decrypting the credential
+     * does so, as `:app`'s does; this one reads it.
+     */
+    suspend fun contains(id: String): Boolean = read(id) != null
 }

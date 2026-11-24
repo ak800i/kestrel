@@ -338,20 +338,25 @@ function Get-AccountCount([string[]]$Dump, [string]$Type) {
 # The number of Google accounts in 'dumpsys account', from the type only, never a name.
 function Get-GoogleAccountCount([string[]]$Dump) { Get-AccountCount $Dump 'com.google' }
 
-# The answer of provider-standin, such as 'standin=off profile=copilot copilot=1', as an ordered table: whether the
-# stand-in runs, the kind of the default profile and the number of Copilot profiles.
+# The answer of provider-standin, such as 'standin=off profile=copilot copilot=1 id=profile-1 credential=present', as an
+# ordered table: whether the stand-in runs, the kind of the default profile, the number of Copilot profiles, the default
+# profile's ID, which Kestrel makes at random and which holds nothing secret (none without a default profile), and
+# whether its credential is stored (present, missing, or none for a profile without one).
 function ConvertFrom-StandInAnswer([string]$Text) {
     $pairs = ConvertFrom-HookPairs $Text
-    if (-not $pairs.Contains('standin') -or -not $pairs.Contains('profile') -or "$($pairs['copilot'])" -notmatch '^\d+$') {
+    if (-not $pairs.Contains('standin') -or -not $pairs.Contains('profile') -or "$($pairs['copilot'])" -notmatch '^\d+$' -or
+        -not $pairs['id'] -or "$($pairs['credential'])" -notin 'present', 'missing', 'none') {
         throw "Not an answer of provider-standin: '$Text'. Install the current debug build with scripts\install.ps1."
     }
     $pairs
 }
 
 # Reads Kestrel's profiles on the device through the debug hook provider-standin, which changes nothing: the kind of the
-# default profile (none, copilot or other) and the number of Copilot profiles. Android gives no hook broadcast to a
-# package that it stopped, as 'am force-stop' leaves Kestrel, so the package is unstopped first ('pm unstop', which starts
-# nothing). scripts\hook.ps1 needs PowerShell 7.3, so it runs in pwsh. Throws when Kestrel does not answer.
+# default profile (none, copilot or other), the number of Copilot profiles, the default profile's ID and whether its
+# credential is stored (ConvertFrom-StandInAnswer). Android gives no hook broadcast to a package that it stopped, as
+# 'am force-stop' leaves Kestrel, so the package is unstopped first ('pm unstop', which starts nothing; the broadcast then
+# starts Kestrel's process). scripts\hook.ps1 needs PowerShell 7.3, so it runs in pwsh. Throws when Kestrel does not
+# answer.
 function Get-KestrelProfiles([string]$Serial) {
     try { Invoke-SettingsCommand -Serial $Serial -Command 'pm unstop dev.kestrel' | Out-Null } catch { Write-Verbose "pm unstop failed: $($_.Exception.Message)" }
     $pwsh = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -362,7 +367,7 @@ function Get-KestrelProfiles([string]$Serial) {
     if (-not $run.Completed) { throw 'scripts\hook.ps1 provider-standin did not end within 60 s' }
     if ($run.ExitCode -ne 0) { throw "scripts\hook.ps1 provider-standin ended with exit code $($run.ExitCode)" }
     $answer = ConvertFrom-StandInAnswer $run.Output
-    [pscustomobject]@{ Profile = "$($answer['profile'])"; Copilot = [int]$answer['copilot'] }
+    [pscustomobject]@{ Profile = "$($answer['profile'])"; Copilot = [int]$answer['copilot']; Id = "$($answer['id'])"; Credential = "$($answer['credential'])" }
 }
 
 # Reads, and changes nothing, what AGENTS.md asks to compare before and after a run on kestrel-api37: the number of
@@ -394,12 +399,18 @@ function Get-OwnerDataChange($Before, $After, [string]$Serial, [string]$During) 
     if ($After.Profiles.Copilot -ne $Before.Profiles.Copilot) {
         "The number of Kestrel's Copilot profiles on $Serial changed during ${During}: $($Before.Profiles.Copilot) before, $($After.Profiles.Copilot) now."
     }
+    if ($After.Profiles.Id -cne $Before.Profiles.Id) {
+        "Kestrel's default profile on $Serial was replaced during ${During}: $($Before.Profiles.Id) before, $($After.Profiles.Id) now."
+    }
+    if ($After.Profiles.Credential -ne $Before.Profiles.Credential) {
+        "The credential of Kestrel's default profile on $Serial changed during ${During}: $($Before.Profiles.Credential) before, $($After.Profiles.Credential) now."
+    }
 }
 
-# Describes an answer of Get-OwnerDataState in one line, with counts and kinds only.
+# Describes an answer of Get-OwnerDataState in one line, with counts, kinds and states only.
 function Format-OwnerDataState($State, [string]$Serial) {
     $profiles = if ($State.Profiles) {
-        "Kestrel's default profile is $($State.Profiles.Profile), and it has $($State.Profiles.Copilot) Copilot profiles"
+        "Kestrel's default profile is $($State.Profiles.Profile) with its credential $($State.Profiles.Credential), and it has $($State.Profiles.Copilot) Copilot profiles"
     } else {
         "Kestrel's profiles could not be read ($($State.ProfilesUnread))"
     }

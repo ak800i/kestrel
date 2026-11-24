@@ -86,7 +86,7 @@ Describe 'connected-test.ps1' {
         $KestrelTestDevices.Clear()
         Remove-Item -LiteralPath $arguments, $gradleSerial -ErrorAction SilentlyContinue
         $env:ANDROID_SERIAL = 'caller-serial'
-        Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1 } }
+        Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' } }
     }
 
     AfterAll {
@@ -144,7 +144,11 @@ Describe 'connected-test.ps1' {
         $script:reads = 0
         Mock Get-KestrelProfiles {
             $script:reads++
-            if ($script:reads -eq 1) { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1 } } else { [pscustomobject]@{ Profile = 'none'; Copilot = 0 } }
+            if ($script:reads -eq 1) {
+                [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' }
+            } else {
+                [pscustomobject]@{ Profile = 'none'; Copilot = 0; Id = 'none'; Credential = 'none' }
+            }
         }
 
         $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest')
@@ -153,7 +157,26 @@ Describe 'connected-test.ps1' {
         $run.Errors | Should -BeExactly @(
             'Kestrel''s default profile on emulator-5554 changed during the tests: copilot before, none now.'
             'The number of Kestrel''s Copilot profiles on emulator-5554 changed during the tests: 1 before, 0 now.'
+            'Kestrel''s default profile on emulator-5554 was replaced during the tests: profile-1 before, none now.'
+            'The credential of Kestrel''s default profile on emulator-5554 changed during the tests: present before, none now.'
         )
+    }
+
+    It 'reads Kestrel''s profiles after the tests before it stops Kestrel, so that Kestrel ends stopped' {
+        # Each read writes down whether Kestrel had been stopped already; the hook would start Kestrel again after the stop.
+        $reads = Join-Path $TestDrive 'reads.txt'
+        Remove-Item -LiteralPath $reads -ErrorAction SilentlyContinue
+        Mock Get-KestrelProfiles {
+            $calls = @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).calls)
+            Add-Content -LiteralPath (Join-Path (Split-Path $env:KESTREL_FAKE_ADB) 'reads.txt') -Value ($calls -contains 'am force-stop dev.kestrel')
+            [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' }
+        }
+
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest')
+
+        $run.Code | Should -Be 0
+        Get-Content -LiteralPath $reads | Should -Be @('False', 'False')
+        @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).calls) | Should -Contain 'am force-stop dev.kestrel'
     }
 
     It 'says so when Kestrel''s profiles cannot be read before the tests, and then compares only the accounts' {
