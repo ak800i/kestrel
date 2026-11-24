@@ -44,6 +44,8 @@ class CaptureTest {
                     "-e pcap_name kestrel-20261124-100000.pcap -e app_filter dev.kestrel -e dump_extensions true -e ip_mode both -e auto_block_private_dns true",
             ),
         )
+        // The control brought PCAPdroid to the front, which the first run would otherwise see as its first screen.
+        assertEquals("input keyevent KEYCODE_HOME", run.adb.commands.last())
         val result = capture.finish()
 
         assertTrue(result.failures.toString(), result.passed)

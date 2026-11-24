@@ -16,7 +16,8 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * PCAPdroid's capture of Kestrel's traffic during one call of a series (design D11 of sub-project 6), judged into a part
  * of the results folder's egress check ([EgressParts]). [start] reads Kestrel's UID and starts the capture before the
- * first run with the device's key, after the restore that puts it back. [finish] stops it, waits until its file stops
+ * first run with the device's key, after the restore that puts it back, and leaves the home screen in front, as the
+ * first run would find it without a capture. [finish] stops it, waits until its file stops
  * growing, because PCAPdroid writes it after the stop, pulls it into the folder as `capture-<stamp>.pcap`, deletes it on
  * the device, reads the device's allowlist (at the start and now), and judges it. Without a model (`expectNone`), any
  * connection fails. A part that cannot be judged is recorded as unknown, with its reason.
@@ -69,6 +70,7 @@ class Capture(
             )
         }
         if (!waitFor(true)) throw IllegalStateException("PCAPdroid's capture did not start on ${device.serial}.")
+        leavePcapdroid()
         synchronized(this) {
             if (closed) throw Stopping("The capture was put back while it started, because :tools:eval is stopping.")
             capturing = true
@@ -127,7 +129,15 @@ class Capture(
     private fun stop() {
         EgressSetup.control(device, key, "stop")
         if (!waitFor(false)) throw IllegalStateException("PCAPdroid's capture did not stop on ${device.serial}.")
-        // The control brings PCAPdroid's task to the front.
+        leavePcapdroid()
+    }
+
+    /**
+     * The home screen in front again: PCAPdroid's control brings its task to the front at a start and at a stop, and after
+     * a start, a task without a setup of its own would take PCAPdroid's screen, which lists Kestrel's connections, as its
+     * first observation.
+     */
+    private fun leavePcapdroid() {
         device.idempotent("input keyevent KEYCODE_HOME")
     }
 
