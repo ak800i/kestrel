@@ -21,7 +21,8 @@ import kotlin.time.Duration.Companion.minutes
  * at a screen-has for which [arrives] is true; the next [deleteMisses] screen-has for Delete count none, as while
  * Gmail's toolbar still moves. The navigation drawer's Drafts row is "Drafts" with no draft and "Drafts, n" with n, beside
  * its title "Drafts"; [drafts] holds Drafts' rows, whose selection the toolbar's "Discard drafts" discards after its
- * question's OK.
+ * question's OK. A row and the buttons are clickable, a row's subject and snippet are not, and screen-has' bounds are
+ * those of the first element that it counts.
  */
 class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>, val drafts: MutableList<String> = mutableListOf()) {
     val selected = mutableSetOf<String>()
@@ -54,6 +55,8 @@ class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>, val drafts: Mutabl
                 pending.clear()
             }
             val elements = elements()
+            // A row and the buttons are clickable; a row's subject and snippet are not.
+            val shown = if (extras["state"] == "clickable") elements.filter { (label, row) -> row == null || row == label } else elements
             val count = when {
                 extras["label"] == "Delete" && selected.isNotEmpty() && deleteMisses > 0 -> {
                     deleteMisses--
@@ -61,9 +64,14 @@ class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>, val drafts: Mutabl
                 }
                 // The drawer's row is a LinearLayout, and its title a TextView.
                 extras["class"] == "LinearLayout" -> if (view == View.DRAWER) FakeScreen.has(listOf(elements[1].first), extras) else 0
-                else -> FakeScreen.has(elements.map { it.first }, extras)
+                else -> FakeScreen.has(shown.map { it.first }, extras)
             }
-            val bounds = if (view == View.DRAWER && extras["label"] == "Drafts" && count >= 1) "0,1446,840,1573" else "none"
+            val first = shown.firstOrNull { FakeScreen.has(listOf(it.first), extras) == 1 }?.let { elements.indexOf(it) }
+            val bounds = when {
+                view == View.DRAWER && extras["label"] == "Drafts" && count >= 1 -> "0,1446,840,1573"
+                count >= 1 && first != null -> "0,$first,1080,${first + 1}"
+                else -> "none"
+            }
             "count=$count app=${MailToSelf.GMAIL} bounds=$bounds"
         }
         adb.hook("SCREEN_TAP") hook@{ extras ->
@@ -279,6 +287,26 @@ class MessageStepsTest {
         assertEquals(listOf("Gmail: in Drafts, discard the draft \"maple heron\"."), failures.map { it.byHand })
         assertEquals(2, both.size)
         assertTrue(twice.adb.hookCalls("SCREEN_TAP").none { it["long"] == "true" })
+    }
+
+    @Test
+    fun aRowThatALiveModelWroteIsNamedByItsOneClickableElement() {
+        // A live model writes its own subject and body, so only the row, the one clickable element, holds the marker once.
+        val draft = "Important, Draft, Note to self: maple heron, Remember maple heron today, 12:15 PM"
+        val email = "me, Note to self: maple heron, Remember maple heron today"
+        for (kind in DeviceKind.entries) {
+            val run = FakeRun(kind)
+            val inbox = mutableListOf(email, "Ana, Lunch")
+            val drafts = mutableListOf(draft, "Draft, Plans for the weekend, Notes, 8:00 AM")
+            fakeGmail(run.adb, inbox, drafts)
+
+            GmailTrash.push(run.scope)
+
+            assertEquals(kind.label, emptyList<Any>(), run.restores.runAll())
+            assertEquals(kind.label, listOf("Ana, Lunch"), inbox)
+            assertEquals(kind.label, listOf("Draft, Plans for the weekend, Notes, 8:00 AM"), drafts)
+            assertTrue(kind.label, run.adb.hookCalls("SCREEN_TAP").filter { it["long"] == "true" }.all { it["contains"] == "maple heron" })
+        }
     }
 
     @Test

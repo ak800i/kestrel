@@ -142,10 +142,13 @@ object GmailTrash {
         scope.device.idempotent("input keyevent KEYCODE_HOME")
     }
 
-    // MailToSelf's subject ends with the marker and its body is the marker; email-self's script writes "Reminder about
-    // {marker}" and "A reminder about {marker}.". Each candidate is long-pressed only when one element holds it.
+    // MailToSelf's subject ends with the marker and its body is the marker; email-self's scripted model writes "Reminder about
+    // {marker}" and "A reminder about {marker}.". A live model writes its own subject and body, which are elements of their
+    // own beside the row, so the last candidate names the row as the one clickable element that holds the marker. Each
+    // candidate is long-pressed only when it names one element.
     private fun row(marker: String): List<TapCandidate> =
-        listOf("$marker, $marker", "$marker, A reminder about $marker", marker).map { TapCandidate(contains = it, long = true) }
+        listOf("$marker, $marker", "$marker, A reminder about $marker", marker).map { TapCandidate(contains = it, long = true) } +
+            TapCandidate(contains = marker, long = true, state = "clickable")
 
     fun openInbox(scope: RunScope) {
         // In a new task (NEW_TASK and CLEAR_TASK), because Gmail's task may still show an e-mail.
