@@ -67,8 +67,10 @@ data object ReplyHas : Check {
 }
 
 /**
- * Kestrel's spoken reply holds [digits] in a row, with every other character of the reply removed, compared on the
- * phone (agent-task -Digits answers 1 or 0); [digits] may hold the run's placeholders, such as "{number}".
+ * One number of Kestrel's spoken reply holds [digits] in a row, from the start of one of its groups of digits to the end
+ * of one, compared on the phone (agent-task -Digits answers 1 or 0). Groups belong to one number when only spaces,
+ * hyphens, dots, brackets or `+` stand between them, so "+1 202-555-0143" holds 2025550143, but "58 percent, about 7
+ * hours" does not hold 587. [digits] may hold the run's placeholders, such as "{number}".
  */
 data class ReplyHasDigits(val digits: String) : Check {
     override val needsTask: Boolean get() = true

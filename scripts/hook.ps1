@@ -226,8 +226,11 @@
 #                                           of confirmed and unconfirmed sends, calls and deletes, shared items, whether the
 #                                           confirmed recipient is the name (match, other, none) and whether the spoken
 #                                           reply holds the marker (1 or 0), the decisions that test mode changed from Run,
-#                                           the model and the tokens; with -Digits, digits=1 when the reply's digits, all
-#                                           other characters removed, hold those digits in a row, else digits=0
+#                                           the model and the tokens; with -Digits, digits=1 when one number of the spoken
+#                                           reply holds those digits in a row, from the start of one of its groups of
+#                                           digits to the end of one, else digits=0; groups belong to one number when only
+#                                           spaces, hyphens, dots, brackets or + stand between them, so "+1 202-555-0143"
+#                                           holds 2025550143, but "58 percent, about 7 hours" does not hold 587
 #   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category]
 #                                           answers the open question of that task as the owner's voice would, and ends its
 #                                           hand-over with continue or cancel; refused when that task asks nothing. With
