@@ -27,8 +27,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The screen as the agent sees and moves it (design D1, D8, D11 and D32 items 27 and 29 of sub-project 5), through the
  * screen session that is connected when each step runs ([session]). Each action checks the element against what the
  * observation showed ([AgentScreenChecks.expected]) and presses as [Press] says; an uncertain press is reported as such.
- * The intents go through `ScreenActions.openUri` and `openIntent`, which Android lets Kestrel's accessibility service
- * start from the background. After every action, also a failed one, [acted] tells the call backstop (D13). While the
+ * Every launch is a `CheckedLaunch` of the agent's launch check: an app opens through `ScreenActions.openApp`, and an
+ * intent through `openIntent` after `IntentSpecs.toIntent`; Android lets Kestrel's accessibility service start both
+ * from the background. After every action, also a failed one, [acted] tells the call backstop (D13). While the
  * confirmation card shows, the port waits until it has gone before it reads or acts (D8). The numbers of look_closer go
  * through [showBadges] and [hideBadges], which plan 5C sets.
  */

@@ -3,7 +3,9 @@ package dev.kestrel.app.screen
 import android.content.Intent
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
+import dev.kestrel.datatools.IntentSpecs
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
@@ -68,11 +70,11 @@ class SystemActionsTest {
     }
 
     @Test
-    fun openUriOpensTheAppForALink() = runBlocking {
+    fun aLinkOpensTheAppThatTakesIt() = runBlocking {
         screen.shell("am force-stop $FIXTURES")
         fixturesAreGone()
 
-        assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openUri("kestrel-fixtures://start"))
+        assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openIntent(link("kestrel-fixtures://start")))
         launcherScreenIsShown()
     }
 
@@ -81,10 +83,10 @@ class SystemActionsTest {
         screen.shell("am force-stop $FIXTURES")
         fixturesAreGone()
 
-        assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openUri("kestrel-fixtures://start", FIXTURES, browsable = true))
+        assertEquals(ActionResult.Done(ActionMethod.INTENT), actions.openIntent(link("kestrel-fixtures://start", FIXTURES)))
         launcherScreenIsShown()
         // A link kept to an app that cannot open it opens nothing, not the app that would otherwise take it (D32 item 12).
-        assertEquals(ActionResult.Failed("No app can open the link."), actions.openUri("kestrel-fixtures://start", "dev.kestrel.missing", browsable = true))
+        assertEquals(ActionResult.Failed("No app can open it."), actions.openIntent(link("kestrel-fixtures://start", "dev.kestrel.missing")))
 
         screen.shell("am force-stop $FIXTURES")
         fixturesAreGone()
@@ -96,8 +98,12 @@ class SystemActionsTest {
     @Test
     fun aFileLinkFailsInsteadOfThrowing() = runBlocking {
         // Android does not let an app hand a file:// link to another app.
-        assertEquals(ActionResult.Failed("Android does not let Kestrel open the link."), actions.openUri("file:///sdcard/Download/note.txt"))
+        assertEquals(ActionResult.Failed("Android does not let Kestrel open it."), actions.openIntent(link("file:///sdcard/Download/note.txt")))
     }
+
+    // A link as the agent's launch check sends it: kept to [packageName] with CATEGORY_BROWSABLE, or to the app that takes it.
+    private fun link(uri: String, packageName: String? = null): Intent =
+        IntentSpecs.toIntent(IntentSpec(IntentSpec.VIEW, uri, packageName, browsable = packageName != null))
 
     @Test
     fun openAppFailsForAnAppThatIsNotInstalled() = runBlocking {

@@ -7,7 +7,6 @@ import android.accessibilityservice.MagnificationConfig
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Rect
-import android.net.Uri
 import android.os.FileUriExposedException
 import android.os.Build
 import android.os.Bundle
@@ -433,30 +432,10 @@ class ScreenActions internal constructor(
     }
 
     /**
-     * Opens a link or a deep link in the app that handles it, or only in [packageName] when given. With [browsable], the
-     * intent carries `CATEGORY_BROWSABLE`, as a link on a web page does, so that only activities that accept links from
-     * the web open it (design D32 item 12 of sub-project 5).
-     */
-    suspend fun openUri(uri: String, packageName: String? = null, browsable: Boolean = false): ActionResult {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        packageName?.let { intent.setPackage(it) }
-        if (browsable) intent.addCategory(Intent.CATEGORY_BROWSABLE)
-        return try {
-            service.startActivity(intent)
-            settled(ActionMethod.INTENT)
-        } catch (e: ActivityNotFoundException) {
-            ActionResult.Failed("No app can open the link.")
-        } catch (e: FileUriExposedException) {
-            // Android does not let an app hand a file:// link to another app.
-            ActionResult.Failed("Android does not let Kestrel open the link.")
-        } catch (e: SecurityException) {
-            ActionResult.Failed("Android does not let Kestrel open the link.")
-        }
-    }
-
-    /**
-     * Starts [intent] from Kestrel's accessibility service, which Android allows while another app is in front, such as
-     * a settings page of `open_settings` or an app's screen that a data tool opens (design D11 and D12 of sub-project 5).
+     * Starts [intent] from Kestrel's accessibility service, which Android allows while another app is in front: every
+     * app, link, page or app screen that the agent's launch check allowed (plan 6B-basefix), and Kestrel's own pages for
+     * the owner, such as notification access (design D11 and D12 of sub-project 5). A `file://` link fails, because
+     * Android does not let an app hand one to another app.
      */
     suspend fun openIntent(intent: Intent): ActionResult {
         return try {

@@ -60,7 +60,7 @@ class OwnerSignalTest {
     fun anAppsOwnTextChangeAfterKestrelOpenedItByIntentIsNotTheOwnersWhileNoKeyboardShows() {
         var now = 1_000L
         val own = branchB { now }
-        // open_url as ScreenActions.openUri runs it: the intent and its settle wait, and then the model thinks.
+        // open_url as ScreenActions.openIntent runs it: the intent and its settle wait, and then the model thinks.
         own.begin()
         now += 200
         own.end()
