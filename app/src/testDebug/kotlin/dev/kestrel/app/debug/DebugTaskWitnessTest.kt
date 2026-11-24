@@ -13,10 +13,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 
-/** The debug build's witness of a task: its newest say texts and the run's marker in the data tools (plan 6B-basefix). */
+/** The debug build's witness of a task: its newest say texts, the sentence of its end and the run's marker in the data tools (plan 6B-basefix). */
 class DebugTaskWitnessTest {
     @Test
-    fun aWitnessKeepsTheNewestSayTextsAndWithAMarkerWatchesTheDataTools() = runTest {
+    fun aWitnessKeepsTheNewestSayTextsAndTheSentenceOfTheEndAndWithAMarkerWatchesTheDataTools() = runTest {
         val data = FakeData()
         val notification = DataResult.Ok(listOf(DataLine("Notification 1.", listOf(DataField("title", "Kestrel test Maple heron")))))
         data.answer("list_notifications", notification)
@@ -30,6 +30,9 @@ class DebugTaskWitnessTest {
         assertEquals(true, witness.evidence.markerInData)
         repeat(DebugTaskWitness.MAX_SAID + 1) { witness.said("Line $it.") }
         assertEquals((1..DebugTaskWitness.MAX_SAID).map { "Line $it." }, witness.evidence.said)
+        assertNull(witness.evidence.spoken)
+        witness.ended("I read your notifications.")
+        assertEquals("I read your notifications.", witness.evidence.spoken)
 
         // Without a marker the data tools stay as they are, and the evidence says that the task had none.
         val plain = DebugTaskWitness.open(emptyMap())

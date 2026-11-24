@@ -337,6 +337,8 @@ class AppOwnerPortTest {
                 heard += text
             }
 
+            override fun ended(sentence: String) = Unit
+
             override fun watch(data: DataPort): DataPort = data
 
             override val evidence: TaskEvidence get() = TaskEvidence(heard.toList())

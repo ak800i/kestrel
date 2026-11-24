@@ -30,7 +30,7 @@ internal object AgentHookAnswers {
     fun result(ended: AgentRunner.Ended, marker: String?, recipient: String?, digits: String? = null): String {
         val report = ended.report
         val said = ended.evidence.said
-        val texts = said + ended.spoken
+        val texts = said + listOfNotNull(ended.evidence.spoken)
         val inData = ended.evidence.markerInData?.let { seen -> if (seen) "1" else "0" } ?: "none"
         return "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
             "credits=${String.format(Locale.ROOT, "%.2f", report.credits)} confirmed=${report.confirmed} " +

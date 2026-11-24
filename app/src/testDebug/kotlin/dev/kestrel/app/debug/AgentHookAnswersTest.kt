@@ -29,7 +29,7 @@ class AgentHookAnswersTest {
             workMillis = 41_000, credits = 0.5, inputTokens = 5000, outputTokens = 250, cacheRead = 2500, confirmed = 1, modelId = "scripted-light",
         )
 
-        val ended = AgentRunner.Ended(report, "Sent to Saved Messages. I told Ana that you're late for maple heron.", touches = 2, signals = 1)
+        val ended = AgentRunner.Ended(report, touches = 2, signals = 1, evidence = TaskEvidence(spoken = "Sent to Saved Messages. I told Ana that you're late for maple heron."))
         val line = AgentHookAnswers.result(ended, "Maple heron", "saved messages")
 
         assertEquals(
@@ -83,8 +83,8 @@ class AgentHookAnswersTest {
         assertEquals(0, AgentHookAnswers.digits("At 10:58 it was 7 percent.", "587"))
         val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 1)
 
-        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, "It is 87 percent."), null, null, "87").endsWith(" digits=1"))
-        assertFalse(AgentHookAnswers.result(AgentRunner.Ended(report, "It is 87 percent."), null, null).contains("digits="))
+        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, evidence = TaskEvidence(spoken = "It is 87 percent.")), null, null, "87").endsWith(" digits=1"))
+        assertFalse(AgentHookAnswers.result(AgentRunner.Ended(report, evidence = TaskEvidence(spoken = "It is 87 percent.")), null, null).contains("digits="))
     }
 
     @Test
@@ -196,13 +196,13 @@ class AgentHookAnswersTest {
     @Test
     fun theMarkerAndTheDigitsCountAlsoInWhatKestrelSaidDuringTheTask() {
         val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 2)
-        val evidence = TaskEvidence(listOf("Kestrel test maple heron: a reminder about maple heron.", "Your battery is at 87 percent."), markerInData = true)
+        val evidence = TaskEvidence(listOf("Kestrel test maple heron: a reminder about maple heron.", "Your battery is at 87 percent."), markerInData = true, spoken = "I read your notifications.")
 
-        val line = AgentHookAnswers.result(AgentRunner.Ended(report, "I read your notifications.", evidence = evidence), "maple heron", null, "87")
+        val line = AgentHookAnswers.result(AgentRunner.Ended(report, evidence = evidence), "maple heron", null, "87")
 
         assertTrue(line, line.contains(" marker=1 "))
         assertTrue(line, line.endsWith(" ownerTouches=0 signals=0 markerSaid=1 markerInData=1 digits=1"))
-        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, "Kestrel test maple heron."), "maple heron", null).endsWith(" markerSaid=0 markerInData=none"))
+        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, evidence = TaskEvidence(spoken = "Kestrel test maple heron.")), "maple heron", null).endsWith(" markerSaid=0 markerInData=none"))
         assertFalse(line.contains("reminder"))
     }
 }

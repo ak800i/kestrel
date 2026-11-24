@@ -62,21 +62,17 @@ internal class AgentRunner(
     private val newId: (Int) -> String = ::taskId,
 ) {
     /**
-     * How task number n ended, for the debug hook `agent-task -Result`: its report, the sentence that Kestrel said at its
-     * end, the owner's touches that the watcher reported during the task ([touches]) and how many of them were signals
-     * without a finger ([signals]: branch B's, or a cancelled gesture of Kestrel's), and what the task's witness observed
-     * ([evidence]; empty in a release build).
+     * How task number n ended, for the debug hook `agent-task -Result`: its report, the owner's touches that the watcher
+     * reported during the task ([touches]) and how many of them were signals without a finger ([signals]: branch B's, or
+     * a cancelled gesture of Kestrel's), and what the task's witness observed ([evidence], with the sentence that Kestrel
+     * said at the end; empty in a release build, which keeps no text of a task).
      */
     internal data class Ended(
         val report: TaskReport,
-        val spoken: String,
         val touches: Int = 0,
         val signals: Int = 0,
         val evidence: TaskEvidence = TaskEvidence(),
-    ) {
-        override fun toString(): String =
-            "Ended(report=$report, spoken=${spoken.length} characters, touches=$touches, signals=$signals, evidence=$evidence)"
-    }
+    )
 
     /** Debug builds only: the model that the hook `agent-script` or a device test installed (design D28). */
     @Volatile
@@ -124,7 +120,7 @@ internal class AgentRunner(
     private var kept: Pair<Recording, Long>? = null
 
     /** Runs task number [task], the owner's words [text]; called on the controller's thread, it returns at once. */
-    fun run(task: Int, text: String) = start(task) { running -> runTask(running, text, options(task)) }
+    fun run(task: Int, text: String) = start(task) { running -> runTask(running, text) }
 
     /** Runs Kestrel's own memory [request] as task number [task] (design D2 and D22 of sub-project 5). */
     fun runMemory(task: Int, request: Request.Memory) = start(task) { running -> runLocal(running, request) }
@@ -216,19 +212,20 @@ internal class AgentRunner(
         running.job.start()
     }
 
-    private suspend fun runTask(running: Running, text: String, options: Map<String, String>) {
+    private suspend fun runTask(running: Running, text: String) {
         val task = running.task
+        val options = options(task)
+        val witness = witness(options)
         var ready: Prepared.Ready? = null
         var spoken = false
         // Design D23: the steps of the last finished task are dropped at the next task.
         kept = null
         try {
-            val choice = choose(options) ?: return refuse(task, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD))
+            val choice = choose(options) ?: return refuse(task, witness, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD))
             backstop.forget()
-            val witness = witnesses?.invoke(options) ?: TaskWitness.NONE
             val start = TaskStart(task, newId(task), text, choice, selfChatAliases, backstop::acted, witness = witness)
             val prepared = environment.prepare(start)
-            if (prepared is Prepared.Refused) return refuse(task, prepared.sentence)
+            if (prepared is Prepared.Refused) return refuse(task, witness, prepared.sentence)
             val ports = prepared as Prepared.Ready
             ready = ports
             if (synchronized(lock) { running.owner = ports.owner; running.pausedEarly }) ports.owner.paused()
@@ -241,7 +238,7 @@ internal class AgentRunner(
                         val sentence = running.stopSentence?.let { "$it ${AgentTexts.ledger(result)}" }
                             ?: AgentTexts.sentence(result, ports.providerName)
                         result.recording?.let { kept = it to nowMillis() }
-                        record(task, Ended(result, sentence, running.touches, running.signals, witness.evidence))
+                        record(task, witness, result, sentence, running.touches, running.signals)
                         if (offer && result.offerRoutine && result.recording != null) {
                             deferred = result to sentence
                         } else {
@@ -262,11 +259,11 @@ internal class AgentRunner(
             }
         } catch (e: CancellationException) {
             // The agent reported before it rethrew; a cancellation before the agent ran still ends the task.
-            if (!spoken && ready == null) withContext(NonCancellable) { refuse(task, AgentTexts.CANCELLED) }
+            if (!spoken && ready == null) withContext(NonCancellable) { refuse(task, witness, AgentTexts.CANCELLED) }
             throw e
         } catch (e: Exception) {
             report("A task", e)
-            if (!spoken) refuse(task, AgentTexts.COULD_NOT_START)
+            if (!spoken) refuse(task, witness, AgentTexts.COULD_NOT_START)
         } finally {
             ready?.let { withContext(NonCancellable) { release(it) } }
         }
@@ -275,12 +272,13 @@ internal class AgentRunner(
     // Kestrel's own memory requests ask the owner first and change nothing without his yes (design D2 and D22).
     private suspend fun runLocal(running: Running, request: Request.Memory) {
         val task = running.task
+        val witness = witness(options(task))
         var ready: Prepared.Ready? = null
         try {
-            val choice = if (request is Request.SaveRoutine) choose(emptyMap()) ?: return refuse(task, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD)) else null
+            val choice = if (request is Request.SaveRoutine) choose(emptyMap()) ?: return refuse(task, witness, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD)) else null
             val id = newId(task)
-            val prepared = environment.prepare(TaskStart(task, id, "", choice, local = true))
-            if (prepared is Prepared.Refused) return refuse(task, prepared.sentence)
+            val prepared = environment.prepare(TaskStart(task, id, "", choice, local = true, witness = witness))
+            if (prepared is Prepared.Refused) return refuse(task, witness, prepared.sentence)
             val ports = prepared as Prepared.Ready
             ready = ports
             if (synchronized(lock) { running.owner = ports.owner; running.pausedEarly }) ports.owner.paused()
@@ -289,15 +287,14 @@ internal class AgentRunner(
                 is Request.Forget -> forget(ports, request)
                 is Request.SaveRoutine -> save(ports, request, id)
             }
-            val result = TaskReport(EndReason.FINISHED)
-            record(task, Ended(result, sentence.orEmpty()))
+            record(task, witness, TaskReport(EndReason.FINISHED), sentence)
             send(Event.TaskEnded(task, sentence))
         } catch (e: CancellationException) {
-            withContext(NonCancellable) { refuse(task, AgentTexts.CANCELLED) }
+            withContext(NonCancellable) { refuse(task, witness, AgentTexts.CANCELLED) }
             throw e
         } catch (e: Exception) {
             report("A memory request", e)
-            refuse(task, AgentTexts.COULD_NOT_START)
+            refuse(task, witness, AgentTexts.COULD_NOT_START)
         } finally {
             ready?.let { withContext(NonCancellable) { release(it) } }
         }
@@ -351,14 +348,22 @@ internal class AgentRunner(
         send(Event.TaskEnded(task, sentence))
     }
 
-    private fun refuse(task: Int, sentence: String) {
-        record(task, Ended(TaskReport(EndReason.NO_PROFILE), sentence))
+    private fun refuse(task: Int, witness: TaskWitness, sentence: String) {
+        record(task, witness, TaskReport(EndReason.NO_PROFILE), sentence)
         send(Event.TaskEnded(task, sentence))
     }
 
-    private fun record(task: Int, ended: Ended) = synchronized(lock) {
-        ends[task] = ended
-        while (ends.size > MAX_ENDS) ends.remove(ends.keys.first())
+    // The witness of a task with [options]: the debug build's, or [TaskWitness.NONE] in a release build.
+    private fun witness(options: Map<String, String>): TaskWitness = witnesses?.invoke(options) ?: TaskWitness.NONE
+
+    // The end's sentence goes to the task's witness only, so that a release build keeps no text of a task.
+    private fun record(task: Int, witness: TaskWitness, report: TaskReport, sentence: String?, touches: Int = 0, signals: Int = 0) {
+        sentence?.let(witness::ended)
+        val ended = Ended(report, touches, signals, witness.evidence)
+        synchronized(lock) {
+            ends[task] = ended
+            while (ends.size > MAX_ENDS) ends.remove(ends.keys.first())
+        }
     }
 
     // Each part in its own try: a failed close must not skip the release, which stops the touch watcher (design D19).

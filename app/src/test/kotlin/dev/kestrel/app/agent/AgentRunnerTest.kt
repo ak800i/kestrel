@@ -425,15 +425,20 @@ class AgentRunnerTest {
     @Test
     fun anInstalledWitnessGetsTheTasksOptionsAndItsEvidenceIsTheTasksEnd() = runTest {
         val given = mutableListOf<Map<String, String>>()
+        val ends = mutableListOf<String>()
         val runner = runner(options = mapOf("marker" to "maple heron"))
         runner.witnesses = { options ->
             given += options
             object : TaskWitness {
                 override fun said(text: String) = Unit
 
+                override fun ended(sentence: String) {
+                    ends += sentence
+                }
+
                 override fun watch(data: DataPort): DataPort = data
 
-                override val evidence: TaskEvidence get() = TaskEvidence(listOf("Opening Viber."), markerInData = true)
+                override val evidence: TaskEvidence get() = TaskEvidence(listOf("Opening Viber."), markerInData = true, spoken = ends.lastOrNull())
             }
         }
 
@@ -441,12 +446,48 @@ class AgentRunnerTest {
         advanceUntilIdle()
 
         assertEquals(listOf(mapOf("marker" to "maple heron")), given)
-        assertEquals(TaskEvidence(listOf("Opening Viber."), markerInData = true), runner.ended(1)!!.evidence)
-        // Without an installed witness, as in a release build, a task observes nothing.
+        assertEquals(listOf("I couldn't do it: No such app. I didn't change anything."), ends)
+        assertEquals(
+            TaskEvidence(listOf("Opening Viber."), markerInData = true, spoken = "I couldn't do it: No such app. I didn't change anything."),
+            runner.ended(1)!!.evidence,
+        )
+        // Without an installed witness, as in a release build, a task observes nothing, not even the sentence of its end.
         val plain = runner()
         plain.run(2, "open Viber")
         advanceUntilIdle()
         assertSame(TaskWitness.NONE, starts.last().witness)
         assertEquals(TaskEvidence(), plain.ended(2)!!.evidence)
+    }
+
+    @Test
+    fun theEndOfATaskThatCouldNotStartAndOfAMemoryRequestReachesTheTasksWitness() = runTest {
+        val witnesses = mutableListOf<RecordingWitness>()
+        val runner = runner(debuggable = true)
+        runner.witnesses = { RecordingWitness().also { witnesses += it } }
+
+        runner.run(1, "open Viber")
+        advanceUntilIdle()
+        owner.owner.answers += Answer.Yes
+        runner.runMemory(2, Request.Remember("the gate code", "blue"))
+        advanceUntilIdle()
+
+        assertEquals(listOf(listOf(AgentTexts.couldNotStart(AgentTexts.TEST_BUILD)), listOf(AgentTexts.REMEMBERED)), witnesses.map { it.ends })
+        assertEquals(AgentTexts.couldNotStart(AgentTexts.TEST_BUILD), runner.ended(1)!!.evidence.spoken)
+        assertEquals(AgentTexts.REMEMBERED, runner.ended(2)!!.evidence.spoken)
+        assertSame(witnesses[1], starts.single().witness)
+    }
+
+    private class RecordingWitness : TaskWitness {
+        val ends = mutableListOf<String>()
+
+        override fun said(text: String) = Unit
+
+        override fun ended(sentence: String) {
+            ends += sentence
+        }
+
+        override fun watch(data: DataPort): DataPort = data
+
+        override val evidence: TaskEvidence get() = TaskEvidence(spoken = ends.lastOrNull())
     }
 }
