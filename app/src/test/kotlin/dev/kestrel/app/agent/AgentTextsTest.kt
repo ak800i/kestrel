@@ -1,6 +1,7 @@
 package dev.kestrel.app.agent
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
@@ -49,6 +50,19 @@ class AgentTextsTest {
         assertEquals(
             "I stopped at the limit because you didn't answer. I opened Viber.",
             AgentTexts.sentence(TaskReport(EndReason.PAUSED_AT_LIMIT, ledger = listOf("opened Viber")), "Copilot"),
+        )
+    }
+
+    // Plan 7A: an interruption says that Kestrel stopped, and why when Kestrel's own screen stayed in front.
+    @Test
+    fun anInterruptionSaysThatKestrelStoppedAndWhy() {
+        assertEquals(
+            "I stopped because Kestrel's own screen stayed in front. I opened Viber.",
+            AgentTexts.sentence(TaskReport(EndReason.INTERRUPTED, interruption = Interruption.KESTREL_SCREEN, ledger = listOf("opened Viber")), "Copilot"),
+        )
+        assertEquals(
+            "I stopped. I didn't change anything.",
+            AgentTexts.sentence(TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), "Copilot"),
         )
     }
 }

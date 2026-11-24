@@ -6,6 +6,7 @@ import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.TaskAsk
@@ -22,6 +23,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -64,6 +66,11 @@ class AppOwnerPortTest {
         override suspend fun watch() {
             watched++
         }
+
+        // How many more times Kestrel's own screen is in front when it is asked.
+        var kestrelPolls = 0
+
+        override suspend fun kestrelInFront(): Boolean = (kestrelPolls > 0).also { if (it) kestrelPolls-- }
     }
     private val audio = object : OtherAudio {
         var plays = false
@@ -362,5 +369,17 @@ class AppOwnerPortTest {
         val silent = started { owner.ask("Continue?", AnswerKind.LIMIT) }
         owner.answered(null)
         assertEquals(Answer.Silence, silent.await())
+    }
+
+    // Plan 7A: Kestrel's own screen is waited for, at most 3 s (design 10.2 of sub-project 7).
+    @Test
+    fun kestrelsOwnScreenIsWaitedForAtMostThreeSeconds() = runTest {
+        screen.kestrelPolls = 3
+        assertTrue(owner.leaveKestrel())
+
+        screen.kestrelPolls = Int.MAX_VALUE
+        val start = currentTime
+        assertFalse(owner.leaveKestrel())
+        assertEquals(OwnerPort.KESTREL_LEAVE_MILLIS, currentTime - start)
     }
 }

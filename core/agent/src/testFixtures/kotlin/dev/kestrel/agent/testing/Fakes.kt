@@ -156,6 +156,12 @@ class FakeOwner : OwnerPort {
     val handOvers = mutableListOf<HandOver>()
     val permissions = mutableListOf<List<String>>()
 
+    /** The answers of [leaveKestrel], whether Kestrel's own screen left within the wait; none left means that it stayed. */
+    val leaves = ArrayDeque<Boolean>()
+
+    /** Runs when the task waits for Kestrel's own screen to leave: a test may change the screen here. */
+    var onLeave: suspend () -> Unit = {}
+
     /** Runs when a confirmation is asked, before its answer: a test may cancel the task's job here (a touch). */
     var onConfirm: suspend (Confirmation) -> Unit = {}
 
@@ -193,6 +199,11 @@ class FakeOwner : OwnerPort {
     }
 
     override suspend fun gate(): Gate = gates.removeFirstOrNull() ?: Gate.GO
+
+    override suspend fun leaveKestrel(): Boolean {
+        onLeave()
+        return leaves.removeFirstOrNull() ?: false
+    }
 
     override fun toString(): String = "FakeOwner(asked=${asked.size}, confirmations=${confirmations.size})"
 }

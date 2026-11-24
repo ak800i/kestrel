@@ -24,6 +24,18 @@ interface OwnerPort {
      * [Gate.RESUMED] when the task runs again. A touch or "stop" cancels the agent's job instead.
      */
     suspend fun gate(): Gate
+
+    /**
+     * Kestrel's own screen is in front of the app that the task would observe (design 10.2 of sub-project 7): waits, as
+     * the pause gate does, until no window of Kestrel's but its overlays is in front, at most [KESTREL_LEAVE_MILLIS].
+     * True when it has left; false when it stayed, and the task then ends as interrupted.
+     */
+    suspend fun leaveKestrel(): Boolean
+
+    companion object {
+        /** How long [leaveKestrel] waits for Kestrel's own screen to leave (design 10.2 of sub-project 7). */
+        const val KESTREL_LEAVE_MILLIS = 3_000L
+    }
 }
 
 /**

@@ -29,6 +29,7 @@ import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -330,5 +331,27 @@ class AgentGoalTest {
         assertEquals(EndReason.FAILED_BY_MODEL, harness.run("Read Ana's chat").end)
 
         assertTrue(harness.requestText(2).contains("Result: finish failed: the checklist has open items c1 and c2; mark them done, skipped or failed."))
+    }
+
+    // D13 of sub-project 7: a touch interrupts a goal's run; the report carries the touch as its cause and what the run did.
+    @Test
+    fun aTouchsCancellationCarriesItsCauseIntoTheReport() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+            call("say", null, null, null, "text" to "Reading."),
+        ))
+        harness.screen.onTap("Ana Petrović", Screens.chat("Ana Petrović", "Hi"))
+        harness.owner.onSay = { throw TaskCancellation(EndReason.INTERRUPTED, Interruption.TOUCH) }
+
+        val failure = runCatching { harness.run("Read Ana's messages") }.exceptionOrNull()
+
+        assertTrue(failure is TaskCancellation)
+        val report = harness.reports.single()
+        assertEquals(EndReason.INTERRUPTED, report.end)
+        assertEquals(Interruption.TOUCH, report.interruption)
+        assertEquals(listOf("opened \"Ana Petrović\""), report.ledger)
+        // An interruption always has its cause, and only an interruption has one.
+        assertThrows(IllegalArgumentException::class.java) { TaskCancellation(EndReason.INTERRUPTED) }
+        assertThrows(IllegalArgumentException::class.java) { TaskCancellation(EndReason.CANCELLED, Interruption.TOUCH) }
     }
 }

@@ -1,11 +1,11 @@
 package dev.kestrel.app.agent
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.ChecklistText
 import dev.kestrel.app.providers.ProviderTexts
-import dev.kestrel.safety.AgentFreeApps
 
 /**
  * What Kestrel says when a task ends (design D24 of sub-project 5; spec 14.5), built by code from the task's report: a
@@ -71,9 +71,10 @@ internal object AgentTexts {
         EndReason.PROVIDER -> report.error?.let { ProviderTexts.spoken(it, provider) } ?: "$provider could not use the request."
         EndReason.NO_PROFILE -> NO_PROFILE
         EndReason.NO_SCREEN -> "I can't see the screen: $NO_SERVICE"
-        EndReason.AGENT_FREE -> when (report.detail) {
-            null, AgentFreeApps.KESTREL, "Kestrel" -> "I don't act in Kestrel's own settings."
-            else -> "${report.detail} is on your list of agent-free apps, so I won't act in it."
+        EndReason.AGENT_FREE -> "${report.detail ?: "The app in front"} is on your list of agent-free apps, so I won't act in it."
+        EndReason.INTERRUPTED -> when (report.interruption) {
+            Interruption.KESTREL_SCREEN -> "I stopped because Kestrel's own screen stayed in front."
+            Interruption.TOUCH, null -> "I stopped."
         }
         EndReason.PAUSED_TOO_LONG -> "I stopped the task because it was paused for a long time."
         EndReason.TEST_MODE -> report.detail ?: "Test mode: Kestrel only sends to your own chats."

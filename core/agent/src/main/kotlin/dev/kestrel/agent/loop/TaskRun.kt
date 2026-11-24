@@ -3,6 +3,7 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.AgentSettings
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
@@ -69,6 +70,7 @@ internal class Ended(
     val detail: String? = null,
     val error: ProviderError? = null,
     val summary: String? = null,
+    val interruption: Interruption? = null,
 ) : Exception(null, null, false, false)
 
 /**
@@ -205,11 +207,14 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         throw IllegalStateException()
     } catch (e: Ended) {
         if (e.reason in STRIKING && !pausedAtFinish) remembering { memory.strike() }
-        report(e.reason, e.detail, e.error, e.summary)
+        report(e.reason, e.detail, e.error, e.summary, e.interruption)
     }
 
-    /** The report of a task that was cancelled with [reason], from what it had done so far (D24, D32 item 4). */
-    fun cancelled(reason: EndReason): TaskReport = report(reason, null, null, null)
+    /**
+     * The report of a task that was cancelled with [reason], and [interruption] when a touch interrupted it, from what it
+     * had done so far (D24, D32 item 4).
+     */
+    fun cancelled(reason: EndReason, interruption: Interruption? = null): TaskReport = report(reason, null, null, null, interruption)
 
     private suspend fun start() {
         log(TaskLog.Kind.START, "request: ${redactor.redact(task.text)}")
@@ -494,15 +499,18 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     val currentModel: RoleModel get() = escalation.current
 
     /**
-     * Checks the app in front of [snapshot] before it is observed (D16, D24): an agent-free app or Kestrel ends the task;
-     * a Play services screen is handed over; a crashed app is closed with back. Returns the snapshot to observe.
+     * Checks the app in front of [snapshot] before it is observed (D16, D24): Kestrel's own screen is waited for at the
+     * owner port until it leaves, and ends the task as interrupted when it stays (design 10.2 of sub-project 7); another
+     * agent-free app ends the task; a Play services screen is handed over; a crashed app is closed with back. Returns the
+     * snapshot to observe.
      */
     suspend fun checkFront(snapshot: ScreenSnapshot): ScreenSnapshot {
         var current = snapshot
         repeat(FRONT_CHECKS) {
             val front = ScreenTree.frontWindow(current)?.packageName
-            if (settings.agentFree.isAgentFree(front)) throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
             when {
+                front == AgentFreeApps.KESTREL -> leaveKestrel()
+                settings.agentFree.isAgentFree(front) -> throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
                 PlayServices.handsOver(current) -> handOverOnly(HandOver.of(HandOverKind.PLAY_SERVICES))
                 crashed(current) -> {
                     ports.screen.act(ScreenAction.Global(GlobalKind.BACK))
@@ -514,9 +522,16 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         }
         // The screen after the last round is checked too: it is never observed while it shows one of these.
         val front = ScreenTree.frontWindow(current)?.packageName
+        if (front == AgentFreeApps.KESTREL) throw Ended(EndReason.INTERRUPTED, interruption = Interruption.KESTREL_SCREEN)
         if (settings.agentFree.isAgentFree(front)) throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
         if (PlayServices.handsOver(current) || crashed(current)) throw Ended(EndReason.STUCK)
         return current
+    }
+
+    // Kestrel's own screen is in front: the owner port waits until it has left, a wait that does not count as work, or
+    // the task ends as interrupted (design 10.2 of sub-project 7).
+    private suspend fun leaveKestrel() {
+        if (!limits.waiting { ports.owner.leaveKestrel() }) throw Ended(EndReason.INTERRUPTED, interruption = Interruption.KESTREL_SCREEN)
     }
 
     private fun crashed(snapshot: ScreenSnapshot): Boolean {
@@ -837,8 +852,9 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         line?.let(ledger::add)
     }
 
-    private fun report(reason: EndReason, detail: String?, error: ProviderError?, summary: String?): TaskReport = TaskReport(
+    private fun report(reason: EndReason, detail: String?, error: ProviderError?, summary: String?, interruption: Interruption?): TaskReport = TaskReport(
         end = reason,
+        interruption = interruption,
         detail = detail?.let(vault::spoken),
         summary = if (declined) null else summary,
         error = error,

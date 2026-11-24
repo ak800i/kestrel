@@ -14,9 +14,13 @@ data class Verdict(val result: RunResult, val check: CheckResult, val reason: Re
  * tested; [refused] is the category of a confirmation that the run cancelled because the task does not name it; and
  * [declined] are the categories that the run answered "no"; [cancelledByRun] is whether the run's own delivered answer
  * to a question or a hand-over ends the task ([dev.kestrel.eval.task.Answers.endsTask]), which makes a CANCELLED end
- * `reason=asked`.
+ * `reason=asked`. A run whose task ended at a round's limit and did not pass fails with the reason `limit` (plan 7A;
+ * design 7.4 of sub-project 7).
  */
 object Verdicts {
+    /** Kestrel's ends at a round's limit, which the hook `agent-task` answers by their names. */
+    private val LIMIT_ENDS = setOf("STOPPED_AT_LIMIT", "PAUSED_AT_LIMIT")
+
     fun judge(
         rule: VerdictRule,
         answer: HookAnswer?,
@@ -38,6 +42,7 @@ object Verdicts {
                 if (checked) CheckResult.PASS else CheckResult.FAIL,
                 when {
                     passed -> Reason.OK
+                    answer["end"] in LIMIT_ENDS -> Reason.LIMIT
                     endMatters && answer["end"] != expectedEnd -> Reason.END
                     // The task ended before the run could decline (plan 6B-basefix T5): its end, not the check, failed it.
                     rule is VerdictRule.Declined && rule.category !in declined && answer["end"] != "DECLINED" -> Reason.END

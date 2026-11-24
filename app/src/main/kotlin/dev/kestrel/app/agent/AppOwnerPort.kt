@@ -6,6 +6,7 @@ import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.TaskAnswers
@@ -28,6 +29,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** The screen as [AppOwnerPort] needs it: the confirmation card, the touch watcher's credits and the feedback bar. */
 internal interface OwnerScreen {
@@ -42,6 +44,9 @@ internal interface OwnerScreen {
 
     /** Starts the touch watcher again: an instant command during a hand-over or a pause stops it when it ends (D19). */
     suspend fun watch()
+
+    /** Whether a window of Kestrel's own app, not one of its overlays, is in front (design 10.2 of sub-project 7). */
+    suspend fun kestrelInFront(): Boolean
 }
 
 /**
@@ -260,6 +265,14 @@ internal class AppOwnerPort(
         }
     }
 
+    // Today nothing moves Kestrel's own screen away, so the task waits for the owner to leave it (plan 7A; design 10.2 of
+    // sub-project 7); plan 7F's conversation screen leaves by itself after the owner sends a command.
+    override suspend fun leaveKestrel(): Boolean =
+        withTimeoutOrNull(OwnerPort.KESTREL_LEAVE_MILLIS) {
+            while (screen.kestrelInFront()) delay(KESTREL_POLL_MILLIS)
+            true
+        } ?: false
+
     override suspend fun gate(): Gate {
         val paused = synchronized(lock) { pause } ?: return Gate.GO
         paused.await()
@@ -358,6 +371,9 @@ internal class AppOwnerPort(
 
         /** How long Android takes to report a paused player as stopped. */
         const val AUDIO_SETTLE_MILLIS = 500L
+
+        /** How often [leaveKestrel] reads whether Kestrel's own screen is still in front. */
+        const val KESTREL_POLL_MILLIS = 200L
 
         fun asked(kind: AnswerKind): TaskAsk = when (kind) {
             AnswerKind.YES_NO, AnswerKind.LIMIT -> TaskAsk.YES_NO

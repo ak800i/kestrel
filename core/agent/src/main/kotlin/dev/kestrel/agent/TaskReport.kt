@@ -19,6 +19,12 @@ enum class EndReason {
 
     /** "Continue?" at a round's limit got no answer; a goal stays open and is held (design 7.4 of sub-project 7). */
     PAUSED_AT_LIMIT,
+
+    /**
+     * The owner's touch interrupted a goal (D13 of sub-project 7), or Kestrel's own screen stayed in front (design 10.2);
+     * [TaskReport.interruption] says which. A goal stays open and is held.
+     */
+    INTERRUPTED,
     STUCK,
     INVALID_CALLS,
     PROVIDER,
@@ -41,11 +47,25 @@ enum class EndReason {
 }
 
 /**
- * How `:app` cancels a task's job with a reason (design D2): a touch, "stop" or a new task after "stop" give
- * [EndReason.CANCELLED], and the end of a 30-minute pause gives [EndReason.PAUSED_TOO_LONG]. Any other
- * CancellationException counts as [EndReason.CANCELLED].
+ * How `:app` cancels a task's job with a reason (design D2): "stop" or a new task after "stop" give [EndReason.CANCELLED],
+ * the end of a 30-minute pause gives [EndReason.PAUSED_TOO_LONG], and a touch gives [EndReason.CANCELLED] for today's
+ * tasks and [EndReason.INTERRUPTED] with [Interruption.TOUCH] for a goal (D13 of sub-project 7). An interruption always
+ * has its cause, and no other reason has one. Any other CancellationException counts as [EndReason.CANCELLED].
  */
-class TaskCancellation(val reason: EndReason) : CancellationException("The task was cancelled: $reason")
+class TaskCancellation(val reason: EndReason, val interruption: Interruption? = null) : CancellationException("The task was cancelled: $reason") {
+    init {
+        require((reason == EndReason.INTERRUPTED) == (interruption != null)) { "An interruption has a cause, and only it has one." }
+    }
+}
+
+/** What interrupted a run that ended as [EndReason.INTERRUPTED] (plan 7A; D13 and design 10.2 of sub-project 7). */
+enum class Interruption {
+    /** The owner touched the screen while a goal acted, which held the goal. */
+    TOUCH,
+
+    /** Kestrel's own screen stayed in front of the app that the run would observe, longer than the owner port waits. */
+    KESTREL_SCREEN,
+}
 
 /**
  * The end of one task (design D24 and D28), which `Agent.run` hands to its caller once on every path. [summary] is the
@@ -57,7 +77,8 @@ class TaskCancellation(val reason: EndReason) : CancellationException("The task 
  * carries its [recording], which `:app` keeps for 10 minutes for "Kestrel, save that as <name>" (D23); [offerRoutine] is
  * true after the second `FINISHED` run with the same `finish` signature, and then `:app` asks `RoutineMaker.offer` after
  * it has spoken the report (never for a tagged test task). [checklist] is the run's checklist at its end, which the
- * report of a round's limit names (plan 7A; design 7.4 of sub-project 7). toString prints only kinds and counts (D25).
+ * report of a round's limit names (plan 7A; design 7.4 of sub-project 7). [interruption] is what interrupted an
+ * [EndReason.INTERRUPTED] run, and null for every other end. toString prints only kinds and counts (D25).
  */
 data class TaskReport(
     val end: EndReason,
@@ -82,11 +103,16 @@ data class TaskReport(
     val recording: Recording? = null,
     val offerRoutine: Boolean = false,
     val checklist: Checklist? = null,
+    val interruption: Interruption? = null,
 ) {
+    init {
+        require((end == EndReason.INTERRUPTED) == (interruption != null)) { "An interruption has a cause, and only it has one." }
+    }
+
     override fun toString(): String =
         "TaskReport(end=$end, error=$error, detail=${detail?.length}, summary=${summary?.length}, ledger=${ledger.size}, " +
             "sends=${sends.size}, recipients=${recipients.size}, steps=$steps, workMillis=$workMillis, credits=$credits, " +
             "tokens=${inputTokens + outputTokens}, cacheRead=$cacheRead, confirmed=$confirmed, unconfirmed=$unconfirmed, " +
             "beforeTestMode=$beforeTestMode, shareItems=$shareItems, recording=${recording != null}, offerRoutine=$offerRoutine, " +
-            "checklist=$checklist)"
+            "checklist=$checklist, interruption=$interruption)"
 }

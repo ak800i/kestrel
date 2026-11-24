@@ -10,8 +10,10 @@ import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.datatools.media.MediaKeys
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
+import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -47,6 +49,10 @@ internal class SessionOwnerScreen(private val session: () -> ScreenSession?) : O
     override suspend fun watch() {
         session()?.startTouchWatcher()
     }
+
+    // The front window is an app's; Kestrel's overlays (the bar, the card, the touch watcher) are never in front.
+    override suspend fun kestrelInFront(): Boolean =
+        session()?.let { ScreenTree.frontWindow(it.snapshots.current().snapshot)?.packageName == AgentFreeApps.KESTREL } ?: false
 }
 
 /**

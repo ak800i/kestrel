@@ -52,6 +52,8 @@ internal class TracingOwner(private val owner: OwnerPort, private val trace: Run
 
     override suspend fun gate(): Gate = owner.gate()
 
+    override suspend fun leaveKestrel(): Boolean = owner.leaveKestrel()
+
     override fun toString(): String = "TracingOwner($owner)"
 
     private companion object {

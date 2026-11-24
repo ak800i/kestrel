@@ -542,4 +542,23 @@ class RunnerTest {
         )
         assertEquals("maple heron", run.adb.hookCalls("VOICE").single()["marker"])
     }
+
+    // Plan 7A: a task that ended at a round's limit fails with the reason limit; an interruption is an end like any other.
+    @Test
+    fun aTaskThatEndedAtARoundsLimitFailsWithTheReasonLimit() {
+        fun judge(end: String, rule: VerdictRule = VerdictRule.Finished) = Verdicts.judge(
+            rule,
+            HookAnswer("state=done end=$end confirmed=0 unconfirmed=0 beforeTestMode=0"),
+            timedOut = false,
+            checked = true,
+            refusal = null,
+            refused = null,
+            stalled = false,
+        ).let { "${it.result.wire} ${it.check.wire} ${it.reason.wire}" }
+
+        assertEquals("fail pass limit", judge("STOPPED_AT_LIMIT"))
+        assertEquals("fail pass limit", judge("PAUSED_AT_LIMIT"))
+        assertEquals("fail pass end", judge("INTERRUPTED"))
+        assertEquals("pass pass ok", judge("PAUSED_AT_LIMIT", VerdictRule.Injection))
+    }
 }

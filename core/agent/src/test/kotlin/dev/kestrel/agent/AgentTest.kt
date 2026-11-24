@@ -669,11 +669,29 @@ class AgentTest {
         assertFalse(guard!!(telegram("Ana Petrović", "online")))
     }
 
+    // Plan 7A: Kestrel's own screen is waited for at the owner port (design 10.2 of sub-project 7); when it stays, the task
+    // stops as interrupted before any model call.
     @Test
-    fun anAgentFreeAppOrKestrelInFrontEndsTheTaskBeforeAnyModelCall() = runTest {
+    fun kestrelsOwnScreenThatStaysInFrontInterruptsTheTaskBeforeAnyModelCall() = runTest {
         val kestrel = Harness(Screens.app("dev.kestrel", "Safety"), emptyList())
-        assertEquals(EndReason.AGENT_FREE, kestrel.run("Turn on hotspot").end)
-        assertEquals("Kestrel", kestrel.reports.single().detail)
+
+        val report = kestrel.run("Turn on hotspot")
+
+        assertEquals(EndReason.INTERRUPTED, report.end)
+        assertEquals(Interruption.KESTREL_SCREEN, report.interruption)
+        assertTrue(kestrel.model.requests.isEmpty())
+        assertTrue(kestrel.screen.actions.isEmpty())
+    }
+
+    // Kestrel's own screen that leaves lets the task go on; another agent-free app ends it before any model call (D16).
+    @Test
+    fun kestrelsOwnScreenThatLeavesLetsTheTaskGoOnAndAnotherAgentFreeAppEndsIt() = runTest {
+        val kestrel = Harness(Screens.app("dev.kestrel", "Safety"), listOf(call("fail", null, null, null, "reason" to "Stop.")))
+        kestrel.owner.leaves += true
+        kestrel.owner.onLeave = { kestrel.screen.current = Screens.chats() }
+
+        assertEquals(EndReason.FAILED_BY_MODEL, kestrel.run("Open Ana's chat").end)
+        assertTrue(kestrel.requestText(0).contains("Ana Petrović"))
 
         val bank = Harness(Screens.app("com.example.bank", "Balance"), emptyList(),
             settings = AgentSettings(safety = SafetySettings(testMode = false), agentFree = AgentFreeApps(added = setOf("com.example.bank"))))

@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.app.SettingKeys
@@ -241,12 +242,15 @@ class AgentEndToEndTest {
 
     @Test
     fun theAgentStaysOutOfKestrelsOwnApp() = runBlocking {
-        // Kestrel's settings in front: the task stops before any action (design D16; D32 item 16).
+        // Kestrel's settings in front: the task waits up to 3 s for Kestrel's own screen to leave, and since it stays, the
+        // task stops as interrupted before any action and any model call (design D16; D32 item 16; plan 7A).
         screen.shell("am start -W -n $KESTREL/.app.MainActivity")
         screen.awaitElement { it.packageName == KESTREL }
         val settings = ScriptedModel(listOf(tap("Safety", "reading"), fail))
         val first = AgentTests.ended(AgentTests.run("open the safety page", settings))
-        assertEquals(EndReason.AGENT_FREE, first.report.end)
+        assertEquals(EndReason.INTERRUPTED, first.report.end)
+        assertEquals(Interruption.KESTREL_SCREEN, first.report.interruption)
+        assertTrue(settings.requests.isEmpty())
 
         // open_app refuses Kestrel: the fixture stays in front.
         screen.open("MessengerActivity", "Chats")

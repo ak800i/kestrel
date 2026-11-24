@@ -26,7 +26,8 @@ class Agent(private val ports: AgentPorts, private val settings: AgentSettings) 
             val result = run.run()
             withContext(NonCancellable) { end(run, result, once) }
         } catch (e: CancellationException) {
-            withContext(NonCancellable) { end(run, run.cancelled((e as? TaskCancellation)?.reason ?: EndReason.CANCELLED), once) }
+            val cancellation = e as? TaskCancellation
+            withContext(NonCancellable) { end(run, run.cancelled(cancellation?.reason ?: EndReason.CANCELLED, cancellation?.interruption), once) }
             throw e
         } catch (e: Exception) {
             withContext(NonCancellable) { end(run, run.cancelled(EndReason.KESTREL_ERROR), once) }
