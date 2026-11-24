@@ -104,3 +104,50 @@ Describe 'The helpers of the owner''s session of sub-project 4' {
         { Wait-ServiceBound 'emulator-5554' -Seconds 0 } | Should -Throw "Kestrel's accessibility service on kestrel-api37 was not bound after 0 s."
     }
 }
+
+# The session as a whole, in a dry run on a fake kestrel-api37: it runs from a copy of the scripts folder in the test
+# drive, adb is fake-adb.cmd, and Kestrel's profiles come from a mock. The script needs PowerShell 7.3, so this test runs
+# only in the pass of PowerShell 7.
+Describe 'a71-providers.ps1' {
+    BeforeAll {
+        $root = Join-Path $TestDrive 'repository'
+        New-Item -ItemType Directory -Path (Join-Path $root 'scripts\lib') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\a71-providers.ps1') -Destination (Join-Path $root 'scripts')
+        foreach ($library in 'Kestrel.ps1', 'Session.ps1', 'DeviceGuard.ps1', 'Oracle.ps1') {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\lib\$library") -Destination (Join-Path $root 'scripts\lib')
+        }
+        $session = Join-Path $root 'scripts\a71-providers.ps1'
+        $fakeAdb = Join-Path $PSScriptRoot 'fake-adb.cmd'
+        $saved = @{}
+        foreach ($name in 'JAVA_HOME', 'ANDROID_HOME', 'ANDROID_AVD_HOME', 'KESTREL_FAKE_ADB') { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+        # Use-KestrelToolchain needs a JDK and an Android SDK folder, which the fakes do not use.
+        $env:JAVA_HOME = $TestDrive
+        $env:ANDROID_HOME = $TestDrive
+        $env:KESTREL_FAKE_ADB = Join-Path $TestDrive 'device.json'
+        $state = [ordered]@{
+            avd = 'kestrel-api37'; model = 'sdk_gphone64_x86_64'; settings = @{}; packages = [ordered]@{ 'dev.kestrel' = '2026-11-20 10:11:12' }
+            accounts = 1; keepsTiles = $false; failures = 0; calls = @(); refused = @()
+        }
+        [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
+        Mock Get-Adb { $fakeAdb }
+        Mock Start-Sleep {}
+        Mock Write-Host {}
+    }
+
+    AfterAll {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    }
+
+    It 'stops at its start, before any step, when Kestrel on kestrel-api37 answers provider-standin in another form, as an older build does' -Skip:($PSVersionTable.PSVersion -lt [version]'7.3') {
+        Mock Get-KestrelProfiles { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1' }
+
+        & $session -DryRun -EmulatorSerial emulator-5554 2>&1 | Out-Null
+
+        $LASTEXITCODE | Should -Be 1
+        $results = @(Get-ChildItem -LiteralPath (Join-Path $root 'corpus\owner') -Filter 'providers-dry-run-*.txt' | Get-Content)
+        $results | ForEach-Object { ($_ -split "`t")[1] } | Select-Object -Unique | Should -BeExactly @('session')
+        $results[-1] | Should -BeLike "*`tsession`tstopped: Not an answer of provider-standin*install.ps1*"
+        # Only the read of the Google accounts reached the device.
+        @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).calls) | Should -BeExactly @('dumpsys account && echo && echo kestrel-end')
+    }
+}

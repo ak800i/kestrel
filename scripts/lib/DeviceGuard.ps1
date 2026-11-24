@@ -341,12 +341,14 @@ function Get-GoogleAccountCount([string[]]$Dump) { Get-AccountCount $Dump 'com.g
 # The answer of provider-standin, such as 'standin=off profile=copilot copilot=1 id=profile-1 credential=present', as an
 # ordered table: whether the stand-in runs, the kind of the default profile, the number of Copilot profiles, the default
 # profile's ID, which Kestrel makes at random and which holds nothing secret (none without a default profile), and
-# whether its credential is stored (present, missing, or none for a profile without one).
+# whether its credential is stored (present, missing, or none for a profile without one). An answer in another form,
+# such as an older build's, which lacks the ID and the credential, throws System.IO.InvalidDataException, so that the
+# guards can tell it from a Kestrel that did not answer (Get-OwnerDataState).
 function ConvertFrom-StandInAnswer([string]$Text) {
     $pairs = ConvertFrom-HookPairs $Text
     if (-not $pairs.Contains('standin') -or -not $pairs.Contains('profile') -or "$($pairs['copilot'])" -notmatch '^\d+$' -or
         -not $pairs['id'] -or "$($pairs['credential'])" -notin 'present', 'missing', 'none') {
-        throw "Not an answer of provider-standin: '$Text'. Install the current debug build with scripts\install.ps1."
+        throw [System.IO.InvalidDataException]::new("Not an answer of provider-standin: '$Text'. Install the current debug build with scripts\install.ps1.")
     }
     $pairs
 }
@@ -356,7 +358,7 @@ function ConvertFrom-StandInAnswer([string]$Text) {
 # credential is stored (ConvertFrom-StandInAnswer). Android gives no hook broadcast to a package that it stopped, as
 # 'am force-stop' leaves Kestrel, so the package is unstopped first ('pm unstop', which starts nothing; the broadcast then
 # starts Kestrel's process). scripts\hook.ps1 needs PowerShell 7.3, so it runs in pwsh. Throws when Kestrel does not
-# answer.
+# answer, and System.IO.InvalidDataException when it answers in another form.
 function Get-KestrelProfiles([string]$Serial) {
     try { Invoke-SettingsCommand -Serial $Serial -Command 'pm unstop dev.kestrel' | Out-Null } catch { Write-Verbose "pm unstop failed: $($_.Exception.Message)" }
     $pwsh = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -372,12 +374,20 @@ function Get-KestrelProfiles([string]$Serial) {
 
 # Reads, and changes nothing, what AGENTS.md asks to compare before and after a run on kestrel-api37: the number of
 # Google accounts in 'dumpsys account', and Kestrel's profiles (Get-KestrelProfiles), or, in ProfilesUnread, why they
-# could not be read, such as a Kestrel that is not installed. Throws when it cannot read the accounts.
+# could not be read: Kestrel is not installed, or it did not answer. :tools:eval's AccountGuard reads them in the same
+# way. Throws when it cannot read the accounts, and when Kestrel answered provider-standin in another form, as an older
+# build does, because its profiles could then not be compared afterwards; the message says to install the current build.
 function Get-OwnerDataState([string]$Serial) {
     $accounts = Get-GoogleAccountCount @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys account')
     $profiles = $null
     $unread = $null
-    try { $profiles = Get-KestrelProfiles -Serial $Serial } catch { $unread = $_.Exception.Message }
+    try {
+        $profiles = Get-KestrelProfiles -Serial $Serial
+    } catch [System.IO.InvalidDataException] {
+        throw
+    } catch {
+        $unread = $_.Exception.Message
+    }
     [pscustomobject]@{ GoogleAccounts = $accounts; Profiles = $profiles; ProfilesUnread = $unread }
 }
 
@@ -419,13 +429,14 @@ function Format-OwnerDataState($State, [string]$Serial) {
 }
 
 # Reads the owner's data on kestrel-api37 again and compares it with -Before, from Get-OwnerDataState. Returns a message
-# for each change (Get-OwnerDataChange), or one that says that the accounts could not be read; nothing when all is as
-# before. It writes nothing, so that each script reports the messages in its own way.
+# for each change (Get-OwnerDataChange), or one that says that the data could not be read, because the accounts could
+# not be read or Kestrel answered in another form; nothing when all is as before. It writes nothing, so that each script
+# reports the messages in its own way.
 function Compare-OwnerData([string]$Serial, $Before, [string]$During) {
     $after = try {
         Get-OwnerDataState -Serial $Serial
     } catch {
-        "The Google accounts of $Serial could not be read after ${During} ($($_.Exception.Message)), so the owner's data there was not checked."
+        "The owner's data on $Serial could not be read after ${During} ($($_.Exception.Message)), so it was not checked there."
         return
     }
     Get-OwnerDataChange -Before $Before -After $after -Serial $Serial -During $During

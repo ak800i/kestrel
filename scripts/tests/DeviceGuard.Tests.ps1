@@ -332,7 +332,8 @@ Describe 'The helpers that read and change the device' {
             { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1 id=profile-1 credential=maybe' } | Should -Throw 'Not an answer of provider-standin*'
             # Older builds answer without the count, or without the ID and the credential.
             { ConvertFrom-StandInAnswer 'standin=off profile=none' } | Should -Throw 'Not an answer of provider-standin*install.ps1*'
-            { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1' } | Should -Throw 'Not an answer of provider-standin*install.ps1*'
+            { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1' } |
+                Should -Throw -ExceptionType ([System.IO.InvalidDataException]) -ExpectedMessage 'Not an answer of provider-standin*install.ps1*'
         }
 
         It 'reads Kestrel''s profiles through hook.ps1 provider-standin, after it unstops Kestrel' {
@@ -373,12 +374,27 @@ Describe 'The helpers that read and change the device' {
             $unread.ProfilesUnread | Should -BeExactly 'scripts\hook.ps1 provider-standin ended with exit code 1'
         }
 
+        It 'stops when Kestrel answers provider-standin in another form, as an older build does, instead of comparing only the accounts' {
+            Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "standin=off profile=copilot copilot=1`r`n"; Id = 1 } }
+
+            { Get-OwnerDataState -Serial emulator-5554 } |
+                Should -Throw -ExceptionType ([System.IO.InvalidDataException]) -ExpectedMessage 'Not an answer of provider-standin*install.ps1*'
+        }
+
         It 'says that the data could not be checked when the accounts cannot be read' {
             Set-FakeDevice -Failures 10
             $before = [pscustomobject]@{ GoogleAccounts = 1; Profiles = $null; ProfilesUnread = 'x' }
 
             Compare-OwnerData -Serial emulator-5554 -Before $before -During 'the tests' |
-                Should -BeLike 'The Google accounts of emulator-5554 could not be read after the tests (*), so the owner''s data there was not checked.'
+                Should -BeLike 'The owner''s data on emulator-5554 could not be read after the tests (*), so it was not checked there.'
+        }
+
+        It 'names an answer of provider-standin in another form after a run, which it could not compare' {
+            $before = [pscustomobject]@{ GoogleAccounts = 1; Profiles = [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' }; ProfilesUnread = $null }
+            Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "standin=off profile=copilot copilot=1`r`n"; Id = 1 } }
+
+            Compare-OwnerData -Serial emulator-5554 -Before $before -During 'the tests' |
+                Should -BeLike 'The owner''s data on emulator-5554 could not be read after the tests (Not an answer of provider-standin*), so it was not checked there.'
         }
     }
 }

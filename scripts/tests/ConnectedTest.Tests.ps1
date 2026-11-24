@@ -189,6 +189,16 @@ Describe 'connected-test.ps1' {
             'with exit code 1), so the script compares only the Google accounts there.')
     }
 
+    It 'stops before Gradle runs when Kestrel on kestrel-api37 answers provider-standin in another form, as an older build does' {
+        Mock Get-KestrelProfiles { ConvertFrom-StandInAnswer 'standin=off profile=copilot copilot=1' }
+
+        { & $connectedTest -Serial emulator-5554 ':app:connectedDebugAndroidTest' } |
+            Should -Throw -ExpectedMessage 'Not an answer of provider-standin*install.ps1*'
+
+        $arguments | Should -Not -Exist
+        $env:ANDROID_SERIAL | Should -BeExactly 'caller-serial'
+    }
+
     It 'reads no owner''s data on the A71' {
         Set-FakeDevice -A71
 

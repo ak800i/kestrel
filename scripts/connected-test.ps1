@@ -9,8 +9,10 @@
 #     and Kestrel's profiles, as scripts\hook.ps1 provider-standin answers (the default profile's kind and ID, whether
 #     its credential is stored, and the number of Copilot profiles), did not change, so that a profile that was
 #     removed or replaced, or a credential that was deleted, fails the run. When Kestrel does not answer before the
-#     tests, for example because it is not installed, the script says so and compares only the accounts. The hook starts
-#     Kestrel's process, so this comes before Kestrel is stopped;
+#     tests, for example because it is not installed, the script says so and compares only the accounts; when it
+#     answers in another form, as an older build does, the script stops before Gradle runs and says to install the
+#     current debug build, because it could not compare the profiles afterwards. The hook starts Kestrel's process, so
+#     this comes before Kestrel is stopped;
 #   - it stops Kestrel ('am force-stop'), which stays stopped at the end, and puts back the device's accessibility
 #     settings;
 #   - it checks that Kestrel was not uninstalled or installed again, either of which deletes Kestrel's data. Kestrel's

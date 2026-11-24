@@ -8,7 +8,8 @@
 # step emulator-signin, which earlier versions had, and scripts\hook.ps1 refuses provider-delete there. At its start and
 # at its end, however it ends, the session reads the number of Google accounts on kestrel-api37 and Kestrel's profiles
 # there (Get-OwnerDataState in scripts\lib\DeviceGuard.ps1); when they changed, it writes an error that names the
-# change, and it ends with exit code 1.
+# change, and it ends with exit code 1. When Kestrel there answers in another form, as an older build does, the session
+# stops at its start, before any step, and says to install the current debug build.
 # The script taps through Kestrel's own pages itself, through the hook screen-has, which finds a label of Kestrel's own
 # windows (the package dev.kestrel, never Chrome's or another app's) and gives only its bounds, and checks each device's
 # state through the hooks; every time that it reports was measured on the device. The owner is needed only at the start,
