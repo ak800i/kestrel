@@ -189,11 +189,38 @@ function Assert-KestrelInstalled([string]$Serial) {
     if (-not $installed) { throw "Kestrel is not installed on $Serial. Install it first with scripts\install.ps1 -Serial $Serial." }
 }
 
+# Who may use a folder on a device, as the device's shell sees it: 'missing'; 'shell' when the shell owns it; 'writable'
+# when another user, Kestrel, owns it and the shell may create files in it through its group; 'closed' otherwise.
+function Get-DeviceFolderAccess([string]$Serial, [string]$Path) {
+    $command = "if [ ! -d '$Path' ]; then echo missing; elif [ -O '$Path' ]; then echo shell; " +
+        "elif [ -w '$Path' ] && [ -x '$Path' ]; then echo writable; else echo closed; fi"
+    return (@(Invoke-SettingsCommand -Serial $Serial -Command $command) -join '').Trim()
+}
+
+# Makes a folder of Kestrel's models folder ready for the copies (design spec, section 8.10). It creates the folder when
+# it is missing. A folder that the shell owns gets the mode 2775, also when it exists already, because on Android 17
+# Kestrel reads such a folder only through the bits for other users (spike S7). A folder that Kestrel owns, which
+# Kestrel's own download or its start created, keeps its mode, because only its owner may change that, and Kestrel reads
+# it as its owner; the shell writes into it through the group ext_data_rw, so the function stops with an error when that
+# group may not. Every command works again on a folder that exists, because Invoke-SettingsCommand may repeat it.
+function Initialize-DeviceModelFolder([string]$Serial, [string]$Path) {
+    Invoke-SettingsCommand -Serial $Serial -Command "mkdir -p '$Path'" | Out-Null
+    $access = Get-DeviceFolderAccess -Serial $Serial -Path $Path
+    if ($access -eq 'shell') {
+        Invoke-SettingsCommand -Serial $Serial -Command "chmod 2775 '$Path'" | Out-Null
+    } elseif ($access -ne 'writable') {
+        $owner = (@(Invoke-SettingsCommand -Serial $Serial -Command "stat -c '%U:%G %a' '$Path'") -join '').Trim()
+        throw "The shell of $Serial may not create files in $Path ($owner): it does not own the folder, and the " +
+            'folder''s group may not write into it, so the models cannot be copied there. The script changes no ' +
+            'mode of Kestrel''s.'
+    }
+}
+
 # Copies the model files from the cache into Kestrel's models folder on a device, except those that the device already
 # holds with the right size and hash, and checks the hash of each copy on the device. Kestrel must be installed. It
-# creates its models folder when it starts, so the function starts Kestrel when the folder is missing. The folders below
-# it get the mode 2775 on every run, also when they exist already, because on Android 17 Kestrel cannot read a folder
-# that adb creates otherwise (spike S7).
+# creates its models folder when it starts, so the function starts Kestrel when the folder is missing. Then it prepares
+# that folder and each folder below it that a copy needs with Initialize-DeviceModelFolder. It never touches the part
+# files of Kestrel's own download in the folder .download.
 function Push-ModelFiles([string]$Serial, $Manifest, [string]$Cache) {
     # adb's progress and error lines must not stop the function; its own checks decide.
     $ErrorActionPreference = 'Continue'
@@ -213,11 +240,10 @@ function Push-ModelFiles([string]$Serial, $Manifest, [string]$Cache) {
         $parts = ([string]$file.path) -split '/'
         for ($count = 1; $count -lt $parts.Count; $count++) { $folders[($parts[0..($count - 1)] -join '/')] = $true }
     }
-    # Each folder comes after the folder that holds it. Invoke-SettingsCommand may run a command again, so the command
-    # must work on a folder that exists.
+    Initialize-DeviceModelFolder -Serial $Serial -Path $root
+    # Each folder comes after the folder that holds it, so that mkdir -p creates only the folder itself.
     foreach ($folder in @($folders.Keys | Sort-Object { ($_ -split '/').Count }, { $_ })) {
-        $path = "$root/$folder"
-        Invoke-SettingsCommand -Serial $Serial -Command "mkdir -p '$path' && chmod 2775 '$path'" | Out-Null
+        Initialize-DeviceModelFolder -Serial $Serial -Path "$root/$folder"
     }
     $adb = Get-Adb
     foreach ($file in $files) {

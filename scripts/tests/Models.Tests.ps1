@@ -224,14 +224,18 @@ Describe 'Push-ModelFiles' {
         $manifest = [pscustomobject]@{ format = 1; archives = @(); models = @([pscustomobject]@{ id = 'm'; engine = 'asr'; files = $files }) }
 
         # Starts a fake device, with or without Kestrel and with or without the models folder that Kestrel creates, and
-        # returns the folder that stands for the device's '/'. -Corrupt names the model files whose push goes wrong.
-        function Set-FakeDevice([switch]$NotInstalled, [switch]$WithModelsFolder, [string[]]$Corrupt = @()) {
+        # returns the folder that stands for the device's '/'. -Folders gives folders below the models folder that exist
+        # already, each with its owner, 'shell' or 'kestrel', and mode. -Corrupt names the model files whose push goes wrong.
+        function Set-FakeDevice([switch]$NotInstalled, [switch]$WithModelsFolder, [hashtable]$Folders = @{}, [string[]]$Corrupt = @()) {
             $root = Join-Path $TestDrive "device-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $root | Out-Null
-            if ($WithModelsFolder) {
-                New-Item -ItemType Directory -Force -Path (Join-Path $root 'sdcard\Android\data\dev.kestrel\files\models') | Out-Null
+            $owners = [ordered]@{}
+            if ($WithModelsFolder) { $owners[$models] = @{ owner = 'kestrel'; mode = '2770' } }
+            foreach ($folder in @($Folders.Keys | Sort-Object)) { $owners["$models/$folder"] = $Folders[$folder] }
+            foreach ($folder in $owners.Keys) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $root ($folder.TrimStart('/') -replace '/', '\')) | Out-Null
             }
-            $state = [ordered]@{ root = $root; installed = -not $NotInstalled; modes = @{}; corrupt = [string[]]@($Corrupt | ForEach-Object { "$models/$_" }); calls = @() }
+            $state = [ordered]@{ root = $root; installed = -not $NotInstalled; folders = $owners; corrupt = [string[]]@($Corrupt | ForEach-Object { "$models/$_" }); calls = @() }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
             $root
         }
@@ -269,24 +273,67 @@ Describe 'Push-ModelFiles' {
         (Get-FakeDevice).calls | Should -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo && echo kestrel-end'
     }
 
-    It 'gives every folder below the models folder the mode 2775, each after the folder that holds it' {
+    It 'creates every missing folder below the models folder with the mode 2775, each after the folder that holds it' {
         Set-FakeDevice -WithModelsFolder | Out-Null
 
         Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache
 
         $device = Get-FakeDevice
-        @($device.modes.PSObject.Properties | ForEach-Object { $_.Name }) | Should -Be @("$models/m", "$models/n", "$models/m/data")
-        @($device.modes.PSObject.Properties | ForEach-Object { $_.Value } | Select-Object -Unique) | Should -Be @('2775')
+        @($device.calls | Where-Object { $_ -like 'mkdir -p *' }) |
+            Should -Be @("mkdir -p '$models' && echo && echo kestrel-end", "mkdir -p '$models/m' && echo && echo kestrel-end",
+                "mkdir -p '$models/n' && echo && echo kestrel-end", "mkdir -p '$models/m/data' && echo && echo kestrel-end")
+        foreach ($folder in 'm', 'n', 'm/data') {
+            $device.folders."$models/$folder".owner | Should -Be 'shell'
+            $device.folders."$models/$folder".mode | Should -Be '2775'
+        }
         $device.calls | Should -Not -Contain 'am start -n dev.kestrel/dev.kestrel.app.MainActivity && echo && echo kestrel-end'
     }
 
-    It 'gives a folder that exists already the mode 2775 too' {
-        $root = Set-FakeDevice -WithModelsFolder
-        New-Item -ItemType Directory -Path (Get-DeviceCopy $root 'm') | Out-Null
+    It 'gives a folder that the shell created earlier the mode 2775 too' {
+        Set-FakeDevice -WithModelsFolder -Folders @{ 'm' = @{ owner = 'shell'; mode = '2770' } } | Out-Null
 
         Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache
 
-        (Get-FakeDevice).modes."$models/m" | Should -Be '2775'
+        (Get-FakeDevice).folders."$models/m".mode | Should -Be '2775'
+    }
+
+    It 'leaves the mode of a folder that Kestrel created alone and copies into it through the group' {
+        $root = Set-FakeDevice -WithModelsFolder -Folders @{ 'm' = @{ owner = 'kestrel'; mode = '2770' } }
+
+        Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache
+
+        $device = Get-FakeDevice
+        $device.folders."$models/m".mode | Should -Be '2770'
+        $device.calls | Should -Not -Contain "chmod 2775 '$models/m' && echo && echo kestrel-end"
+        $device.calls | Should -Not -Contain "chmod 2775 '$models' && echo && echo kestrel-end"
+        Get-Content -LiteralPath (Get-DeviceCopy $root 'm/a.onnx') -Raw | Should -BeExactly 'model a'
+    }
+
+    It 'copies after a cancelled download of Kestrel''s, keeps what it placed and leaves its part files alone' {
+        $kestrels = @{ owner = 'kestrel'; mode = '2770' }
+        $root = Set-FakeDevice -WithModelsFolder -Folders @{ 'm' = $kestrels; '.download' = $kestrels; '.download/m' = $kestrels }
+        Set-Content -LiteralPath (Get-DeviceCopy $root 'm/a.onnx') -Value $contents['m/a.onnx'] -NoNewline
+        $part = Get-DeviceCopy $root '.download/m/data/b.txt.part'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $part) | Out-Null
+        Set-Content -LiteralPath $part -Value 'memb' -NoNewline
+
+        Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache
+
+        Get-Content -LiteralPath $part -Raw | Should -BeExactly 'memb'
+        Get-Content -LiteralPath (Get-DeviceCopy $root 'm/data/b.txt') -Raw | Should -BeExactly 'member b'
+        $calls = (Get-FakeDevice).calls
+        @($calls | Where-Object { $_ -like '*.download*' }) | Should -BeNullOrEmpty
+        @($calls | Where-Object { $_ -like 'push *' }) | Should -Be @("push $models/m/data/b.txt", "push $models/n/c.txt")
+    }
+
+    It 'stops before any copy when Kestrel created a folder in which its group may not write' {
+        Set-FakeDevice -WithModelsFolder -Folders @{ 'm' = @{ owner = 'kestrel'; mode = '2750' } } | Out-Null
+
+        { Push-ModelFiles -Serial 'fake' -Manifest $manifest -Cache $cache } |
+            Should -Throw "*may not create files in $models/m (u0_a353:ext_data_rw 2750)*does not own*"
+        $device = Get-FakeDevice
+        @($device.calls | Where-Object { $_ -like 'push *' -or $_ -like 'chmod *' }) | Should -BeNullOrEmpty
+        $device.folders."$models/m".mode | Should -Be '2750'
     }
 
     It 'copies nothing that the device already has' {
