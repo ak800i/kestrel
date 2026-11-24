@@ -95,39 +95,81 @@ object KeepDisplayDensity : Setup {
 }
 
 /**
- * Keeps the stored settings of [NAMESPACES] whose keys [matching] finds, but [except], as they were before the run (plan
- * 6B-basefix T6): it changes nothing, and its one restore writes back each one that the run changed and deletes each one
- * that the run added. These are a vendor's keys, such as One UI's font size index and font style, whose effect only their
- * own Settings page applies, so the restore names each in [RunScope.putBack]'s stored list and warns that the screen may
- * still show the run's choice until it is set again by hand. Settings whose restore Android applies itself keep their own
- * steps, so they are [except]: the font scale ([SettingsValue]) and the display density ([KeepDisplayDensity]).
+ * What Android does when a restore writes a stored setting back (plan 6B-basefix T6), which decides whether the owner may
+ * have to set it again by hand.
  */
-data class KeepStoredSettings(val matching: Regex, val except: Set<SettingKey> = emptySet()) : Setup {
+enum class StoredEffect {
+    /** Android applies the written value at once, as when the owner sets it: the restore records it in [PutBack.applied]. */
+    AT_ONCE,
+
+    /** A flag that changes nothing on screen and that no page sets: the restore puts it back and records nothing. */
+    NONE,
+
+    /**
+     * Only the setting's own Settings page applies it, so the screen may show the run's choice until a reboot or until the
+     * owner sets it again: the restore records it in [PutBack.stored] and warns. A key of unknown effect is treated so.
+     */
+    BY_PAGE,
+}
+
+/**
+ * Keeps the stored settings of [NAMESPACES] whose keys [matching] finds, but [except], as they were before the run (plan
+ * 6B-basefix T6): it changes nothing, and its one restore writes back each one that the run changed, deletes each one
+ * that the run added, and reads them again. What the owner sees then depends on how Android applies each key, which
+ * [effects] gives ([StoredEffect.BY_PAGE] for a key that it does not name, such as a vendor's): the restore names a key
+ * that Android applies in [RunScope.putBack]'s applied list, puts a flag back silently, and names a key that only its
+ * page applies in the stored list, with a warning that says what was set back and what was deleted. A key that stays
+ * changed fails the restore, whose reason gives the command for each such key. Settings that have a step of their own are
+ * [except], such as the font scale ([SettingsValue]) and the display density ([KeepDisplayDensity]).
+ */
+data class KeepStoredSettings(
+    val matching: Regex,
+    val except: Set<SettingKey> = emptySet(),
+    val effects: Map<SettingKey, StoredEffect> = emptyMap(),
+) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val before = read(scope)
-        val values = before.entries.joinToString { "${it.key}=${it.value}" }.ifEmpty { "none" }
-        val byHand = "Run: adb -s ${scope.device.serial} shell settings list system (and secure, global), and set the keys that the warning names back to: $values"
-        scope.restores.push("the stored display settings as before", byHand) {
+        scope.restores.push("the stored display settings as before", byHand(scope, before)) {
             val after = read(scope)
             val changed = (before.keys + after.keys).filter { before[it] != after[it] }
-            for (setting in changed) {
-                val old = before[setting]
-                scope.device.idempotent(
-                    if (old == null) "settings delete ${setting.namespace} ${setting.key}" else "settings put ${setting.namespace} ${setting.key} ${shellQuoted(old)}",
-                )
-                scope.putBack.recordStored(setting.toString())
+            for (setting in changed) scope.device.idempotent(undo(setting, before[setting]))
+            val now = if (changed.isEmpty()) after else read(scope)
+            val (back, left) = changed.partition { now[it] == before[it] }
+            for (setting in back) {
+                when (effect(setting)) {
+                    StoredEffect.AT_ONCE -> scope.putBack.recordApplied(setting.toString())
+                    StoredEffect.NONE -> Unit
+                    StoredEffect.BY_PAGE -> scope.putBack.recordStored(setting.toString())
+                }
             }
-            if (changed.isNotEmpty()) {
+            val byPage = back.filter { effect(it) == StoredEffect.BY_PAGE }
+            if (byPage.isNotEmpty()) {
+                val done = byPage.joinToString { if (before[it] == null) "$it (added by the run, deleted)" else "$it (set back to its value before the run)" }
                 scope.console.warn(
-                    "The run changed ${changed.joinToString()}; the restore wrote them back, and the screen may show them only after " +
-                        "a reboot or when they are set again in Settings > Display.",
+                    "The run changed display settings that only their own Settings page applies: $done. The screen may show the " +
+                        "run's choice until a reboot, or until they are set again by hand in Settings > Display.",
                 )
             }
+            check(left.isEmpty()) { "Still as the run left them; run: " + left.joinToString("; ") { undo(it, before[it]) } }
         }
         return SetupResult.Ready
     }
 
     override fun probe(scope: RunScope): Map<String, String> = read(scope).mapKeys { it.key.toString() }
+
+    private fun effect(setting: SettingKey): StoredEffect = effects[setting] ?: StoredEffect.BY_PAGE
+
+    /** What the owner does when the restore fails or cannot finish: the old values back, and the run's added keys deleted. */
+    private fun byHand(scope: RunScope, before: Map<SettingKey, String>): String {
+        val puts = before.entries.joinToString("; ") { undo(it.key, it.value) }
+        val skipped = if (except.isEmpty()) "" else ", but not ${except.joinToString()}"
+        return "In adb -s ${scope.device.serial} shell, run " + (if (puts.isEmpty()) "" else "$puts; then ") +
+            "settings delete <namespace> <key> for each other key of ${NAMESPACES.joinToString()} whose name matches " +
+            "'${matching.pattern}'$skipped, because the run added it."
+    }
+
+    private fun undo(setting: SettingKey, old: String?): String =
+        if (old == null) "settings delete ${setting.namespace} ${setting.key}" else "settings put ${setting.namespace} ${setting.key} ${shellQuoted(old)}"
 
     private fun read(scope: RunScope): Map<SettingKey, String> = buildMap {
         for (namespace in NAMESPACES) {
@@ -145,6 +187,26 @@ data class KeepStoredSettings(val matching: Regex, val except: Set<SettingKey> =
 
         /** The keys of a display page's size controls: the font scale, the display density, and the vendor's font and zoom keys. */
         val DISPLAY_SIZE = Regex("font|density|zoom", RegexOption.IGNORE_CASE)
+
+        /**
+         * How Android applies the AOSP keys that [DISPLAY_SIZE] finds, as the AOSP sources of API 33 (android13-release) and
+         * API 37 (android17-release) show; every other key that it finds, such as One UI's, is [StoredEffect.BY_PAGE].
+         * `system font_scale` and `secure display_density_forced` have steps of their own. `secure
+         * accessibility_pinch_to_zoom_anywhere_enabled` and `system device_font_scale` (a default that no page sets), which
+         * API 37 has and API 33 has not, have no reader that shows how a write takes effect, so they stay [StoredEffect.BY_PAGE].
+         */
+        val DISPLAY_SIZE_EFFECTS: Map<SettingKey, StoredEffect> = mapOf(
+            // Bold text: ActivityTaskManagerService's SettingObserver observes it and updateFontWeightAdjustmentIfNeeded
+            // puts it into the configuration at once (services/core/java/com/android/server/wm/ActivityTaskManagerService.java).
+            SettingKey("secure", "font_weight_adjustment") to StoredEffect.AT_ONCE,
+            // The captions' text size: CaptioningManager observes it and calls each listener's onFontScaleChanged
+            // (core/java/android/view/accessibility/CaptioningManager.java).
+            SettingKey("secure", "accessibility_captioning_font_scale") to StoredEffect.AT_ONCE,
+            // API 34 and later: set to 1 the first time that the font size changes (SystemUI's FontScalingDialogDelegate,
+            // Settings' FontSizeData). Its one reader, SystemUI's config_quickSettingsAutoAdd, adds the Font size tile
+            // once when it is first set; writing it back changes nothing on screen.
+            SettingKey("secure", "accessibility_font_scaling_has_been_changed") to StoredEffect.NONE,
+        )
     }
 }
 

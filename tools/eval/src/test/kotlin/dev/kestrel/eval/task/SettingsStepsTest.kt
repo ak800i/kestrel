@@ -369,11 +369,7 @@ class SettingsStepsTest {
 
     @Test
     fun theStoredFontKeysThatARunChangedGoBackAndAreNamedForTheHand() {
-        val run = FakeRun(DeviceKind.A71)
-        run.adb.on("^settings delete (\\S+) (\\S+)$") {
-            run.adb.settings.remove("${it.groupValues[1]}/${it.groupValues[2]}")
-            ""
-        }
+        val run = FakeRun(DeviceKind.A71).deletingSettings()
         run.adb.settings.putAll(mapOf("system/font_scale" to "1.1", "system/font_size" to "3", "secure/android_id" to "x"))
         val keep = KeepStoredSettings(KeepStoredSettings.DISPLAY_SIZE, except = setOf(SettingKey("system", "font_scale")))
 
@@ -387,7 +383,72 @@ class SettingsStepsTest {
         assertTrue(run.restores.runAll().isEmpty())
         assertEquals(mapOf("system/font_scale" to "1.3", "system/font_size" to "3", "secure/android_id" to "x"), run.adb.settings.toMap())
         assertEquals(listOf("system/font_size", "system/flip_font_style"), run.scope.putBack.stored)
-        assertTrue(run.console.warnings.toString(), run.console.warnings.any { it.contains("system/font_size, system/flip_font_style") })
+        assertTrue(run.scope.putBack.applied.isEmpty())
+        val warning = run.console.warnings.single()
+        assertTrue(warning, warning.contains("system/font_size (set back to its value before the run), system/flip_font_style (added by the run, deleted)"))
+    }
+
+    @Test
+    fun aStoredKeyIsNamedForTheHandOnlyWhenAndroidDoesNotApplyItsRestore() {
+        val run = FakeRun(DeviceKind.EMULATOR).deletingSettings()
+        run.adb.settings.putAll(mapOf("secure/font_weight_adjustment" to "0", "secure/accessibility_captioning_font_scale" to "1.0"))
+        val keep = KeepStoredSettings(KeepStoredSettings.DISPLAY_SIZE, effects = KeepStoredSettings.DISPLAY_SIZE_EFFECTS)
+
+        assertEquals(SetupResult.Ready, keep.apply(run.scope))
+        // Bold text and the captions' size, which Android applies when they are written, the slider's flag, and an unknown key.
+        run.adb.settings["secure/font_weight_adjustment"] = "300"
+        run.adb.settings["secure/accessibility_captioning_font_scale"] = "1.5"
+        run.adb.settings["secure/accessibility_font_scaling_has_been_changed"] = "1"
+        run.adb.settings["system/vendor_zoom_level"] = "2"
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(mapOf("secure/font_weight_adjustment" to "0", "secure/accessibility_captioning_font_scale" to "1.0"), run.adb.settings.toMap())
+        assertEquals(listOf("secure/font_weight_adjustment", "secure/accessibility_captioning_font_scale"), run.scope.putBack.applied)
+        assertEquals(listOf("system/vendor_zoom_level"), run.scope.putBack.stored)
+        val warning = run.console.warnings.single()
+        assertTrue(warning, warning.contains("system/vendor_zoom_level (added by the run, deleted)"))
+        assertFalse(warning, warning.contains("font_weight_adjustment") || warning.contains("captioning") || warning.contains("has_been_changed"))
+
+        // Keys that Android applies, or that change nothing on screen, need no warning.
+        val quiet = FakeRun(DeviceKind.EMULATOR).deletingSettings()
+        assertEquals(SetupResult.Ready, keep.apply(quiet.scope))
+        quiet.adb.settings["secure/font_weight_adjustment"] = "300"
+        quiet.adb.settings["secure/accessibility_font_scaling_has_been_changed"] = "1"
+        assertTrue(quiet.restores.runAll().isEmpty())
+        assertEquals(listOf("secure/font_weight_adjustment"), quiet.scope.putBack.applied)
+        assertTrue(quiet.scope.putBack.stored.isEmpty())
+        assertTrue(quiet.console.warnings.toString(), quiet.console.warnings.isEmpty())
+    }
+
+    @Test
+    fun aStoredKeyThatStaysChangedFailsTheRestoreWithWhatToSetBackAndWhatToDelete() {
+        val run = FakeRun(DeviceKind.A71).deletingSettings()
+        // The device ignores the write of One UI's font size index.
+        run.adb.on("^settings put system font_size ") { "" }
+        run.adb.settings.putAll(mapOf("system/font_size" to "3", "global/font_family" to "sans serif"))
+        val keep = KeepStoredSettings(KeepStoredSettings.DISPLAY_SIZE, except = setOf(SettingKey("system", "font_scale")))
+
+        assertEquals(SetupResult.Ready, keep.apply(run.scope))
+        run.adb.settings["system/font_size"] = "5"
+        run.adb.settings["system/flip_font_style"] = "2"
+
+        val failure = run.restores.runAll().single()
+        assertTrue(failure.reason, failure.reason.contains("settings put system font_size '3'"))
+        assertFalse(failure.reason, failure.reason.contains("flip_font_style"))
+        assertTrue(failure.byHand, failure.byHand.contains("settings put system font_size '3'"))
+        assertTrue(failure.byHand, failure.byHand.contains("settings put global font_family 'sans serif'"))
+        assertTrue(failure.byHand, failure.byHand.contains("settings delete <namespace> <key>"))
+        assertTrue(failure.byHand, failure.byHand.contains("but not system/font_scale"))
+        assertFalse(failure.byHand, failure.byHand.contains("warning"))
+        assertEquals(listOf("system/flip_font_style"), run.scope.putBack.stored)
+    }
+
+    /** Lets the fake device delete a setting, as `settings delete` does. */
+    private fun FakeRun.deletingSettings(): FakeRun = apply {
+        adb.on("^settings delete (\\S+) (\\S+)$") {
+            adb.settings.remove("${it.groupValues[1]}/${it.groupValues[2]}")
+            ""
+        }
     }
 }
 

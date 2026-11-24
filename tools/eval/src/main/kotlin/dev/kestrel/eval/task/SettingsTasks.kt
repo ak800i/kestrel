@@ -57,7 +57,11 @@ object SettingsTasks {
         "font-size", "make the text bigger",
         listOf(
             KeepDisplayDensity,
-            KeepStoredSettings(KeepStoredSettings.DISPLAY_SIZE, except = setOf(SettingKey("system", "font_scale"), SettingKey("secure", "display_density_forced"))),
+            KeepStoredSettings(
+                KeepStoredSettings.DISPLAY_SIZE,
+                except = setOf(SettingKey("system", "font_scale"), SettingKey("secure", "display_density_forced")),
+                effects = KeepStoredSettings.DISPLAY_SIZE_EFFECTS,
+            ),
             SettingsValue("system", "font_scale", "1.0"),
         ),
         listOf(SettingsIs("system", "font_scale", Wanted.Above(1.0))),
