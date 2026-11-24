@@ -12,7 +12,8 @@ import java.util.Locale
  * `compare <results folder>… [--rerun --device <serial>]` (design D2 and D10 of sub-project 6): each folder's live
  * `report.json` judged against its device's part of `eval\baseline.json`, one `compare=<device> …` line per finding, and
  * with folders of both devices the total of both. With `--rerun`, a device that fails runs the tasks whose rate fell 3
- * more times live ([rerun], a new folder beside the first), and is judged again on the 6 runs. Results of another model
+ * more times live ([rerun], a new folder beside the first), and is judged again on the 6 runs; re-runs on another device
+ * than the folder's are refused. Results of another model
  * than the device's part are refused, with the way to record a new part. Returns 0 when every device passed, else 1.
  */
 class CompareCommand(
@@ -35,7 +36,8 @@ class CompareCommand(
             var judgement = Comparison.judge(report.device, first, part, GAPS)
             val device = command.device
             if (!judgement.passed && command.rerun && device != null && judgement.fell.isNotEmpty()) {
-                val again = (rerun ?: ::liveRerun)(device, judgement.fell)
+                val again = rerun?.invoke(device, judgement.fell) ?: liveRerun(device, report.device, judgement.fell)
+                if (again.device != report.device) throw refusedDevice(again.device, report.device)
                 val more = again.tasks.associate { it.task to Rate(it.passes, it.runs) }
                 judgement = Comparison.judge(report.device, first.mapValues { (task, rate) -> more[task]?.let { rate + it } ?: rate }, part, GAPS, first)
             }
@@ -49,12 +51,21 @@ class CompareCommand(
         return if (failed) 1 else 0
     }
 
-    /** The re-runs: [tasks] 3 more times live on [serial], into a new results folder, which must name the same device. */
-    private fun liveRerun(serial: String, tasks: List<String>): Report {
-        val series = SeriesCommand(environment, "suite", live = true, runs = 3) { kind -> Catalogue.suite(kind, live = true).filter { it.name in tasks } }
+    /**
+     * The re-runs: [tasks] 3 more times live on [serial], into a new results folder. A device of another kind than [folder]'s
+     * is refused before any run.
+     */
+    private fun liveRerun(serial: String, folder: String, tasks: List<String>): Report {
+        val series = SeriesCommand(environment, "suite", live = true, runs = 3) { kind ->
+            if (kind.folder != folder) throw refusedDevice(kind.folder, folder)
+            Catalogue.suite(kind, live = true).filter { it.name in tasks }
+        }
         series.execute(serial) {}
         return series.report ?: throw IllegalStateException("The re-runs wrote no report.")
     }
+
+    private fun refusedDevice(device: String, folder: String) =
+        Refusal("compare --rerun's device is $device, and the results folder's is $folder; give --device the serial of $folder.")
 
     private companion object {
         val GAPS = Catalogue.ALL.filter { it.gap != null }.map { it.name }.toSet()

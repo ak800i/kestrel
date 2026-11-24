@@ -1,6 +1,7 @@
 package dev.kestrel.eval.command
 
 import dev.kestrel.eval.Cli
+import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.report.Baseline
 import dev.kestrel.eval.report.BaselinePart
 import dev.kestrel.eval.report.BaselineTask
@@ -65,6 +66,17 @@ class CompareCommandTest {
         assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", other))
         assertTrue(fake.output.contains("--record-baseline"))
         assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", folder("a71-20261124-140000", report("a71", "m1"))))
+    }
+
+    @Test
+    fun reRunsOnAnotherDeviceThanTheFoldersAreRefused() {
+        baseline("kestrel-api37")
+        val fell = folder("kestrel-api37-20261124-100000", report("kestrel-api37", "m1", mapOf("j" to 1)))
+        val elsewhere = CompareCommand(fake.environment, Command.Compare(listOf(fell), rerun = true, device = "R58N66RVD7Z")) { _, tasks -> report("a71", "m1", tasks = tasks) }
+
+        val refusal = assertThrows(Refusal::class.java) { elsewhere.execute() }
+        assertTrue(refusal.message!!.contains("kestrel-api37"))
+        assertTrue(!fake.output.contains("compare=kestrel-api37 result=pass"))
     }
 
     @Test
