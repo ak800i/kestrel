@@ -82,6 +82,7 @@ internal class AppScreenPort(
             is ScreenAction.SetText -> actions.setText(action.key, action.text, AgentScreenChecks.expected(action.expect))
             is ScreenAction.Scroll -> actions.scroll(direction(action.direction), action.key, action.expect?.let(AgentScreenChecks::expected))
             is ScreenAction.Swipe -> swipe(screen, action)
+            is ScreenAction.SetSlider -> actions.setSlider(action.key, action.percent, AgentScreenChecks.expected(action.expect))
             is ScreenAction.Global -> actions.global(if (action.kind == GlobalKind.BACK) GlobalAction.BACK else GlobalAction.HOME)
             is ScreenAction.OpenApp -> actions.openApp(action.packageName)
             is ScreenAction.OpenUri -> actions.openUri(action.uri, action.packageName, action.browsable)

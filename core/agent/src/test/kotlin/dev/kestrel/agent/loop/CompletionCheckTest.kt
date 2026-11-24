@@ -36,7 +36,21 @@ class CompletionCheckTest {
         dataSteps: Set<Int> = emptySet(),
         sends: List<ConfirmedSend> = emptyList(),
         lastChecked: Map<String, Boolean> = emptyMap(),
-    ) = CompletionCheck.check(finish, table(shown), fresh, "Kestrel fixtures", dataSteps, sends, lastChecked)
+        lastSlider: Map<String, Int> = emptyMap(),
+    ) = CompletionCheck.check(finish, table(shown), fresh, "Kestrel fixtures", dataSteps, sends, lastChecked, lastSlider)
+
+    @Test
+    fun aSliderMustShowThePercentOfItsEvidenceOrOfTheTasksLastSetSliderWithin2Points() {
+        fun page(percent: Int) = dev.kestrel.agent.testing.ScreenBuilder.screen("com.android.settings") { slider("Display brightness", percent, 600) }
+        val at31 = page(31)
+        val slider = number(at31, "Display brightness")
+        val key = table(at31).entry(slider)!!.key!!
+
+        assertEquals(Verdict.Passed, check(finish(Evidence(slider, null, null, 30)), at31))
+        assertEquals(Verdict.Passed, check(finish(Evidence(slider, null, null)), at31, lastSlider = mapOf(key to 30)))
+        assertEquals(Verdict.Missing("($slider) shows 31 %"), check(finish(Evidence(slider, null, null, 50)), at31))
+        assertEquals(Verdict.Missing("say which percent ($slider) should show"), check(finish(Evidence(slider, null, null)), at31))
+    }
 
     @Test
     fun aFinishWithoutEvidenceOrWithAGoneElementFails() {

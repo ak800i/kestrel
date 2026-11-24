@@ -22,7 +22,7 @@ class ToolsTest {
                 "tap", "long_press", "type_text", "scroll", "swipe", "back", "home", "open_app", "open_url", "open_deep_link", "open_settings", "wait",
                 "look_closer", "find_contact", "find_media", "share_media", "list_events", "create_event", "set_alarm", "set_timer",
                 "list_notifications", "list_sms", "compose_sms", "list_calls", "get_location", "media_control", "navigate", "ask_user", "say",
-                "finish", "fail", "remember", "forget",
+                "finish", "fail", "remember", "forget", "set_slider",
             ),
             Tools.ALL.map { it.name },
         )
@@ -38,7 +38,8 @@ class ToolsTest {
             val required = (tool.parameters["required"] as? JsonArray).orEmpty().map { (it as JsonPrimitive).content }
             assertEquals(tool.name, tool.name in Tools.WITH_CATEGORY, "category" in properties)
             assertEquals(tool.name, tool.name in Tools.WITH_CATEGORY, "category" in required)
-            assertEquals(tool.name, tool.name in screenTools || tool.name == Tools.FAIL, "reason" in required)
+            // set_slider acts on an element but comes last, because a new tool goes at the end of the list (spec 11.4).
+            assertEquals(tool.name, tool.name in screenTools || tool.name == Tools.FAIL || tool.name == Tools.SET_SLIDER, "reason" in required)
         }
     }
 

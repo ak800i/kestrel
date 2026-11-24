@@ -48,6 +48,12 @@ sealed interface AgentCall {
         override fun toString(): String = "Swipe(direction=$direction, target=$target, category=$category, reason=${reason.length} chars)"
     }
 
+    data class SetSlider(val target: Int, val percent: Int, override val reason: String, val category: Category) : AgentCall {
+        override val tool: String get() = Tools.SET_SLIDER
+
+        override fun toString(): String = "SetSlider(target=$target, percent=$percent, category=$category, reason=${reason.length} chars)"
+    }
+
     data class Back(override val reason: String) : AgentCall {
         override val tool: String get() = Tools.BACK
 
@@ -211,8 +217,11 @@ sealed interface AgentCall {
     }
 }
 
-/** One item of `finish`'s evidence: an element of the newest observation, or a data tool's step (design D21). */
-data class Evidence(val target: Int?, val step: Int?, val checked: Boolean?)
+/**
+ * One item of `finish`'s evidence: an element of the newest observation, or a data tool's step (design D21); [percent] is
+ * the value that a cited slider should show (design D19 of sub-project 6).
+ */
+data class Evidence(val target: Int?, val step: Int?, val checked: Boolean?, val percent: Int? = null)
 
 /** A route note that `finish` proposes for an app (design D22). */
 data class NoteDraft(val app: String, val note: String) {

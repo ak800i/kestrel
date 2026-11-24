@@ -80,14 +80,19 @@ object ToolArguments {
             return element as? JsonArray ?: throw Bad("The argument $name must be an array.")
         }
 
-        fun target(name: String = "target", typed: Boolean = false, pressed: Boolean = false): Int = optionalTarget(name, typed, pressed) ?: missing(name)
+        fun target(name: String = "target", typed: Boolean = false, pressed: Boolean = false, slider: Boolean = false): Int =
+            optionalTarget(name, typed, pressed, slider) ?: missing(name)
 
-        /** A number of the newest observation; [typed] and [pressed] need an element (an OCR line can only be tapped). */
-        fun optionalTarget(name: String = "target", typed: Boolean = false, pressed: Boolean = false): Int? {
+        /**
+         * A number of the newest observation; [typed] and [pressed] need an element (an OCR line can only be tapped), and
+         * [slider] a slider (design D19 of sub-project 6).
+         */
+        fun optionalTarget(name: String = "target", typed: Boolean = false, pressed: Boolean = false, slider: Boolean = false): Int? {
             val number = optionalInt(name) ?: return null
             val entry = table.entry(number) ?: throw Bad("The newest observation has no [$number].")
             if (entry.ocr && (typed || pressed)) throw Bad("[$number] is an OCR line, which Kestrel can only tap.")
             if (typed && !entry.editable) throw Bad("[$number] is not an editable field.")
+            if (slider && !entry.slider) throw Bad("[$number] is not a slider.")
             return number
         }
     }
@@ -169,6 +174,7 @@ object ToolArguments {
         Tools.FINISH -> AgentCall.Finish(r.string("summary", Tools.SUMMARY_LIMIT), evidence(r), r.optionalString("signature"), notes(r))
         Tools.FAIL -> AgentCall.Fail(r.string("reason", Tools.FAIL_LIMIT))
         Tools.REMEMBER -> AgentCall.Remember(r.string("key"), r.string("value"))
+        Tools.SET_SLIDER -> AgentCall.SetSlider(r.target(slider = true), r.int("percent", 0..100), reason(r), category(r))
         else -> AgentCall.Forget(r.string("key"))
     }
 
@@ -217,7 +223,7 @@ object ToolArguments {
             val target = fields.optionalTarget()
             val step = fields.optionalInt("step", 1..Int.MAX_VALUE)
             if ((target == null) == (step == null)) throw Bad("Each item of evidence needs a target or a step.")
-            Evidence(target, step, fields.optionalBoolean("checked"))
+            Evidence(target, step, fields.optionalBoolean("checked"), fields.optionalInt("percent", 0..100))
         }
     }
 

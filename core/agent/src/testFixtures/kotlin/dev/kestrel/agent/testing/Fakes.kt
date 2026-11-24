@@ -89,6 +89,7 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
         current = when {
             rule != null -> rule.next(screen)
             action is ScreenAction.SetText -> typed(screen, action.key, action.text)
+            action is ScreenAction.SetSlider -> screen.copy(elements = screen.elements.map { if (it.key == action.key) it.copy(sliderPercent = action.percent) else it })
             else -> screen
         }
         return result

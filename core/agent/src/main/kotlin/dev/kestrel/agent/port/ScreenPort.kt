@@ -95,6 +95,11 @@ sealed interface ScreenAction {
         override fun toString(): String = "Swipe(key=${key?.length ?: 0} chars, direction=$direction)"
     }
 
+    /** Puts the slider at [percent] of its range and reads it back (design D19 of sub-project 6). */
+    data class SetSlider(val key: String, val expect: Expect, val percent: Int) : ScreenAction {
+        override fun toString(): String = "SetSlider(key=${key.length} chars, percent=$percent)"
+    }
+
     data class Global(val kind: GlobalKind) : ScreenAction
 
     data class OpenApp(val packageName: String) : ScreenAction {

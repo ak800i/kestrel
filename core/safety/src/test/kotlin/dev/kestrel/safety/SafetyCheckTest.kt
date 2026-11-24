@@ -228,6 +228,31 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun setSliderIsAnElementActionWhoseCategoryTheModelDeclaresUnderTheContextRules() {
+        fun slide(key: String, declared: Category = Category.ORDINARY_SETTINGS) =
+            Proposal("set_slider", ActionKind.SET_SLIDER, declared, targetKey = key, percent = 30, frontAppLabel = "Settings")
+        val settings = TestScreen("com.android.settings")
+        val brightness = settings.add(400, "Display brightness", className = "android.widget.SeekBar")
+        val protectedPage = TestScreen("com.android.settings")
+        val bar = protectedPage.add(80, null, id = "action_bar", clickable = false)
+        protectedPage.add(90, "Accessibility", parent = bar, clickable = false)
+        val size = protectedPage.add(400, "Font size", className = "android.widget.SeekBar")
+        val dialer = TestScreen("com.google.android.dialer")
+        val volume = dialer.add(400, "Volume", className = "android.widget.SeekBar")
+        val shop = TestScreen(title = "Shop")
+        val shopBar = shop.add(80, null, id = "toolbar", clickable = false)
+        shop.add(90, "Checkout", parent = shopBar, clickable = false)
+        val tip = shop.add(1500, "Tip", className = "android.widget.SeekBar", clickable = false)
+
+        assertEquals(listOf("run", "run", "run"), Mode.entries.map { decide(slide(brightness), settings, nothing, it) })
+        assertEquals("block", decide(slide(size), protectedPage))
+        assertEquals("handover:CALL", decide(slide(volume), dialer))
+        assertEquals("handover:PAYMENT", decide(slide(tip), shop, everything, Mode.FULL_AUTO))
+        assertEquals("confirm", decide(slide(brightness, Category.DELETING), settings))
+        assertEquals(Decision.Run, SafetyCheck.decide(slide(brightness), settings.snapshot(), nothing, standard.copy(testMode = true)))
+    }
+
+    @Test
     fun credentialsAndPaymentsAreHandedOver() {
         val login = TestScreen()
         val password = login.add(600, null, editable = true, password = true, hint = "Password")

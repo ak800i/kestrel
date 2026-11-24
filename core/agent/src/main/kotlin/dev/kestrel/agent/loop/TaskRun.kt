@@ -155,6 +155,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     val okDataSteps = mutableSetOf<Int>()
     private val ownerSteps = mutableSetOf<Int>()
     val lastChecked = mutableMapOf<String, Boolean>()
+
+    /** The percent that the task's last set_slider asked of each slider, by key (design D19 of sub-project 6). */
+    val lastSlider = mutableMapOf<String, Int>()
     var confirmed = 0
     var unconfirmed = 0
     var beforeTestMode = 0
@@ -263,6 +266,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             is AgentCall.TypeText -> observation.table.entry(call.target)
             is AgentCall.Scroll -> call.target?.let(observation.table::entry)
             is AgentCall.Swipe -> call.target?.let(observation.table::entry)
+            is AgentCall.SetSlider -> observation.table.entry(call.target)
             else -> null
         }
         val done = execute(reply.call)
@@ -340,7 +344,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     }
 
     internal suspend fun execute(call: AgentCall): Done = when (call) {
-        is AgentCall.Tap, is AgentCall.LongPress, is AgentCall.TypeText, is AgentCall.Scroll, is AgentCall.Swipe,
+        is AgentCall.Tap, is AgentCall.LongPress, is AgentCall.TypeText, is AgentCall.Scroll, is AgentCall.Swipe, is AgentCall.SetSlider,
         is AgentCall.Back, is AgentCall.Home -> screenSteps.element(call)
         is AgentCall.OpenApp -> screenSteps.openApp(call)
         is AgentCall.OpenUrl, is AgentCall.OpenDeepLink -> screenSteps.openLink(call)
@@ -772,7 +776,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
             throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
         }
-        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends + pendingSends(), lastChecked, safety::hide)) {
+        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends + pendingSends(), lastChecked, lastSlider, safety::hide)) {
             Verdict.Passed -> Unit
             Verdict.Unverifiable -> throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
             is Verdict.Missing -> {
@@ -838,6 +842,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
                 }
             }
             outcome == Outcome.TargetChanged && done.tool == Tools.TYPE_TEXT -> "typed into $label"
+            outcome is Outcome.SliderAt -> outcome.percent?.let { "set $label to $it %" }
             outcome is Outcome.AnotherScreen && done.tool == Tools.TAP -> outcome.title?.let { "opened ${ScreenText.quote(it, 40)}" } ?: "opened another screen"
             else -> dataSteps.ledgerLine(done)
         }

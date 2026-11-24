@@ -61,6 +61,10 @@ object ConfirmationBuilder {
                 return ask("Open $receiver's share screen with ${items(proposal.shareCount)}?", null)
             }
             ActionKind.COMPOSE_SMS -> return ask("Open the messages app with a text message?", null)
+            ActionKind.SET_SLIDER -> {
+                val percent = proposal.percent ?: 0
+                return ask("Set '${element?.let { ScreenTree.name(it) } ?: "the slider"}' to $percent% in $app?", "$percent")
+            }
             ActionKind.OPEN_URL, ActionKind.OPEN_DEEP_LINK -> return link(proposal, prefix, category)
             ActionKind.TYPE -> {
                 val text = Placeholders.forConfirmation(proposal.text.orEmpty())

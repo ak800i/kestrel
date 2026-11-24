@@ -64,6 +64,11 @@ class ScreenBuilder(private val packageName: String, private val windowTitle: St
     /** A picture without a label. */
     fun image(top: Int, viewId: String? = null, parent: Int? = null): Int = add(null, top, viewId, parent, "android.widget.ImageView")
 
+    /** A slider that its content description names, at [percent] of its range (design D19 of sub-project 6). */
+    fun slider(label: String, percent: Int, top: Int, viewId: String? = null): Int =
+        add(label, top, viewId, null, "android.widget.SeekBar", description = label, slider = true, sliderPercent = percent,
+            actions = setOf(ElementAction.SCROLL_FORWARD, ElementAction.SCROLL_BACKWARD))
+
     private fun add(
         label: String?,
         top: Int,
@@ -86,6 +91,8 @@ class ScreenBuilder(private val packageName: String, private val windowTitle: St
         suggestedName: String? = null,
         scrollAxis: ScrollAxis? = null,
         actions: Set<ElementAction> = emptySet(),
+        slider: Boolean = false,
+        sliderPercent: Int? = null,
     ): Int {
         val id = viewId?.let { "$packageName:id/$it" }
         elements += ScreenElement(
@@ -110,6 +117,8 @@ class ScreenBuilder(private val packageName: String, private val windowTitle: St
             focused = focused,
             password = password,
             scrollAxis = scrollAxis,
+            slider = slider,
+            sliderPercent = sliderPercent,
         )
         return elements.size - 1
     }

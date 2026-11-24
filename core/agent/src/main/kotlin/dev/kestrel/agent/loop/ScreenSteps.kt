@@ -52,6 +52,7 @@ internal class ScreenSteps(private val run: TaskRun) {
             is AgentCall.TypeText -> table.entry(call.target)
             is AgentCall.Scroll -> call.target?.let(table::entry)
             is AgentCall.Swipe -> call.target?.let(table::entry)
+            is AgentCall.SetSlider -> table.entry(call.target)
             else -> null
         }
         while (true) {
@@ -300,10 +301,15 @@ internal class ScreenSteps(private val run: TaskRun) {
         val result = when {
             !outcome.done -> Outcome.Failed(outcome.reason ?: ACTION_FAILED)
             outcome.uncertain && changed == Outcome.NothingChanged -> Outcome.Uncertain
+            // A slider's result is the value that it shows now, which the completion check compares (design D19 of sub-project 6).
+            call is AgentCall.SetSlider -> {
+                key?.let { run.lastSlider[it] = call.percent }
+                Outcome.SliderAt(key?.let { after.element(it) }?.sliderPercent)
+            }
             else -> changed
         }
         val extra = if (result == Outcome.Uncertain) Redacted.kestrel(UNCERTAIN) else null
-        return Done(call.tool, result, entry, detail = direction(call), after = after, extra = extra)
+        return Done(call.tool, result, entry, detail = detail(call), after = after, extra = extra)
     }
 
     // In test mode, a press carries test mode's check, which the port runs again on the snapshot that it presses on: the
@@ -322,9 +328,10 @@ internal class ScreenSteps(private val run: TaskRun) {
         }
     }
 
-    private fun direction(call: AgentCall): String? = when (call) {
+    private fun detail(call: AgentCall): String? = when (call) {
         is AgentCall.Scroll -> call.direction.name.lowercase()
         is AgentCall.Swipe -> call.direction.name.lowercase()
+        is AgentCall.SetSlider -> "to ${call.percent} %"
         else -> null
     }
 

@@ -6,6 +6,7 @@ import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTitle
 import dev.kestrel.screen.model.ScreenTree
+import kotlin.math.abs
 
 /**
  * The result of [CompletionCheck.check]: passed; what was missing, which the model gets as "finish failed: …"; or
@@ -41,6 +42,7 @@ internal object CompletionCheck {
         steps: Set<Int>,
         sends: List<ConfirmedSend>,
         lastChecked: Map<String, Boolean>,
+        lastSlider: Map<String, Int> = emptyMap(),
         hide: (String) -> String = { it },
     ): Verdict {
         if (finish.evidence.isEmpty()) return Verdict.Missing("no evidence was cited")
@@ -67,6 +69,12 @@ internal object CompletionCheck {
             if (element.checkable) {
                 val wanted = evidence.checked ?: lastChecked[key] ?: return Verdict.Missing("say which state ($target) should show")
                 if (element.checked != wanted) return Verdict.Missing("($target) is ${if (element.checked) "checked" else "not checked"}")
+            }
+            // A cited slider shows the percent of its evidence or of the task's last set_slider (design D19 of sub-project 6).
+            val shownPercent = element.sliderPercent
+            if (element.slider && shownPercent != null) {
+                val wantedPercent = evidence.percent ?: lastSlider[key] ?: return Verdict.Missing("say which percent ($target) should show")
+                if (abs(shownPercent - wantedPercent) > SLIDER_POINTS) return Verdict.Missing("($target) shows $shownPercent %")
             }
             val text = listOfNotNull(element.label, element.text, element.contentDescription).joinToString(" ")
             cited += text
@@ -107,6 +115,8 @@ internal object CompletionCheck {
         return Normalizer.normalize(hide(own)).contains(content)
     }
 
+    // How far a slider may stand from the percent asked for, as set_slider's read-back allows.
+    private const val SLIDER_POINTS = 2
     private val MEDIA_CLASSES = listOf("ImageView", "VideoView")
     private val MEDIA_WORDS = setOf(
         "photo", "photos", "video", "videos", "image", "images", "picture", "pictures",

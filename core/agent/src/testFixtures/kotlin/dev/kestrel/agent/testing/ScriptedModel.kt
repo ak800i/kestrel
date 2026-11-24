@@ -96,15 +96,22 @@ class ScriptedModel(
         else -> element
     }
 
-    /** The number of the newest observation's element whose label is the target's `label` and whose class holds `class`. */
+    /**
+     * The number of the newest observation's element whose label is the target's `label`, or holds its `contains` without
+     * letter case (plan 6B: a real app's row joins several texts into one label), and whose class holds `class`.
+     */
     private fun resolve(target: JsonObject, request: ChatRequest): Int {
-        val label = target["label"]!!.jsonPrimitive.content
+        val label = target["label"]?.jsonPrimitive?.contentOrNull
+        val contains = target["contains"]?.jsonPrimitive?.contentOrNull
+        require((label == null) != (contains == null)) { "A script's target needs a label or a part of one" }
         val className = target["class"]?.jsonPrimitive?.contentOrNull
         for (text in texts(request).asReversed()) {
             val lines = LINE.findAll(text).toList()
             if (lines.isEmpty()) continue
             val line = lines.firstOrNull { match ->
-                unescape(match.groupValues[3]) == label && (className == null || match.groupValues[2].contains(className, ignoreCase = true))
+                val shown = unescape(match.groupValues[3])
+                (if (label != null) shown == label else shown.contains(contains!!, ignoreCase = true)) &&
+                    (className == null || match.groupValues[2].contains(className, ignoreCase = true))
             } ?: throw IllegalStateException("The newest observation has no element for the script's target")
             return line.groupValues[1].toInt()
         }

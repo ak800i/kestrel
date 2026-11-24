@@ -47,9 +47,10 @@ object Tools {
     const val FAIL = "fail"
     const val REMEMBER = "remember"
     const val FORGET = "forget"
+    const val SET_SLIDER = "set_slider"
 
     /** The tools whose call declares a category: those that act on an element. */
-    val WITH_CATEGORY: Set<String> = setOf(TAP, LONG_PRESS, TYPE_TEXT, SCROLL, SWIPE)
+    val WITH_CATEGORY: Set<String> = setOf(TAP, LONG_PRESS, TYPE_TEXT, SCROLL, SWIPE, SET_SLIDER)
 
     internal const val REASON_LIMIT = 120
     internal const val QUESTION_LIMIT = 200
@@ -260,6 +261,7 @@ object Tools {
                             "target" to integer("The number of an element in the newest observation."),
                             "step" to integer("The step of a data tool's result, which its result line names: Result (step 5) is step 5."),
                             "checked" to boolean("For a checkable element: whether it should be checked."),
+                            "percent" to integer("For a slider: the percent that it should now show."),
                         ),
                         emptyList(),
                     ),
@@ -283,6 +285,18 @@ object Tools {
             listOf("key", "value"),
         ),
         tool(FORGET, "Ask the owner to forget a fact.", listOf("key" to string("What the fact is about.")), listOf("key")),
+        // New tools go at the end, so that the earlier tools keep their order and text (spec 11.4).
+        tool(
+            SET_SLIDER,
+            "Put a slider of the newest observation at a percent of its range. Kestrel reads the value back.",
+            listOf(
+                target,
+                "percent" to integer("Where to put the slider, in percent of its range: 0 is its lowest and 100 its highest."),
+                reason,
+                category,
+            ),
+            listOf("target", "percent", "reason", "category"),
+        ),
     )
 
     private val byName = ALL.associateBy { it.name }

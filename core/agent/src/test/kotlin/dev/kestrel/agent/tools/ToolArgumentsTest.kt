@@ -125,6 +125,29 @@ class ToolArgumentsTest {
     }
 
     @Test
+    fun aSlidersTargetMustBeASliderAndItsPercentFrom0To100() {
+        val tree = TestTree("com.android.settings")
+        tree.add(200, "Done", clickable = true, className = "android.widget.Button")
+        tree.add(600, description = "Display brightness", className = "android.widget.SeekBar", slider = true, sliderPercent = 40)
+        val sliders = ObservationBuilder(Redactor(vault), AgentFreeApps()).build(ObservationInput(1, tree.snapshot(), "Settings")).table
+        fun parse(name: String, json: String) = ToolArguments.parse(name, Json.parseToJsonElement(json).jsonObject, sliders, vault)
+
+        assertEquals(
+            ParsedCall.Valid(AgentCall.SetSlider(2, 30, "dim it", Category.ORDINARY_SETTINGS)),
+            parse("set_slider", """{"target": 2, "percent": 30, "reason": "dim it", "category": "ordinary_settings"}"""),
+        )
+        assertEquals(ParsedCall.Invalid("[1] is not a slider."), parse("set_slider", """{"target": 1, "percent": 30, "reason": "r", "category": "reading"}"""))
+        assertEquals(
+            ParsedCall.Invalid("The argument percent must be from 0 to 100."),
+            parse("set_slider", """{"target": 2, "percent": 101, "reason": "r", "category": "reading"}"""),
+        )
+        assertEquals(
+            ParsedCall.Valid(AgentCall.Finish("Dim.", listOf(Evidence(2, null, null, 30)), null, emptyList())),
+            parse("finish", """{"summary": "Dim.", "evidence": [{"target": 2, "percent": 30}]}"""),
+        )
+    }
+
+    @Test
     fun datesReadTodayYesterdayAndTheIsoForms() {
         val today = LocalDate.of(2026, 11, 20)
 

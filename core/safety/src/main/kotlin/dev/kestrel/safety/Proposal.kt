@@ -30,6 +30,9 @@ enum class ActionKind {
     TYPE,
     SCROLL,
     SWIPE,
+
+    /** `set_slider`, an action on an element whose category the model declares (design D19 of sub-project 6). */
+    SET_SLIDER,
     BACK,
     HOME,
     WAIT,
@@ -84,8 +87,10 @@ data class Proposal(
     val shareCount: ShareCount? = null,
     val frontAppLabel: String? = null,
     val receivingAppLabel: String? = null,
+    /** `set_slider`'s percent, which its question names (design D19 of sub-project 6). */
+    val percent: Int? = null,
 ) {
     override fun toString(): String =
         "Proposal(tool=$tool, kind=$kind, declared=$declared, target=${targetKey != null}, point=${point != null}, " +
-            "textLength=${text?.length ?: 0}, linkLength=${link?.length ?: 0})"
+            "textLength=${text?.length ?: 0}, linkLength=${link?.length ?: 0}, percent=$percent)"
 }

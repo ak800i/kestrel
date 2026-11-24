@@ -55,6 +55,7 @@ object ActionMapper {
             is AgentCall.TypeText -> of(ActionKind.TYPE, call.category, table.entry(call.target), call.text)
             is AgentCall.Scroll -> of(ActionKind.SCROLL, call.category, call.target?.let(table::entry) ?: largestScrollable(table))
             is AgentCall.Swipe -> of(ActionKind.SWIPE, call.category, call.target?.let(table::entry))
+            is AgentCall.SetSlider -> of(ActionKind.SET_SLIDER, call.category, table.entry(call.target)).copy(percent = call.percent)
             is AgentCall.Back -> of(ActionKind.BACK)
             is AgentCall.Home -> of(ActionKind.HOME)
             is AgentCall.Wait -> of(ActionKind.WAIT)
@@ -96,6 +97,7 @@ object ActionMapper {
             val entry = call.target?.let(table::entry)
             ScreenAction.Swipe(entry?.key, call.direction, entry?.expect)
         }
+        is AgentCall.SetSlider -> table.entry(call.target)?.let { entry -> entry.key?.let { ScreenAction.SetSlider(it, entry.expect, call.percent) } }
         is AgentCall.Back -> ScreenAction.Global(GlobalKind.BACK)
         is AgentCall.Home -> ScreenAction.Global(GlobalKind.HOME)
         else -> null

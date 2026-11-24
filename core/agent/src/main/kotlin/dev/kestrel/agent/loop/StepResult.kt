@@ -47,6 +47,11 @@ sealed interface Outcome {
         override val words: String get() = "uncertain"
     }
 
+    /** What a slider shows after set_slider read it back, in percent of its range (design D19 of sub-project 6). */
+    data class SliderAt(val percent: Int?) : Outcome {
+        override val words: String get() = percent?.let { "it shows $it %" } ?: "it shows no value"
+    }
+
     /** [reason] is Kestrel's sentence, which may quote the model's app name or an app's label; its own full stop goes. */
     data class Refused(val reason: String) : Outcome {
         override val words: String get() = "refused: ${reason.trimEnd('.')}"
@@ -203,6 +208,7 @@ data class StepResult(
             Tools.TYPE_TEXT to "typed into",
             Tools.SCROLL to "scrolled",
             Tools.SWIPE to "swiped",
+            Tools.SET_SLIDER to "set",
             Tools.BACK to "went back",
             Tools.HOME to "went home",
             Tools.OPEN_APP to "opened",

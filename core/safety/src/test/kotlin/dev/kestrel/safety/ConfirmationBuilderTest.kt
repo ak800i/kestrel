@@ -286,4 +286,15 @@ class ConfirmationBuilderTest {
         assertEquals(HandOverKind.RECIPIENT, (nowhere as Decision.HandOver).handOver.kind)
         assertTrue(nowhere.handOver.text.startsWith("I can't tell where this link goes."))
     }
+
+    @Test
+    fun aSliderIsAskedAboutWithItsLabelAndThePercent() {
+        val screen = TestScreen("com.android.settings")
+        val key = screen.add(400, "Display brightness", className = "android.widget.SeekBar")
+        val proposal = Proposal("set_slider", ActionKind.SET_SLIDER, Category.DELETING, targetKey = key, percent = 30, frontAppLabel = "Settings")
+
+        val decision = ConfirmationBuilder.build(proposal, screen.snapshot(), Category.DELETING, task) as Decision.Confirm
+
+        assertEquals("Set 'Display brightness' to 30% in Settings? Say confirm or cancel.", decision.confirmation.question)
+    }
 }

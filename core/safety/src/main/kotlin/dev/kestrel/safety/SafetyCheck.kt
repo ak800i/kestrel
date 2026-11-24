@@ -15,9 +15,13 @@ import dev.kestrel.screen.model.WindowSummary
  * outside the task's allowance is confirmed in every mode, as is typing a placeholder.
  */
 object SafetyCheck {
-    private val ACTING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT, ActionKind.TYPE, ActionKind.SWIPE)
+    // set_slider acts on an element as a tap does: the model declares its category, and the context rules and the label
+    // words reach it (design D19 of sub-project 6).
+    private val ACTING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT, ActionKind.TYPE, ActionKind.SWIPE, ActionKind.SET_SLIDER)
     private val PRESSING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT)
-    private val DECLARING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT, ActionKind.TYPE, ActionKind.SCROLL, ActionKind.SWIPE)
+    private val DECLARING = setOf(
+        ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT, ActionKind.TYPE, ActionKind.SCROLL, ActionKind.SWIPE, ActionKind.SET_SLIDER,
+    )
     private val LEAVING = setOf(ActionKind.OPEN_APP, ActionKind.OPEN_URL, ActionKind.OPEN_DEEP_LINK, ActionKind.OPEN_SETTINGS, ActionKind.HOME)
     private const val CHANGED = "The screen changed before the action; nothing was done."
     private const val COVERED = "Another window covers that point."
@@ -63,7 +67,7 @@ object SafetyCheck {
         if (proposal.kind in DECLARING) raise(proposal.declared ?: Category.READING, Source.DECLARED) else raise(fixed(proposal.kind), Source.FIXED)
 
         // 2. The words of the labels that the action reaches, and of their clickable ancestors.
-        if (proposal.kind in PRESSING || proposal.kind == ActionKind.SWIPE) {
+        if (proposal.kind in PRESSING || proposal.kind == ActionKind.SWIPE || proposal.kind == ActionKind.SET_SLIDER) {
             val clears = index != null && ContextRules.clearsAField(screen, index)
             val names = reached.flatMap { at -> listOf(at) + ScreenTree.ancestors(screen, at).filter { screen.elements[it].clickable } }
                 .map { ScreenTree.name(screen.elements[it]) } + proposal.pointText
@@ -88,7 +92,10 @@ object SafetyCheck {
             if (ContextRules.isProtected(screen, window, task.trail)) raise(Category.PROTECTED, Source.PROTECTED_SCREEN)
             if (ContextRules.isPhoneApp(window.packageName, env.phonePackages)) raise(Category.CALLS, Source.PHONE_APP)
             if (reached.any { ContextRules.isCredential(screen, it, window) }) raise(Category.CREDENTIALS, Source.CREDENTIALS)
-            if (proposal.kind in PRESSING && ContextRules.isPayment(screen, window) && reached.any { screen.elements[it].clickable }) {
+            // A slider on a payment screen is a payment too, clickable or not (design D19 of sub-project 6).
+            if (ContextRules.isPayment(screen, window) &&
+                (proposal.kind == ActionKind.SET_SLIDER || (proposal.kind in PRESSING && reached.any { screen.elements[it].clickable }))
+            ) {
                 raise(Category.PAYMENTS, Source.PAYMENTS)
             }
             if (proposal.kind in PRESSING && pressed != null && ContextRules.nearCompose(screen, pressed, point.takeIf { index == null })) {
