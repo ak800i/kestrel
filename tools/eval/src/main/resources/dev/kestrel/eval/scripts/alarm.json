@@ -1,0 +1,4 @@
+[
+  {"tool": "set_alarm", "arguments": {"hour": {hour}, "minute": {minute}}},
+  {"tool": "finish", "arguments": {"summary": "The alarm is set for {time} tomorrow morning.", "evidence": [{"step": 1}]}}
+]

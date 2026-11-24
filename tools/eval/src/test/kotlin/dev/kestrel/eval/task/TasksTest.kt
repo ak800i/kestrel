@@ -25,7 +25,8 @@ class TasksTest {
     fun everyScriptIsAResourceWithAJsonArrayAndEveryStandInExists() {
         for (task in Catalogue.ALL) {
             val dryRun = task.dryRun ?: continue
-            assertTrue(task.name, Json.parseToJsonElement(ScriptInstaller.resource(dryRun.script)).jsonArray.isNotEmpty())
+            val values = RunValues("maple heron", "Ana", "6:45", "+1 202 555 0160", "pera.test@example.com", "2026-11-24", "6", "45")
+            assertTrue(task.name, Json.parseToJsonElement(values.fill(ScriptInstaller.resource(dryRun.script), json = true)).jsonArray.isNotEmpty())
             dryRun.standIn?.let { standIn ->
                 val executed = Catalogue.find(standIn)
                 assertTrue(task.name, executed != null && executed.kind == TaskKind.STAND_IN && executed.dryRun?.standIn == null)
@@ -61,7 +62,7 @@ class TasksTest {
 
     @Test
     fun theSuitesAreTheSuiteAndD3TasksLiveAndTheScriptsAndStandInsWithoutAModel() {
-        val suite = SettingsTasks.ALL.map { it.name }
+        val suite = (SettingsTasks.ALL + ClockTasks.ALL).map { it.name }
         assertEquals(suite + listOf("hotspot", "firefox-wiki", "read-email"), Catalogue.suite(DeviceKind.EMULATOR, live = true).map { it.name })
         assertEquals(suite + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), Catalogue.suite(DeviceKind.A71, live = true).map { it.name })
         assertEquals(

@@ -95,5 +95,17 @@ object Dumps {
     /** The battery's level in percent, from `dumpsys battery`'s line `level: 85`, or null without one. */
     fun batteryLevel(dump: List<String>): Int? = dump.firstNotNullOfOrNull { Regex("^\\s*level: (\\d+)\\s*$").find(it)?.groupValues?.get(1)?.toInt() }
 
+    /** Whether `dumpsys notification` lists a notification of [packageName] whose flags hold FLAG_ONGOING_EVENT (0x2), as a running timer's does. */
+    fun ongoingNotification(dump: List<String>, packageName: String): Boolean {
+        val owner = Regex("\\bpkg=${Regex.escape(packageName)}(\\s|$)")
+        var inPackage = false
+        for (line in dump) {
+            if (record.containsMatchIn(line)) inPackage = owner.containsMatchIn(line)
+            val value = flags.find(line)?.groupValues?.get(1)
+            if (inPackage && value != null && (value.toLong(16) and 0x2L) != 0L) return true
+        }
+        return false
+    }
+
     private fun JsonObject.text(name: String): String? = this[name]?.jsonPrimitive?.contentOrNull
 }

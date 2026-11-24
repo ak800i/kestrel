@@ -1,0 +1,4 @@
+[
+  {"tool": "set_timer", "arguments": {"seconds": 300}},
+  {"tool": "finish", "arguments": {"summary": "A 5-minute timer is running.", "evidence": [{"step": 1}]}}
+]

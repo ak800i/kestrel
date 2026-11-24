@@ -11,9 +11,19 @@ import java.nio.file.Path
 
 /**
  * The values of one run (design D4 of sub-project 6) that fill the placeholders of a request and a script: `{marker}`,
- * two words of the run, and `{name}`, `{time}`, `{number}` and `{address}`, which a setup step sets.
+ * two words of the run, and `{name}`, `{time}`, `{number}` and `{address}`, which a setup step sets; plan 6B adds
+ * `{date}` (tomorrow as YYYY-MM-DD), `{hour}` and `{minute}` (an alarm's numbers), which a script's data tools need.
  */
-class RunValues(val marker: String, var name: String? = null, var time: String? = null, var number: String? = null, var address: String? = null) {
+class RunValues(
+    val marker: String,
+    var name: String? = null,
+    var time: String? = null,
+    var number: String? = null,
+    var address: String? = null,
+    var date: String? = null,
+    var hour: String? = null,
+    var minute: String? = null,
+) {
     /** [text] with its placeholders filled; for a JSON script ([json]) each value is escaped as a JSON string's content. */
     fun fill(text: String, json: Boolean = false): String = PLACEHOLDER.replace(text) { match ->
         val value = when (match.groupValues[1]) {
@@ -21,13 +31,16 @@ class RunValues(val marker: String, var name: String? = null, var time: String? 
             "name" -> name
             "time" -> time
             "number" -> number
-            else -> address
+            "address" -> address
+            "date" -> date
+            "hour" -> hour
+            else -> minute
         } ?: throw IllegalStateException("The run has no value for ${match.value}.")
         if (json) value.replace("\\", "\\\\").replace("\"", "\\\"") else value
     }
 
     private companion object {
-        val PLACEHOLDER = Regex("\\{(marker|name|time|number|address)\\}")
+        val PLACEHOLDER = Regex("\\{(marker|name|time|number|address|date|hour|minute)\\}")
     }
 }
 
