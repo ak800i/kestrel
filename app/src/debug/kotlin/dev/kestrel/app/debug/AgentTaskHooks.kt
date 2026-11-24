@@ -209,7 +209,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     suspend fun data(intent: Intent): String {
         val argument = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() }
         val agentFree = AgentFreeApps.from(graph.settings.get(SettingKeys.AGENT_FREE_APPS))
-        val port = AndroidDataPort(context, open = { false }, isAgentFree = agentFree::isAgentFree)
+        val port = AndroidDataPort(context, isAgentFree = agentFree::isAgentFree)
         val tool = intent.getStringExtra(EXTRA_TOOL)
         val result = when (tool) {
             "list_sms" -> port.listSms(argument, LIMIT)
@@ -235,6 +235,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
             is DataResult.NeedsPermission -> "result=permission items=0"
             is DataResult.NeedsAccess -> "result=access items=0"
             is DataResult.Failed -> "result=failed items=0"
+            is DataResult.Opens -> "result=opens items=0"
         }
     }
 

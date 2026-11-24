@@ -66,14 +66,23 @@ enum class AccessKind { NOTIFICATIONS }
 
 sealed interface DataResult {
     /**
-     * The tool's items: [note] is Kestrel's own text ("Android gave Kestrel only the photos that you selected"), and
-     * [opened] the package that an intent tool opened, for `ScreenPort.waitForFront`.
+     * The tool's items: [note] is Kestrel's own text ("Android gave Kestrel only the photos that you selected"). A tool
+     * that opens an app's screen gives [Opens] instead, because no port opens anything itself.
      */
-    data class Ok(val lines: List<DataLine>, val note: String? = null, val opened: String? = null) : DataResult {
-        override fun toString(): String = "Ok(lines=${lines.size}, note=${note != null}, opened=${opened != null})"
+    data class Ok(val lines: List<DataLine>, val note: String? = null) : DataResult {
+        override fun toString(): String = "Ok(lines=${lines.size}, note=${note != null})"
     }
 
     data class NeedsPermission(val permissions: List<String>) : DataResult
+
+    /**
+     * An app's screen that the tool prepared and does not open itself (plan 6B-basefix): [intent] opens only through the
+     * agent's launch check, and [done] is Kestrel's fixed sentence for the result once it opened. [front] tells whether
+     * the app comes to the front, which a clock app that sets an alarm without its screen does not.
+     */
+    data class Opens(val intent: IntentSpec, val done: String, val front: Boolean = true) : DataResult {
+        override fun toString(): String = "Opens(intent=$intent, done=${done.length} chars, front=$front)"
+    }
 
     data class NeedsAccess(val kind: AccessKind) : DataResult
 

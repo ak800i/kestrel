@@ -7,6 +7,8 @@ import android.content.Intent
 import android.provider.CalendarContract
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.IntentExtra
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.datatools.DataLines
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -82,15 +84,15 @@ class CalendarTool(private val resolver: ContentResolver, private val granted: (
             from.atStartOfDay(zone).toInstant().toEpochMilli() to to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
 
         /** The calendar app's insert screen with the event; without an end, the event lasts an hour. */
-        fun insertIntent(title: String, start: LocalDateTime, end: LocalDateTime?, location: String?, zone: ZoneId): Intent {
+        fun insertIntent(title: String, start: LocalDateTime, end: LocalDateTime?, location: String?, zone: ZoneId): IntentSpec {
             val begin = start.atZone(zone).toInstant().toEpochMilli()
             val finish = end?.atZone(zone)?.toInstant()?.toEpochMilli() ?: (begin + 3_600_000)
-            return Intent(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI)
-                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
-                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, finish)
-                .putExtra(CalendarContract.Events.TITLE, title)
-                .apply { location?.let { putExtra(CalendarContract.Events.EVENT_LOCATION, it) } }
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val extras = mapOf(
+                CalendarContract.EXTRA_EVENT_BEGIN_TIME to IntentExtra.LongNumber(begin),
+                CalendarContract.EXTRA_EVENT_END_TIME to IntentExtra.LongNumber(finish),
+                CalendarContract.Events.TITLE to IntentExtra.Text(title),
+            ) + listOfNotNull(location?.let { CalendarContract.Events.EVENT_LOCATION to IntentExtra.Text(it) })
+            return IntentSpec(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI.toString(), extras = extras)
         }
     }
 }

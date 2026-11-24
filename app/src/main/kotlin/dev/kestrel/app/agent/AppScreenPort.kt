@@ -3,6 +3,7 @@ package dev.kestrel.app.agent
 import android.content.pm.PackageManager
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Badge
+import dev.kestrel.agent.port.CheckedLaunch
 import dev.kestrel.agent.port.Direction
 import dev.kestrel.agent.port.GlobalKind
 import dev.kestrel.agent.port.IntentSpec
@@ -86,9 +87,10 @@ internal class AppScreenPort(
             is ScreenAction.Swipe -> swipe(screen, action)
             is ScreenAction.SetSlider -> actions.setSlider(action.key, action.percent, AgentScreenChecks.expected(action.expect))
             is ScreenAction.Global -> actions.global(if (action.kind == GlobalKind.BACK) GlobalAction.BACK else GlobalAction.HOME)
-            is ScreenAction.OpenApp -> actions.openApp(action.packageName)
-            is ScreenAction.OpenUri -> actions.openUri(action.uri, action.packageName, action.browsable)
-            is ScreenAction.OpenIntent -> actions.openIntent(IntentSpecs.toIntent(action.spec))
+            is ScreenAction.Launch -> when (val opens = action.launch.opens) {
+                is CheckedLaunch.Opens.App -> actions.openApp(opens.packageName)
+                is CheckedLaunch.Opens.Activity -> actions.openIntent(IntentSpecs.toIntent(opens.intent))
+            }
         }
     }
 

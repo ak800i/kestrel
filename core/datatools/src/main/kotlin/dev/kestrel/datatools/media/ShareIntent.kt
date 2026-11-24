@@ -1,8 +1,9 @@
 package dev.kestrel.datatools.media
 
-import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
+import dev.kestrel.agent.port.IntentExtra
+import dev.kestrel.agent.port.IntentSpec
 
 /**
  * The intent of `share_media` (design D12 of sub-project 5; research r55): `ACTION_SEND` for one item, or
@@ -18,15 +19,14 @@ object ShareIntent {
         else -> "*/*"
     }
 
-    fun build(packageName: String, uris: List<Uri>, mimeType: String): Intent {
+    fun build(packageName: String, uris: List<Uri>, mimeType: String): IntentSpec {
         require(uris.isNotEmpty()) { "A share needs at least one item" }
-        val intent = if (uris.size == 1) {
-            Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
+        val items = uris.map { it.toString() }
+        val (action, stream) = if (items.size == 1) {
+            Intent.ACTION_SEND to IntentExtra.ContentUri(items[0])
         } else {
-            Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            Intent.ACTION_SEND_MULTIPLE to IntentExtra.ContentUris(items)
         }
-        val clip = ClipData.newRawUri("", uris[0]).apply { uris.drop(1).forEach { addItem(ClipData.Item(it)) } }
-        return intent.setPackage(packageName).setType(mimeType).apply { clipData = clip }
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        return IntentSpec(action, packageName = packageName, extras = mapOf(Intent.EXTRA_STREAM to stream), type = mimeType, readable = items)
     }
 }

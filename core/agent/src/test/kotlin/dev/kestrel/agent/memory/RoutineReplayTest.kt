@@ -3,6 +3,7 @@ package dev.kestrel.agent.memory
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Harness
 import dev.kestrel.agent.Screens
+import dev.kestrel.agent.port.CheckedLaunch
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.ScreenAction
@@ -104,7 +105,7 @@ class RoutineReplayTest {
 
         assertEquals(EndReason.FINISHED, report.end)
         assertTrue(harness.model.requests.isEmpty())
-        assertTrue(harness.screen.actions.first() is ScreenAction.OpenApp)
+        assertTrue(harness.screen.launched.first() is CheckedLaunch.Opens.App)
         assertEquals(listOf("John Smith"), harness.owner.confirmations.single().recipients)
     }
 

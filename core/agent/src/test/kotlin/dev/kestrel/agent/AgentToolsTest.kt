@@ -1,5 +1,6 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.loop.Launches
 import dev.kestrel.agent.loop.ScreenSteps
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
@@ -7,6 +8,7 @@ import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.port.PermissionEnd
@@ -54,7 +56,7 @@ class AgentToolsTest {
     private fun shareHarness(vararg then: JsonObject, first: ScreenSnapshot = picker()): Harness =
         Harness(Screens.app("com.android.launcher3", "Home"), shareSteps(*then)).apply {
             data.answer("find_media", photos("m1", "m2", "m3"))
-            data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+            data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND_MULTIPLE", packageName = telegram), "Kestrel opened the share screen."))
             data.onCall = { if (it == "share_media") screen.current = first }
         }
 
@@ -147,7 +149,7 @@ class AgentToolsTest {
             call("finish", null, null, null, "summary" to "Sent.", "evidence" to listOf(mapOf("target" to mapOf("label" to "3 photos")))),
         ))
         harness.data.answer("find_media", photos("m1", "m2", "m3").copy(note = "Kestrel can see only the photos that you allowed."))
-        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND_MULTIPLE", packageName = telegram), "Kestrel opened the share screen."))
         harness.data.onCall = { if (it == "share_media") harness.screen.current = picker() }
         harness.screen.onTap("John Smith", picker(send = true))
         harness.screen.onTap("Send", john())
@@ -175,7 +177,7 @@ class AgentToolsTest {
             call("finish", null, null, null, "summary" to "Sent.", "evidence" to listOf(mapOf("target" to mapOf("label" to "3 photos")))),
         ))
         harness.data.answer("find_media", photos("m1", "m2", "m3"))
-        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND_MULTIPLE", packageName = telegram), "Kestrel opened the share screen."))
         harness.data.onCall = { if (it == "share_media") harness.screen.current = picker() }
         // The first tap on John's row may not have worked and changes nothing; the second one works.
         val taps = { harness.screen.actions.count { it is ScreenAction.Tap } }
@@ -207,7 +209,7 @@ class AgentToolsTest {
             call("finish", null, null, null, "summary" to "Sent.", "evidence" to listOf(mapOf("target" to mapOf("label" to "3 photos")))),
         ))
         harness.data.answer("find_media", photos("m1", "m2", "m3"))
-        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND_MULTIPLE", packageName = telegram), "Kestrel opened the share screen."))
         harness.data.onCall = { if (it == "share_media") harness.screen.current = picker() }
         // The first tap on Send may not have worked and changes nothing; the second one works.
         val taps = { harness.screen.actions.count { it is ScreenAction.Tap } }
@@ -236,7 +238,7 @@ class AgentToolsTest {
             call("tap", "John Smith", null, null, "reason" to "pick John", "category" to "reading"),
         ))
         harness.data.answer("find_media", photos("m1", "m2", "m3", "m4", "m5", "m6"))
-        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = telegram))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND_MULTIPLE", packageName = telegram), "Kestrel opened the share screen."))
         harness.data.onCall = { if (it == "share_media") harness.screen.current = picker() }
         harness.screen.onTap("John Smith", john())
         harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.NO)
@@ -457,7 +459,7 @@ class AgentToolsTest {
 
             harness.run("Show Kalemegdan on Google Maps")
 
-            assertEquals(app, listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), harness.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+            assertEquals(app, listOf(IntentSpec(IntentSpec.VIEW, "geo:0,0?q=Kalemegdan", maps, browsable = true)), harness.screen.sent)
             assertTrue(app, harness.owner.confirmations.isEmpty())
         }
     }
@@ -494,7 +496,7 @@ class AgentToolsTest {
 
         every.run("Show Kalemegdan on Google Maps")
 
-        assertEquals(every.lastRequestText(), listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), every.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+        assertEquals(every.lastRequestText(), listOf(IntentSpec(IntentSpec.VIEW, "geo:0,0?q=Kalemegdan", maps, browsable = true)), every.screen.sent)
         assertEquals("google maps", ScreenSteps.packageWords(maps))
         assertEquals("google mapslite", ScreenSteps.packageWords("com.google.android.apps.mapslite"))
         assertEquals("settings", ScreenSteps.packageWords("com.android.settings"))
@@ -525,7 +527,7 @@ class AgentToolsTest {
 
         real.run("Show Kalemegdan on Google Maps")
 
-        assertEquals(real.lastRequestText(), listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), real.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+        assertEquals(real.lastRequestText(), listOf(IntentSpec(IntentSpec.VIEW, "geo:0,0?q=Kalemegdan", maps, browsable = true)), real.screen.sent)
     }
 
     @Test
@@ -587,10 +589,11 @@ class AgentToolsTest {
 
         harness.run("Show Kalemegdan on Google Maps")
 
-        assertEquals(listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), harness.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
-        assertEquals(1, harness.screen.handlerQueries)
-        // Whatever the number of launcher apps: the chosen app's own check, and the link's target that the safety check judges.
-        assertEquals(2, harness.screen.resolves)
+        assertEquals(listOf(IntentSpec(IntentSpec.VIEW, "geo:0,0?q=Kalemegdan", maps, browsable = true)), harness.screen.sent)
+        // Whatever the number of launcher apps: one query finds the apps that open the link, and the launch check asks
+        // once more for the chosen app, as the link will be sent.
+        assertEquals(2, harness.screen.handlerQueries)
+        assertEquals(0, harness.screen.resolves)
     }
 
     @Test
@@ -615,9 +618,11 @@ class AgentToolsTest {
         assertTrue(inTelegram.lastRequestText(), inTelegram.lastRequestText().contains("Kestrel opens a tel: link only in the phone app."))
         val dialer = "com.google.android.dialer"
         val inPhone = namedApp(dialer, "tel:+12025550143", handles = mapOf("tel:" to dialer))
+        // The phone app is installed, though the launcher does not show it.
+        inPhone.screen.installed += dialer
         inPhone.settings = inPhone.settings.copy(emergency = EmergencyNumbers { false })
         inPhone.run("Dial Ana")
-        assertEquals(inPhone.lastRequestText(), listOf(ScreenAction.OpenUri("tel:+12025550143", dialer, browsable = true)), inPhone.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+        assertEquals(inPhone.lastRequestText(), listOf(IntentSpec(IntentSpec.VIEW, "tel:+12025550143", dialer, browsable = true)), inPhone.screen.sent)
     }
 
     @Test
@@ -626,13 +631,13 @@ class AgentToolsTest {
             val web = group("web", 300, 2200, className = "android.webkit.WebView")
             if (filled) text("Wikipedia", 400, parent = web)
         }
-        val opens = { harness: Harness -> harness.screen.actions.count { it is ScreenAction.OpenUri } }
+        val opens = { harness: Harness -> harness.screen.actions.count { it is ScreenAction.Launch } }
         fun firefox(): Harness = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
             call("open_url", null, null, null, "url" to "https://en.wikipedia.org", "reason" to "open the page"),
             stop,
         )).apply {
             screen.resolver = { "org.mozilla.firefox" }
-            screen.on({ action, _ -> action is ScreenAction.OpenUri }) { page(filled = opens(this) == 2) }
+            screen.on({ action, _ -> action is ScreenAction.Launch }) { page(filled = opens(this) == 2) }
         }
 
         val retried = firefox()
@@ -666,13 +671,117 @@ class AgentToolsTest {
     fun aLinkIsNotSentToTheChosenAppWhenAndroidNoLongerResolvesItThere() = runTest {
         // Google Maps opens the link when it is chosen, and no longer when the link is checked before it opens.
         val harness = namedApp("Google Maps")
-        harness.screen.resolver = { spec -> spec.packageName?.takeIf { it == maps && harness.screen.resolves <= 1 } }
+        harness.screen.resolver = { spec -> spec.packageName?.takeIf { it == maps && harness.screen.handlerQueries <= 1 } }
 
         harness.run("Show Kalemegdan on Google Maps")
 
         assertTrue(harness.screen.actions.isEmpty())
         assertTrue(harness.owner.confirmations.isEmpty())
-        assertTrue(harness.lastRequestText(), harness.lastRequestText().contains(ScreenSteps.NOT_RESOLVED))
+        assertTrue(harness.lastRequestText(), harness.lastRequestText().contains(Launches.NOT_RESOLVED))
+    }
+
+    // Each data tool that opens an app's screen, with the intent that a port prepared for it (plan 6B-basefix): the
+    // intent opens only through the launch check, whatever app the port named.
+    private val openingTools: List<Pair<String, JsonObject>> = listOf(
+        "create_event" to call("create_event", null, null, null, "title" to "Dentist", "start" to "2026-11-21T10:00"),
+        "set_alarm" to call("set_alarm", null, null, null, "hour" to 7, "minute" to 30),
+        "set_timer" to call("set_timer", null, null, null, "seconds" to 90),
+        "compose_sms" to call("compose_sms", null, null, null, "number" to "+12025550143", "text" to "I'm late"),
+        "navigate" to call("navigate", null, null, null, "app" to "waze", "to" to "Main Street 1"),
+        "share_media" to call("share_media", null, null, null, "app" to "telegram", "items" to listOf("m1")),
+    )
+
+    private fun opening(tool: String, step: JsonObject, intent: IntentSpec, agentFree: Set<String> = emptySet()): Harness =
+        Harness(
+            Screens.app("com.android.launcher3", "Home"),
+            listOf(step, stop),
+            settings = AgentSettings(safety = SafetySettings(testMode = false), agentFree = AgentFreeApps(added = agentFree)),
+        ).apply {
+            data.answer(tool, DataResult.Opens(intent, "Kestrel opened it."))
+            owner.confirms += List(3) { ConfirmEnd.YES }
+        }
+
+    @Test
+    fun aDataToolNeverOpensAnAppThatTheAgentMayNotUse() = runTest {
+        // The intent names no app, and Android resolves it to an agent-free one; or the port named that app itself.
+        val vault = "com.example.vault"
+        for (intent in listOf(IntentSpec("android.intent.action.INSERT", "content://com.android.calendar/events"), IntentSpec("android.intent.action.SEND", packageName = vault))) {
+            for ((tool, step) in openingTools) {
+                val harness = opening(tool, step, intent, agentFree = setOf(vault))
+                harness.screen.resolver = { vault }
+
+                harness.run("Use $tool")
+
+                assertEquals(tool, listOf(tool), harness.data.calls)
+                assertTrue(tool, harness.screen.launched.isEmpty())
+                assertTrue(harness.lastRequestText(), harness.lastRequestText().contains("is agent-free"))
+            }
+        }
+    }
+
+    @Test
+    fun aDataToolOpensNothingWhenAndroidDoesNotOpenItsIntentInTheAppThatItNames() = runTest {
+        val intent = IntentSpec("android.intent.action.SET_ALARM", packageName = "com.example.clock")
+        for ((tool, step) in openingTools) {
+            val harness = opening(tool, step, intent)
+            harness.screen.resolver = { null }
+
+            harness.run("Use $tool")
+
+            assertTrue(tool, harness.screen.launched.isEmpty())
+            assertTrue(harness.lastRequestText(), harness.lastRequestText().contains(Launches.NOT_RESOLVED))
+        }
+    }
+
+    @Test
+    fun aDataToolOpensItsIntentPinnedToTheAppThatAndroidResolvesItTo() = runTest {
+        val clock = "com.google.android.deskclock"
+        val intent = IntentSpec("android.intent.action.SET_ALARM")
+        val harness = opening("set_alarm", call("set_alarm", null, null, null, "hour" to 7, "minute" to 30), intent)
+        harness.screen.resolver = { clock }
+
+        harness.run("Set an alarm for 7:30")
+
+        assertEquals(listOf(intent.copy(packageName = clock)), harness.screen.sent)
+        assertTrue(harness.lastRequestText(), harness.lastRequestText().contains("Kestrel opened it."))
+    }
+
+    @Test
+    fun navigateSendsItsLinkOnlyAfterLinkCheckJudgedIt() = runTest {
+        val step = call("navigate", null, null, null, "app" to "waze", "to" to "Main Street 1")
+        // Waze is agent-free: LinkCheck refuses the link before the launch's own check.
+        val waze = IntentSpec(IntentSpec.VIEW, "waze://?q=Main%20Street%201&navigate=yes", "com.waze")
+        val closed = opening("navigate", step, waze, agentFree = setOf("com.waze"))
+        closed.run("Navigate to Main Street 1 with Waze")
+        assertTrue(closed.screen.launched.isEmpty())
+        assertTrue(closed.lastRequestText(), closed.lastRequestText().contains("The link opens an app that the agent may not use."))
+
+        // A scheme that no link of the agent may have is refused, whichever tool prepared it.
+        val file = opening("navigate", step, IntentSpec(IntentSpec.VIEW, "file:///sdcard/route.gpx", "com.waze"))
+        file.run("Navigate to Main Street 1 with Waze")
+        assertTrue(file.screen.launched.isEmpty())
+        assertTrue(file.lastRequestText(), file.lastRequestText().contains("Kestrel never opens file links."))
+
+        val open = opening("navigate", step, waze)
+        open.run("Navigate to Main Street 1 with Waze")
+        assertEquals(listOf(waze), open.screen.sent)
+    }
+
+    @Test
+    fun aLinkWithoutANamedAppGoesOnlyToTheAppThatWasJudgedOrElseToAndroidsChooser() = runTest {
+        fun link(resolved: String?): Harness = Harness(
+            Screens.app("com.android.launcher3", "Home"),
+            listOf(call("open_deep_link", null, null, null, "uri" to "geo:0,0?q=Kalemegdan", "reason" to "show the place"), stop),
+        ).apply { screen.resolver = { spec -> spec.packageName ?: resolved } }
+
+        val one = link(maps)
+        one.run("Show Kalemegdan on a map")
+        assertEquals(listOf(IntentSpec(IntentSpec.VIEW, "geo:0,0?q=Kalemegdan", maps, browsable = true)), one.screen.sent)
+
+        // No app or several apps take it: no package, so Android shows its chooser (spec 12.1).
+        val chooser = link(null)
+        chooser.run("Show Kalemegdan on a map")
+        assertEquals(listOf(IntentSpec(IntentSpec.VIEW, "geo:0,0?q=Kalemegdan", null, browsable = true)), chooser.screen.sent)
     }
 
     @Test

@@ -27,6 +27,7 @@ import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Expect
+import dev.kestrel.agent.port.IntentExtra
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.port.ScreenAction
@@ -89,7 +90,8 @@ class ToStringTest {
             Expect(marker, marker, marker, editable = true, password = false, checkable = false),
             ScreenAction.SetText(marker, Expect(marker, null, null, editable = true, password = false, checkable = false), marker),
             ActionOutcome(done = false, reason = marker),
-            DataResult.Ok(listOf(DataLine(marker, listOf(DataField("name", marker)))), note = marker, opened = marker),
+            DataResult.Ok(listOf(DataLine(marker, listOf(DataField("name", marker)))), note = marker),
+            DataResult.Opens(IntentSpec("android.intent.action.SEND", marker, marker, extras = mapOf("text" to IntentExtra.Text(marker), "items" to IntentExtra.ContentUris(listOf(marker))), type = marker, readable = listOf(marker)), marker),
             DataResult.Failed(marker),
             DataLine(marker, listOf(DataField("name", marker))),
             DataField("name", marker),

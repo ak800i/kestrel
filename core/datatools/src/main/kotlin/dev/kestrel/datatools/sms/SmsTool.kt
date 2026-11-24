@@ -7,6 +7,8 @@ import android.net.Uri
 import android.provider.Telephony
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.IntentExtra
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.commands.phone.Contact
 import dev.kestrel.commands.phone.ContactMatch
 import dev.kestrel.commands.phone.ContactMatcher
@@ -57,10 +59,8 @@ class SmsTool(
         private val COLUMNS = arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.DATE, Telephony.Sms.TYPE, Telephony.Sms.BODY)
 
         /** The SMS app's compose screen for [number] with [text], through `smsto:`. */
-        fun composeIntent(number: String, text: String): Intent =
-            Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", number, null))
-                .putExtra("sms_body", text)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        fun composeIntent(number: String, text: String): IntentSpec =
+            IntentSpec(Intent.ACTION_SENDTO, Uri.fromParts("smsto", number, null).toString(), extras = mapOf("sms_body" to IntentExtra.Text(text)))
 
         /**
          * Why Kestrel cannot look up the name [wanted] in the [contacts]: it may not read them, or more contacts have the

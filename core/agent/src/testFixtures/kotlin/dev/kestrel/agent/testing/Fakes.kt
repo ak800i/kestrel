@@ -10,6 +10,7 @@ import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.AppsPort
 import dev.kestrel.agent.port.Badge
 import dev.kestrel.agent.port.Capture
+import dev.kestrel.agent.port.CheckedLaunch
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.DataResult
@@ -77,10 +78,8 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
         key != null && screen.element(key)?.label == label
     }) { next }
 
-    /** Opening anything (an app, a link, an intent) shows [next]. */
-    fun onOpen(next: ScreenSnapshot) = on({ action, _ ->
-        action is ScreenAction.OpenApp || action is ScreenAction.OpenUri || action is ScreenAction.OpenIntent
-    }) { next }
+    /** Opening anything (an app, a link, a page or an app's screen) shows [next]. */
+    fun onOpen(next: ScreenSnapshot) = on({ action, _ -> action is ScreenAction.Launch }) { next }
 
     override suspend fun snapshot(): ScreenSnapshot? {
         onSnapshot()
@@ -109,8 +108,15 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
 
     override suspend fun handlers(intent: IntentSpec): Set<String> {
         handlerQueries++
-        return installed.filterTo(mutableSetOf()) { resolver(intent.copy(packageName = it)) == it }
+        val candidates = intent.packageName?.let(::setOf) ?: installed
+        return candidates.filterTo(mutableSetOf()) { resolver(intent.copy(packageName = it)) == it }
     }
+
+    /** What each launch opened, in order. */
+    val launched: List<CheckedLaunch.Opens> get() = actions.mapNotNull { (it as? ScreenAction.Launch)?.launch?.opens }
+
+    /** The intents that the launches sent, in order. */
+    val sent: List<IntentSpec> get() = launched.mapNotNull { (it as? CheckedLaunch.Opens.Activity)?.intent }
 
     override suspend fun showBadges(badges: List<Badge>) {
         this.badges += badges

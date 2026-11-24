@@ -74,7 +74,7 @@ class NotificationListenerTest {
         access(true)
         postFixture()
         var result: DataResult? = null
-        val port = AndroidDataPort(context, open = { false }, isAgentFree = { false })
+        val port = AndroidDataPort(context, isAgentFree = { false })
 
         val found = VoiceTests.waitUntil(10_000) {
             result = runBlocking { port.listNotifications() }

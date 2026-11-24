@@ -2,11 +2,11 @@ package dev.kestrel.datatools.media
 
 import android.content.ContentResolver
 import android.content.ContentUris
-import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.MediaKinds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,7 +52,7 @@ class MediaTool(
     }
 
     /** The share intent of the task's items [ids] to [packageName]; every one of them must be known ([unknown]). */
-    fun shareIntent(packageName: String, ids: List<String>): Intent {
+    fun shareIntent(packageName: String, ids: List<String>): IntentSpec {
         val byId = items.values.associateBy { it.id }
         val chosen = ids.distinct().map { byId.getValue(it) }
         val videos = chosen.count { it.video }

@@ -2,7 +2,6 @@ package dev.kestrel.datatools
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.media.AudioManager
@@ -43,15 +42,15 @@ import java.time.ZoneId
 
 /**
  * The agent's data tools on Android (design D9 and D12 of sub-project 5): plan 5A's [DataPort] over Android's providers,
- * its location, its notification listener and the apps' intents. [open] starts an activity through Kestrel's accessibility
- * service (`ScreenActions.openIntent`), which Android allows while another app is in front; [isAgentFree] is the task's
- * list of agent-free apps, which `list_notifications` leaves out. A missing permission gives
+ * its location, its notification listener and the apps' intents. A tool that opens an app's screen only describes the
+ * intent ([DataResult.Opens]): the port has no way to start an activity, so the agent's launch check opens it, as it opens
+ * every app for the agent (plan 6B-basefix). [isAgentFree] is the task's list of agent-free apps, which
+ * `list_notifications` leaves out. A missing permission gives
  * [DataResult.NeedsPermission] with the permissions that the tool asks for together, and the agent asks the owner (D12);
  * so does a permission that Android takes back during a read. Nothing here logs, and nothing starts a coroutine of its own.
  */
 class AndroidDataPort(
     context: Context,
-    private val open: suspend (Intent) -> Boolean,
     private val isAgentFree: (String?) -> Boolean,
     private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) : DataPort {
@@ -79,23 +78,21 @@ class AndroidDataPort(
     }
 
     override suspend fun shareMedia(packageName: String, items: List<String>): DataResult = mediaCalls.call {
-        DataPortRules.shareRefusal(items, media.unknown(items)) ?: run {
-            if (!open(media.shareIntent(packageName, items))) return@run DataResult.Failed(NOT_OPENED)
-            opened("Kestrel opened the share screen with ${items.distinct().size} items; choose the chat on the screen.", packageName)
-        }
+        DataPortRules.shareRefusal(items, media.unknown(items))
+            ?: DataResult.Opens(media.shareIntent(packageName, items), "Kestrel opened the share screen with ${items.distinct().size} items; choose the chat on the screen.")
     }
 
     override suspend fun listEvents(from: LocalDate, to: LocalDate): DataResult =
         DataPortRules.guarded(listOf(Manifest.permission.READ_CALENDAR)) { calendar.list(from, to, zone()) }
 
     override suspend fun createEvent(title: String, start: LocalDateTime, end: LocalDateTime?, location: String?): DataResult =
-        start(CalendarTool.insertIntent(title, start, end, location, zone()), "Kestrel opened the calendar's new event; tap Save to keep it.")
+        DataResult.Opens(CalendarTool.insertIntent(title, start, end, location, zone()), "Kestrel opened the calendar's new event; tap Save to keep it.")
 
     override suspend fun setAlarm(hour: Int, minute: Int, label: String?, days: List<DayOfWeek>): DataResult =
-        start(ClockIntents.alarm(hour, minute, label, days), "Kestrel asked the clock app to set an alarm for %02d:%02d.".format(hour, minute), wait = false)
+        DataResult.Opens(ClockIntents.alarm(hour, minute, label, days), "Kestrel asked the clock app to set an alarm for %02d:%02d.".format(hour, minute), front = false)
 
     override suspend fun setTimer(seconds: Int, label: String?): DataResult =
-        start(ClockIntents.timer(seconds, label), "Kestrel asked the clock app to set a timer of $seconds s.", wait = false)
+        DataResult.Opens(ClockIntents.timer(seconds, label), "Kestrel asked the clock app to set a timer of $seconds s.", front = false)
 
     override suspend fun listNotifications(): DataResult = DataPortRules.guarded(emptyList()) {
         if (!KestrelNotificationListener.hasAccess(app)) return@guarded DataResult.NeedsAccess(AccessKind.NOTIFICATIONS)
@@ -110,7 +107,7 @@ class AndroidDataPort(
         DataPortRules.guarded(listOf(Manifest.permission.READ_SMS)) { sms.list(from, limit, zone()) }
 
     override suspend fun composeSms(number: String, text: String): DataResult =
-        start(SmsTool.composeIntent(number, text), "Kestrel opened a new SMS with the text; it is not sent.")
+        DataResult.Opens(SmsTool.composeIntent(number, text), "Kestrel opened a new SMS with the text; it is not sent.")
 
     override suspend fun listCalls(limit: Int): DataResult =
         DataPortRules.guarded(listOf(Manifest.permission.READ_CALL_LOG)) { calls.list(limit, zone()) }
@@ -122,15 +119,11 @@ class AndroidDataPort(
     override suspend fun mediaControl(action: MediaAction): DataResult = keys.press(action)
 
     override suspend fun navigate(app: NavigationApp, to: String, mode: TravelMode?): DataResult {
-        if (app == NavigationApp.WAZE && installed(NavigationIntents.WAZE)) {
-            if (!open(IntentSpecs.toIntent(NavigationIntents.waze(to)))) return DataResult.Failed(NOT_OPENED)
-            return opened(NavigationIntents.WAZE_RESULT, NavigationIntents.WAZE)
-        }
+        if (app == NavigationApp.WAZE && installed(NavigationIntents.WAZE)) return DataResult.Opens(NavigationIntents.waze(to), NavigationIntents.WAZE_RESULT)
         val spec = NavigationIntents.googleMaps(to, mode) ?: return DataResult.Failed(NavigationIntents.MAPS_NEEDS_ADDRESS)
         if (!installed(NavigationIntents.GOOGLE_MAPS)) return DataResult.Failed("neither Waze nor Google Maps is installed")
-        if (!open(IntentSpecs.toIntent(spec))) return DataResult.Failed(NOT_OPENED)
         val fellBack = if (app == NavigationApp.WAZE) "Waze is not installed, so Kestrel used Google Maps. " else ""
-        return opened(fellBack + NavigationIntents.MAPS_RESULT, NavigationIntents.GOOGLE_MAPS)
+        return DataResult.Opens(spec, fellBack + NavigationIntents.MAPS_RESULT)
     }
 
     // add_contact and delete_contact ask for both contacts permissions together (design D19 of sub-project 6).
@@ -171,21 +164,12 @@ class AndroidDataPort(
         null
     }
 
-    /** Starts [intent] and reports [done]; with [wait], the package that opens it goes to `ScreenPort.waitForFront`. */
-    private suspend fun start(intent: Intent, done: String, wait: Boolean = true): DataResult {
-        val target = if (wait) withContext(Dispatchers.IO) { IntentSpecs.resolve(app.packageManager, intent) } else null
-        if (!open(intent)) return DataResult.Failed(NOT_OPENED)
-        return opened(done, target)
-    }
-
-    private fun opened(done: String, packageName: String?): DataResult = DataResult.Ok(listOf(DataLine(done, emptyList())), opened = packageName)
 
     private fun installed(packageName: String): Boolean = app.packageManager.getLaunchIntentForPackage(packageName) != null
 
     override fun toString(): String = "AndroidDataPort($media)"
 
     private companion object {
-        const val NOT_OPENED = "the app did not open"
 
         // Android binds the listener shortly after access is given; a read waits at most this long for it.
         const val CONNECT_MILLIS = 2_000L

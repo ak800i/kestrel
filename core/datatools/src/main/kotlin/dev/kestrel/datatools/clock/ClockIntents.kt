@@ -1,7 +1,8 @@
 package dev.kestrel.datatools.clock
 
-import android.content.Intent
 import android.provider.AlarmClock
+import dev.kestrel.agent.port.IntentExtra
+import dev.kestrel.agent.port.IntentSpec
 import java.time.DayOfWeek
 
 /**
@@ -9,24 +10,24 @@ import java.time.DayOfWeek
  * clock app sets them without showing its screen. They need the normal permission `SET_ALARM`.
  */
 object ClockIntents {
-    fun alarm(hour: Int, minute: Int, label: String?, days: List<DayOfWeek>): Intent =
-        Intent(AlarmClock.ACTION_SET_ALARM)
-            .putExtra(AlarmClock.EXTRA_HOUR, hour)
-            .putExtra(AlarmClock.EXTRA_MINUTES, minute)
-            .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            .apply {
-                label?.let { putExtra(AlarmClock.EXTRA_MESSAGE, it) }
-                if (days.isNotEmpty()) putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, calendarDays(days))
-            }
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun alarm(hour: Int, minute: Int, label: String?, days: List<DayOfWeek>): IntentSpec {
+        val extras = mapOf(
+            AlarmClock.EXTRA_HOUR to IntentExtra.Number(hour),
+            AlarmClock.EXTRA_MINUTES to IntentExtra.Number(minute),
+            AlarmClock.EXTRA_SKIP_UI to IntentExtra.Flag(true),
+        ) + listOfNotNull(
+            label?.let { AlarmClock.EXTRA_MESSAGE to IntentExtra.Text(it) },
+            days.takeIf { it.isNotEmpty() }?.let { AlarmClock.EXTRA_DAYS to IntentExtra.Numbers(calendarDays(it)) },
+        )
+        return IntentSpec(AlarmClock.ACTION_SET_ALARM, extras = extras)
+    }
 
-    fun timer(seconds: Int, label: String?): Intent =
-        Intent(AlarmClock.ACTION_SET_TIMER)
-            .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-            .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            .apply { label?.let { putExtra(AlarmClock.EXTRA_MESSAGE, it) } }
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun timer(seconds: Int, label: String?): IntentSpec {
+        val extras = mapOf(AlarmClock.EXTRA_LENGTH to IntentExtra.Number(seconds), AlarmClock.EXTRA_SKIP_UI to IntentExtra.Flag(true)) +
+            listOfNotNull(label?.let { AlarmClock.EXTRA_MESSAGE to IntentExtra.Text(it) })
+        return IntentSpec(AlarmClock.ACTION_SET_TIMER, extras = extras)
+    }
 
     /** The days as `java.util.Calendar` numbers them (Sunday 1 to Saturday 7), each once, which `EXTRA_DAYS` expects. */
-    fun calendarDays(days: List<DayOfWeek>): ArrayList<Int> = days.distinct().mapTo(ArrayList()) { it.value % 7 + 1 }
+    fun calendarDays(days: List<DayOfWeek>): List<Int> = days.distinct().map { it.value % 7 + 1 }
 }

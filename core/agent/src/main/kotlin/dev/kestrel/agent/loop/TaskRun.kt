@@ -132,6 +132,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     val escalation = Escalation(ports.model.model)
     private val builder = ObservationBuilder(redactor, settings.agentFree)
     private val choices = ToolChoices()
+    val launches = Launches(this)
     private val screenSteps = ScreenSteps(this)
     private val dataSteps = DataSteps(this)
     private val looks = LookCloser(this)

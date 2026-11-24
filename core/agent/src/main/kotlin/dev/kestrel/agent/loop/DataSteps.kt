@@ -3,6 +3,7 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.DataResultText
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.observe.ScreenText
+import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.HandOverEnd
@@ -43,6 +44,10 @@ internal class DataSteps(private val run: TaskRun) {
         override fun toString(): String = "FoundContact(ref=${ref != null}, name=${name.length} chars)"
     }
 
+    // A data tool's app screen that opened: [front] is the app to wait for, when it comes to the front, and [done] the
+    // tool's fixed sentence.
+    private class Opened(val front: String?, val done: String)
+
     suspend fun run(asked: AgentCall): Done {
         val call = resolved(asked)
         var sharePackage: String? = null
@@ -77,13 +82,23 @@ internal class DataSteps(private val run: TaskRun) {
             val front = ScreenTree.frontWindow(before)?.packageName
             val result = runAllowed(call, sharePackage, front, contact?.ref) ?: return Done(call.tool, Outcome.PermissionRefused)
             if (result is DataResult.Failed) return Done(call.tool, Outcome.Failed(result.reason), detail = detail(call))
-            val ok = result as DataResult.Ok
+            // The app's screen that the tool prepared opens only through the launch check (plan 6B-basefix).
+            val launched = (result as? DataResult.Opens)?.let { opens ->
+                val launch = when (val checked = run.launches.intent(opens.intent)) {
+                    is Launches.Launch.Stop -> return Done(call.tool, checked.outcome, detail = detail(call))
+                    is Launches.Launch.Go -> checked.launch
+                }
+                if (!run.ports.screen.act(ScreenAction.Launch(launch)).done) return Done(call.tool, Outcome.Failed(NOT_OPENED), detail = detail(call))
+                Opened(launch.target.takeIf { opens.front }, opens.done)
+            }
+            val ok = launched?.let { DataResult.Ok(listOf(DataLine(it.done, emptyList()))) } ?: result as DataResult.Ok
             remember(call, ok)
             if (contact != null) deleted(go, contact)
-            // A share or a new SMS always starts the share flow, also when `DataPort` names no package (D14).
+            // A share or a new SMS always starts the share flow, also when Android names no app for it (D14).
             val opens = call is AgentCall.ShareMedia || call is AgentCall.ComposeSms
-            val after = if (opens || ok.opened != null) {
-                run.ports.screen.waitForFront(ok.opened ?: sharePackage, ScreenSteps.FRONT_WAIT_MILLIS, before = front)
+            val opened = launched?.front
+            val after = if (opens || opened != null) {
+                run.ports.screen.waitForFront(opened ?: sharePackage, ScreenSteps.FRONT_WAIT_MILLIS, before = front)
                 run.fresh().also { run.safety = SafetyCheck.afterAction(proposal, before, it, run.safety) }
             } else {
                 null
@@ -116,7 +131,7 @@ internal class DataSteps(private val run: TaskRun) {
         }
         // Back to the task's app before the tool runs again (D12, D15).
         if (front != null && !run.ports.screen.waitForFront(front, ScreenSteps.FRONT_WAIT_MILLIS)) {
-            run.ports.screen.act(ScreenAction.OpenApp(front))
+            (run.launches.app(front) as? Launches.Launch.Go)?.let { run.ports.screen.act(ScreenAction.Launch(it.launch)) }
             run.ports.screen.waitForFront(front, ScreenSteps.FRONT_WAIT_MILLIS)
         }
         val again = ActionMapper.runData(call, run.ports.data, today, sharePackage, contactRef) ?: return DataResult.Failed(NOT_DATA)
@@ -242,6 +257,7 @@ internal class DataSteps(private val run: TaskRun) {
         /** The field of a `find_contact` line that holds a number with its kind, as "+1 202 555 0143 (mobile)". */
         const val PHONE_FIELD = "phone"
         private const val NOT_DATA = "this is not a data tool"
+        private const val NOT_OPENED = "the app did not open"
         private const val NO_ACCESS = "Kestrel still has no notification access"
     }
 }

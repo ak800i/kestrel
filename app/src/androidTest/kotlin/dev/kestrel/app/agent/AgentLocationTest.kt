@@ -73,7 +73,7 @@ class AgentLocationTest {
                 runBlocking { ScreenTree.frontWindow(screen.session.snapshots.current().snapshot)?.packageName } == SETTINGS
             }) { "Settings did not come to the front" }
 
-            val result = AndroidDataPort(context, open = { false }, isAgentFree = { false }).getLocation()
+            val result = AndroidDataPort(context, isAgentFree = { false }).getLocation()
 
             assertTrue(result is DataResult.Ok)
         } finally {

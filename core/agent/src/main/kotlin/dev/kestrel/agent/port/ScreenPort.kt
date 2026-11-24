@@ -61,16 +61,64 @@ data class Expect(
         "Expect(label=${label?.length ?: 0} chars, class=${className != null}, package=${packageName != null}, editable=$editable, password=$password, checkable=$checkable)"
 }
 
-/** An intent that a data tool or an `open_*` tool sends (design D1, D11, D12), with its string extras. */
+/**
+ * An intent that Kestrel sends for the agent (design D1, D11, D12 of sub-project 5; plan 6B-basefix): the `open_*` tools'
+ * links and pages and the data tools' app screens, as plain values that `:core:datatools`' `IntentSpecs.toIntent` turns
+ * into Android's intent, so that the intent that the launch check resolves is the intent that opens. [type] is the
+ * data's MIME type, [extras] are typed, and [readable] holds the content URIs that the app that opens it may read, which
+ * go into the clip data with a read grant.
+ */
 data class IntentSpec(
     val action: String,
     val data: String? = null,
     val packageName: String? = null,
     val browsable: Boolean = false,
-    val extras: Map<String, String> = emptyMap(),
+    val extras: Map<String, IntentExtra> = emptyMap(),
+    val type: String? = null,
+    val readable: List<String> = emptyList(),
 ) {
+    /** A VIEW intent with data is a link, which LinkCheck judges wherever it comes from (spec 12.1). */
+    val isLink: Boolean get() = action == VIEW && data != null
+
     override fun toString(): String =
-        "IntentSpec(action=$action, data=${data?.length ?: 0} chars, package=${packageName != null}, browsable=$browsable, extras=${extras.size})"
+        "IntentSpec(action=$action, data=${data?.length ?: 0} chars, package=${packageName != null}, browsable=$browsable, " +
+            "extras=${extras.size}, type=${type != null}, readable=${readable.size})"
+
+    companion object {
+        const val VIEW = "android.intent.action.VIEW"
+    }
+}
+
+/** A typed extra of an [IntentSpec]. Its `toString` names only its kind, because a value can be the owner's data. */
+sealed interface IntentExtra {
+    data class Text(val value: String) : IntentExtra {
+        override fun toString(): String = "Text(${value.length} chars)"
+    }
+
+    data class Number(val value: Int) : IntentExtra {
+        override fun toString(): String = "Number"
+    }
+
+    data class LongNumber(val value: Long) : IntentExtra {
+        override fun toString(): String = "LongNumber"
+    }
+
+    data class Flag(val value: Boolean) : IntentExtra {
+        override fun toString(): String = "Flag"
+    }
+
+    data class Numbers(val values: List<Int>) : IntentExtra {
+        override fun toString(): String = "Numbers(${values.size})"
+    }
+
+    /** One content URI, as `EXTRA_STREAM` of a share holds it. */
+    data class ContentUri(val uri: String) : IntentExtra {
+        override fun toString(): String = "ContentUri"
+    }
+
+    data class ContentUris(val uris: List<String>) : IntentExtra {
+        override fun toString(): String = "ContentUris(${uris.size})"
+    }
 }
 
 /**
@@ -109,15 +157,8 @@ sealed interface ScreenAction {
 
     data class Global(val kind: GlobalKind) : ScreenAction
 
-    data class OpenApp(val packageName: String) : ScreenAction {
-        override fun toString(): String = "OpenApp(package=${packageName.length} chars)"
-    }
-
-    data class OpenUri(val uri: String, val packageName: String?, val browsable: Boolean) : ScreenAction {
-        override fun toString(): String = "OpenUri(uri=${uri.length} chars, package=${packageName != null}, browsable=$browsable)"
-    }
-
-    data class OpenIntent(val spec: IntentSpec) : ScreenAction
+    /** Opens what [launch] holds: the only action that opens an app, a link or a page (plan 6B-basefix). */
+    data class Launch(val launch: CheckedLaunch) : ScreenAction
 }
 
 /**

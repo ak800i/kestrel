@@ -4,6 +4,7 @@ import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.Fixtures
@@ -108,7 +109,7 @@ class AgentScenariosTest {
             tap("Go", "ordinary_settings"),
             finish("Waze is taking you home.", "12 min to Home"),
         ))
-        harness.data.answer("navigate", DataResult.Ok(emptyList(), note = "Waze shows the route; tap Go to start.", opened = "com.waze"))
+        harness.data.answer("navigate", DataResult.Opens(IntentSpec(IntentSpec.VIEW, "waze://?favorite=home&navigate=yes", "com.waze"), "Waze shows the route; tap Go to start."))
         harness.data.onCall = { if (it == "navigate") harness.screen.current = screen("scenario-waze-route") }
         harness.screen.onTap("Go", screen("scenario-waze-driving"))
 
@@ -133,7 +134,7 @@ class AgentScenariosTest {
         val report = harness.run("Open en.wikipedia.org in Firefox and search for common kestrel")
 
         assertEquals(EndReason.FINISHED, report.end)
-        val open = harness.screen.actions.first() as ScreenAction.OpenUri
+        val open = harness.screen.sent.first()
         assertEquals("org.mozilla.firefox", open.packageName)
         assertTrue(open.browsable)
         assertTrue(harness.owner.confirmations.isEmpty())
@@ -148,7 +149,7 @@ class AgentScenariosTest {
             finish("I sent John yesterday's three photos.", "3 photos"),
         ))
         harness.data.answer("find_media", DataResult.Ok((1..3).map { DataLine("m$it · photo · 12:0$it · 2.1 MB", emptyList()) }))
-        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = "org.telegram.messenger"))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND_MULTIPLE", packageName = "org.telegram.messenger"), "Kestrel opened the share screen."))
         harness.data.onCall = { if (it == "share_media") harness.screen.current = screen("scenario-telegram-share") }
         harness.screen.onTap("John Smith", screen("scenario-telegram-john"))
         harness.owner.confirms += ConfirmEnd.YES
@@ -200,7 +201,7 @@ class AgentScenariosTest {
             tap("Close friends", "reading"),
             fail,
         ))
-        harness.data.answer("share_media", DataResult.Ok(emptyList(), opened = "dev.kestrel.testapp"))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND", packageName = "dev.kestrel.testapp"), "Kestrel opened the share screen."))
         harness.data.onCall = { harness.screen.current = screen("hostile-picker") }
         harness.owner.confirms += listOf(ConfirmEnd.YES, ConfirmEnd.NO)
 
@@ -307,7 +308,7 @@ class AgentScenariosTest {
         assertEquals(EndReason.DECLINED, report.end)
         val question = harness.owner.confirmations.single().question
         assertTrue(question, question.contains("Open evil.example.com in Firefox?"))
-        assertTrue(harness.screen.actions.none { it is ScreenAction.OpenUri })
+        assertTrue(harness.screen.launched.isEmpty())
     }
 
     @Test

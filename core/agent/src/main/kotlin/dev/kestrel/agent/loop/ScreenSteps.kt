@@ -4,6 +4,7 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
 import dev.kestrel.agent.port.Capture
+import dev.kestrel.agent.port.CheckedLaunch
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.agent.port.ScreenAction
@@ -12,7 +13,6 @@ import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.agent.tools.Browser
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.NamePick
-import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Pick
 import dev.kestrel.safety.ActionKind
 import dev.kestrel.safety.AgentFreeApps
@@ -21,8 +21,6 @@ import dev.kestrel.safety.Confirmation
 import dev.kestrel.safety.Decision
 import dev.kestrel.safety.HandOver
 import dev.kestrel.safety.HandOverKind
-import dev.kestrel.safety.LinkCheck
-import dev.kestrel.safety.LinkVerdict
 import dev.kestrel.safety.Placeholders
 import dev.kestrel.safety.Proposal
 import dev.kestrel.safety.SafetyCheck
@@ -34,7 +32,6 @@ import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.delay
-import java.net.URI
 import kotlin.math.abs
 
 /**
@@ -348,8 +345,11 @@ internal class ScreenSteps(private val run: TaskRun) {
             is Pick.Several -> return Done(call.tool, Outcome.Failed("several apps match: " + pick.items.take(NamePick.MAX_CHOICES).joinToString(", ") { quoted(it.label) }))
             is Pick.One -> pick.item
         }
-        if (run.settings.closed(app.packageName)) return Done(call.tool, Outcome.Refused("${quoted(app.label)} is agent-free"))
-        val done = open(call, ScreenAction.OpenApp(app.packageName), app.packageName, app.label)
+        val launch = when (val checked = run.launches.app(app.packageName)) {
+            is Launches.Launch.Stop -> return Done(call.tool, checked.outcome)
+            is Launches.Launch.Go -> checked.launch
+        }
+        val done = open(call, launch, app.label)
         // The notes come only with an app that is in front now: not after a failure, a refusal, a pause or a hand-over,
         // so that a task never sees, and never strikes, the notes of an app that did not open (D22).
         val opened = done.executed && done.text == null && done.outcome !is Outcome.Failed && done.outcome !is Outcome.Refused &&
@@ -375,41 +375,18 @@ internal class ScreenSteps(private val run: TaskRun) {
             is LinkApp.Found -> app.packageName
             is LinkApp.Missing -> return Done(call.tool, Outcome.Failed(app.reason))
         }
-        val checked = when (val clearance = CheckedLink.check(run, link, kind, packageName, fromOwner(link))) {
-            is LinkClearance.Blocked -> return Done(call.tool, clearance.outcome)
-            is LinkClearance.Cleared -> clearance.link
+        val spec = IntentSpec(IntentSpec.VIEW, link, packageName, browsable = true)
+        val launch = when (val checked = run.launches.intent(spec, kind)) {
+            is Launches.Launch.Stop -> return Done(call.tool, checked.outcome)
+            is Launches.Launch.Go -> checked.launch
         }
         sentLink = false
-        val done = open(call, checked.action, checked.target, null, linkTarget = checked.target)
+        val done = open(call, launch, null)
         // The retry is Firefox's, also when Firefox is the default browser that the link resolved to (r57); only after the
         // first intent was sent, never after a pause, a refusal or a hand-over, so the link never opens unchecked (D2, D12).
-        if (!sentLink || checked.target == null || checked.target !in Browser.FIREFOX.packages || done.after == null) return done
-        return firefox(call, done, checked, checked.target)
-    }
-
-    // A link that Kestrel may send now (D2, D12; plan 6B-basefix): [target] is the app that Android resolves it to, with
-    // [packageName] when the tool names one, and LinkCheck allowed that app. A link's intent exists only here, and only
-    // [check] makes one, so no link opens without both.
-    private class CheckedLink private constructor(val link: String, val kind: ActionKind, val packageName: String?, val target: String?) {
-        val action: ScreenAction get() = ScreenAction.OpenUri(link, packageName, browsable = true)
-
-        companion object {
-            // Resolves [link] as it will be sent, and judges the app that opens it. A link that names a package goes only to
-            // that package, so when Android no longer resolves it there, no app could be judged and nothing is sent.
-            suspend fun check(run: TaskRun, link: String, kind: ActionKind, packageName: String?, fromOwner: Boolean): LinkClearance {
-                val target = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true))
-                if (packageName != null && target != packageName) return LinkClearance.Blocked(Outcome.Failed(NOT_RESOLVED))
-                val verdict = LinkCheck.check(link, kind, fromOwner, target, run.settings::closed, run.settings.emergency, phonePackages = run.settings.phonePackages)
-                if (verdict is LinkVerdict.Refused) return LinkClearance.Blocked(Outcome.Refused(verdict.reason))
-                return LinkClearance.Cleared(CheckedLink(link, kind, packageName, target))
-            }
-        }
-    }
-
-    private sealed interface LinkClearance {
-        class Cleared(val link: CheckedLink) : LinkClearance
-
-        class Blocked(val outcome: Outcome) : LinkClearance
+        val target = launch.target
+        if (!sentLink || target == null || target !in Browser.FIREFOX.packages || done.after == null) return done
+        return firefox(call, done, spec, kind, target)
     }
 
     private sealed interface LinkApp {
@@ -419,25 +396,19 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     // The app that `open_deep_link`'s `app` names (spec 11.4): an installed package, or a name of exactly one of the
-    // launcher apps that open the link ([appNamed]). The link then goes to that app alone, so Android shows no chooser, and
-    // the safety check judges that app as the link's target. One query finds the apps that open the link, and `resolve`
-    // confirms the chosen one, because an app with two activities for the link would still leave it to Android's chooser.
+    // launcher apps that open the link ([appNamed]). One query finds the apps that open the link. The link then goes to
+    // that app alone, so Android shows no chooser, and the launch check judges that app as the link's target.
     private suspend fun linkApp(name: String, link: String): LinkApp {
-        suspend fun opens(packageName: String) = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true)) == packageName
         val wanted = name.trim()
         val apps = run.ports.apps.launcherApps()
+        val handlers = run.ports.screen.handlers(IntentSpec(IntentSpec.VIEW, link, browsable = true))
         apps.firstOrNull { it.packageName == wanted }?.let {
-            return if (opens(it.packageName)) LinkApp.Found(it.packageName) else LinkApp.Missing("${quoted(it.label)} doesn't open this link")
+            return if (it.packageName in handlers) LinkApp.Found(it.packageName) else LinkApp.Missing("${quoted(it.label)} doesn't open this link")
         }
         if (PACKAGE_NAME.matches(wanted)) {
-            return if (opens(wanted)) LinkApp.Found(wanted) else LinkApp.Missing("no installed app ${quoted(wanted)} opens this link")
+            return if (wanted in handlers) LinkApp.Found(wanted) else LinkApp.Missing("no installed app ${quoted(wanted)} opens this link")
         }
-        val handlers = run.ports.screen.handlers(IntentSpec(VIEW, link, browsable = true))
-        return when (val named = appNamed(wanted, apps, handlers)) {
-            is LinkApp.Found -> named.takeIf { opens(it.packageName) }
-                ?: LinkApp.Missing("${quoted(apps.first { it.packageName == named.packageName }.label)} doesn't open this link")
-            is LinkApp.Missing -> named
-        }
+        return appNamed(wanted, apps, handlers)
     }
 
     // Which of the launcher [apps] the name [wanted] means for a link that [handlers] open (plan 6B-basefix B1'). A name that
@@ -472,7 +443,7 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     // Firefox's web area can stay empty (r57's bug 2023734): wait for it, send the intent once more, then say so (D11).
-    private suspend fun firefox(call: AgentCall, done: Done, first: CheckedLink, firefox: String): Done {
+    private suspend fun firefox(call: AgentCall, done: Done, spec: IntentSpec, kind: ActionKind, firefox: String): Done {
         for (attempt in 0..1) {
             repeat(WAIT_POLLS) {
                 val now = run.fresh()
@@ -483,12 +454,12 @@ internal class ScreenSteps(private val run: TaskRun) {
                 // The second intent is an action, so it waits at the pause gate; after a pause it is not sent, because the
                 // owner may have changed the screen (D2). It is checked again as it is sent, and goes only to Firefox.
                 if (run.gate()) break
-                val again = when (val clearance = CheckedLink.check(run, first.link, first.kind, first.packageName, fromOwner(first.link))) {
-                    is LinkClearance.Blocked -> return Done(call.tool, clearance.outcome, after = run.fresh())
-                    is LinkClearance.Cleared -> clearance.link
+                val again = when (val checked = run.launches.intent(spec, kind)) {
+                    is Launches.Launch.Stop -> return Done(call.tool, checked.outcome, after = run.fresh())
+                    is Launches.Launch.Go -> checked.launch
                 }
-                if (again.target != firefox) return Done(call.tool, Outcome.Failed(NOT_RESOLVED), after = run.fresh())
-                run.ports.screen.act(again.action)
+                if (again.target != firefox) return Done(call.tool, Outcome.Failed(Launches.NOT_RESOLVED), after = run.fresh())
+                run.ports.screen.act(ScreenAction.Launch(again))
             }
         }
         val now = run.fresh()
@@ -505,17 +476,22 @@ internal class ScreenSteps(private val run: TaskRun) {
 
     suspend fun openSettings(call: AgentCall.OpenSettings): Done {
         for (action in call.page.actions) {
-            val spec = IntentSpec(action)
-            val target = run.ports.screen.resolve(spec) ?: continue
+            // A page that no app opens is skipped for the next one of the list.
+            val launch = when (val checked = run.launches.intent(IntentSpec(action))) {
+                is Launches.Launch.Stop -> return Done(call.tool, checked.outcome)
+                is Launches.Launch.Go -> checked.launch.takeIf { it.target != null } ?: continue
+            }
             // The result names the page that opened, which can be a fallback of the page asked for (D11).
             val page = if (action == call.page.actions.first()) call.page.wire else pageName(action)
-            return open(call, ScreenAction.OpenIntent(spec), target, page)
+            return open(call, launch, page)
         }
         return Done(call.tool, Outcome.Failed("this phone has no such settings page"))
     }
 
-    // Opens something, then waits up to 5 s until its app is in front (D11; review A M15, A2-N7).
-    private suspend fun open(call: AgentCall, action: ScreenAction, target: String?, detail: String?, linkTarget: String? = null): Done {
+    // Opens what the launch check allowed, then waits up to 5 s until its app is in front (D11; review A M15, A2-N7).
+    private suspend fun open(call: AgentCall, launch: CheckedLaunch, detail: String?): Done {
+        val link = linkOf(call)
+        val linkTarget = launch.target.takeIf { link != null }
         while (true) {
             if (run.gate()) return paused(call.tool, null)
             val before = run.fresh()
@@ -523,17 +499,17 @@ internal class ScreenSteps(private val run: TaskRun) {
             val proposal = ActionMapper.proposal(
                 call, run.observation.table, run.observation.appLabel,
                 receivingAppLabel = linkTarget?.let { run.label(it) },
-                linkFromOwner = linkOf(call)?.let(::fromOwner) ?: false,
+                linkFromOwner = link?.let(run.launches::fromOwner) ?: false,
                 linkTargetPackage = linkTarget,
             )
             when (val clearance = run.decide(proposal, before, call.tool, null)) {
                 Clearance.Again -> continue
                 is Clearance.Stop -> return clearance.done
                 is Clearance.Go -> {
-                    val outcome = run.ports.screen.act(action)
+                    val outcome = run.ports.screen.act(ScreenAction.Launch(launch))
                     if (!outcome.done) return Done(call.tool, Outcome.Failed(outcome.reason ?: ACTION_FAILED), after = run.fresh())
-                    if (action is ScreenAction.OpenUri) sentLink = true
-                    run.ports.screen.waitForFront(target, FRONT_WAIT_MILLIS, before = ScreenTree.frontWindow(before)?.packageName)
+                    if (link != null) sentLink = true
+                    run.ports.screen.waitForFront(launch.target, FRONT_WAIT_MILLIS, before = ScreenTree.frontWindow(before)?.packageName)
                     val after = run.fresh()
                     run.safety = SafetyCheck.afterAction(proposal, before, after, run.safety)
                     return Done(call.tool, Changes.outcome(before, after, null, run.settings::closed), detail = detail, after = after)
@@ -569,24 +545,6 @@ internal class ScreenSteps(private val run: TaskRun) {
         else -> null
     }
 
-    // A link came from the owner when its host (or for a deep link, the whole link) is in his request (D32 item 12): its
-    // words as a whole run of the request's words, or the host as one spoken word ("wikipedia.org" said "wikipedia org").
-    // Only an https link has a host that names a place: in `whatsapp://send?…`, `viber://forward?…` or `tg://share?…` the
-    // "host" is an action word that most messaging requests hold (D12).
-    private fun fromOwner(link: String): Boolean {
-        val uri = try {
-            URI(link)
-        } catch (e: Exception) {
-            null
-        }
-        val host = uri?.host?.takeIf { uri.scheme.equals(HTTPS, ignoreCase = true) } ?: link
-        val words = Normalizer.words(host)
-        val request = Normalizer.words(run.task.text)
-        if (words.isEmpty()) return false
-        val joined = words.joinToString("")
-        return request.windowed(words.size).any { it == words } || request.any { it == joined }
-    }
-
     // "android.settings.WIRELESS_SETTINGS" is the page "wireless".
     private fun pageName(action: String): String =
         action.substringAfterLast('.').removeSuffix("_SETTINGS").lowercase().replace('_', ' ')
@@ -602,14 +560,12 @@ internal class ScreenSteps(private val run: TaskRun) {
         const val UNCERTAIN = "The tap may not have worked; check the screen before trying again."
         const val PAUSED = "The task was paused before this action, so nothing was done."
         const val EMPTY_PAGE = "the page shows no content to Kestrel"
-        const val NOT_RESOLVED = "Android no longer opens this link in that app, so Kestrel did not send it"
         const val ACTION_FAILED = "the action failed"
         const val NOTHING_TO_ACT_ON = "there is nothing to act on"
         const val FRONT_WAIT_MILLIS = 5_000L
         const val POLL_MILLIS = 500L
         private const val CHANGE_POLL_MILLIS = 100L
         private const val WAIT_POLLS = 10
-        private const val VIEW = "android.intent.action.VIEW"
         private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
 
         /**
@@ -620,7 +576,6 @@ internal class ScreenSteps(private val run: TaskRun) {
             packageName.split('.').filter { it.isNotEmpty() && it.lowercase() !in GENERIC_PACKAGE_PARTS }.joinToString(" ").ifEmpty { null }
 
         private val GENERIC_PACKAGE_PARTS = setOf("com", "org", "net", "io", "android", "apps", "app")
-        private const val HTTPS = "https"
         private const val WEB_VIEW = "android.webkit.WebView"
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
     }

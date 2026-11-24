@@ -90,8 +90,10 @@ internal class AppAgentEnvironment(
             is ModelChoice.Profile -> models.port(choice.lightweight) ?: return Prepared.Refused(AgentTexts.NO_PROFILE)
         }
         val agentSettings = agentSettings(start)
+        // Kestrel's own pages for the owner, such as notification access during its hand-over; the agent's launches go
+        // only through the launch check and AppScreenPort.
         val open: suspend (Intent) -> Boolean = { intent -> session()?.actions?.openIntent(intent) is ActionResult.Done }
-        val data = start.witness.watch(AndroidDataPort(context, open, agentSettings.agentFree::isAgentFree))
+        val data = start.witness.watch(AndroidDataPort(context, agentSettings.agentFree::isAgentFree))
         val owner = AppOwnerPort(
             start.task,
             send,

@@ -28,6 +28,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.port.AccessKind
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.IntentExtra
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.MediaKinds
 import dev.kestrel.datatools.calendar.CalendarTool
@@ -144,7 +145,7 @@ class DataToolsTest {
 
         assertEquals(listOf("m1 · photo · 2001-02-03 12:00", "m2 · photo · 2001-02-03 12:05"), found.lines.map { it.fixed.substringBeforeLast(" · ") })
         assertEquals(listOf("m3"), media.unknown(listOf("m1", "m3")))
-        val share = media.shareIntent("org.telegram.messenger", listOf("m1", "m2"))
+        val share = IntentSpecs.toIntent(media.shareIntent("org.telegram.messenger", listOf("m1", "m2")))
         assertEquals(Intent.ACTION_SEND_MULTIPLE, share.action)
         assertEquals("org.telegram.messenger", share.`package`)
         assertEquals("image/*", share.type)
@@ -221,26 +222,26 @@ class DataToolsTest {
 
     @Test
     fun theIntentsOfTheClockTheSmsAppAndTheCalendarCarryTheirExtras() {
-        val alarm = ClockIntents.alarm(7, 30, "Kestrel test", listOf(DayOfWeek.MONDAY, DayOfWeek.FRIDAY))
+        val alarm = IntentSpecs.toIntent(ClockIntents.alarm(7, 30, "Kestrel test", listOf(DayOfWeek.MONDAY, DayOfWeek.FRIDAY)))
         assertEquals(AlarmClock.ACTION_SET_ALARM, alarm.action)
         assertEquals(7, alarm.getIntExtra(AlarmClock.EXTRA_HOUR, -1))
         assertEquals(30, alarm.getIntExtra(AlarmClock.EXTRA_MINUTES, -1))
         assertTrue(alarm.getBooleanExtra(AlarmClock.EXTRA_SKIP_UI, false))
         assertEquals(arrayListOf(2, 6), alarm.getIntegerArrayListExtra(AlarmClock.EXTRA_DAYS))
 
-        val timer = ClockIntents.timer(90, null)
+        val timer = IntentSpecs.toIntent(ClockIntents.timer(90, null))
         assertEquals(AlarmClock.ACTION_SET_TIMER, timer.action)
         assertEquals(90, timer.getIntExtra(AlarmClock.EXTRA_LENGTH, -1))
         assertTrue(timer.getBooleanExtra(AlarmClock.EXTRA_SKIP_UI, false))
 
-        val sms = SmsTool.composeIntent(NUMBER, "I'm late")
+        val sms = IntentSpecs.toIntent(SmsTool.composeIntent(NUMBER, "I'm late"))
         assertEquals(Intent.ACTION_SENDTO, sms.action)
         assertEquals("smsto", sms.data?.scheme)
         assertEquals(NUMBER, sms.data?.schemeSpecificPart)
         assertEquals("I'm late", sms.getStringExtra("sms_body"))
 
         val zone = ZoneId.systemDefault()
-        val event = CalendarTool.insertIntent("Kestrel test", DAY.atTime(9, 0), null, null, zone)
+        val event = IntentSpecs.toIntent(CalendarTool.insertIntent("Kestrel test", DAY.atTime(9, 0), null, null, zone))
         assertEquals(Intent.ACTION_INSERT, event.action)
         val begin = DAY.atTime(9, 0).atZone(zone).toInstant().toEpochMilli()
         assertEquals(begin, event.getLongExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, 0))
@@ -250,7 +251,7 @@ class DataToolsTest {
 
     @Test
     fun anIntentSpecBecomesTheIntentThatItDescribes() {
-        val link = IntentSpecs.toIntent(IntentSpec(Intent.ACTION_VIEW, "https://en.wikipedia.org/", "org.mozilla.firefox", browsable = true, extras = mapOf("note" to "test")))
+        val link = IntentSpecs.toIntent(IntentSpec(Intent.ACTION_VIEW, "https://en.wikipedia.org/", "org.mozilla.firefox", browsable = true, extras = mapOf("note" to IntentExtra.Text("test"))))
         assertEquals(Intent.ACTION_VIEW, link.action)
         assertEquals("https://en.wikipedia.org/", link.dataString)
         assertEquals("org.mozilla.firefox", link.`package`)
@@ -266,7 +267,7 @@ class DataToolsTest {
 
     @Test
     fun theDataPortAsksForNotificationAccessThatThisPackageLacks() = runBlocking {
-        val port = AndroidDataPort(context, open = { false }, isAgentFree = { false })
+        val port = AndroidDataPort(context, isAgentFree = { false })
 
         assertEquals(DataResult.NeedsAccess(AccessKind.NOTIFICATIONS), port.listNotifications())
     }
