@@ -51,19 +51,48 @@ object Firefox {
     fun closeTaps(title: String): List<TapCandidate> = listOf(TapCandidate(label = "$CLOSE $title"))
 
     /** Starts Firefox and opens its tabs tray once the tab counter shows, within [START] s; whether the tab counter was tapped. */
-    fun openTray(scope: RunScope): Boolean {
-        start(scope)
-        return AppTaps(scope, D3Tasks.FIREFOX).run(listOf(COUNTER))
-    }
+    fun openTray(scope: RunScope): Boolean = start(scope) && AppTaps(scope, D3Tasks.FIREFOX).run(listOf(COUNTER))
 
-    /** Starts Firefox from its launcher and waits until its tab counter shows, at most [START] s. */
-    fun start(scope: RunScope) {
+    /**
+     * Starts Firefox from its launcher and waits until its tab counter shows, at most [START] s; whether it showed.
+     * Firefox's first run asks Android to make it the default browser (the A71's Firefox does, in the permission
+     * controller's RequestRoleActivity), which only the owner may answer, so the wait ends there without an answer and
+     * [RunScope.notes] records [FIRST_RUN].
+     */
+    fun start(scope: RunScope): Boolean {
         scope.device.idempotent("monkey -p ${D3Tasks.FIREFOX} -c android.intent.category.LAUNCHER 1")
         for (second in 1..START) {
             scope.clock.sleep(1.seconds)
-            if (COUNTER.any { counted(scope, it) }) return
+            if (COUNTER.any { counted(scope, it) }) return true
+            if (Dumps.resumedActivity(scope.device.read("dumpsys activity activities"))?.endsWith(ROLE_REQUEST) == true) {
+                scope.notes[FIRST_RUN] = "yes"
+                return false
+            }
         }
+        return false
     }
+
+    /** Why a Firefox task is untestable when its tab counter did not show: its first run, or [otherwise]. */
+    fun untestable(scope: RunScope, otherwise: String): SetupResult.Untestable =
+        SetupResult.Untestable(if (scope.notes[FIRST_RUN] != null) FIRST_RUN_WHY else otherwise)
+
+    /**
+     * Stops Firefox, and after the run saw Firefox's first-run question, closes the Firefox task that still holds it after
+     * the stop, as a swipe in Recents would, without an answer; Firefox's other tasks stay.
+     */
+    fun stop(scope: RunScope) {
+        scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}")
+        if (scope.notes[FIRST_RUN] == null) return
+        for (task in Dumps.rootTasksAsking(scope.device.read("am stack list"), D3Tasks.FIREFOX, ROLE_REQUEST)) scope.device.idempotent("am stack remove $task")
+        check(Dumps.rootTasksAsking(scope.device.read("am stack list"), D3Tasks.FIREFOX, ROLE_REQUEST).isEmpty()) { "Firefox's question about the default browser is still open." }
+    }
+
+    /** The permission controller's activity that asks the owner to give an app a role, such as the default browser. */
+    const val ROLE_REQUEST = ".role.ui.RequestRoleActivity"
+
+    /** The key of [RunScope.notes] that says Firefox showed its first run's question. */
+    const val FIRST_RUN = "firefox-first-run"
+    const val FIRST_RUN_WHY = "Firefox asks to be the default browser, a question of its first run that only the owner may answer"
 
     private fun counted(scope: RunScope, candidate: TapCandidate): Boolean =
         scope.hooks.screenHas(packageName = D3Tasks.FIREFOX, label = candidate.label, contains = candidate.contains, className = candidate.className, state = candidate.state)
@@ -121,11 +150,11 @@ object Firefox {
  */
 data class FirefoxTab(val page: String = "ak800i", val title: String = GITHUB) : Setup {
     override fun apply(scope: RunScope): SetupResult {
-        scope.restores.push("Firefox stopped", "Close Firefox.") { scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}") }
+        scope.restores.push("Firefox stopped", "Close Firefox, also in Recents.") { Firefox.stop(scope) }
         val opened = scope.restores.change("Firefox's tabs tray opened", "Close Firefox.") { Firefox.openTray(scope) }
         val before = opened && Firefox.shows(scope, page)
-        scope.restores.change("Firefox stopped again", "Close Firefox.") { scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}") }
-        if (!opened) return SetupResult.Untestable("Firefox's tabs tray did not open")
+        scope.restores.change("Firefox stopped again", "Close Firefox, also in Recents.") { Firefox.stop(scope) }
+        if (!opened) return Firefox.untestable(scope, "Firefox's tabs tray did not open")
         if (before) return SetupResult.Untestable("Firefox already has a tab of $page, which the run would not tell from its own")
         scope.restores.push("the run's tab in Firefox", "Firefox: close the tab of $page.") {
             check(Firefox.openTray(scope)) { "Firefox's tabs tray did not open." }
@@ -153,9 +182,9 @@ data class FirefoxNewTab(val uri: String, val address: String, val settle: Durat
     override fun apply(scope: RunScope): SetupResult {
         // Set inside the change, which the shutdown hook awaits before it runs the restore: a page that was never asked for closes no tab.
         val asked = AtomicBoolean(false)
-        scope.restores.push("Firefox stopped", "Close Firefox.") { scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}") }
+        scope.restores.push("Firefox stopped", "Close Firefox, also in Recents.") { Firefox.stop(scope) }
         scope.restores.change("Firefox started", "Close Firefox.") { Firefox.start(scope) }
-        val tabs = Firefox.tabs(scope) ?: return SetupResult.Untestable("Firefox's tab counter shows no number of tabs")
+        val tabs = Firefox.tabs(scope) ?: return Firefox.untestable(scope, "Firefox's tab counter shows no number of tabs")
         scope.restores.push("the rehearsal's tab in Firefox", "Firefox: close the tab of $address.") { if (asked.get()) Firefox.closeOwnTab(scope, address, tabs) }
         // A lost answer needs no read-back here: the task's checks read the screen next, and the restore reads the address.
         scope.restores.change("a page opened in Firefox", "Close Firefox.") {

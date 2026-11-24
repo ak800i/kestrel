@@ -54,7 +54,9 @@ class RehearseCommand(private val environment: Environment, private val command:
                 // A later step that reads the same value sees the earlier steps' change, so the first read counts.
                 step.probe(scope).forEach { (key, value) -> before.putIfAbsent(key, value) }
                 probed.add(step)
-                if (step.apply(scope) is SetupResult.Untestable) {
+                val result = step.apply(scope)
+                if (result is SetupResult.Untestable) {
+                    session.console.line("Rehearsal of ${task.name}: not testable on ${session.device.kind.label}: ${result.why}.")
                     outcome = "skipped" to "untestable"
                     break
                 }

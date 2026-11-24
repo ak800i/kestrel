@@ -244,8 +244,10 @@ class SettingsStepsTest {
         run.adb.on("^dumpsys display$") { emulator.joinToString("\n") }
         run.adb.settings["system/screen_brightness_mode"] = "1"
         run.adb.settings["system/screen_brightness"] = "7"
-        assertEquals(mapOf("screen_brightness_mode" to "1", "screen_brightness" to "7"), ManualBrightness().probe(run.scope))
+        // With automatic brightness the device changes the level itself, so only the mode is compared.
+        assertEquals(mapOf("screen_brightness_mode" to "1"), ManualBrightness().probe(run.scope))
         ManualBrightness().apply(run.scope)
+        assertEquals(mapOf("screen_brightness_mode" to "0", "screen_brightness" to "200"), ManualBrightness().probe(run.scope))
         assertEquals("0", run.adb.settings["system/screen_brightness_mode"])
         assertEquals("200", run.adb.settings["system/screen_brightness"])
         assertFalse(BrightnessNear(30, 5).passes(run.scope, none))
@@ -261,6 +263,14 @@ class SettingsStepsTest {
             listOf("settings put system screen_brightness 7", "settings put system screen_brightness_mode 1"),
             run.adb.commands.filter { it.startsWith("settings put") }.takeLast(2),
         )
+
+        // A device without the mode gets none again, rather than manual brightness.
+        val bare = FakeRun()
+        bare.adb.on("^settings delete system screen_brightness_mode$") { bare.adb.settings.remove("system/screen_brightness_mode"); "" }
+        bare.adb.settings["system/screen_brightness"] = "40"
+        ManualBrightness().apply(bare.scope)
+        bare.restores.runAll()
+        assertEquals(mapOf("system/screen_brightness" to "40"), bare.adb.settings.toMap())
     }
 
     @Test

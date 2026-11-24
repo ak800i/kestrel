@@ -2,6 +2,7 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.AlarmEntry
 import dev.kestrel.eval.device.Alarms
+import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,6 +46,9 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     var front = clock
     var ongoing = false
 
+    /** Whether One UI's tip about the full screen has the focus and covers the screen, with its one button, OK. */
+    var tip = false
+
     /** The row whose editor sheet is open, or null on the list. */
     var sheet: Row? = null
     private var screen = "alarms"
@@ -69,6 +73,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
             screen = "timers"
             ""
         }
+        run.adb.on("^dumpsys window$") { "  mCurrentFocus=Window{5999a62 u0 ${if (tip) "ImmersiveModeConfirmation" else "$clock/.Main"}}" }
         run.adb.on("^input swipe 540 1700 540 700 ") {
             swipes++
             position = minOf(position + 1, rows.maxOfOrNull { it.page } ?: 0)
@@ -130,6 +135,16 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     private fun elements(): List<Element> {
         val open = sheet
         return when {
+            tip -> listOf(Element("OK", "android.widget.Button", "424,2062,655,2162", null))
+            screen == "timers" && clock == ClockApp.SAMSUNG -> timers.flatMap {
+                // One UI 5.1's controls of the running timer: each a clickable container around a clickable Button of the same label.
+                listOf(
+                    Element("Delete", "android.view.ViewGroup", "105,1998,454,2203", null, delete = true),
+                    Element("Delete", "android.widget.Button", "147,2037,454,2163", null, delete = true),
+                    Element("Pause", "android.view.ViewGroup", "626,1998,975,2203", null),
+                    Element("Pause", "android.widget.Button", "626,2037,933,2163", null),
+                )
+            }
             screen == "timers" -> timers.map { Element("Delete", "android.widget.Button", "0,900,300,980", null, delete = true) }
             open != null -> listOf(
                 Element("${open.time} AM Edit", "android.view.ViewGroup", "0,1000,1080,1155", open),
@@ -171,6 +186,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
         val target = matches.firstOrNull()?.let { all[it] } ?: return "tapped=false count=0"
         val row = target.row
         when {
+            tip && target.label == "OK" -> tip = false
             target.delete && row == null -> {
                 timers.removeFirstOrNull()?.let { alarms.remove(it) }
                 ongoing = false
@@ -412,6 +428,32 @@ class ClockStepsTest {
     }
 
     @Test
+    fun theRestoreDeletesEveryCardThatTheRunSetAtTheTestTimeAlsoASwitchedOffOne() {
+        val run = FakeRun()
+        val phone = ClockPhone(run)
+        phone.row("8:30")
+        ClockFree().apply(run.scope)
+        // A live run on kestrel-api37: the one-time alarm, and an alarm on Wednesdays that the model switched off, both at 6:45.
+        phone.setAlarm(6, 45)
+        phone.row("6:45")
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf("8:30"), phone.rows.map { it.time })
+        assertEquals(0, phone.clocks())
+        val card = mapOf("contains" to "6:45", "package" to ClockApp.GOOGLE)
+        val delete = mapOf("label" to "Delete", "package" to ClockApp.GOOGLE)
+        assertEquals(listOf(card, delete, card, delete), run.adb.hookCalls("SCREEN_TAP"))
+
+        // The run's only alarm switched off: dumpsys alarm shows none, and its card is deleted all the same.
+        val off = FakeRun()
+        val offPhone = ClockPhone(off)
+        ClockFree().apply(off.scope)
+        offPhone.row("6:45")
+        assertTrue(off.restores.runAll().isEmpty())
+        assertTrue(offPhone.rows.isEmpty())
+    }
+
+    @Test
     fun theRestoreScrollsToTheListsTopAndFindsTheTestAlarmOnItsPage() {
         for (page in listOf(0, 1)) {
             val run = FakeRun()
@@ -468,29 +510,56 @@ class ClockStepsTest {
 
     @Test
     fun aNewTimerDueInFourToFiveMinutesWithItsNotificationPassesAndIsDeletedAfterTheRun() {
-        val run = FakeRun()
-        val phone = ClockPhone(run)
-        phone.timerIn(270)
+        for (clock in listOf(ClockApp.GOOGLE, ClockApp.SAMSUNG)) {
+            val run = FakeRun(if (clock == ClockApp.SAMSUNG) DeviceKind.A71 else DeviceKind.EMULATOR)
+            val phone = ClockPhone(run, clock)
 
-        assertEquals(SetupResult.Ready, TimerCleanup.apply(run.scope))
-        assertFalse(TimerRunning.passes(run.scope, none))
-        phone.ongoing = true
-        assertFalse(TimerRunning.passes(run.scope, none))
-        phone.ongoing = false
-        phone.timerIn(290)
-        assertFalse(TimerRunning.passes(run.scope, none))
-        phone.ongoing = true
-        assertTrue(TimerRunning.passes(run.scope, none))
+            assertEquals(clock, SetupResult.Ready, TimerCleanup.apply(run.scope))
+            assertFalse(clock, TimerRunning.passes(run.scope, none))
+            phone.timerIn(290)
+            assertFalse(clock, TimerRunning.passes(run.scope, none))
+            phone.ongoing = true
+            assertTrue(clock, TimerRunning.passes(run.scope, none))
+            // On the A71, One UI's tip about the full screen may cover the timers page; it is dismissed with its own OK.
+            phone.tip = clock == ClockApp.SAMSUNG
 
-        run.adb.hook("SCREEN_HAS") { extras -> "count=${if (extras["label"] == "Delete") 1 else 0} app=${ClockApp.GOOGLE}" }
-        run.adb.hook("SCREEN_TAP") {
-            phone.alarms.removeAt(phone.alarms.lastIndex)
-            phone.ongoing = false
-            "tapped=true count=1"
+            assertTrue(clock, run.restores.runAll().isEmpty())
+            assertTrue(clock, phone.alarms.isEmpty())
+            assertFalse(clock, phone.tip)
+            val taps = if (clock == ClockApp.SAMSUNG) listOf("OK", "Delete") else listOf("Delete")
+            assertEquals(clock, taps, run.adb.hookCalls("SCREEN_TAP").map { it["label"] })
+            assertTrue(clock, run.adb.commands.contains("am start -W -a android.intent.action.SHOW_TIMERS -p $clock"))
+            assertTrue(clock, run.adb.commands.none { it.startsWith("am force-stop") })
         }
-        assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(1, phone.alarms.size)
-        assertTrue(run.adb.commands.contains("am start -W -a android.intent.action.SHOW_TIMERS -p com.google.android.deskclock"))
-        assertTrue(run.adb.commands.none { it.startsWith("am force-stop") })
+    }
+
+    @Test
+    fun aTimerOfTheOwnersMakesTheTaskUntestableAndAnotherTimerAfterTheRunIsLeftToTheOwner() {
+        fun phone(): Pair<FakeRun, ClockPhone> = FakeRun(DeviceKind.A71).let { it to ClockPhone(it, ClockApp.SAMSUNG) }
+
+        // A running timer of the owner's, an hour away, and a paused one, which only its notification shows.
+        val (running, owners) = phone()
+        owners.timerIn(3_600)
+        val (paused, pausedOwners) = phone()
+        pausedOwners.ongoing = true
+        for (run in listOf(running, paused)) {
+            assertTrue(TimerCleanup.apply(run.scope) is SetupResult.Untestable)
+            assertTrue(run.restores.runAll().isEmpty())
+            assertTrue(run.adb.commands.none { it.startsWith("am start") })
+        }
+
+        // A timer that the owner started during the run, whether it ends before the test timer or long after it.
+        for (other in listOf(120L, 3_600L)) {
+            val (run, clock) = phone()
+            assertEquals(SetupResult.Ready, TimerCleanup.apply(run.scope))
+            clock.timerIn(290)
+            clock.timerIn(other)
+            clock.ongoing = true
+            val failure = run.restores.runAll().single()
+            assertTrue(failure.reason, failure.reason.contains("The clock runs 2 timers, so the script deleted none of them."))
+            assertEquals(2, clock.alarms.size)
+            assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
+            assertTrue(run.adb.commands.none { it.contains("SHOW_TIMERS") })
+        }
     }
 }

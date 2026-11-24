@@ -49,12 +49,32 @@ object ClockApp {
 
     /**
      * The taps that delete the running test timer on the clock's timers page: Google Clock's Delete (kestrel-api37's
-     * names the timer), Samsung Clock's Cancel.
+     * names the timer), Samsung Clock's Delete.
      */
     fun timerTaps(clock: String): List<List<TapCandidate>> = when (clock) {
-        SAMSUNG -> listOf(listOf(TapCandidate(label = "Cancel"), TapCandidate(label = "Delete")))
+        SAMSUNG -> listOf(SAMSUNG_TIMER)
         else -> listOf(listOf(TapCandidate(label = "Delete 5 minutes timer"), TapCandidate(label = DELETE), TapCandidate(contains = DELETE)))
     }
+
+    /**
+     * Samsung Clock's control that deletes its running timer, as One UI 5.1 shows it on the A71 (counted there on
+     * 2026-11-24): "Delete", a clickable container around a clickable Button of the same label, so the first of the two
+     * clickable elements, the container, which screen-tap reaches first; then older candidates.
+     */
+    val SAMSUNG_TIMER = listOf(TapCandidate(label = DELETE, state = "clickable", first = true), TapCandidate(label = "Cancel"), TapCandidate(label = DELETE))
+
+    /**
+     * What the clock's timers page shows while a timer runs, which the restore needs before it taps: on Samsung Clock the
+     * running timer's Pause, one Button (beside it, Delete); Google Clock's own Delete names its timer, so it needs none.
+     */
+    fun timerRunningShown(scope: RunScope, clock: String): Boolean =
+        clock != SAMSUNG || scope.hooks.screenHas(packageName = clock, label = "Pause", className = "Button").let { it["app"] == clock && it.int("count") == 1 }
+
+    /**
+     * The clock's running timers: its alarms on the elapsed clock (types 2 and 3), which both Google Clock and Samsung
+     * Clock use for a timer, while its alarms and other wakeups use the wall clock.
+     */
+    fun timers(dump: AlarmDump, clock: String): List<AlarmEntry> = dump.of(clock).filter { it.type == 2 || it.type == 3 }
 }
 
 /**
@@ -135,8 +155,8 @@ internal object AlarmList {
  * there (an enabled alarm anywhere in the list), or when any page of the clock's list of alarms shows one (also one that
  * is switched off). The list is read from its top to its end ([AlarmList]); a list whose top or end does not show fails
  * the setup rather than pick a time. The list is left at its top, with the home key. The clock's alarm clocks are
- * recorded first, so that the restores delete the test alarm with the clock's own taps when `dumpsys alarm` shows one at
- * that time, and name any other alarm that the run set, which they leave.
+ * recorded first, so that the restores delete every card at that time with the clock's own taps (each is the run's,
+ * since no card showed the time before it), and name any other alarm that the run set, which they leave.
  */
 data class ClockFree(val times: List<String> = TIMES) : Setup {
     override fun apply(scope: RunScope): SetupResult {
@@ -196,25 +216,29 @@ data class ClockFree(val times: List<String> = TIMES) : Setup {
 
 /**
  * The test alarm's deletion by Google Clock's own taps, checked in `dumpsys alarm` (design D9 of sub-project 6), and the
- * check for other alarms that the run set. Only the one card whose label holds the test's time, in one of its two forms,
- * is touched, and only when the list shows exactly one such card: a tap on the card (not on its time, which opens a time
- * picker, nor on its switch) opens the alarm's editor sheet, and the sheet's Delete is tapped only when the sheet shows
- * the test's time. Anything else taps nothing more and fails the restore, which names what to do by hand. Only alarm
- * clocks count, never the clock app's other wakeups.
+ * check for other alarms that the run set. ClockFree picked a time that no card showed before the run, so every card at
+ * that time is the run's, such as a live model's one-time alarm and a repeating one that it switched off: each is
+ * deleted in turn, at most [CARDS], also a switched-off one that `dumpsys alarm` does not show. A tap on the first card
+ * whose label holds the test's time, in one of its two forms (not on its time, which opens a time picker, nor on its
+ * switch), opens the alarm's editor sheet, and the sheet's Delete is tapped only when the sheet shows the test's time.
+ * Both forms on the list, or anything else, taps nothing more and fails the restore, which names what to do by hand.
+ * Only alarm clocks count, never the clock app's other wakeups.
  */
 internal object AlarmCleanup {
-    /** Deletes the test alarm at [time] when it is set. */
+    private const val CARDS = 4
+
+    /** Deletes every card at [time], and checks that no alarm is set there and that the list shows none. */
     fun run(scope: RunScope, clock: String, hour: Int, minute: Int, time: String) {
         check(scope.device.kind == DeviceKind.EMULATOR) { "The test alarm at $time is on ${scope.device.kind.label}, where the script deletes no alarm." }
-        if (!set(scope, clock, hour, minute)) return
         scope.device.idempotent("am start -W -a android.intent.action.SHOW_ALARMS -p $clock")
         scope.clock.sleep(3.seconds)
-        try {
+        val cleared = try {
             delete(scope, clock, time)
         } finally {
             scope.device.idempotent("input keyevent KEYCODE_HOME")
         }
         check(!set(scope, clock, hour, minute)) { "The test alarm at $time is still set in $clock." }
+        check(cleared) { "The clock's list still shows an alarm at $time in $clock." }
     }
 
     /** Fails, naming their times, when the clock has alarm clocks that were not there before the run, other than the test alarm; it never deletes them. */
@@ -238,20 +262,25 @@ internal object AlarmCleanup {
         return clocks(dump, clock).any { at -> listOf(next, next + DAY).any { abs(at - it) < MINUTE } }
     }
 
+    /** Deletes each card at [time], which ClockFree saw on no card before the run; whether the list shows none any more. */
     private fun delete(scope: RunScope, clock: String, time: String): Boolean {
-        var form: String? = null
-        var several = false
-        val walk = AlarmList.walk(scope, clock, AlarmList.forms(time), ClockApp.CARD) { page ->
-            val total = page.counts.values.sum()
-            several = total > 1
-            form = page.counts.entries.firstOrNull { it.value == 1 }?.key
-            total > 0
+        repeat(CARDS + 1) { round ->
+            var form: String? = null
+            var mixed = false
+            val walk = AlarmList.walk(scope, clock, AlarmList.forms(time), ClockApp.CARD) { page ->
+                val shown = page.counts.filterValues { it > 0 }.keys
+                mixed = shown.size > 1
+                form = shown.firstOrNull()
+                shown.isNotEmpty()
+            }
+            if (walk == AlarmList.Walk.ENDED) return true
+            val card = form
+            if (walk != AlarmList.Walk.FOUND || mixed || card == null || round == CARDS) return false
+            val taps = AppTaps(scope, clock)
+            if (!taps.run(listOf(listOf(TapCandidate(contains = card, className = ClockApp.CARD, first = true))))) return false
+            if (!sheet(scope, clock, card) || !taps.run(listOf(listOf(TapCandidate(label = ClockApp.DELETE))))) return false
         }
-        val card = form
-        if (walk != AlarmList.Walk.FOUND || several || card == null) return false
-        val taps = AppTaps(scope, clock)
-        if (!taps.run(listOf(listOf(TapCandidate(contains = card, className = ClockApp.CARD))))) return false
-        return sheet(scope, clock, card) && taps.run(listOf(listOf(TapCandidate(label = ClockApp.DELETE))))
+        return false
     }
 
     /**
@@ -296,27 +325,56 @@ data object AlarmIntent : Setup {
 }
 
 /**
- * timer's restore, pushed before the run (design D9 of sub-project 6): the clock's alarms are recorded now, and after
- * the run a new one due within 6 minutes, the test timer, is deleted with the clock's own taps on its timers page and
- * checked.
+ * timer's restore, pushed before the run (design D9 of sub-project 6). A timer of the owner's, running, paused or ringing
+ * (an alarm of the clock on the elapsed clock, or an ongoing notification of the clock), makes the task untestable before
+ * any change: the clock's timers page would show it beside the run's, and a tap could reach it. Else the clock's alarms
+ * are recorded now, and after the run the one new alarm due within 6 minutes, the test timer, is deleted with the
+ * clock's own taps on its timers page and checked. When the clock runs any other timer then, such as one that the owner
+ * started during the run, the restore taps nothing and says to delete the test timer by hand.
  */
 data object TimerCleanup : Setup {
     private const val BEFORE = "timer-before"
+    private const val BY_HAND = "Clock > Timer: delete the 5-minute timer."
+
+    /** How long the restore waits for the timers page to show the control that deletes the timer. */
+    private const val PAGE_SECONDS = 10
 
     override fun apply(scope: RunScope): SetupResult {
         val clock = ClockApp.find(scope) ?: return SetupResult.Untestable("no app sets timers")
         val dump = ClockApp.alarms(scope) ?: return SetupResult.Untestable("dumpsys alarm gives no clocks")
+        if (ClockApp.timers(dump, clock).isNotEmpty() || Dumps.ongoingNotification(scope.device.read("dumpsys notification"), clock)) {
+            return SetupResult.Untestable("the clock app has a timer of the owner's, or shows one, which the run's own would not be told from")
+        }
         scope.notes[ClockApp.NOTE] = clock
         scope.notes[BEFORE] = dump.of(clock).joinToString(",") { "${it.whenElapsed}" }
-        scope.restores.push("the test timer", "Clock > Timer: delete the 5-minute timer.") {
-            if (newTimers(scope, clock).isEmpty()) return@push
+        scope.restores.push("the test timer", BY_HAND) {
+            val new = newTimers(scope, clock)
+            if (new.isEmpty()) return@push
+            val running = ClockApp.timers(checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }, clock)
+            check(new.size == 1 && running.all { it in new }) {
+                "The clock runs ${(running + new).distinct().size} timers, so the script deleted none of them. $BY_HAND"
+            }
+            val taps = ClockApp.timerTaps(clock)
             scope.device.idempotent("am start -W -a android.intent.action.SHOW_TIMERS -p $clock")
-            scope.clock.sleep(3.seconds)
-            AppTaps(scope, clock).run(ClockApp.timerTaps(clock))
-            scope.device.idempotent("input keyevent KEYCODE_HOME")
-            check(newTimers(scope, clock).isEmpty()) { "The test timer still runs in $clock." }
+            try {
+                for (second in 1..PAGE_SECONDS) {
+                    scope.clock.sleep(1.seconds)
+                    ImmersiveTip.dismiss(scope)
+                    if (taps.first().any { shown(scope, clock, it) } && ClockApp.timerRunningShown(scope, clock)) break
+                }
+                // The test timer is the clock's only one, so its page shows only its controls.
+                if (ClockApp.timerRunningShown(scope, clock)) AppTaps(scope, clock).run(taps)
+            } finally {
+                scope.device.idempotent("input keyevent KEYCODE_HOME")
+            }
+            check(newTimers(scope, clock).isEmpty()) { "The test timer still runs in $clock. $BY_HAND" }
         }
         return SetupResult.Ready
+    }
+
+    private fun shown(scope: RunScope, clock: String, candidate: TapCandidate): Boolean {
+        val answer = scope.hooks.screenHas(packageName = clock, label = candidate.label, contains = candidate.contains)
+        return answer["app"] == clock && answer.int("count") >= 1
     }
 
     /** The clock's alarms due within 6 minutes that were not there before the run. */

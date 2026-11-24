@@ -159,6 +159,38 @@ class CommandsTest {
     }
 
     @Test
+    fun theBrightnessRehearsalsCompareTheLevelOnlyWhenTheOwnerSetItByHand() {
+        var night = "no"
+        fake.adb.on("^cmd uimode night$") { "Night mode: $night" }
+        fake.adb.on("^cmd uimode night (yes|no|auto)$") { night = it.groupValues[1]; "" }
+        // With automatic brightness on, the device sets the level itself, as One UI does on the A71.
+        fake.adb.on("^settings put system screen_brightness_mode (\\d)$") {
+            fake.adb.settings["system/screen_brightness_mode"] = it.groupValues[1]
+            if (it.groupValues[1] == "1") fake.adb.settings["system/screen_brightness"] = "64"
+            ""
+        }
+        fake.adb.settings["system/screen_brightness_mode"] = "1"
+        fake.adb.settings["system/screen_brightness"] = "70"
+
+        assertEquals(Cli.EXIT_PASSED, fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "brightness,two-settings"))
+        assertEquals("1", fake.adb.settings["system/screen_brightness_mode"])
+
+        fake.adb.settings["system/screen_brightness_mode"] = "0"
+        fake.adb.settings["system/screen_brightness"] = "70"
+        // A manual level that the restore does not put back is a change.
+        fake.adb.on("^settings put system screen_brightness 70$") { "" }
+        assertEquals(Cli.EXIT_FAILED, fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "brightness"))
+
+        assertEquals(
+            listOf(
+                "rehearse=brightness result=pass reason=ok", "rehearse=two-settings result=pass reason=ok", "rehearse=brightness result=fail reason=changed",
+            ),
+            fake.output.lines().filter { it.startsWith("rehearse=") },
+        )
+        assertTrue(fake.output.lines().any { it.endsWith("not as before: screen_brightness") })
+    }
+
+    @Test
     fun dndsRehearsalStopsAtItsSetupWhenTheOwnersScheduleCouldStartDuringIt() {
         fake.adb.settings["global/zen_mode"] = "0"
         fake.adb.on("^dumpsys notification --zen$") { ZenDump.android13(null, ZenDump.rule13("EVERY_NIGHT_DEFAULT_RULE", null)) }
@@ -167,6 +199,7 @@ class CommandsTest {
         val code = fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "dnd")
 
         assertEquals(listOf("rehearse=dnd result=skipped reason=untestable"), fake.output.lines().filter { it.startsWith("rehearse=") })
+        assertTrue(fake.output.lines().any { it.startsWith("Rehearsal of dnd: not testable on kestrel-api37: ") && it.contains("schedule") })
         assertEquals(Cli.EXIT_PASSED, code)
         // Neither the rehearsal's set_dnd priority nor its undo, set_dnd off, which would snooze the schedule.
         assertTrue(fake.adb.commands.none { it.startsWith("cmd notification set_dnd") })

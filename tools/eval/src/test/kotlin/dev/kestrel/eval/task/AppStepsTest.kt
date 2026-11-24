@@ -157,6 +157,45 @@ class AppStepsTest {
     }
 
     @Test
+    fun firefoxsFirstRunQuestionAboutTheDefaultBrowserMakesItsTasksUntestableAndIsClosedUnanswered() {
+        val run = FakeRun(DeviceKind.A71)
+        FakeFirefox(run.adb)
+        var asking = false
+        // The A71's Firefox, which has not been through its first run, asks Android to make it the default browser when it starts.
+        run.adb.on("^monkey -p org\\.mozilla\\.firefox ") {
+            asking = true
+            ""
+        }
+        run.adb.on("^dumpsys activity activities$") {
+            val front = if (asking) "com.google.android.permissioncontroller/com.android.permissioncontroller.role.ui.RequestRoleActivity" else "org.mozilla.firefox/.App"
+            "  topResumedActivity=ActivityRecord{a1 u0 $front t932}"
+        }
+        run.adb.on("^am stack list$") {
+            val top = if (asking) "com.google.android.permissioncontroller/com.android.permissioncontroller.role.ui.RequestRoleActivity" else "org.mozilla.firefox/org.mozilla.firefox.App"
+            listOf(
+                "RootTask id=932 bounds=[0,0][1080,2400] displayId=0 userId=0",
+                "  taskId=932: org.mozilla.firefox/org.mozilla.firefox.App bounds=[0,0][1080,2400] userId=0 visible=true topActivity=ComponentInfo{$top}",
+                "RootTask id=1 bounds=[0,0][1080,2400] displayId=0 userId=0",
+                "  taskId=940: com.sec.android.app.launcher/.activities.LauncherActivity bounds=[0,0][1080,2400] userId=0 visible=true topActivity=ComponentInfo{com.sec.android.app.launcher/.activities.LauncherActivity}",
+            ).joinToString("\n")
+        }
+        run.adb.on("^am stack remove (\\d+)$") {
+            if (it.groupValues[1] == "932") asking = false
+            ""
+        }
+        run.adb.hook("SCREEN_HAS") { "count=0 bounds=none app=com.google.android.permissioncontroller" }
+
+        for (setup in listOf(FirefoxTab(), FirefoxNewTab("https://en.wikipedia.org/wiki/Common_kestrel", FakeFirefox.WIKI_ADDRESS))) {
+            assertEquals(SetupResult.Untestable(Firefox.FIRST_RUN_WHY), setup.apply(run.scope))
+            assertTrue(run.restores.runAll().isEmpty())
+            assertFalse(asking)
+        }
+        assertEquals(listOf("am stack remove 932", "am stack remove 932"), run.adb.commands.filter { it.startsWith("am stack remove") })
+        assertTrue(run.adb.commands.none { it.startsWith("input keyevent") })
+        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
+    }
+
+    @Test
     fun firefoxWikisRehearsalClosesOnlyItsOwnSelectedTabThroughTheCountersMenu() {
         val run = FakeRun()
         val firefox = FakeFirefox(run.adb)

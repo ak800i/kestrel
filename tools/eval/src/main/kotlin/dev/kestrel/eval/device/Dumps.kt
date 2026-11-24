@@ -99,6 +99,21 @@ object Dumps {
     fun appOpMode(lines: List<String>, op: String): String =
         lines.firstNotNullOfOrNull { Regex("^\\s*${Regex.escape(op)}:\\s*(\\w+)").find(it)?.groupValues?.get(1) } ?: "default"
 
+    /**
+     * The ids of the root tasks in `am stack list` that hold a task of [packageName] whose top activity's class ends with
+     * [activity], such as a Firefox task that still shows Android's question about the default browser after Firefox stopped.
+     */
+    fun rootTasksAsking(list: List<String>, packageName: String, activity: String): List<Int> {
+        val tasks = mutableListOf<Int>()
+        var root: Int? = null
+        for (line in list) {
+            Regex("^\\s*RootTask id=(\\d+)").find(line)?.let { root = it.groupValues[1].toInt() }
+            val task = Regex("^\\s*taskId=\\d+: ([\\w.]+)/\\S+ .*\\btopActivity=ComponentInfo\\{[\\w.]+/([\\w.$]+)\\}").find(line) ?: continue
+            if (task.groupValues[1] == packageName && task.groupValues[2].endsWith(activity)) root?.let { if (it !in tasks) tasks.add(it) }
+        }
+        return tasks
+    }
+
     /** The activity in front as `<package>/<class>`, from `dumpsys activity activities`, or null when none is resumed. */
     fun resumedActivity(dump: List<String>): String? {
         val names = listOf(

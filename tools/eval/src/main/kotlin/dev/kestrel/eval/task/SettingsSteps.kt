@@ -90,7 +90,9 @@ data class NightMode(val on: Boolean) : Check {
 /**
  * Automatic brightness off and `screen_brightness` at [setting] for the run (design D8 of sub-project 6; 200 is 96 % on
  * AOSP's slider and 78 % on a linear one, far from the 30 % that the task asks for), after a restore that puts back
- * both values read before it, the brightness before its mode.
+ * both values read before it, the brightness before its mode. With automatic brightness on, the device changes
+ * `screen_brightness` itself (One UI on the A71 does), so the rehearsal's probe compares the brightness only when the
+ * mode was manual, and the mode always.
  */
 data class ManualBrightness(val setting: Int = 200) : Setup {
     override fun apply(scope: RunScope): SetupResult {
@@ -98,7 +100,7 @@ data class ManualBrightness(val setting: Int = 200) : Setup {
         val level = scope.setting("system", LEVEL)
         val undo = listOfNotNull(
             level.takeIf { it != "null" }?.let { "settings put system $LEVEL $it" },
-            mode.takeIf { it != "null" }?.let { "settings put system $MODE $it" },
+            if (mode == "null") "settings delete system $MODE" else "settings put system $MODE $mode",
         )
         val byHand = "Run: adb -s ${scope.device.serial} shell \"${undo.joinToString("; ")}\""
         scope.restores.push("the brightness as before", byHand) { undo.forEach { scope.device.idempotent(it) } }
@@ -109,9 +111,13 @@ data class ManualBrightness(val setting: Int = 200) : Setup {
         return SetupResult.Ready
     }
 
-    override fun probe(scope: RunScope): Map<String, String> = mapOf(MODE to scope.setting("system", MODE), LEVEL to scope.setting("system", LEVEL))
+    override fun probe(scope: RunScope): Map<String, String> {
+        val mode = scope.setting("system", MODE)
+        return if (mode == AUTOMATIC) mapOf(MODE to mode) else mapOf(MODE to mode, LEVEL to scope.setting("system", LEVEL))
+    }
 
     companion object {
+        private const val AUTOMATIC = "1"
         const val MODE = "screen_brightness_mode"
         const val LEVEL = "screen_brightness"
     }
