@@ -11,6 +11,7 @@ import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.act.TouchSource
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -34,15 +35,34 @@ class ScreenServiceRule : ExternalResource() {
 
     val automation: UiAutomation get() = Companion.automation
 
-    override fun before() {
-        runBlocking {
-            // A mode that an interrupted run stored would turn Kestrel on when its service connects (section 8.5).
-            graph.settings.set(SettingKeys.LISTENING, ListeningSetting())
-            shell("settings delete secure enabled_accessibility_services")
-            withTimeout(10_000) { graph.screen.first { it == null } }
-            shell("settings put secure enabled_accessibility_services $SERVICE")
-            shell("settings put secure accessibility_enabled 1")
-            session = withTimeout(10_000) { graph.screen.filterNotNull().first() }
+    override fun before() = runBlocking { start() }
+
+    private suspend fun start() {
+        // A mode that an interrupted run stored would turn Kestrel on when its service connects (section 8.5).
+        graph.settings.set(SettingKeys.LISTENING, ListeningSetting())
+        shell("settings delete secure enabled_accessibility_services")
+        withTimeout(10_000) { graph.screen.first { it == null } }
+        shell("settings put secure enabled_accessibility_services $SERVICE")
+        shell("settings put secure accessibility_enabled 1")
+        session = withTimeout(10_000) { graph.screen.filterNotNull().first() }
+    }
+
+    /**
+     * Runs [block] with [source] as this device's touch rule and branch (design D19 of sub-project 5), and puts back the
+     * stored one afterwards. The source is stored, as the debug hook `agent-touch-source` stores it, and a new session
+     * starts, because a session reads the stored source only after it is published, and that read would replace a
+     * source that a test gave the session itself.
+     */
+    suspend fun <T> withTouchSource(source: TouchSource, block: suspend () -> T): T {
+        val stored = graph.settings.get(SettingKeys.TOUCH_RULE)
+        graph.settings.set(SettingKeys.TOUCH_RULE, source)
+        try {
+            start()
+            withTimeout(5_000) { while (session.touchSource != source) delay(20) }
+            return block()
+        } finally {
+            graph.settings.set(SettingKeys.TOUCH_RULE, stored)
+            session.touchSource = stored
         }
     }
 

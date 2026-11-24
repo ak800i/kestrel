@@ -6,11 +6,18 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.kestrel.app.commands.TextFieldTests.awaitFocus
+import dev.kestrel.app.commands.TextFieldTests.awaitKeyboard
+import dev.kestrel.app.commands.TextFieldTests.awaitLine
+import dev.kestrel.app.commands.TextFieldTests.field
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.OwnActions
 import dev.kestrel.screen.act.Touch
+import dev.kestrel.screen.act.TouchBranch
+import dev.kestrel.screen.act.TouchRule
+import dev.kestrel.screen.act.TouchSource
 import dev.kestrel.screen.model.ScreenElement
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -165,6 +172,42 @@ class OwnActionsTest {
             collector.cancel()
         }
         Unit
+    }
+
+    /**
+     * Branch B on the device (review M2 of the touch fix de4eeb7): a change of the focused field's text is no signal while
+     * no keyboard shows, as when an app fills its own field, and the same change while the keyboard shows is the owner's
+     * typing, one signal. Each change is one key of `input text`, which edits the field as a keyboard does and bypasses
+     * Kestrel's own actions; a text that an accessibility service sets reports no text change on Android 17 (the probe's
+     * set-text case). The second half reads Android's real window list, so it fails when Kestrel no longer sees the
+     * keyboard's window.
+     */
+    @Test
+    fun onBranchBATextChangeOfTheFocusedFieldCountsOnlyWhileTheKeyboardShows() = runBlocking {
+        screen.withTouchSource(TouchSource(TouchRule.CREDITS, TouchBranch.B)) {
+            TestFinger(screen.automation).use { finger ->
+                screen.open("EditActivity", "Edit fixture")
+                assertTrue(session.startTouchWatcher())
+                screen.awaitInputWindow(WATCHER)
+                fun Probe.signals() = touches.count { (touch, _) -> touch.deviceId == OwnActions.SIGNAL_DEVICE }
+
+                assertTrue(perform(id("text_notes"), AccessibilityNodeInfo.ACTION_FOCUS))
+                screen.awaitFocus("text_notes")
+                screen.awaitKeyboard(shown = false)
+                val app = probe("change without a keyboard") { screen.shell("input text a") }
+                screen.awaitLine("Notes: \"a\" 1-1")
+                assertEquals("A text change without a keyboard was a signal: ${app.line(Build.VERSION.SDK_INT)}", 0, app.signals())
+
+                val notes = screen.field("text_notes").bounds
+                finger.tap(notes.centerX, notes.centerY)
+                screen.awaitKeyboard(shown = true)
+                // The tap's own signals end before the typing starts.
+                delay(1_000)
+                val owner = probe("typing with the keyboard") { screen.shell("input text b") }
+                screen.awaitLine("Notes: \"ab\" 2-2")
+                assertEquals("The typing with the keyboard up was not one signal: ${owner.line(Build.VERSION.SDK_INT)}", 1, owner.signals())
+            }
+        }
     }
 
     private companion object {
