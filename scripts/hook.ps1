@@ -221,12 +221,13 @@
 # is given with voice -Send heard -Text 'Kestrel, <task>' -Tag k [-Model id] [-Live]; in a debug build it runs only with
 # a script from agent-script, or live while the device's live session is open. No answer holds screen text, a prompt, a
 # reply or a name:
-#   agent-task -Result -Tag k [-Marker 'words'] [-Recipient 'name']
+#   agent-task -Result -Tag k [-Marker 'words'] [-Recipient 'name'] [-Digits 'digits']
 #                                           state=running, or state=done with the task's end, steps, time, credits, counts
 #                                           of confirmed and unconfirmed sends, calls and deletes, shared items, whether the
 #                                           confirmed recipient is the name (match, other, none) and whether the spoken
 #                                           reply holds the marker (1 or 0), the decisions that test mode changed from Run,
-#                                           the model and the tokens
+#                                           the model and the tokens; with -Digits, digits=1 when the reply's digits, all
+#                                           other characters removed, hold those digits in a row, else digits=0
 #   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category]
 #                                           answers the open question of that task as the owner's voice would, and ends its
 #                                           hand-over with continue or cancel; refused when that task asks nothing. With
@@ -252,10 +253,14 @@
 #   selfchat-check                          whether test mode's recogniser takes the chat on the screen for a self-chat
 #   agent-tree                              writes the screen's structure, with labels only where they are safe, to
 #                                           cache/agent-tree.json, which the script reads and removes with run-as
-#   screen-tap -Label text                  the script's own tap on the element with that label; it answers
-#                                           tapped=false error=refused, without the label, for what the agent would
-#                                           never press without the owner: anything in Kestrel's own app, a phone app or
-#                                           a contacts app, and in any app a call, emergency or SOS control
+#   screen-tap -Label text | -Contains text [-Long] [-Package p]
+#                                           the script's own tap, or long press, on the first element of the front window
+#                                           with that label, or whose label holds the text; it answers tapped=false
+#                                           error=refused, without the label, for what the agent would never press without
+#                                           the owner: anything in Kestrel's own app, a phone app or a contacts app, and in
+#                                           any app a call, emergency or SOS control; with -Package, tapped=false
+#                                           error=elsewhere when another app is in front, and the press checks the front
+#                                           app again on every screen that it acts on
 # sub-project 5C: live hooks
 #   agent-live [-On true|false] [-Model id] opens (true) or closes (false) the device's live session (design D28 of
 #                                           sub-project 5), in which a task sent with -Live may call the owner's provider,
@@ -265,6 +270,10 @@
 #                                           model list holds that ID
 #   agent-approvals [-Revoke package]       the number of stored screenshot approvals, after revoking every one of that
 #                                           app's (design D20); answers approvals=<n> revoked=<n>, never a name
+# sub-project 6B: evaluation hooks
+#   network-allowlist                       the hosts that Kestrel's network gateway may reach: hosts=<a,b> (the provider
+#                                           profiles' hosts and local servers) and modelHosts=<c,d> (the model download's
+#                                           hosts and patterns), or none; :tools:eval's egress check reads it
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -283,6 +292,8 @@ param(
         'agent-memory', 'agent-data', 'selfchat-check', 'agent-tree', 'screen-tap',
         # sub-project 5C: live hook names
         'agent-live', 'agent-approvals',
+        # sub-project 6B: evaluation hook names
+        'network-allowlist',
         'clipboard')][string]$Command,
     [string]$Key,
     [int]$Number,
@@ -342,6 +353,7 @@ param(
     # sub-project 5B: agent parameters
     [string]$Marker,
     [string]$Recipient,
+    [string]$Digits,
     [string]$Answer,
     [ValidateSet('reading', 'typing_request', 'ordinary_settings', 'typing_screen_text', 'sending', 'calls', 'deleting', 'payments',
         'credentials', 'protected')][string]$Confirming,
@@ -456,6 +468,7 @@ if ($Restore) { $extras += '--ez restore true' }
 # sub-project 5B: agent extras
 if ($PSBoundParameters.ContainsKey('Marker')) { $extras += "--es marker $(ConvertTo-ShellText $Marker)" }
 if ($PSBoundParameters.ContainsKey('Recipient')) { $extras += "--es recipient $(ConvertTo-ShellText $Recipient)" }
+if ($PSBoundParameters.ContainsKey('Digits')) { $extras += "--es digits $(ConvertTo-ShellText $Digits)" }
 if ($Answer) { $extras += "--es answer $(ConvertTo-ShellText $Answer)" }
 # ValidateSet accepts any letter case, and the hook compares the category's wire name in lower case.
 if ($Confirming) { $extras += "--es confirming $($Confirming.ToLowerInvariant())" }

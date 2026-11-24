@@ -107,6 +107,19 @@ Describe 'hook.ps1' {
         $output | Should -BeLike '*agent-memory -Has needs -Key; give the key to look for.*'
     }
 
+    It 'accepts network-allowlist and agent-task -Digits, and reaches the argument checks' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $allowlist = (& pwsh -NoProfile -File $hook -Serial no-such-device network-allowlist -Boost -1 2>&1) -join "`n"
+        $digits = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-task -Result -Tag t1 -Digits 2025550143 -Boost -1 2>&1) -join "`n"
+
+        $allowlist | Should -Not -BeLike "*Cannot validate argument on parameter 'Command'*"
+        $allowlist | Should -BeLike '*-Boost -1 is negative*'
+        $digits | Should -Not -BeLike '*A parameter cannot be found*'
+        $digits | Should -BeLike '*-Boost -1 is negative*'
+    }
+
     It 'accepts agent-live, which opens and closes the live session of sitting 2, and reaches the argument checks' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'

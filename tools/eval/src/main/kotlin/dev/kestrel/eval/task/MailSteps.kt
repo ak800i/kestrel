@@ -27,7 +27,8 @@ data object MailToSelf : Setup {
         scope.clock.sleep(2.seconds)
         if (Dumps.resumedPackage(scope.device.read("dumpsys activity activities")) != GMAIL) throw SetupFailed("Gmail's compose screen did not open.")
         val tapped = try {
-            scope.hooks.screenTap("Send")["tapped"] == "true"
+            // Only while Gmail is in front, which the hook checks again on every screen that its tap acts on (plan 6B).
+            scope.hooks.screenTap(label = "Send", packageName = GMAIL)["tapped"] == "true"
         } catch (e: HookLost) {
             true
         }

@@ -6,9 +6,15 @@ package dev.kestrel.eval.hook
  * was lost, so that the caller reads the state back.
  */
 class Hooks(private val client: HookClient) {
-    /** agent-task -Result: `state=running`, or `state=done` with the task's end, counts, model and tokens; with [marker], whether the reply held it. */
-    fun agentTask(tag: String, marker: String? = null, recipient: String? = null): HookAnswer =
-        read("agent-task", Extra.Flag("result", true), Extra.Text("tag", tag), marker?.let { Extra.Text("marker", it) }, recipient?.let { Extra.Text("recipient", it) })
+    /**
+     * agent-task -Result: `state=running`, or `state=done` with the task's end, counts, model and tokens; with [marker],
+     * whether the reply held it, and with [digits] (design D17 of sub-project 6), whether its digits held them.
+     */
+    fun agentTask(tag: String, marker: String? = null, recipient: String? = null, digits: String? = null): HookAnswer =
+        read(
+            "agent-task", Extra.Flag("result", true), Extra.Text("tag", tag), marker?.let { Extra.Text("marker", it) },
+            recipient?.let { Extra.Text("recipient", it) }, digits?.let { Extra.Text("digits", it) },
+        )
 
     /** agent-state: the task's phase, its open question's kind, the hand-over and the open confirmation's category. */
     fun agentState(tag: String): HookAnswer = read("agent-state", Extra.Text("tag", tag))
@@ -55,8 +61,19 @@ class Hooks(private val client: HookClient) {
             state?.let { Extra.Text("state", it) },
         )
 
-    /** screen-tap: the script's own tap on the element with exactly [label]; refused in Kestrel, a phone app and a contacts app. */
-    fun screenTap(label: String): HookAnswer = act("screen-tap", Extra.Text("label", label))
+    /**
+     * screen-tap: the script's own tap, or with [long] long press, on the first element with exactly [label], or whose label
+     * holds [contains]; with [packageName] only while that app is in front (design D17 of sub-project 6). Refused in
+     * Kestrel, a phone app and a contacts app.
+     */
+    fun screenTap(label: String? = null, contains: String? = null, long: Boolean = false, packageName: String? = null): HookAnswer =
+        act(
+            "screen-tap", label?.let { Extra.Text("label", it) }, contains?.let { Extra.Text("contains", it) },
+            Extra.Flag("long", true).takeIf { long }, packageName?.let { Extra.Text("package", it) },
+        )
+
+    /** network-allowlist: the hosts of the gateway's allowlist and the model download's hosts (`hosts=`, `modelHosts=`). */
+    fun networkAllowlist(): HookAnswer = read("network-allowlist")
 
     /** selfchat-check: whether test mode's recogniser takes the chat on the screen for a self-chat. */
     fun selfchatCheck(): Boolean = read("selfchat-check")["selfchat"] == "yes"

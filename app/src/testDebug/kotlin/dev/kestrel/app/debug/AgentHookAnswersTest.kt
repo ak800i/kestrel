@@ -65,6 +65,40 @@ class AgentHookAnswersTest {
     }
 
     @Test
+    fun digitsAreComparedOnThePhoneWithoutEverythingElseOfTheReply() {
+        assertEquals(1, AgentHookAnswers.digits("Ana Test's number is +1 202-555-0143.", "2025550143"))
+        assertEquals(1, AgentHookAnswers.digits("Your battery is at 87 percent.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("Your battery is at 86 percent.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("No number here.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("87", null))
+        val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 1)
+
+        assertTrue(AgentHookAnswers.result(report, "It is 87 percent.", null, null, "87").endsWith(" digits=1"))
+        assertFalse(AgentHookAnswers.result(report, "It is 87 percent.", null, null).contains("digits="))
+    }
+
+    @Test
+    fun screenTapFindsALabelOrAPartOfItInTheFrontWindowAndTheAllowlistIsSorted() {
+        val front = WindowSummary(1, WindowKind.APPLICATION, "com.google.android.gm", bounds = IntRect(0, 0, 100, 100), active = true)
+        val behind = WindowSummary(2, WindowKind.APPLICATION, "org.mozilla.firefox", bounds = IntRect(0, 0, 100, 100), layer = -1)
+        val snapshot = ScreenSnapshot(
+            0, listOf(front, behind),
+            listOf(
+                button("Kestrel test maple heron").copy(windowId = 2),
+                button("Inbox"),
+                button("me · Kestrel test maple heron · 23:59"),
+                button("Delete"),
+            ),
+        )
+
+        assertEquals(listOf(3), AgentHookAnswers.tapMatches(snapshot, "Delete", null))
+        assertEquals(listOf(2), AgentHookAnswers.tapMatches(snapshot, null, "KESTREL TEST maple"))
+        assertEquals(emptyList<Int>(), AgentHookAnswers.tapMatches(snapshot, "Kestrel test", null))
+        assertEquals("api.githubcopilot.com,github.com", AgentHookAnswers.hostList(listOf("github.com", "api.githubcopilot.com")))
+        assertEquals("none", AgentHookAnswers.hostList(emptyList()))
+    }
+
+    @Test
     fun aliasesMapPackagesAndRefuseAnythingElse() {
         assertEquals(mapOf("dev.kestrel.testapp" to "org.telegram.messenger"), AgentHookAnswers.aliases("dev.kestrel.testapp=org.telegram.messenger"))
         assertEquals(emptyMap<String, String>(), AgentHookAnswers.aliases(""))

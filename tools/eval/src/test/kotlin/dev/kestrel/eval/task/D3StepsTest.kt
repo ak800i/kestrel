@@ -75,7 +75,7 @@ class D3StepsTest {
             ),
             run.adb.commands.filter { it.startsWith("am start") },
         )
-        assertEquals(mapOf("label" to "Send"), run.adb.hookCalls("SCREEN_TAP").single())
+        assertEquals(mapOf("label" to "Send", "package" to "com.google.android.gm"), run.adb.hookCalls("SCREEN_TAP").single())
         assertEquals(SetupResult.Untestable("corpus\\owner\\a71-config.json gives no address of this device's Gmail account"), MailToSelf.apply(FakeRun().scope))
     }
 

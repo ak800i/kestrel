@@ -53,6 +53,16 @@ internal class AgentHooks(private val graph: AppGraph, private val context: Cont
             chosen.forEach { graph.screenshotApprovals.revoke(it) }
             "approvals=${graph.settings.get(dev.kestrel.app.SettingKeys.SCREENSHOT_APPROVALS).approvals.size} revoked=${chosen.size}"
         }
+        // sub-project 6B: command branches
+        // The hosts that Kestrel's network gateway may reach, for :tools:eval's egress check (design D17 of sub-project 6):
+        // the provider profiles' hosts and local servers, as the allowlist job applies them, and the model download's hosts.
+        // Host names are no screen text; the tool writes them only into the results folder, which git ignores.
+        "NETWORK_ALLOWLIST" -> {
+            val setting = graph.settings.get(dev.kestrel.app.SettingKeys.PROVIDERS)
+            val hosts = dev.kestrel.app.providers.ProviderAllowlist.profileHosts(setting, graph.catalog) +
+                dev.kestrel.app.providers.ProviderAllowlist.localServers(setting)
+            "hosts=${AgentHookAnswers.hostList(hosts)} modelHosts=${AgentHookAnswers.hostList(graph.models.manifest.downloadHosts)}"
+        }
         else -> throw HookError("unknown agent hook")
     }
 
@@ -63,6 +73,8 @@ internal class AgentHooks(private val graph: AppGraph, private val context: Cont
             "AGENT_MEMORY", "AGENT_DATA", "SELFCHAT_CHECK", "AGENT_TREE", "SCREEN_TAP",
             // sub-project 5C: commands
             "AGENT_LIVE", "AGENT_APPROVALS",
+            // sub-project 6B: commands
+            "NETWORK_ALLOWLIST",
         )
     }
 }

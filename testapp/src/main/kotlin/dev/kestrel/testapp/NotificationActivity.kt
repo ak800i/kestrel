@@ -14,7 +14,9 @@ import android.os.Bundle
  * (design spec, Appendix A): a notification with a long text, which the shade can expand, and an action. With the extra
  * `cancel` it removes the notification instead. With the extra `headsUp` it posts a second notification on a channel of
  * high importance, which Android shows as a heads-up, with [MARKER] in its text, which no observation may hold (design
- * D9 of sub-project 5). The tests grant the test app the notification permission.
+ * D9 of sub-project 5). With the extra `marker` it posts a notification titled "Kestrel test <marker>", which
+ * :tools:eval's notification-read reads back (design D17 of sub-project 6). The tests grant the test app the notification
+ * permission.
  */
 class NotificationActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -23,6 +25,17 @@ class NotificationActivity : Activity() {
         if (intent.getBooleanExtra(EXTRA_CANCEL, false)) {
             notifications.cancel(ID)
             notifications.cancel(HEADS_UP_ID)
+            notifications.cancel(MARKER_ID)
+        } else if (intent.getStringExtra(EXTRA_MARKER) != null) {
+            notifications.createNotificationChannel(NotificationChannel(CHANNEL, "Fixtures", NotificationManager.IMPORTANCE_DEFAULT))
+            notifications.notify(
+                MARKER_ID,
+                Notification.Builder(this, CHANNEL)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("Kestrel test ${intent.getStringExtra(EXTRA_MARKER)}")
+                    .setContentText("A test notification of Kestrel's evaluation.")
+                    .build(),
+            )
         } else if (intent.getBooleanExtra(EXTRA_HEADS_UP, false)) {
             notifications.createNotificationChannel(NotificationChannel(HEADS_UP_CHANNEL, "Fixture alerts", NotificationManager.IMPORTANCE_HIGH))
             notifications.notify(
@@ -57,6 +70,8 @@ class NotificationActivity : Activity() {
     companion object {
         const val EXTRA_CANCEL = "cancel"
         const val EXTRA_HEADS_UP = "headsUp"
+        const val EXTRA_MARKER = "marker"
+        private const val MARKER_ID = 3
         const val TITLE = "Fixture reminder"
         const val HEADS_UP_TITLE = "Fixture alert"
         const val MARKER = "KX4711"

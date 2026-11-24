@@ -121,6 +121,24 @@ class AgentHooksTest {
     }
 
     @Test
+    fun screenTapTakesAPartOfALabelALongPressAndAPackageThatMustBeInFront() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+
+        assertEquals("tapped=false error=elsewhere", answer(hook("SCREEN_TAP --es label SEND --es package com.google.android.gm")))
+        assertEquals("tapped=true count=1", answer(hook("SCREEN_TAP --es contains SEN --ez long true --es package $FIXTURES")))
+        screen.awaitElement { it.label == "Long-pressed Send" }
+        assertTrue(hook("SCREEN_TAP --es package $FIXTURES").contains("result=1, data=\"error: add --es label <text> or --es contains <text>\""))
+    }
+
+    @Test
+    fun networkAllowlistNamesTheModelHostsAndOnlyHostNames() = runBlocking {
+        val reply = answer(hook("NETWORK_ALLOWLIST"))
+
+        assertTrue(reply, Regex("^hosts=(none|[a-z0-9.,*-]+) modelHosts=[a-z0-9.,*-]+$").matches(reply))
+        assertTrue(reply, reply.contains("huggingface.co"))
+    }
+
+    @Test
     fun screenTapRefusesACallControlInAnyAppWithoutNamingIt() = runBlocking {
         screen.shell("run-as $FIXTURES rm -f files/presses.log")
         try {

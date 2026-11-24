@@ -18,13 +18,41 @@ import java.util.Locale
  * or a count.
  */
 internal object AgentHookAnswers {
-    /** agent-task -Result's answer for a task that ended. */
-    fun result(report: TaskReport, spoken: String, marker: String?, recipient: String?): String =
+    /** agent-task -Result's answer for a task that ended; with [digits] (agent-task -Digits), `digits=1|0` at its end. */
+    fun result(report: TaskReport, spoken: String, marker: String?, recipient: String?, digits: String? = null): String =
         "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
             "credits=${String.format(Locale.ROOT, "%.2f", report.credits)} confirmed=${report.confirmed} " +
             "unconfirmed=${report.unconfirmed} shareItems=${report.shareItems} recipient=${recipient(report.recipients, recipient)} " +
             "marker=${marker(spoken, marker)} beforeTestMode=${report.beforeTestMode} model=${word(report.modelId)} " +
-            "in=${report.inputTokens} out=${report.outputTokens} cacheRead=${report.cacheRead} cacheWrite=${report.cacheWrite}"
+            "in=${report.inputTokens} out=${report.outputTokens} cacheRead=${report.cacheRead} cacheWrite=${report.cacheWrite}" +
+            (digits?.let { " digits=${digits(spoken, it)}" } ?: "")
+
+    /**
+     * 1 when the spoken reply's ASCII digits, with every other character removed, hold the digits of [digits] in a row, else
+     * 0 (design D17 of sub-project 6): a phone number or a battery level said in any format, never the reply itself.
+     */
+    fun digits(spoken: String, digits: String?): Int {
+        val wanted = digits.orEmpty().filter { it in '0'..'9' }
+        if (wanted.isEmpty()) return 0
+        return if (wanted in spoken.filter { it in '0'..'9' }) 1 else 0
+    }
+
+    /**
+     * The elements of the front window that screen-tap may press, in the snapshot's order: those whose label is [label], or
+     * with [contains] those whose label holds that text without letter case (design D17 of sub-project 6).
+     */
+    fun tapMatches(snapshot: ScreenSnapshot, label: String?, contains: String?): List<Int> {
+        val front = ScreenTree.frontWindow(snapshot) ?: return emptyList()
+        return snapshot.elements.indices.filter { index ->
+            val element = snapshot.elements[index]
+            val text = element.label
+            element.windowId == front.id && text != null &&
+                if (contains != null) text.contains(contains, ignoreCase = true) else text == label
+        }
+    }
+
+    /** network-allowlist's list of host names or patterns, sorted and joined with commas; `none` for an empty list. */
+    fun hostList(hosts: Collection<String>): String = hosts.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted().joinToString(",").ifEmpty { "none" }
 
     /** Whether one of the task's confirmed [recipients] is [wanted], compared folded: match, other, or none without either. */
     fun recipient(recipients: List<String>, wanted: String?): String = when {

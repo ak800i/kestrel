@@ -19,9 +19,11 @@ import dev.kestrel.datatools.AndroidDataPort
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.EmergencyGuard
 import dev.kestrel.safety.SelfChats
+import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.TouchBranch
 import dev.kestrel.screen.act.TouchRule
 import dev.kestrel.screen.act.TouchSource
+import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,14 +46,16 @@ import java.time.LocalDate
  * a reply, a name or a tool's arguments; [AgentHookAnswers] builds the lines.
  */
 internal class AgentTaskHooks(private val graph: AppGraph, private val context: Context) {
-    // agent-task -Result -Tag k [--es marker] [--es recipient]
+    // agent-task -Result -Tag k [--es marker] [--es recipient] [--es digits]
     fun task(intent: Intent): String {
         if (!intent.getBooleanExtra(EXTRA_RESULT, false)) throw HookError("add --ez result true")
         val (_, number) = taggedTask(intent)
         val runner = graph.agent
         val ended = runner.ended(number)
         if (ended == null || runner.running(number)) return "state=running"
-        return AgentHookAnswers.result(ended.report, ended.spoken, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT))
+        return AgentHookAnswers.result(
+            ended.report, ended.spoken, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS),
+        )
     }
 
     // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>], as the owner's
@@ -286,22 +290,34 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         return "tree=written path=${context.cacheDir.name}/$TREE_FILE windows=${snapshot.windows.size} elements=${snapshot.elements.size}"
     }
 
-    // screen-tap --es label <text>: the script's own tap on the element whose label equals the text, compared on the phone.
+    // screen-tap (--es label <text> | --es contains <text>) [--ez long true] [--es package <package>]: the script's own tap,
+    // or long press, on the first element of the front window whose label equals the text or holds it, compared on the
+    // phone (design D17 of sub-project 6). With a package it acts only while that app is in front, and the press checks the
+    // front app again on every snapshot that it acts on, so that it never lands in an app that came to the front meanwhile.
     suspend fun tap(intent: Intent): String {
-        val label = intent.getStringExtra(EXTRA_LABEL)?.takeIf { it.isNotEmpty() } ?: throw HookError("add --es label <text>")
+        val label = intent.getStringExtra(EXTRA_LABEL)?.takeIf { it.isNotEmpty() }
+        val contains = intent.getStringExtra(EXTRA_CONTAINS)?.takeIf { it.isNotEmpty() }
+        if ((label == null) == (contains == null)) throw HookError("add --es label <text> or --es contains <text>")
+        val wanted = intent.getStringExtra(EXTRA_PACKAGE)?.takeIf { it.isNotEmpty() }
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val snapshot = session.snapshots.current().snapshot
         val front = ScreenTree.frontWindow(snapshot) ?: return "tapped=false count=0"
-        val matches = snapshot.elements.indices.filter { snapshot.elements[it].windowId == front.id && snapshot.elements[it].label == label }
+        if (wanted != null && front.packageName != wanted) return "tapped=false error=elsewhere"
+        val matches = AgentHookAnswers.tapMatches(snapshot, label, contains)
         val phoneApp = context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
         // Never what the agent would press only after the owner's yes or never, so that a script's tap can never place a
         // call (process rule 10). The answer names no label.
-        if (AgentHookAnswers.tapRefused(snapshot, matches.firstOrNull(), label, EmergencyGuard.PHONE_PACKAGES + listOfNotNull(phoneApp))) {
+        if (AgentHookAnswers.tapRefused(snapshot, matches.firstOrNull(), label ?: contains!!, EmergencyGuard.PHONE_PACKAGES + listOfNotNull(phoneApp))) {
             return "tapped=false error=refused"
         }
         val target = matches.firstOrNull()?.let { snapshot.elements[it] } ?: return "tapped=false count=0"
-        val done = session.actions.tap(target.key) is dev.kestrel.screen.act.ActionResult.Done
-        return "tapped=$done count=${matches.size}"
+        val guard = wanted?.let { app -> { screen: ScreenSnapshot -> ScreenTree.frontWindow(screen)?.packageName == app } }
+        val result = if (intent.getBooleanExtra(EXTRA_LONG, false)) {
+            session.actions.longPress(target.key, guard = guard)
+        } else {
+            session.actions.tap(target.key, guard = guard)
+        }
+        return "tapped=${result is ActionResult.Done} count=${matches.size}"
     }
 
     // The task number of the transcript with the hook's tag (plan 4D's H1).
@@ -360,6 +376,10 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         private const val EXTRA_HAS = "has"
         private const val EXTRA_TOOL = "tool"
         private const val EXTRA_LABEL = "label"
+        private const val EXTRA_CONTAINS = "contains"
+        private const val EXTRA_PACKAGE = "package"
+        private const val EXTRA_LONG = "long"
+        private const val EXTRA_DIGITS = "digits"
         private const val KEY_EMAILS = "ownerEmails"
         private const val KEY_VIBER = "viberSelfChatName"
         private const val KEY_WHATSAPP = "whatsappOwnName"
