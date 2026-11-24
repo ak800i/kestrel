@@ -33,4 +33,9 @@ data class TaskRequest(
         "TaskRequest(idLength=${id.length}, textLength=${text.length}, knownNames=${knownNames.size}, " +
             "conversation=${conversation?.text?.length}, ownerHistory=${ownerHistory.size}, carried=${carried.sorted()}, " +
             "checklist=$checklist, resume=$resume, limits=$limits)"
+
+    companion object {
+        /** The first line of every [conversation] block, which the system prompt names (design 8.4 of sub-project 7). */
+        const val CONVERSATION_HEADER = "This conversation so far:"
+    }
 }
