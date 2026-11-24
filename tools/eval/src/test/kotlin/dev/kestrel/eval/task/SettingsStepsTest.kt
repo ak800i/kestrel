@@ -443,6 +443,67 @@ class SettingsStepsTest {
         assertEquals(listOf("system/flip_font_style"), run.scope.putBack.stored)
     }
 
+    @Test
+    fun theTileThatSystemUiAddedIsRemovedThroughSystemUiAndItsOwnRecordIsNamedForTheHand() {
+        val run = FakeRun(DeviceKind.EMULATOR)
+        // SystemUI's new pipeline (API 35 and later) applies set-tiles and stores the list itself.
+        run.adb.on("^cmd statusbar set-tiles '(.*)'$") { run.adb.settings["secure/sysui_qs_tiles"] = it.groupValues[1]; "" }
+        run.adb.settings.putAll(mapOf("secure/sysui_qs_tiles" to "internet,bt,custom(com.example/.Tile)", "secure/qs_auto_tiles" to "work"))
+
+        assertEquals(SetupResult.Ready, KeepQuickSettingsTiles.apply(run.scope))
+        // The run's first font size change: SystemUI adds the Font size tile and records it.
+        run.adb.settings["secure/sysui_qs_tiles"] = "internet,bt,custom(com.example/.Tile),font_scaling"
+        run.adb.settings["secure/qs_auto_tiles"] = "work,font_scaling"
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals("internet,bt,custom(com.example/.Tile)", run.adb.settings["secure/sysui_qs_tiles"])
+        assertTrue(run.adb.commands.toString(), run.adb.commands.contains("cmd statusbar set-tiles 'internet,bt,custom(com.example/.Tile)'"))
+        // SystemUI writes its own record back over any change, so the restore does not write it and says so.
+        assertTrue(run.adb.commands.toString(), run.adb.commands.none { it.startsWith("settings put secure qs_auto_tiles") })
+        assertEquals(listOf("secure/sysui_qs_tiles"), run.scope.putBack.applied)
+        assertEquals(listOf("secure/qs_auto_tiles"), run.scope.putBack.stored)
+        val warning = run.console.warnings.single()
+        assertTrue(warning, warning.contains("secure/qs_auto_tiles") && warning.contains("SystemUI"))
+    }
+
+    @Test
+    fun beforeTheNewPipelineSystemUiAppliesBothTileSettingsWhenTheyAreWrittenBack() {
+        val run = FakeRun(DeviceKind.A71).deletingSettings()
+        run.adb.settings["secure/sysui_qs_tiles"] = "wifi,bt"
+
+        assertEquals(SetupResult.Ready, KeepQuickSettingsTiles.apply(run.scope))
+        run.adb.settings["secure/sysui_qs_tiles"] = "wifi,bt,font_scaling"
+        run.adb.settings["secure/qs_auto_tiles"] = "font_scaling"
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(mapOf("secure/sysui_qs_tiles" to "wifi,bt"), run.adb.settings.toMap())
+        assertTrue(run.adb.commands.toString(), run.adb.commands.none { it.startsWith("cmd statusbar") })
+        assertEquals(listOf("secure/sysui_qs_tiles", "secure/qs_auto_tiles"), run.scope.putBack.applied)
+        assertTrue(run.scope.putBack.stored.isEmpty())
+        assertTrue(run.console.warnings.toString(), run.console.warnings.isEmpty())
+
+        // A run that left the tiles as they were changes nothing.
+        val still = FakeRun(DeviceKind.EMULATOR)
+        still.adb.settings["secure/sysui_qs_tiles"] = "wifi"
+        assertEquals(SetupResult.Ready, KeepQuickSettingsTiles.apply(still.scope))
+        assertTrue(still.restores.runAll().isEmpty())
+        assertTrue(still.adb.commands.toString(), still.adb.commands.none { it.startsWith("cmd statusbar") || it.startsWith("settings put") })
+        assertTrue(still.scope.putBack.applied.isEmpty() && still.scope.putBack.stored.isEmpty())
+    }
+
+    @Test
+    fun tilesThatSystemUiDidNotTakeBackFailTheRestoreWithTheCommand() {
+        val run = FakeRun(DeviceKind.EMULATOR)
+        run.adb.settings["secure/sysui_qs_tiles"] = "wifi,bt"
+
+        assertEquals(SetupResult.Ready, KeepQuickSettingsTiles.apply(run.scope))
+        run.adb.settings["secure/sysui_qs_tiles"] = "wifi,bt,font_scaling"
+
+        val failure = run.restores.runAll().single()
+        assertTrue(failure.byHand, failure.byHand.contains("cmd statusbar set-tiles 'wifi,bt'"))
+        assertTrue(run.scope.putBack.applied.isEmpty())
+    }
+
     /** Lets the fake device delete a setting, as `settings delete` does. */
     private fun FakeRun.deletingSettings(): FakeRun = apply {
         adb.on("^settings delete (\\S+) (\\S+)$") {

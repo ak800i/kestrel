@@ -59,6 +59,9 @@ data class SettingsIs(val namespace: String, val key: String, val wanted: Wanted
 
 /** A setting by its namespace (`system`, `secure` or `global`) and its key. */
 data class SettingKey(val namespace: String, val key: String) {
+    /** The shell command that gives the setting [old] again, or deletes it when it had no value (null). */
+    fun writeBack(old: String?): String = if (old == null) "settings delete $namespace $key" else "settings put $namespace $key ${shellQuoted(old)}"
+
     override fun toString(): String = "$namespace/$key"
 }
 
@@ -132,7 +135,7 @@ data class KeepStoredSettings(
         scope.restores.push("the stored display settings as before", byHand(scope, before)) {
             val after = read(scope)
             val changed = (before.keys + after.keys).filter { before[it] != after[it] }
-            for (setting in changed) scope.device.idempotent(undo(setting, before[setting]))
+            for (setting in changed) scope.device.idempotent(setting.writeBack(before[setting]))
             val now = if (changed.isEmpty()) after else read(scope)
             val (back, left) = changed.partition { now[it] == before[it] }
             for (setting in back) {
@@ -150,7 +153,7 @@ data class KeepStoredSettings(
                         "run's choice until a reboot, or until they are set again by hand in Settings > Display.",
                 )
             }
-            check(left.isEmpty()) { "Still as the run left them; run: " + left.joinToString("; ") { undo(it, before[it]) } }
+            check(left.isEmpty()) { "Still as the run left them; run: " + left.joinToString("; ") { it.writeBack(before[it]) } }
         }
         return SetupResult.Ready
     }
@@ -161,15 +164,12 @@ data class KeepStoredSettings(
 
     /** What the owner does when the restore fails or cannot finish: the old values back, and the run's added keys deleted. */
     private fun byHand(scope: RunScope, before: Map<SettingKey, String>): String {
-        val puts = before.entries.joinToString("; ") { undo(it.key, it.value) }
+        val puts = before.entries.joinToString("; ") { it.key.writeBack(it.value) }
         val skipped = if (except.isEmpty()) "" else ", but not ${except.joinToString()}"
         return "In adb -s ${scope.device.serial} shell, run " + (if (puts.isEmpty()) "" else "$puts; then ") +
             "settings delete <namespace> <key> for each other key of ${NAMESPACES.joinToString()} whose name matches " +
             "'${matching.pattern}'$skipped, because the run added it."
     }
-
-    private fun undo(setting: SettingKey, old: String?): String =
-        if (old == null) "settings delete ${setting.namespace} ${setting.key}" else "settings put ${setting.namespace} ${setting.key} ${shellQuoted(old)}"
 
     private fun read(scope: RunScope): Map<SettingKey, String> = buildMap {
         for (namespace in NAMESPACES) {
@@ -204,10 +204,93 @@ data class KeepStoredSettings(
             SettingKey("secure", "accessibility_captioning_font_scale") to StoredEffect.AT_ONCE,
             // API 34 and later: set to 1 the first time that the font size changes (SystemUI's FontScalingDialogDelegate,
             // Settings' FontSizeData). Its one reader, SystemUI's config_quickSettingsAutoAdd, adds the Font size tile
-            // once when it is first set; writing it back changes nothing on screen.
+            // once when it is first set, which [KeepQuickSettingsTiles] puts back; writing the flag back changes nothing on screen.
             SettingKey("secure", "accessibility_font_scaling_has_been_changed") to StoredEffect.NONE,
         )
     }
+}
+
+/**
+ * Keeps the Quick Settings tiles (`secure sysui_qs_tiles`) and SystemUI's record of the tiles that it added by itself
+ * (`secure qs_auto_tiles`) as they were before the run (plan 6B-basefix T6). From API 34, SystemUI adds the Font size tile
+ * the first time that the font size changes (`config_quickSettingsAutoAdd` holds
+ * `accessibility_font_scaling_has_been_changed:font_scaling`) and records it. How a restore reaches SystemUI depends on
+ * its Quick Settings pipeline, as the AOSP sources of API 33 to 37 show (packages/SystemUI/src/com/android/systemui/qs):
+ * - Up to API 34, the old pipeline: QSTileHost reads `sysui_qs_tiles` through TunerServiceImpl's ContentObserver, and
+ *   AutoAddTracker reloads `qs_auto_tiles` from its own ContentObserver, so a write of either applies at once.
+ * - From API [NEW_PIPELINE_SDK], the new pipeline (the release flag `qs_new_pipeline` is on in API 35, and API 36 has no
+ *   other): UserTileSpecRepository and UserAutoAddRepository hold the truth and write it back over any change of either
+ *   setting. The tiles go back through SystemUI with `cmd statusbar set-tiles`, which StatusBarShellCommand has from API
+ *   35 and CentralSurfacesCommandQueueCallbacks.setQsTiles hands to QSHost.changeTilesByUser. The record has no such
+ *   command, so it cannot be put back while SystemUI runs: the restore names it in [RunScope.putBack]'s stored list and
+ *   warns that SystemUI will not add those tiles by itself again.
+ * Each of the two has a restore of its own, so that one that fails does not keep the other from running.
+ */
+object KeepQuickSettingsTiles : Setup {
+    val TILES = SettingKey("secure", "sysui_qs_tiles")
+    val AUTO_ADDED = SettingKey("secure", "qs_auto_tiles")
+    const val NEW_PIPELINE_SDK = 35
+    private const val TRIES = 10
+
+    override fun apply(scope: RunScope): SetupResult {
+        val newPipeline = scope.device.test.sdk >= NEW_PIPELINE_SDK
+        keepAutoAdded(scope, value(scope, AUTO_ADDED), newPipeline)
+        keepTiles(scope, value(scope, TILES), newPipeline)
+        return SetupResult.Ready
+    }
+
+    override fun probe(scope: RunScope): Map<String, String> =
+        listOf(TILES, AUTO_ADDED).associate { it.toString() to (value(scope, it) ?: "none") }
+
+    private fun keepTiles(scope: RunScope, before: String?, newPipeline: Boolean) {
+        // The new pipeline stores its tiles as soon as SystemUI starts, so it always has a list to set again.
+        val undo = if (newPipeline) before?.let { "cmd statusbar set-tiles ${shellQuoted(it)}" } else TILES.writeBack(before)
+        val byHand = undo?.let { "Run: adb -s ${scope.device.serial} shell $it" } ?: "Set the Quick Settings tiles again in their edit mode."
+        scope.restores.push("the Quick Settings tiles as before", byHand) {
+            if (value(scope, TILES) != before) {
+                scope.device.idempotent(checkNotNull(undo) { "SystemUI had no stored tile list before the run, which no command sets again." })
+                check(settles(scope, TILES, before)) { "SystemUI did not take the tiles back." }
+                scope.putBack.recordApplied(TILES.toString())
+            }
+        }
+    }
+
+    private fun keepAutoAdded(scope: RunScope, before: String?, newPipeline: Boolean) {
+        val undo = AUTO_ADDED.writeBack(before)
+        val byHand = if (newPipeline) "None while SystemUI runs; it writes $AUTO_ADDED back over any change." else "Run: adb -s ${scope.device.serial} shell $undo"
+        scope.restores.push("SystemUI's record of the tiles that it added as before", byHand) {
+            val now = value(scope, AUTO_ADDED)
+            if (now == before) return@push
+            if (newPipeline) {
+                scope.putBack.recordStored(AUTO_ADDED.toString())
+                val added = tiles(now) - tiles(before).toSet()
+                scope.console.warn(
+                    "SystemUI recorded in $AUTO_ADDED that it added ${added.joinToString().ifEmpty { "tiles" }} by itself during the run, so it " +
+                        "will not add them by itself again. It writes its own record back over any change while it runs, so the restore " +
+                        "could not put it back.",
+                )
+            } else {
+                scope.device.idempotent(undo)
+                check(value(scope, AUTO_ADDED) == before) { "$AUTO_ADDED is still not as before; run: $undo" }
+                scope.putBack.recordApplied(AUTO_ADDED.toString())
+            }
+        }
+    }
+
+    /** Whether [setting] holds [wanted] now or within [TRIES] seconds, the time that SystemUI takes to store a change. */
+    private fun settles(scope: RunScope, setting: SettingKey, wanted: String?): Boolean {
+        repeat(TRIES) {
+            if (value(scope, setting) == wanted) return true
+            scope.clock.sleep(1.seconds)
+        }
+        return value(scope, setting) == wanted
+    }
+
+    private fun value(scope: RunScope, setting: SettingKey): String? = scope.setting(setting.namespace, setting.key).takeIf { it != "null" }
+
+    private fun tiles(list: String?): List<String> = list?.split(',')?.filter { it.isNotBlank() }.orEmpty()
+
+    override fun toString(): String = "KeepQuickSettingsTiles"
 }
 
 /** Dark theme's mode from `cmd uimode night`, which answers "Night mode: yes". */

@@ -52,7 +52,8 @@ object SettingsTasks {
     )
 
     // The display page's other size controls are kept too, each as Android applies it, because a run may change them
-    // instead of the font scale (T6).
+    // instead of the font scale, and so are the Quick Settings tiles, to which SystemUI adds Font size after the first
+    // change (T6).
     val FONT_SIZE = task(
         "font-size", "make the text bigger",
         listOf(
@@ -62,6 +63,7 @@ object SettingsTasks {
                 except = setOf(SettingKey("system", "font_scale"), SettingKey("secure", "display_density_forced")),
                 effects = KeepStoredSettings.DISPLAY_SIZE_EFFECTS,
             ),
+            KeepQuickSettingsTiles,
             SettingsValue("system", "font_scale", "1.0"),
         ),
         listOf(SettingsIs("system", "font_scale", Wanted.Above(1.0))),
