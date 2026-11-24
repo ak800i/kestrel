@@ -3,8 +3,11 @@ package dev.kestrel.agent.memory
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Harness
 import dev.kestrel.agent.Screens
+import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.port.CheckedLaunch
 import dev.kestrel.agent.port.ConfirmEnd
+import dev.kestrel.agent.port.DataField
+import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
@@ -68,6 +71,24 @@ class RoutineReplayTest {
         assertEquals("I'm on my way", harness.screen.actions.filterIsInstance<ScreenAction.SetText>().single().text)
         assertEquals("opened \"John Smith\"", report.ledger.first())
         assertEquals(3, harness.log.entries.count { it.first == TaskLog.Kind.ACTION && it.second.startsWith("routine ") })
+    }
+
+    // Design 8.1 of sub-project 7: a replayed routine's record names each data result by the routine's own step and each app
+    // that its steps acted in, as a model's steps do.
+    @Test
+    fun aReplayedRoutineTracesItsDataByItsOwnStepAndTheAppsThatItActedIn() = runTest {
+        val read = RoutineStep(Tools.LIST_SMS, arguments = buildJsonObject {})
+        val harness = harness().apply {
+            memory.routines[0] = routine.copy(steps = listOf(routine.steps[0], read) + routine.steps.drop(1))
+            data.answer(Tools.LIST_SMS, DataResult.Ok(listOf(DataLine("", listOf(DataField("from", "John"), DataField("body", "Hello"))))))
+        }
+
+        val report = harness.run("Send John a fixtures message that I'm on my way", knownNames = setOf("Ana Petrović", "John Smith"))
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertTrue(harness.model.requests.isEmpty())
+        assertEquals(listOf(2), harness.goal.traces.filterIsInstance<TraceEntry.Data>().map { it.step })
+        assertEquals(listOf(TraceEntry.AppUsed("Kestrel fixtures", Screens.MESSENGER)), harness.goal.traces.filterIsInstance<TraceEntry.AppUsed>())
     }
 
     // Android gives each new window its own ID, so a later session of the app shows the same screens in other windows.

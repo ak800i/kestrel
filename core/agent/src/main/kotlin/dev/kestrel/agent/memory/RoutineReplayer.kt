@@ -52,7 +52,7 @@ internal class RoutineReplayer(private val run: TaskRun) {
                 ?: return failed("its arguments did not fit the screen")
             val started = run.ports.clock.elapsedMillis()
             val done = run.execute(call)
-            run.replayed(done, started)
+            run.replayed(done, started, index + 1)
             if (!done.executed) return failed("the task was paused")
             when (val outcome = done.outcome) {
                 is Outcome.Failed, is Outcome.Refused, is Outcome.CheckFailed, Outcome.PermissionRefused -> return failed(outcome.words)

@@ -94,7 +94,10 @@ internal class Done(
     val invalid: Boolean = false,
     val executed: Boolean = true,
     val unchanged: Boolean = false,
-)
+) {
+    /** Whether the step failed: its action failed, was refused or failed its check, or its call was not valid. */
+    val failed: Boolean get() = outcome is Outcome.Failed || outcome is Outcome.Refused || outcome is Outcome.CheckFailed || invalid
+}
 
 /** A send that the owner confirmed (design D14), kept in memory for the completion check; never logged. */
 internal data class ConfirmedSend(val recipients: List<String>, val content: String?, val share: Boolean) {
@@ -285,7 +288,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
             line += "\n" + APP_STOPPED
             appStopped = false
         }
-        val failed = done.outcome is Outcome.Failed || done.outcome is Outcome.Refused || done.outcome is Outcome.CheckFailed || done.invalid
+        val failed = done.failed
         conversation.add(Step(
             number = replies,
             reply = message,
@@ -338,14 +341,19 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         )
     }
 
-    /** A step of a routine's replay (D23): its observation, its `ACTION` entry and its ledger line, as a model's step has. */
-    internal suspend fun replayed(done: Done, started: Long) {
+    /**
+     * A step of a routine's replay (D23): its observation, its `ACTION` entry and its ledger line, as a model's step has,
+     * and for the command's record its data and the app that it acted in (design 8.1 of sub-project 7). A replay runs
+     * before the model's first step, so the record names its data by the routine's own [step] number.
+     */
+    internal suspend fun replayed(done: Done, started: Long, step: Int) {
         val first = StepResult(replies, done.tool, done.outcome ?: Outcome.Answered, done.target, observation.appLabel, done.detail)
         val next = done.after?.let { observe(it, done.last ?: first.lastLine(), done.target?.key, done.ocr) }
         val outcome = if (done.outcome is Outcome.AnotherScreen) Outcome.AnotherScreen(next?.title) else done.outcome
         val line = done.text ?: first.copy(outcome = outcome ?: Outcome.Answered).resultLine()
         log(TaskLog.Kind.ACTION, "routine ${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
-        done.data?.let { trace.data(done.tool, replies, it) }
+        done.data?.let { trace.data(done.tool, step, it) }
+        if (done.executed && !done.failed) done.target?.packageName?.let { trace.acted(it) }
         if (done.executed) ledger(done, outcome)
         trace.ledger(ledger.lines)
     }
