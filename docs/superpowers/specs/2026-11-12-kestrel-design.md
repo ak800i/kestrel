@@ -7,18 +7,19 @@
 | Owner | Aleksa Jankovic (`ak800i`) |
 | Repository | `H:\Code\kestrel`, to be published as `github.com/ak800i/kestrel` |
 | Licence | GPL-3.0-or-later |
+| Sub-project 7 | Conversations, from the design of 24 November 2026 (`2026-11-24-conversations-design.md`, called "sub-project 7's design" below). Plan 7.0 wrote it into this spec. Since then, this spec describes Kestrel after sub-project 7 and decides where the two differ, and that design keeps the details that this spec refers to. |
 
 ## 1. Summary
 
-Kestrel is a personal Android app that replaces Google's Voice Access on the owner's Samsung Galaxy S23+.
+Kestrel is a personal Android app for the owner's Samsung Galaxy S23+: a standalone copilot and driver of the phone. The owner reaches it through two channels: his voice, and the conversation screen, where he types. Kestrel also replaces Google's Voice Access.
 
-It keeps everything that Voice Access does. The owner can still give direct commands such as "scroll down", "tap Send" or "show numbers", and can dictate and edit text by voice. Kestrel adds a second layer on top: the owner can give a whole task in one sentence, for example "Kestrel, send Ana a Viber message that I'm 10 minutes late", and an agent performs it on the phone step by step through Android's accessibility service.
+It keeps everything that Voice Access does. The owner can still give direct commands such as "scroll down", "tap Send" or "show numbers", and can dictate and edit text by voice. Kestrel adds a second layer on top: the owner holds a conversation with Kestrel, by voice or typed. He gives a command, for example "Kestrel, send Ana a Viber message that I'm 10 minutes late", and an agent performs it on the phone step by step through Android's accessibility service. The next command can build on the earlier ones, as in "and send it to Mila too", and the conversation ends by itself after a quiet time without a command (section 11.1). For a bigger goal, the agent keeps a checklist, works within limits that the owner sets, and asks before it goes on (section 11.7). The owner can look through his past conversations, read them and continue one (section 15).
 
 Three rules shape the whole design:
 
 1. **Nothing leaves the phone except the traffic to the LLM provider that the owner configures, and the download of the speech and OCR models after the owner taps Download in the setup checklist, from the models' own hosts, which see the phone's address and which files it downloads, and nothing else.** Speech recognition, voice output, OCR and all storage run on the phone. There is no telemetry of any kind.
-2. **The agent reads the screen as text whenever it can.** It uses the accessibility tree first and on-device OCR second. It sends a screenshot to the LLM only with the owner's permission, which Kestrel asks for by voice.
-3. **Safety rules live in code, not in the LLM prompt.** A check in Kestrel's code decides which actions need a spoken confirmation, which are handed back to the owner, and which are always blocked.
+2. **The agent reads the screen as text whenever it can.** It uses the accessibility tree first and on-device OCR second. It sends a screenshot to the LLM only with the owner's permission, which Kestrel asks for by voice or on its question card.
+3. **Safety rules live in code, not in the LLM prompt.** A check in Kestrel's code decides which actions need the owner's confirmation, which are handed back to the owner, and which are always blocked.
 
 ## 2. Background and prior art
 
@@ -34,7 +35,18 @@ Three rules shape the whole design:
 | Term | Meaning |
 |---|---|
 | Instant command | A short, fixed command such as "go back" or "tap 5". Kestrel parses it on the phone without an LLM and executes it at once, as Voice Access does. |
-| Task | A free-form request that starts with the name "Kestrel", or that follows the side-key or earbud gesture. The agent or a saved routine performs it. |
+| Conversation | A series of the owner's commands that build on each other, spoken or typed. At most one conversation is open. It ends when the quiet time passes after a command, or when the owner starts a new one, and a past conversation can be continued (section 11.1). The agent's `Conversation` in the code is something else: the messages of one task run with the model (section 11.2). |
+| Command | One input of the owner's that asks Kestrel to do something: spoken, with the name "Kestrel", after the side-key or earbud gesture or inside the follow-up window; or typed on the conversation screen. |
+| Channel | How an input came in and how Kestrel answers it: the voice channel or the text channel (section 11.1). |
+| Conversation screen | Kestrel's screen where the owner reads the conversation and types commands. The launcher opens it (section 15). |
+| Goal | The work that a command asks for, with its checklist. A goal can run over several rounds and take steering and "continue" from later inputs (section 11.7). |
+| Round | One stretch of a goal's work within the limits that the owner sets (section 11.7). A yes to "Continue?" gives another round. |
+| Task | The work of one command, done by the agent or by a saved routine. A task run is one run of the agent's loop. A goal runs as one or more task runs: a yes to "Continue?" starts another round in the same task run, and a resumed goal starts a new task run (section 11.7). |
+| Record | The structured summary of one command: the request, what Kestrel said and asked, what the owner answered, the data tools' results, the apps used, the checklist and the final answer. The later commands of the conversation get the records as context (section 11.2), and the search and the conversation screen read them. |
+| Quiet time | The time without a command after which the conversation ends: 1 minute by default (section 11.1). |
+| Follow-up window | The short time after Kestrel's spoken final reply in which the owner may speak to the conversation without the name: 8 s by default (section 8.3). |
+| Steering | A command that comes while a goal acts. It changes the goal instead of starting a new one (section 11.10). |
+| Held goal | A goal that is open but not acting: paused by a lock or a call, paused at a limit, or interrupted (section 14.4). It is held for 30 minutes. |
 | Agent | The loop that describes the screen to the LLM, receives one action at a time, checks it and executes it. |
 | Routine | A saved recording of a successful task, with slots such as a contact or a message, that Kestrel can replay without the LLM. |
 | Safety check | Code in `:core:safety` that decides, for each action of the agent or a routine, whether to run it, ask for confirmation, hand it over to the owner or block it. |
