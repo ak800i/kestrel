@@ -374,7 +374,7 @@ internal class ScreenSteps(private val run: TaskRun) {
             is LinkApp.Missing -> return Done(call.tool, Outcome.Failed(app.reason))
         }
         val target = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true))
-        val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency)
+        val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency, phonePackages = run.settings.phonePackages)
         if (verdict is LinkVerdict.Refused) return Done(call.tool, Outcome.Refused(verdict.reason))
         sentLink = false
         val done = open(call, ScreenAction.OpenUri(link, packageName, browsable = true), target, null, linkTarget = target)

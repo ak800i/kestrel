@@ -19,6 +19,7 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Category
+import dev.kestrel.safety.EmergencyNumbers
 import dev.kestrel.safety.SafetySettings
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -492,6 +493,17 @@ class AgentToolsTest {
         kestrel.run("Show Kalemegdan in Kestrel")
         assertTrue(kestrel.screen.actions.isEmpty())
         assertTrue(kestrel.lastRequestText(), kestrel.lastRequestText().contains("The link opens an app that the agent may not use."))
+
+        // A tel: link opens only in a phone app, never in another app that takes it.
+        val inTelegram = namedApp(telegram, "tel:+12025550143", handles = mapOf("tel:" to telegram))
+        inTelegram.run("Call Ana in Telegram")
+        assertTrue(inTelegram.screen.actions.isEmpty())
+        assertTrue(inTelegram.lastRequestText(), inTelegram.lastRequestText().contains("Kestrel opens a tel: link only in the phone app."))
+        val dialer = "com.google.android.dialer"
+        val inPhone = namedApp(dialer, "tel:+12025550143", handles = mapOf("tel:" to dialer))
+        inPhone.settings = inPhone.settings.copy(emergency = EmergencyNumbers { false })
+        inPhone.run("Dial Ana")
+        assertEquals(inPhone.lastRequestText(), listOf(ScreenAction.OpenUri("tel:+12025550143", dialer, browsable = true)), inPhone.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
     }
 
     @Test

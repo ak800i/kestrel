@@ -19,8 +19,9 @@ sealed interface LinkVerdict {
 /**
  * Checks every link before Kestrel opens it (design D11 and D32 item 12 of sub-project 5): `open_url` opens only `https`,
  * `open_deep_link` only spec 11.4's schemes, never `intent:`, `file:`, `content:`, `javascript:` or `android-app:`, and
- * never a link whose activity belongs to Kestrel, an agent-free app or Play services. A `tel:` link opens only the dial
- * screen, and only for a number that Kestrel may dial ([EmergencyGuard.telAllowed]). A link that came from the screen or
+ * never a link whose activity belongs to Kestrel, an agent-free app or Play services. A `tel:` link opens only in a phone
+ * app of `phonePackages`, only the dial screen, and only for a number that Kestrel may dial ([EmergencyGuard.telAllowed]).
+ * A link that came from the screen or
  * a data tool and carries a query or a fragment with data ("=", "&" or a digit; a section anchor is none) sends that data
  * off the phone, so it is `SENDING` (research r52, fixture 12; review 2 M5 and 2-2 New 5), unless it is a `geo:` or an https
  * search whose query values are only [check]'s `ownerWords` (fix-6b item 10, review 6b-links I1 and M1). Data in a link's
@@ -55,6 +56,7 @@ object LinkCheck {
         isAgentFree: (String?) -> Boolean,
         emergency: EmergencyNumbers,
         ownerWords: Set<String> = emptySet(),
+        phonePackages: Set<String> = EmergencyGuard.PHONE_PACKAGES,
     ): LinkVerdict {
         val text = link.trim()
         val scheme = SCHEME.find(text)?.groupValues?.get(1)?.lowercase() ?: return LinkVerdict.Refused("The link has no scheme.")
@@ -71,6 +73,7 @@ object LinkCheck {
             return LinkVerdict.Refused("The link opens an app that the agent may not use.")
         }
         if (scheme == "tel") {
+            if (targetPackage != null && targetPackage !in phonePackages) return LinkVerdict.Refused("Kestrel opens a tel: link only in the phone app.")
             val number = text.substringAfter(':').substringBefore('?')
             if (!EmergencyGuard.telAllowed(number, emergency)) return LinkVerdict.Refused("Kestrel doesn't open this number; dial it yourself.")
         }

@@ -42,6 +42,9 @@ class LinkCheckTest {
         for (link in listOf("tel:112", "tel:999", "tel:1234", "tel:**21*0601234567#", "tel:%23%2306%23")) {
             assertEquals(link, true, refused(check(link)))
         }
+        assertEquals(LinkVerdict.Allowed(Category.READING), check("tel:+12025550143", target = "com.google.android.dialer"))
+        assertEquals(LinkVerdict.Allowed(Category.READING), LinkCheck.check("tel:+12025550143", ActionKind.OPEN_DEEP_LINK, true, "com.example.phone", agentFree, emergency, phonePackages = setOf("com.example.phone")))
+        assertEquals(LinkVerdict.Refused("Kestrel opens a tel: link only in the phone app."), check("tel:+12025550143", target = "org.telegram.messenger"))
     }
 
     @Test

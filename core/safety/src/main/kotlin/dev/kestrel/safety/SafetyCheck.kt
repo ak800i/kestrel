@@ -23,6 +23,7 @@ object SafetyCheck {
         ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT, ActionKind.TYPE, ActionKind.SCROLL, ActionKind.SWIPE, ActionKind.SET_SLIDER,
     )
     private val LEAVING = setOf(ActionKind.OPEN_APP, ActionKind.OPEN_URL, ActionKind.OPEN_DEEP_LINK, ActionKind.OPEN_SETTINGS, ActionKind.HOME)
+    private val LINKS = setOf(ActionKind.OPEN_URL, ActionKind.OPEN_DEEP_LINK)
     private const val CHANGED = "The screen changed before the action; nothing was done."
     private const val COVERED = "Another window covers that point."
     private const val CLOSED_APP = "That point is in an app that the agent may not use."
@@ -115,7 +116,7 @@ object SafetyCheck {
 
         // Links.
         if (proposal.kind == ActionKind.OPEN_URL || proposal.kind == ActionKind.OPEN_DEEP_LINK) {
-            when (val verdict = LinkCheck.check(proposal.link.orEmpty(), proposal.kind, proposal.linkFromOwner, proposal.linkTargetPackage, env.isAgentFree, env.emergency, known(task))) {
+            when (val verdict = LinkCheck.check(proposal.link.orEmpty(), proposal.kind, proposal.linkFromOwner, proposal.linkTargetPackage, env.isAgentFree, env.emergency, known(task), env.phonePackages)) {
                 is LinkVerdict.Refused -> {
                     sources += Source.LINK
                     return ending(Decision.Block(verdict.reason))
@@ -153,7 +154,8 @@ object SafetyCheck {
     /**
      * Test mode's block: every call, every text message, and every action that any source rates as sending, whatever its
      * final category ("Send and delete"), unless it sends to the owner's own chat (review 2 I2), or it is a `mailto:` link
-     * to his own addresses alone, which opens a compose screen whose Send test mode checks again.
+     * to his own addresses alone, which opens a compose screen whose Send test mode checks again. A link goes to its own
+     * target, not to the chat in front, so for a link only the `mailto:` exception counts (review 6b-links P1).
      */
     private fun testModeBlock(
         proposal: Proposal,
@@ -167,7 +169,8 @@ object SafetyCheck {
         when {
             category == Category.CALLS -> "Test mode: Kestrel makes no calls."
             proposal.kind == ActionKind.COMPOSE_SMS -> "Test mode: Kestrel sends no text messages."
-            (sends || category == Category.SENDING) && !SelfChats.recognise(screen, pressedKey(proposal, screen), settings, task.shareFlow, env.selfChatAliases) &&
+            (sends || category == Category.SENDING) &&
+                (proposal.kind in LINKS || !SelfChats.recognise(screen, pressedKey(proposal, screen), settings, task.shareFlow, env.selfChatAliases)) &&
                 !(proposal.kind == ActionKind.OPEN_DEEP_LINK && SelfChats.mailtoToOwner(proposal.link.orEmpty(), settings)) ->
                 "Test mode: Kestrel only sends to your own chats."
             else -> null
