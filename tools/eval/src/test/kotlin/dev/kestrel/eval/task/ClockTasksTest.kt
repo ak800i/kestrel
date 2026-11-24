@@ -59,13 +59,14 @@ class ClockTasksTest {
         bench.adb.hook("VOICE") { extras ->
             if (works && extras["text"] == "Kestrel, start a 5 minute timer") {
                 phone.timerIn(295)
-                phone.ongoing = true
+                phone.localOnly = true
             }
             "sent"
         }
 
         assertEquals(Reason.OK, bench.run(ClockTasks.TIMER).reason)
         assertTrue(phone.alarms.isEmpty())
+        assertEquals(listOf(ClockPhone.CLEAR), bench.adb.commands.filter { it.startsWith("pm ") })
         works = false
         assertEquals(Reason.CHECK, bench.run(ClockTasks.TIMER).reason)
         bench.assertPutBack()
@@ -81,7 +82,7 @@ class ClockTasksTest {
         }
         bench.adb.on("^am start -W -a android.intent.action.SET_TIMER --ei android.intent.extra.alarm.LENGTH 300 ") {
             phone.timerIn(299)
-            phone.ongoing = true
+            phone.localOnly = true
             ""
         }
 

@@ -89,7 +89,7 @@ data object NoOwnerAlarms : Setup {
  * in `dumpsys alarm` (also one at a time that is not the test's), a timer (its alarm on the elapsed clock) or any
  * notification of it, such as a paused timer's or an upcoming alarm's. So the test's time is always [TIME], in `{time}`,
  * `{hour}` and `{minute}`, and every alarm that the clock holds after the run is the run's. The restore clears Google
- * Clock's data ([AlarmCleanup]): the controller's decision of 2026-11-24, after the restore by the clock's own taps
+ * Clock's data ([ClockClear]): the controller's decision of 2026-11-24, after the restore by the clock's own taps
  * failed twice after live runs.
  */
 data object ClockFree : Setup {
@@ -102,44 +102,54 @@ data object ClockFree : Setup {
         val clock = ClockApp.find(scope) ?: return SetupResult.Untestable("no app sets alarms")
         if (clock != ClockApp.GOOGLE) return SetupResult.Untestable("its clock app is not Google Clock, the only one whose data the script clears")
         val dump = ClockApp.alarms(scope) ?: return SetupResult.Untestable("dumpsys alarm gives no clocks")
-        if (AlarmCleanup.clocks(dump, clock).isNotEmpty() || ClockApp.timers(dump, clock).isNotEmpty() || Dumps.notification(scope.device.read("dumpsys notification"), clock)) {
-            return SetupResult.Untestable("Google Clock holds an alarm or a timer, which its restore would delete")
-        }
+        if (ClockClear.holds(scope, dump)) return SetupResult.Untestable("Google Clock holds an alarm or a timer, which its restore would delete")
         scope.notes[ClockApp.NOTE] = clock
         scope.values.time = TIME
         scope.values.hour = "$HOUR"
         scope.values.minute = "$MINUTE"
-        scope.restores.push("the test alarm at $TIME", AlarmCleanup.BY_HAND) { AlarmCleanup.run(scope) }
+        scope.restores.push("the test alarm at $TIME", AlarmCleanup.BY_HAND) { ClockClear.run(scope) }
         return SetupResult.Ready
     }
 }
 
 /**
- * alarm's restore (design D9 of sub-project 6): `pm clear` of Google Clock, and only of it, which deletes every alarm and
- * timer that the run set, also a switched-off one, then the check that `dumpsys alarm` shows no alarm clock of it. It
- * refuses on any device but kestrel-api37, before any command, and the device's own check of each command
- * ([dev.kestrel.eval.device.Device.guarded]) refuses it on another device that took kestrel-api37's serial. Only alarm
- * clocks count, never the clock app's other wakeups.
+ * The restore of alarm and of timer on kestrel-api37 (design D9 of sub-project 6): `pm clear` of Google Clock, and only
+ * of it, which deletes every alarm and timer that the run set, also a switched-off alarm or a paused timer, then the
+ * check that `dumpsys alarm` shows no alarm clock and no timer of it. It refuses on any device but kestrel-api37, before
+ * any command, and the device's own check of each command ([dev.kestrel.eval.device.Device.guarded]) refuses it on
+ * another device that took kestrel-api37's serial. Only alarm clocks and timers count, never the clock's other wakeups.
  */
-internal object AlarmCleanup {
-    const val BY_HAND = "Clock > Alarms: delete every alarm."
-
-    /** How long the check waits for the cleared clock's alarm clocks to leave `dumpsys alarm`. */
+internal object ClockClear {
+    /** How long the check waits for the cleared clock's alarm clocks and timers to leave `dumpsys alarm`. */
     private const val WAIT_SECONDS = 5
+
+    /** Whether Google Clock holds an alarm clock (at any time), a timer or any notification, which [run] would delete. */
+    fun holds(scope: RunScope, dump: AlarmDump): Boolean {
+        val clock = ClockApp.GOOGLE
+        return AlarmCleanup.clocks(dump, clock).isNotEmpty() || ClockApp.timers(dump, clock).isNotEmpty() || Dumps.notification(scope.device.read("dumpsys notification"), clock)
+    }
 
     fun run(scope: RunScope) {
         val clock = ClockApp.GOOGLE
-        check(scope.device.kind == DeviceKind.EMULATOR) { "The test alarm is on ${scope.device.kind.label}, where the script clears no app's data." }
+        check(scope.device.kind == DeviceKind.EMULATOR) { "The clock is on ${scope.device.kind.label}, where the script clears no app's data." }
         val answer = scope.device.idempotent("pm clear $clock")
         check(answer.any { it.trim() == "Success" }) { "pm clear $clock did not answer Success." }
-        var left = 0
+        var alarms = 0
+        var timers = 0
         for (second in 0..WAIT_SECONDS) {
             if (second > 0) scope.clock.sleep(1.seconds)
-            left = clocks(checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }, clock).distinct().size
-            if (left == 0) return
+            val dump = checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }
+            alarms = AlarmCleanup.clocks(dump, clock).distinct().size
+            timers = ClockApp.timers(dump, clock).distinct().size
+            if (alarms == 0 && timers == 0) return
         }
-        error("Google Clock still holds $left alarm(s) after pm clear.")
+        error("Google Clock still holds $alarms alarm(s) and $timers timer(s) after pm clear.")
     }
+}
+
+/** alarm's own reading of `dumpsys alarm`: the clock's alarm clocks, and whether one is at the test's time. */
+internal object AlarmCleanup {
+    const val BY_HAND = "Clock > Alarms: delete every alarm."
 
     /** The times of [clock]'s alarm clocks in [dump], never its other wakeups. */
     fun clocks(dump: AlarmDump, clock: String): List<Long> = dump.of(clock).filter { it.clock }.map { it.origWhen }
@@ -182,12 +192,19 @@ data object AlarmIntent : Setup {
 }
 
 /**
- * timer's restore, pushed before the run (design D9 of sub-project 6). A timer of the owner's, running, paused or ringing
- * (an alarm of the clock on the elapsed clock, or an ongoing notification of the clock), makes the task untestable before
- * any change: the clock's timers page would show it beside the run's, and a tap could reach it. Else the clock's alarms
- * are recorded now, and after the run the one new alarm due within 6 minutes, the test timer, is deleted with the
- * clock's own taps on its timers page and checked. When the clock runs any other timer then, such as one that the owner
- * started during the run, the restore taps nothing and says to delete the test timer by hand.
+ * timer's restore, pushed before the run (design D9 of sub-project 6).
+ *
+ * On kestrel-api37, as for alarm ([ClockFree]), the clock must be Google Clock and hold no alarm clock, no timer and no
+ * notification before the run, else the task is untestable before any change, and the restore clears Google Clock's
+ * data ([ClockClear]) and checks that no timer is left. The clock's own taps could not be used there: a cleared Google
+ * Clock, as alarm's restore leaves it, covers its timer's Delete with a tip about its privacy policy.
+ *
+ * On the A71, a timer of the owner's, running, paused or ringing (an alarm of the clock on the elapsed clock, or an
+ * ongoing notification of the clock), makes the task untestable before any change: the clock's timers page would show
+ * it beside the run's, and a tap could reach it. Else the clock's alarms are recorded now, and after the run the one new
+ * alarm due within 6 minutes, the test timer, is deleted with the clock's own taps on its timers page and checked. When
+ * the clock runs any other timer then, such as one that the owner started during the run, the restore taps nothing and
+ * says to delete the test timer by hand.
  */
 data object TimerCleanup : Setup {
     private const val BEFORE = "timer-before"
@@ -199,11 +216,17 @@ data object TimerCleanup : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val clock = ClockApp.find(scope) ?: return SetupResult.Untestable("no app sets timers")
         val dump = ClockApp.alarms(scope) ?: return SetupResult.Untestable("dumpsys alarm gives no clocks")
+        if (scope.device.kind == DeviceKind.EMULATOR) {
+            if (clock != ClockApp.GOOGLE) return SetupResult.Untestable("its clock app is not Google Clock, the only one whose data the script clears")
+            if (ClockClear.holds(scope, dump)) return SetupResult.Untestable("Google Clock holds an alarm, a timer or a notification, which its restore would delete")
+            record(scope, clock, dump)
+            scope.restores.push("the test timer", BY_HAND) { ClockClear.run(scope) }
+            return SetupResult.Ready
+        }
         if (ClockApp.timers(dump, clock).isNotEmpty() || Dumps.ongoingNotification(scope.device.read("dumpsys notification"), clock)) {
             return SetupResult.Untestable("the clock app has a timer of the owner's, or shows one, which the run's own would not be told from")
         }
-        scope.notes[ClockApp.NOTE] = clock
-        scope.notes[BEFORE] = dump.of(clock).joinToString(",") { "${it.whenElapsed}" }
+        record(scope, clock, dump)
         scope.restores.push("the test timer", BY_HAND) {
             val new = newTimers(scope, clock)
             if (new.isEmpty()) return@push
@@ -229,6 +252,12 @@ data object TimerCleanup : Setup {
         return SetupResult.Ready
     }
 
+    /** The clock, and its alarms before the run, which [newTimers] leaves out. */
+    private fun record(scope: RunScope, clock: String, dump: AlarmDump) {
+        scope.notes[ClockApp.NOTE] = clock
+        scope.notes[BEFORE] = dump.of(clock).joinToString(",") { "${it.whenElapsed}" }
+    }
+
     private fun shown(scope: RunScope, clock: String, candidate: TapCandidate): Boolean {
         val answer = scope.hooks.screenHas(packageName = clock, label = candidate.label, contains = candidate.contains)
         return answer["app"] == clock && answer.int("count") >= 1
@@ -242,13 +271,20 @@ data object TimerCleanup : Setup {
     }
 }
 
-/** A new alarm of the clock app due 4 to 5 minutes from now, with 10 s to spare, and the clock's ongoing notification (design D8). */
+/**
+ * A new alarm of the clock app due 4 to 5 minutes from now, with 10 s to spare, and the clock's notification (design D8).
+ * On the A71 only an ongoing notification counts, as a running timer's is. On kestrel-api37 any notification of Google
+ * Clock counts, because [TimerCleanup] found none before the run, and a cleared Google Clock (9.2) posts its running
+ * timer's notification as LOCAL_ONLY, without FLAG_ONGOING_EVENT.
+ */
 data object TimerRunning : Check {
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
         val clock = scope.notes[ClockApp.NOTE] ?: return false
         val now = ClockApp.alarms(scope)?.nowElapsed ?: return false
         val due = (4.minutes - 10.seconds).inWholeMilliseconds..(5.minutes + 10.seconds).inWholeMilliseconds
-        return TimerCleanup.newTimers(scope, clock).any { it.whenElapsed - now in due } && Dumps.ongoingNotification(scope.device.read("dumpsys notification"), clock)
+        if (TimerCleanup.newTimers(scope, clock).none { it.whenElapsed - now in due }) return false
+        val notifications = scope.device.read("dumpsys notification")
+        return if (scope.device.kind == DeviceKind.EMULATOR) Dumps.notification(notifications, clock) else Dumps.ongoingNotification(notifications, clock)
     }
 }
 

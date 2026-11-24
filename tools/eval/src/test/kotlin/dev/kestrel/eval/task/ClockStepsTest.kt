@@ -15,9 +15,10 @@ import java.time.ZonedDateTime
 
 /**
  * A device's clock app for the tests, modelled on Google Clock on kestrel-api37: its package, `dumpsys alarm` at noon of
- * 2026-11-23 in Belgrade with [alarms], the app in front, its running timers and its notifications, an ongoing one as a
- * running timer's and another as an upcoming alarm's. On the timers page, Delete deletes the running timer. `pm clear` of
- * the clock deletes its alarms, its timers and its notifications, unless it is [stuck].
+ * 2026-11-23 in Belgrade with [alarms], the app in front, its running timers and its notifications: a running timer's,
+ * ongoing or ([localOnly]) as a cleared Google Clock posts it, and another as an upcoming alarm's. On the timers page,
+ * Delete deletes the running timer. `pm clear` of the clock deletes its alarms, its timers and its notifications, unless
+ * it is [stuck].
  */
 class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) {
     private class Element(val label: String, val className: String, val bounds: String, val delete: Boolean = false)
@@ -27,6 +28,9 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     var front = clock
     var ongoing = false
     var notified = false
+
+    /** Whether a running timer's notification is shown as a cleared Google Clock 9.2 posts it: LOCAL_ONLY, not ongoing. */
+    var localOnly = false
 
     /** Whether `pm clear` of the clock answers Success but leaves its alarms. */
     var stuck = false
@@ -48,6 +52,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
             listOfNotNull(
                 if (ongoing) "  NotificationRecord(0x0a1: pkg=$clock user=UserHandle{0} id=1)\n    flags=ONGOING_EVENT|LOCAL_ONLY|PROMOTED_ONGOING" else null,
                 if (notified) "  NotificationRecord(0x0a2: pkg=$clock user=UserHandle{0} id=2)\n    flags=AUTO_CANCEL" else null,
+                if (localOnly) "  NotificationRecord(0x0a3: pkg=$clock user=UserHandle{0} id=2147483641)\n    flags=LOCAL_ONLY" else null,
             ).joinToString("\n")
         }
         run.adb.on("^am start -W -a android.intent.action.SHOW_TIMERS ") {
@@ -61,6 +66,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
             }
             ongoing = false
             notified = false
+            localOnly = false
             "Success"
         }
         run.adb.on("^dumpsys window$") { "  mCurrentFocus=Window{5999a62 u0 ${if (tip) "ImmersiveModeConfirmation" else "$clock/.Main"}}" }
@@ -139,6 +145,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
             target.delete -> {
                 timers.removeFirstOrNull()?.let { alarms.remove(it) }
                 ongoing = false
+                localOnly = false
             }
         }
         return "tapped=true count=${matches.size}"
@@ -278,7 +285,7 @@ class ClockStepsTest {
         // On the A71 the restore refuses before any command.
         val a71 = FakeRun(DeviceKind.A71)
         ClockPhone(a71).setAlarm(6, 45)
-        assertThrows(IllegalStateException::class.java) { AlarmCleanup.run(a71.scope) }
+        assertThrows(IllegalStateException::class.java) { ClockClear.run(a71.scope) }
         assertTrue(a71.adb.commands.isEmpty())
 
         // Another device that took kestrel-api37's serial after the setup: the device's own check refuses the clear.
@@ -290,6 +297,16 @@ class ClockStepsTest {
         assertEquals(1, run.restores.runAll().size)
         assertTrue(run.adb.commands.none { it.startsWith("pm ") })
         assertEquals(1, phone.clocks())
+
+        // The same for the timer's restore.
+        val timer = FakeRun()
+        val timerPhone = ClockPhone(timer)
+        assertEquals(SetupResult.Ready, TimerCleanup.apply(timer.scope))
+        timerPhone.timerIn(290)
+        timer.adb.props["ro.boot.qemu.avd_name"] = "zoran"
+        assertEquals(1, timer.restores.runAll().size)
+        assertTrue(timer.adb.commands.none { it.startsWith("pm ") })
+        assertEquals(1, timerPhone.alarms.size)
     }
 
     @Test
@@ -313,28 +330,75 @@ class ClockStepsTest {
     }
 
     @Test
-    fun aNewTimerDueInFourToFiveMinutesWithItsNotificationPassesAndIsDeletedAfterTheRun() {
-        for (clock in listOf(ClockApp.GOOGLE, ClockApp.SAMSUNG)) {
-            val run = FakeRun(if (clock == ClockApp.SAMSUNG) DeviceKind.A71 else DeviceKind.EMULATOR)
-            val phone = ClockPhone(run, clock)
+    fun onTheA71ANewTimerDueInFourToFiveMinutesWithItsOngoingNotificationPassesAndIsDeletedWithTheClocksTaps() {
+        val run = FakeRun(DeviceKind.A71)
+        val phone = ClockPhone(run, ClockApp.SAMSUNG)
 
-            assertEquals(clock, SetupResult.Ready, TimerCleanup.apply(run.scope))
-            assertFalse(clock, TimerRunning.passes(run.scope, none))
-            phone.timerIn(290)
-            assertFalse(clock, TimerRunning.passes(run.scope, none))
-            phone.ongoing = true
-            assertTrue(clock, TimerRunning.passes(run.scope, none))
-            // On the A71, One UI's tip about the full screen may cover the timers page; it is dismissed with its own OK.
-            phone.tip = clock == ClockApp.SAMSUNG
+        assertEquals(SetupResult.Ready, TimerCleanup.apply(run.scope))
+        assertFalse(TimerRunning.passes(run.scope, none))
+        phone.timerIn(290)
+        assertFalse(TimerRunning.passes(run.scope, none))
+        // Only an ongoing notification counts on the A71, where the owner's other notifications of the clock may be.
+        phone.localOnly = true
+        assertFalse(TimerRunning.passes(run.scope, none))
+        phone.ongoing = true
+        assertTrue(TimerRunning.passes(run.scope, none))
+        // One UI's tip about the full screen may cover the timers page; it is dismissed with its own OK.
+        phone.tip = true
 
-            assertTrue(clock, run.restores.runAll().isEmpty())
-            assertTrue(clock, phone.alarms.isEmpty())
-            assertFalse(clock, phone.tip)
-            val taps = if (clock == ClockApp.SAMSUNG) listOf("OK", "Delete") else listOf("Delete")
-            assertEquals(clock, taps, run.adb.hookCalls("SCREEN_TAP").map { it["label"] })
-            assertTrue(clock, run.adb.commands.contains("am start -W -a android.intent.action.SHOW_TIMERS -p $clock"))
-            assertTrue(clock, run.adb.commands.none { it.startsWith("am force-stop") })
+        assertTrue(run.restores.runAll().isEmpty())
+        assertTrue(phone.alarms.isEmpty())
+        assertFalse(phone.tip)
+        assertEquals(listOf("OK", "Delete"), run.adb.hookCalls("SCREEN_TAP").map { it["label"] })
+        assertTrue(run.adb.commands.contains("am start -W -a android.intent.action.SHOW_TIMERS -p ${ClockApp.SAMSUNG}"))
+        assertTrue(run.adb.commands.none { it.startsWith("am force-stop") || it.startsWith("pm ") })
+    }
+
+    @Test
+    fun onKestrelApi37TheTimerNeedsAnEmptyGoogleClockAndItsRestoreClearsIt() {
+        // An alarm clock of Google Clock's, a running timer, a paused timer's ongoing notification, or another notification.
+        val holds = listOf<(ClockPhone) -> Unit>({ it.alarmAt(7, 0) }, { it.timerIn(3_600) }, { it.ongoing = true }, { it.notified = true }, { it.localOnly = true })
+        for (hold in holds) {
+            val held = FakeRun()
+            val phone = ClockPhone(held)
+            hold(phone)
+            val before = phone.alarms.toList()
+
+            val result = TimerCleanup.apply(held.scope)
+            assertTrue("$result", result is SetupResult.Untestable)
+            assertEquals(0, held.restores.size)
+            assertTrue(held.adb.commands.none { it.startsWith("pm ") || it.startsWith("am ") })
+            assertEquals(before, phone.alarms)
         }
+        val samsung = FakeRun()
+        ClockPhone(samsung, ClockApp.SAMSUNG)
+        assertTrue(TimerCleanup.apply(samsung.scope) is SetupResult.Untestable)
+        assertEquals(0, samsung.restores.size)
+
+        val run = FakeRun()
+        val phone = ClockPhone(run)
+        assertEquals(SetupResult.Ready, TimerCleanup.apply(run.scope))
+        phone.timerIn(290)
+        assertFalse(TimerRunning.passes(run.scope, none))
+        // A cleared Google Clock posts its running timer's notification without FLAG_ONGOING_EVENT.
+        phone.localOnly = true
+        assertTrue(TimerRunning.passes(run.scope, none))
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(ClockPhone.CLEAR), run.adb.commands.filter { it.startsWith("pm ") })
+        assertTrue(phone.alarms.isEmpty())
+        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
+        assertTrue(run.adb.commands.none { it.contains("SHOW_TIMERS") || it.startsWith("am force-stop") })
+
+        // A clear that leaves the timer fails the restore, which names what to do by hand.
+        val stuck = FakeRun()
+        val stuckPhone = ClockPhone(stuck)
+        assertEquals(SetupResult.Ready, TimerCleanup.apply(stuck.scope))
+        stuckPhone.timerIn(290)
+        stuckPhone.stuck = true
+        val failure = stuck.restores.runAll().single()
+        assertTrue(failure.reason, failure.reason.contains("1 timer"))
+        assertTrue(failure.byHand, failure.byHand.contains("Clock > Timer"))
     }
 
     @Test
