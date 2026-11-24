@@ -75,7 +75,7 @@ object ActionMapper {
             // DataSteps adds the found contact's name and number, which only it knows.
             is AgentCall.DeleteContact -> of(ActionKind.DELETE_CONTACT)
             is AgentCall.ComposeSms -> of(ActionKind.COMPOSE_SMS, text = call.text).copy(receivingPackage = receivingPackage, receivingAppLabel = receivingAppLabel)
-            is AgentCall.AskUser, is AgentCall.Say, is AgentCall.Finish, is AgentCall.Fail -> of(ActionKind.DIALOGUE)
+            is AgentCall.AskUser, is AgentCall.Say, is AgentCall.Finish, is AgentCall.Fail, is AgentCall.UpdateChecklist -> of(ActionKind.DIALOGUE)
             is AgentCall.Remember, is AgentCall.Forget -> of(ActionKind.MEMORY)
         }
     }

@@ -56,7 +56,7 @@ enum class ActionKind {
     /** `delete_contact`: deleting (design D19 of sub-project 6). */
     DELETE_CONTACT,
 
-    /** `ask_user`, `say`, `finish` and `fail`. */
+    /** `ask_user`, `say`, `finish`, `fail` and `update_checklist`, which only report to the owner and never act. */
     DIALOGUE,
 
     /** `remember` and `forget`, which always ask the owner themselves (spec 11.4). */

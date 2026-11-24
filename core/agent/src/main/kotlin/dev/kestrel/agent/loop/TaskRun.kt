@@ -74,8 +74,9 @@ internal class Ended(
  * [text] with its [summary] and [last] line; the snapshot [after] it, from which the next observation is built; a data
  * tool's [data] lines; an [extra] text below the result line; a [screenshot]; the [ocr] lines that `look_closer` read;
  * whether it made progress when the step decides that itself ([progress]); whether it ran at all ([executed] is
- * false when a pause withdrew it); and whether a data tool that worked changed nothing ([unchanged]), so that the
- * ledger names nothing.
+ * false when a pause withdrew it); whether a data tool that worked changed nothing ([unchanged]), so that the ledger names
+ * nothing; and whether the step counts for progress at all ([counted]: `update_checklist` neither makes progress nor counts
+ * as a step without progress, design 7.2 of sub-project 7).
  */
 internal class Done(
     val tool: String,
@@ -94,6 +95,7 @@ internal class Done(
     val invalid: Boolean = false,
     val executed: Boolean = true,
     val unchanged: Boolean = false,
+    val counted: Boolean = true,
 ) {
     /** Whether the step failed: its action failed, was refused or failed its check, or its call was not valid. */
     val failed: Boolean get() = outcome is Outcome.Failed || outcome is Outcome.Refused || outcome is Outcome.CheckFailed || invalid
@@ -143,6 +145,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private val dataSteps = DataSteps(this)
     private val looks = LookCloser(this)
     private val dialogue = DialogueSteps(this)
+    private val checklists = ChecklistSteps(this, task.checklist)
 
     /** The run's questions to the owner, which share one count of interruptions (D2). */
     val questions = Questions(this)
@@ -170,6 +173,10 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     val confirmedSends = mutableListOf<ConfirmedSend>()
     val okDataSteps = mutableSetOf<Int>()
     private val ownerSteps = mutableSetOf<Int>()
+
+    // The steps that acted on the screen without failing; with the data steps that gave a result and the steps that the
+    // owner did, they are the steps that a done item of the checklist may name (design 7.2 of sub-project 7).
+    private val actedSteps = mutableSetOf<Int>()
     val lastChecked = mutableMapOf<String, Boolean>()
 
     /**
@@ -317,11 +324,15 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         done.data?.let { trace.data(done.tool, replies, it) }
         if (done.outcome is Outcome.DataOk) okDataSteps += replies
         if (done.text == OWNER_DID_IT_RESULT) ownerSteps += replies
+        if (done.executed && !failed && done.tool in Tools.ACTING) actedSteps += replies
+        checklists.stepped(done.tool)
         if (done.invalid) {
             handle(escalation.invalid(progress))
             return
         }
         if (done.executed) record(message, reply, target, signature, failed)
+        // update_checklist neither makes progress nor counts as a step without progress (design 7.2 of sub-project 7).
+        if (!done.counted) return
         progress.record(done.tool, done.outcome, done.target?.key, signature, done.data?.text, added = done.progress == true)
         ledger(done, outcome)
         trace.ledger(ledger.lines)
@@ -385,6 +396,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         is AgentCall.Fail -> throw Ended(EndReason.FAILED_BY_MODEL, detail = spoken(call.reason))
         is AgentCall.Remember -> dialogue.remember(call)
         is AgentCall.Forget -> dialogue.forget(call)
+        is AgentCall.UpdateChecklist -> checklists.update(call, actedSteps + okDataSteps + ownerSteps)
         else -> dataSteps.run(call)
     }
 
@@ -751,6 +763,9 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     // --- Finishing ---
 
     private suspend fun finish(call: AgentCall.Finish): Done {
+        // An open item of the checklist refuses the finish before anything else, so that a pause cannot end the run as
+        // unverified while an item is open (design 7.2 of sub-project 7).
+        checklists.finishRefusal()?.let { return finishFailed(call, it, after = null) }
         // A lock or a call while the model answered: the check cannot run on the screen that the model saw (D21).
         if (gate()) {
             // The pause says nothing about the route notes, so it gives them no strike (D22).
@@ -765,10 +780,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends + pendingSends(), lastChecked, lastSlider, safety::hide)) {
             Verdict.Passed -> Unit
             Verdict.Unverifiable -> throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
-            is Verdict.Missing -> {
-                val what = "finish failed: ${verdict.what}"
-                return Done(call.tool, text = "Result: $what.", summary = "Step $replies: $what.", last = what, after = fresh, invalid = true)
-            }
+            is Verdict.Missing -> return finishFailed(call, verdict.what, after = fresh)
         }
         remembering { memory.admit(call.notes) }
         val signature = call.signature
@@ -777,6 +789,13 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         // `:app` offers to save the task after it has spoken the report (D23); a store that cannot count makes no offer.
         offerRoutine = recording != null && signature != null && recalled(0) { ports.memory.countSignature(signature) } == OFFER_AT
         throw Ended(EndReason.FINISHED, summary = spoken(call.summary))
+    }
+
+    // A finish that the run refuses is an invalid call, whose result says what is missing; [after] is the screen that the
+    // check read, if it read one.
+    private fun finishFailed(call: AgentCall.Finish, reason: String, after: ScreenSnapshot?): Done {
+        val what = "finish failed: $reason"
+        return Done(call.tool, text = "Result: $what.", summary = "Step $replies: $what.", last = what, after = after, invalid = true)
     }
 
     /** The task's steps for "Kestrel, save that as <name>", or null when it typed a vault value or did nothing (D23). */
@@ -832,6 +851,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         modelId = ports.model.model.lightweight.id,
         recording = finished.takeIf { reason == EndReason.FINISHED },
         offerRoutine = offerRoutine && reason == EndReason.FINISHED,
+        checklist = checklists.checklist,
     )
 
     /** Writes [text] to the activity log; a failure of the log never ends the task. */
@@ -899,6 +919,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         private const val OFFER_AT = 2
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
         private val STRIKING = setOf(EndReason.FAILED_BY_MODEL, EndReason.UNVERIFIED, EndReason.STUCK)
-        private val UNRECORDED = setOf(Tools.ASK_USER, Tools.SAY, Tools.FINISH, Tools.FAIL, Tools.REMEMBER, Tools.FORGET, Tools.LOOK_CLOSER)
+        private val UNRECORDED = setOf(
+            Tools.ASK_USER, Tools.SAY, Tools.FINISH, Tools.FAIL, Tools.REMEMBER, Tools.FORGET, Tools.LOOK_CLOSER, Tools.UPDATE_CHECKLIST,
+        )
     }
 }

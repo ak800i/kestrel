@@ -1,5 +1,8 @@
 package dev.kestrel.agent.tools
 
+import dev.kestrel.agent.goal.ChecklistDraft
+import dev.kestrel.agent.goal.ChecklistRules
+import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.observe.ObservationTable
 import dev.kestrel.agent.port.Direction
 import dev.kestrel.agent.port.MediaAction
@@ -108,6 +111,10 @@ object ToolArguments {
     private val DAYS = Tools.DAYS.zip(DayOfWeek.values()).toMap()
     private val ITEM = Regex("m[0-9]+")
     private val ANY_DAY = LocalDate.of(2000, 1, 1)
+    private val ITEM_STATES = ItemState.entries.associateBy { it.wire }
+    // Kestrel's ids: c and a positive number without leading zeros, with no upper limit, because a long goal's checklist
+    // has none (design 7.2 of sub-project 7).
+    private val ITEM_ID = Regex("c[1-9][0-9]*")
 
     fun parse(name: String, arguments: JsonObject, table: ObservationTable, vault: Vault): ParsedCall {
         if (Tools.spec(name) == null) return ParsedCall.Invalid("Kestrel has no such tool.")
@@ -139,7 +146,9 @@ object ToolArguments {
     }
 
     /** The one argument of each tool where a placeholder may stand: typed after the owner's yes, or spoken as its kind. */
-    private val PLACEHOLDER_ARGUMENTS = mapOf(Tools.TYPE_TEXT to "text", Tools.SAY to "text", Tools.FINISH to "summary", Tools.FAIL to "reason")
+    private val PLACEHOLDER_ARGUMENTS = mapOf(
+        Tools.TYPE_TEXT to "text", Tools.SAY to "text", Tools.FINISH to "summary", Tools.FAIL to "reason", Tools.UPDATE_CHECKLIST to "items",
+    )
 
     private fun read(name: String, r: Reader): AgentCall = when (name) {
         Tools.TAP -> AgentCall.Tap(r.target(), reason(r), category(r))
@@ -177,7 +186,9 @@ object ToolArguments {
         Tools.SET_SLIDER -> AgentCall.SetSlider(r.target(slider = true), r.int("percent", 0..100), reason(r), category(r))
         Tools.ADD_CONTACT -> AgentCall.AddContact(r.string("name", Tools.NAME_LIMIT), number(r))
         Tools.DELETE_CONTACT -> AgentCall.DeleteContact(r.int("contact", 1..Tools.LIST_MAX))
-        else -> AgentCall.Forget(r.string("key"))
+        Tools.FORGET -> AgentCall.Forget(r.string("key"))
+        Tools.UPDATE_CHECKLIST -> AgentCall.UpdateChecklist(checklist(r))
+        else -> throw Bad("Kestrel has no such tool.")
     }
 
     private fun reason(r: Reader): String = r.string("reason", Tools.REASON_LIMIT)
@@ -235,6 +246,26 @@ object ToolArguments {
             val step = fields.optionalInt("step", 1..Int.MAX_VALUE)
             if ((target == null) == (step == null)) throw Bad("Each item of evidence needs a target or a step.")
             Evidence(target, step, fields.optionalBoolean("checked"), fields.optionalInt("percent", 0..100))
+        }
+    }
+
+    /**
+     * update_checklist's items (design 7.2 of sub-project 7): each with a text, a state and the limits of its description,
+     * and an id only in the form that Kestrel gives; `ChecklistRules` checks the list itself.
+     */
+    private fun checklist(r: Reader): List<ChecklistDraft> {
+        val items = r.array("items") ?: throw Bad("The argument items is missing.")
+        return items.map { item ->
+            val fields = Reader(item as? JsonObject ?: throw Bad("Each item of items must be an object."), r.table)
+            val id = fields.optionalString("id")
+            if (id != null && !ITEM_ID.matches(id)) throw Bad("An item's id must be an id from the last checklist result, such as c3.")
+            ChecklistDraft(
+                id = id,
+                text = fields.string("text", ChecklistRules.TEXT_LIMIT),
+                state = fields.choice("state", ITEM_STATES),
+                step = fields.optionalInt("step", 1..Int.MAX_VALUE),
+                why = fields.optionalString("why", ChecklistRules.TEXT_LIMIT),
+            )
         }
     }
 

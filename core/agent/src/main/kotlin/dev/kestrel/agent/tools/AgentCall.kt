@@ -1,5 +1,6 @@
 package dev.kestrel.agent.tools
 
+import dev.kestrel.agent.goal.ChecklistDraft
 import dev.kestrel.agent.port.Direction
 import dev.kestrel.agent.port.MediaAction
 import dev.kestrel.agent.port.MediaKinds
@@ -226,6 +227,13 @@ sealed interface AgentCall {
         override val tool: String get() = Tools.FORGET
 
         override fun toString(): String = "Forget(key=${key.length} chars)"
+    }
+
+    /** The checklist's [items] as they were read, before `ChecklistRules` checks the list (design 7.2 of sub-project 7). */
+    data class UpdateChecklist(val items: List<ChecklistDraft>) : AgentCall {
+        override val tool: String get() = Tools.UPDATE_CHECKLIST
+
+        override fun toString(): String = "UpdateChecklist(items=${items.size})"
     }
 }
 

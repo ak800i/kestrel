@@ -1,5 +1,6 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.memory.Recording
 import dev.kestrel.providers.http.ProviderError
 import kotlinx.coroutines.CancellationException
@@ -52,7 +53,8 @@ class TaskCancellation(val reason: EndReason) : CancellationException("The task 
  * counts are those that the debug hook `agent-task -Result` reports (D28). A `FINISHED` task that typed no vault value
  * carries its [recording], which `:app` keeps for 10 minutes for "Kestrel, save that as <name>" (D23); [offerRoutine] is
  * true after the second `FINISHED` run with the same `finish` signature, and then `:app` asks `RoutineMaker.offer` after
- * it has spoken the report (never for a tagged test task). toString prints only kinds and counts (D25).
+ * it has spoken the report (never for a tagged test task). [checklist] is the run's checklist at its end, which the
+ * report of a round's limit names (plan 7A; design 7.4 of sub-project 7). toString prints only kinds and counts (D25).
  */
 data class TaskReport(
     val end: EndReason,
@@ -76,10 +78,12 @@ data class TaskReport(
     val modelId: String? = null,
     val recording: Recording? = null,
     val offerRoutine: Boolean = false,
+    val checklist: Checklist? = null,
 ) {
     override fun toString(): String =
         "TaskReport(end=$end, error=$error, detail=${detail?.length}, summary=${summary?.length}, ledger=${ledger.size}, " +
             "sends=${sends.size}, recipients=${recipients.size}, steps=$steps, workMillis=$workMillis, credits=$credits, " +
             "tokens=${inputTokens + outputTokens}, cacheRead=$cacheRead, confirmed=$confirmed, unconfirmed=$unconfirmed, " +
-            "beforeTestMode=$beforeTestMode, shareItems=$shareItems, recording=${recording != null}, offerRoutine=$offerRoutine)"
+            "beforeTestMode=$beforeTestMode, shareItems=$shareItems, recording=${recording != null}, offerRoutine=$offerRoutine, " +
+            "checklist=$checklist)"
 }

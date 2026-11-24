@@ -1,5 +1,7 @@
 package dev.kestrel.agent.tools
 
+import dev.kestrel.agent.goal.ChecklistRules
+import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.providers.chat.ToolSpec
 import dev.kestrel.safety.Category
@@ -50,9 +52,16 @@ object Tools {
     const val SET_SLIDER = "set_slider"
     const val ADD_CONTACT = "add_contact"
     const val DELETE_CONTACT = "delete_contact"
+    const val UPDATE_CHECKLIST = "update_checklist"
 
     /** The tools whose call declares a category: those that act on an element. */
     val WITH_CATEGORY: Set<String> = setOf(TAP, LONG_PRESS, TYPE_TEXT, SCROLL, SWIPE, SET_SLIDER)
+
+    /**
+     * The tools that act on the screen: a step of one of them that ran without failing may mark a checklist item done
+     * (design 7.2 of sub-project 7). `wait` and `look_closer` only look, and the dialogue tools only talk.
+     */
+    val ACTING: Set<String> = WITH_CATEGORY + setOf(BACK, HOME, OPEN_APP, OPEN_URL, OPEN_DEEP_LINK, OPEN_SETTINGS)
 
     internal const val REASON_LIMIT = 120
     internal const val QUESTION_LIMIT = 200
@@ -320,6 +329,29 @@ object Tools {
             "Delete a contact that the task's newest find_contact result lists, by its number there: 2 for contact 2. Use it instead of a contacts app.",
             listOf("contact" to integer("The contact's number in the newest find_contact result.")),
             listOf("contact"),
+        ),
+        // Design 7.2 of sub-project 7: ChecklistRules checks the list, Kestrel gives the ids.
+        tool(
+            UPDATE_CHECKLIST,
+            "Write the goal's checklist: the steps to reach the owner's goal and the state of each. Send every step that is still " +
+                "todo or doing each time; a step that is done, skipped or failed may be left out and stays as it is. Mark a step " +
+                "done only with the number of the step that did it.",
+            listOf(
+                "items" to array(
+                    "The steps: 1 to ${ChecklistRules.MAX_ITEMS} in a call. New steps go at the end, in the order given.",
+                    objectOf(
+                        listOf(
+                            "id" to string("The item's id from the last checklist result, such as c3; leave it out for a new item."),
+                            "text" to string("One step, in a few words; at most ${ChecklistRules.TEXT_LIMIT} characters."),
+                            "state" to string("The step's state: todo, doing, done, skipped or failed.", ItemState.entries.map { it.wire }),
+                            "step" to integer("For done: the number of the step that did it."),
+                            "why" to string("For skipped or failed: why; at most ${ChecklistRules.TEXT_LIMIT} characters."),
+                        ),
+                        listOf("text", "state"),
+                    ),
+                ),
+            ),
+            listOf("items"),
         ),
     )
 

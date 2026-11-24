@@ -1,5 +1,6 @@
 package dev.kestrel.agent.loop
 
+import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.GoalPort
 import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.port.AppsPort
@@ -47,6 +48,9 @@ internal class RunTrace(
     suspend fun acted(packageName: String) {
         if (usedApps.add(packageName)) guarded { goal.traced(TraceEntry.AppUsed(apps.label(packageName) ?: packageName, packageName)) }
     }
+
+    /** The run's [checklist] after an update that the rules accepted (design 7.2 of sub-project 7). */
+    suspend fun checklist(checklist: Checklist) = guarded { goal.checklistChanged(checklist) }
 
     /** The ledger's [lines] that the record does not hold yet; the ledger only grows. */
     suspend fun ledger(lines: List<String>) {

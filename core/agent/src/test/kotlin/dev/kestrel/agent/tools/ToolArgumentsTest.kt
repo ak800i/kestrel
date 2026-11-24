@@ -1,5 +1,7 @@
 package dev.kestrel.agent.tools
 
+import dev.kestrel.agent.goal.ChecklistDraft
+import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.observe.ObservationBuilder
 import dev.kestrel.agent.observe.ObservationInput
 import dev.kestrel.agent.observe.ObservationTable
@@ -174,5 +176,23 @@ class ToolArgumentsTest {
         assertEquals(LocalDateTime.of(2026, 11, 20, 10, 20), Dates.dateTime("2026-11-20T10:20"))
         assertNull(Dates.dateTime("2026-11-20T25:00"))
         assertNull(Dates.dateTime("2026-11-20T10:20:00"))
+    }
+
+    // Design 7.2 of sub-project 7: the items' fields and limits; ChecklistRules checks the list itself.
+    @Test
+    fun aChecklistsItemsAreReadAndTheirIdsChecked() {
+        assertEquals(
+            AgentCall.UpdateChecklist(listOf(ChecklistDraft("c1", "Open Viber", ItemState.DONE, 3), ChecklistDraft(null, "Reply", ItemState.SKIPPED, why = "No reply needed"))),
+            valid("update_checklist", """{"items": [{"id": "c1", "text": "Open Viber", "state": "done", "step": 3}, {"text": "Reply", "state": "skipped", "why": "No reply needed"}]}"""),
+        )
+        assertEquals("An item's id must be an id from the last checklist result, such as c3.", invalid("update_checklist", """{"items": [{"id": "x1", "text": "A", "state": "todo"}]}"""))
+        assertEquals("An item's id must be an id from the last checklist result, such as c3.", invalid("update_checklist", """{"items": [{"id": "c07", "text": "A", "state": "todo"}]}"""))
+        // A long goal's ids have no upper limit.
+        assertEquals(
+            AgentCall.UpdateChecklist(listOf(ChecklistDraft("c1234567", "Reply to Mila", ItemState.DOING))),
+            valid("update_checklist", """{"items": [{"id": "c1234567", "text": "Reply to Mila", "state": "doing"}]}"""),
+        )
+        assertEquals("The argument state is missing.", invalid("update_checklist", """{"items": [{"text": "A"}]}"""))
+        assertEquals("The argument text is longer than 120 characters.", invalid("update_checklist", """{"items": [{"text": "${"a".repeat(121)}", "state": "todo"}]}"""))
     }
 }

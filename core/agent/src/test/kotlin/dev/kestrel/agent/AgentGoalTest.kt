@@ -1,5 +1,8 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.goal.Checklist
+import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.agent.goal.TraceEntry
@@ -11,11 +14,13 @@ import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.agent.tools.Tools
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
+import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.Mode
@@ -203,5 +208,80 @@ class AgentGoalTest {
         assertTrue(words.length > ScreenText.VALUE_LIMIT)
         assertEquals("The owner added (typed) before the first step: \"$words\"", lastMessage(harness, 0))
         assertTrue(harness.requestText(1).contains("The owner said: \"$words\""))
+    }
+
+    private fun item(text: String, state: String, vararg more: Pair<String, Any?>): Map<String, Any?> = mapOf("text" to text, "state" to state) + more
+
+    private fun checklist(vararg items: Map<String, Any?>) = call("update_checklist", null, null, null, "items" to items.toList())
+
+    @Test
+    fun aChecklistThatKeepsTheRulesIsSavedReportedAndNamedInItsResult() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("list_sms"),
+            checklist(item("Read the SMS", "done", "step" to 1), item("Tell the owner", "todo")),
+            fail(),
+        ))
+        harness.data.answer(Tools.LIST_SMS, sms("Hi"))
+
+        val report = harness.run("Read my newest SMS")
+
+        val saved = Checklist(listOf(ChecklistItem("c1", "Read the SMS", ItemState.DONE, step = 1), ChecklistItem("c2", "Tell the owner", ItemState.TODO)))
+        assertEquals(listOf(saved), harness.goal.checklists)
+        assertTrue(harness.requestText(2).contains("Result: checklist saved, 1 of 2 done (c1, c2)."))
+        assertEquals(saved, report.checklist)
+    }
+
+    // A step that only talked did nothing that an item could be done by (design 7.2 of sub-project 7).
+    @Test
+    fun aChecklistThatBreaksARuleOrComesRightAfterAnotherIsAnInvalidCall() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("say", null, null, null, "text" to "Opening it."),
+            checklist(item("Open the chat", "done", "step" to 1)),
+            checklist(item("Open the chat", "todo")),
+            checklist(item("Open the chat", "doing", "id" to "c1")),
+            fail(),
+        ))
+
+        harness.run("Open Ana's chat")
+
+        assertEquals(List(4) { ModelRole.LIGHTWEIGHT } + ModelRole.VERSATILE, harness.model.roles)
+        assertTrue(
+            harness.requestText(2).contains(
+                "Result: update_checklist failed: Step 1 cannot mark c1 done: name a step that acted on the screen without failing, a data step with a result or a step that the owner did.",
+            ),
+        )
+        assertTrue(
+            harness.requestText(4).contains(
+                "Result: update_checklist failed: it came right after the last update; act on the screen or with another tool before you update the checklist again.",
+            ),
+        )
+        assertEquals(1, harness.goal.checklists.size)
+    }
+
+    @Test
+    fun aChecklistUpdateNeitherMakesProgressNorCountsAsAStepWithout() = runTest {
+        val say = call("say", null, null, null, "text" to "Working.")
+        val harness = Harness(Screens.chats(), listOf(say, say, checklist(item("Say hello", "doing")), say, fail()))
+
+        harness.run("Say hello")
+
+        // Three steps without progress switch to the versatile model; the update between them is none of the three.
+        assertEquals(List(4) { ModelRole.LIGHTWEIGHT } + ModelRole.VERSATILE, harness.model.roles)
+    }
+
+    // The open items refuse the finish before its pause gate, which would otherwise end the run as unverified.
+    @Test
+    fun finishFailsWhileTheChecklistHasOpenItemsBeforeAPauseCouldEndTheRun() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            checklist(item("Open the chat", "todo"), item("Read it", "todo")),
+            call("finish", null, null, null, "summary" to "Done.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Ana Petrović")))),
+            fail(),
+        ))
+        // The turns' gates of the first two steps, then a pause that ends while the model answers the finish.
+        harness.owner.gates += listOf(Gate.GO, Gate.GO, Gate.RESUMED)
+
+        assertEquals(EndReason.FAILED_BY_MODEL, harness.run("Read Ana's chat").end)
+
+        assertTrue(harness.requestText(2).contains("Result: finish failed: the checklist has open items c1 and c2; mark them done, skipped or failed."))
     }
 }
