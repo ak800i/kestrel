@@ -195,4 +195,16 @@ class ToolArgumentsTest {
         assertEquals("The argument state is missing.", invalid("update_checklist", """{"items": [{"text": "A"}]}"""))
         assertEquals("The argument text is longer than 120 characters.", invalid("update_checklist", """{"items": [{"text": "${"a".repeat(121)}", "state": "todo"}]}"""))
     }
+
+    // Design 9.4 of sub-project 7: the words, and two days as YYYY-MM-DD in their order.
+    @Test
+    fun aSearchTakesItsWordsAndTwoDaysInOrder() {
+        assertEquals(
+            AgentCall.SearchConversations("Mila", LocalDate.of(2026, 11, 13), LocalDate.of(2026, 11, 20)),
+            valid("search_conversations", """{"query": "Mila", "from": "2026-11-13", "to": "2026-11-20"}"""),
+        )
+        assertEquals(AgentCall.SearchConversations("Mila", null, null), valid("search_conversations", """{"query": "Mila", "from": ""}"""))
+        assertEquals("The argument from must be YYYY-MM-DD.", invalid("search_conversations", """{"query": "Mila", "from": "yesterday"}"""))
+        assertEquals("The argument to must not be before from.", invalid("search_conversations", """{"query": "Mila", "from": "2026-11-20", "to": "2026-11-13"}"""))
+    }
 }

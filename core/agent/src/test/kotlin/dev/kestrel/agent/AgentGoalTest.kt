@@ -2,6 +2,9 @@ package dev.kestrel.agent
 
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.HistoryMatch
+import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.goal.HistoryResult
 import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.SteerChannel
@@ -17,6 +20,7 @@ import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.ScreenAction
+import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.agent.tools.Tools
 import dev.kestrel.providers.chat.ChatMessage
@@ -32,6 +36,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 /**
  * What a run gives the goal around it and takes from it (plan 7A; design 5.4, 7 and 8 of sub-project 7): the record's
@@ -353,5 +358,35 @@ class AgentGoalTest {
         // An interruption always has its cause, and only an interruption has one.
         assertThrows(IllegalArgumentException::class.java) { TaskCancellation(EndReason.INTERRUPTED) }
         assertThrows(IllegalArgumentException::class.java) { TaskCancellation(EndReason.CANCELLED, Interruption.TOUCH) }
+    }
+
+    // Design 9.4 of sub-project 7: the matches reach the model only as this run's data step, and become its data note.
+    @Test
+    fun aSearchOfPastConversationsIsADataStepOfThisRun() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("search_conversations", null, null, null, "query" to "restaurant Mila", "from" to "2026-11-13"),
+            call("finish", null, null, null, "summary" to "It's Ambar.", "evidence" to listOf(mapOf("step" to 1))),
+        ))
+        harness.history.result = HistoryResult(listOf(HistoryMatch(0, 2, "Find the restaurant Mila sent me", "It's Ambar.", emptyList(), emptyList())))
+
+        val report = harness.run("Which restaurant did Mila send me?")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertEquals(listOf(HistoryQuery("restaurant Mila", LocalDate.of(2026, 11, 13), null)), harness.history.queries)
+        val result = harness.requestText(1)
+        assertTrue(result, result.contains("Result (step 1): searched past conversations for restaurant Mila → ok (1 item)."))
+        assertTrue(result, result.contains("  The owner said: \"Find the restaurant Mila sent me\""))
+        assertEquals(Tools.SEARCH_CONVERSATIONS, harness.goal.traces.filterIsInstance<TraceEntry.Data>().single().tool)
+    }
+
+    @Test
+    fun aSearchThatFailsIsItsStepsResultNotTheEndOfTheTask() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("search_conversations", null, null, null, "query" to "Mila"), fail()))
+        harness.history.fails = true
+
+        assertEquals(EndReason.FAILED_BY_MODEL, harness.run("What did Mila send?").end)
+
+        assertTrue(harness.requestText(1).contains("Result: searched past conversations for Mila → failed: Kestrel could not read its past conversations."))
+        assertTrue(harness.log.texts(TaskLog.Kind.ERROR).contains("history: java.lang.IllegalStateException"))
     }
 }

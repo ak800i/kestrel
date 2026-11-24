@@ -77,7 +77,7 @@ object ActionMapper {
             is AgentCall.ComposeSms -> of(ActionKind.COMPOSE_SMS, text = call.text).copy(receivingPackage = receivingPackage, receivingAppLabel = receivingAppLabel)
             is AgentCall.AskUser, is AgentCall.Say, is AgentCall.Finish, is AgentCall.Fail -> of(ActionKind.DIALOGUE)
             is AgentCall.Remember, is AgentCall.Forget -> of(ActionKind.MEMORY)
-            is AgentCall.UpdateChecklist -> of(ActionKind.KESTREL_RECORDS)
+            is AgentCall.UpdateChecklist, is AgentCall.SearchConversations -> of(ActionKind.KESTREL_RECORDS)
         }
     }
 

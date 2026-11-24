@@ -150,6 +150,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private val looks = LookCloser(this)
     private val dialogue = DialogueSteps(this)
     private val checklists = ChecklistSteps(this, task.checklist)
+    private val searches = HistorySteps(this)
 
     /** The run's questions to the owner, which share one count of interruptions (D2). */
     val questions = Questions(this)
@@ -404,6 +405,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         is AgentCall.Remember -> dialogue.remember(call)
         is AgentCall.Forget -> dialogue.forget(call)
         is AgentCall.UpdateChecklist -> checklists.update(call, actedSteps + okDataSteps + ownerSteps)
+        is AgentCall.SearchConversations -> searches.search(call)
         else -> dataSteps.run(call)
     }
 
@@ -945,6 +947,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         private val STRIKING = setOf(EndReason.FAILED_BY_MODEL, EndReason.UNVERIFIED, EndReason.STUCK)
         private val UNRECORDED = setOf(
             Tools.ASK_USER, Tools.SAY, Tools.FINISH, Tools.FAIL, Tools.REMEMBER, Tools.FORGET, Tools.LOOK_CLOSER, Tools.UPDATE_CHECKLIST,
+            Tools.SEARCH_CONVERSATIONS,
         )
     }
 }

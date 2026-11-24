@@ -8,6 +8,7 @@ import dev.kestrel.agent.port.NavigationApp
 import dev.kestrel.agent.port.TravelMode
 import dev.kestrel.safety.Category
 import java.time.DayOfWeek
+import java.time.LocalDate
 
 /**
  * A tool call whose arguments `ToolArguments` has checked (design D10 of sub-project 5). Its text form prints the tool
@@ -234,6 +235,13 @@ sealed interface AgentCall {
         override val tool: String get() = Tools.UPDATE_CHECKLIST
 
         override fun toString(): String = "UpdateChecklist(items=${items.size})"
+    }
+
+    /** The words to look for in past conversations, and the first and last day to search (design 9.4 of sub-project 7). */
+    data class SearchConversations(val query: String, val from: LocalDate?, val to: LocalDate?) : AgentCall {
+        override val tool: String get() = Tools.SEARCH_CONVERSATIONS
+
+        override fun toString(): String = "SearchConversations(query=${query.length} chars, from=$from, to=$to)"
     }
 }
 

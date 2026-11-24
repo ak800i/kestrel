@@ -22,7 +22,7 @@ class ToolsTest {
                 "tap", "long_press", "type_text", "scroll", "swipe", "back", "home", "open_app", "open_url", "open_deep_link", "open_settings", "wait",
                 "look_closer", "find_contact", "find_media", "share_media", "list_events", "create_event", "set_alarm", "set_timer",
                 "list_notifications", "list_sms", "compose_sms", "list_calls", "get_location", "media_control", "navigate", "ask_user", "say",
-                "finish", "fail", "remember", "forget", "set_slider", "add_contact", "delete_contact", "update_checklist",
+                "finish", "fail", "remember", "forget", "set_slider", "add_contact", "delete_contact", "update_checklist", "search_conversations",
             ),
             Tools.ALL.map { it.name },
         )

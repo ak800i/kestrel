@@ -20,6 +20,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.format.DateTimeParseException
 
 /**
  * Checks a tool call's arguments against its schema and the limits of its description (design D4 and D10 of
@@ -188,6 +189,7 @@ object ToolArguments {
         Tools.DELETE_CONTACT -> AgentCall.DeleteContact(r.int("contact", 1..Tools.LIST_MAX))
         Tools.FORGET -> AgentCall.Forget(r.string("key"))
         Tools.UPDATE_CHECKLIST -> AgentCall.UpdateChecklist(checklist(r))
+        Tools.SEARCH_CONVERSATIONS -> search(r)
         else -> throw Bad("Kestrel has no such tool.")
     }
 
@@ -266,6 +268,23 @@ object ToolArguments {
                 step = fields.optionalInt("step", 1..Int.MAX_VALUE),
                 why = fields.optionalString("why", ChecklistRules.TEXT_LIMIT),
             )
+        }
+    }
+
+    /** search_conversations' words and days (design 9.4 of sub-project 7): the last day is never before the first. */
+    private fun search(r: Reader): AgentCall.SearchConversations {
+        val from = isoDay(r, "from")
+        val to = isoDay(r, "to")
+        if (from != null && to != null && to < from) throw Bad("The argument to must not be before from.")
+        return AgentCall.SearchConversations(r.string("query", Tools.QUERY_LIMIT), from, to)
+    }
+
+    private fun isoDay(r: Reader, name: String): LocalDate? {
+        val text = r.optionalString(name) ?: return null
+        return try {
+            LocalDate.parse(text)
+        } catch (e: DateTimeParseException) {
+            throw Bad("The argument $name must be YYYY-MM-DD.")
         }
     }
 

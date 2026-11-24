@@ -1,6 +1,7 @@
 package dev.kestrel.agent.tools
 
 import dev.kestrel.agent.goal.ChecklistRules
+import dev.kestrel.agent.goal.HistoryPort
 import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.providers.chat.ToolSpec
@@ -53,6 +54,7 @@ object Tools {
     const val ADD_CONTACT = "add_contact"
     const val DELETE_CONTACT = "delete_contact"
     const val UPDATE_CHECKLIST = "update_checklist"
+    const val SEARCH_CONVERSATIONS = "search_conversations"
 
     /** The tools whose call declares a category: those that act on an element. */
     val WITH_CATEGORY: Set<String> = setOf(TAP, LONG_PRESS, TYPE_TEXT, SCROLL, SWIPE, SET_SLIDER)
@@ -75,6 +77,7 @@ object Tools {
     internal const val TIMER_MAX = 86_400
     internal const val NAME_LIMIT = 80
     internal const val NUMBER_LIMIT = 40
+    internal const val QUERY_LIMIT = 200
 
     internal val DIRECTIONS = listOf("up", "down", "left", "right")
     internal val DAYS = listOf("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -353,6 +356,18 @@ object Tools {
                 ),
             ),
             listOf("items"),
+        ),
+        // Design 9.4 of sub-project 7: the search runs on the phone, and only its matches reach the model.
+        tool(
+            SEARCH_CONVERSATIONS,
+            "Search the owner's earlier conversations with Kestrel on this phone. Returns at most ${HistoryPort.MAX_MATCHES} earlier commands that match, " +
+                "newest first. Use it when the owner refers to something from before that this conversation does not hold.",
+            listOf(
+                "query" to string("Words to look for: a name, an app, a topic; at most $QUERY_LIMIT characters."),
+                "from" to string("The first day to search: YYYY-MM-DD."),
+                "to" to string("The last day to search: YYYY-MM-DD."),
+            ),
+            listOf("query"),
         ),
     )
 
