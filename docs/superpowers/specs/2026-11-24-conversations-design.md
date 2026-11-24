@@ -509,9 +509,10 @@ The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`
 The tool goes at the end of `Tools.ALL`, as spec 11.4 requires for a new tool.
 
 ```text
-update_checklist — "Write the goal's checklist: the steps to reach the owner's goal and the state of each. Send every
-step that is still todo or doing each time; a step that is done, skipped or failed may be left out and stays as it is.
-Mark a step done only with the number of the step that did it."
+update_checklist — "Write the goal's checklist before you work on it: the steps to reach the owner's goal and the state
+of each. Send every step that is still todo or doing each time; a step that is done, skipped or failed may be left out
+and stays as it is. Mark a step done only with the number of the step that did it, which cannot come before the call
+that added the step."
   items (array, required), each an object:
     id     string   "The item's id from the last checklist result, such as c3; leave it out for a new item."
     text   string   "One step, in a few words; at most 120 characters."   (required)

@@ -333,9 +333,10 @@ object Tools {
         // Design 7.2 of sub-project 7: ChecklistRules checks the list, Kestrel gives the ids.
         tool(
             UPDATE_CHECKLIST,
-            "Write the goal's checklist: the steps to reach the owner's goal and the state of each. Send every step that is still " +
-                "todo or doing each time; a step that is done, skipped or failed may be left out and stays as it is. Mark a step " +
-                "done only with the number of the step that did it.",
+            "Write the goal's checklist before you work on it: the steps to reach the owner's goal and the state of each. Send " +
+                "every step that is still todo or doing each time; a step that is done, skipped or failed may be left out and stays " +
+                "as it is. Mark a step done only with the number of the step that did it, which cannot come before the call that " +
+                "added the step.",
             listOf(
                 "items" to array(
                     "The steps: 1 to ${ChecklistRules.MAX_ITEMS} in a call. New steps go at the end, in the order given.",
