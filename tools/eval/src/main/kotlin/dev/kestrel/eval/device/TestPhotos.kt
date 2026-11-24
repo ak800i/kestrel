@@ -3,6 +3,7 @@ package dev.kestrel.eval.device
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
@@ -64,6 +65,39 @@ class TestPhotos(private val device: Device, private val work: Path) {
             }
             throw e
         }
+    }
+
+    /**
+     * Puts one card taken a minute ago on the device's clock into the folder and indexes it, so that it is the newest image
+     * (plan 6B: photo-latest), and returns its time. It shares nothing, so it has no refusal of a day that holds the
+     * owner's photos; it removes what it copied when Android does not index the card. Each change runs inside [change].
+     */
+    fun addNewest(change: (() -> Unit) -> Unit = { it() }): LocalDateTime {
+        val offset = PhotoCard.exifOffset(device.read("date +%z").joinToString("").trim())
+        val taken = LocalDateTime.parse(device.read("date +%Y-%m-%dT%H:%M:%S").joinToString("").trim()).minusMinutes(1).withSecond(0)
+        val before = imageCount()
+        try {
+            change { device.idempotent("mkdir -p $FOLDER") }
+            Files.createDirectories(work)
+            val local = work.resolve("kestrel_test_newest.jpg")
+            Files.write(local, PhotoCard.jpeg(1, taken, offset))
+            val remote = "$FOLDER/kestrel_test_newest.jpg"
+            change {
+                device.push(local, remote)
+                device.idempotent("touch -m -d '${taken.format(TOUCH)}' $remote")
+                device.idempotent("content call --uri content://media/ --method scan_file --arg $remote")
+            }
+            val test = rows(" --where $WHERE")
+            if (test.size != 1) throw IllegalStateException("Android indexed ${test.size} of the 1 test photo.")
+        } catch (e: Exception) {
+            try {
+                remove(before)
+            } catch (cleanup: Exception) {
+                e.addSuppressed(cleanup)
+            }
+            throw e
+        }
+        return taken
     }
 
     /** Deletes the folder, which deletes its rows, deletes any row that is left, and returns whether the device has [before] images again. */

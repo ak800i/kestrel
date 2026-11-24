@@ -1,0 +1,4 @@
+[
+  {"tool": "open_deep_link", "arguments": {"uri": "geo:0,0?q=Kalemegdan", "reason": "show the place on Google Maps"}},
+  {"tool": "finish", "arguments": {"summary": "Google Maps shows Kalemegdan.", "evidence": [{"target": {"contains": "Kalemegdan"}}]}}
+]

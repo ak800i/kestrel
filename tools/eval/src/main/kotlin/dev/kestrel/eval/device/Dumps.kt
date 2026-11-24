@@ -1,9 +1,12 @@
 package dev.kestrel.eval.device
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -52,6 +55,28 @@ object Dumps {
         val id = front["id"]?.jsonPrimitive?.int ?: return 0
         return tree["elements"]?.jsonArray?.map { it.jsonObject }
             ?.count { it["windowId"]?.jsonPrimitive?.int == id && it.text("className").orEmpty().endsWith("ImageView") } ?: 0
+    }
+
+    /**
+     * How many elements of a class ending in ImageView in `agent-tree`'s active application window cover at least [share]
+     * of the window, as a photo viewer's one photo does (design D8 of sub-project 6: photo-latest's fallback).
+     */
+    fun largeImageCount(json: String, share: Double = 0.5): Int {
+        val tree = Json.parseToJsonElement(json).jsonObject
+        val front = tree["windows"]?.jsonArray?.map { it.jsonObject }
+            ?.firstOrNull { it.text("kind") == "APPLICATION" && it["active"]?.jsonPrimitive?.contentOrNull == "true" } ?: return 0
+        val id = front["id"]?.jsonPrimitive?.int ?: return 0
+        val window = area(front["bounds"]) ?: return 0
+        return tree["elements"]?.jsonArray?.map { it.jsonObject }?.count { element ->
+            element["windowId"]?.jsonPrimitive?.int == id && element.text("className").orEmpty().endsWith("ImageView") && (area(element["bounds"]) ?: 0L) >= share * window
+        } ?: 0
+    }
+
+    /** The area of `[left, top, right, bottom]`, or null for anything else. */
+    private fun area(bounds: JsonElement?): Long? {
+        val values = (bounds as? JsonArray)?.mapNotNull { it.jsonPrimitive.intOrNull } ?: return null
+        if (values.size != 4) return null
+        return (values[2] - values[0]).toLong() * (values[3] - values[1])
     }
 
     /** The package of the activity in front, from `dumpsys activity activities`, or null when none is resumed. */

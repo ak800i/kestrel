@@ -1,0 +1,5 @@
+[
+  {"tool": "open_app", "arguments": {"name": "Photos", "reason": "find the latest photo"}},
+  {"tool": "tap", "target": {"contains": "Photo taken"}, "arguments": {"reason": "open the latest photo", "category": "reading"}},
+  {"tool": "finish", "arguments": {"summary": "Your latest photo is open.", "evidence": []}}
+]

@@ -1,0 +1,4 @@
+[
+  {"tool": "open_url", "arguments": {"url": "https://github.com/ak800i/kestrel", "browser": "firefox", "reason": "open the page in Firefox"}},
+  {"tool": "finish", "arguments": {"summary": "github.com/ak800i/kestrel is open in Firefox.", "evidence": [{"target": {"contains": "ak800i"}}]}}
+]

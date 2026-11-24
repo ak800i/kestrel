@@ -1,0 +1,4 @@
+[
+  {"tool": "open_deep_link", "arguments": {"uri": "https://www.youtube.com/results?search_query=kestrel+hovering", "reason": "search YouTube"}},
+  {"tool": "finish", "arguments": {"summary": "YouTube shows videos of kestrels hovering.", "evidence": [{"target": {"contains": "kestrel hovering"}}]}}
+]

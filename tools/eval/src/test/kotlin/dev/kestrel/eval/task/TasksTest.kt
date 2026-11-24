@@ -62,7 +62,11 @@ class TasksTest {
 
     @Test
     fun theSuitesAreTheSuiteAndD3TasksLiveAndTheScriptsAndStandInsWithoutAModel() {
-        val suite = (SettingsTasks.ALL + ClockTasks.ALL + PeopleTasks.ALL + MessageTasks.ALL).map { it.name }
+        val suite = (SettingsTasks.ALL + ClockTasks.ALL + PeopleTasks.ALL + MessageTasks.ALL + AppTasks.ALL).map { it.name }
+        // Design D8: kestrel-api37 runs 26 tasks live and the A71 27, one of them the known gap.
+        assertEquals(23, suite.size)
+        assertEquals(26, Catalogue.suite(DeviceKind.EMULATOR, live = true).size)
+        assertEquals(27, Catalogue.suite(DeviceKind.A71, live = true).size)
         assertEquals(suite + listOf("hotspot", "firefox-wiki", "read-email"), Catalogue.suite(DeviceKind.EMULATOR, live = true).map { it.name })
         assertEquals(suite - "sms-read" + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), Catalogue.suite(DeviceKind.A71, live = true).map { it.name })
         assertEquals(
