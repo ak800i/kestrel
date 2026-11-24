@@ -210,8 +210,6 @@ class Runner(
         fun elapsed(): Duration = clock.elapsed() - start
         var heard = Duration.ZERO
         var quietUntil = Duration.ZERO
-        // Whether the open "Which number should I use?" is in the record already.
-        var silent = false
         while (elapsed() < LIMIT) {
             clock.sleep(POLL)
             val pairs = quietly { hooks.agentTask(tag) }
@@ -225,32 +223,53 @@ class Runner(
             heard = elapsed()
             if (pairs["state"] == "done") {
                 state.answer = pairs
+                state.record.ended()
                 return
             }
             if (elapsed() < quietUntil) continue
             val asked = quietly { hooks.agentState(tag) } ?: continue
-            val kind = Answers.kind(asked) ?: continue
+            val kind = Answers.kind(asked)
+            state.record.saw(kind)
+            if (kind == null) continue
             val reply = task.answers.reply(asked)
             if (reply == null) {
-                // "Which number should I use?" stays unanswered (the owner's decision P1), once in the run's record.
-                if (kind == Answers.PICK_NUMBER && !silent) state.asked.add(Asked(kind, null))
-                silent = kind == Answers.PICK_NUMBER
+                // "Which number should I use?" stays unanswered (the owner's decision P1).
+                if (kind == Answers.PICK_NUMBER) state.record.keepOpen()
                 continue
             }
-            silent = false
             val confirming = asked["confirming"].takeIf { asked["asking"] == "confirm" }
             // A confirmation that the task does not name was cancelled; outside the injection fixtures, whose defence it is, the run fails.
             if (confirming != null && reply == "cancel" && task.kind != TaskKind.INJECTION) state.refused = confirming
             if (confirming != null && reply == "no") state.declined.add(confirming)
             // A lost or refused answer is not sent again: the next poll answers only if the same question is still open.
-            // Only an answer that reached Kestrel can have ended anything; one sent again to the same open question is
-            // recorded once.
-            val delivered = quietly { hooks.agentAnswer(tag, reply, confirming) } != null
-            if (delivered) Asked(kind, reply).let { if (state.asked.lastOrNull() != it) state.asked.add(it) }
+            when (send { hooks.agentAnswer(tag, reply, confirming) }) {
+                Delivery.DELIVERED -> state.record.answered(reply)
+                Delivery.LOST -> state.record.lost(reply)
+                Delivery.REFUSED -> Unit
+            }
             quietUntil = elapsed() + QUIET
         }
         state.timedOut = true
     }
+
+    /**
+     * Sends an answer that acts once: [Delivery.REFUSED] when Kestrel answered with an error, such as "the task asks
+     * nothing"; [Delivery.LOST] when its reply did not come back, after which Kestrel may have received it or not.
+     */
+    private fun send(answer: () -> HookAnswer): Delivery = try {
+        answer()
+        Delivery.DELIVERED
+    } catch (e: HookError) {
+        Delivery.REFUSED
+    } catch (e: HookSilent) {
+        Delivery.LOST
+    } catch (e: HookLost) {
+        Delivery.LOST
+    } catch (e: DeviceCommandFailed) {
+        Delivery.LOST
+    }
+
+    private enum class Delivery { DELIVERED, REFUSED, LOST }
 
     /** Whether Kestrel has a task with [tag], read for up to 10 s after the transcript's answer was lost. */
     private fun exists(tag: String): Boolean {
@@ -334,11 +353,14 @@ class Runner(
         var refused: String? = null
         val declined = mutableSetOf<String>()
 
-        // The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order (T1).
-        val asked = mutableListOf<Asked>()
+        // The task's questions as the run met them, and its answers that reached Kestrel (T1).
+        val record = AskedRecord()
+
+        /** The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order. */
+        val asked: List<Asked> get() = record.asked
 
         /** The kinds of the questions and hand-overs whose answer by the run ended the task, each once. */
-        fun cancelled(): List<String> = asked.filter { it.endsTask }.map { it.kind }.distinct()
+        fun cancelled(): List<String> = record.cancelled()
     }
 
     private data class End(val after: Boolean, val credits: String, val failures: List<RestoreFailure>)

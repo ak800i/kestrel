@@ -443,4 +443,30 @@ class RunnerTest {
         polls = 0
         assertEquals(Reason.END, runner().run(task(), "[]", 4, "willow walnut").reason)
     }
+
+    @Test
+    fun aCancelWhoseReplyWasLostEndedTheTaskWhenTheQuestionClosedOrTheTaskEndedRightAfter() {
+        val open = "phase=running work=running-task handOver=none confirming=none"
+        fun answers() = run.adb.hookCalls("AGENT_ANSWER").size
+        var sent = 0
+        run.adb.hook("AGENT_STATE") { if (answers() > sent) "$open asking=none question=none" else "$open asking=free question=free" }
+        val cancelled = "state=done end=CANCELLED steps=2 workMs=4000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 " +
+            "model=scripted in=10 out=2 cacheRead=0 cacheWrite=0"
+
+        // The task ended at the first poll after the lost reply.
+        run.adb.hook("AGENT_TASK") { if (answers() > sent) cancelled else "state=running" }
+        run.adb.loseNext("hook.AGENT_ANSWER")
+        val ended = runner().run(task(), "[]", 1, "maple heron")
+        assertEquals(1, answers())
+        assertTrue(ended.text(), ended.text().endsWith(" asked=free reason=asked"))
+
+        // The question closed at the next read, so the run did not answer again, and the task ended later.
+        sent = answers()
+        var polls = 0
+        run.adb.hook("AGENT_TASK") { if (answers() > sent && ++polls > 4) cancelled else "state=running" }
+        run.adb.loseNext("hook.AGENT_ANSWER")
+        val closed = runner().run(task(), "[]", 2, "cedar otter")
+        assertEquals(sent + 1, answers())
+        assertTrue(closed.text(), closed.text().endsWith(" asked=free reason=asked"))
+    }
 }
