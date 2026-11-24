@@ -18,12 +18,12 @@ class AppTasksTest {
         bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 org.mozilla.firefox/.App t4}" }
         var works = true
         bench.adb.hook("VOICE") { extras ->
-            if (works && extras["text"] == "Kestrel, open github.com/ak800i/kestrel in Firefox") firefox.tabs.add(FakeFirefox.GITHUB)
+            if (works && extras["text"] == "Kestrel, open github.com/ak800i/kestrel in Firefox") firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
             "sent"
         }
 
         assertEquals(Reason.OK, bench.run(AppTasks.FIREFOX_URL).reason)
-        assertEquals(listOf("Wikipedia, Common kestrel"), firefox.tabs)
+        assertEquals(listOf(FakeFirefox.WIKI), firefox.titles())
         works = false
         assertEquals(Reason.CHECK, bench.run(AppTasks.FIREFOX_URL).reason)
         bench.assertPutBack()
@@ -36,6 +36,15 @@ class AppTasksTest {
             bench.adb.on("^pm list packages ") { "package:$app" }
             var front = "com.google.android.apps.nexuslauncher"
             bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 $front/.Main t4}" }
+            // The setup opens YouTube's home page or Maps, whose question was answered before, and leaves it behind the home screen.
+            bench.adb.on("^am start -W -a android.intent.action.VIEW -d '(https://www\\.youtube\\.com/|geo:0,0)' ") {
+                front = app
+                ""
+            }
+            bench.adb.on("^input keyevent KEYCODE_HOME$") {
+                front = "com.google.android.apps.nexuslauncher"
+                ""
+            }
             bench.adb.hook("SCREEN_HAS") { extras -> "count=${if (front == app && extras["contains"] in setOf("kestrel hovering", "Kalemegdan")) 1 else 0} app=$front" }
             var works = true
             bench.adb.hook("VOICE") {
@@ -66,6 +75,10 @@ class AppTasksTest {
         }
         bench.adb.on("^am start -W -a android.intent.action.VIEW -d '(\\S+)' -p (\\S+)$") {
             front = it.groupValues[2]
+            ""
+        }
+        bench.adb.on("^input keyevent KEYCODE_HOME$") {
+            front = "com.sec.android.app.launcher"
             ""
         }
 
@@ -125,13 +138,13 @@ class AppTasksTest {
             bench.adb.on("^am start -W -a android.intent.action.VIEW -d '(\\S+)' -p (\\S+)$") { match ->
                 front = match.groupValues[2]
                 activity = null
-                if (front == "org.mozilla.firefox") firefox.tabs.add(FakeFirefox.GITHUB)
+                if (front == "org.mozilla.firefox") firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
                 ""
             }
             bench.adb.hook("SCREEN_HAS") { extras ->
                 val words = extras["contains"].orEmpty()
                 val count = when {
-                    front == "org.mozilla.firefox" -> firefox.has(extras)
+                    front == "org.mozilla.firefox" -> return@hook firefox.answer(extras)
                     else -> if (words in setOf("kestrel hovering", "Kalemegdan", "1:04")) 1 else 0
                 }
                 "count=$count app=$front"
@@ -145,7 +158,7 @@ class AppTasksTest {
             assertTrue(task.name, task.check.all { it.passes(scope, HookAnswer.EMPTY) })
             assertTrue(task.name, bench.run.restores.runAll().isEmpty())
         }
-        assertEquals(listOf("Wikipedia, Common kestrel"), firefox.tabs)
+        assertEquals(listOf(FakeFirefox.WIKI), firefox.titles())
         assertEquals(0, media.test.size)
     }
 }

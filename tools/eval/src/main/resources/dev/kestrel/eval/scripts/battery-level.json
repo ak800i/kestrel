@@ -1,3 +1,10 @@
 [
-  {"tool": "finish", "arguments": {"summary": "Your battery is at {number} percent.", "evidence": []}}
+  {"tool": "open_settings", "arguments": {"page": "main", "reason": "find the battery"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "scroll", "arguments": {"direction": "down", "reason": "find the battery", "category": "reading"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the list settle"}},
+  {"tool": "tap", "target": {"contains": "Battery"}, "arguments": {"reason": "open the battery page", "category": "reading"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the page open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "finish", "arguments": {"summary": "Your battery is at {number} percent.", "evidence": [{"target": {"label": "{number}%"}}]}}
 ]

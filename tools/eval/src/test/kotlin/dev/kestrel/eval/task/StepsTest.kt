@@ -41,7 +41,7 @@ class StepsTest {
                 "pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO",
                 "pm revoke dev.kestrel android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
             ),
-            run.adb.commands,
+            run.adb.commands.filterNot { it.startsWith("am broadcast") },
         )
     }
 

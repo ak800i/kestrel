@@ -1,19 +1,36 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.Extra
 import dev.kestrel.eval.hook.HookAnswer
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
-/** The SMS provider's inbox through `content`: the `_id`s of the messages whose body holds a text, deleted by `_id`. */
+/**
+ * The SMS provider's inbox through `content`: the `_id`s of the messages whose body holds a text, deleted by `_id`. Android
+ * 17 ignores the shell's delete without a word while the shell's app op WRITE_SMS is "ignore", so [delete] allows it for
+ * the deletes and then puts back the mode that it read before.
+ */
 object Sms {
+    private const val SHELL = "com.android.shell"
+
     fun ids(scope: RunScope, text: String): List<Long> =
         Rows.parse(scope.device.read("content query --uri content://sms/inbox --projection _id --where ${shellQuoted("body LIKE '%$text%'")}")).mapNotNull { it["_id"]?.toLongOrNull() }
 
     fun delete(scope: RunScope, ids: List<Long>) {
-        for (id in ids) scope.device.idempotent("content delete --uri content://sms --where ${shellQuoted("_id=$id")}")
+        if (ids.isEmpty()) return
+        val before = mode(scope)
+        if (before != "allow") scope.device.idempotent("appops set $SHELL WRITE_SMS allow")
+        try {
+            for (id in ids) scope.device.idempotent("content delete --uri content://sms --where ${shellQuoted("_id=$id")}")
+        } finally {
+            if (before != "allow") scope.device.idempotent("appops set $SHELL WRITE_SMS $before")
+        }
+        check(mode(scope) == before) { "The shell's app op WRITE_SMS is not $before again; run: adb shell appops set $SHELL WRITE_SMS $before" }
     }
+
+    private fun mode(scope: RunScope): String = Dumps.appOpMode(scope.device.read("appops get $SHELL WRITE_SMS"), "WRITE_SMS")
 }
 
 /**
@@ -66,16 +83,27 @@ data object TestNotification : Setup {
 
 /**
  * Kestrel's notification access, which list_notifications needs, given for the run when Kestrel lacks it and taken back
- * afterwards (`cmd notification allow_listener` and `disallow_listener`).
+ * afterwards (`cmd notification allow_listener` and `disallow_listener`). Android 17 writes the setting a moment after
+ * `disallow_listener`, so the restore waits up to [SETTLE] until the setting no longer names Kestrel. Taking the access
+ * back can end Kestrel's process, which may come back with listening off, so [Listening] turns listening on again.
  */
 data object NotificationAccess : Setup {
     const val LISTENER = "dev.kestrel/dev.kestrel.datatools.notifications.KestrelNotificationListener"
     private const val SHORT = "dev.kestrel/.datatools.notifications.KestrelNotificationListener"
+    private const val SETTLE = 10
 
     override fun apply(scope: RunScope): SetupResult {
         if (allowed(scope)) return SetupResult.Ready
         val byHand = "Settings > Notifications > Device and app notifications: take back Kestrel's notification access."
-        scope.restores.push("Kestrel's notification access taken back", byHand) { scope.device.idempotent("cmd notification disallow_listener $LISTENER") }
+        Listening.keep(scope)
+        scope.restores.push("Kestrel's notification access taken back", byHand) {
+            scope.device.idempotent("cmd notification disallow_listener $LISTENER")
+            var reads = 0
+            while (allowed(scope)) {
+                check(++reads < SETTLE) { "Kestrel's notification access is still on." }
+                scope.clock.sleep(1.seconds)
+            }
+        }
         scope.restores.change("Kestrel's notification access given", byHand) { scope.device.idempotent("cmd notification allow_listener $LISTENER") }
         scope.clock.sleep(2.seconds)
         if (!allowed(scope)) throw SetupFailed("Kestrel's notification access did not turn on.")
@@ -98,13 +126,27 @@ data object OwnAddress : Setup {
 
 /**
  * email-self's restore, pushed before the run: Gmail's own deletion of the conversation that holds the run's marker
- * ([GmailTrash]), which waits for the e-mail that Kestrel's task may have sent.
+ * ([GmailTrash]), which waits for the e-mail only when Kestrel's task may have sent it: when the task confirmed an action
+ * or ran one unconfirmed, or when its end cannot be read. A task that test mode ended before any send, or a run that
+ * gave no task, sent none, so the restore neither waits for it nor warns that it never came.
  */
 data object MailCleanup : Setup {
     override fun apply(scope: RunScope): SetupResult {
         GmailTrash.push(scope)
-        GmailTrash.expect(scope)
+        // Pushed after GmailTrash's restore, so that it runs before it, once the task has ended.
+        scope.restores.push("the wait for the test e-mail", "None.") { if (sent(scope)) GmailTrash.expect(scope) }
         return SetupResult.Ready
+    }
+
+    private fun sent(scope: RunScope): Boolean {
+        val tag = scope.tag ?: return false
+        val answer = try {
+            scope.hooks.agentTask(tag)
+        } catch (e: Exception) {
+            return true
+        }
+        if (answer["state"] != "done") return true
+        return answer.int("confirmed") > 0 || answer.int("unconfirmed") > 0
     }
 }
 

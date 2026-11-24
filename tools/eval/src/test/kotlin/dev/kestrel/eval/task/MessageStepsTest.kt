@@ -78,21 +78,31 @@ class MessageStepsTest {
 
     @Test
     fun theTestSmsComesThroughTheEmulatorsConsoleAndLeavesByItsId() {
-        val run = FakeRun()
-        var deleted = false
-        run.adb.on("^content query --uri content://sms/inbox --projection _id --where ") {
-            if (!deleted && run.adb.hostCommands.any { it.take(3) == listOf("emu", "sms", "send") }) "Row: 0 _id=7" else "No result found."
-        }
-        run.adb.on("^content delete --uri content://sms --where '_id=7'$") {
-            deleted = true
-            ""
-        }
+        for (before in listOf("ignore", null)) {
+            val run = FakeRun()
+            var deleted = false
+            // Android 17 ignores the shell's delete of an SMS unless its app op WRITE_SMS allows it.
+            var mode = before
+            run.adb.on("^appops get com\\.android\\.shell WRITE_SMS$") { mode?.let { "WRITE_SMS: $it; time=+1h ago" } ?: "No operations." }
+            run.adb.on("^appops set com\\.android\\.shell WRITE_SMS (\\w+)$") {
+                mode = it.groupValues[1].takeIf { value -> value != "default" }
+                ""
+            }
+            run.adb.on("^content query --uri content://sms/inbox --projection _id --where ") {
+                if (!deleted && run.adb.hostCommands.any { it.take(3) == listOf("emu", "sms", "send") }) "Row: 0 _id=7" else "No result found."
+            }
+            run.adb.on("^content delete --uri content://sms --where '_id=7'$") {
+                if (mode == "allow") deleted = true
+                ""
+            }
 
-        assertEquals(SetupResult.Ready, EmuSms("+1 202 555 0177", "Kestrel test {marker}").apply(run.scope))
-        assertTrue(run.adb.hostCommands.contains(listOf("emu", "sms", "send", "12025550177", "Kestrel test maple heron")))
-        assertTrue(run.adb.commands.contains("content query --uri content://sms/inbox --projection _id --where 'body LIKE '\\''%maple heron%'\\'''"))
-        assertTrue(run.restores.runAll().isEmpty())
-        assertTrue(deleted)
+            assertEquals(SetupResult.Ready, EmuSms("+1 202 555 0177", "Kestrel test {marker}").apply(run.scope))
+            assertTrue(run.adb.hostCommands.contains(listOf("emu", "sms", "send", "12025550177", "Kestrel test maple heron")))
+            assertTrue(run.adb.commands.contains("content query --uri content://sms/inbox --projection _id --where 'body LIKE '\\''%maple heron%'\\'''"))
+            assertTrue(run.restores.runAll().isEmpty())
+            assertTrue(deleted)
+            assertEquals(before, mode)
+        }
         assertTrue(EmuSms("+1 202 555 0177", "Kestrel test {marker}").apply(FakeRun(DeviceKind.A71).scope) is SetupResult.Untestable)
     }
 
@@ -120,6 +130,55 @@ class MessageStepsTest {
         assertTrue(run.restores.runAll().isEmpty())
         assertFalse(posted)
         assertEquals("com.example.watch/com.example.watch.Listener", listeners)
+    }
+
+    @Test
+    fun takingKestrelsNotificationAccessBackWaitsForTheSettingAndTurnsListeningBackOnAsItWas() {
+        for (before in listOf("listening", "paused")) {
+            val run = FakeRun()
+            var listeners = "com.example.watch/com.example.watch.Listener"
+            // Android 17 writes the setting a moment after disallow_listener, and Kestrel's process comes back with listening off.
+            var lag = 0
+            run.adb.on("^settings get secure enabled_notification_listeners$") {
+                if (lag > 0) {
+                    lag--
+                    "$listeners:${NotificationAccess.LISTENER}"
+                } else {
+                    listeners
+                }
+            }
+            var mode = before
+            var silent = 0
+            run.adb.on("^cmd notification (allow|disallow)_listener (\\S+)$") { match ->
+                if (match.groupValues[1] == "allow") {
+                    listeners = "$listeners:${match.groupValues[2]}"
+                } else {
+                    listeners = listeners.split(':').filter { it != match.groupValues[2] }.joinToString(":")
+                    lag = 2
+                    silent = 2
+                    mode = "off"
+                }
+                ""
+            }
+            run.adb.on("dev\\.kestrel\\.hook\\.VOICE_STATE") {
+                if (silent > 0) {
+                    silent--
+                    "Broadcasting: Intent { act=dev.kestrel.hook.VOICE_STATE }\nBroadcast completed: result=0"
+                } else {
+                    "Broadcasting: Intent { act=dev.kestrel.hook.VOICE_STATE }\nBroadcast completed: result=-1, data=\"mode=$mode work=idle\""
+                }
+            }
+            run.adb.hook("VOICE") { extras ->
+                if (extras["event"] == "toggle") mode = if (mode == "listening") "paused" else "listening"
+                "sent"
+            }
+
+            assertEquals(SetupResult.Ready, NotificationAccess.apply(run.scope))
+            assertTrue(run.restores.runAll().isEmpty())
+            assertEquals(if (before == "listening") "listening" else "off", mode)
+            assertEquals(mapOf("listener" to "off"), NotificationAccess.probe(run.scope))
+            assertEquals(if (before == "listening") 1 else 0, run.adb.hookCalls("VOICE").count { it["event"] == "toggle" })
+        }
     }
 
     @Test
@@ -209,6 +268,9 @@ class MessageStepsTest {
             gmail.pending.add("me, Reminder about maple heron, A reminder about maple heron")
 
             assertEquals(SetupResult.Ready, MailCleanup.apply(run.scope))
+            // Kestrel's task ran, and confirmed the send.
+            run.scope.tag = "t1"
+            run.adb.hook("AGENT_TASK") { "state=done end=FINISHED steps=3 confirmed=1 unconfirmed=0" }
             assertTrue(run.restores.runAll().isEmpty())
 
             assertEquals(listOf("Ana, Lunch"), inbox)
@@ -219,6 +281,18 @@ class MessageStepsTest {
                 assertTrue(run.console.warnings.single().contains("maple heron"))
                 assertTrue(run.clock.time in 1.minutes..2.minutes)
             }
+        }
+
+        // email-self's task, which test mode ended before any send, or one that never started, sent no e-mail that the restore waits for.
+        for (tag in listOf("t1", null)) {
+            val run = FakeRun(DeviceKind.A71)
+            fakeGmail(run.adb, mutableListOf("Ana, Lunch"))
+            assertEquals(SetupResult.Ready, MailCleanup.apply(run.scope))
+            run.scope.tag = tag
+            run.adb.hook("AGENT_TASK") { "state=done end=TEST_MODE steps=1 confirmed=0 unconfirmed=0" }
+            assertTrue(run.restores.runAll().isEmpty())
+            assertTrue(run.clock.time < 1.minutes)
+            assertTrue(run.console.warnings.isEmpty())
         }
 
         // A test e-mail that was never sent is not waited for.

@@ -86,6 +86,9 @@ class Hooks(private val client: HookClient) {
     /** voice-state: the Orchestrator's mode and the voice session, never text. */
     fun voiceState(): HookAnswer = read("voice-state")
 
+    /** voice -Send [event]: an event of Kestrel's Orchestrator other than a transcript, such as toggle. */
+    fun voiceSend(event: String): HookAnswer = act("voice", Extra.Text("event", event))
+
     /** voice -Send heard: the transcript [text] with [tag], as if Kestrel had heard it; [live] and [model] go with its task. */
     fun voiceHeard(text: String, tag: String, live: Boolean = false, model: String? = null): HookAnswer =
         act(

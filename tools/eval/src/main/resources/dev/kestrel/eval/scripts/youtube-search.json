@@ -1,4 +1,6 @@
 [
-  {"tool": "open_deep_link", "arguments": {"uri": "https://www.youtube.com/results?search_query=kestrel+hovering", "reason": "search YouTube"}},
+  {"tool": "open_url", "arguments": {"url": "https://www.youtube.com/results?search_query=kestrel+hovering", "browser": "default", "reason": "search YouTube"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the results show"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "finish", "arguments": {"summary": "YouTube shows videos of kestrels hovering.", "evidence": [{"target": {"contains": "kestrel hovering"}}]}}
 ]

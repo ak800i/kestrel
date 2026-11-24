@@ -1,5 +1,11 @@
 [
   {"tool": "open_app", "arguments": {"name": "Photos", "reason": "find the latest photo"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let Photos load"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let Photos load"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let Photos load"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the photos settle"}},
   {"tool": "tap", "target": {"contains": "Photo taken"}, "arguments": {"reason": "open the latest photo", "category": "reading"}},
-  {"tool": "finish", "arguments": {"summary": "Your latest photo is open.", "evidence": []}}
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the photo open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the viewer settle"}},
+  {"tool": "finish", "arguments": {"summary": "Your latest photo is open.", "evidence": [{"target": {"contains": "Photo taken"}}]}}
 ]

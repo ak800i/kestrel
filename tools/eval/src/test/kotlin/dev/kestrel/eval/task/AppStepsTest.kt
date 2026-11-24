@@ -15,32 +15,79 @@ import org.junit.Test
 import java.time.LocalDateTime
 
 /**
- * Firefox for the tests: its tabs by title, the newest in front. Outside the tabs tray the screen shows the front tab's
- * title and the tab counter, "2 open tabs. Tap to switch tabs." or "1 open tab. …", which opens the tray; the tray shows
- * each tab's title and its close button, "Close tab <title>". The hooks match them as [FakeScreen] says.
+ * Firefox for the tests, as on kestrel-api37: its tabs by title and address, the newest selected and in front. Outside
+ * the tabs tray the screen shows the selected tab's address bar ("<address>. Search or enter address") and the tab
+ * counter, a clickable element with an inner copy of its label, "Non-private Tabs Open: 2. Tap to switch tabs.", which
+ * opens the tray, and whose long press opens a menu with "Close tab", which closes the selected tab and shows "Tab
+ * closed". The tray shows each tab's card, whose label holds its title and "Close tab <title>", its title, and its close
+ * button, "Close tab <title>", and then the tray's own counters. The hooks match them as [FakeScreen] says.
  */
 class FakeFirefox(adb: FakeAdb) {
-    val tabs = mutableListOf("Wikipedia, Common kestrel")
+    class Tab(val title: String, val address: String)
+
+    private class Element(val label: String, val className: String, val clickable: Boolean, val bounds: String, val tab: Tab? = null)
+
+    val tabs = mutableListOf(Tab(WIKI, WIKI_ADDRESS))
     var tray = false
+    var menu = false
+    var closed = false
 
     /** What a tap on the tab counter does after it opened the tray. */
     var onTrayTap: () -> Unit = {}
 
-    fun labels(): List<String> = if (tray) {
-        tabs.flatMap { listOf(it, "Close tab $it") }
-    } else {
-        listOfNotNull(tabs.lastOrNull(), if (tabs.size == 1) "1 open tab. Tap to switch tabs." else "${tabs.size} open tabs. Tap to switch tabs.")
+    fun titles(): List<String> = tabs.map { it.title }
+
+    fun open(title: String, address: String) {
+        tabs.add(Tab(title, address))
     }
 
-    fun has(extras: Map<String, String>): Int = FakeScreen.has(labels(), extras)
+    private fun counter(): String = "Non-private Tabs Open: ${tabs.size}. Tap to switch tabs."
+
+    private fun elements(): List<Element> = when {
+        tray -> tabs.withIndex().flatMap { (index, tab) ->
+            val top = 600 + 600 * index
+            listOf(
+                Element("${tab.title} Close tab ${tab.title}", "android.view.View", true, "42,$top,519,${top + 590}", tab),
+                Element(tab.title, "android.widget.TextView", false, "106,${top + 30},403,${top + 70}", tab),
+                Element("Close tab ${tab.title}", "android.widget.Button", true, "405,$top,531,${top + 120}", tab),
+            )
+        } + listOf(
+            Element("Private Tabs Open: 0. Tap to switch tabs.", "android.view.View", true, "0,132,270,258"),
+            Element("Normal Tabs Open: ${tabs.size}. Tap to switch tabs.", "android.view.View", false, "270,132,540,258"),
+            Element(counter(), "android.view.View", false, "374,164,437,227"),
+        )
+        else -> listOfNotNull(
+            tabs.lastOrNull()?.let { Element("${it.address}. Search or enter address", "android.view.View", false, "150,153,800,279") },
+            Element(counter(), "android.view.View", true, "828,153,954,279"),
+            Element(counter(), "android.view.View", false, "860,185,923,248"),
+        ) + (if (menu) listOf("New tab", "New private tab", "Close tab").map { Element(it, "android.widget.Button", true, "0,1800,1080,1900") } else emptyList()) +
+            (if (closed) listOf(Element("Tab closed", "android.widget.TextView", false, "63,2000,843,2100"), Element("UNDO", "android.view.View", true, "864,2000,1038,2100")) else emptyList())
+    }
+
+    /** screen-has' answer: the count, the first element's bounds and the app. */
+    fun answer(extras: Map<String, String>): String {
+        val found = elements().filter { element ->
+            FakeScreen.has(listOf(element.label), extras) == 1 &&
+                (extras["class"]?.let { element.className.endsWith(".$it") } ?: true) &&
+                (extras["state"] != "clickable" || element.clickable)
+        }
+        return "count=${found.size} bounds=${found.firstOrNull()?.bounds ?: "none"} app=${D3Tasks.FIREFOX}"
+    }
 
     fun tap(extras: Map<String, String>): String {
-        val labels = labels()
-        val matches = FakeScreen.taps(labels, extras)
-        val label = labels[matches.firstOrNull() ?: return "tapped=false count=0"]
+        val all = elements()
+        val matches = FakeScreen.taps(all.map { it.label }, extras)
+        val element = all[matches.firstOrNull() ?: return "tapped=false count=0"]
+        val label = element.label
         when {
-            label.startsWith("Close tab ") -> tabs.remove(label.removePrefix("Close tab "))
-            label.contains("open tab") -> {
+            label == "Close tab" && menu -> {
+                tabs.removeLastOrNull()
+                menu = false
+                closed = true
+            }
+            label.startsWith("Close tab ") && element.className.endsWith("Button") -> tabs.remove(element.tab)
+            label.startsWith("Non-private Tabs Open") && !tray && extras["long"] == "true" -> menu = true
+            label.startsWith("Non-private Tabs Open") && !tray -> {
                 tray = true
                 onTrayTap()
             }
@@ -51,19 +98,27 @@ class FakeFirefox(adb: FakeAdb) {
     init {
         adb.on("^monkey -p org\\.mozilla\\.firefox ") {
             tray = false
+            menu = false
             ""
         }
         adb.on("^am force-stop org\\.mozilla\\.firefox$") {
             tray = false
+            menu = false
+            closed = false
             ""
         }
-        adb.hook("SCREEN_HAS") { extras -> "count=${has(extras)} app=${D3Tasks.FIREFOX}" }
+        adb.hook("SCREEN_HAS") { extras -> answer(extras) }
         adb.hook("SCREEN_TAP") { extras -> tap(extras) }
     }
 
     companion object {
-        /** The title that GitHub gives the repository's page. */
-        const val GITHUB = "GitHub - ak800i/kestrel: A private, voice-first assistant"
+        const val WIKI = "Common kestrel - Wikipedia"
+        const val WIKI_ADDRESS = "en.wikipedia.org/wiki/Common_kestrel"
+
+        /** The title that GitHub gives the repository's page, and the page's address. */
+        const val GITHUB = "GitHub - ak800i/kestrel: A private, voice-first assistant for Android that performs tasks through the accessibility " +
+            "service. Only the configured LLM provider receives data. · GitHub"
+        const val GITHUB_ADDRESS = "github.com/ak800i/kestrel"
     }
 }
 
@@ -88,15 +143,49 @@ class AppStepsTest {
 
         assertEquals(SetupResult.Ready, FirefoxTab().apply(run.scope))
         assertEquals("am force-stop org.mozilla.firefox", run.adb.commands.last())
-        firefox.tabs.add(FakeFirefox.GITHUB)
+        firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
         assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(listOf("Wikipedia, Common kestrel"), firefox.tabs)
-        assertEquals(listOf("open tab", "open tabs", "Close tab GitHub - ak800i"), run.adb.hookCalls("SCREEN_TAP").map { it["contains"] })
+        assertEquals(listOf(FakeFirefox.WIKI), firefox.titles())
+        // The counter by its one clickable element, though its inner copy holds the same label; the close button by its exact label, which the card holds too.
+        val counter = mapOf("contains" to "Non-private Tabs Open", "package" to D3Tasks.FIREFOX)
+        assertEquals(listOf(counter, counter, mapOf("label" to "Close tab ${FakeFirefox.GITHUB}", "package" to D3Tasks.FIREFOX)), run.adb.hookCalls("SCREEN_TAP"))
 
-        firefox.tabs.add(FakeFirefox.GITHUB)
+        firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
         assertTrue(FirefoxTab().apply(run.scope) is SetupResult.Untestable)
         assertTrue(run.restores.runAll().isEmpty())
         assertEquals(2, firefox.tabs.size)
+    }
+
+    @Test
+    fun firefoxWikisRehearsalClosesOnlyItsOwnSelectedTabThroughTheCountersMenu() {
+        val run = FakeRun()
+        val firefox = FakeFirefox(run.adb)
+        // The owner's tab of the same page stays.
+        firefox.open(FakeFirefox.GITHUB, FakeFirefox.GITHUB_ADDRESS)
+        var opens = true
+        run.adb.on("^am start -W -a android.intent.action.VIEW -d 'https://en\\.wikipedia\\.org/wiki/Common_kestrel' -p org\\.mozilla\\.firefox$") {
+            if (opens) firefox.open(FakeFirefox.WIKI, FakeFirefox.WIKI_ADDRESS)
+            ""
+        }
+        run.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 org.mozilla.firefox/.App t4}" }
+        val steps = (D3Tasks.FIREFOX_WIKI.rehearsal as Rehearsal.Steps).steps
+
+        for (step in steps) assertEquals(SetupResult.Ready, step.apply(run.scope))
+        assertEquals(3, firefox.tabs.size)
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(FakeFirefox.WIKI, FakeFirefox.GITHUB), firefox.titles())
+        assertEquals(
+            listOf(mapOf("contains" to "Non-private Tabs Open", "long" to "true", "package" to D3Tasks.FIREFOX), mapOf("label" to "Close tab", "package" to D3Tasks.FIREFOX)),
+            run.adb.hookCalls("SCREEN_TAP"),
+        )
+
+        // A page that did not open leaves the selected tab, which is not the page's, and the restore says so.
+        opens = false
+        for (step in steps) assertEquals(SetupResult.Ready, step.apply(run.scope))
+        val failures = run.restores.runAll()
+        assertEquals(listOf("the rehearsal's tab in Firefox"), failures.map { it.what })
+        assertEquals(listOf(FakeFirefox.WIKI, FakeFirefox.GITHUB), firefox.titles())
+        assertEquals(2, run.adb.hookCalls("SCREEN_TAP").size)
     }
 
     @Test
@@ -113,6 +202,78 @@ class AppStepsTest {
         assertEquals(listOf("am force-stop org.mozilla.firefox"), run.adb.commands.filter { it.startsWith("am force-stop") })
         assertTrue(run.adb.commands.indexOf("am force-stop org.mozilla.firefox") > run.adb.commands.indexOfFirst { it.contains("hook.SCREEN_TAP") })
         assertFalse(firefox.tray)
+    }
+
+    @Test
+    fun youtubesNotificationQuestionIsDismissedWithoutAnAnswerAndYouTubeStaysOpen() {
+        // What Back does to the dialog at each try: close it and leave YouTube open, close YouTube too, or nothing.
+        for (backs in listOf(listOf("open"), listOf("closed", "open"), listOf("stays", "stays"))) {
+            val run = FakeRun()
+            val youtube = "com.google.android.youtube"
+            run.adb.on("^pm list packages -e ") { "package:$youtube" }
+            var front = "com.google.android.apps.nexuslauncher"
+            run.adb.on("^am start -W -a android.intent.action.VIEW -d 'https://www\\.youtube\\.com/' -p com\\.google\\.android\\.youtube$") {
+                front = "com.google.android.permissioncontroller"
+                ""
+            }
+            var back = 0
+            run.adb.on("^input keyevent KEYCODE_BACK$") {
+                when (backs[back++]) {
+                    "open" -> front = youtube
+                    "closed" -> front = "com.google.android.apps.nexuslauncher"
+                }
+                ""
+            }
+            run.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 $front/.Main t4}" }
+            run.adb.on("^dumpsys package com\\.google\\.android\\.youtube$") {
+                "      android.permission.POST_NOTIFICATIONS: granted=false, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]"
+            }
+
+            val result = DismissPermissionPrompt(AppTasks.YOUTUBE, DismissPermissionPrompt.NOTIFICATIONS, "https://www.youtube.com/").apply(run.scope)
+
+            val expected = if (backs.last() == "open") SetupResult.Ready else SetupResult.Untestable("Android asks whether $youtube may have android.permission.POST_NOTIFICATIONS, which only the owner may answer")
+            assertEquals(backs.toString(), expected, result)
+            // Never a tap: no answer, and so no grant.
+            assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
+            assertEquals(backs.size, back)
+            assertEquals("input keyevent KEYCODE_HOME", run.adb.commands.last { it.startsWith("input") || it.startsWith("am force-stop") })
+            assertTrue(run.restores.runAll().isEmpty())
+            assertEquals("am force-stop $youtube", run.adb.commands.last())
+        }
+    }
+
+    @Test
+    fun kestrelListensAgainAfterTheRestoreThatTookBackItsPermissionEndedItsProcess() {
+        for (before in listOf("listening", "off")) {
+            val run = FakeRun()
+            var granted = false
+            run.adb.on("^dumpsys package dev\\.kestrel$") { "      android.permission.READ_SMS: granted=$granted" }
+            // The revoke ends Kestrel's process: one read still answers the old process, then the new one does not listen.
+            var reads = mutableListOf<String>()
+            var mode = before
+            run.adb.on("^pm (grant|revoke) dev\\.kestrel android\\.permission\\.READ_SMS$") {
+                granted = it.groupValues[1] == "grant"
+                if (!granted) {
+                    reads = mutableListOf("listening")
+                    mode = "off"
+                }
+                ""
+            }
+            run.adb.on("dev\\.kestrel\\.hook\\.VOICE_STATE") {
+                "Broadcasting: Intent { act=dev.kestrel.hook.VOICE_STATE }\nBroadcast completed: result=-1, data=\"mode=${reads.removeFirstOrNull() ?: mode} work=idle\""
+            }
+            run.adb.hook("VOICE") { extras ->
+                if (extras["event"] == "toggle") mode = if (mode == "listening") "paused" else "listening"
+                "sent"
+            }
+
+            assertEquals(SetupResult.Ready, Grant("dev.kestrel", listOf("android.permission.READ_SMS")).apply(run.scope))
+            assertTrue(run.restores.runAll().isEmpty())
+
+            assertFalse(granted)
+            assertEquals(if (before == "listening") "listening" else "off", mode)
+            assertEquals(if (before == "listening") 1 else 0, run.adb.hookCalls("VOICE").size)
+        }
     }
 
     @Test

@@ -66,7 +66,7 @@ object D3Tasks {
         setup = listOf(ForceStop(FIREFOX)),
         check = listOf(Foreground(setOf(FIREFOX)), ScreenHas(contains = "Common kestrel")),
         dryRun = DryRun("stand-in-firefox.json", standIn = "stand-in-firefox"),
-        rehearsal = Rehearsal.Steps(listOf(OpenUri("https://en.wikipedia.org/wiki/Common_kestrel", FIREFOX, settle = 10.seconds))),
+        rehearsal = Rehearsal.Steps(listOf(FirefoxNewTab("https://en.wikipedia.org/wiki/Common_kestrel", "en.wikipedia.org/wiki/Common_kestrel"))),
     )
 
     val TELEGRAM_PHOTOS = Task(
