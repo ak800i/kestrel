@@ -31,7 +31,7 @@ Code comments name this plan "plan 7A" and the design's sections as "design 7.3 
 
 ## Before you start
 
-- Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed. Plan 6B-basefix changes `core\agent`, `app\src\main\kotlin\dev\kestrel\app\agent` (`AgentEnvironment.kt`, `AgentRunner.kt`, `AppAgentEnvironment.kt`, `AppOwnerPort.kt`), the debug hooks and `tools\eval`, and this plan was written against `sp3` at `a4c5c081`, while plan 6B-basefix was still being carried out (its Tasks 1 to 5 were in); after the review's fixes its checker ran clean against `sp3` at `eb727872`.
+- Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed. Plan 6B-basefix changes `core\agent`, `app\src\main\kotlin\dev\kestrel\app\agent` (`AgentEnvironment.kt`, `AgentRunner.kt`, `AppAgentEnvironment.kt`, `AppOwnerPort.kt`), the debug hooks and `tools\eval`, and this plan was written against `sp3` at `a4c5c081`, while plan 6B-basefix was still being carried out (its Tasks 1 to 5 were in); after the review's fixes its checker ran clean against `sp3` at `0a6fd5a2`.
 - At the start of Task 1, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7a-agent.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7a-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plan 6B-basefix moved or changed, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that plan 6B-basefix left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives Task 1.
 - Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :core:agent:test :core:safety:test :app:testDebugUnitTest :tools:eval:test`, then `foreach ($dir in 'core\agent\build\test-results\test', 'app\build\test-results\testDebugUnitTest', 'tools\eval\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`. These are G₀ (`:core:agent`), A₀ (`:app` JVM, with `app/src/testDebug`) and E₀ (`:tools:eval`). Each task gives its counts as "N + k", where N is the count before the task. If a count differs, stop and ask the controller.
 - Check that no script of the eval dry suite reaches today's limits, which from Task 7 on ask "Continue?" (design 14.2 item 1): `Get-ChildItem tools\eval\src\main\resources\dev\kestrel\eval\scripts\*.json | ForEach-Object { "{0} {1}" -f (Select-String -Path $_.FullName -Pattern '"tool"\s*:' -AllMatches).Matches.Count, $_.Name } | Sort-Object { [int]($_ -split ' ')[0] } -Descending | Select-Object -First 1; "scripts with credits: $(@(Select-String -Path tools\eval\src\main\resources\dev\kestrel\eval\scripts\*.json -Pattern '"credits"').Count)"`. Expected: the longest script with fewer than 30 calls (`12 two-settings.json` at `a4c5c081`) and `scripts with credits: 0`, so each reply costs the scripted model's 0.1 AI Credits, far below 10. Otherwise stop and ask the controller.
@@ -99,7 +99,7 @@ The new package `dev.kestrel.agent.goal` with the types that plan 7B consumes, `
 
 **Interfaces:**
 - Consumes: `dev.kestrel.agent.loop.Redacted` (`Redacted.kestrel(text)`), `dev.kestrel.safety.Category`.
-- Produces (package `dev.kestrel.agent.goal`): `interface GoalPort { fun takeSteering(): List<Steer>; suspend fun checklistChanged(checklist: Checklist); suspend fun traced(entry: TraceEntry) }`; `enum class SteerChannel(val wire: String) { SPOKEN("spoken"), TYPED("typed") }`; `data class Steer(val text: String, val channel: SteerChannel)`; `sealed interface TraceEntry` with `Requested(text)`, `Said(text)`, `Asked(text)`, `Answered(text)`, `Data(tool: String, step: Int, text: String)`, `AppUsed(label: String, packageName: String)`, `Did(line: String)`; `object NoGoal : GoalPort`; `interface HistoryPort { suspend fun search(query: HistoryQuery): HistoryResult; companion object { const val MAX_MATCHES = 5 } }`; `data class HistoryQuery(val text: String, val from: LocalDate? = null, val to: LocalDate? = null)`; `data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false)`; `data class HistoryMatch(val atMillis: Long, val command: Int, val request: String, val answer: String?, val apps: List<String>, val data: List<HistoryData>)`; `data class HistoryData(val tool: String, val text: String)`; `object NoHistory : HistoryPort`; `@Serializable data class Checklist(val items: List<ChecklistItem>)` with `val done: Int` and `val open: List<ChecklistItem>`; `@Serializable data class ChecklistItem(val id: String, val text: String, val state: ItemState, val step: Int? = null, val why: String? = null)`; `@Serializable enum class ItemState(val wire: String) { TODO, DOING, DONE, SKIPPED, FAILED }`; `@Serializable data class GoalLimits(val replies: Int = 500, val workMinutes: Int = 60, val credits: Int = 1000)`; `enum class ResumeCause(val words: String) { LIMIT, INTERRUPTION, RESTART }`; `data class ResumeNote(val after: ResumeCause, val done: List<String>)`. `class AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal: GoalPort, history: HistoryPort)`. `data class TaskRequest(id, text, knownNames = emptySet(), conversation: Redacted? = null, ownerHistory: List<String> = emptyList(), carried: Set<Category> = emptySet(), checklist: Checklist? = null, resume: ResumeNote? = null, limits: GoalLimits = GoalLimits())`. Test fixtures: `class FakeGoal : GoalPort` (`steering: ArrayDeque<Steer>`, `checklists`, `traces`, `onTake`), `class FakeHistory(var result: HistoryResult)` (`queries`, `fails`). `Harness.goal`, `Harness.history`, `Harness.run(request: TaskRequest)`, `Harness.ID`. `:app`: `TaskStart(task, id, text, model, goal: GoalPort, history: HistoryPort, selfChatAliases, acted, local, witness)`.
+- Produces (package `dev.kestrel.agent.goal`): `interface GoalPort { fun takeSteering(): List<Steer>; fun stepStarted(step: Int); suspend fun checklistChanged(checklist: Checklist); suspend fun traced(entry: TraceEntry) }`; `enum class SteerChannel(val wire: String) { SPOKEN("spoken"), TYPED("typed") }`; `data class Steer(val text: String, val channel: SteerChannel)`; `sealed interface TraceEntry` with `Requested(text)`, `Said(text)`, `Asked(text)`, `Answered(text)`, `Data(tool: String, step: Int, text: String)`, `AppUsed(label: String, packageName: String)`, `Did(line: String)`; `object NoGoal : GoalPort`; `interface HistoryPort { suspend fun search(query: HistoryQuery): HistoryResult; companion object { const val MAX_MATCHES = 5 } }`; `data class HistoryQuery(val text: String, val from: LocalDate? = null, val to: LocalDate? = null)`; `data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false)`; `data class HistoryMatch(val atMillis: Long, val command: Int, val request: String, val answer: String?, val apps: List<String>, val data: List<HistoryData>)`; `data class HistoryData(val tool: String, val text: String)`; `object NoHistory : HistoryPort`; `@Serializable data class Checklist(val items: List<ChecklistItem>)` with `val done: Int` and `val open: List<ChecklistItem>`; `@Serializable data class ChecklistItem(val id: String, val text: String, val state: ItemState, val step: Int? = null, val why: String? = null)`; `@Serializable enum class ItemState(val wire: String) { TODO, DOING, DONE, SKIPPED, FAILED }`; `@Serializable data class GoalLimits(val replies: Int = 500, val workMinutes: Int = 60, val credits: Int = 1000)`; `enum class ResumeCause(val words: String) { LIMIT, INTERRUPTION, RESTART }`; `data class ResumeNote(val after: ResumeCause, val done: List<String>)`. `class AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal: GoalPort, history: HistoryPort)`. `data class TaskRequest(id, text, knownNames = emptySet(), conversation: Redacted? = null, ownerHistory: List<String> = emptyList(), carried: Set<Category> = emptySet(), checklist: Checklist? = null, resume: ResumeNote? = null, limits: GoalLimits = GoalLimits())`. Test fixtures: `class FakeGoal : GoalPort` (`steering: ArrayDeque<Steer>`, `steps`, `checklists`, `traces`, `onTake`), `class FakeHistory(var result: HistoryResult)` (`queries`, `fails`). `Harness.goal`, `Harness.history`, `Harness.run(request: TaskRequest)`, `Harness.ID`. `:app`: `TaskStart(task, id, text, model, goal: GoalPort, history: HistoryPort, selfChatAliases, acted, local, witness)`.
 
 Counts: `:core:agent` G₀ + 0 (the new types join `ToStringTest`'s list); `:app` JVM A₀ + 0.
 
@@ -191,12 +191,19 @@ package dev.kestrel.agent.goal
 /**
  * What a task run needs from the goal around it (design 5.4 of sub-project 7): `:core:conversation`'s `RunningGoal`
  * implements it, and today's `AgentRunner` passes [NoGoal]. The run drains the owner's steering before each model call
- * (design 7.3), reports each checklist that the rules accepted (design 7.2), and traces what the command's record needs as
- * it happens, so that the record survives the end of Kestrel's process (design 8.1).
+ * (design 7.3), says when each step starts (design 10.5), reports each checklist that the rules accepted (design 7.2),
+ * and traces what the command's record needs as it happens, so that the record survives the end of Kestrel's process
+ * (design 8.1).
  */
 interface GoalPort {
     /** The owner's steering since the last call, oldest first; the loop drains it before each model call. */
     fun takeSteering(): List<Steer>
+
+    /**
+     * Step [step] of the run starts: its waits are over, its steering is drained, and its model call comes next. The goal
+     * shows the number, as the bar's "Step 12 · 3 of 7" (design 10.5); it must not block.
+     */
+    fun stepStarted(step: Int)
 
     /** The model's checked checklist; the goal stores and shows it. */
     suspend fun checklistChanged(checklist: Checklist)
@@ -258,9 +265,11 @@ sealed interface TraceEntry {
     }
 }
 
-/** The goal of today's `AgentRunner` (plan 7A): no steering, and nothing kept. */
+/** The goal of today's `AgentRunner` (plan 7A): no steering, and nothing kept or shown. */
 object NoGoal : GoalPort {
     override fun takeSteering(): List<Steer> = emptyList()
+
+    override fun stepStarted(step: Int) = Unit
 
     override suspend fun checklistChanged(checklist: Checklist) = Unit
 
@@ -529,10 +538,12 @@ Add at the end of the file `core/agent/src/testFixtures/kotlin/dev/kestrel/agent
 
 /**
  * The goal around a run as the tests script it (design 5.4 of sub-project 7): [steering] waits until the loop drains it,
- * and the checklists and traces that the run reported are kept in order. [onTake] runs each time the loop drains.
+ * and the steps that started and the checklists and traces that the run reported are kept in order. [onTake] runs each
+ * time the loop drains.
  */
 class FakeGoal : GoalPort {
     val steering = ArrayDeque<Steer>()
+    val steps = mutableListOf<Int>()
     val checklists = mutableListOf<Checklist>()
     val traces = mutableListOf<TraceEntry>()
     var onTake: () -> Unit = {}
@@ -540,6 +551,10 @@ class FakeGoal : GoalPort {
     override fun takeSteering(): List<Steer> {
         onTake()
         return steering.toList().also { steering.clear() }
+    }
+
+    override fun stepStarted(step: Int) {
+        steps += step
     }
 
     override suspend fun checklistChanged(checklist: Checklist) {
@@ -550,7 +565,7 @@ class FakeGoal : GoalPort {
         traces += entry
     }
 
-    override fun toString(): String = "FakeGoal(steering=${steering.size}, checklists=${checklists.size}, traces=${traces.size})"
+    override fun toString(): String = "FakeGoal(steering=${steering.size}, steps=${steps.size}, checklists=${checklists.size}, traces=${traces.size})"
 }
 
 /** The search over past conversations as the tests script it: [result] for every query, or a failure with [fails]. */
@@ -838,7 +853,7 @@ git commit -m "feat(agent): the goal's ports and types for conversations, and a 
 
 ### Task 2: The run traces the command's record, and its dialogue leaves `TaskRun`
 
-The run tells the goal, as it happens, what the command's record needs (design 8.1): the request, what Kestrel said and asked, the owner's answers, each data tool's result, the apps that its steps acted in, and its ledger lines. One class, `RunTrace`, holds that side of the run: it gives every text its record's form (redacted, each vault value as its kind's words), keeps which apps and ledger lines the record holds already, and logs a failure of the goal's store by its class. `TracingOwner`, a decorator of the run's owner port, traces the dialogue through it, so that every question of every step (look_closer's, the data tools', the limits') is traced in one place; `TaskRun` makes single calls for the rest. So that `TaskRun` does not grow with plan 7A, its dialogue tools (`ask_user`, `say`, `remember`, `forget`) move into `DialogueSteps`, beside `ScreenSteps` and `DataSteps`, and its questions into `Questions`: `ask_user` and the yes-or-no questions each had their own copy of the loop that waits at the pause gate and asks again after an interruption, and Task 7's limit question would have been a third, so the loops become one. The one loop starts the count of interruptions again after the third one, which counts as no answer, as `ask_user`'s loop did; the yes-or-no loop did not, so a question after it gave up got no second chance.
+The run tells the goal when each step starts, for the bar's "Step 12 · 3 of 7" (design 10.5), and, as it happens, what the command's record needs (design 8.1): the request, what Kestrel said and asked, the owner's answers, each data tool's result, the apps that its steps acted in, and its ledger lines. One class, `RunTrace`, holds that side of the run: it gives every text its record's form (redacted, each vault value as its kind's words), keeps which apps and ledger lines the record holds already, and logs a failure of the goal's store by its class. `TracingOwner`, a decorator of the run's owner port, traces the dialogue through it, so that every question of every step (look_closer's, the data tools', the limits') is traced in one place; `TaskRun` makes single calls for the rest. So that `TaskRun` does not grow with plan 7A, its dialogue tools (`ask_user`, `say`, `remember`, `forget`) move into `DialogueSteps`, beside `ScreenSteps` and `DataSteps`, and its questions into `Questions`: `ask_user` and the yes-or-no questions each had their own copy of the loop that waits at the pause gate and asks again after an interruption, and Task 7's limit question would have been a third, so the loops become one. The one loop starts the count of interruptions again after the third one, which counts as no answer, as `ask_user`'s loop did; the yes-or-no loop did not, so a question after it gave up got no second chance.
 
 **Files:**
 - Create: `core/agent/src/main/kotlin/dev/kestrel/agent/loop/RunTrace.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TracingOwner.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/DialogueSteps.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/Questions.kt`
@@ -846,10 +861,10 @@ The run tells the goal, as it happens, what the command's record needs (design 8
 - Test: `core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.kt` (new), `core/agent/src/test/kotlin/dev/kestrel/agent/AgentTest.kt`; the existing tests of `ask_user`, `say`, `remember`, `forget`, the stuck question and `share_media`'s question in `AgentTest` and `AgentToolsTest` cover the move
 
 **Interfaces:**
-- Consumes: Task 1's `GoalPort.traced`, `TraceEntry`, `FakeGoal.traces`, `Harness.goal`.
-- Produces: `internal fun AgentPorts.withOwner(owner: OwnerPort): AgentPorts`; `internal class RunTrace(goal: GoalPort, apps: AppsPort, vault: Vault, redactor: Redactor, log: suspend (TaskLog.Kind, String) -> Unit)` with `requested(text)`, `said(text)`, `asked(text)`, `answered(text)`, `data(tool, step, result: Redacted)`, `acted(packageName)` and `ledger(lines)`, all `suspend`; `internal class TracingOwner(owner: OwnerPort, trace: RunTrace) : OwnerPort`; `internal class DialogueSteps(run: TaskRun)` with `askUser`, `say`, `remember` and `forget`; `internal class Questions(run: TaskRun)` with `suspend fun ask(question: String, kind: AnswerKind): Answer` (never `Answer.Interrupted`: the third interruption in a row gives `Answer.Silence`), `suspend fun yes(question: String): Boolean`, `fun interrupted(): Boolean` and `fun countAgain()`; in `TaskRun`: `val trace: RunTrace`, `val ports: AgentPorts` (the given ports with the tracing owner) and `val questions: Questions`; `TaskRun.askYesNo` is gone. The order of a run's traces: `Requested` at its start (not for a resume), then per step its dialogue (`Said`, `Asked`, `Answered`), its `Data`, its `AppUsed` (once per app), and its new `Did` lines.
+- Consumes: Task 1's `GoalPort.stepStarted`, `GoalPort.traced`, `TraceEntry`, `FakeGoal.steps`, `FakeGoal.traces`, `Harness.goal`.
+- Produces: `internal fun AgentPorts.withOwner(owner: OwnerPort): AgentPorts`; `internal class RunTrace(goal: GoalPort, apps: AppsPort, vault: Vault, redactor: Redactor, log: suspend (TaskLog.Kind, String) -> Unit)` with `stepStarted(step)`, `requested(text)`, `said(text)`, `asked(text)`, `answered(text)`, `data(tool, step, result: Redacted)`, `acted(packageName)` and `ledger(lines)`, all `suspend`; `internal class TracingOwner(owner: OwnerPort, trace: RunTrace) : OwnerPort`; `internal class DialogueSteps(run: TaskRun)` with `askUser`, `say`, `remember` and `forget`; `internal class Questions(run: TaskRun)` with `suspend fun ask(question: String, kind: AnswerKind): Answer` (never `Answer.Interrupted`: the third interruption in a row gives `Answer.Silence`), `suspend fun yes(question: String): Boolean`, `fun interrupted(): Boolean` and `fun countAgain()`; in `TaskRun`: `val trace: RunTrace`, `val ports: AgentPorts` (the given ports with the tracing owner) and `val questions: Questions`; `TaskRun.askYesNo` is gone. `TaskRun.turn()` calls `trace.stepStarted(replies + 1)` after the pause gate, the limit check and the steering, right before the model call, so a step's number reaches the goal before anything of that step. The order of a run's traces: `Requested` at its start (not for a resume), then per step its dialogue (`Said`, `Asked`, `Answered`), its `Data`, its `AppUsed` (once per app), and its new `Did` lines.
 
-Counts: `:core:agent` G + 3.
+Counts: `:core:agent` G + 4.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -922,6 +937,19 @@ class AgentGoalTest {
         assertTrue(data, data.contains("a one-time code"))
         assertEquals(TraceEntry.Said("Your code is a one-time code."), harness.goal.traces.filterIsInstance<TraceEntry.Said>().single())
     }
+
+    // Design 10.5 of sub-project 7: the goal learns each step's number when the step starts, before anything of it runs.
+    @Test
+    fun theGoalLearnsEachStepAsItStarts() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("say", null, null, null, "text" to "Looking."), fail()))
+        var whileSaying: List<Int>? = null
+        harness.owner.onSay = { whileSaying = harness.goal.steps.toList() }
+
+        harness.run("Read Ana's messages")
+
+        assertEquals(listOf(1), whileSaying)
+        assertEquals(listOf(1, 2), harness.goal.steps)
+    }
 }
 ```
 
@@ -950,7 +978,7 @@ Add this test to `core/agent/src/test/kotlin/dev/kestrel/agent/AgentTest.kt`, be
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.AgentGoalTest --tests=dev.kestrel.agent.AgentTest`
-Expected: FAIL: the two tests of `AgentGoalTest`, because the run traces nothing (`harness.goal.traces` is empty; the second test fails with `NoSuchElementException`), and `aQuestionInterruptedThreeTimesCountsAsNoAnswerAndTheNextStartsAfresh`, because the yes-or-no question leaves the count at three, so `ask_user` gives up at its first interruption (4 questions asked, not 5).
+Expected: FAIL: the three tests of `AgentGoalTest`, because the run traces nothing and reports no step (`harness.goal.traces` and `harness.goal.steps` are empty; the second test fails with `NoSuchElementException`), and `aQuestionInterruptedThreeTimesCountsAsNoAnswerAndTheNextStartsAfresh`, because the yes-or-no question leaves the count at three, so `ask_user` gives up at its first interruption (4 questions asked, not 5).
 
 - [ ] **Step 3: Create the record's trace and the tracing owner port**
 
@@ -983,6 +1011,9 @@ internal class RunTrace(
     // The apps whose use the record holds, and how many of the ledger's lines it holds.
     private val usedApps = mutableSetOf<String>()
     private var tracedLines = 0
+
+    /** Step [step] starts (design 10.5 of sub-project 7). */
+    suspend fun stepStarted(step: Int) = guarded { goal.stepStarted(step) }
 
     /** The owner's request of a run that is no resume, which the run has not redacted yet. */
     suspend fun requested(text: String) = traced(TraceEntry.Requested(recordText(text)))
@@ -1530,6 +1561,22 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
 In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, replace:
 
 ```kotlin
+        if (resumePending) resumed()
+        val priced = callModel()
+```
+
+with:
+
+```kotlin
+        if (resumePending) resumed()
+        // The step's number for the goal, once the waits before the step are over (design 10.5 of sub-project 7).
+        trace.stepStarted(replies + 1)
+        val priced = callModel()
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, replace:
+
+```kotlin
     private suspend fun start() {
         log(TaskLog.Kind.START, "request: ${redactor.redact(task.text)}")
 ```
@@ -1615,7 +1662,7 @@ Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.AgentGoalTes
 Expected: PASS.
 
 Run: `scripts\gradle.ps1 :core:agent:test :app:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL, G + 3 and A + 0 tests; the earlier tests of `ask_user`, `say`, `remember`, `forget`, the stuck question and `share_media`'s question pass unchanged.
+Expected: BUILD SUCCESSFUL, G + 4 and A + 0 tests; the earlier tests of `ask_user`, `say`, `remember`, `forget`, the stuck question and `share_media`'s question pass unchanged.
 
 Run: `scripts\gradle.ps1 --stop`
 
@@ -2330,7 +2377,7 @@ In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, replace:
 ```kotlin
         // A resume during the cost question is observed before this turn's model call too (D2).
         if (resumePending) resumed()
-        val priced = callModel()
+        // The step's number for the goal, once the waits before the step are over (design 10.5 of sub-project 7).
 ```
 
 with:
@@ -2339,7 +2386,7 @@ with:
         // A resume during the cost question is observed before this turn's model call too (D2).
         if (resumePending) resumed()
         steer()
-        val priced = callModel()
+        // The step's number for the goal, once the waits before the step are over (design 10.5 of sub-project 7).
 ```
 
 In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, replace:
@@ -6162,7 +6209,7 @@ Counts: unchanged.
 - [ ] **Step 1: The whole gate, as CI runs it**
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
-Expected: BUILD SUCCESSFUL. Then the count command of "Before you start" prints G₀ + 39, A₀ + 5 and E₀ + 1.
+Expected: BUILD SUCCESSFUL. Then the count command of "Before you start" prints G₀ + 40, A₀ + 5 and E₀ + 1.
 
 Run: `scripts\test-scripts.ps1`
 Expected: every test passes in both shells (this plan changes no script).
@@ -6198,7 +6245,7 @@ Add to `.superpowers/sdd/progress.md`, under "## Plan 7A": the build's commit on
 
 ## Counts at the end of plan 7A
 
-- `:core:agent`: G₀ + 39 (Task 2: 3, Task 3: 3, Task 4: 5, Task 5: 7, Task 6: 5, Task 7: 4, Task 8: 2, Task 9: 6, Task 10: 3, Task 11: 1).
+- `:core:agent`: G₀ + 40 (Task 2: 4, Task 3: 3, Task 4: 5, Task 5: 7, Task 6: 5, Task 7: 4, Task 8: 2, Task 9: 6, Task 10: 3, Task 11: 1).
 - `:app` JVM (with `app/src/testDebug`): A₀ + 5 (Task 7: 3, Task 8: 2).
 - `:tools:eval`: E₀ + 1 (Task 8).
 - `:core:safety` and the Pester tests: unchanged.
@@ -6208,7 +6255,7 @@ Add to `.superpowers/sdd/progress.md`, under "## Plan 7A": the build's commit on
 What plan 7B (`:core:conversation`) and the later plans consume, exactly as this plan leaves it. Package `dev.kestrel.agent.goal` unless another is named.
 
 **The goal's port (Task 1, Task 2, Task 4)**
-- `interface GoalPort { fun takeSteering(): List<Steer>; suspend fun checklistChanged(checklist: Checklist); suspend fun traced(entry: TraceEntry) }`. `takeSteering` is called on the run's coroutine at the start of each turn, after the pause gate and the limit check and before the model call; it must not block. A failure of `checklistChanged` or `traced` is logged by `RunTrace` by its class and never ends the run.
+- `interface GoalPort { fun takeSteering(): List<Steer>; fun stepStarted(step: Int); suspend fun checklistChanged(checklist: Checklist); suspend fun traced(entry: TraceEntry) }`. `takeSteering` is called on the run's coroutine at the start of each turn, after the pause gate and the limit check and before the model call; it must not block. `stepStarted(step)` follows it on the same coroutine, right before the model call, with the number of the step that starts within this run (1, 2, …; a second round after "Continue?" goes on counting, and a resumed goal's new run counts from 1 again, as its `Data` entries do); it must not block either. `RunningGoal` publishes the goal's step, which is this number plus the steps of the goal's earlier runs (their `TaskReport.steps`), with the checklist's done and total, for the bar's "Step 12 · 3 of 7 · Replying to Mila" (design 10.5); `NoGoal` ignores it. A failure of `checklistChanged` or `traced` is logged by `RunTrace` by its class and never ends the run.
 - **Steering that the run never drains.** The run drains steering only at the start of a turn, so a message that arrives during the run's last step (a `finish` that checks the screen, a `fail`, a limit's question, a step that ends the run) stays in `SteeringInbox` when `Agent.run` returns. `GoalRunner` decides its fate after every round, and never drops it without a word: when the round left the goal held (`PAUSED_AT_LIMIT`, `INTERRUPTED`), the message stays in the inbox, and the next run of the goal drains it at its first turn, as `The owner added (…) before the first step: …`, after any steering that resumes the goal; when the goal ended for good (any other end, also "stop"), the inbox is emptied, nothing of it runs, and the goal's final reply ends with one sentence of Kestrel's that names each such message as received too late, so that the owner can say it again as a new command. Its `OWNER_STEERED` line stays in the record either way.
 - `enum class SteerChannel(val wire: String) { SPOKEN("spoken"), TYPED("typed") }`; `data class Steer(val text: String, val channel: SteerChannel)`. The run writes `The owner added (<wire>) at step <n>: "<words>"`, or `before the first step`, and then the allowance's sentence when the message widened it; the words are redacted, quoted and escaped, and never cut. `TaskText.OWNER_ADDED = "The owner added"` (internal to `:core:agent`).
 - `sealed interface TraceEntry`: `Requested(text)` (at the start of a run that is no resume), `Said(text)` (a `say`, a hand-over's sentence, a permission request's reason), `Asked(text)` (a question or a confirmation, before it is asked), `Answered(text)` (the owner's words, a number, `yes` or `no`; nothing for silence, an interruption or a timeout), `Data(tool: String, step: Int, text: String)` (a data tool's or `search_conversations`' result as the model saw it), `AppUsed(label: String, packageName: String)` (once per app per run), `Did(line: String)` (each new ledger line). Every text is in its record's form: redacted once, each vault value as its kind's words. `RecordBuilder` maps them to `CommandRecord`'s request, `RecordLine` kinds (`KESTREL_SAID`, `KESTREL_ASKED`, `OWNER_ANSWERED`), `DataNote`, `AppUse` and `ledger`. `ConversationOwner` traces nothing of the run's dialogue again: the run's `TracingOwner` does it, through `RunTrace` (internal to `:core:agent`), which also traces the checklist through `checklistChanged`.
@@ -6243,12 +6290,12 @@ What plan 7B (`:core:conversation`) and the later plans consume, exactly as this
 - `dev.kestrel.agent.AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal: GoalPort, history: HistoryPort)`; `:app`'s `TaskStart(task, id, text, model, goal, history, selfChatAliases, acted, local, witness)` carries the two ports to `AppAgentEnvironment`.
 - `operator fun dev.kestrel.safety.TaskAllowance.plus(other: TaskAllowance): TaskAllowance`.
 - `dev.kestrel.agent.tools.Tools.SEARCH_CONVERSATIONS = "search_conversations"`, the last tool of `Tools.ALL`.
-- Test fixtures (`dev.kestrel.agent.testing`): `FakeGoal` (`steering`, `checklists`, `traces`, `onTake`), `FakeHistory` (`result`, `queries`, `fails`), `FakeOwner.leaves` and `FakeOwner.onLeave`.
+- Test fixtures (`dev.kestrel.agent.testing`): `FakeGoal` (`steering`, `steps`, `checklists`, `traces`, `onTake`), `FakeHistory` (`result`, `queries`, `fails`), `FakeOwner.leaves` and `FakeOwner.onLeave`.
 
 ## Self-review
 
 - **Spec coverage.** The design's plan 7A row: `GoalPort` (Task 1), `Steer` and owner messages in `Conversation` (Task 4), `Checklist`, `ChecklistRules`, `update_checklist` and the finish rule (Tasks 1, 5, 6), `GoalLimits`, `Limits.nextRound()`, the limit question and the new `EndReason`s (Tasks 1, 7, 8), `HistoryPort` and `search_conversations` with its result format (Tasks 1, 9), `TaskRequest`'s new fields and `carried` joined into the allowance (Tasks 1, 3), the context's order (Task 3), `checkFront`'s wait for Kestrel's screen (Task 8), the interruption's end (Task 8), the system prompt's sentences (Task 11), the new `end=` values in the hook's answer (unchanged names, see "Changes to the design") and in `:tools:eval`'s reader (Task 8), and `AgentRunner` with no-op ports and today's limits (Tasks 1, 7). Design 8.1's traces (Task 2), 7.6's resume (Task 10), 12.1's owner words (Task 3), and 15.1's `TaskRun` cases: steering drained at the next turn (Task 4), steering words and allowance (Task 4), the limit question and its three answers (Task 7), `nextRound` (Task 7), `finish` refused with open items, also when a pause comes at the finish (Task 6), a done item only by a step that did something (Tasks 5, 6), `update_checklist` neutral for progress (Task 6), two updates in a row (Task 6), a long goal's checklist past 20 items (Tasks 5, 10), an interruption's report with its typed cause (Task 8), Kestrel's own screen at the port (Task 8), `TaskSafety` seeded by `ownerHistory` and the carried allowance with Standard mode still confirming and calls still handed over (Task 3), and `ChecklistRulesTest` (Task 5).
-- **The review of 2026-11-24.** I1: Task 6 (`ChecklistSteps.finishRefusal`, at the top of `TaskRun.finish`; `CompletionCheck` unchanged). I2: Tasks 5 and 6 (`Tools.ACTING`, `actedSteps`). I3: Tasks 2, 3 and 4 (`RunTrace`, `DialogueSteps`, `Questions`, `OwnerWords`); the checker's simulated `TaskRun.kt` has 944 lines, against 952 at `eb727872`. I4: "Interfaces for 7B" (steering that the run never drains; a resumed run's owner words and allowance). M1: Task 11. M2: Task 8 (`Interruption`). M3: Task 8 (`aTouchsCancellationCarriesItsCauseIntoTheReport`). M4: Task 4 (`ScreenText.quoteWhole`). The checklist's cap: Tasks 5, 6, 10 and 11, and "Changes to the design". Second round: N1 (ids without an upper limit) and N2 (the 20-item refusal names the way past it) in Tasks 5 and 6; the specs' `c9b89882` and `eb727872` in Tasks 6, 7, 10 and 11 and in "Interfaces for 7B".
+- **The review of 2026-11-24.** I1: Task 6 (`ChecklistSteps.finishRefusal`, at the top of `TaskRun.finish`; `CompletionCheck` unchanged). I2: Tasks 5 and 6 (`Tools.ACTING`, `actedSteps`). I3: Tasks 2, 3 and 4 (`RunTrace`, `DialogueSteps`, `Questions`, `OwnerWords`); the checker's simulated `TaskRun.kt` has 946 lines, against 952 at `0a6fd5a2`. I4: "Interfaces for 7B" (steering that the run never drains; a resumed run's owner words and allowance). M1: Task 11. M2: Task 8 (`Interruption`). M3: Task 8 (`aTouchsCancellationCarriesItsCauseIntoTheReport`). M4: Task 4 (`ScreenText.quoteWhole`). The checklist's cap: Tasks 5, 6, 10 and 11, and "Changes to the design". The step's start for the bar (design 10.5): `GoalPort.stepStarted` in Tasks 1 and 2 and in "Interfaces for 7B". Second round: N1 (ids without an upper limit) and N2 (the 20-item refusal names the way past it) in Tasks 5 and 6; the specs' `c9b89882` and `eb727872` in Tasks 6, 7, 10 and 11 and in "Interfaces for 7B".
 - **Placeholders.** Every step that changes code shows the code; every command names its expected result.
 - **Type consistency.** `ChecklistRules.check(drafts, current, steps, nextId)` is called with the same four arguments in `ChecklistSteps`, and `ChecklistCheck.Saved(checklist, nextId, sent)` is read there; `TaskCancellation(reason, interruption)` in `AgentGoalTest`, `Agent.kt` and `TaskRun.cancelled`; `Questions.ask(question, kind)` in `DialogueSteps` and `TaskRun.checkLimits`; `Limits(clock, countsCredits, round)` in `TaskRun` and `LimitsTest`; `TaskStart(task, id, text, model, goal, history, …)` in `AgentRunner` and `AgentEnvironment`; `AgentPorts(…, goal, history)` in every construction; `HistoryText.of(result, zone)` in `HistorySteps` and `HistoryTextTest`.
 
