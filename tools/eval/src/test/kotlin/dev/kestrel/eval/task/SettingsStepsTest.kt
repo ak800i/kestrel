@@ -44,6 +44,21 @@ class SettingsStepsTest {
     }
 
     @Test
+    fun aFontScaleThatAndroidsWriteBackOfAnEarlierChangeOverwroteIsWrittenAgainUntilAndroidAppliesIt() {
+        val run = FakeRun(DeviceKind.A71)
+        run.adb.settings["system/font_scale"] = "1.1"
+        run.adb.busyHandler = true
+        // A write that nothing waited for, whose write-back Android has not made yet.
+        run.device.idempotent("settings put system font_scale 1.3")
+
+        FontScale.set(run.scope, "1.0")
+
+        assertEquals("1.0", run.adb.settings["system/font_scale"])
+        assertEquals("1.0", run.adb.fontScale)
+        assertEquals(2, run.adb.commands.count { it == "settings put system font_scale '1.0'" })
+    }
+
+    @Test
     fun darkThemeAndDoNotDisturbGoBackToTheOwnersModes() {
         val run = FakeRun(DeviceKind.A71)
         var night = "custom_schedule"

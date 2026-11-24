@@ -12,6 +12,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.math.abs
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -55,6 +56,78 @@ data class SettingsValue(val namespace: String, val key: String, val value: Stri
 /** The setting holds what the task asked for. */
 data class SettingsIs(val namespace: String, val key: String, val wanted: Wanted) : Check {
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean = wanted.accepts(scope.setting(namespace, key))
+}
+
+/**
+ * The font scale (`system font_scale`, Settings' Font size), which Android does not keep as a plain stored setting: the
+ * key's observer in ActivityTaskManagerService reads it on the service's handler, applies it to the configuration, and
+ * posts a write of the applied scale back into the key (`updateFontScaleIfNeeded` and `Settings.System.putConfigurationForUser`
+ * in services/core/java/com/android/server/wm/ActivityTaskManagerService.java of API 33 and 37). So a write that follows
+ * another before that write-back can be overwritten by it: on the A71, font-size's setup wrote 1.0 and its rehearsal 1.15
+ * about 0.1 s later, and the key held 1.0 again. [set] therefore writes the scale, and returns only once the configuration
+ * that `dumpsys window windows` prints holds it, after which no earlier write-back is left to land; when the key no
+ * longer holds the scale before that, a write-back of an earlier change overwrote it, and [set] writes it again.
+ */
+object FontScale {
+    val KEY = SettingKey("system", "font_scale")
+
+    /** The name of the scale that Android applied, in a probe. */
+    const val APPLIED = "window/fontScale"
+
+    /** The scale that Android applies without a stored key. */
+    const val DEFAULT = "1.0"
+    private const val WRITES = 3
+    private val POLL = 250.milliseconds
+    private val WAIT = 10.seconds
+    private val CONFIGURATION = Regex("^\\s*mGlobalConfiguration=\\{(\\S+) ")
+
+    /** The stored key, or null when the device has none. */
+    fun stored(scope: RunScope): String? = scope.setting(KEY.namespace, KEY.key).takeIf { it != "null" }
+
+    /** The font scale of Android's configuration, as `dumpsys window windows` prints it in `mGlobalConfiguration`. */
+    fun applied(scope: RunScope): String? = scope.device.read("dumpsys window windows").firstNotNullOfOrNull { CONFIGURATION.find(it)?.groupValues?.get(1) }
+
+    /** Writes [value], or deletes the key for null, and returns once Android has applied it. */
+    fun set(scope: RunScope, value: String?) {
+        val wanted = (value ?: DEFAULT).toFloat()
+        repeat(WRITES) {
+            scope.device.idempotent(KEY.writeBack(value))
+            if (awaitApplied(scope, value, wanted)) return
+        }
+        error("Android wrote another font scale back over ${value ?: "the default"} each of $WRITES times; font_scale is ${stored(scope)}.")
+    }
+
+    /** True once the configuration holds [wanted]; false when the key no longer holds [value], which a write-back overwrote. */
+    private fun awaitApplied(scope: RunScope, value: String?, wanted: Float): Boolean {
+        var waited = Duration.ZERO
+        while (true) {
+            val stored = stored(scope)
+            // Without a key, Android applies its default, which its write-back may store.
+            if (stored?.toFloatOrNull() != wanted && !(value == null && stored == null)) return false
+            val applied = applied(scope)
+            if (applied?.toFloatOrNull() == wanted) return true
+            check(waited < WAIT) { "Android did not apply the font scale ${value ?: DEFAULT} within $WAIT; its configuration has ${applied ?: "no font scale"}." }
+            scope.clock.sleep(POLL)
+            waited += POLL
+        }
+    }
+}
+
+/**
+ * The font scale for the run, after a restore that puts back the scale read before it, each written with [FontScale.set],
+ * so that Android has applied it before the next step. Its probe reads the stored key and the scale that Android applied.
+ */
+data class FontScaleValue(val value: String) : Setup {
+    override fun apply(scope: RunScope): SetupResult {
+        val before = FontScale.stored(scope)
+        val byHand = "Run: adb -s ${scope.device.serial} shell ${FontScale.KEY.writeBack(before)}"
+        scope.restores.push("the font scale as before", byHand) { FontScale.set(scope, before) }
+        scope.restores.change("the font scale set to $value", byHand) { FontScale.set(scope, value) }
+        return SetupResult.Ready
+    }
+
+    override fun probe(scope: RunScope): Map<String, String> =
+        mapOf(FontScale.KEY.toString() to (FontScale.stored(scope) ?: "null"), FontScale.APPLIED to (FontScale.applied(scope) ?: "none"))
 }
 
 /** A setting by its namespace (`system`, `secure` or `global`) and its key. */
@@ -123,7 +196,7 @@ enum class StoredEffect {
  * that Android applies in [RunScope.putBack]'s applied list (`putBack=`), puts a flag back silently, and names a key that
  * only its page applies in the stored list (`byHand=`), with a warning that says what was set back and what was deleted.
  * A key that stays changed fails the restore, whose reason gives the command for each such key. Settings that have a step
- * of their own are [except], such as the font scale ([SettingsValue]) and the display density ([KeepDisplayDensity]).
+ * of their own are [except], such as the font scale ([FontScaleValue]) and the display density ([KeepDisplayDensity]).
  */
 data class KeepStoredSettings(
     val matching: Regex,

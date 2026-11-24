@@ -6,7 +6,8 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The suite's settings tasks (design D8 of sub-project 6), on both devices; brightness and two-settings are untestable on
  * the A71 ([AospBrightnessCurve]). Each starts on the home screen with Settings stopped and ends there again. A rehearsal
- * makes the end state with one shell command; battery-level's check is Kestrel's reply, so it rehearses its setup only.
+ * makes the end state with one shell command, or font-size's with a font scale that Android has applied ([FontScale]);
+ * battery-level's check is Kestrel's reply, so it rehearses its setup only.
  */
 object SettingsTasks {
     private val BOTH = setOf(DeviceKind.EMULATOR, DeviceKind.A71)
@@ -60,14 +61,14 @@ object SettingsTasks {
             KeepDisplayDensity,
             KeepStoredSettings(
                 KeepStoredSettings.DISPLAY_SIZE,
-                except = setOf(SettingKey("system", "font_scale"), SettingKey("secure", "display_density_forced")),
+                except = setOf(FontScale.KEY, SettingKey("secure", "display_density_forced")),
                 effects = KeepStoredSettings.DISPLAY_SIZE_EFFECTS,
             ),
             KeepQuickSettingsTiles,
-            SettingsValue("system", "font_scale", "1.0"),
+            FontScaleValue("1.0"),
         ),
         listOf(SettingsIs("system", "font_scale", Wanted.Above(1.0))),
-        Rehearsal.Steps(listOf(Shell("settings put system font_scale 1.15", "settings put system font_scale 1.0"))),
+        Rehearsal.Steps(listOf(FontScaleValue("1.15"))),
     )
 
     val WIFI_SETTINGS = task(

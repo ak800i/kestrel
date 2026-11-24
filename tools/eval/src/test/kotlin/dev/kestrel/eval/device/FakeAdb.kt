@@ -36,6 +36,18 @@ class FakeAdb(
      */
     var density: String? = null
 
+    /**
+     * The font scale of Android's configuration, which `dumpsys window windows` prints in `mGlobalConfiguration`; null while
+     * it is the stored `system/font_scale` (or 1.0 without one), as on a device at rest. Android applies a write of the key
+     * as ActivityTaskManagerService does, on its handler: the key's observer reads the key and, when the configuration's
+     * scale differs, applies it and posts a write of the applied scale back into the key. The handler runs its messages
+     * at once after each command, or, while [busyHandler], one message before each command, as on the A71 when its
+     * handler is busy, so that a write-back can land after a later write and overwrite it.
+     */
+    var fontScale: String? = null
+    var busyHandler = false
+    private val handler = ArrayDeque<() -> Unit>()
+
     /** Each package's granted runtime permissions, which `pm grant` and `pm revoke` change and `dumpsys package` prints. */
     val granted = mutableMapOf<String, MutableSet<String>>()
 
@@ -90,10 +102,10 @@ class FakeAdb(
         if (loss != null) {
             lost.remove(loss)
             // The command ran on the device; only its answer is lost.
-            answer(inner)
+            onDevice(inner)
             return ShellResult(255, "", "error: closed")
         }
-        val output = answer(inner) ?: return ShellResult(1, "", "the command failed")
+        val output = onDevice(inner) ?: return ShellResult(1, "", "the command failed")
         val text = if (output.isEmpty() || output.endsWith("\n")) output else "$output\n"
         return ShellResult(0, "$text\nkestrel-end\n", "")
     }
@@ -106,6 +118,30 @@ class FakeAdb(
             args == listOf("emu", "avd", "name") -> ShellResult(0, "$consoleName\r\nOK\r\n", "")
             else -> ShellResult(0, hostOut(args), "")
         }
+    }
+
+    /** Answers a guarded command, with Android's handler running around it as [busyHandler] says. */
+    private fun onDevice(command: String): String? {
+        if (busyHandler) handler.removeFirstOrNull()?.invoke()
+        val output = answer(command)
+        if (!busyHandler) while (handler.isNotEmpty()) handler.removeFirst()()
+        return output
+    }
+
+    private fun appliedFontScale(): String = fontScale ?: settings[FONT_SCALE] ?: DEFAULT_FONT_SCALE
+
+    private fun writeFontScale(value: String?) {
+        fontScale = appliedFontScale()
+        if (value == null) settings.remove(FONT_SCALE) else settings[FONT_SCALE] = value
+        handler.addLast(::fontScaleChanged)
+    }
+
+    /** ActivityTaskManagerService's observer of the key: it applies a scale that differs and posts its write-back. */
+    private fun fontScaleChanged() {
+        val scale = settings[FONT_SCALE] ?: DEFAULT_FONT_SCALE
+        if (scale.toFloat() == appliedFontScale().toFloat()) return
+        fontScale = scale
+        handler.addLast { writeFontScale(scale) }
     }
 
     private fun answer(command: String): String? {
@@ -124,6 +160,11 @@ class FakeAdb(
         SETTINGS_LIST.matchEntire(command)?.let { match ->
             val prefix = "${match.groupValues[1]}/"
             return settings.filterKeys { it.startsWith(prefix) }.entries.joinToString("\n") { "${it.key.removePrefix(prefix)}=${it.value}" }
+        }
+        if (command == "dumpsys window windows") return "  mGlobalConfiguration={${appliedFontScale()} ?mcc?mnc [en_US] ldltr sw411dp w411dp h864dp 420dpi nrml long port}"
+        FONT_SCALE_WRITE.matchEntire(command)?.let { match ->
+            writeFontScale(match.groupValues[2].takeIf { match.groupValues[1] == "put" }?.removeSurrounding("'"))
+            return ""
         }
         SETTINGS_GET.matchEntire(command)?.let { return settings["${it.groupValues[1]}/${it.groupValues[2]}"] ?: "null" }
         SETTINGS_PUT.matchEntire(command)?.let {
@@ -158,6 +199,9 @@ class FakeAdb(
         private val GUARD = Regex("case \\$\\(getprop (\\S+)\\) in (\\S+)\\) (.*) && echo && echo kestrel-end;; \\*\\) echo kestrel-refused;; esac", RegexOption.DOT_MATCHES_ALL)
         private val GETPROP = Regex("getprop (\\S+)")
         private val WM_DENSITY = Regex("wm density (\\d+|reset)")
+        private const val FONT_SCALE = "system/font_scale"
+        private const val DEFAULT_FONT_SCALE = "1.0"
+        private val FONT_SCALE_WRITE = Regex("settings (put|delete) system font_scale ?(.*)")
         private val SETTINGS_LIST = Regex("settings list (\\S+)")
         private val SETTINGS_GET = Regex("settings get (\\S+) (\\S+)")
         private val SETTINGS_PUT = Regex("settings put (\\S+) (\\S+) (.+)")

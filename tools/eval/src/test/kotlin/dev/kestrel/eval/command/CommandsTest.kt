@@ -217,6 +217,20 @@ class CommandsTest {
     }
 
     @Test
+    fun fontSizesRehearsalPassesWhenAndroidWritesTheSetupsFontScaleBackLate() {
+        // As on the A71 at 20:14: Android's handler applies the setup's 1.0 and writes it back only after the next write.
+        fake.adb.settings["system/font_scale"] = "1.1"
+        fake.adb.busyHandler = true
+
+        val code = fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "font-size")
+
+        assertEquals(listOf("rehearse=font-size result=pass reason=ok"), fake.output.lines().filter { it.startsWith("rehearse=") })
+        assertEquals(Cli.EXIT_PASSED, code)
+        assertEquals("1.1", fake.adb.settings["system/font_scale"])
+        assertEquals("1.1", fake.adb.fontScale)
+    }
+
+    @Test
     fun dndsRehearsalStopsAtItsSetupWhenTheOwnersScheduleCouldStartDuringIt() {
         fake.adb.settings["global/zen_mode"] = "0"
         fake.adb.on("^dumpsys notification --zen$") { ZenDump.android13(null, ZenDump.rule13("EVERY_NIGHT_DEFAULT_RULE", null)) }
