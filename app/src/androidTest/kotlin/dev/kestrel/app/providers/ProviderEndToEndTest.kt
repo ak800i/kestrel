@@ -73,6 +73,8 @@ class ProviderEndToEndTest {
         override suspend fun write(id: String, credential: Credential) = Unit
 
         override suspend fun delete(id: String) = Unit
+
+        override suspend fun contains(id: String): Boolean = false
     }
 
     private object NoLimits : PlanLimits {

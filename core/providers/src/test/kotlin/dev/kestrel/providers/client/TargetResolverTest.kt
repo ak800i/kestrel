@@ -51,6 +51,8 @@ class TargetResolverTest {
         override suspend fun delete(id: String) {
             stored.remove(id)
         }
+
+        override suspend fun contains(id: String): Boolean = id in stored
     }
     private val http = ProviderHttp(Call.Factory { error("no request in these tests") })
     private val credentials = CredentialManager(vault, http, catalog, CoroutineScope(Dispatchers.Default))

@@ -57,6 +57,8 @@ class CopilotTargetsTest {
             override suspend fun write(id: String, credential: Credential) = Unit
 
             override suspend fun delete(id: String) = Unit
+
+            override suspend fun contains(id: String): Boolean = true
         }
         credentials = CredentialManager(vault, http, catalog, CoroutineScope(Dispatchers.Default))
     }

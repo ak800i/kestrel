@@ -435,6 +435,8 @@ class ProviderGraphTest {
             deleted.countDown()
             deleteGate.await(10, TimeUnit.SECONDS)
         }
+
+        override suspend fun contains(id: String): Boolean = stored.containsKey(id)
     }
 
     /**

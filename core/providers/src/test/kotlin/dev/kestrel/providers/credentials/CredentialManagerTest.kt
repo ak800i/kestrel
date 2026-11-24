@@ -84,6 +84,8 @@ class CredentialManagerTest {
         override suspend fun delete(id: String) {
             stored.remove(id)
         }
+
+        override suspend fun contains(id: String): Boolean = stored.containsKey(id)
     }
 
     /** Gives [outcome] after [gate] completes, and counts its calls. */
