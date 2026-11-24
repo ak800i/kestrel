@@ -41,27 +41,19 @@ object ClockApp {
     }
 
     /**
-     * The taps that delete the running test timer on the clock's timers page: Google Clock's Delete (kestrel-api37's
-     * names the timer), Samsung Clock's Delete.
-     */
-    fun timerTaps(clock: String): List<List<TapCandidate>> = when (clock) {
-        SAMSUNG -> listOf(SAMSUNG_TIMER)
-        else -> listOf(listOf(TapCandidate(label = "Delete 5 minutes timer"), TapCandidate(label = DELETE), TapCandidate(contains = DELETE)))
-    }
-
-    /**
      * Samsung Clock's control that deletes its running timer, as One UI 5.1 shows it on the A71 (counted there on
      * 2026-11-24): "Delete", a clickable container around a clickable Button of the same label, so the first of the two
-     * clickable elements, the container, which screen-tap reaches first; then older candidates.
+     * clickable elements, the container, which screen-tap reaches first; then older candidates. The timer's restore taps
+     * it only on the A71 and only in Samsung Clock; kestrel-api37's Google Clock is cleared instead ([ClockClear]).
      */
     val SAMSUNG_TIMER = listOf(TapCandidate(label = DELETE, state = "clickable", first = true), TapCandidate(label = "Cancel"), TapCandidate(label = DELETE))
 
     /**
-     * What the clock's timers page shows while a timer runs, which the restore needs before it taps: on Samsung Clock the
-     * running timer's Pause, one Button (beside it, Delete); Google Clock's own Delete names its timer, so it needs none.
+     * What Samsung Clock's timers page shows while a timer runs, which the restore needs before it taps: the running
+     * timer's Pause, one Button (beside it, Delete).
      */
-    fun timerRunningShown(scope: RunScope, clock: String): Boolean =
-        clock != SAMSUNG || scope.hooks.screenHas(packageName = clock, label = "Pause", className = "Button").let { it["app"] == clock && it.int("count") == 1 }
+    fun timerRunningShown(scope: RunScope): Boolean =
+        scope.hooks.screenHas(packageName = SAMSUNG, label = "Pause", className = "Button").let { it["app"] == SAMSUNG && it.int("count") == 1 }
 
     /**
      * The clock's running timers: its alarms on the elapsed clock (types 2 and 3), which both Google Clock and Samsung
@@ -199,10 +191,11 @@ data object AlarmIntent : Setup {
  * data ([ClockClear]) and checks that no timer is left. The clock's own taps could not be used there: a cleared Google
  * Clock, as alarm's restore leaves it, covers its timer's Delete with a tip about its privacy policy.
  *
- * On the A71, a timer of the owner's, running, paused or ringing (an alarm of the clock on the elapsed clock, or an
+ * On the A71 the clock must be Samsung Clock, the only clock whose timer taps were counted there, else the task is
+ * untestable. A timer of the owner's, running, paused or ringing (an alarm of the clock on the elapsed clock, or an
  * ongoing notification of the clock), makes the task untestable before any change: the clock's timers page would show
  * it beside the run's, and a tap could reach it. Else the clock's alarms are recorded now, and after the run the one new
- * alarm due within 6 minutes, the test timer, is deleted with the clock's own taps on its timers page and checked. When
+ * alarm due within 6 minutes, the test timer, is deleted with Samsung Clock's own taps on its timers page and checked. When
  * the clock runs any other timer then, such as one that the owner started during the run, the restore taps nothing and
  * says to delete the test timer by hand.
  */
@@ -223,6 +216,7 @@ data object TimerCleanup : Setup {
             scope.restores.push("the test timer", BY_HAND) { ClockClear.run(scope) }
             return SetupResult.Ready
         }
+        if (clock != ClockApp.SAMSUNG) return SetupResult.Untestable("its clock app is not Samsung Clock, the only one whose timer taps were counted on the A71")
         if (ClockApp.timers(dump, clock).isNotEmpty() || Dumps.ongoingNotification(scope.device.read("dumpsys notification"), clock)) {
             return SetupResult.Untestable("the clock app has a timer of the owner's, or shows one, which the run's own would not be told from")
         }
@@ -234,16 +228,16 @@ data object TimerCleanup : Setup {
             check(new.size == 1 && running.all { it in new }) {
                 "The clock runs ${(running + new).distinct().size} timers, so the script deleted none of them. $BY_HAND"
             }
-            val taps = ClockApp.timerTaps(clock)
+            val taps = listOf(ClockApp.SAMSUNG_TIMER)
             scope.device.idempotent("am start -W -a android.intent.action.SHOW_TIMERS -p $clock")
             try {
                 for (second in 1..PAGE_SECONDS) {
                     scope.clock.sleep(1.seconds)
                     ImmersiveTip.dismiss(scope)
-                    if (taps.first().any { shown(scope, clock, it) } && ClockApp.timerRunningShown(scope, clock)) break
+                    if (taps.first().any { shown(scope, clock, it) } && ClockApp.timerRunningShown(scope)) break
                 }
                 // The test timer is the clock's only one, so its page shows only its controls.
-                if (ClockApp.timerRunningShown(scope, clock)) AppTaps(scope, clock).run(taps)
+                if (ClockApp.timerRunningShown(scope)) AppTaps(scope, clock).run(taps)
             } finally {
                 scope.device.idempotent("input keyevent KEYCODE_HOME")
             }

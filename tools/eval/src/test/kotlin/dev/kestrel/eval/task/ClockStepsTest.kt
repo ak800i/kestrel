@@ -402,6 +402,18 @@ class ClockStepsTest {
     }
 
     @Test
+    fun onTheA71AClockThatIsNotSamsungClockMakesTheTimerUntestable() {
+        val run = FakeRun(DeviceKind.A71)
+        ClockPhone(run, ClockApp.GOOGLE)
+
+        val result = TimerCleanup.apply(run.scope)
+
+        assertTrue("$result", result is SetupResult.Untestable)
+        assertEquals(0, run.restores.size)
+        assertTrue(run.adb.commands.none { it.startsWith("am ") || it.startsWith("pm ") })
+    }
+
+    @Test
     fun aTimerOfTheOwnersMakesTheTaskUntestableAndAnotherTimerAfterTheRunIsLeftToTheOwner() {
         fun phone(): Pair<FakeRun, ClockPhone> = FakeRun(DeviceKind.A71).let { it to ClockPhone(it, ClockApp.SAMSUNG) }
 
