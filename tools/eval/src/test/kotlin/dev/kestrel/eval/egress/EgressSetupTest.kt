@@ -115,6 +115,34 @@ class EgressSetupTest {
     }
 
     @Test
+    fun theFirstStartTapsOnlyInPcapdroidAndOnceInOneUisNotice() {
+        // Another app's dialog in front: its "OK" is never tapped, and the first start stops there.
+        val other = FakePcapdroid(listOf(Shown("OK", app = "com.example.other"), Shown("Next", app = "com.example.other")), listOf(Shown("DONE")))
+        val stopped = assertThrows(IllegalStateException::class.java) { other.setup().run() }
+        assertTrue(stopped.message, stopped.message!!.contains("stopped at com.example.other"))
+        assertEquals(emptyList<String?>(), other.taps())
+
+        // One UI's one-time notice over the launcher is answered once, in SystemUI only.
+        val notice = FakePcapdroid(
+            listOf(Shown("OK", app = SYSTEM_UI)),
+            listOf(Shown("DONE")),
+            listOf(Shown("Settings")),
+            listOf(Shown("Control permissions")),
+            listOf(Shown("More options")),
+            listOf(Shown("Show API key")),
+            listOf(Shown("OK")),
+        )
+        assertEquals("set-up", notice.setup().run())
+        assertEquals(listOf("OK", "DONE", "Settings", "Control permissions", "More options", "Show API key", "OK"), notice.taps())
+        assertEquals(listOf(SYSTEM_UI) + List(6) { Pcapdroid.PACKAGE }, notice.tapsIn())
+
+        // A second notice is not answered.
+        val twice = FakePcapdroid(listOf(Shown("OK", app = SYSTEM_UI)), listOf(Shown("OK", app = SYSTEM_UI)), listOf(Shown("DONE")))
+        assertThrows(IllegalStateException::class.java) { twice.setup().run() }
+        assertEquals(listOf("OK"), twice.taps())
+    }
+
+    @Test
     fun aLabelThatShowsTwiceIsNeverTapped() {
         val app = FakePcapdroid(listOf(Shown("DONE")), listOf(Shown("Settings"), Shown("Settings")))
 
@@ -147,12 +175,14 @@ class EgressSetupTest {
         assertEquals("input keyevent KEYCODE_HOME", run.adb.commands.last())
     }
 
-    private class Shown(val label: String, val clickable: Boolean = true, val swipes: Int = 0)
+    private class Shown(val label: String, val clickable: Boolean = true, val swipes: Int = 0, val app: String = Pcapdroid.PACKAGE)
 
     /**
      * PCAPdroid behind the hooks, page by page, on a device without it: screen-has compares labels without letter case, as
-     * ScreenQuery does, and screen-tap presses only an exact label, as tapMatches does; a tap on a label in [refused] is
-     * answered as one in another window. A pressed label opens the next page, and an element shows after its swipes.
+     * ScreenQuery does, and counts only the elements of its `package`; screen-tap presses only an exact label, as
+     * tapMatches does, and with a `package` only while that app's page is in front; a tap on a label in [refused] is
+     * answered as one in another window. A page belongs to the app of its first element, PCAPdroid unless it names
+     * another. A pressed label opens the next page, and an element shows after its swipes.
      */
     private inner class FakePcapdroid(private vararg val pages: List<Shown>, refused: Set<String> = emptySet()) {
         val run = FakeRun()
@@ -174,13 +204,16 @@ class EgressSetupTest {
             }
             run.adb.hook("SCREEN_HAS") { extras ->
                 val label = extras["label"]
-                val shown = showing().filter { it.label.equals(label, ignoreCase = true) && (extras["state"] != "clickable" || it.clickable) }
-                "count=${if (label == null) 1 else shown.size} app=com.emanuelef.remote_capture"
+                val shown = showing().filter {
+                    (extras["package"] ?: it.app) == it.app && it.label.equals(label, ignoreCase = true) && (extras["state"] != "clickable" || it.clickable)
+                }
+                "count=${if (label == null) 1 else shown.size} app=${front()}"
             }
             run.adb.hook("SCREEN_TAP") { extras ->
                 val label = extras["label"]
                 val matches = showing().count { it.label == label }
                 when {
+                    extras["package"].let { it != null && it != front() } -> "tapped=false error=elsewhere"
                     label in refused -> "tapped=false error=elsewhere"
                     matches == 0 -> "tapped=false count=0"
                     else -> "tapped=true count=$matches".also { page++; swipes = 0 }
@@ -198,13 +231,18 @@ class EgressSetupTest {
 
         private fun showing(): List<Shown> = pages.getOrNull(page).orEmpty().filter { it.swipes <= swipes }
 
+        private fun front(): String = pages.getOrNull(page)?.firstOrNull()?.app ?: Pcapdroid.PACKAGE
+
         fun setup(keys: PcapdroidKeys = PcapdroidKeys(folder.resolve("keys-${System.nanoTime()}.json")), apk: Path = folder.resolve("PCAPdroid_v2.0.4.apk")) =
             EgressSetup(run.device, run.hooks, run.clock, keys) { apk }
 
         fun taps(): List<String?> = run.adb.hookCalls("SCREEN_TAP").map { it["label"] }
+
+        fun tapsIn(): List<String?> = run.adb.hookCalls("SCREEN_TAP").map { it["package"] }
     }
 
     private companion object {
         const val KEY = "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+        const val SYSTEM_UI = "com.android.systemui"
     }
 }

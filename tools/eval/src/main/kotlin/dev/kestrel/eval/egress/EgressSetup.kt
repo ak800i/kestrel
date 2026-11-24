@@ -16,7 +16,8 @@ import kotlin.time.Duration.Companion.seconds
  * PCAPdroid's one-time setup on a test device, which needs no owner (design D11 of sub-project 6): Private DNS off or
  * automatic; the pinned APK ([apk]) installed; its notification permission, the VPN op and on API 37 the local network
  * permission; its first start after a force-stop, whose pages the script's own taps pass ("Next", "Skip", "DONE", "Done",
- * "OK", "Continue", each counted before its tap, at most 10 pages); its API key by the script's own taps, each on the one
+ * "OK", "Continue", each counted before its tap, at most 10 pages), only in PCAPdroid's own windows, and with one tap at
+ * most outside them: One UI's one-time notice ([systemNotice]); its API key by the script's own taps, each on the one
  * element that shows with its label (the key that PCAPdroid has, else a new one), read once from PCAPdroid's own node
  * of `uiautomator dump`, every other node dropped, into [keys]; and a capture started and stopped with it. A device that
  * has PCAPdroid and a working key is only checked. A step that screen-tap cannot press stops the setup there. PCAPdroid
@@ -62,7 +63,7 @@ class EgressSetup(
             try {
                 device.idempotent("pm grant ${Pcapdroid.PACKAGE} android.permission.ACCESS_LOCAL_NETWORK")
             } catch (e: DeviceCommandFailed) {
-                // The first start's prompt is then answered by the same taps as its pages.
+                // The first start then stops at Android's prompt, which no tap of the script answers, and names its app.
             }
         }
     }
@@ -73,23 +74,42 @@ class EgressSetup(
         device.idempotent("am force-stop ${Pcapdroid.PACKAGE}")
         device.idempotent("monkey -p ${Pcapdroid.PACKAGE} -c android.intent.category.LAUNCHER 1")
         clock.sleep(3.seconds)
-        repeat(MAX_TAPS) { if (!nextPage()) return started() }
+        var notice = true
+        repeat(MAX_TAPS) {
+            if (nextPage()) return@repeat
+            if (notice) {
+                notice = false
+                if (systemNotice()) return@repeat
+            }
+            return started()
+        }
         started()
     }
 
     /**
-     * Taps the first label of [ONBOARDING] that screen-has counts and screen-tap presses, and false when none is counted.
-     * screen-has compares labels without letter case and screen-tap exactly, so "DONE" is counted on a "Done" button too.
+     * Taps the first label of [ONBOARDING] that screen-has counts in PCAPdroid and screen-tap presses there, and false when
+     * none is counted: a label of another app's window, such as a dialog over PCAPdroid, is never tapped. screen-has
+     * compares labels without letter case and screen-tap exactly, so "DONE" is counted on a "Done" button too.
      */
     private fun nextPage(): Boolean {
         var counted = false
         for (label in ONBOARDING) {
-            if (hooks.screenHas(label = label).int("count") < 1) continue
+            if (hooks.screenHas(packageName = Pcapdroid.PACKAGE, label = label).int("count") < 1) continue
             counted = true
-            if (pressed(label, null) == null) return true
+            if (pressed(label, Pcapdroid.PACKAGE) == null) return true
         }
         if (!counted) return false
         throw IllegalStateException("PCAPdroid's first start shows a page that screen-tap cannot press on ${device.serial}: finish it there by hand once, and run egress-setup again.")
+    }
+
+    /**
+     * One UI's one-time notice over PCAPdroid's first start, which the A71's first set-up met: an "OK" that SystemUI shows
+     * exactly once as a clickable element, tapped only while SystemUI's window is in front. True when it was tapped.
+     */
+    private fun systemNotice(): Boolean {
+        if (hooks.screenHas(packageName = SYSTEM_UI, label = NOTICE, state = "clickable").int("count") != 1) return false
+        val refused = pressed(NOTICE, SYSTEM_UI) ?: return true
+        throw IllegalStateException("One UI's notice shows an $NOTICE that screen-tap cannot press on ${device.serial} ($refused): answer it there by hand once, and run egress-setup again.")
     }
 
     private fun started() {
@@ -183,6 +203,8 @@ class EgressSetup(
     companion object {
         private val PRIVATE_DNS = setOf("null", "off", "opportunistic")
         private val ONBOARDING = listOf("Next", "Skip", "DONE", "Done", "OK", "Continue")
+        private const val SYSTEM_UI = "com.android.systemui"
+        private const val NOTICE = "OK"
 
         // PCAPdroid 2.0.4 shows Settings as a button of its main screen's bar, not in its menu. Its menu has "Show API key"
         // only while it has a key, and then "Generate API key" would first ask to discard that key, so a key it has is shown.
