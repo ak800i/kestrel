@@ -1,5 +1,13 @@
 [
   {"tool": "open_settings", "arguments": {"page": "bluetooth", "reason": "find the Bluetooth switch"}},
+  {"tool": "tap", "target": {"contains": "Connection preferences"}, "arguments": {"reason": "find the Bluetooth page", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the page open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "tap", "target": {"label": "Bluetooth"}, "arguments": {"reason": "open the Bluetooth page", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the page open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "tap", "target": {"label": "Use Bluetooth"}, "arguments": {"reason": "turn Bluetooth off", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the switch turn off"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "finish", "arguments": {"summary": "Bluetooth is off.", "evidence": [{"target": {"label": "Use Bluetooth"}, "checked": false}]}}
 ]

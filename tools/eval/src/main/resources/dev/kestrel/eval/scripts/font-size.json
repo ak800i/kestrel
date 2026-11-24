@@ -1,6 +1,10 @@
 [
   {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the text size"}},
-  {"tool": "tap", "target": {"label": "Display size and text"}, "arguments": {"reason": "open the text size", "category": "ordinary_settings"}},
-  {"tool": "set_slider", "target": {"contains": "Font size", "class": "SeekBar"}, "arguments": {"percent": 33, "reason": "make the text one step bigger", "category": "ordinary_settings"}},
-  {"tool": "finish", "arguments": {"summary": "The text is one step bigger.", "evidence": [{"target": {"contains": "Font size", "class": "SeekBar"}, "percent": 33}]}}
+  {"tool": "tap", "target": {"contains": "Display size"}, "arguments": {"reason": "open the text size", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the page open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "tap", "target": {"label": "Increase font size"}, "arguments": {"reason": "make the text one step bigger", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the text grow"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "finish", "arguments": {"summary": "The text is one step bigger.", "evidence": [{"target": {"label": "Font size"}}]}}
 ]

@@ -1,5 +1,9 @@
 [
   {"tool": "create_event", "arguments": {"title": "{marker}", "start": "{date}T15:00", "end": "{date}T16:00"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the event open"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the event open"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the event open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "tap", "target": {"label": "Save"}, "arguments": {"reason": "save the event", "category": "ordinary_settings"}},
   {"tool": "finish", "arguments": {"summary": "{marker} is in your calendar tomorrow at 3 pm.", "evidence": [{"step": 1}]}}
 ]

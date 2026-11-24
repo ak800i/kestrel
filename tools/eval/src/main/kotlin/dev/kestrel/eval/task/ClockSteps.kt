@@ -43,10 +43,13 @@ object ClockApp {
         ZoneOffset.UTC
     }
 
-    /** The taps that delete the running test timer on the clock's timers page: Google Clock's Delete, Samsung Clock's Cancel. */
+    /**
+     * The taps that delete the running test timer on the clock's timers page: Google Clock's Delete (kestrel-api37's
+     * names the timer), Samsung Clock's Cancel.
+     */
     fun timerTaps(clock: String): List<List<TapCandidate>> = when (clock) {
         SAMSUNG -> listOf(listOf(TapCandidate(label = "Cancel"), TapCandidate(label = "Delete")))
-        else -> listOf(listOf(TapCandidate(label = DELETE), TapCandidate(contains = DELETE)))
+        else -> listOf(listOf(TapCandidate(label = "Delete 5 minutes timer"), TapCandidate(label = DELETE), TapCandidate(contains = DELETE)))
     }
 }
 

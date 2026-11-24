@@ -1,4 +1,4 @@
 [
   {"tool": "open_settings", "arguments": {"page": "wifi", "reason": "open the Wi-Fi settings"}},
-  {"tool": "finish", "arguments": {"summary": "The Wi-Fi settings are open.", "evidence": [{"target": {"contains": "Wi", "class": "Switch"}}]}}
+  {"tool": "finish", "arguments": {"summary": "The Wi-Fi settings are open.", "evidence": [{"target": {"contains": "Use Wi"}}]}}
 ]

@@ -1,8 +1,14 @@
 [
   {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the brightness and the dark theme"}},
-  {"tool": "tap", "target": {"label": "Brightness level"}, "arguments": {"reason": "open the brightness slider", "category": "ordinary_settings"}},
+  {"tool": "tap", "target": {"contains": "Brightness level"}, "arguments": {"reason": "open the brightness slider", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the brightness slider open"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "set_slider", "target": {"contains": "brightness", "class": "SeekBar"}, "arguments": {"percent": 30, "reason": "set the brightness", "category": "ordinary_settings"}},
   {"tool": "back", "arguments": {"reason": "back to the display settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the display settings show"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "tap", "target": {"label": "Dark theme"}, "arguments": {"reason": "turn the dark theme on", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the page show the dark theme"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "finish", "arguments": {"summary": "The dark theme is on and the brightness is at 30 percent.", "evidence": [{"target": {"label": "Dark theme"}, "checked": true}]}}
 ]
