@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
-import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.port.AnswerKind
+import dev.kestrel.app.agent.AgentRunner
 import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.safety.AgentFreeApps
@@ -19,14 +19,21 @@ import java.util.Locale
  * or a count.
  */
 internal object AgentHookAnswers {
-    /** agent-task -Result's answer for a task that ended; with [digits] (agent-task -Digits), `digits=1|0` at its end. */
-    fun result(report: TaskReport, spoken: String, marker: String?, recipient: String?, digits: String? = null): String =
-        "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
+    /**
+     * agent-task -Result's answer for a task that [ended]: its report's end and counts, whether its spoken sentence holds
+     * [marker], the owner's touches that the watcher reported (`ownerTouches=`) and the signals among them (`signals=`); with
+     * [digits] (agent-task -Digits), `digits=1|0` at its end.
+     */
+    fun result(ended: AgentRunner.Ended, marker: String?, recipient: String?, digits: String? = null): String {
+        val report = ended.report
+        return "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
             "credits=${String.format(Locale.ROOT, "%.2f", report.credits)} confirmed=${report.confirmed} " +
             "unconfirmed=${report.unconfirmed} shareItems=${report.shareItems} recipient=${recipient(report.recipients, recipient)} " +
-            "marker=${marker(spoken, marker)} beforeTestMode=${report.beforeTestMode} model=${word(report.modelId)} " +
-            "in=${report.inputTokens} out=${report.outputTokens} cacheRead=${report.cacheRead} cacheWrite=${report.cacheWrite}" +
-            (digits?.let { " digits=${digits(spoken, it)}" } ?: "")
+            "marker=${marker(ended.spoken, marker)} beforeTestMode=${report.beforeTestMode} model=${word(report.modelId)} " +
+            "in=${report.inputTokens} out=${report.outputTokens} cacheRead=${report.cacheRead} cacheWrite=${report.cacheWrite} " +
+            "ownerTouches=${ended.touches} signals=${ended.signals}" +
+            (digits?.let { " digits=${digits(ended.spoken, it)}" } ?: "")
+    }
 
     /**
      * 1 when one number of the spoken reply holds the digits of [digits] in a row, from the start of one of its groups of

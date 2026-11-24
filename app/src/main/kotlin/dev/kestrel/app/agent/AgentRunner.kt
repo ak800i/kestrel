@@ -61,9 +61,13 @@ internal class AgentRunner(
     private val nowMillis: () -> Long,
     private val newId: (Int) -> String = ::taskId,
 ) {
-    /** How task number n ended, for the debug hook `agent-task -Result`: its report and the sentence that Kestrel said. */
-    internal data class Ended(val report: TaskReport, val spoken: String) {
-        override fun toString(): String = "Ended(report=$report, spoken=${spoken.length} characters)"
+    /**
+     * How task number n ended, for the debug hook `agent-task -Result`: its report, the sentence that Kestrel said at its
+     * end, the owner's touches that the watcher reported during the task ([touches]) and how many of them were signals
+     * without a finger ([signals]: branch B's, or a cancelled gesture of Kestrel's).
+     */
+    internal data class Ended(val report: TaskReport, val spoken: String, val touches: Int = 0, val signals: Int = 0) {
+        override fun toString(): String = "Ended(report=$report, spoken=${spoken.length} characters, touches=$touches, signals=$signals)"
     }
 
     /** Debug builds only: the model that the hook `agent-script` or a device test installed (design D28). */
@@ -86,6 +90,14 @@ internal class AgentRunner(
 
         // A pause that came before the owner port existed; the owner port gets it as soon as it exists (design D2).
         var pausedEarly = false
+
+        // The owner's touches that the watcher reported during the task, and the signals among them; only the task's touch
+        // collector writes them.
+        @Volatile
+        var touches = 0
+
+        @Volatile
+        var signals = 0
     }
 
     private val lock = Any()
@@ -207,13 +219,13 @@ internal class AgentRunner(
             val offer = !debuggable
             var deferred: Pair<TaskReport, String>? = null
             coroutineScope {
-                val touches = launch { ports.touches.collect { touched(ports, it) } }
+                val touches = launch { ports.touches.collect { touched(running, ports, it) } }
                 try {
                     Agent(ports.ports, ports.settings).run(TaskRequest(start.id, text, ports.knownNames)) { result ->
                         val sentence = running.stopSentence?.let { "$it ${AgentTexts.ledger(result)}" }
                             ?: AgentTexts.sentence(result, ports.providerName)
                         result.recording?.let { kept = it to nowMillis() }
-                        record(task, result, sentence)
+                        record(task, Ended(result, sentence, running.touches, running.signals))
                         if (offer && result.offerRoutine && result.recording != null) {
                             deferred = result to sentence
                         } else {
@@ -262,7 +274,7 @@ internal class AgentRunner(
                 is Request.SaveRoutine -> save(ports, request, id)
             }
             val result = TaskReport(EndReason.FINISHED)
-            record(task, result, sentence.orEmpty())
+            record(task, Ended(result, sentence.orEmpty()))
             send(Event.TaskEnded(task, sentence))
         } catch (e: CancellationException) {
             withContext(NonCancellable) { refuse(task, AgentTexts.CANCELLED) }
@@ -311,7 +323,9 @@ internal class AgentRunner(
         }
     }
 
-    private suspend fun touched(ready: Prepared.Ready, touch: OwnerTouch) {
+    private suspend fun touched(running: Running, ready: Prepared.Ready, touch: OwnerTouch) {
+        running.touches++
+        if (touch.signal) running.signals++
         send(Event.OwnerTouched)
         touch.lateEchoMillis?.let { ready.ports.log.write(TaskLog.Kind.ACTION, "possible late echo after $it ms") }
     }
@@ -322,12 +336,12 @@ internal class AgentRunner(
     }
 
     private fun refuse(task: Int, sentence: String) {
-        record(task, TaskReport(EndReason.NO_PROFILE), sentence)
+        record(task, Ended(TaskReport(EndReason.NO_PROFILE), sentence))
         send(Event.TaskEnded(task, sentence))
     }
 
-    private fun record(task: Int, result: TaskReport, sentence: String) = synchronized(lock) {
-        ends[task] = Ended(result, sentence)
+    private fun record(task: Int, ended: Ended) = synchronized(lock) {
+        ends[task] = ended
         while (ends.size > MAX_ENDS) ends.remove(ends.keys.first())
     }
 

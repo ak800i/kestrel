@@ -231,7 +231,10 @@
 #                                           reply holds those digits in a row, from the start of one of its groups of
 #                                           digits to the end of one, else digits=0; groups belong to one number when only
 #                                           spaces, hyphens, dots, brackets or + stand between them, so "+1 202-555-0143"
-#                                           holds 2025550143, but "58 percent, about 7 hours" does not hold 587
+#                                           holds 2025550143, but "58 percent, about 7 hours" does not hold 587;
+#                                           ownerTouches= and signals= count the owner's touches that the touch watcher
+#                                           reported during the task and the signals among them without a finger (branch
+#                                           B's, a cancelled gesture)
 #   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category]
 #                                           answers the open question of that task as the owner's voice would, and ends its
 #                                           hand-over with continue or cancel; refused when that task asks nothing. With

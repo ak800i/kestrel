@@ -402,4 +402,21 @@ class AgentRunnerTest {
             if (closeFails) error("The card failed")
         }
     }
+
+    @Test
+    fun aTasksEndCountsTheOwnersTouchesAndTheSignalsAmongThem() = runTest {
+        owner.gateWait = CompletableDeferred()
+        val runner = runner()
+        runner.run(1, "open Viber")
+        runCurrent()
+
+        touches.emit(OwnerTouch())
+        touches.emit(OwnerTouch(signal = true))
+        runCurrent()
+        runner.steer(Effect.CancelTask)
+        advanceUntilIdle()
+
+        val ended = runner.ended(1)!!
+        assertEquals(listOf(2, 1), listOf(ended.touches, ended.signals))
+    }
 }

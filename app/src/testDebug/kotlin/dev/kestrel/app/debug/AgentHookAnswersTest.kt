@@ -3,6 +3,7 @@ package dev.kestrel.app.debug
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.port.AnswerKind
+import dev.kestrel.app.agent.AgentRunner
 import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
@@ -27,11 +28,12 @@ class AgentHookAnswersTest {
             workMillis = 41_000, credits = 0.5, inputTokens = 5000, outputTokens = 250, cacheRead = 2500, confirmed = 1, modelId = "scripted-light",
         )
 
-        val line = AgentHookAnswers.result(report, "Sent to Saved Messages. I told Ana that you're late for maple heron.", "Maple heron", "saved messages")
+        val ended = AgentRunner.Ended(report, "Sent to Saved Messages. I told Ana that you're late for maple heron.", touches = 2, signals = 1)
+        val line = AgentHookAnswers.result(ended, "Maple heron", "saved messages")
 
         assertEquals(
             "state=done end=FINISHED steps=5 workMs=41000 credits=0.50 confirmed=1 unconfirmed=0 shareItems=0 recipient=match marker=1 " +
-                "beforeTestMode=0 model=scripted-light in=5000 out=250 cacheRead=2500 cacheWrite=0",
+                "beforeTestMode=0 model=scripted-light in=5000 out=250 cacheRead=2500 cacheWrite=0 ownerTouches=2 signals=1",
             line,
         )
         assertFalse(line.contains("Ana"))
@@ -80,8 +82,8 @@ class AgentHookAnswersTest {
         assertEquals(0, AgentHookAnswers.digits("At 10:58 it was 7 percent.", "587"))
         val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 1)
 
-        assertTrue(AgentHookAnswers.result(report, "It is 87 percent.", null, null, "87").endsWith(" digits=1"))
-        assertFalse(AgentHookAnswers.result(report, "It is 87 percent.", null, null).contains("digits="))
+        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, "It is 87 percent."), null, null, "87").endsWith(" digits=1"))
+        assertFalse(AgentHookAnswers.result(AgentRunner.Ended(report, "It is 87 percent."), null, null).contains("digits="))
     }
 
     @Test

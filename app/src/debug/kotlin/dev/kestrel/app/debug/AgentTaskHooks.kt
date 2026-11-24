@@ -53,9 +53,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val runner = graph.agent
         val ended = runner.ended(number)
         if (ended == null || runner.running(number)) return "state=running"
-        return AgentHookAnswers.result(
-            ended.report, ended.spoken, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS),
-        )
+        return AgentHookAnswers.result(ended, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS))
     }
 
     // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>], as the owner's

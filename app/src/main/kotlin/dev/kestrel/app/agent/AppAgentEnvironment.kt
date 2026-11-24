@@ -118,7 +118,7 @@ internal class AppAgentEnvironment(
         val names = knownNames()
         if (!startWatcherOrStop(screen::startTouchWatcher, screen::stopTouchWatcher)) return Prepared.Refused(AgentTexts.NO_WATCHER)
         val touches = screen.touches.filter { it.owner }.map { touch ->
-            OwnerTouch(touch.sinceNodeActionMillis?.takeIf { it <= OwnActions.LATE_ECHO_MILLIS })
+            OwnerTouch(touch.sinceNodeActionMillis?.takeIf { it <= OwnActions.LATE_ECHO_MILLIS }, signal = touch.deviceId == OwnActions.SIGNAL_DEVICE)
         }
         return Prepared.Ready(ports, agentSettings, owner, names, touches, provider) {
             screen.stopTouchWatcher()

@@ -39,8 +39,12 @@ internal class TaskStart(
     override fun toString(): String = "TaskStart(task=$task, text=${text.length} characters, model=${model?.javaClass?.simpleName}, local=$local)"
 }
 
-/** A touch of the owner's that the watcher reported; [lateEchoMillis] is set when it came soon after an action of Kestrel's (D19). */
-internal data class OwnerTouch(val lateEchoMillis: Long? = null)
+/**
+ * A touch of the owner's that the watcher reported; [lateEchoMillis] is set when it came soon after an action of Kestrel's
+ * (D19), and [signal] when no input event carried it: branch B's signal of the screen's events, or a gesture of Kestrel's
+ * that a touch cancelled.
+ */
+internal data class OwnerTouch(val lateEchoMillis: Long? = null, val signal: Boolean = false)
 
 /**
  * The owner port of one task together with the Orchestrator's effects that steer it (design D2 of sub-project 5).
