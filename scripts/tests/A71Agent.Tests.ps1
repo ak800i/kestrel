@@ -843,6 +843,22 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Mock Invoke-Device { '      android.permission.POST_NOTIFICATIONS: granted=true' } -ParameterFilter { $Command -eq 'dumpsys package com.google.android.gm' }
     }
 
+    It 'grants the photos and videos and gives notification access as the evaluation''s kept set, which no restore takes back, and revokes only the location that it granted' {
+        Mock Invoke-Device { '      android.permission.READ_MEDIA_IMAGES: granted=true, flags=[ USER_SET ]' } -ParameterFilter { $Command -eq 'dumpsys package dev.kestrel' }
+
+        Grant-AgentPermissions $A71
+        Enable-NotificationAccess $A71
+
+        $commands | Should -Be @(
+            "$A71 pm grant dev.kestrel android.permission.READ_MEDIA_VIDEO"
+            "$A71 pm grant dev.kestrel android.permission.ACCESS_FINE_LOCATION"
+            "$A71 pm grant dev.kestrel android.permission.ACCESS_COARSE_LOCATION"
+            "$A71 cmd notification allow_listener dev.kestrel/dev.kestrel.datatools.notifications.KestrelNotificationListener"
+        )
+        $registered | Should -HaveCount 1
+        $registered[0].Data.Grant | Should -Be @('android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION')
+    }
+
     It 'takes an empty or missing whatsappOwnName, because WhatsApp is skipped, and then sets no WhatsApp name in test mode' {
         $path = Join-Path $TestDrive 'a71-config.json'
         $fake = [ordered]@{ pin = '97531'; whatsappOwnName = ''; gmailAddress = 'pera.test@example.com'; homePlace = 'Belgrade Fortress'; testLocation = '44.8100,20.4600'; testStreet = 'Knez Mihailova' }

@@ -491,28 +491,28 @@ function Start-Listening([string]$Device, [ValidateSet('quiet', 'own')][string]$
     Invoke-Device $Device 'input keyevent KEYCODE_HOME' | Out-Null
 }
 
-# Kestrel's runtime permissions for the tasks (design D29: granted with pm grant, revoked at the end): the photos and
-# videos, and the location. Only those that Kestrel did not have are granted, and only those are revoked again.
+# Kestrel's runtime permissions for the tasks: the photos and videos, which belong to the evaluation's kept set and stay
+# granted on both test devices (the owner's decision of 2026-11-24; AGENTS.md), and the location (design D29), which the
+# sitting grants and revokes at its end. Only those that Kestrel did not have are granted, and only the location that the
+# sitting granted is revoked: taking back a photo or video permission would also end Kestrel's process.
 function Grant-AgentPermissions([string]$Device) {
-    $wanted = @('android.permission.READ_MEDIA_IMAGES', 'android.permission.READ_MEDIA_VIDEO', 'android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION')
-    $had = @(Get-GrantedPermissions -Dump (Invoke-Device $Device 'dumpsys package dev.kestrel') -Permissions $wanted)
-    $grant = @($wanted | Where-Object { $_ -notin $had })
-    if (-not $grant) { return }
-    Register-Restore "Kestrel's runtime permissions on $(Get-DeviceName $Device)" "Settings > Apps > Kestrel > Permissions: set Photos and videos and Location to Don't allow." @{ Device = $Device; Grant = $grant } {
-        param($Data)
-        foreach ($permission in $Data.Grant) { Invoke-Device $Data.Device "pm revoke dev.kestrel $permission" | Out-Null }
-    } | Out-Null
-    foreach ($permission in $grant) { Invoke-Device $Device "pm grant dev.kestrel $permission" | Out-Null }
+    $kept = @('android.permission.READ_MEDIA_IMAGES', 'android.permission.READ_MEDIA_VIDEO')
+    $location = @('android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION')
+    $had = @(Get-GrantedPermissions -Dump (Invoke-Device $Device 'dumpsys package dev.kestrel') -Permissions ($kept + $location))
+    $revoked = @($location | Where-Object { $_ -notin $had })
+    if ($revoked) {
+        Register-Restore "Kestrel's location permission on $(Get-DeviceName $Device)" "Settings > Apps > Kestrel > Permissions: set Location to Don't allow." @{ Device = $Device; Grant = $revoked } {
+            param($Data)
+            foreach ($permission in $Data.Grant) { Invoke-Device $Data.Device "pm revoke dev.kestrel $permission" | Out-Null }
+        } | Out-Null
+    }
+    foreach ($permission in @($kept + $location) | Where-Object { $_ -notin $had }) { Invoke-Device $Device "pm grant dev.kestrel $permission" | Out-Null }
 }
 
-# Notification access for Kestrel's listener (design D9), revoked again at the end of each sitting.
+# Notification access for Kestrel's listener (design D9), which belongs to the evaluation's kept set and stays on on both
+# test devices (the owner's decision of 2026-11-24; AGENTS.md), so no restore takes it back.
 function Enable-NotificationAccess([string]$Device) {
-    $component = 'dev.kestrel/dev.kestrel.datatools.notifications.KestrelNotificationListener'
-    Register-Restore "notification access for Kestrel on $(Get-DeviceName $Device)" 'Settings > Notifications > Device and app notifications (or Notification access): turn Kestrel off.' $Device {
-        param($Device)
-        Invoke-Device $Device 'cmd notification disallow_listener dev.kestrel/dev.kestrel.datatools.notifications.KestrelNotificationListener' | Out-Null
-    } | Out-Null
-    Invoke-Device $Device "cmd notification allow_listener $component" | Out-Null
+    Invoke-Device $Device 'cmd notification allow_listener dev.kestrel/dev.kestrel.datatools.notifications.KestrelNotificationListener' | Out-Null
 }
 
 # The owner's names for test mode's self-chat rules (design D18), through agent-settings; ownerEmails stays empty, so
