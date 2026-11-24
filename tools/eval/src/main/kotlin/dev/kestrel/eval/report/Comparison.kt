@@ -12,7 +12,7 @@ data class Rate(val passes: Int, val runs: Int) {
 /**
  * A device's judgement (design D10 of sub-project 6): its [rate] and the [baseline]'s, in percent, over the [shared]
  * tasks; whether it [passed]; the tasks whose rate [fell] below the baseline's, which the re-runs run again; the tasks
- * that fell from 3 of 3 to 1 of 3 or less in their first runs ([collapsed]), which are always reported; and the tasks
+ * that fell from 3 of 3 to 1 of 3 or less in their first runs, which were 3 ([collapsed]), which are always reported; and the tasks
  * that ran only in the results or only in the baseline.
  */
 data class Judgement(
@@ -46,6 +46,9 @@ data class Judgement(
 object Comparison {
     const val POINTS = 5.0
 
+    /** The runs per task of a baseline part and of the results that it judges. */
+    const val RUNS = 3
+
     fun judge(device: String, results: Map<String, Rate>, part: BaselinePart, gaps: Set<String>, first: Map<String, Rate> = results): Judgement {
         val ran = results.filterValues { it.runs > 0 }.keys - gaps
         val recorded = part.tasks.filterValues { it.runs > 0 }.keys - gaps
@@ -60,7 +63,10 @@ object Comparison {
             baseline = baseline,
             passed = shared.isNotEmpty() && baseline - rate <= POINTS + 1e-9,
             fell = shared.filter { results.getValue(it).value < base(it).value },
-            collapsed = shared.filter { task -> base(task).let { it.runs == 3 && it.passes == 3 } && (first[task] ?: results.getValue(task)).passes <= 1 },
+            collapsed = shared.filter { task ->
+                val start = first[task] ?: results.getValue(task)
+                base(task).let { it.runs == RUNS && it.passes == RUNS } && start.runs == RUNS && start.passes <= 1
+            },
             onlyResults = (ran - recorded).sorted(),
             onlyBaseline = (recorded - ran).sorted(),
         )

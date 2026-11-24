@@ -42,6 +42,14 @@ class ComparisonTest {
     }
 
     @Test
+    fun aCollapseCountsOnlyFirstRunsOfThree() {
+        // 1 of 1 is no fall from 3 of 3 to 1 of 3, and 1 of 5 is not one either: D10's rule names 3 runs.
+        assertEquals(emptyList<String>(), Comparison.judge("a71", names.associateWith { Rate(1, 1) }, part, emptySet()).collapsed)
+        assertEquals(emptyList<String>(), Comparison.judge("a71", names.associateWith { Rate(1, 5) }, part, emptySet()).collapsed)
+        assertEquals(listOf("j"), Comparison.judge("a71", results("j" to 0), part, emptySet()).collapsed)
+    }
+
+    @Test
     fun knownGapsAreLeftOutAndTasksOfOnlyOneSideAreListedApart() {
         val withGap = part.copy(tasks = part.tasks + mapOf("telegram-photos" to BaselineTask(3, 3), "waze-home" to BaselineTask(1, 3)))
         val results = results() + mapOf("telegram-photos" to Rate(0, 1), "timer" to Rate(0, 3), "waze-home" to Rate(0, 0))

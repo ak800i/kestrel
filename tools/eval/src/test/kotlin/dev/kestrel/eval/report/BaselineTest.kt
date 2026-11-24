@@ -3,6 +3,9 @@ package dev.kestrel.eval.report
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
 
@@ -34,5 +37,14 @@ class BaselineTest {
         assertEquals(setOf("devices"), json.keys)
         assertEquals(setOf("commit", "model", "tasks"), json.getValue("devices").jsonObject.getValue("a71").jsonObject.keys)
         assertEquals(Baseline(), Baseline.read(folder.resolve("none.json")))
+    }
+
+    @Test
+    fun aPartNeedsTheSuitesCommitAndModel() {
+        val report = Report("a71", "c".repeat(40), "claude-x", true, "2026-11-24T10:00", "2026-11-24T12:00", emptyList(), Totals(0, 0, 0, 0.0, 0, Tokens()))
+        assertNull(Baseline.problem(report))
+        assertTrue(Baseline.problem(report.copy(commit = "unknown"))!!.contains("commit"))
+        assertTrue(Baseline.problem(report.copy(model = "none"))!!.contains("model"))
+        assertThrows(IllegalArgumentException::class.java) { Baseline.part(report.copy(model = "none")) }
     }
 }

@@ -1,5 +1,7 @@
 package dev.kestrel.eval.command
 
+import dev.kestrel.eval.report.Comparison
+
 /** A command line that the tool does not take; it is refused with the usage, exit code 2. */
 class UsageError(message: String) : Exception(message)
 
@@ -83,6 +85,9 @@ object Arguments {
                 val compare = options["--compare"] == "true"
                 if (record && (!live || tasks != null)) throw UsageError("--record-baseline records a live suite of every task: give --live and no --tasks.")
                 if (compare && !live) throw UsageError("--compare judges a live suite: give --live.")
+                if ((record || compare) && runs != null && runs != Comparison.RUNS) {
+                    throw UsageError("--record-baseline and --compare take design D10's ${Comparison.RUNS} runs per task, not $runs: leave out --runs.")
+                }
                 Command.Suite(device(), live, runs ?: 3, tasks, compare, record)
             }
             "compare" -> {

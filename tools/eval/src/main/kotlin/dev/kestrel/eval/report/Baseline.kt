@@ -32,8 +32,19 @@ data class Baseline(val devices: Map<String, BaselinePart> = emptyMap()) {
         /** The baseline of [file], or an empty one when there is none yet. */
         fun read(file: Path): Baseline = if (Files.isRegularFile(file)) JSON.decodeFromString(serializer(), Files.readString(file)) else Baseline()
 
+        /** Why [report] cannot be a part, or null when it can: D10's part names the suite's 40-hex commit and its model. */
+        fun problem(report: Report): String? = when {
+            !COMMIT.matches(report.commit) -> "the suite's commit is ${report.commit}, not a commit of git"
+            report.model == "none" -> "the suite's runs named no model"
+            else -> null
+        }
+
         /** A device's part from its live suite's [report]: each task that ran, with its passes and runs. */
-        fun part(report: Report): BaselinePart =
-            BaselinePart(report.commit, report.model, report.tasks.filter { it.runs > 0 }.associate { it.task to BaselineTask(it.passes, it.runs) })
+        fun part(report: Report): BaselinePart {
+            problem(report)?.let { throw IllegalArgumentException(it) }
+            return BaselinePart(report.commit, report.model, report.tasks.filter { it.runs > 0 }.associate { it.task to BaselineTask(it.passes, it.runs) })
+        }
+
+        private val COMMIT = Regex("[0-9a-f]{40}")
     }
 }

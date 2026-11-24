@@ -19,8 +19,8 @@ class CompareCommandTest {
     private val fake = FakeEnvironment()
     private val names = ('a'..'j').map { "$it" }
 
-    private fun report(device: String, model: String, changed: Map<String, Int> = emptyMap(), tasks: List<String> = names): Report {
-        val reports = tasks.map { TaskReport(it, changed[it] ?: 3, 3, emptyMap(), 4.0, 9000.0, 0.5, 0, Tokens()) }
+    private fun report(device: String, model: String, changed: Map<String, Int> = emptyMap(), tasks: List<String> = names, runs: Int = 3): Report {
+        val reports = tasks.map { TaskReport(it, changed[it] ?: runs, runs, emptyMap(), 4.0, 9000.0, 0.5, 0, Tokens()) }
         return Report(device, "c".repeat(40), model, true, "2026-11-24T10:00", "2026-11-24T12:00", reports, Totals(reports.sumOf { it.passes }, reports.sumOf { it.runs }, 0, 5.0, 0, Tokens()))
     }
 
@@ -62,6 +62,10 @@ class CompareCommandTest {
         assertEquals(listOf("emulator-5554" to listOf("i", "j")), asked)
         assertTrue(fake.output.contains("compare=kestrel-api37 collapsed=j"))
 
+        // Re-runs of another model than the part's would mix two models in the 6 runs.
+        val otherModel = CompareCommand(fake.environment, Command.Compare(listOf(fell), rerun = true, device = "emulator-5554")) { _, tasks -> report("kestrel-api37", "m2", tasks = tasks) }
+        assertTrue(assertThrows(Refusal::class.java) { otherModel.execute() }.message!!.contains("m2"))
+
         val other = folder("kestrel-api37-20261124-110000", report("kestrel-api37", "m2"))
         assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", other))
         assertTrue(fake.output.contains("--record-baseline"))
@@ -77,6 +81,25 @@ class CompareCommandTest {
         val refusal = assertThrows(Refusal::class.java) { elsewhere.execute() }
         assertTrue(refusal.message!!.contains("kestrel-api37"))
         assertTrue(!fake.output.contains("compare=kestrel-api37 result=pass"))
+        // The first judgement shows although the re-runs were refused.
+        assertTrue(fake.output.contains("compare=kestrel-api37 result=fail rate=93.3 baseline=100.0 tasks=10"))
+        assertTrue(fake.output.contains("compare=kestrel-api37 collapsed=j"))
+    }
+
+    @Test
+    fun resultsOfAnotherNumberOfRunsThanThreeAreRefusedExceptForKnownGaps() {
+        baseline("kestrel-api37")
+        val once = folder("kestrel-api37-20261124-100000", report("kestrel-api37", "m1", runs = 1))
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", once))
+        assertTrue(fake.output.contains("3 runs"))
+        assertTrue(!fake.output.contains("collapsed="))
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", folder("kestrel-api37-20261124-110000", report("kestrel-api37", "m1", runs = 5))))
+
+        // A known gap runs once, and a skipped run counts among the 3.
+        val gap = TaskReport("telegram-photos", 1, 1, emptyMap(), 4.0, 9000.0, 0.5, 0, Tokens())
+        val skipped = TaskReport("k", 1, 2, mapOf("untestable" to 1), 4.0, 9000.0, 0.5, 0, Tokens())
+        val full = report("kestrel-api37", "m1").let { it.copy(tasks = it.tasks + gap + skipped) }
+        assertEquals(Cli.EXIT_PASSED, fake.cli("compare", folder("kestrel-api37-20261124-120000", full)))
     }
 
     @Test
@@ -92,5 +115,10 @@ class CompareCommandTest {
         assertThrows(UsageError::class.java) { Arguments.parse(listOf("suite", "--device", "emulator-5554", "--record-baseline")) }
         assertThrows(UsageError::class.java) { Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--record-baseline", "--tasks", "dnd")) }
         assertThrows(UsageError::class.java) { Arguments.parse(listOf("suite", "--device", "emulator-5554", "--compare")) }
+        // D10's baseline and judgement are of 3 runs per task.
+        assertThrows(UsageError::class.java) { Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--runs", "1", "--record-baseline")) }
+        assertThrows(UsageError::class.java) { Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--runs", "5", "--compare")) }
+        assertEquals(Command.Suite("emulator-5554", live = true, compare = true), Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--runs", "3", "--compare")))
+        assertEquals(Command.Suite("emulator-5554", live = true, runs = 1), Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--runs", "1")))
     }
 }

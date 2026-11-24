@@ -77,6 +77,7 @@ class Cli(private val environment: Environment) {
         val report = series.report ?: return code
         if (command.recordBaseline) {
             val file = environment.root.resolve("eval").resolve("baseline.json")
+            Baseline.problem(report)?.let { throw Refusal("eval\\baseline.json was not changed: $it. The suite's results are still in ${series.folder}.") }
             Baseline.read(file).with(report.device, Baseline.part(report)).write(file)
             environment.out.println("eval\\baseline.json now holds the part of ${report.device}, commit ${report.commit}, model ${report.model}.")
         }

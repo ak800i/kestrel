@@ -11,10 +11,11 @@ import java.util.Locale
 /**
  * `compare <results folder>… [--rerun --device <serial>]` (design D2 and D10 of sub-project 6): each folder's live
  * `report.json` judged against its device's part of `eval\baseline.json`, one `compare=<device> …` line per finding, and
- * with folders of both devices the total of both. With `--rerun`, a device that fails runs the tasks whose rate fell 3
- * more times live ([rerun], a new folder beside the first), and is judged again on the 6 runs; re-runs on another device
- * than the folder's are refused. Results of another model
- * than the device's part are refused, with the way to record a new part. Returns 0 when every device passed, else 1.
+ * with folders of both devices the total of both. Only suites of D10's 3 runs per task are judged; a known gap may run
+ * fewer. With `--rerun`, a device that fails prints its first judgement, runs the tasks whose rate fell 3 more times
+ * live ([rerun], a new folder beside the first), and is judged again on the 6 runs; re-runs on another device than the
+ * folder's, or of another model than the device's part, are refused. Results of another model than the device's part
+ * are refused, with the way to record a new part. Returns 0 when every device passed, else 1.
  */
 class CompareCommand(
     private val environment: Environment,
@@ -29,15 +30,24 @@ class CompareCommand(
             if (!report.live) throw Refusal("compare judges live results only, and ${report.device}'s were not live.")
             val part = baseline.devices[report.device]
                 ?: throw Refusal("eval\\baseline.json has no part for ${report.device}; record one with scripts\\eval.ps1 suite --device <serial> --live --record-baseline.")
-            if (part.model != report.model) {
-                throw Refusal("${report.device}'s results used the model ${report.model}, and its baseline part ${part.model}; record a new part with scripts\\eval.ps1 suite --device <serial> --live --record-baseline.")
+            refuseOtherModel(report, part.model)
+            val other = report.tasks.firstOrNull { it.task !in GAPS && it.runs + it.skipped.values.sum() != Comparison.RUNS }
+            if (other != null) {
+                throw Refusal(
+                    "compare judges suites of design D10's ${Comparison.RUNS} runs per task, and ${report.device}'s results ran ${other.task} " +
+                        "${other.runs + other.skipped.values.sum()} times.",
+                )
             }
             val first = report.tasks.associate { it.task to Rate(it.passes, it.runs) }
             var judgement = Comparison.judge(report.device, first, part, GAPS)
             val device = command.device
             if (!judgement.passed && command.rerun && device != null && judgement.fell.isNotEmpty()) {
+                // Shown before the re-runs, so that a refusal or Ctrl+C during them still leaves the first judgement.
+                judgement.lines().forEach { environment.out.println(it) }
+                environment.out.println("compare=${report.device} rerun=${judgement.fell.joinToString(",")} runs=${Comparison.RUNS}")
                 val again = rerun?.invoke(device, judgement.fell) ?: liveRerun(device, report.device, judgement.fell)
                 if (again.device != report.device) throw refusedDevice(again.device, report.device)
+                refuseOtherModel(again, part.model)
                 val more = again.tasks.associate { it.task to Rate(it.passes, it.runs) }
                 judgement = Comparison.judge(report.device, first.mapValues { (task, rate) -> more[task]?.let { rate + it } ?: rate }, part, GAPS, first)
             }
@@ -66,6 +76,13 @@ class CompareCommand(
 
     private fun refusedDevice(device: String, folder: String) =
         Refusal("compare --rerun's device is $device, and the results folder's is $folder; give --device the serial of $folder.")
+
+    /** Results, the first or the re-runs', of another model than the device's part, which D10 does not compare. */
+    private fun refuseOtherModel(report: Report, model: String) {
+        if (report.model != model) {
+            throw Refusal("${report.device}'s results used the model ${report.model}, and its baseline part $model; record a new part with scripts\\eval.ps1 suite --device <serial> --live --record-baseline.")
+        }
+    }
 
     private companion object {
         val GAPS = Catalogue.ALL.filter { it.gap != null }.map { it.name }.toSet()
