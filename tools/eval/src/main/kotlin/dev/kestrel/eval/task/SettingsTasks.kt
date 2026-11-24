@@ -4,9 +4,9 @@ import dev.kestrel.eval.device.DeviceKind
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The suite's settings tasks (design D8 of sub-project 6), on both devices. Each starts on the home screen with Settings
- * stopped and ends there again. A rehearsal makes the end state with one shell command; battery-level's check is
- * Kestrel's reply, so it rehearses its setup only.
+ * The suite's settings tasks (design D8 of sub-project 6), on both devices; brightness and two-settings are untestable on
+ * the A71 ([AospBrightnessCurve]). Each starts on the home screen with Settings stopped and ends there again. A rehearsal
+ * makes the end state with one shell command; battery-level's check is Kestrel's reply, so it rehearses its setup only.
  */
 object SettingsTasks {
     private val BOTH = setOf(DeviceKind.EMULATOR, DeviceKind.A71)
@@ -14,14 +14,14 @@ object SettingsTasks {
     private val NIGHT = Shell("cmd uimode night yes", "cmd uimode night no")
     private val DIM = Shell("settings put system screen_brightness 9", "settings put system screen_brightness 200")
 
-    private fun task(name: String, request: String, setup: List<Setup>, check: List<Check>, rehearsal: Rehearsal) = Task(
+    private fun task(name: String, request: String, setup: List<Setup>, check: List<Check>, rehearsal: Rehearsal, guards: List<Setup> = emptyList()) = Task(
         name = name,
         kind = TaskKind.SUITE,
         request = Request(request),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
-        setup = START + setup,
+        setup = guards + START + setup,
         check = check,
         dryRun = DryRun("$name.json"),
         rehearsal = rehearsal,
@@ -31,6 +31,7 @@ object SettingsTasks {
 
     val BRIGHTNESS = task(
         "brightness", "set the brightness to 30 percent", listOf(ManualBrightness()), listOf(BrightnessNear(30, 5)), Rehearsal.Steps(listOf(DIM)),
+        guards = listOf(AospBrightnessCurve),
     )
 
     val SCREEN_TIMEOUT = task(
@@ -71,6 +72,7 @@ object SettingsTasks {
         listOf(UiNightMode(on = false), ManualBrightness()),
         listOf(NightMode(on = true), BrightnessNear(30, 5)),
         Rehearsal.Steps(listOf(NIGHT, DIM)),
+        guards = listOf(AospBrightnessCurve),
     )
 
     val ALL = listOf(DARK_MODE, BRIGHTNESS, SCREEN_TIMEOUT, DND, BLUETOOTH_OFF, FONT_SIZE, WIFI_SETTINGS, BATTERY_LEVEL, TWO_SETTINGS)

@@ -112,16 +112,18 @@ object Firefox {
     private const val MOST_TABS = 500
 
     /**
-     * The number of tabs that the tab counter shows, or null when it shows none of [COUNTS]' forms with a number up to
-     * [MOST_TABS]. screen-has answers no text, so this asks for each number in turn.
+     * The number of tabs that the tab counter shows, or null when no tab counter shows. A counter with 0 tabs, or with
+     * none of [COUNTS]' forms with a number up to [MOST_TABS], such as the empty counter of the A71's fresh Firefox,
+     * which has no tabs, counts as 0. screen-has answers no text, so this asks for each number in turn.
      */
     fun tabs(scope: RunScope): Int? {
-        val form = COUNTS.firstOrNull { shows(scope, it.first) }?.second ?: return null
-        return (1..MOST_TABS).firstOrNull { shows(scope, form(it)) }
+        if (COUNTER.none { counted(scope, it) }) return null
+        val form = COUNTS.firstOrNull { shows(scope, it.first) }?.second ?: return 0
+        return (0..MOST_TABS).firstOrNull { shows(scope, form(it)) } ?: 0
     }
 
-    /** Whether the tab counter shows [tabs] tabs. */
-    fun showsTabs(scope: RunScope, tabs: Int): Boolean = COUNTS.any { shows(scope, it.second(tabs)) }
+    /** Whether the tab counter shows [tabs] tabs; for 0, also an empty counter. */
+    fun showsTabs(scope: RunScope, tabs: Int): Boolean = COUNTS.any { shows(scope, it.second(tabs)) } || tabs == 0 && tabs(scope) == 0
 
     fun shows(scope: RunScope, text: String): Boolean = scope.hooks.screenHas(packageName = D3Tasks.FIREFOX, contains = text).int("count") >= 1
 
@@ -176,7 +178,7 @@ data class FirefoxTab(val page: String = "ak800i", val title: String = GITHUB) :
  * closed through the tab counter's menu ([Firefox.closeOwnTab]), only when Firefox has one tab more than before the open
  * and its address bar shows [address], before Firefox is stopped. So a tab of the same page that an earlier run left,
  * which Firefox may select instead of opening a new one, stays, and so do the owner's other tabs, because they are not
- * selected. Without a number on the tab counter the task is untestable.
+ * selected. With no tab counter on the screen the task is untestable; an empty counter is 0 tabs.
  */
 data class FirefoxNewTab(val uri: String, val address: String, val settle: Duration = 10.seconds) : Setup {
     override fun apply(scope: RunScope): SetupResult {
@@ -184,7 +186,7 @@ data class FirefoxNewTab(val uri: String, val address: String, val settle: Durat
         val asked = AtomicBoolean(false)
         scope.restores.push("Firefox stopped", "Close Firefox, also in Recents.") { Firefox.stop(scope) }
         scope.restores.change("Firefox started", "Close Firefox.") { Firefox.start(scope) }
-        val tabs = Firefox.tabs(scope) ?: return Firefox.untestable(scope, "Firefox's tab counter shows no number of tabs")
+        val tabs = Firefox.tabs(scope) ?: return Firefox.untestable(scope, "Firefox's tab counter did not show")
         scope.restores.push("the rehearsal's tab in Firefox", "Firefox: close the tab of $address.") { if (asked.get()) Firefox.closeOwnTab(scope, address, tabs) }
         // A lost answer needs no read-back here: the task's checks read the screen next, and the restore reads the address.
         scope.restores.change("a page opened in Firefox", "Close Firefox.") {

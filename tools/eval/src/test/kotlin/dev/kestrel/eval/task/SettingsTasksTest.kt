@@ -90,6 +90,21 @@ class SettingsTasksTest {
     }
 
     @Test
+    fun brightnessAndTwoSettingsAreUntestableOnTheA71BeforeAnyChange() {
+        for (task in listOf(SettingsTasks.BRIGHTNESS, SettingsTasks.TWO_SETTINGS)) {
+            val bench = TaskBench(DeviceKind.A71)
+            bench.adb.settings.putAll(mapOf("system/screen_brightness" to "102", "system/screen_brightness_mode" to "1"))
+            bench.adb.on("^cmd uimode night$") { "Night mode: no" }
+
+            assertEquals(task.name, Reason.UNTESTABLE, bench.run(task).reason)
+            assertTrue(bench.run.console.lines.toString(), bench.run.console.lines.any { it.endsWith(": One UI's brightness curve is not AOSP's, so the check cannot judge the value.") })
+            assertTrue(bench.adb.commands.toString(), bench.adb.commands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("settings ") || it.startsWith("cmd uimode") })
+            assertTrue(bench.adb.hookCalls("VOICE").isEmpty())
+            bench.assertPutBack()
+        }
+    }
+
+    @Test
     fun batteryLevelPassesWhenTheReplyHoldsTheLevel() {
         val phone = Phone()
         var digits = "1"

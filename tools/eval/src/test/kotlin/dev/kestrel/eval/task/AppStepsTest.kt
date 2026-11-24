@@ -41,7 +41,10 @@ class FakeFirefox(adb: FakeAdb) {
         tabs.add(Tab(title, address))
     }
 
-    private fun counter(): String = "Non-private Tabs Open: ${tabs.size}. Tap to switch tabs."
+    /** The number in the tab counter's label for a number of tabs; the A71's fresh Firefox shows no number for none. */
+    var number: (Int) -> String = { "$it" }
+
+    private fun counter(): String = "Non-private Tabs Open: ${number(tabs.size)}. Tap to switch tabs."
 
     private fun elements(): List<Element> = when {
         tray -> tabs.withIndex().flatMap { (index, tab) ->
@@ -255,7 +258,48 @@ class AppStepsTest {
     }
 
     @Test
-    fun firefoxWikisRehearsalIsUntestableWhenTheTabCounterSaysNoNumber() {
+    fun firefoxWikisRehearsalReadsAnEmptyTabCounterAsNoTabsAndClosesOnlyTheTabThatItsOpenMade() {
+        for (empty in listOf("0", "")) {
+            val run = FakeRun(DeviceKind.A71)
+            val firefox = FakeFirefox(run.adb)
+            // A fresh Firefox whose tabs the owner closed: its tab counter shows 0, or no number at all.
+            firefox.tabs.clear()
+            firefox.number = { if (it == 0) empty else "$it" }
+            var opens = true
+            run.adb.on("^am start -W -a android.intent.action.VIEW -d 'https://en\\.wikipedia\\.org/wiki/Common_kestrel' -p org\\.mozilla\\.firefox$") {
+                if (opens) firefox.open(FakeFirefox.WIKI, FakeFirefox.WIKI_ADDRESS)
+                ""
+            }
+            run.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 org.mozilla.firefox/.App t4}" }
+            val steps = (D3Tasks.FIREFOX_WIKI.rehearsal as Rehearsal.Steps).steps
+
+            for (step in steps) assertEquals(empty, SetupResult.Ready, step.apply(run.scope))
+            assertEquals(empty, 1, firefox.tabs.size)
+            assertTrue(empty, run.restores.runAll().isEmpty())
+            assertTrue(empty, firefox.tabs.isEmpty())
+            assertEquals(
+                empty,
+                listOf(mapOf("contains" to "Non-private Tabs Open", "long" to "true", "package" to D3Tasks.FIREFOX), mapOf("label" to "Close tab", "package" to D3Tasks.FIREFOX)),
+                run.adb.hookCalls("SCREEN_TAP"),
+            )
+
+            // A page that did not open added no tab: nothing is closed, and nothing is left to put back.
+            opens = false
+            for (step in steps) assertEquals(empty, SetupResult.Ready, step.apply(run.scope))
+            assertTrue(empty, run.restores.runAll().isEmpty())
+            assertEquals(empty, 2, run.adb.hookCalls("SCREEN_TAP").size)
+
+            // Two tabs more: no tab is closed, and the restore says so.
+            for (step in steps) assertEquals(empty, SetupResult.Ready, step.apply(run.scope))
+            repeat(2) { firefox.open(FakeFirefox.WIKI, FakeFirefox.WIKI_ADDRESS) }
+            assertEquals(empty, listOf("the rehearsal's tab in Firefox"), run.restores.runAll().map { it.what })
+            assertEquals(empty, 2, firefox.tabs.size)
+            assertEquals(empty, 2, run.adb.hookCalls("SCREEN_TAP").size)
+        }
+    }
+
+    @Test
+    fun firefoxWikisRehearsalIsUntestableWhenNoTabCounterShows() {
         val run = FakeRun()
         FakeFirefox(run.adb)
         run.adb.hook("SCREEN_HAS") { "count=0 app=${D3Tasks.FIREFOX}" }

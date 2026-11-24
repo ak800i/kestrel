@@ -1,6 +1,7 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.Brightness
+import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.HookAnswer
 import java.time.DateTimeException
@@ -85,6 +86,18 @@ data class UiNightMode(val on: Boolean) : Setup {
 /** Dark theme is on, or off. */
 data class NightMode(val on: Boolean) : Check {
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean = Night.mode(scope) == if (on) "yes" else "no"
+}
+
+/**
+ * brightness's and two-settings' first step: on the A71 the tasks are untestable before any change, because [BrightnessNear]
+ * reads the level with AOSP's curve, and One UI's is another (the owner's decision of 2026-11-24, after the A71's live
+ * baseline). On kestrel-api37 they run as before.
+ */
+data object AospBrightnessCurve : Setup {
+    const val WHY = "One UI's brightness curve is not AOSP's, so the check cannot judge the value"
+
+    override fun apply(scope: RunScope): SetupResult =
+        if (scope.device.kind == DeviceKind.A71) SetupResult.Untestable(WHY) else SetupResult.Ready
 }
 
 /**
