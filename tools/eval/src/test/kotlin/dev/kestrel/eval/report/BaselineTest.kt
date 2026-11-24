@@ -1,0 +1,38 @@
+package dev.kestrel.eval.report
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import java.nio.file.Files
+
+/** `eval\baseline.json`: a part per device, each with its own commit and model, and nothing else (design D10 of sub-project 6). */
+class BaselineTest {
+    @Test
+    fun aPartComesFromALiveReportAndReplacesOnlyItsDevicesPart() {
+        val report = Report(
+            "a71", "c".repeat(40), "claude-x", true, "2026-11-24T10:00", "2026-11-24T12:00",
+            listOf(
+                TaskReport("dark-mode", 3, 3, emptyMap(), 5.0, 1000.0, 0.3, 0, Tokens()),
+                TaskReport("waze-home", 0, 0, mapOf("untestable" to 3), 0.0, 0.0, 0.0, 0, Tokens()),
+            ),
+            Totals(3, 3, 3, 0.3, 0, Tokens()),
+        )
+        val part = Baseline.part(report)
+        assertEquals(BaselinePart("c".repeat(40), "claude-x", mapOf("dark-mode" to BaselineTask(3, 3))), part)
+
+        val folder = Files.createTempDirectory("eval-baseline")
+        val file = folder.resolve("eval").resolve("baseline.json")
+        Baseline(mapOf("kestrel-api37" to BaselinePart("a".repeat(40), "m1", mapOf("timer" to BaselineTask(2, 3))))).write(file)
+        Baseline.read(file).with("a71", part).write(file)
+
+        val read = Baseline.read(file)
+        assertEquals(setOf("kestrel-api37", "a71"), read.devices.keys)
+        assertEquals(BaselineTask(2, 3), read.devices.getValue("kestrel-api37").tasks["timer"])
+        assertEquals(part, read.devices["a71"])
+        val json = Json.parseToJsonElement(Files.readString(file)).jsonObject
+        assertEquals(setOf("devices"), json.keys)
+        assertEquals(setOf("commit", "model", "tasks"), json.getValue("devices").jsonObject.getValue("a71").jsonObject.keys)
+        assertEquals(Baseline(), Baseline.read(folder.resolve("none.json")))
+    }
+}

@@ -16,7 +16,17 @@ sealed interface Command {
         val results: String? = null,
     ) : Command
 
-    data class Suite(val device: String, val live: Boolean = false, val runs: Int = 3, val tasks: List<String>? = null) : Command
+    data class Suite(
+        val device: String,
+        val live: Boolean = false,
+        val runs: Int = 3,
+        val tasks: List<String>? = null,
+        val compare: Boolean = false,
+        val recordBaseline: Boolean = false,
+    ) : Command
+
+    /** [device] is the serial for `--rerun`'s live runs, which the folders cannot name for the emulator. */
+    data class Compare(val folders: List<String>, val rerun: Boolean = false, val device: String? = null) : Command
 
     /** [runs] is 1 without a model and 5 live when the command line gives none. */
     data class Injection(val device: String, val live: Boolean = false, val runs: Int? = null) : Command
@@ -28,11 +38,12 @@ sealed interface Command {
 
 /** Reads the command line: a command and its options, each option once, `--runs` from 1 to 10. */
 object Arguments {
-    private val FLAGS = setOf("--live", "--dry-run")
+    private val FLAGS = setOf("--live", "--dry-run", "--compare", "--record-baseline", "--rerun")
     private val VALUES = setOf("--device", "--task", "--runs", "--model", "--name", "--results", "--tasks")
     private val ALLOWED = mapOf(
         "run" to setOf("--device", "--task", "--runs", "--live", "--model", "--name", "--dry-run", "--results"),
-        "suite" to setOf("--device", "--live", "--runs", "--tasks"),
+        "suite" to setOf("--device", "--live", "--runs", "--tasks", "--compare", "--record-baseline"),
+        "compare" to setOf("--rerun", "--device"),
         "injection" to setOf("--device", "--live", "--runs"),
         "rehearse" to setOf("--device", "--tasks"),
         "list" to setOf("--device"),
@@ -42,7 +53,9 @@ object Arguments {
         val name = args.firstOrNull() ?: throw UsageError("Give a command.")
         val allowed = ALLOWED[name] ?: throw UsageError("Unknown command $name.")
         val options = mutableMapOf<String, String>()
+        val folders = mutableListOf<String>()
         var at = 1
+        if (name == "compare") while (at < args.size && !args[at].startsWith("--")) folders.add(args[at++])
         while (at < args.size) {
             val option = args[at++]
             if (option !in allowed) throw UsageError("$name takes no option $option.")
@@ -65,7 +78,19 @@ object Arguments {
                     options["--dry-run"] == "true", options["--results"],
                 )
             }
-            "suite" -> Command.Suite(device(), live, runs ?: 3, tasks)
+            "suite" -> {
+                val record = options["--record-baseline"] == "true"
+                val compare = options["--compare"] == "true"
+                if (record && (!live || tasks != null)) throw UsageError("--record-baseline records a live suite of every task: give --live and no --tasks.")
+                if (compare && !live) throw UsageError("--compare judges a live suite: give --live.")
+                Command.Suite(device(), live, runs ?: 3, tasks, compare, record)
+            }
+            "compare" -> {
+                if (folders.isEmpty()) throw UsageError("compare needs one or more results folders.")
+                val rerun = options["--rerun"] == "true"
+                if (rerun && options["--device"] == null) throw UsageError("compare --rerun needs --device <serial> of the device that the folder names.")
+                Command.Compare(folders, rerun, options["--device"])
+            }
             "injection" -> Command.Injection(device(), live, runs)
             "rehearse" -> Command.Rehearse(device(), tasks)
             else -> Command.ListTasks(options["--device"])

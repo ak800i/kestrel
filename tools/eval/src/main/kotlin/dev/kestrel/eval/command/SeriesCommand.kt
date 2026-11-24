@@ -28,6 +28,12 @@ class SeriesCommand(
     private val runs: Int,
     private val pick: (DeviceKind) -> List<Task>,
 ) {
+    /** The report and the folder of the series, once it ended. */
+    var report: Report? = null
+        private set
+    var folder: Path? = null
+        private set
+
     fun execute(serial: String, lines: (LineWriter) -> Unit): Int {
         val session = Session(environment, serial)
         val kind = session.device.kind
@@ -48,7 +54,10 @@ class SeriesCommand(
                 runsFile.append(name, "${task.name} on ${kind.label}, $count runs")
                 failures += runner.runAll(task, if (live) null else ScriptInstaller.resource(task.dryRun!!.script), runs)
             }
-            Report.of(kind, commit(), live, start, environment.clock.now(), writer.lines).write(folder.resolve("report.json"))
+            val report = Report.of(kind, commit(), live, start, environment.clock.now(), writer.lines)
+            report.write(folder.resolve("report.json"))
+            this.report = report
+            this.folder = folder
             session.console.line("The results are in $folder.")
             if (failures > 0) 1 else 0
         }

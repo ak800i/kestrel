@@ -2,6 +2,7 @@ package dev.kestrel.eval
 
 import dev.kestrel.eval.command.Arguments
 import dev.kestrel.eval.command.Command
+import dev.kestrel.eval.command.CompareCommand
 import dev.kestrel.eval.command.Environment
 import dev.kestrel.eval.command.ListCommand
 import dev.kestrel.eval.command.RehearseCommand
@@ -11,6 +12,7 @@ import dev.kestrel.eval.command.UsageError
 import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.config.Redactions
 import dev.kestrel.eval.device.Refusal
+import dev.kestrel.eval.report.Baseline
 import dev.kestrel.eval.run.LineWriter
 import dev.kestrel.eval.run.Stopping
 
@@ -45,7 +47,8 @@ class Cli(private val environment: Environment) {
         return try {
             when (command) {
                 is Command.Run -> RunCommand(environment, command).execute(keep)
-                is Command.Suite -> SeriesCommand.suite(environment, command).execute(command.device, keep)
+                is Command.Suite -> suite(command, keep)
+                is Command.Compare -> CompareCommand(environment, command).execute()
                 is Command.Injection -> SeriesCommand.injection(environment, command).execute(command.device, keep)
                 is Command.Rehearse -> RehearseCommand(environment, command).execute()
                 is Command.ListTasks -> ListCommand(environment, command).execute(out)
@@ -64,6 +67,26 @@ class Cli(private val environment: Environment) {
         }
     }
 
+    /**
+     * A suite, then with `--record-baseline` its device's part of `eval\baseline.json` (design D10 of sub-project 6), and
+     * with `--compare` the judgement of its folder, with the re-runs on the same device.
+     */
+    private fun suite(command: Command.Suite, keep: (LineWriter) -> Unit): Int {
+        val series = SeriesCommand.suite(environment, command)
+        var code = series.execute(command.device, keep)
+        val report = series.report ?: return code
+        if (command.recordBaseline) {
+            val file = environment.root.resolve("eval").resolve("baseline.json")
+            Baseline.read(file).with(report.device, Baseline.part(report)).write(file)
+            environment.out.println("eval\\baseline.json now holds the part of ${report.device}, commit ${report.commit}, model ${report.model}.")
+        }
+        val folder = series.folder
+        if (command.compare && folder != null) {
+            code = maxOf(code, CompareCommand(environment, Command.Compare(listOf(folder.toString()), rerun = true, device = command.device)).execute())
+        }
+        return code
+    }
+
     /** The errors that came after [first], such as a change of kestrel-api37's accounts after a command that failed. */
     private fun errors(first: Throwable, redactions: Redactions) {
         for (later in first.suppressed) environment.out.println("ERROR: ${redactions.forConsole(later.message ?: later.javaClass.simpleName)}")
@@ -77,7 +100,8 @@ class Cli(private val environment: Environment) {
         val USAGE: String = """
             |Usage: scripts\eval.ps1 <command> [options]
             |  run --device <serial> --task <name> [--runs n] [--live] [--model id] [--name first-name] [--dry-run] [--results file]
-            |  suite --device <serial> [--live] [--runs n] [--tasks a,b]
+            |  suite --device <serial> [--live] [--runs n] [--tasks a,b] [--compare] [--record-baseline]
+            |  compare <results folder>... [--rerun --device <serial>]
             |  injection --device <serial> [--live] [--runs n]
             |  rehearse --device <serial> [--tasks a,b]
             |  list [--device <serial>]

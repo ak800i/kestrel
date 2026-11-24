@@ -57,6 +57,10 @@ data class Report(
 
     companion object {
         private val JSON = Json { prettyPrint = true }
+        private val READ = Json { ignoreUnknownKeys = true }
+
+        /** The report of a results folder's `report.json`. */
+        fun read(file: Path): Report = READ.decodeFromString(serializer(), Files.readString(file))
 
         /** The report of [lines], in the order of their tasks; a run that was skipped counts only among the skipped. */
         fun of(device: DeviceKind, commit: String, live: Boolean, start: LocalDateTime, end: LocalDateTime, lines: List<RunLine>): Report {
