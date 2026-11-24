@@ -55,6 +55,7 @@ class SettingsStepsTest {
             ""
         }
         run.adb.settings["global/zen_mode"] = "3"
+        run.adb.on("^dumpsys notification --zen$") { ZenDump.manual(run.adb.settings["global/zen_mode"] != "0") }
 
         assertTrue(UiNightMode(on = false).apply(run.scope) is SetupResult.Untestable)
         assertEquals(0, run.restores.size)
@@ -80,6 +81,76 @@ class SettingsStepsTest {
         assertEquals("yes", night)
         assertEquals("0", run.adb.settings["global/zen_mode"])
         assertEquals("cmd notification set_dnd off", run.adb.commands.last { it.startsWith("cmd notification") })
+    }
+
+    @Test
+    fun theZenDumpSaysWhetherTheManualDoNotDisturbOrAnAutomaticRuleIsOn() {
+        fun on(dump: String) = Zen.on(dump.lines())
+
+        assertEquals(Zen.On(manual = true, automatic = false), on(ZenDump.manual(true)))
+        assertEquals(Zen.On(manual = false, automatic = false), on(ZenDump.manual(false)))
+        assertEquals(Zen.On(manual = false, automatic = true), on(ZenDump.android13(null, ZenDump.rule13("a", "STATE_TRUE"))))
+        // A schedule that the owner snoozed, or turned off, is not on.
+        assertEquals(
+            Zen.On(manual = false, automatic = false),
+            on(ZenDump.android13(null, ZenDump.rule13("a", "STATE_TRUE", snoozing = true), ZenDump.rule13("b", "STATE_TRUE", enabled = false))),
+        )
+        // With modes UI the manual rule is always there, and a deleted rule is never on.
+        assertEquals(
+            Zen.On(manual = false, automatic = false),
+            on(ZenDump.modesUi(ZenDump.ruleUi(null, null), ZenDump.ruleUi("a", "STATE_FALSE"), deleted = ZenDump.ruleUi("d", "STATE_TRUE"))),
+        )
+        assertEquals(Zen.On(manual = true, automatic = false), on(ZenDump.modesUi(ZenDump.ruleUi(null, "STATE_TRUE"), ZenDump.ruleUi("a", "STATE_TRUE", "OVERRIDE_DEACTIVATE"))))
+        assertEquals(Zen.On(manual = false, automatic = true), on(ZenDump.modesUi(ZenDump.ruleUi(null, null), ZenDump.ruleUi("a", null, "OVERRIDE_ACTIVATE"))))
+        assertNull(on("  Notification listeners:"))
+    }
+
+    @Test
+    fun doNotDisturbsRestoreTurnsOffOnlyTheManualOneAndNeverAScheduleThatBeganDuringTheRun() {
+        val run = FakeRun(DeviceKind.A71)
+        run.adb.settings["global/zen_mode"] = "0"
+        var dump = ZenDump.manual(false)
+        run.adb.on("^dumpsys notification --zen$") { dump }
+        run.adb.on("^cmd notification set_dnd (\\w+)$") {
+            run.adb.settings["global/zen_mode"] = if (it.groupValues[1] == "off") "0" else "1"
+            dump = ZenDump.manual(it.groupValues[1] != "off")
+            ""
+        }
+        // A run whose task left Do Not Disturb on as [atTheEnd] shows it; the restore's own set_dnd commands.
+        fun restoreAfter(atTheEnd: String): List<String> {
+            run.adb.settings["global/zen_mode"] = "0"
+            dump = ZenDump.manual(false)
+            assertEquals(SetupResult.Ready, Dnd(on = false).apply(run.scope))
+            run.adb.settings["global/zen_mode"] = "1"
+            dump = atTheEnd
+            val from = run.adb.commands.size
+            assertTrue(run.restores.runAll().isEmpty())
+            return run.adb.commands.drop(from).filter { it.startsWith("cmd notification") }
+        }
+
+        // Kestrel's manual Do Not Disturb goes off again.
+        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.manual(true)))
+        assertEquals("0", run.adb.settings["global/zen_mode"])
+
+        // The owner's schedule began during the run: set_dnd off would snooze it for the night, so both stay on, with a word.
+        val schedule = ZenDump.rule13("EVERY_NIGHT_DEFAULT_RULE", "STATE_TRUE")
+        assertEquals(emptyList<String>(), restoreAfter(ZenDump.android13(ZenDump.rule13(null, null), schedule)))
+        assertEquals("1", run.adb.settings["global/zen_mode"])
+        assertEquals(1, run.console.warnings.size)
+
+        // A schedule alone is left as it is, without a word.
+        assertEquals(emptyList<String>(), restoreAfter(ZenDump.android13(null, schedule)))
+        assertEquals(1, run.console.warnings.size)
+
+        // A dump that does not say which Do Not Disturb is on changes nothing, and the restore fails.
+        run.adb.settings["global/zen_mode"] = "0"
+        Dnd(on = false).apply(run.scope)
+        run.adb.settings["global/zen_mode"] = "1"
+        dump = "  Notification listeners:"
+        val from = run.adb.commands.size
+        assertEquals(1, run.restores.runAll().size)
+        assertEquals("1", run.adb.settings["global/zen_mode"])
+        assertTrue(run.adb.commands.drop(from).none { it.startsWith("cmd notification") })
     }
 
     @Test
@@ -184,4 +255,43 @@ class SettingsStepsTest {
         assertFalse(ReplyHasDigits("{number}").passes(run.scope, none))
         assertTrue(ReplyHasDigits("2025550143").passes(run.scope, none))
     }
+}
+
+/**
+ * `dumpsys notification --zen` of a test device, as AOSP's ZenModeHelper prints it: [android13] before modes UI (the
+ * A71), [modesUi] with it, where ZenModeConfig prints itself over several lines and the manual rule is always there.
+ */
+internal object ZenDump {
+    private const val RULE = "name=Sleeping,zenMode=ZEN_MODE_IMPORTANT_INTERRUPTIONS,conditionId=condition://android/schedule?days=1.2.3.4.5.6.7&start=22.0&end=7.0," +
+        "pkg=android,component=null,configActivity=null,creationTime=1,enabler=null,zenPolicy=null,modified=false"
+
+    private fun condition(state: String?) = state?.let { "Condition[state=$it,id=condition://android/schedule,summary=...,line1=,line2=,icon=0,flags=2]" }
+
+    /** A rule of Android 13, whose condition has [state] (none when null). */
+    fun rule13(id: String?, state: String?, enabled: Boolean = true, snoozing: Boolean = false) =
+        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},snoozing=$snoozing,$RULE,condition=${condition(state)}]"
+
+    /** A rule with modes UI, whose condition has [state] (none when null). */
+    fun ruleUi(id: String?, state: String?, override: String = "OVERRIDE_NONE", enabled: Boolean = true) =
+        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},conditionOverride=$override,$RULE,condition=${condition(state)}," +
+            "deviceEffects=null,allowManualInvocation=true,iconResName=null,triggerDescription=null,type=1]"
+
+    fun android13(manual: String?, vararg automatic: String): String {
+        val config = (
+            listOf(
+                "allow(alarms=true,media=true,system=false,calls=true,callsFrom=stars,repeatCallers=true,messages=false,messagesFrom=contacts,conversations=true," +
+                    "conversationsFrom=important,events=false,reminders=false)",
+                "      disallow(visualEffects=157)",
+                "      manualRule=$manual",
+            ) + automatic.mapIndexed { index, rule -> (if (index == 0) "      automaticRules=" else "                     ") + rule }
+            ).joinToString("\n")
+        return "    mZenMode=ZEN_MODE_OFF\n    mConsolidatedPolicy=Policy[]\n    mConfigs[u=0]=$config\n    mUser=0\n    mConfig=$config\n    mSuppressedEffects=0"
+    }
+
+    fun modesUi(manual: String, vararg automatic: String, deleted: String? = null): String =
+        "    mZenMode=ZEN_MODE_OFF\n    mConfig=ZenModeConfig[user=0\nhasPriorityChannels=false,allowPriorityChannels=true,\nautomaticRules={\n" +
+            automatic.joinToString(",\n") { "a=$it" } + "}" + ",\nmanualRule=$manual,\ndeletedRules={${deleted?.let { "\nd=$it" }.orEmpty()}}]\n    mSuppressedEffects=0"
+
+    /** Do Not Disturb [on] by the manual rule as `set_dnd` leaves it on Android 13, or off, beside a schedule that is off. */
+    fun manual(on: Boolean) = android13(if (on) rule13(null, null) else null, rule13("EVERY_NIGHT_DEFAULT_RULE", null))
 }

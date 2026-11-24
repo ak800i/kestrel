@@ -57,6 +57,16 @@ object Calendars {
         return Rows.parse(scope.device.read("content query --uri $EVENTS --projection _id --where ${shellQuoted(where)}")).mapNotNull { it["_id"]?.toLongOrNull() }
     }
 
+    /** The `_id`s of [calendar]'s events that start on the run's `{date}` in the device's zone. */
+    fun onDate(scope: RunScope, calendar: Long): Set<Long> {
+        val date = scope.values.date ?: throw IllegalStateException("The run has no value for {date}.")
+        val day = LocalDate.parse(date)
+        val from = day.atStartOfDay(ClockApp.zone(scope)).toInstant().toEpochMilli()
+        val to = day.plusDays(1).atStartOfDay(ClockApp.zone(scope)).toInstant().toEpochMilli()
+        val where = "calendar_id=$calendar AND deleted=0 AND dtstart>=$from AND dtstart<$to"
+        return Rows.parse(scope.device.read("content query --uri $EVENTS --projection _id --where ${shellQuoted(where)}")).mapNotNull { it["_id"]?.toLongOrNull() }.toSet()
+    }
+
     fun delete(scope: RunScope, ids: List<Long>) {
         for (id in ids) scope.device.idempotent("content delete --uri $EVENTS --where ${shellQuoted("_id=$id")}")
     }
@@ -100,14 +110,26 @@ data class CalendarEvent(val title: String, val start: LocalTime, val end: Local
 
 /**
  * calendar-add's restore, pushed before the run (design D9 of sub-project 6): every event whose title holds the run's
- * marker, which only the run's task writes, is deleted by its `_id`, and checked.
+ * marker, which only the run's task writes, is deleted by its `_id`, and checked. An event of `{date}` in the device's
+ * own Google calendar ([Calendars.own]) that came during the run and is still there afterwards, such as one that Kestrel
+ * saved under another title, is reported for a look by hand and never deleted, because a sync may have added it.
  */
 data object CalendarCleanup : Setup {
     override fun apply(scope: RunScope): SetupResult {
-        val pattern = "%${scope.values.marker}%"
-        scope.restores.push("the test event", "Calendar: delete the event \"${scope.values.marker}\" of tomorrow.") {
+        val marker = scope.values.marker
+        val pattern = "%$marker%"
+        val calendar = Calendars.own(scope)
+        val before = calendar?.let { Calendars.onDate(scope, it) }
+        scope.restores.push("the test event", "Calendar: delete the event \"$marker\" of tomorrow.") {
             Calendars.delete(scope, Calendars.titled(scope, pattern))
             check(Calendars.titled(scope, pattern).isEmpty()) { "The test event is still in the calendar." }
+            val left = if (calendar == null || before == null) 0 else (Calendars.onDate(scope, calendar) - before).size
+            if (left > 0) {
+                scope.console.warn(
+                    "Not put back: $left event(s) of tomorrow added during the run without the marker \"$marker\" in the test account's calendar. " +
+                        "By hand: in Calendar, delete the event of tomorrow that Kestrel saved for \"$marker\"; a sync may have added the others.",
+                )
+            }
         }
         return SetupResult.Ready
     }

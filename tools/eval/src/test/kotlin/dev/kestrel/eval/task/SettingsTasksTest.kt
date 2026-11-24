@@ -33,6 +33,7 @@ class SettingsTasksTest {
                 adb.settings["global/zen_mode"] = if (it.groupValues[1] == "off") "0" else "1"
                 ""
             }
+            adb.on("^dumpsys notification --zen$") { ZenDump.manual(adb.settings["global/zen_mode"] != "0") }
             adb.on("^cmd bluetooth_manager (enable|disable)$") {
                 adb.settings["global/bluetooth_on"] = if (it.groupValues[1] == "enable") "1" else "0"
                 ""

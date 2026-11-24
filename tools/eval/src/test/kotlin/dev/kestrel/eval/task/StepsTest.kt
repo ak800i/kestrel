@@ -1,6 +1,7 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.config.Redactions
+import dev.kestrel.eval.device.DeviceCommandFailed
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.run.Restores
@@ -60,10 +61,25 @@ class StepsTest {
             listOf(
                 "pm grant dev.kestrel android.permission.READ_MEDIA_VIDEO",
                 "pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO",
-                "pm revoke dev.kestrel android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
             ),
             run.adb.commands.filter { it.startsWith("pm ") },
         )
+    }
+
+    @Test
+    fun aGrantThatFailedIsTakenBackOnlyWhenItReachedTheDevice() {
+        val granted = mutableListOf("android.permission.READ_MEDIA_IMAGES")
+        run.adb.on("^dumpsys package dev.kestrel$") { granted.joinToString("\n") { "        $it: granted=true, flags=[ USER_SET ]" } }
+        // The grant of READ_MEDIA_VIDEO takes effect, but adb loses every answer; the next grant never starts.
+        run.adb.on("^pm grant dev.kestrel (\\S+)$") {
+            granted.add(it.groupValues[1])
+            null
+        }
+
+        assertThrows(DeviceCommandFailed::class.java) { Grant("dev.kestrel", Grant.MEDIA).apply(run.scope) }
+        assertTrue(run.restores.runAll().isEmpty())
+
+        assertEquals(listOf("pm revoke dev.kestrel android.permission.READ_MEDIA_VIDEO"), run.adb.commands.filter { it.startsWith("pm revoke") })
     }
 
     @Test

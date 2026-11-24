@@ -71,6 +71,18 @@ class PeopleTasksTest {
     }
 
     @Test
+    fun aGrantThatKestrelRefusesFailsOnlyTheRunAndTakesNothingBack() {
+        val (bench, providers) = bench()
+        // A Kestrel that does not request WRITE_CONTACTS: pm grant and pm revoke both end with a SecurityException.
+        bench.adb.on("^pm (grant|revoke) dev\\.kestrel android\\.permission\\.WRITE_CONTACTS$") { null }
+
+        assertEquals(Reason.SETUP, bench.run(PeopleTasks.CONTACT_ADD).reason)
+        assertTrue(bench.adb.commands.none { it.startsWith("pm revoke") })
+        assertTrue(providers.live().isEmpty())
+        bench.assertPutBack()
+    }
+
+    @Test
     fun contactDeleteDeclinedPassesWhenKestrelAskedAndTheContactStayedAndEachRehearsalPasses() {
         val (bench, providers) = bench()
         val questions = ArrayDeque(listOf("confirming=deleting"))

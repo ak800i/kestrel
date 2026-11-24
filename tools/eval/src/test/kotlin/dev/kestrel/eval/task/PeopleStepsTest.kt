@@ -88,7 +88,7 @@ class PeopleStepsTest {
         assertEquals(mapOf("contact:Ana Test" to "0"), ana.probe(run.scope))
         assertEquals(SetupResult.Ready, ana.apply(run.scope))
         assertEquals(FakeProviders.Raw(2, "Ana Test", "+1 202 555 0143"), providers.raws.last())
-        assertTrue(run.adb.commands.contains("content insert --uri content://com.android.contacts/raw_contacts --bind starred:i:0"))
+        assertTrue(run.adb.commands.any { it.matches(Regex("content insert --uri content://com\\.android\\.contacts/raw_contacts --bind starred:i:0 --bind sync1:s:kestrel-eval-\\S+")) })
         val unchanged = ContactUnchanged("Ana Test", "+1 202 555 0143")
         assertTrue(unchanged.passes(run.scope, none))
         providers.raws.last().number = "+1 202 555 0199"
@@ -108,5 +108,77 @@ class PeopleStepsTest {
         assertEquals(SetupResult.Ready, ana.apply(lost.scope))
         assertEquals(listOf(FakeProviders.Raw(1, "Ana Test", "+1 202 555 0143")), other.raws)
         assertEquals(1, lost.adb.commands.count { it.startsWith("content insert --uri content://com.android.contacts/raw_contacts") })
+    }
+
+    @Test
+    fun aContactThatASyncAddsDuringTheInsertIsNeverTakenForTheTestContact() {
+        val run = FakeRun()
+        val providers = FakeProviders(run.adb)
+        providers.afterRawInsert = {
+            providers.afterRawInsert = {}
+            providers.raws.add(FakeProviders.Raw(providers.raws.size + 1L, "Owner Synced", "+381 60 111 2222"))
+        }
+
+        assertEquals(SetupResult.Ready, DeviceContact("Ana Test", "+1 202 555 0143").apply(run.scope))
+        assertEquals(FakeProviders.Raw(1, "Ana Test", "+1 202 555 0143"), providers.raws[0])
+        assertEquals("1", run.scope.notes[DeviceContact.RAW])
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(FakeProviders.Raw(1, "Ana Test", "+1 202 555 0143", deleted = true), FakeProviders.Raw(2, "Owner Synced", "+381 60 111 2222")), providers.raws)
+    }
+
+    @Test
+    fun theTestContactLeavesAlsoWhenItsIdWasNeverReadBack() {
+        val run = FakeRun()
+        val providers = FakeProviders(run.adb)
+        // The insert reaches the device, and then adb loses the answers of the lookup of its _id.
+        providers.afterRawInsert = { providers.rawLookupFailures = 3 }
+
+        assertThrows(Exception::class.java) { DeviceContact("Ana Test", "+1 202 555 0143").apply(run.scope) }
+        assertEquals(null, run.scope.notes[DeviceContact.RAW])
+        assertEquals(1, providers.raws.size)
+        assertTrue(run.restores.runAll().isEmpty())
+        assertTrue(providers.live().isEmpty())
+    }
+
+    @Test
+    fun anEventThatKestrelSavedWithoutTheMarkerIsReportedAndNotDeleted() {
+        val run = FakeRun(config = config)
+        val providers = FakeProviders(run.adb)
+        providers.events.add(FakeProviders.Event(1, 1, "Dentist", providers.at(24, 9)))
+        Tomorrow.apply(run.scope)
+        CalendarCleanup.apply(run.scope)
+        providers.events.add(FakeProviders.Event(2, 1, "maple heron", providers.at(24, 15)))
+        providers.events.add(FakeProviders.Event(3, 1, "Meeting", providers.at(24, 15)))
+        // Events of another calendar or of another day are not the run's.
+        providers.events.add(FakeProviders.Event(4, 2, "Holiday", providers.at(24, 0)))
+        providers.events.add(FakeProviders.Event(5, 1, "Lunch", providers.at(25, 12)))
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(false, true, false, false, false), providers.events.map { it.deleted })
+        assertEquals(1, run.console.warnings.size)
+        assertTrue(run.console.warnings.single(), run.console.warnings.single().contains("1 event"))
+
+        val clean = FakeRun(config = config)
+        FakeProviders(clean.adb).events.add(FakeProviders.Event(1, 1, "Dentist", providers.at(24, 9)))
+        Tomorrow.apply(clean.scope)
+        CalendarCleanup.apply(clean.scope)
+        assertTrue(clean.restores.runAll().isEmpty())
+        assertTrue(clean.console.warnings.isEmpty())
+    }
+
+    @Test
+    fun aContactThatKestrelSavedWithAnotherNumberIsReportedAndNotDeleted() {
+        val run = FakeRun()
+        val providers = FakeProviders(run.adb)
+        providers.raws.add(FakeProviders.Raw(1, "Owner Friend", "+381 60 000 0000"))
+        FreeNumber.apply(run.scope)
+        ContactCleanup.apply(run.scope)
+        providers.raws.add(FakeProviders.Raw(2, "Maple Heron", "+1 202 555 0160"))
+        providers.raws.add(FakeProviders.Raw(3, "Maple Heron", "+1 202 555 0106"))
+
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(false, true, false), providers.raws.map { it.deleted })
+        assertEquals(1, run.console.warnings.size)
+        assertTrue(run.console.warnings.single(), run.console.warnings.single().contains("1 contact"))
     }
 }

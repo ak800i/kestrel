@@ -158,21 +158,78 @@ data class Bluetooth(val on: Boolean) : Setup {
 }
 
 /**
- * Do Not Disturb on (priority only) or off for the run (`cmd notification set_dnd`), after a restore that puts back the
- * mode read before it from `zen_mode`: 0 off, 1 priority only, 2 total silence, 3 alarms only. A device whose Do Not
- * Disturb is on already cannot run the task: a schedule may have turned it on, and `set_dnd` would put it back as a
- * manual Do Not Disturb without an end.
+ * Which Do Not Disturb is on, from `dumpsys notification --zen`, which prints the zen config `mConfig` last: its manual
+ * rule (Android 13 prints `null` when it is off; with modes UI it is always there) and its automatic rules, such as the
+ * owner's schedules and apps' modes. A rule is on as AOSP's `ZenRule.isActive` says, before modes UI (`snoozing`) and
+ * with it (`conditionOverride`); with modes UI the config's deleted rules come last, and are never on.
+ */
+object Zen {
+    data class On(val manual: Boolean, val automatic: Boolean)
+
+    /** What is on, or null when [dump] has no zen config with a manual rule. */
+    fun on(dump: List<String>): On? {
+        val start = dump.indexOfLast { it.trimStart().startsWith("mConfig=") }
+        if (start < 0) return null
+        val end = (start + 1 until dump.size).firstOrNull { dump[it].trimStart().startsWith("mSuppressedEffects=") } ?: dump.size
+        val config = dump.subList(start, end).joinToString("\n").substringBefore("deletedRules=")
+        if (!MANUAL.containsMatchIn(config)) return null
+        val starts = Regex.escape(RULE).toRegex().findAll(config).map { it.range.first }.toList()
+        var manual = false
+        var automatic = false
+        starts.forEachIndexed { index, from ->
+            val rule = config.substring(from, starts.getOrElse(index + 1) { config.length })
+            val isManual = config.substring(0, from).endsWith("manualRule=")
+            if (active(rule, isManual)) if (isManual) manual = true else automatic = true
+        }
+        return On(manual, automatic)
+    }
+
+    private fun active(rule: String, manual: Boolean): Boolean {
+        fun field(name: String) = Regex("[\\[,]$name=([^,\\]]*)").find(rule)?.groupValues?.get(1)
+        val enabled = field("enabled") == "TRUE"
+        val trueOrUnknown = field("state") == "STATE_TRUE" || field("state") == "STATE_UNKNOWN"
+        return when (field("conditionOverride")) {
+            // Before modes UI, a manual rule exists only while it is on.
+            null -> manual || (enabled && field("snoozing") == "false" && trueOrUnknown)
+            "OVERRIDE_ACTIVATE" -> enabled
+            "OVERRIDE_DEACTIVATE" -> false
+            else -> enabled && trueOrUnknown
+        }
+    }
+
+    private const val RULE = "ZenRule["
+    private val MANUAL = Regex("manualRule=(null|ZenRule\\[)")
+}
+
+/**
+ * Do Not Disturb on (priority only) or off for the run (`cmd notification set_dnd`). A device whose Do Not Disturb is on
+ * already cannot run the task: a schedule may have turned it on, and `set_dnd` would put it back as a manual Do Not
+ * Disturb without an end. The restore turns off only a manual Do Not Disturb, which the run's task turned on, and only
+ * while no automatic rule is on ([Zen]): `set_dnd off` would snooze a schedule of the owner's that began during the run
+ * for the rest of the night, so then the restore leaves Do Not Disturb as it is, and says so when the manual one is on too.
  */
 data class Dnd(val on: Boolean) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val before = NAMES[scope.setting("global", ZEN)] ?: return SetupResult.Untestable("it does not say its Do Not Disturb mode")
         if (before != "off") return SetupResult.Untestable("Do Not Disturb is on already, perhaps by a schedule, which the shell cannot put back as it was")
-        val byHand = "Run: adb -s ${scope.device.serial} shell cmd notification set_dnd $before"
-        scope.restores.push("Do Not Disturb as before", byHand) { scope.device.idempotent("cmd notification set_dnd $before") }
+        val byHand = "Unless a schedule of the device has Do Not Disturb on, run: adb -s ${scope.device.serial} shell cmd notification set_dnd off"
+        scope.restores.push("Do Not Disturb as before", byHand) { turnOff(scope) }
         scope.restores.change("Do Not Disturb ${if (on) "on" else "off"}", byHand) {
             scope.device.idempotent("cmd notification set_dnd ${if (on) "priority" else "off"}")
         }
         return SetupResult.Ready
+    }
+
+    private fun turnOff(scope: RunScope) {
+        if (scope.setting("global", ZEN) == "0") return
+        val zen = Zen.on(scope.device.read("dumpsys notification --zen")) ?: throw IllegalStateException("the device did not say which Do Not Disturb is on")
+        when {
+            zen.automatic && zen.manual -> scope.console.warn(
+                "Do Not Disturb: a schedule of the device began during the run, so the run left Do Not Disturb on, also the task's own. " +
+                    "When the schedule ends, turn Do Not Disturb off if it stays on.",
+            )
+            zen.manual -> scope.device.idempotent("cmd notification set_dnd off")
+        }
     }
 
     override fun probe(scope: RunScope): Map<String, String> = mapOf(ZEN to scope.setting("global", ZEN))

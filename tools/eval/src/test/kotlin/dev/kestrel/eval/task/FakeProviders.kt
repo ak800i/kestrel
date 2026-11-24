@@ -8,16 +8,21 @@ import java.time.ZonedDateTime
 /**
  * The calendar and contacts providers of a device for the tests, as `content` answers them: the device's own Google
  * calendar (1) and a holiday calendar (2) of [address], events, and raw contacts with one name and one number each,
- * whose contact `_id` is their own. Phone lookup compares the last 10 digits, as Android compares numbers loosely. The
- * device's time is noon of 2026-11-23 in Belgrade.
+ * whose contact `_id` is their own, and their `sync1`. Phone lookup compares the last 10 digits, as Android compares numbers
+ * loosely. The device's time is noon of 2026-11-23 in Belgrade. [afterRawInsert] runs after a raw contact's insert, as a
+ * sync that adds one in the same second, and [rawLookupFailures] fails that many queries of the raw contacts.
  */
 class FakeProviders(adb: FakeAdb, address: String = "pera.second@example.com") {
     data class Event(val id: Long, val calendar: Long, val title: String, val start: Long, var deleted: Boolean = false)
 
-    data class Raw(val id: Long, var name: String? = null, var number: String? = null, var deleted: Boolean = false)
+    data class Raw(val id: Long, var name: String? = null, var number: String? = null, var deleted: Boolean = false) {
+        var sync1: String? = null
+    }
 
     val events = mutableListOf<Event>()
     val raws = mutableListOf<Raw>()
+    var afterRawInsert: () -> Unit = {}
+    var rawLookupFailures = 0
     private val zone = ZoneId.of("Europe/Belgrade")
 
     fun at(day: Int, hour: Int): Long = ZonedDateTime.of(2026, 11, day, hour, 0, 0, 0, zone).toInstant().toEpochMilli()
@@ -35,20 +40,39 @@ class FakeProviders(adb: FakeAdb, address: String = "pera.second@example.com") {
             ""
         }
         adb.on("^content query --uri content://com\\.android\\.calendar/events --projection _id --where (.+)$") { match ->
-            val where = WHERE_EVENT.matchEntire(unshell(match.groupValues[1]))!!
-            val start = where.groupValues[3].toLongOrNull()
-            rows(events.filter { !it.deleted && like(it.title, where.groupValues[1]) && (start == null || it.start == start) }.map { mapOf("_id" to "${it.id}") })
+            val text = unshell(match.groupValues[1])
+            val day = WHERE_DAY.matchEntire(text)
+            val found = if (day != null) {
+                val (calendar, from, to) = day.destructured
+                events.filter { !it.deleted && it.calendar == calendar.toLong() && it.start >= from.toLong() && it.start < to.toLong() }
+            } else {
+                val where = WHERE_EVENT.matchEntire(text)!!
+                val start = where.groupValues[3].toLongOrNull()
+                events.filter { !it.deleted && like(it.title, where.groupValues[1]) && (start == null || it.start == start) }
+            }
+            rows(found.map { mapOf("_id" to "${it.id}") })
         }
         adb.on("^content delete --uri content://com\\.android\\.calendar/events --where '_id=(\\d+)'$") { match ->
             events.filter { it.id == match.groupValues[1].toLong() }.forEach { it.deleted = true }
             ""
         }
-        adb.on("^content query --uri content://com\\.android\\.contacts/raw_contacts --projection _id$") { rows(raws.map { mapOf("_id" to "${it.id}") }) }
-        adb.on("^content query --uri content://com\\.android\\.contacts/raw_contacts --projection _id --where '(contact_id|_id)=(\\d+) AND deleted=0'$") { match ->
-            rows(live().filter { it.id == match.groupValues[2].toLong() }.map { mapOf("_id" to "${it.id}") })
+        adb.on("^content query --uri content://com\\.android\\.contacts/raw_contacts --projection _id( --where (.+))?$") { match ->
+            if (rawLookupFailures > 0) {
+                rawLookupFailures--
+                return@on null
+            }
+            val where = unshell(match.groupValues[2])
+            val found = when {
+                where.isEmpty() -> raws
+                WHERE_RAW_ID.matches(where) -> live().filter { it.id == WHERE_RAW_ID.matchEntire(where)!!.groupValues[2].toLong() }
+                WHERE_RAW_ABOVE.matches(where) -> live().filter { it.id > WHERE_RAW_ABOVE.matchEntire(where)!!.groupValues[1].toLong() }
+                else -> live().filter { it.sync1 == WHERE_RAW_SYNC1.matchEntire(where)!!.groupValues[1] }
+            }
+            rows(found.map { mapOf("_id" to "${it.id}") })
         }
-        adb.on("^content insert --uri content://com\\.android\\.contacts/raw_contacts --bind starred:i:0$") {
-            raws.add(Raw(raws.size + 1L))
+        adb.on("^content insert --uri content://com\\.android\\.contacts/raw_contacts --bind starred:i:0( --bind sync1:s:(\\S+))?$") { match ->
+            raws.add(Raw(raws.size + 1L).apply { sync1 = match.groupValues[2].ifEmpty { null } })
+            afterRawInsert()
             ""
         }
         adb.on("^content insert --uri content://com\\.android\\.contacts/data --bind raw_contact_id:l:(\\d+) --bind mimetype:s:vnd\\.android\\.cursor\\.item/(name|phone_v2) --bind data1:s:('[^']*')") { match ->
@@ -72,6 +96,10 @@ class FakeProviders(adb: FakeAdb, address: String = "pera.second@example.com") {
 
     companion object {
         private val WHERE_EVENT = Regex("deleted=0 AND title LIKE '([^']*)'( AND dtstart=(\\d+))?")
+        private val WHERE_DAY = Regex("calendar_id=(\\d+) AND deleted=0 AND dtstart>=(\\d+) AND dtstart<(\\d+)")
+        private val WHERE_RAW_ID = Regex("(contact_id|_id)=(\\d+) AND deleted=0")
+        private val WHERE_RAW_ABOVE = Regex("_id>(\\d+) AND deleted=0")
+        private val WHERE_RAW_SYNC1 = Regex("sync1='([^']*)' AND deleted=0")
 
         /** SQL's `LIKE` for the tests' patterns: a whole title, or with `%` at both ends a part of one, whatever the letter case. */
         private fun like(title: String, pattern: String): Boolean =

@@ -2,6 +2,7 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.HookLost
+import java.util.Collections
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -46,9 +47,12 @@ data class ScreenTap(val label: String) : Setup {
 }
 
 /**
- * Grants [packageName] the runtime [permissions] that it lacks, and takes back only those after the run, as task-check.ps1
- * did with Kestrel's media permissions. Android 13 does not know READ_MEDIA_VISUAL_USER_SELECTED, which exists from API 34.
- * Taking a permission back ends the app's process; the runner waits for Kestrel to listen again before the next run.
+ * Grants [packageName] the runtime [permissions] that it lacks, and takes back after the run only those that the run
+ * granted, as task-check.ps1 did with Kestrel's media permissions: a grant that succeeded, or one that failed but that
+ * the grant state read after it shows (the answer of a grant that took effect may be lost). A grant that fails, such as
+ * of a permission that the app does not request, fails the run's setup without a restore that would fail too. Android 13
+ * does not know READ_MEDIA_VISUAL_USER_SELECTED, which exists from API 34. Taking a permission back ends the app's
+ * process; the runner waits for Kestrel to listen again before the next run.
  */
 data class Grant(val packageName: String, val permissions: List<String>) : Setup {
     override fun apply(scope: RunScope): SetupResult {
@@ -56,11 +60,22 @@ data class Grant(val packageName: String, val permissions: List<String>) : Setup
         val missing = permissions.filter { it !in granted && (scope.device.test.sdk >= 34 || it != VISUAL_USER_SELECTED) }
         if (missing.isEmpty()) return SetupResult.Ready
         val byHand = "Settings > Apps > $packageName > Permissions: take back ${missing.joinToString()}."
+        // Written inside each change, which the shutdown hook awaits before it runs the restore.
+        val byRun = Collections.synchronizedSet(LinkedHashSet<String>())
         scope.restores.push("the permissions that the run granted $packageName", byHand) {
-            for (permission in missing) scope.device.idempotent("pm revoke $packageName $permission")
+            val failed = synchronized(byRun) { byRun.toList() }.filter { runCatching { scope.device.idempotent("pm revoke $packageName $it") }.isFailure }
+            check(failed.isEmpty()) { "Could not take back ${failed.joinToString()}." }
         }
         for (permission in missing) {
-            scope.restores.change("$permission granted to $packageName", byHand) { scope.device.idempotent("pm grant $packageName $permission") }
+            scope.restores.change("$permission granted to $packageName", byHand) {
+                try {
+                    scope.device.idempotent("pm grant $packageName $permission")
+                } catch (e: Exception) {
+                    if (runCatching { permission in granted(scope) }.getOrDefault(true)) byRun.add(permission)
+                    throw e
+                }
+                byRun.add(permission)
+            }
         }
         return SetupResult.Ready
     }
