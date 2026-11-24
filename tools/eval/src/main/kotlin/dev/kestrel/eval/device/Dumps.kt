@@ -140,6 +140,12 @@ object Dumps {
         return false
     }
 
+    /** Whether `dumpsys notification` lists any notification of [packageName], ongoing or not. */
+    fun notification(dump: List<String>, packageName: String): Boolean {
+        val owner = Regex("\\bpkg=${Regex.escape(packageName)}(\\s|$)")
+        return dump.any { record.containsMatchIn(it) && owner.containsMatchIn(it) }
+    }
+
     private fun ongoing(value: String): Boolean =
         if (value.startsWith("0x")) (value.substring(2).toLongOrNull(16) ?: 0L) and 0x2L != 0L else value.split('|').contains("ONGOING_EVENT")
 

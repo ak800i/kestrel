@@ -15,42 +15,25 @@ import java.time.ZonedDateTime
 
 /**
  * A device's clock app for the tests, modelled on Google Clock on kestrel-api37: its package, `dumpsys alarm` at noon of
- * 2026-11-23 in Belgrade with [alarms], the [rows] of its list of alarms, each on a page of the list from its top, the
- * page in view, which a swipe changes, the hash of the list's first row in view, the app in front, its running timers
- * and its ongoing notification. Each row is a card whose label holds its time ("Alarm Tomorrow 6:45 AM Alarm is
- * currently enabled."), with the time and the switch inside it, which hold the time too. The hooks match them as
- * [FakeScreen] says: a tap on a card opens the alarm's editor sheet, which covers the list and shows the time, Delete and
- * Save; the sheet's Delete deletes the alarm and its row. A tap on the time or the switch changes nothing here. On the
- * timers page, Delete deletes the running timer.
+ * 2026-11-23 in Belgrade with [alarms], the app in front, its running timers and its notifications, an ongoing one as a
+ * running timer's and another as an upcoming alarm's. On the timers page, Delete deletes the running timer. `pm clear` of
+ * the clock deletes its alarms, its timers and its notifications, unless it is [stuck].
  */
 class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) {
-    /** A row of the list that shows [time]; [at] is its alarm's time in `dumpsys alarm` while it is switched on. */
-    class Row(val time: String, val page: Int, val at: Long? = null)
-
-    private class Element(val label: String, val className: String, val bounds: String, val row: Row?, val delete: Boolean = false)
+    private class Element(val label: String, val className: String, val bounds: String, val delete: Boolean = false)
 
     val alarms = mutableListOf<String>()
-    val rows = mutableListOf<Row>()
     private val timers = mutableListOf<String>()
-    var position = 0
-    var swipes = 0
-
-    /** Whether the list scrolls at all, whether every swipe shows new rows (a list without an end), and whether its first row has no name. */
-    var scrollable = true
-    var endless = false
-    var unnamed = false
-
-    /** Whether a tap on a card leaves the list as it was, and whether it opens the sheet of the list's first row instead of its own. */
-    var inert = false
-    var wrongSheet = false
     var front = clock
     var ongoing = false
+    var notified = false
+
+    /** Whether `pm clear` of the clock answers Success but leaves its alarms. */
+    var stuck = false
 
     /** Whether One UI's tip about the full screen has the focus and covers the screen, with its one button, OK. */
     var tip = false
 
-    /** The row whose editor sheet is open, or null on the list. */
-    var sheet: Row? = null
     private var screen = "alarms"
     private val zone = ZoneId.of("Europe/Belgrade")
     private val noon = at(23, 12, 0)
@@ -62,40 +45,32 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
         }
         run.adb.on("^dumpsys alarm$") { (listOf("  nowRTC=$noon=2026-11-23 12:00:00.000 nowELAPSED=$ELAPSED") + alarms).joinToString("\n") }
         run.adb.on("^dumpsys notification$") {
-            if (ongoing) "  NotificationRecord(0x0a1: pkg=$clock user=UserHandle{0} id=1)\n    flags=ONGOING_EVENT|LOCAL_ONLY|PROMOTED_ONGOING" else ""
-        }
-        run.adb.on("^am start -W -a android.intent.action.SHOW_ALARMS ") {
-            screen = "alarms"
-            sheet = null
-            ""
+            listOfNotNull(
+                if (ongoing) "  NotificationRecord(0x0a1: pkg=$clock user=UserHandle{0} id=1)\n    flags=ONGOING_EVENT|LOCAL_ONLY|PROMOTED_ONGOING" else null,
+                if (notified) "  NotificationRecord(0x0a2: pkg=$clock user=UserHandle{0} id=2)\n    flags=AUTO_CANCEL" else null,
+            ).joinToString("\n")
         }
         run.adb.on("^am start -W -a android.intent.action.SHOW_TIMERS ") {
             screen = "timers"
             ""
         }
+        run.adb.on("^pm clear $clock$") {
+            if (!stuck) {
+                alarms.clear()
+                timers.clear()
+            }
+            ongoing = false
+            notified = false
+            "Success"
+        }
         run.adb.on("^dumpsys window$") { "  mCurrentFocus=Window{5999a62 u0 ${if (tip) "ImmersiveModeConfirmation" else "$clock/.Main"}}" }
-        run.adb.on("^input swipe 540 1700 540 700 ") {
-            swipes++
-            position = minOf(position + 1, rows.maxOfOrNull { it.page } ?: 0)
-            ""
-        }
-        run.adb.on("^input swipe 540 700 540 1700 ") {
-            swipes++
-            position = maxOf(position - 1, 0)
-            ""
-        }
         run.adb.hook("SCREEN_HAS") { has(it) }
         run.adb.hook("SCREEN_TAP") { tap(it) }
     }
 
     fun at(day: Int, hour: Int, minute: Int): Long = ZonedDateTime.of(2026, 11, day, hour, minute, 0, 0, zone).toInstant().toEpochMilli()
 
-    /** A row of the list at [time], switched off, as the owner's or Google Clock's own alarms of 8:30 and 9:00. */
-    fun row(time: String, page: Int = 0) {
-        rows.add(Row(time, page))
-    }
-
-    /** An alarm clock of [packageName] at [hour]:[minute] on 2026-11-[day] in `dumpsys alarm`, without a row, with Google Clock's wakeups around it. */
+    /** An alarm clock of [packageName] at [hour]:[minute] on 2026-11-[day] in `dumpsys alarm`, with Google Clock's wakeups around it. */
     fun alarmAt(hour: Int, minute: Int, day: Int = 24, packageName: String = clock): Long {
         val time = at(day, hour, minute)
         alarms.add(entry(time, packageName, clock = true))
@@ -120,9 +95,9 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     /** The number of alarm clocks in `dumpsys alarm`. */
     fun clocks(): Int = alarms.count { it.contains("Alarm clock:") }
 
-    /** An alarm that is switched on at [hour]:[minute] tomorrow, with its row, which shows [time]. */
-    fun setAlarm(hour: Int, minute: Int, time: String = "$hour:%02d".format(minute), page: Int = 0) {
-        rows.add(Row(time, page, at = alarmAt(hour, minute)))
+    /** An alarm that is switched on at [hour]:[minute] tomorrow. */
+    fun setAlarm(hour: Int, minute: Int) {
+        alarmAt(hour, minute)
     }
 
     /** A timer's alarm of the clock app due [seconds] later. */
@@ -132,49 +107,24 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
         timers.add(line)
     }
 
-    private fun elements(): List<Element> {
-        val open = sheet
-        return when {
-            tip -> listOf(Element("OK", "android.widget.Button", "424,2062,655,2162", null))
-            screen == "timers" && clock == ClockApp.SAMSUNG -> timers.flatMap {
-                // One UI 5.1's controls of the running timer: each a clickable container around a clickable Button of the same label.
-                listOf(
-                    Element("Delete", "android.view.ViewGroup", "105,1998,454,2203", null, delete = true),
-                    Element("Delete", "android.widget.Button", "147,2037,454,2163", null, delete = true),
-                    Element("Pause", "android.view.ViewGroup", "626,1998,975,2203", null),
-                    Element("Pause", "android.widget.Button", "626,2037,933,2163", null),
-                )
-            }
-            screen == "timers" -> timers.map { Element("Delete", "android.widget.Button", "0,900,300,980", null, delete = true) }
-            open != null -> listOf(
-                Element("${open.time} AM Edit", "android.view.ViewGroup", "0,1000,1080,1155", open),
-                Element("${open.time} AM", "android.widget.TextView", "95,1000,394,1155", open),
-                Element("Delete", "android.widget.Button", "42,2179,235,2305", open, delete = true),
-                Element("Save", "android.widget.Button", "873,2179,1038,2305", open),
+    private fun elements(): List<Element> = when {
+        tip -> listOf(Element("OK", "android.widget.Button", "424,2062,655,2162"))
+        screen == "timers" && clock == ClockApp.SAMSUNG -> timers.flatMap {
+            // One UI 5.1's controls of the running timer: each a clickable container around a clickable Button of the same label.
+            listOf(
+                Element("Delete", "android.view.ViewGroup", "105,1998,454,2203", delete = true),
+                Element("Delete", "android.widget.Button", "147,2037,454,2163", delete = true),
+                Element("Pause", "android.view.ViewGroup", "626,1998,975,2203"),
+                Element("Pause", "android.widget.Button", "626,2037,933,2163"),
             )
-            else -> rows.filter { it.page == position }.withIndex().flatMap { (index, row) ->
-                val top = 300 + 410 * index
-                listOf(
-                    Element("Alarm Tomorrow ${row.time} AM Alarm is currently enabled.", "androidx.cardview.widget.CardView", "42,$top,1038,${top + 400}", row),
-                    Element("${row.time} AM", "android.widget.TextView", "95,${top + 200},394,${top + 355}", row),
-                    Element("${row.time} AM alarm", "android.widget.Switch", "848,${top + 215},985,${top + 341}", row),
-                )
-            }
         }
+        screen == "timers" -> timers.map { Element("Delete", "android.widget.Button", "0,900,300,980", delete = true) }
+        else -> emptyList()
     }
 
     private fun has(extras: Map<String, String>): String {
-        if (extras["state"] == "scrollable") {
-            val first = when {
-                !scrollable || unnamed -> "none"
-                endless -> "s$swipes"
-                else -> "p$position"
-            }
-            return "count=${if (scrollable) 1 else 0} first=$first app=$front"
-        }
-        val all = elements()
         val className = extras["class"]
-        val found = all.filter { element ->
+        val found = elements().filter { element ->
             FakeScreen.has(listOf(element.label), extras) == 1 && (className == null || element.className.endsWith(".$className"))
         }
         return "count=${found.size} bounds=${found.firstOrNull()?.bounds ?: "none"} app=$front"
@@ -184,28 +134,19 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
         val all = elements()
         val matches = FakeScreen.taps(all.map { it.label }, extras)
         val target = matches.firstOrNull()?.let { all[it] } ?: return "tapped=false count=0"
-        val row = target.row
         when {
             tip && target.label == "OK" -> tip = false
-            target.delete && row == null -> {
+            target.delete -> {
                 timers.removeFirstOrNull()?.let { alarms.remove(it) }
                 ongoing = false
             }
-            target.delete && row != null -> {
-                rows.remove(row)
-                row.at?.let { at ->
-                    val times = listOf(at - 1_800_000L, at, at + 15_000L, at + 30_000L)
-                    alarms.removeIf { line -> times.any { line.contains("origWhen $it ") } && line.contains("$clock}") }
-                }
-                sheet = null
-            }
-            row != null && sheet == null && target.className.endsWith("CardView") && !inert -> sheet = if (wrongSheet) rows.first() else row
         }
         return "tapped=true count=${matches.size}"
     }
 
     companion object {
         const val ELAPSED = 1_000_000L
+        const val CLEAR = "pm clear ${ClockApp.GOOGLE}"
     }
 }
 
@@ -255,237 +196,100 @@ class ClockStepsTest {
 
         assertEquals(listOf(1795153500000L), AlarmCleanup.clocks(Alarms.parse(dump)!!, ClockApp.GOOGLE).distinct())
 
+        // Google Clock's wakeups that are no alarm clocks, at the test's time and at another, before and after the setup.
         val run = FakeRun()
         val phone = ClockPhone(run)
-        ClockFree().apply(run.scope)
-        // Google Clock's wakeups at the test's time and around an alarm of the owner's that was there before the run.
-        phone.wakeupAt(6, 45)
         phone.wakeupAt(4, 45)
+        assertEquals(SetupResult.Ready, ClockFree.apply(run.scope))
+        phone.wakeupAt(6, 45)
         assertFalse(NextAlarmAt.passes(run.scope, none))
         assertTrue(run.restores.runAll().isEmpty())
-        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
     }
 
     @Test
-    fun clockFreePicksATimeWithoutAnAlarmOnTheClocksScreenAndNeverStopsTheClock() {
+    fun clockFreeTakesTheTestTimeOnlyWhenGoogleClockHoldsNoAlarmAndNoTimer() {
         val run = FakeRun()
-        val phone = ClockPhone(run)
-        phone.row("6:45")
+        ClockPhone(run)
 
-        assertEquals(SetupResult.Ready, ClockFree().apply(run.scope))
-        assertEquals("6:40", run.scope.values.time)
+        assertEquals(SetupResult.Ready, ClockFree.apply(run.scope))
+        assertEquals("6:45", run.scope.values.time)
         assertEquals("6", run.scope.values.hour)
-        assertEquals("40", run.scope.values.minute)
+        assertEquals("45", run.scope.values.minute)
         assertEquals(ClockApp.GOOGLE, run.scope.notes[ClockApp.NOTE])
-        assertTrue(run.adb.commands.contains("am start -W -a android.intent.action.SHOW_ALARMS -p com.google.android.deskclock"))
-        assertTrue(run.restores.runAll().isEmpty())
-        assertTrue(run.adb.commands.none { it.startsWith("am force-stop") })
+        assertEquals(1, run.restores.size)
+        assertTrue(run.adb.commands.toString(), run.adb.commands.none { it.startsWith("pm ") || it.startsWith("am ") || it.startsWith("input ") })
+        assertTrue(run.adb.hookCalls("SCREEN_HAS").isEmpty() && run.adb.hookCalls("SCREEN_TAP").isEmpty())
 
-        val full = FakeRun()
-        ClockPhone(full).apply { ClockFree.TIMES.forEach { row(it) } }
-        assertTrue(ClockFree().apply(full.scope) is SetupResult.Untestable)
-        val elsewhere = FakeRun()
-        ClockPhone(elsewhere).front = "com.google.android.apps.nexuslauncher"
-        assertTrue(ClockFree().apply(elsewhere.scope) is SetupResult.Untestable)
-    }
+        // An alarm clock of the clock's at any time, a running timer, a paused timer's ongoing notification, or another notification of the clock's.
+        val holds = listOf<(ClockPhone) -> Unit>({ it.alarmAt(7, 0) }, { it.timerIn(3_600) }, { it.ongoing = true }, { it.notified = true })
+        for (hold in holds) {
+            val held = FakeRun()
+            val phone = ClockPhone(held)
+            hold(phone)
+            val before = phone.alarms.toList()
 
-    @Test
-    fun aTimeIsNotFreeWhenDumpsysShowsAnAlarmThereOrAnyPageOfTheListShowsOne() {
-        val run = FakeRun()
-        val phone = ClockPhone(run)
-        // An enabled alarm at 6:45 that the list's first screen does not show, and one at 6:40 further down.
-        phone.alarmAt(6, 45)
-        phone.row("6:40", page = 1)
-
-        assertEquals(SetupResult.Ready, ClockFree().apply(run.scope))
-        assertEquals("6:35", run.scope.values.time)
-        assertEquals("6:45", run.scope.notes[ClockFree.SET_BEFORE])
-        assertEquals(0, phone.position)
-        assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(1, phone.clocks())
-        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
-    }
-
-    @Test
-    fun theScanStartsAtTheListsTopWhereverTheListWasLeft() {
-        val run = FakeRun()
-        val phone = ClockPhone(run)
-        phone.row("6:45")
-        phone.row("9:00", page = 1)
-        phone.row("6:40", page = 2)
-        phone.position = 2
-
-        assertEquals(SetupResult.Ready, ClockFree().apply(run.scope))
-        assertEquals("6:35", run.scope.values.time)
-    }
-
-    @Test
-    fun aListWithoutAConfirmedEndMakesTheSetupFailRatherThanPickATime() {
-        for (endless in listOf(true, false)) {
-            val run = FakeRun()
-            val phone = ClockPhone(run)
-            phone.row("6:45")
-            phone.row("6:40", page = 1)
-            if (endless) phone.endless = true else phone.unnamed = true
-
-            assertThrows(SetupFailed::class.java) { ClockFree().apply(run.scope) }
-            assertNull(run.scope.values.time)
-            assertTrue(run.restores.runAll().isEmpty())
+            val result = ClockFree.apply(held.scope)
+            assertTrue("$result", result is SetupResult.Untestable)
+            assertEquals(0, held.restores.size)
+            assertTrue(held.adb.commands.none { it.startsWith("pm ") || it.startsWith("am ") })
+            assertEquals(before, phone.alarms)
         }
+        // An alarm clock of another app is no alarm of the clock's.
+        val other = FakeRun()
+        ClockPhone(other).alarmAt(7, 0, packageName = "com.example.other")
+        assertEquals(SetupResult.Ready, ClockFree.apply(other.scope))
     }
 
     @Test
-    fun aTwentyFourHourClocksTimeWithItsLeadingZeroCountsAndIsDeleted() {
+    fun theRestoreClearsGoogleClockOnceAndChecksThatNoAlarmClockIsLeft() {
         val run = FakeRun()
         val phone = ClockPhone(run)
-        // A switched-off alarm, which dumpsys alarm does not show, on a 24-hour clock.
-        phone.row("06:45")
-
-        assertEquals(SetupResult.Ready, ClockFree().apply(run.scope))
-        assertEquals("6:40", run.scope.values.time)
-        phone.setAlarm(6, 40, time = "06:40")
-        assertTrue(run.restores.runAll().isEmpty())
-        assertTrue(phone.alarms.isEmpty())
-        assertEquals(listOf("06:45"), phone.rows.map { it.time })
-        assertEquals(
-            listOf(mapOf("contains" to "06:40", "package" to ClockApp.GOOGLE), mapOf("label" to "Delete", "package" to ClockApp.GOOGLE)),
-            run.adb.hookCalls("SCREEN_TAP"),
-        )
-    }
-
-    @Test
-    fun theTestAlarmIsCheckedAtTheNextTimeAndDeletedOnlyThroughItsOwnRow() {
-        val run = FakeRun()
-        val phone = ClockPhone(run)
-        ClockFree().apply(run.scope)
+        assertEquals(SetupResult.Ready, ClockFree.apply(run.scope))
 
         assertFalse(NextAlarmAt.passes(run.scope, none))
         phone.alarmAt(6, 45, packageName = "com.example.other")
         phone.alarmAt(6, 40)
         assertFalse(NextAlarmAt.passes(run.scope, none))
-        phone.setAlarm(6, 45)
-        assertTrue(NextAlarmAt.passes(run.scope, none))
-
-        // Google Clock's own alarms of 8:30 and 9:00.
-        phone.row("8:30")
-        phone.row("9:00")
-        val failures = run.restores.runAll()
-        assertEquals(listOf("alarms that the run set at other times"), failures.map { it.what })
-        assertFalse(NextAlarmAt.passes(run.scope, none))
-        assertEquals(listOf("8:30", "9:00"), phone.rows.map { it.time })
-        assertEquals(
-            listOf(mapOf("contains" to "6:45", "package" to ClockApp.GOOGLE), mapOf("label" to "Delete", "package" to ClockApp.GOOGLE)),
-            run.adb.hookCalls("SCREEN_TAP"),
-        )
-    }
-
-    @Test
-    fun theRestoreTapsNoDeleteThatItCannotBindToTheTestAlarmsRow() {
-        fun failsAndKeeps(setUp: (ClockPhone) -> Unit, taps: List<Map<String, String>>) {
-            val run = FakeRun()
-            val phone = ClockPhone(run)
-            ClockFree().apply(run.scope)
-            setUp(phone)
-            val owners = phone.rows.filter { it.at == null }.map { it.time }
-
-            val failures = run.restores.runAll()
-            assertTrue(failures.map { it.what }.toString(), "the test alarm at 6:45" in failures.map { it.what })
-            assertTrue(failures.first { it.what == "the test alarm at 6:45" }.reason.contains("still set"))
-            assertTrue(run.adb.hookCalls("SCREEN_TAP").none { it["label"] == "Delete" })
-            assertEquals(taps, run.adb.hookCalls("SCREEN_TAP"))
-            assertEquals(owners, phone.rows.filter { it.at == null }.map { it.time })
-        }
-        val time = listOf(mapOf("contains" to "6:45", "package" to ClockApp.GOOGLE))
-
-        // The test alarm is set, but no card shows its time.
-        failsAndKeeps({ phone ->
-            phone.alarmAt(6, 45)
-            phone.row("8:30")
-            phone.row("9:00")
-        }, emptyList())
-        // Two cards show the time, in its two forms.
-        failsAndKeeps({ phone ->
-            phone.setAlarm(6, 45)
-            phone.row("06:45")
-        }, emptyList())
-        // The tap on the card opens no sheet.
-        failsAndKeeps({ phone ->
-            phone.setAlarm(6, 45)
-            phone.row("8:30")
-            phone.inert = true
-        }, time)
-        // The tap on the card opens the sheet of another alarm, whose Delete is never tapped.
-        failsAndKeeps({ phone ->
-            phone.row("8:30")
-            phone.setAlarm(6, 45)
-            phone.wrongSheet = true
-        }, time)
-        // The tap on the card finds labels of a second card that hold it, 16:45, which comes first, so it answers another count.
-        failsAndKeeps({ phone ->
-            phone.row("16:45")
-            phone.setAlarm(6, 45)
-        }, time)
-    }
-
-    @Test
-    fun theRestoreDeletesEveryCardThatTheRunSetAtTheTestTimeAlsoASwitchedOffOne() {
-        val run = FakeRun()
-        val phone = ClockPhone(run)
-        phone.row("8:30")
-        ClockFree().apply(run.scope)
-        // A live run on kestrel-api37: the one-time alarm, and an alarm on Wednesdays that the model switched off, both at 6:45.
-        phone.setAlarm(6, 45)
-        phone.row("6:45")
-
-        assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(listOf("8:30"), phone.rows.map { it.time })
-        assertEquals(0, phone.clocks())
-        val card = mapOf("contains" to "6:45", "package" to ClockApp.GOOGLE)
-        val delete = mapOf("label" to "Delete", "package" to ClockApp.GOOGLE)
-        assertEquals(listOf(card, delete, card, delete), run.adb.hookCalls("SCREEN_TAP"))
-
-        // The run's only alarm switched off: dumpsys alarm shows none, and its card is deleted all the same.
-        val off = FakeRun()
-        val offPhone = ClockPhone(off)
-        ClockFree().apply(off.scope)
-        offPhone.row("6:45")
-        assertTrue(off.restores.runAll().isEmpty())
-        assertTrue(offPhone.rows.isEmpty())
-    }
-
-    @Test
-    fun theRestoreScrollsToTheListsTopAndFindsTheTestAlarmOnItsPage() {
-        for (page in listOf(0, 1)) {
-            val run = FakeRun()
-            val phone = ClockPhone(run)
-            phone.row("8:30")
-            phone.row("9:00", page = 1)
-            ClockFree().apply(run.scope)
-            phone.setAlarm(6, 45, page = page)
-            // The run left the list at its end.
-            phone.position = 1
-
-            assertTrue(run.restores.runAll().isEmpty())
-            assertFalse(NextAlarmAt.passes(run.scope, none))
-            assertEquals(listOf("8:30", "9:00"), phone.rows.map { it.time })
-        }
-    }
-
-    @Test
-    fun anAlarmThatTheRunSetAtAnotherTimeIsNamedByHandAndStays() {
-        val run = FakeRun()
-        val phone = ClockPhone(run)
-        phone.alarmAt(7, 0)
-        ClockFree().apply(run.scope)
+        // A live run's alarm at the test's time and another at 18:45 today.
         phone.setAlarm(6, 45)
         phone.alarmAt(18, 45, day = 23)
+        assertTrue(NextAlarmAt.passes(run.scope, none))
 
-        val failures = run.restores.runAll()
-        assertEquals(listOf("alarms that the run set at other times"), failures.map { it.what })
-        assertTrue(failures.single().reason, failures.single().reason.contains("2026-11-23 18:45"))
-        assertFalse(failures.single().reason, failures.single().reason.contains("07:00"))
-        assertEquals(2, phone.clocks())
-        assertTrue(run.adb.hookCalls("SCREEN_TAP").none { it["contains"] == "18:45" })
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(ClockPhone.CLEAR), run.adb.commands.filter { it.startsWith("pm ") })
+        assertEquals(0, phone.clocks())
+        assertFalse(NextAlarmAt.passes(run.scope, none))
+        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
+        assertTrue(run.adb.commands.none { it.startsWith("am force-stop") })
+
+        // A clear that leaves an alarm clock fails the restore, which names what to do by hand.
+        val stuck = FakeRun()
+        val stuckPhone = ClockPhone(stuck)
+        ClockFree.apply(stuck.scope)
+        stuckPhone.setAlarm(6, 45)
+        stuckPhone.stuck = true
+        val failure = stuck.restores.runAll().single()
+        assertTrue(failure.reason, failure.reason.contains("still holds 1 alarm"))
+        assertTrue(failure.byHand, failure.byHand.contains("Clock > Alarms"))
+    }
+
+    @Test
+    fun theRestoreClearsNoAppOnAnyDeviceButKestrelApi37() {
+        // On the A71 the restore refuses before any command.
+        val a71 = FakeRun(DeviceKind.A71)
+        ClockPhone(a71).setAlarm(6, 45)
+        assertThrows(IllegalStateException::class.java) { AlarmCleanup.run(a71.scope) }
+        assertTrue(a71.adb.commands.isEmpty())
+
+        // Another device that took kestrel-api37's serial after the setup: the device's own check refuses the clear.
+        val run = FakeRun()
+        val phone = ClockPhone(run)
+        assertEquals(SetupResult.Ready, ClockFree.apply(run.scope))
+        phone.setAlarm(6, 45)
+        run.adb.props["ro.boot.qemu.avd_name"] = "zoran"
+        assertEquals(1, run.restores.runAll().size)
+        assertTrue(run.adb.commands.none { it.startsWith("pm ") })
+        assertEquals(1, phone.clocks())
     }
 
     @Test

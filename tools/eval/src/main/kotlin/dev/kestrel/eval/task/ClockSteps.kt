@@ -7,10 +7,8 @@ import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.HookAnswer
 import java.time.DateTimeException
-import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -26,13 +24,8 @@ object ClockApp {
     /** The key of [RunScope.notes] that holds the clock's package. */
     const val NOTE = "clock"
 
-    /**
-     * Google Clock's labels, which Task 10 confirms on kestrel-api37: an alarm's card (a CardView whose label holds its
-     * time), which opens the alarm's editor sheet, and the sheet's Delete and Save.
-     */
-    const val CARD = "CardView"
+    /** The label of the clocks' control that deletes a running timer. */
     const val DELETE = "Delete"
-    const val SAVE = "Save"
 
     /** The clock app's package, from `cmd package resolve-activity`, or null when no app sets alarms. */
     fun find(scope: RunScope): String? =
@@ -91,165 +84,61 @@ data object NoOwnerAlarms : Setup {
 }
 
 /**
- * Google Clock's list of alarms, read page by page through `screen-has` (design D8 of sub-project 6): on each page the
- * counts of the times' forms and the hash of the list's first row in view. The list's top and its end count only when two
- * swipes in a row changed neither; a list that does not scroll is one page. A list whose first row has no name, or whose
- * top or end did not show within [PAGES] swipes, is not known ([Walk.UNKNOWN]).
+ * alarm's time and its restore (design D8 and D9 of sub-project 6), on kestrel-api37 only ([NoOwnerAlarms]) and with
+ * Google Clock. Before any change, the task is untestable when the clock holds an alarm or a timer: an alarm clock of it
+ * in `dumpsys alarm` (also one at a time that is not the test's), a timer (its alarm on the elapsed clock) or any
+ * notification of it, such as a paused timer's or an upcoming alarm's. So the test's time is always [TIME], in `{time}`,
+ * `{hour}` and `{minute}`, and every alarm that the clock holds after the run is the run's. The restore clears Google
+ * Clock's data ([AlarmCleanup]): the controller's decision of 2026-11-24, after the restore by the clock's own taps
+ * failed twice after live runs.
  */
-internal object AlarmList {
-    const val PAGES = 10
-    private const val DOWN = "input swipe 540 1700 540 700 300"
-    private const val UP = "input swipe 540 700 540 1700 300"
+data object ClockFree : Setup {
+    const val TIME = "6:45"
+    private const val HOUR = 6
+    private const val MINUTE = 45
 
-    data class Page(val counts: Map<String, Int>, val first: String?, val scrolls: Boolean)
-
-    enum class Walk { ENDED, FOUND, UNKNOWN, ELSEWHERE }
-
-    /** A time's two forms, "6:45" and a 24-hour clock's "06:45"; screen-has compares whole words, so it tells them apart. */
-    fun forms(time: String): List<String> = listOf(time, "0$time")
-
-    /**
-     * Scrolls the list to its top, then reads it down to its end, or until [found] holds for a page ([Walk.FOUND]); with
-     * [className], a page counts only the elements of that class that hold a form, such as the alarms' cards.
-     */
-    fun walk(scope: RunScope, clock: String, forms: List<String>, className: String? = null, found: (Page) -> Boolean): Walk {
-        val top = go(scope, clock, forms, null, UP) { false }
-        return if (top == Walk.ENDED) go(scope, clock, forms, className, DOWN, found) else top
-    }
-
-    /** Scrolls the list to its top; whether the top showed. */
-    fun top(scope: RunScope, clock: String): Boolean = go(scope, clock, emptyList(), null, UP) { false } == Walk.ENDED
-
-    private fun go(scope: RunScope, clock: String, forms: List<String>, className: String?, swipe: String, found: (Page) -> Boolean): Walk {
-        var page = read(scope, clock, forms, className) ?: return Walk.ELSEWHERE
-        if (found(page)) return Walk.FOUND
-        if (!page.scrolls) return Walk.ENDED
-        var still = 0
-        repeat(PAGES) {
-            if (page.first == null) return Walk.UNKNOWN
-            // A lost answer is read back by the next page.
-            scope.device.once(swipe)
-            scope.clock.sleep(1.seconds)
-            val next = read(scope, clock, forms, className) ?: return Walk.ELSEWHERE
-            if (found(next)) return Walk.FOUND
-            still = if (next == page) still + 1 else 0
-            if (still == 2) return Walk.ENDED
-            page = next
-        }
-        return Walk.UNKNOWN
-    }
-
-    /** The page in view, or null when the clock app is not in front. */
-    private fun read(scope: RunScope, clock: String, forms: List<String>, className: String?): Page? {
-        val answers = forms.associateWith { scope.hooks.screenHas(packageName = clock, contains = it, className = className) }
-        val list = scope.hooks.screenHas(packageName = clock, state = "scrollable")
-        if ((answers.values + list).any { it["app"] != clock }) return null
-        return Page(answers.mapValues { it.value.int("count") }, list["first"]?.takeUnless { it == "none" }, list.int("count") > 0)
-    }
-}
-
-/**
- * alarm's time (design D8 and D20 of sub-project 6), on kestrel-api37 only ([NoOwnerAlarms]) and with Google Clock: the
- * first of 6:45, 6:40, 6:35 and 6:50 at which the clock has no alarm, in `{time}`, `{hour}` and `{minute}`. Each time is
- * counted as "6:45" and as a 24-hour clock's "06:45". A time is not free when `dumpsys alarm` shows an alarm of the clock
- * there (an enabled alarm anywhere in the list), or when any page of the clock's list of alarms shows one (also one that
- * is switched off). The list is read from its top to its end ([AlarmList]); a list whose top or end does not show fails
- * the setup rather than pick a time. The list is left at its top, with the home key. The clock's alarm clocks are
- * recorded first, so that the restores delete every card at that time with the clock's own taps (each is the run's,
- * since no card showed the time before it), and name any other alarm that the run set, which they leave.
- */
-data class ClockFree(val times: List<String> = TIMES) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         if (scope.device.kind != DeviceKind.EMULATOR) return SetupResult.Untestable(NoOwnerAlarms.WHY)
         val clock = ClockApp.find(scope) ?: return SetupResult.Untestable("no app sets alarms")
-        if (clock != ClockApp.GOOGLE) return SetupResult.Untestable("its clock app is not Google Clock, the only one whose test alarm the script deletes")
+        if (clock != ClockApp.GOOGLE) return SetupResult.Untestable("its clock app is not Google Clock, the only one whose data the script clears")
         val dump = ClockApp.alarms(scope) ?: return SetupResult.Untestable("dumpsys alarm gives no clocks")
+        if (AlarmCleanup.clocks(dump, clock).isNotEmpty() || ClockApp.timers(dump, clock).isNotEmpty() || Dumps.notification(scope.device.read("dumpsys notification"), clock)) {
+            return SetupResult.Untestable("Google Clock holds an alarm or a timer, which its restore would delete")
+        }
         scope.notes[ClockApp.NOTE] = clock
-        scope.notes[CLOCKS_BEFORE] = AlarmCleanup.clocks(dump, clock).joinToString(",")
-        val setBefore = times.filter { time -> numbers(time).let { (hour, minute) -> AlarmCleanup.set(scope, clock, hour, minute) } }
-        scope.notes[SET_BEFORE] = setBefore.joinToString(",")
-        val unset = times - setBefore.toSet()
-        scope.restores.push("the home screen in front", "Press Home.") { scope.device.idempotent("input keyevent KEYCODE_HOME") }
-        scope.restores.change("the clock's alarms shown", "Press Home.") { scope.device.idempotent("am start -W -a android.intent.action.SHOW_ALARMS -p $clock") }
-        scope.clock.sleep(3.seconds)
-        val forms = unset.flatMap { time -> AlarmList.forms(time).map { it to time } }.toMap()
-        val shown = mutableSetOf<String>()
-        val walk = AlarmList.walk(scope, clock, forms.keys.toList()) { page ->
-            page.counts.filterValues { it > 0 }.keys.forEach { shown.add(forms.getValue(it)) }
-            false
-        }
-        if (walk == AlarmList.Walk.ELSEWHERE) {
-            scope.device.idempotent("input keyevent KEYCODE_HOME")
-            return SetupResult.Untestable("the clock app's alarms did not show")
-        }
-        if (walk != AlarmList.Walk.ENDED) {
-            throw SetupFailed("The clock's list of alarms showed no top and end within ${AlarmList.PAGES} swipes, so no test time is known to be free.")
-        }
-        AlarmList.top(scope, clock)
-        scope.device.idempotent("input keyevent KEYCODE_HOME")
-        val free = unset.firstOrNull { it !in shown } ?: return SetupResult.Untestable("the clock app has an alarm at each of the test's times")
-        val (hour, minute) = numbers(free)
-        scope.values.time = free
-        scope.values.hour = "$hour"
-        scope.values.minute = "$minute"
-        scope.restores.push("alarms that the run set at other times", "Clock > Alarms: check the alarms at the times that the failure names, and delete those that the run set.") {
-            AlarmCleanup.others(scope, clock, hour, minute)
-        }
-        scope.restores.push("the test alarm at $free", "Clock > Alarms: delete the alarm at $free.") {
-            AlarmCleanup.run(scope, clock, hour, minute, free)
-        }
+        scope.values.time = TIME
+        scope.values.hour = "$HOUR"
+        scope.values.minute = "$MINUTE"
+        scope.restores.push("the test alarm at $TIME", AlarmCleanup.BY_HAND) { AlarmCleanup.run(scope) }
         return SetupResult.Ready
-    }
-
-    private fun numbers(time: String): List<Int> = time.split(':').map { it.toInt() }
-
-    companion object {
-        val TIMES = listOf("6:45", "6:40", "6:35", "6:50")
-
-        /** The key of [RunScope.notes] that holds the candidate times at which `dumpsys alarm` showed an alarm before the run. */
-        const val SET_BEFORE = "alarms-set-before"
-
-        /** The key of [RunScope.notes] that holds the times of the clock's alarm clocks in `dumpsys alarm` before the run. */
-        const val CLOCKS_BEFORE = "alarm-clocks-before"
     }
 }
 
 /**
- * The test alarm's deletion by Google Clock's own taps, checked in `dumpsys alarm` (design D9 of sub-project 6), and the
- * check for other alarms that the run set. ClockFree picked a time that no card showed before the run, so every card at
- * that time is the run's, such as a live model's one-time alarm and a repeating one that it switched off: each is
- * deleted in turn, at most [CARDS], also a switched-off one that `dumpsys alarm` does not show. A tap on the first card
- * whose label holds the test's time, in one of its two forms (not on its time, which opens a time picker, nor on its
- * switch), opens the alarm's editor sheet, and the sheet's Delete is tapped only when the sheet shows the test's time.
- * Both forms on the list, or anything else, taps nothing more and fails the restore, which names what to do by hand.
- * Only alarm clocks count, never the clock app's other wakeups.
+ * alarm's restore (design D9 of sub-project 6): `pm clear` of Google Clock, and only of it, which deletes every alarm and
+ * timer that the run set, also a switched-off one, then the check that `dumpsys alarm` shows no alarm clock of it. It
+ * refuses on any device but kestrel-api37, before any command, and the device's own check of each command
+ * ([dev.kestrel.eval.device.Device.guarded]) refuses it on another device that took kestrel-api37's serial. Only alarm
+ * clocks count, never the clock app's other wakeups.
  */
 internal object AlarmCleanup {
-    private const val CARDS = 4
+    const val BY_HAND = "Clock > Alarms: delete every alarm."
 
-    /** Deletes every card at [time], and checks that no alarm is set there and that the list shows none. */
-    fun run(scope: RunScope, clock: String, hour: Int, minute: Int, time: String) {
-        check(scope.device.kind == DeviceKind.EMULATOR) { "The test alarm at $time is on ${scope.device.kind.label}, where the script deletes no alarm." }
-        scope.device.idempotent("am start -W -a android.intent.action.SHOW_ALARMS -p $clock")
-        scope.clock.sleep(3.seconds)
-        val cleared = try {
-            delete(scope, clock, time)
-        } finally {
-            scope.device.idempotent("input keyevent KEYCODE_HOME")
+    /** How long the check waits for the cleared clock's alarm clocks to leave `dumpsys alarm`. */
+    private const val WAIT_SECONDS = 5
+
+    fun run(scope: RunScope) {
+        val clock = ClockApp.GOOGLE
+        check(scope.device.kind == DeviceKind.EMULATOR) { "The test alarm is on ${scope.device.kind.label}, where the script clears no app's data." }
+        val answer = scope.device.idempotent("pm clear $clock")
+        check(answer.any { it.trim() == "Success" }) { "pm clear $clock did not answer Success." }
+        var left = 0
+        for (second in 0..WAIT_SECONDS) {
+            if (second > 0) scope.clock.sleep(1.seconds)
+            left = clocks(checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }, clock).distinct().size
+            if (left == 0) return
         }
-        check(!set(scope, clock, hour, minute)) { "The test alarm at $time is still set in $clock." }
-        check(cleared) { "The clock's list still shows an alarm at $time in $clock." }
-    }
-
-    /** Fails, naming their times, when the clock has alarm clocks that were not there before the run, other than the test alarm; it never deletes them. */
-    fun others(scope: RunScope, clock: String, hour: Int, minute: Int) {
-        val dump = checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }
-        val zone = ClockApp.zone(scope)
-        val before = scope.notes[ClockFree.CLOCKS_BEFORE].orEmpty().split(',').mapNotNull { it.toLongOrNull() }.toSet()
-        val next = Alarms.nextAt(dump.nowRtc, zone, hour, minute)
-        val new = clocks(dump, clock).filter { at -> at !in before && listOf(next, next + DAY).none { abs(at - it) < MINUTE } }.distinct().sorted()
-        val format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(zone)
-        check(new.isEmpty()) { "The run set ${new.size} other alarm(s) in $clock, at ${new.joinToString { format.format(Instant.ofEpochMilli(it)) }}; they stay." }
+        error("Google Clock still holds $left alarm(s) after pm clear.")
     }
 
     /** The times of [clock]'s alarm clocks in [dump], never its other wakeups. */
@@ -262,42 +151,10 @@ internal object AlarmCleanup {
         return clocks(dump, clock).any { at -> listOf(next, next + DAY).any { abs(at - it) < MINUTE } }
     }
 
-    /** Deletes each card at [time], which ClockFree saw on no card before the run; whether the list shows none any more. */
-    private fun delete(scope: RunScope, clock: String, time: String): Boolean {
-        repeat(CARDS + 1) { round ->
-            var form: String? = null
-            var mixed = false
-            val walk = AlarmList.walk(scope, clock, AlarmList.forms(time), ClockApp.CARD) { page ->
-                val shown = page.counts.filterValues { it > 0 }.keys
-                mixed = shown.size > 1
-                form = shown.firstOrNull()
-                shown.isNotEmpty()
-            }
-            if (walk == AlarmList.Walk.ENDED) return true
-            val card = form
-            if (walk != AlarmList.Walk.FOUND || mixed || card == null || round == CARDS) return false
-            val taps = AppTaps(scope, clock)
-            if (!taps.run(listOf(listOf(TapCandidate(contains = card, className = ClockApp.CARD, first = true))))) return false
-            if (!sheet(scope, clock, card) || !taps.run(listOf(listOf(TapCandidate(label = ClockApp.DELETE))))) return false
-        }
-        return false
-    }
-
-    /**
-     * Whether the alarm's editor sheet is open on [form]: no card shows the time any more, because the sheet covers the
-     * list, the sheet shows it, and it has one Delete and one Save.
-     */
-    private fun sheet(scope: RunScope, clock: String, form: String): Boolean {
-        val card = scope.hooks.screenHas(packageName = clock, contains = form, className = ClockApp.CARD)
-        val shown = scope.hooks.screenHas(packageName = clock, contains = form)
-        val buttons = listOf(ClockApp.DELETE, ClockApp.SAVE).map { scope.hooks.screenHas(packageName = clock, label = it) }
-        if ((buttons + card + shown).any { it["app"] != clock }) return false
-        return card.int("count") == 0 && shown.int("count") >= 1 && buttons.all { it.int("count") == 1 }
-    }
-
     private const val MINUTE = 60_000L
     private const val DAY = 86_400_000L
 }
+
 /** A new alarm of the clock app at the next {time}, or at the same time a day later, in `dumpsys alarm` (design D8). */
 data object NextAlarmAt : Check {
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean {

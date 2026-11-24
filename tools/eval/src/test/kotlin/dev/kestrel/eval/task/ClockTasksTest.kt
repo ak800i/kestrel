@@ -21,7 +21,7 @@ class ClockTasksTest {
 
         assertEquals(Reason.OK, bench.run(ClockTasks.ALARM).reason)
         assertTrue(phone.alarms.isEmpty())
-        assertTrue(phone.rows.isEmpty())
+        assertEquals(listOf(ClockPhone.CLEAR), bench.adb.commands.filter { it.startsWith("pm ") })
         works = false
         assertEquals(Reason.CHECK, bench.run(ClockTasks.ALARM).reason)
         bench.assertPutBack()
@@ -31,7 +31,7 @@ class ClockTasksTest {
     fun alarmIsUntestableOnTheA71BeforeAnyChangeOrRestore() {
         val bench = TaskBench(DeviceKind.A71)
         val phone = ClockPhone(bench.run, ClockApp.SAMSUNG)
-        phone.row("6:45")
+        phone.alarmAt(6, 45)
         bench.adb.hook("VOICE") {
             phone.setAlarm(6, 45)
             "sent"
@@ -39,14 +39,14 @@ class ClockTasksTest {
 
         assertEquals(Reason.UNTESTABLE, bench.run(ClockTasks.ALARM).reason)
         assertTrue(bench.run.console.lines.toString(), bench.run.console.lines.any { it.endsWith(": the owner's real alarms are on this phone.") })
-        assertTrue(bench.adb.commands.toString(), bench.adb.commands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("dumpsys alarm") || it.startsWith("cmd package") })
+        assertTrue(bench.adb.commands.toString(), bench.adb.commands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("pm ") || it.startsWith("dumpsys alarm") || it.startsWith("cmd package") })
         assertTrue(bench.adb.hookCalls("SCREEN_HAS").isEmpty() && bench.adb.hookCalls("SCREEN_TAP").isEmpty() && bench.adb.hookCalls("VOICE").isEmpty())
-        assertEquals(listOf("6:45"), phone.rows.map { it.time })
+        assertEquals(1, phone.clocks())
         bench.assertPutBack()
 
         val run = FakeRun(DeviceKind.A71)
         ClockPhone(run, ClockApp.SAMSUNG)
-        assertEquals(SetupResult.Untestable("the owner's real alarms are on this phone"), ClockFree().apply(run.scope))
+        assertEquals(SetupResult.Untestable("the owner's real alarms are on this phone"), ClockFree.apply(run.scope))
         assertTrue(run.adb.commands.isEmpty())
         assertEquals(0, run.restores.size)
     }
