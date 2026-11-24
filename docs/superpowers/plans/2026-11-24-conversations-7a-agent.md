@@ -5199,15 +5199,15 @@ git commit -m "feat(agent): Kestrel's own screen is waited for at the owner port
 
 ### Task 9: `search_conversations`
 
-The tool `search_conversations` goes at the end of `Tools.ALL`, after `update_checklist` (design 9.4). `HistorySteps` asks `HistoryPort.search` and gives the model `HistoryText`'s result: at most 5 earlier commands, newest first, at most 1,500 tokens, quoted as data. The step acts on nothing and needs no safety check; a result that differs from the tool's earlier results in the run is progress, a result with matches is a data step that `finish` may cite, the result becomes the command's data note through Task 2's trace, and a failure of the archive is the step's result. Today's `NoHistory` finds nothing.
+The tool `search_conversations` goes at the end of `Tools.ALL`, after `update_checklist` (design 9.4). `HistorySteps` asks `HistoryPort.search` and gives the model `HistoryText`'s result: at most 5 earlier commands, newest first, at most 1,500 tokens, quoted as data. The step acts on nothing and needs no safety check: `ActionMapper.proposal` files it, with `update_checklist`, under `ActionKind.KESTREL_RECORDS`, the kind of the tools that act on nothing on the phone and only write or read Kestrel's own records (design 12.3), never under `READ_DATA`, which reads the owner's phone data through `DataPort`, or `DIALOGUE`; a result that differs from the tool's earlier results in the run is progress, a result with matches is a data step that `finish` may cite, the result becomes the command's data note through Task 2's trace, and a failure of the archive is the step's result. Today's `NoHistory` finds nothing.
 
 **Files:**
 - Create: `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistoryText.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`
-- Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/tools/Tools.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/tools/AgentCall.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/tools/ToolArguments.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/StepResult.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, `core/agent/src/test/resources/golden/tools.jsonl`
+- Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/tools/Tools.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/tools/AgentCall.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/tools/ToolArguments.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/tools/ActionMapper.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/StepResult.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, `core/agent/src/test/resources/golden/tools.jsonl`
 - Test: `core/agent/src/test/kotlin/dev/kestrel/agent/loop/HistoryTextTest.kt` (new), `core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.kt`, `core/agent/src/test/kotlin/dev/kestrel/agent/tools/ToolArgumentsTest.kt`, `core/agent/src/test/kotlin/dev/kestrel/agent/tools/ToolsTest.kt`
 
 **Interfaces:**
-- Consumes: Task 1's `HistoryPort`, `HistoryQuery`, `HistoryResult`, `HistoryMatch`, `HistoryData`, `HistoryPort.MAX_MATCHES`, `FakeHistory`; Task 2's data trace.
+- Consumes: Task 1's `HistoryPort`, `HistoryQuery`, `HistoryResult`, `HistoryMatch`, `HistoryData`, `HistoryPort.MAX_MATCHES`, `FakeHistory`; Task 2's data trace; Task 6's fix's `ActionKind.KESTREL_RECORDS` (in `:core:safety`'s `Proposal.kt`, whose KDoc already names `search_conversations`) and its branch `is AgentCall.UpdateChecklist -> of(ActionKind.KESTREL_RECORDS)` in `ActionMapper.proposal`.
 - Produces: `Tools.SEARCH_CONVERSATIONS = "search_conversations"`, `Tools.QUERY_LIMIT = 200`; `AgentCall.SearchConversations(val query: String, val from: LocalDate?, val to: LocalDate?)`; `internal object HistoryText { TOKEN_BUDGET = 1_500; NO_MATCH; NO_OTHER; MORE; fun of(result: HistoryResult, zone: ZoneId): Shown }`; `internal class HistorySteps(run: TaskRun)` with `suspend fun search(call: AgentCall.SearchConversations): Done`. The result's form, which plan 7B's `HistorySearch` feeds:
 
   `Match 1 · Thursday, 19 November 2026, 18:04 · command 2 of that conversation` / `  The owner said: "…"` / `  Kestrel answered: "…"` / `  Apps: Viber` / `  Data: list_sms: from: "Mila" · body: "…"`, and at the end `No other match.`, `More earlier commands match; …` or `<n> more matches are left out, …`; `No match.` alone without a match.
@@ -5561,6 +5561,18 @@ with:
     }
 
     private fun notes(r: Reader): List<NoteDraft> {
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/tools/ActionMapper.kt`, replace:
+
+```kotlin
+            is AgentCall.UpdateChecklist -> of(ActionKind.KESTREL_RECORDS)
+```
+
+with:
+
+```kotlin
+            is AgentCall.UpdateChecklist, is AgentCall.SearchConversations -> of(ActionKind.KESTREL_RECORDS)
 ```
 
 - [ ] **Step 4: The result and the step**
