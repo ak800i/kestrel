@@ -151,7 +151,7 @@ object ToolArguments {
         Tools.HOME -> AgentCall.Home(reason(r))
         Tools.OPEN_APP -> AgentCall.OpenApp(r.string("name"), reason(r))
         Tools.OPEN_URL -> AgentCall.OpenUrl(r.string("url"), r.optionalChoice("browser", BROWSERS) ?: Browser.DEFAULT, reason(r))
-        Tools.OPEN_DEEP_LINK -> AgentCall.OpenDeepLink(r.string("uri"), reason(r))
+        Tools.OPEN_DEEP_LINK -> AgentCall.OpenDeepLink(r.string("uri"), reason(r), r.optionalString("app"))
         Tools.OPEN_SETTINGS -> AgentCall.OpenSettings(r.choice("page", PAGES), reason(r))
         Tools.WAIT -> AgentCall.Wait(r.int("seconds", 1..Tools.WAIT_MAX), reason(r))
         Tools.LOOK_CLOSER -> AgentCall.LookCloser(r.optionalTarget(), reason(r))

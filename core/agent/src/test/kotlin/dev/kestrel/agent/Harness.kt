@@ -1,5 +1,6 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.agent.port.ModelInfo
 import dev.kestrel.agent.testing.FakeApps
 import dev.kestrel.agent.testing.FakeClock
@@ -25,11 +26,12 @@ class Harness(
     replies: List<JsonObject>,
     var settings: AgentSettings = AgentSettings(safety = SafetySettings(testMode = false)),
     model: ModelInfo = ScriptedModel.INFO,
+    launcher: List<LauncherApp> = FakeApps.DEFAULT,
 ) {
     val screen = FakeScreen(first)
     val owner = FakeOwner()
     val data = FakeData()
-    val apps = FakeApps()
+    val apps = FakeApps(launcher)
     val memory = FakeMemory()
     val log = FakeLog()
     val clock = FakeClock()

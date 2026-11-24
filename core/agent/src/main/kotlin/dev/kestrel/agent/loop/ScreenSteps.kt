@@ -368,15 +368,53 @@ internal class ScreenSteps(private val run: TaskRun) {
         val installed = run.ports.apps.launcherApps().map { it.packageName }.toSet()
         val browserPackage = browser.packages.firstOrNull { it in installed }
         if (browser != Browser.DEFAULT && browserPackage == null) return Done(call.tool, Outcome.Failed(if (browser == Browser.FIREFOX) "Firefox is not installed" else "Chrome is not installed"))
-        val target = run.ports.screen.resolve(IntentSpec(VIEW, link, browserPackage, browsable = true))
+        val packageName = when (val app = (call as? AgentCall.OpenDeepLink)?.app?.let { linkApp(it, link) }) {
+            null -> browserPackage
+            is LinkApp.Found -> app.packageName
+            is LinkApp.Missing -> return Done(call.tool, Outcome.Failed(app.reason))
+        }
+        val target = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true))
         val verdict = LinkCheck.check(link, kind, fromOwner(link), target, run.settings::closed, run.settings.emergency)
         if (verdict is LinkVerdict.Refused) return Done(call.tool, Outcome.Refused(verdict.reason))
         sentLink = false
-        val done = open(call, ScreenAction.OpenUri(link, browserPackage, browsable = true), target, null, linkTarget = target)
+        val done = open(call, ScreenAction.OpenUri(link, packageName, browsable = true), target, null, linkTarget = target)
         // The retry is Firefox's, also when Firefox is the default browser that the link resolved to (r57); only after the
         // first intent was sent, never after a pause, a refusal or a hand-over, so the link never opens unchecked (D2, D12).
         if (!sentLink || target == null || target !in Browser.FIREFOX.packages || done.after == null) return done
-        return firefox(call, done, link, browserPackage, target)
+        return firefox(call, done, link, packageName, target)
+    }
+
+    private sealed interface LinkApp {
+        data class Found(val packageName: String) : LinkApp
+
+        data class Missing(val reason: String) : LinkApp
+    }
+
+    // The app that `open_deep_link`'s `app` names (spec 11.4): an installed package, or a launcher label that names exactly
+    // one app that opens the link. The link then goes to that app alone, so Android shows no chooser, and the safety check
+    // judges that app as the link's target.
+    private suspend fun linkApp(name: String, link: String): LinkApp {
+        suspend fun opens(packageName: String) = run.ports.screen.resolve(IntentSpec(VIEW, link, packageName, browsable = true)) == packageName
+        val wanted = name.trim()
+        val apps = run.ports.apps.launcherApps()
+        apps.firstOrNull { it.packageName == wanted }?.let {
+            return if (opens(it.packageName)) LinkApp.Found(it.packageName) else LinkApp.Missing("${quoted(it.label)} doesn't open this link")
+        }
+        if (PACKAGE_NAME.matches(wanted)) {
+            return if (opens(wanted)) LinkApp.Found(wanted) else LinkApp.Missing("no installed app ${quoted(wanted)} opens this link")
+        }
+        val named = when (val pick = NamePick.pick(wanted, apps, { it.label }, { false })) {
+            Pick.None -> return LinkApp.Missing("no app named ${quoted(wanted)}")
+            is Pick.One -> listOf(pick.item)
+            is Pick.Several -> pick.items
+        }
+        val handlers = named.filter { opens(it.packageName) }
+        return when {
+            handlers.size == 1 -> LinkApp.Found(handlers.single().packageName)
+            handlers.size > 1 -> LinkApp.Missing("several apps match: " + handlers.joinToString(", ") { quoted(it.label) })
+            named.size == 1 -> LinkApp.Missing("${quoted(named.single().label)} doesn't open this link")
+            else -> LinkApp.Missing("none of the apps named ${quoted(wanted)} opens this link")
+        }
     }
 
     // Firefox's web area can stay empty (r57's bug 2023734): wait for it, send the intent once more, then say so (D11).
@@ -512,6 +550,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         private const val CHANGE_POLL_MILLIS = 100L
         private const val WAIT_POLLS = 10
         private const val VIEW = "android.intent.action.VIEW"
+        private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
         private const val HTTPS = "https"
         private const val WEB_VIEW = "android.webkit.WebView"
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)

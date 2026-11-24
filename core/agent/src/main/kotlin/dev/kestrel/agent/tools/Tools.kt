@@ -139,8 +139,13 @@ object Tools {
         ),
         tool(
             OPEN_DEEP_LINK,
-            "Open a link into an app. Only these schemes: viber, whatsapp, tg, waze, google.navigation, geo, tel, sms and mailto. A tel link only opens the dial screen.",
-            listOf("uri" to string("The link."), reason),
+            "Open a link into an app. Only these schemes: viber, whatsapp, tg, waze, google.navigation, geo, tel, sms and mailto. A tel link only opens the dial screen. " +
+                "When the owner names the app, give it as app, so that the link opens in that app without a chooser.",
+            listOf(
+                "uri" to string("The link."),
+                reason,
+                "app" to string("The app that should open the link, when the owner names it: an installed app's name, such as Google Maps, or its package name. Leave it out to let Android choose."),
+            ),
             listOf("uri", "reason"),
         ),
         tool(

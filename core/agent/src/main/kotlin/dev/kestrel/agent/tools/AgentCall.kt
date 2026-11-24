@@ -78,10 +78,11 @@ sealed interface AgentCall {
         override fun toString(): String = "OpenUrl(url=${url.length} chars, browser=$browser, reason=${reason.length} chars)"
     }
 
-    data class OpenDeepLink(val uri: String, override val reason: String) : AgentCall {
+    /** [app] is the app that should open the link, by its package or launcher name; null lets Android choose. */
+    data class OpenDeepLink(val uri: String, override val reason: String, val app: String? = null) : AgentCall {
         override val tool: String get() = Tools.OPEN_DEEP_LINK
 
-        override fun toString(): String = "OpenDeepLink(uri=${uri.length} chars, reason=${reason.length} chars)"
+        override fun toString(): String = "OpenDeepLink(uri=${uri.length} chars, reason=${reason.length} chars, app=${app?.length ?: 0} chars)"
     }
 
     data class OpenSettings(val page: SettingsPage, override val reason: String) : AgentCall {

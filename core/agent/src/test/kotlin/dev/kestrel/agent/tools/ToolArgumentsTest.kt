@@ -47,6 +47,11 @@ class ToolArgumentsTest {
             valid("type_text", """{"target": 2, "text": "", "reason": "clear it", "category": "typing_request"}"""),
         )
         assertEquals(AgentCall.OpenUrl("https://example.com", Browser.DEFAULT, "read"), valid("open_url", """{"url": "https://example.com", "reason": "read"}"""))
+        assertEquals(
+            AgentCall.OpenDeepLink("geo:0,0?q=Kalemegdan", "show it", "Google Maps"),
+            valid("open_deep_link", """{"uri": "geo:0,0?q=Kalemegdan", "reason": "show it", "app": "Google Maps"}"""),
+        )
+        assertEquals(AgentCall.OpenDeepLink("geo:0,0?q=Kalemegdan", "show it"), valid("open_deep_link", """{"uri": "geo:0,0?q=Kalemegdan", "reason": "show it"}"""))
         assertEquals(AgentCall.ListSms(null, 20), valid("list_sms", "{}"))
         // A blank optional text counts as left out (review 3 M5).
         assertEquals(AgentCall.ListSms(null, 5), valid("list_sms", """{"from": "", "limit": 5}"""))

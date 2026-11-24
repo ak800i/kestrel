@@ -7,9 +7,11 @@ import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
+import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.agent.port.ScreenAction
+import dev.kestrel.agent.testing.FakeApps
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
@@ -425,6 +427,71 @@ class AgentToolsTest {
         assertEquals(Category.SENDING, question.category)
         assertTrue(question.question, question.question.contains("a whatsapp link"))
         assertTrue(harness.screen.actions.isEmpty())
+    }
+
+    private val maps = "com.google.android.apps.maps"
+
+    // A deep link with the app that the owner named; Android would ask which app opens a geo: link, so without a package
+    // it resolves to none, and each app opens only the links of [handles]. Two apps are called Google Maps, and by default
+    // only one of them opens the link.
+    private fun namedApp(app: String, link: String = "geo:0,0?q=Kalemegdan", handles: Map<String, String> = mapOf("geo:" to maps)): Harness =
+        Harness(
+            Screens.app("com.android.launcher3", "Home"),
+            listOf(call("open_deep_link", null, null, null, "uri" to link, "reason" to "show the place", "app" to app), stop),
+            launcher = FakeApps.DEFAULT + LauncherApp("Google Maps", maps, "11.150") + LauncherApp("Google Maps", "com.google.android.apps.mapslite", "1.0"),
+        ).apply {
+            screen.resolver = { spec -> spec.packageName?.takeIf { handles.any { (scheme, app) -> spec.data.orEmpty().startsWith(scheme) && app == spec.packageName } } }
+        }
+
+    @Test
+    fun aDeepLinkOpensInTheAppThatTheOwnerNamedWithoutAChooser() = runTest {
+        for (app in listOf("Google Maps", maps)) {
+            val harness = namedApp(app)
+
+            harness.run("Show Kalemegdan on Google Maps")
+
+            assertEquals(app, listOf(ScreenAction.OpenUri("geo:0,0?q=Kalemegdan", maps, browsable = true)), harness.screen.actions.filterIsInstance<ScreenAction.OpenUri>())
+            assertTrue(app, harness.owner.confirmations.isEmpty())
+        }
+    }
+
+    @Test
+    fun aNamedAppThatIsMissingOrDoesNotOpenTheLinkIsAnErrorForTheModel() = runTest {
+        for ((app, error) in listOf(
+            "Here WeGo" to "no app named \"Here WeGo\"",
+            "com.here.app.maps" to "no installed app \"com.here.app.maps\" opens this link",
+            "Waze" to "\"Waze\" doesn't open this link",
+            "com.waze" to "\"Waze\" doesn't open this link",
+        )) {
+            val harness = namedApp(app)
+
+            harness.run("Show Kalemegdan on Google Maps")
+
+            assertTrue(app, harness.screen.actions.isEmpty())
+            assertTrue(harness.lastRequestText(), harness.lastRequestText().contains(error))
+        }
+        // Two apps with the name, and both open the link: the model has to name one.
+        val both = namedApp("Google Maps")
+        both.screen.resolver = { spec -> spec.packageName }
+        both.run("Show Kalemegdan on Google Maps")
+        assertTrue(both.screen.actions.isEmpty())
+        assertTrue(both.lastRequestText(), both.lastRequestText().contains("several apps match"))
+    }
+
+    @Test
+    fun aNamedAppIsTheLinksTargetForEveryRuleOfTheSafetyCheck() = runTest {
+        // A messenger opens it: the search of the owner's words no longer reads, so Standard asks, and the owner declines.
+        val messenger = namedApp("Telegram", handles = mapOf("geo:" to telegram))
+        val report = messenger.run("Show Kalemegdan in Telegram")
+        assertEquals(EndReason.DECLINED, report.end)
+        assertEquals(Category.SENDING, messenger.owner.confirmations.single().category)
+        assertTrue(messenger.screen.actions.isEmpty())
+
+        // Kestrel itself, an agent-free app, is refused.
+        val kestrel = namedApp("dev.kestrel", handles = mapOf("geo:" to "dev.kestrel"))
+        kestrel.run("Show Kalemegdan in Kestrel")
+        assertTrue(kestrel.screen.actions.isEmpty())
+        assertTrue(kestrel.lastRequestText(), kestrel.lastRequestText().contains("The link opens an app that the agent may not use."))
     }
 
     @Test
