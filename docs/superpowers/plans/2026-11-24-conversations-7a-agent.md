@@ -5772,19 +5772,19 @@ git commit -m "feat(agent): search_conversations gives the model at most five ea
 
 ### Task 10: A resumed goal's task message
 
-A goal that resumes after a pause at a limit without an answer, after an interruption or after a restart starts a new run (design 7.1 and 7.6): its task message starts with Kestrel's own lines, which name the goal, why it resumes, its checklist, what Kestrel did so far, and that the screen must be looked at afresh. Its first observation is fresh, as every run's is; it replays no routine, its checklist's done items stay done, and every confirmation is asked again because the run is new.
+A goal that resumes after a pause at a limit without an answer, after an interruption or after a restart starts a new run (design 7.1 and 7.6): its task message starts with Kestrel's own lines, which name the goal, why it resumes, its checklist, what Kestrel did so far, the owner's steering that its earlier rounds took, and that the screen must be looked at afresh. The steering is there as an instruction, because a steer that an interruption cut before the model acted on it would otherwise reach the new run only as the owner's words for safety (`ownerHistory`); plan 7B asked for it (its section "What plan 7A adds for this plan"), so `ResumeNote` gains `steered`. Its first observation is fresh, as every run's is; it replays no routine, its checklist's done items stay done, and every confirmation is asked again because the run is new.
 
 **Files:**
-- Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskText.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`
-- Test: `core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.kt`
+- Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/goal/ResumeNote.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskText.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`
+- Test: `core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.kt`, `core/agent/src/test/kotlin/dev/kestrel/agent/ToStringTest.kt`
 
 **Interfaces:**
-- Consumes: Task 1's `ResumeNote`, `ResumeCause.words`, `TaskRequest.resume` and `TaskRequest.checklist`; Task 3's `TaskText.message`; Task 7's `ChecklistText.closed`; Task 6's `ChecklistSteps` (which starts with `task.checklist`).
-- Produces: the resumed task message, which plan 7B's `GoalRunner` gets by passing `TaskRequest(text = <the goal's first command, as its record holds it>, checklist = <the goal's checklist>, resume = ResumeNote(<cause>, <the record's ledger lines>))`:
+- Consumes: Task 1's `ResumeNote`, `ResumeCause.words`, `Steer`, `TaskRequest.resume` and `TaskRequest.checklist`; Task 3's `TaskText.message`; Task 4's `TaskText.steered`; Task 7's `ChecklistText.closed`; Task 6's `ChecklistSteps` (which starts with `task.checklist`).
+- Produces: `data class ResumeNote(val after: ResumeCause, val done: List<String>, val steered: List<Steer> = emptyList())`, whose toString prints `steered=<n>`; the resumed task message, which plan 7B's `GoalRunner` gets by passing `TaskRequest(text = <the goal's first command, as its record holds it>, checklist = <the goal's checklist>, resume = ResumeNote(<cause>, <the record's ledger lines>, <the steering that the goal's earlier rounds took, oldest first, in its record's form>))`:
 
-  `The owner's goal: <text>` / `You are continuing this goal after <a pause at a limit | an interruption | a restart of Kestrel>.` / `Its checklist: c1 [done] "Open Viber" · c2 [doing] "Reply to Mila"` (left out without a checklist; a checklist of more than 20 items names only its open items: `Its checklist: 21 done, 0 skipped, 0 failed; open: c22 [doing] "Reply to Mila"`, or `open: none`, with `ChecklistText.closed`'s counts) / `What Kestrel did so far: opened Viber.` (or `nothing yet`) / `Look at the screen afresh; it may have changed.` / `Today is …` / the allowance's sentence. A steering command that resumed the goal follows through `GoalPort.takeSteering()` at the first turn ("before the first step").
+  `The owner's goal: <text>` / `You are continuing this goal after <a pause at a limit | an interruption | a restart of Kestrel>.` / `Its checklist: c1 [done] "Open Viber" · c2 [doing] "Reply to Mila"` (left out without a checklist; a checklist of more than 20 items names only its open items: `Its checklist: 21 done, 0 skipped, 0 failed; open: c22 [doing] "Reply to Mila"`, or `open: none`, with `ChecklistText.closed`'s counts) / `What Kestrel did so far: opened Viber.` (or `nothing yet`) / one line per steer of `steered`, in order: `The owner added (<spoken|typed>) in an earlier round: "<words>"`, the words redacted once, quoted and escaped as `TaskText.steered` does and never cut, with no allowance sentence (the allowance reaches the run through `carried`) / `Look at the screen afresh; it may have changed.` / `Today is …` / the allowance's sentence. A steering command that resumed the goal follows through `GoalPort.takeSteering()` at the first turn ("before the first step").
 
-Counts: `:core:agent` G + 3.
+Counts: `:core:agent` G + 4.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5871,14 +5871,74 @@ Add these tests to `core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.k
         val message = firstMessage(harness)
         assertTrue(message, message.contains("\nIts checklist: 21 done, 0 skipped, 0 failed; open: c22 [doing] \"Reply to Mila\"\nWhat Kestrel did so far: nothing yet.\n"))
     }
+
+    // Plan 7B's request: the steering of the goal's earlier rounds is an instruction of the resumed run, in its order.
+    @Test
+    fun aResumedGoalNamesTheSteeringOfItsEarlierRoundsInOrder() = runTest {
+        val harness = Harness(Screens.chats(), listOf(fail()))
+        val steered = listOf(Steer("Also send it to Mila", SteerChannel.TYPED), Steer("Say \"see you\" at the end", SteerChannel.SPOKEN))
+
+        harness.run(TaskRequest(Harness.ID, "Send Ana the photo", resume = ResumeNote(ResumeCause.INTERRUPTION, listOf("opened Viber"), steered)))
+
+        val message = firstMessage(harness)
+        assertTrue(
+            message,
+            message.contains(
+                "What Kestrel did so far: opened Viber.\n" +
+                    "The owner added (typed) in an earlier round: \"Also send it to Mila\"\n" +
+                    "The owner added (spoken) in an earlier round: \"Say \\\"see you\\\" at the end\"\n" +
+                    "Look at the screen afresh; it may have changed.\n",
+            ),
+        )
+    }
+```
+
+In `core/agent/src/test/kotlin/dev/kestrel/agent/ToStringTest.kt`, replace:
+
+```kotlin
+            ResumeNote(ResumeCause.LIMIT, listOf(marker)),
+```
+
+with:
+
+```kotlin
+            ResumeNote(ResumeCause.LIMIT, listOf(marker), listOf(Steer(marker, SteerChannel.TYPED))),
 ```
 
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.AgentGoalTest`
-Expected: FAIL: the first and the third test's messages start with `The owner's task: …` and hold no checklist, and in the second the resumed run replays the routine and ends `FINISHED`.
+Expected: FAIL, the compiler reports that `ResumeNote` has no parameter for the steering (`steered`), in `AgentGoalTest` and in `ToStringTest`. Without that test and that line, the first and the third test's messages would start with `The owner's task: …` and hold no checklist, and in the second the resumed run would replay the routine and end `FINISHED`.
 
 - [ ] **Step 3: The resumed message and no routine**
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/goal/ResumeNote.kt`, replace:
+
+```kotlin
+/**
+ * Set when a goal resumes in a new run (design 7.6 of sub-project 7): why, and what Kestrel did so far, its ledger lines
+ * in Kestrel's own words, which the run's task message names, so that no earlier step is done again. toString prints only
+ * counts.
+ */
+data class ResumeNote(val after: ResumeCause, val done: List<String>) {
+    override fun toString(): String = "ResumeNote(after=$after, done=${done.size})"
+}
+```
+
+with:
+
+```kotlin
+/**
+ * Set when a goal resumes in a new run (design 7.6 of sub-project 7): why, what Kestrel did so far, its ledger lines in
+ * Kestrel's own words, which the run's task message names, so that no earlier step is done again, and the owner's
+ * steering that the goal's earlier rounds took ([steered], oldest first, in its record's form), which the message names as
+ * his instructions (plan 7A at plan 7B's request). Steering that still waits in the goal's inbox reaches the run through
+ * `GoalPort.takeSteering()` and is not in [steered]. toString prints only counts.
+ */
+data class ResumeNote(val after: ResumeCause, val done: List<String>, val steered: List<Steer> = emptyList()) {
+    override fun toString(): String = "ResumeNote(after=$after, done=${done.size}, steered=${steered.size})"
+}
+```
 
 In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskText.kt`, replace:
 
@@ -5933,14 +5993,15 @@ with:
     }
 
     // A resumed goal's own lines (design 7.6 of sub-project 7): the goal, why it resumes, its checklist, what Kestrel did,
-    // and a fresh look. The checklist's texts came from the model, so they are quoted as data; Kestrel's lines are not.
-    private fun resumed(task: TaskRequest, resume: ResumeNote, redactor: Redactor): List<String> = listOfNotNull(
-        Redacted.of(redactor, "The owner's goal: " + task.text).text,
-        "You are continuing this goal after ${resume.after.words}.",
-        task.checklist?.let(::checklistLine),
-        "What Kestrel did so far: ${resume.done.joinToString(", ").ifEmpty { "nothing yet" }}.",
-        "Look at the screen afresh; it may have changed.",
-    )
+    // the owner's steering of its earlier rounds, and a fresh look. The checklist's texts came from the model, so they are
+    // quoted as data; Kestrel's lines are not, and the steering is the owner's own words, whole.
+    private fun resumed(task: TaskRequest, resume: ResumeNote, redactor: Redactor): List<String> =
+        listOfNotNull(
+            Redacted.of(redactor, "The owner's goal: " + task.text).text,
+            "You are continuing this goal after ${resume.after.words}.",
+            task.checklist?.let(::checklistLine),
+            "What Kestrel did so far: ${resume.done.joinToString(", ").ifEmpty { "nothing yet" }}.",
+        ) + resume.steered.map { added(it, "in an earlier round", redactor) } + "Look at the screen afresh; it may have changed."
 
     // A checklist of more than 20 items names only its open items, at most 20, and counts its closed ones as a records
     // block does; they stay as they are and need no id from the model (design 7.2 and 8.3 of sub-project 7).
@@ -5949,6 +6010,30 @@ with:
         if (checklist.items.size <= ChecklistRules.MAX_ITEMS) return "Its checklist: " + named(checklist.items)
         return "Its checklist: ${ChecklistText.closed(checklist)}; open: " + named(checklist.open).ifEmpty { "none" }
     }
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskText.kt`, replace:
+
+```kotlin
+    fun steered(steer: Steer, step: Int, widened: String?, redactor: Redactor): Redacted {
+        val words = ScreenText.quoteWhole(Redacted.of(redactor, steer.text).text)
+        val at = if (step == 0) "before the first step" else "at step $step"
+        return Redacted.kestrel(listOfNotNull("$OWNER_ADDED (${steer.channel.wire}) $at: $words", widened).joinToString("\n"))
+    }
+```
+
+with:
+
+```kotlin
+    fun steered(steer: Steer, step: Int, widened: String?, redactor: Redactor): Redacted {
+        val at = if (step == 0) "before the first step" else "at step $step"
+        return Redacted.kestrel(listOfNotNull(added(steer, at, redactor), widened).joinToString("\n"))
+    }
+
+    // An owner's steer [at] a point of the goal, as the model reads it: his words redacted once, quoted and escaped, and
+    // never cut (design 7.3 of sub-project 7).
+    private fun added(steer: Steer, at: String, redactor: Redactor): String =
+        "$OWNER_ADDED (${steer.channel.wire}) $at: ${ScreenText.quoteWhole(Redacted.of(redactor, steer.text).text)}"
 ```
 
 In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/TaskRun.kt`, replace:
@@ -5972,7 +6057,7 @@ Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.AgentGoalTes
 Expected: PASS.
 
 Run: `scripts\gradle.ps1 :core:agent:test`
-Expected: BUILD SUCCESSFUL, G + 3 tests.
+Expected: BUILD SUCCESSFUL, G + 4 tests.
 
 Run: `scripts\gradle.ps1 --stop`
 
@@ -5980,7 +6065,7 @@ Run: `scripts\gradle.ps1 --stop`
 
 ```powershell
 git add core/agent/src/main/kotlin/dev/kestrel/agent/loop core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.kt
-git commit -m "feat(agent): a resumed goal's run starts with Kestrel's lines, its checklist as data (a long one by its open items) and what it did, and replays no routine" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "feat(agent): a resumed goal's run starts with Kestrel's lines, its checklist as data (a long one by its open items), what it did and the owner's earlier steering, and replays no routine" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
@@ -6209,7 +6294,7 @@ Counts: unchanged.
 - [ ] **Step 1: The whole gate, as CI runs it**
 
 Run: `scripts\gradle.ps1 :build-logic:convention:check check kestrelAudit`
-Expected: BUILD SUCCESSFUL. Then the count command of "Before you start" prints G₀ + 40, A₀ + 5 and E₀ + 1.
+Expected: BUILD SUCCESSFUL. Then the count command of "Before you start" prints G₀ + 41, A₀ + 5 and E₀ + 1.
 
 Run: `scripts\test-scripts.ps1`
 Expected: every test passes in both shells (this plan changes no script).
@@ -6245,7 +6330,7 @@ Add to `.superpowers/sdd/progress.md`, under "## Plan 7A": the build's commit on
 
 ## Counts at the end of plan 7A
 
-- `:core:agent`: G₀ + 40 (Task 2: 4, Task 3: 3, Task 4: 5, Task 5: 7, Task 6: 5, Task 7: 4, Task 8: 2, Task 9: 6, Task 10: 3, Task 11: 1).
+- `:core:agent`: G₀ + 41 (Task 2: 4, Task 3: 3, Task 4: 5, Task 5: 7, Task 6: 5, Task 7: 4, Task 8: 2, Task 9: 6, Task 10: 4, Task 11: 1).
 - `:app` JVM (with `app/src/testDebug`): A₀ + 5 (Task 7: 3, Task 8: 2).
 - `:tools:eval`: E₀ + 1 (Task 8).
 - `:core:safety` and the Pester tests: unchanged.
@@ -6285,8 +6370,8 @@ What plan 7B (`:core:conversation`) and the later plans consume, exactly as this
 
 **The run's request (Task 1, Task 3, Task 10, Task 11)**
 - `dev.kestrel.agent.TaskRequest(id, text, knownNames = emptySet(), conversation: Redacted? = null, ownerHistory: List<String> = emptyList(), carried: Set<Category> = emptySet(), checklist: Checklist? = null, resume: ResumeNote? = null, limits: GoalLimits = GoalLimits())` and `TaskRequest.CONVERSATION_HEADER = "This conversation so far:"`. `conversation` is `Redacted.kestrel(...)` of a block that starts with the header (and carries a continued conversation's note). `:core:agent` puts it into the context as it comes and never cuts it, so `ContextBlock` alone keeps it within its budget (2,000 tokens, `min(2,000, window ÷ 8)` for a local Ollama model, counted as `ScreenText.tokens` counts), in design 8.3's fill order, adding each part only while the block stays within the budget: (1) the newest record's request and answer (at most 400 characters each, cut further for a small local budget), end, apps (at most 5) and its checklist's line of counts (`ChecklistText.closed`); (2) its open items in the checklist's order, one per line such as `c4 [doing] Reply to Mila` (at most 20, by the rule of design 7.2), the rest as one line such as "and 7 more open items"; (3) its data notes, then its lines, then its ledger lines, each newest first, the rest counted on one line; (4) the older records, condensed, newest first, each whole, the rest left out with the line "(3 earlier commands of this conversation are left out; search_conversations finds them.)"; with it, the task message starts "The owner's new command: ". The context is `<test-mode note>\n\n<conversation>\n\n<memory>`, each part only when it exists. `ownerHistory` holds the owner's words of the conversation's earlier commands, answers and steering, as their records hold them; `carried` the allowance of its earlier commands and their steering (`TaskAllowance.from` of each, which `CommandRecord.allowance` stores by `Category.wire`). `OwnerWords.seeded` (internal) folds both into the run's first `TaskSafety`.
-- **A resumed run's owner words and allowance.** A resumed goal's run starts a new `TaskSafety`, so its request must bring everything that the goal's earlier rounds learned from the owner. Its `ownerHistory` holds, in this order, the owner's words of the conversation's earlier commands (their requests, answers and steering), then the goal's own inputs after its first command: the answers that he gave in its earlier rounds, its steering and its "continue" inputs; the first command itself is `text`, so it is not repeated. Its `carried` joins the allowance of the earlier commands and their steering with the allowance of the goal's own steering so far (`TaskAllowance.from` of each message, as the goal's record stores it); the run adds `text`'s own allowance itself. A steering message that resumes the goal is not in either: it reaches the run through `takeSteering()` at its first turn, which adds its words and allowance. `conversation` holds only the records of the conversation's earlier commands, never the open goal's own record, whose progress the resumed message gives through `checklist` and `ResumeNote.done`; the goal's earlier steering reaches the model through the checklist that the model updated after it (design 7.6).
-- `enum class ResumeCause(val words: String) { LIMIT, INTERRUPTION, RESTART }`; `data class ResumeNote(val after: ResumeCause, val done: List<String>)`: for a resume, `text` is the goal's first command as its record holds it, `checklist` the goal's checklist and `done` its ledger lines; the run traces no `Requested`, replays no routine and asks every confirmation again.
+- **A resumed run's owner words and allowance.** A resumed goal's run starts a new `TaskSafety`, so its request must bring everything that the goal's earlier rounds learned from the owner. Its `ownerHistory` holds, in this order, the owner's words of the conversation's earlier commands (their requests, answers and steering), then the goal's own inputs after its first command: the answers that he gave in its earlier rounds, its steering and its "continue" inputs; the first command itself is `text`, so it is not repeated. Its `carried` joins the allowance of the earlier commands and their steering with the allowance of the goal's own steering so far (`TaskAllowance.from` of each message, as the goal's record stores it); the run adds `text`'s own allowance itself. A steering message that resumes the goal is not in either: it reaches the run through `takeSteering()` at its first turn, which adds its words and allowance. `conversation` holds only the records of the conversation's earlier commands, never the open goal's own record, whose progress the resumed message gives through `checklist` and `ResumeNote.done`; the goal's earlier steering reaches the model as `ResumeNote.steered`'s lines in the resumed message.
+- `enum class ResumeCause(val words: String) { LIMIT, INTERRUPTION, RESTART }`; `data class ResumeNote(val after: ResumeCause, val done: List<String>, val steered: List<Steer> = emptyList())` (toString prints `steered=<n>`; Task 10): for a resume, `text` is the goal's first command as its record holds it, `checklist` the goal's checklist, `done` its ledger lines, and `steered` the owner's steering that the goal's earlier rounds took, oldest first, in its record's form (redacted once, each vault value by its kind's words). The resumed message names each steer on its own line after "What Kestrel did so far: …": `The owner added (<wire>) in an earlier round: "<words>"`, quoted and escaped, never cut, with no allowance sentence (its allowance reaches the run through `carried`). Steering that still waits in the goal's inbox reaches the run through `takeSteering()` before its first step, and is not in `steered`; the run traces no `Requested`, replays no routine and asks every confirmation again.
 - `dev.kestrel.agent.AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal: GoalPort, history: HistoryPort)`; `:app`'s `TaskStart(task, id, text, model, goal, history, selfChatAliases, acted, local, witness)` carries the two ports to `AppAgentEnvironment`.
 - `operator fun dev.kestrel.safety.TaskAllowance.plus(other: TaskAllowance): TaskAllowance`.
 - `dev.kestrel.agent.tools.Tools.SEARCH_CONVERSATIONS = "search_conversations"`, the last tool of `Tools.ALL`.
@@ -6295,7 +6380,7 @@ What plan 7B (`:core:conversation`) and the later plans consume, exactly as this
 ## Self-review
 
 - **Spec coverage.** The design's plan 7A row: `GoalPort` (Task 1), `Steer` and owner messages in `Conversation` (Task 4), `Checklist`, `ChecklistRules`, `update_checklist` and the finish rule (Tasks 1, 5, 6), `GoalLimits`, `Limits.nextRound()`, the limit question and the new `EndReason`s (Tasks 1, 7, 8), `HistoryPort` and `search_conversations` with its result format (Tasks 1, 9), `TaskRequest`'s new fields and `carried` joined into the allowance (Tasks 1, 3), the context's order (Task 3), `checkFront`'s wait for Kestrel's screen (Task 8), the interruption's end (Task 8), the system prompt's sentences (Task 11), the new `end=` values in the hook's answer (unchanged names, see "Changes to the design") and in `:tools:eval`'s reader (Task 8), and `AgentRunner` with no-op ports and today's limits (Tasks 1, 7). Design 8.1's traces (Task 2), 7.6's resume (Task 10), 12.1's owner words (Task 3), and 15.1's `TaskRun` cases: steering drained at the next turn (Task 4), steering words and allowance (Task 4), the limit question and its three answers (Task 7), `nextRound` (Task 7), `finish` refused with open items, also when a pause comes at the finish (Task 6), a done item only by a step that did something (Tasks 5, 6), `update_checklist` neutral for progress (Task 6), two updates in a row (Task 6), a long goal's checklist past 20 items (Tasks 5, 10), an interruption's report with its typed cause (Task 8), Kestrel's own screen at the port (Task 8), `TaskSafety` seeded by `ownerHistory` and the carried allowance with Standard mode still confirming and calls still handed over (Task 3), and `ChecklistRulesTest` (Task 5).
-- **The review of 2026-11-24.** I1: Task 6 (`ChecklistSteps.finishRefusal`, at the top of `TaskRun.finish`; `CompletionCheck` unchanged). I2: Tasks 5 and 6 (`Tools.ACTING`, `actedSteps`). I3: Tasks 2, 3 and 4 (`RunTrace`, `DialogueSteps`, `Questions`, `OwnerWords`); the checker's simulated `TaskRun.kt` has 946 lines, against 952 at `4c37cca0`. I4: "Interfaces for 7B" (steering that the run never drains; a resumed run's owner words and allowance). M1: Task 11. M2: Task 8 (`Interruption`). M3: Task 8 (`aTouchsCancellationCarriesItsCauseIntoTheReport`). M4: Task 4 (`ScreenText.quoteWhole`). The checklist's cap: Tasks 5, 6, 10 and 11, and "Changes to the design". The step's start for the bar (design 10.5): `GoalPort.stepStarted` in Tasks 1 and 2 and in "Interfaces for 7B". Second round: N1 (ids without an upper limit) and N2 (the 20-item refusal names the way past it) in Tasks 5 and 6; the specs' `c9b89882` and `eb727872` in Tasks 6, 7, 10 and 11 and in "Interfaces for 7B".
+- **The review of 2026-11-24.** I1: Task 6 (`ChecklistSteps.finishRefusal`, at the top of `TaskRun.finish`; `CompletionCheck` unchanged). I2: Tasks 5 and 6 (`Tools.ACTING`, `actedSteps`). I3: Tasks 2, 3 and 4 (`RunTrace`, `DialogueSteps`, `Questions`, `OwnerWords`); the checker's simulated `TaskRun.kt` has 946 lines, against 952 at `4c37cca0`. I4: "Interfaces for 7B" (steering that the run never drains; a resumed run's owner words and allowance). M1: Task 11. M2: Task 8 (`Interruption`). M3: Task 8 (`aTouchsCancellationCarriesItsCauseIntoTheReport`). M4: Task 4 (`ScreenText.quoteWhole`). The checklist's cap: Tasks 5, 6, 10 and 11, and "Changes to the design". The step's start for the bar (design 10.5): `GoalPort.stepStarted` in Tasks 1 and 2 and in "Interfaces for 7B". Plan 7B's request: `ResumeNote.steered` and its lines in Task 10. Second round: N1 (ids without an upper limit) and N2 (the 20-item refusal names the way past it) in Tasks 5 and 6; the specs' `c9b89882` and `eb727872` in Tasks 6, 7, 10 and 11 and in "Interfaces for 7B".
 - **Placeholders.** Every step that changes code shows the code; every command names its expected result.
 - **Type consistency.** `ChecklistRules.check(drafts, current, steps, nextId)` is called with the same four arguments in `ChecklistSteps`, and `ChecklistCheck.Saved(checklist, nextId, sent)` is read there; `TaskCancellation(reason, interruption)` in `AgentGoalTest`, `Agent.kt` and `TaskRun.cancelled`; `Questions.ask(question, kind)` in `DialogueSteps` and `TaskRun.checkLimits`; `Limits(clock, countsCredits, round)` in `TaskRun` and `LimitsTest`; `TaskStart(task, id, text, model, goal, history, …)` in `AgentRunner` and `AgentEnvironment`; `AgentPorts(…, goal, history)` in every construction; `HistoryText.of(result, zone)` in `HistorySteps` and `HistoryTextTest`.
 
