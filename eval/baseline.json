@@ -1,0 +1,212 @@
+{
+    "devices": {
+        "a71": {
+            "commit": "de4eeb7733f25bc52737f16003669bd9e60a8028",
+            "model": "gpt-6-luna",
+            "tasks": {
+                "dark-mode": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "screen-timeout": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "dnd": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "bluetooth-off": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "font-size": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "wifi-settings": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "battery-level": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "timer": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "calendar-add": {
+                    "passes": 0,
+                    "runs": 3
+                },
+                "calendar-read": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "contact-add": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "contact-number": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "contact-delete-declined": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "email-self": {
+                    "passes": 0,
+                    "runs": 1
+                },
+                "notification-read": {
+                    "passes": 0,
+                    "runs": 3
+                },
+                "firefox-url": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "youtube-search": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "maps-place": {
+                    "passes": 0,
+                    "runs": 3
+                },
+                "photo-latest": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "telegram-late": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "waze-home": {
+                    "passes": 1,
+                    "runs": 3
+                },
+                "firefox-wiki": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "telegram-photos": {
+                    "passes": 1,
+                    "runs": 1
+                },
+                "read-email": {
+                    "passes": 3,
+                    "runs": 3
+                }
+            }
+        },
+        "kestrel-api37": {
+            "commit": "de4eeb7733f25bc52737f16003669bd9e60a8028",
+            "model": "gpt-6-luna",
+            "tasks": {
+                "dark-mode": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "brightness": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "screen-timeout": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "bluetooth-off": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "font-size": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "wifi-settings": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "battery-level": {
+                    "passes": 1,
+                    "runs": 3
+                },
+                "two-settings": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "alarm": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "timer": {
+                    "passes": 2,
+                    "runs": 3
+                },
+                "calendar-add": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "calendar-read": {
+                    "passes": 0,
+                    "runs": 3
+                },
+                "contact-add": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "contact-number": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "contact-delete-declined": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "sms-read": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "email-self": {
+                    "passes": 0,
+                    "runs": 1
+                },
+                "notification-read": {
+                    "passes": 0,
+                    "runs": 3
+                },
+                "firefox-url": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "youtube-search": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "maps-place": {
+                    "passes": 0,
+                    "runs": 3
+                },
+                "photo-latest": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "hotspot": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "firefox-wiki": {
+                    "passes": 3,
+                    "runs": 3
+                },
+                "read-email": {
+                    "passes": 2,
+                    "runs": 3
+                }
+            }
+        }
+    }
+}
