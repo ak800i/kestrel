@@ -1,7 +1,7 @@
 {
     "devices": {
         "a71": {
-            "commit": "de4eeb7733f25bc52737f16003669bd9e60a8028",
+            "commit": "9ddf33854aaa43ecad522c9b5f83491076b231c0",
             "model": "gpt-6-luna",
             "tasks": {
                 "dark-mode": {
@@ -13,7 +13,7 @@
                     "runs": 3
                 },
                 "dnd": {
-                    "passes": 3,
+                    "passes": 0,
                     "runs": 3
                 },
                 "bluetooth-off": {
@@ -21,7 +21,7 @@
                     "runs": 3
                 },
                 "font-size": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 },
                 "wifi-settings": {
@@ -29,7 +29,7 @@
                     "runs": 3
                 },
                 "battery-level": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 },
                 "timer": {
@@ -37,7 +37,7 @@
                     "runs": 3
                 },
                 "calendar-add": {
-                    "passes": 0,
+                    "passes": 3,
                     "runs": 3
                 },
                 "calendar-read": {
@@ -45,7 +45,7 @@
                     "runs": 3
                 },
                 "contact-add": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 },
                 "contact-number": {
@@ -61,7 +61,7 @@
                     "runs": 1
                 },
                 "notification-read": {
-                    "passes": 0,
+                    "passes": 3,
                     "runs": 3
                 },
                 "firefox-url": {
@@ -73,7 +73,7 @@
                     "runs": 3
                 },
                 "maps-place": {
-                    "passes": 0,
+                    "passes": 3,
                     "runs": 3
                 },
                 "photo-latest": {
@@ -81,15 +81,15 @@
                     "runs": 3
                 },
                 "telegram-late": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 },
                 "waze-home": {
-                    "passes": 1,
+                    "passes": 2,
                     "runs": 3
                 },
                 "firefox-wiki": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 },
                 "telegram-photos": {
@@ -103,7 +103,7 @@
             }
         },
         "kestrel-api37": {
-            "commit": "de4eeb7733f25bc52737f16003669bd9e60a8028",
+            "commit": "9ddf33854aaa43ecad522c9b5f83491076b231c0",
             "model": "gpt-6-luna",
             "tasks": {
                 "dark-mode": {
@@ -123,7 +123,7 @@
                     "runs": 3
                 },
                 "font-size": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 },
                 "wifi-settings": {
@@ -131,7 +131,7 @@
                     "runs": 3
                 },
                 "battery-level": {
-                    "passes": 1,
+                    "passes": 3,
                     "runs": 3
                 },
                 "two-settings": {
@@ -151,7 +151,7 @@
                     "runs": 3
                 },
                 "calendar-read": {
-                    "passes": 0,
+                    "passes": 2,
                     "runs": 3
                 },
                 "contact-add": {
@@ -163,7 +163,7 @@
                     "runs": 3
                 },
                 "contact-delete-declined": {
-                    "passes": 3,
+                    "passes": 1,
                     "runs": 3
                 },
                 "sms-read": {
@@ -175,7 +175,7 @@
                     "runs": 1
                 },
                 "notification-read": {
-                    "passes": 0,
+                    "passes": 3,
                     "runs": 3
                 },
                 "firefox-url": {
@@ -187,11 +187,11 @@
                     "runs": 3
                 },
                 "maps-place": {
-                    "passes": 0,
+                    "passes": 3,
                     "runs": 3
                 },
                 "photo-latest": {
-                    "passes": 3,
+                    "passes": 2,
                     "runs": 3
                 },
                 "hotspot": {
@@ -199,11 +199,11 @@
                     "runs": 3
                 },
                 "firefox-wiki": {
-                    "passes": 3,
+                    "passes": 2,
                     "runs": 3
                 },
                 "read-email": {
-                    "passes": 2,
+                    "passes": 3,
                     "runs": 3
                 }
             }
