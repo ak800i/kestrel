@@ -14,9 +14,9 @@ import dev.kestrel.safety.Category
  *
  * Within a conversation (sub-project 7): [conversation] is the records block of its earlier commands, which goes into the
  * context after the test-mode note (design 8.4); [ownerHistory] are the owner's words of its earlier commands, answers
- * and steering, which count as his own text (D8); [carried] is the allowance of its earlier commands (D16); [checklist]
- * and [resume] are set when a goal resumes in a new run (design 7.6); and [limits] are one round's limits (D7). toString
- * prints only lengths and counts (D25).
+ * and steering, which count as his own text (D8); [carried] is the allowance of its earlier commands, of which only the
+ * categories of `TaskAllowance.CARRIES` count (D16); [checklist] and [resume] are set when a goal resumes in a new run
+ * (design 7.6); and [limits] are one round's limits (D7). toString prints only lengths and counts (D25).
  */
 data class TaskRequest(
     val id: String,

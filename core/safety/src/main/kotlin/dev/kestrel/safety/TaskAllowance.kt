@@ -41,6 +41,16 @@ class TaskAllowance(val categories: Set<Category>) {
     companion object {
         val NONE = TaskAllowance(emptySet())
 
+        /**
+         * The categories that carry from a conversation's earlier commands to its later ones: sending, calls and deleting,
+         * the three that the owner's words can ask for (D16 of sub-project 7). Typing screen text never carries, so data
+         * from an earlier result stays data (D8 of sub-project 7).
+         */
+        val CARRIES: Set<Category> = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
+
+        /** The allowance that [categories] of earlier commands carry: only those of [CARRIES]; any other is ignored. */
+        fun carried(categories: Set<Category>): TaskAllowance = TaskAllowance(categories intersect CARRIES)
+
         private val POSITIONS = setOf("and", "then", "please", "also", "kestrel")
         private val NOT_NAMES = setOf("me", "my", "mi", "meni", "the", "a", "an", "this", "that", "all", "it")
         private val MESSAGE_MARKS = setOf("that", "saying", "about", "da")

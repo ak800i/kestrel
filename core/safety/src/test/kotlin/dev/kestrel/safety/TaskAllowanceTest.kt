@@ -10,6 +10,12 @@ class TaskAllowanceTest {
     private fun allowed(request: String, knownNames: Set<String> = emptySet()) = TaskAllowance.from(request, knownNames).categories
 
     @Test
+    fun onlySendingCallsAndDeletingCarryToALaterCommand() {
+        assertEquals(setOf(Category.SENDING, Category.CALLS, Category.DELETING), TaskAllowance.carried(Category.entries.toSet()).categories)
+        assertEquals(TaskAllowance.NONE, TaskAllowance.carried(Category.entries.toSet() - TaskAllowance.CARRIES))
+    }
+
+    @Test
     fun theSixTasksOfTheDesign() {
         assertEquals(setOf(Category.SENDING), allowed("Send Ana a Viber message that I'm 10 minutes late"))
         assertEquals(emptySet<Category>(), allowed("Turn on hotspot"))

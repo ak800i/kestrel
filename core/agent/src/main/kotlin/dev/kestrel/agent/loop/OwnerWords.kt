@@ -15,7 +15,7 @@ internal object OwnerWords {
     /** The run's first safety: [task]'s words and allowance, with [names] the names that the allowance reads. */
     fun seeded(task: TaskRequest, names: Set<String>, memoryValues: List<String>): TaskSafety = task.ownerHistory.fold(
         TaskSafety(
-            allowance = TaskAllowance.from(task.text, names) + TaskAllowance(task.carried),
+            allowance = TaskAllowance.from(task.text, names) + TaskAllowance.carried(task.carried),
             ownerWords = Normalizer.words(task.text).toSet(),
             memoryValues = memoryValues,
             ownerDigits = listOf(TaskSafety.digitsOf(task.text)).filter { it.isNotEmpty() },

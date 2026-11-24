@@ -15,6 +15,7 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOverKind
+import dev.kestrel.safety.Mode
 import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -135,5 +136,19 @@ class AgentGoalTest {
         assertTrue(alone.owner.confirmations.single().question.contains("You didn't ask me to send anything."))
         assertEquals(HandOverKind.CALL, calling.owner.handOvers.single().kind)
         assertTrue(calling.screen.actions.isEmpty())
+    }
+
+    // D16 of sub-project 7: only sending, calls and deleting carry, so a carried typing_screen_text is no allowance.
+    @Test
+    fun aCarriedCategoryThatDoesNotCarryIsIgnored() = runTest {
+        val harness = Harness(Screens.chat("Mila Ilić", "Hi"), listOf(
+            call("type_text", "Type a message…", null, null, "text" to "See you at five", "reason" to "copy it", "category" to "typing_screen_text"),
+            fail(),
+        ), settings = AgentSettings(safety = SafetySettings(mode = Mode.RELAXED)))
+
+        harness.run(TaskRequest(Harness.ID, "And to Mila too", carried = setOf(Category.TYPING_SCREEN_TEXT)))
+
+        val asked = harness.owner.confirmations.single().question
+        assertTrue(asked, asked.startsWith("You didn't ask me to copy text from the screen."))
     }
 }
