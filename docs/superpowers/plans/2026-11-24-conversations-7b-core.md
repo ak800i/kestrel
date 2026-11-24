@@ -33,7 +33,7 @@ Code comments name this plan "plan 7B" and the design's sections as "design 6.2 
 
 A steering message that a run took and that an interruption then cut before the model acted on it would reach a resumed run only as the owner's words for safety (`ownerHistory`), not as an instruction, because a resumed run's task message names only the goal, its checklist and its ledger. So every steer that a goal received goes into its resumed rounds' task message, and plan 7A's Task 10 gives the message a place for them:
 - `data class ResumeNote(val after: ResumeCause, val done: List<String>, val steered: List<Steer> = emptyList())`, with `toString` printing `steered=${steered.size}`: the owner's steering that the goal's earlier rounds took, oldest first, in its record's form (redacted once, each vault value named by its kind's words).
-- The resumed task message gains one line per steer, after "What Kestrel did so far: …" and before "Look at the screen afresh; it may have changed.": `The owner added (<SteerChannel.wire>) in an earlier round: "<words>"`, its words redacted once, quoted and escaped as `TaskText.steered` does, never cut, and with no allowance sentence (the allowance reaches the run through `carried`).
+- The resumed task message gains one line per steer, after Kestrel's notes of what it did (`What Kestrel did so far, in its own notes: "<note>" · "<note>"`, each note quoted whole and escaped as data, or `What Kestrel did so far: nothing yet.`) and before "Look at the screen afresh; it may have changed.": `The owner added (<SteerChannel.wire>) in an earlier round: "<words>"`, its words redacted once, quoted and escaped as `TaskText.steered` does, never cut, and with no allowance sentence (the allowance reaches the run through `carried`).
 - A test in `AgentGoalTest`: a resume with two steers has both lines, in order, in its task message.
 
 Steering that still waits in the goal's inbox reaches the run through `GoalPort.takeSteering()` before its first step, as before, and is not in `steered`.
@@ -7096,7 +7096,7 @@ class ConversationEngineTest {
         val resumed = environment.model.requests.first().text()
         assertTrue(resumed.contains("You are continuing this goal after a restart of Kestrel."))
         assertTrue(resumed.contains("c2 [todo] \"Archive the newsletters\""))
-        assertTrue(resumed.contains("What Kestrel did so far: opened Gmail."))
+        assertTrue(resumed.contains("What Kestrel did so far, in its own notes: \"opened Gmail\"\n"))
         assertTrue(resumed.contains("The owner added (typed) before the first step: \"only the ones from 2025\""))
         assertNull(engine.view.value.goal)
     }

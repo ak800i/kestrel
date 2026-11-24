@@ -585,7 +585,7 @@ What Kestrel did so far, in its own notes: "opened Viber" · "sent the message t
 Look at the screen afresh; it may have changed.
 ```
 
-The checklist's texts and Kestrel's notes are quoted and escaped as data, as screen text is: a note holds labels from the screen and contacts' names, so a line break in a chat's name cannot start a line that reads as Kestrel's or the owner's. Without notes the line is "What Kestrel did so far: nothing yet.".
+The checklist's texts and Kestrel's notes are data: each is quoted and escaped the way screen text is, and a note is never cut. A note holds labels from the screen and contacts' names, so a line break in a chat's name cannot start a line that reads as Kestrel's or the owner's; a note's own quotes, such as those around a screen's title, are escaped too. Without notes the line is "What Kestrel did so far: nothing yet.".
 
 A steering command that resumed the goal follows as an owner message. The first observation is fresh. Kestrel's code repeats no earlier step; the checklist and the ledger tell the model what is done. A share that was confirmed but not seen sent is listed as "tried, not seen sent", as `pendingLines()` says today. Every confirmation is asked again (D8).
 
