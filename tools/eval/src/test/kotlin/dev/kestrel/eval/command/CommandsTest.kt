@@ -119,7 +119,7 @@ class CommandsTest {
     fun recordBaselineIsRefusedBeforeAnyRunWhenKestrelsBuildIsNotHeadsKestrel() {
         val older = "b".repeat(40)
         // A build of another commit whose changes reach Kestrel, and a build of HEAD with uncommitted changes.
-        for ((build, diff) in listOf("commit=$older dirty=0" to "app/src/main/kotlin/dev/kestrel/app/MainActivity.kt\ntools/eval/build.gradle.kts\n", "commit=${FakeEnvironment.COMMIT} dirty=1" to "")) {
+        for ((build, diff) in listOf("commit=$older dirty=0" to "app/src/main/kotlin/dev/kestrel/app/MainActivity.kt\n", "commit=${FakeEnvironment.COMMIT} dirty=1" to "")) {
             val fake = FakeEnvironment()
             fake.build = build
             fake.gitDiff = diff

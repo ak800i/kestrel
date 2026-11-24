@@ -32,9 +32,9 @@ import kotlin.time.Duration.Companion.seconds
  * kestrel-api37 (once without a model, 5 times live, by default). With [resume], a suite goes on in the folder of one
  * that stopped ([Resume]), and only while the Kestrel install that ran it is still the device's: it keeps the tasks
  * whose runs all have a line that is not `reason=stopped`, runs the rest of the last task that was cut short (all of it,
- * and names the kept tasks, when HEAD changed the tool since the folder's runs), then every other task whole after its
- * earlier lines were dropped, and stops when a task's runs name another model than the folder's, whose lines it takes out
- * again; its report is of the whole folder. With [recordBaseline], it runs only HEAD's Kestrel ([checkBaselineBuild]).
+ * and names the kept tasks, when HEAD differs from the folder's commit in paths that change no run of Kestrel), then
+ * every other task whole after its earlier lines were dropped, and stops when a task's runs name another model than the
+ * folder's, whose lines it takes out again; its report is of the whole folder. With [recordBaseline], it runs only HEAD's Kestrel ([checkBaselineBuild]).
  * With [egress], each call that makes runs captures them ([Capture]) as a part of the folder's egress check
  * ([EgressParts]); a resumed folder that has parts is captured again, and runs that no part covers make an unknown part.
  * Returns 0 when no run failed (with [resume], of the whole folder) and the folder's egress check, if any, passed, else 1.
@@ -81,7 +81,7 @@ class SeriesCommand(
         if (resumption != null && resumption.runs.isNotEmpty()) resumed.folder.rewrite(resumption.kept, stamp)
         if (resumed != null && !resumed.sameCommit && resumption!!.kept.isNotEmpty()) {
             session.console.line(
-                "${resumption.kept.joinToString { it.task }} ran at ${resumed.commit}, and HEAD $head changed the tool since: judge whether their " +
+                "${resumption.kept.joinToString { it.task }} ran at ${resumed.commit}, and HEAD $head changed the tool, its baseline or the documentation since: judge whether their " +
                     "results still hold before --record-baseline, or remove their blocks from runs.txt and resume again.",
             )
         }
@@ -165,8 +165,8 @@ class SeriesCommand(
 
     /**
      * `--record-baseline` records only HEAD's Kestrel (review I2 of plan 6B): the installed debug build must come from a
-     * worktree without changes outside the tool and the documentation, at a commit that differs from HEAD at most there
-     * ([Resume.NEUTRAL]). A build that reports no commit, from before its debug build wrote one, gets a warning instead.
+     * worktree without changes in paths that can change a run of Kestrel, at a commit that differs from HEAD at most
+     * outside them ([Resume.KESTREL_PATHS]). A build that reports no commit, from before its debug build wrote one, gets a warning instead.
      */
     private fun checkBaselineBuild(build: KestrelBuild?, head: String, session: Session) {
         val commit = build?.commit
@@ -176,7 +176,7 @@ class SeriesCommand(
         }
         val fix = "install HEAD's build with scripts\\install.ps1 and run a new suite."
         if (build.dirty == true) {
-            throw Refusal("--record-baseline records only HEAD's Kestrel, and the installed build was built at $commit with changes outside tools/eval and docs; $fix")
+            throw Refusal("--record-baseline records only HEAD's Kestrel, and the installed build was built at $commit with changes that can change its runs; $fix")
         }
         if (commit == head) return
         val changed = Resume.kestrelChanges(environment, commit, head)

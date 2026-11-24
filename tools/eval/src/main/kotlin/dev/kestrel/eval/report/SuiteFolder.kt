@@ -84,8 +84,8 @@ class SuiteFolder private constructor(val path: Path, private val text: List<Str
      * What a resume of the suite's [tasks] (each with its number of runs now) does: a task whose block is complete with
      * that number keeps its lines; the folder's last block, when it was cut short, runs on from its first run without a
      * line, first; every other task runs whole, in the suite's order, and its earlier lines are dropped. Without
-     * [sameCommit], when HEAD changed the tool since the folder's runs, the cut-short block runs whole too, because it is
-     * usually the task whose failure the tool was just fixed for.
+     * [sameCommit], when HEAD differs from the folder's commit in paths that change no run of Kestrel, the cut-short
+     * block runs whole too, because it is usually the task whose failure the tool was just fixed for.
      */
     fun resume(tasks: List<Pair<String, Int>>, sameCommit: Boolean = true): Resumption {
         val counts = tasks.toMap()

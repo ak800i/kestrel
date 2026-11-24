@@ -12,7 +12,7 @@ import java.nio.file.Files
  * This computer and a scripted kestrel-api37 for the tests of the commands: Kestrel and `:testapp` installed, its
  * accessibility service on, listening, test mode on, a Copilot profile and one Google account, and a task that ends
  * FINISHED; [processes] records the local programs, `git rev-parse HEAD` answers a fixed commit, `git diff` answers
- * [gitDiff] and `git log -g` answers [reflog]. Kestrel's build was installed at [installed], and the `state` hook names
+ * [gitDiff], as git names the changed paths of Kestrel's ([Resume.KESTREL_PATHS]), and `git log -g` answers [reflog]. Kestrel's build was installed at [installed], and the `state` hook names
  * its commit and dirty flag in [build].
  */
 class FakeEnvironment {

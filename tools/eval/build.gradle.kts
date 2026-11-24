@@ -16,3 +16,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
 }
+
+tasks.test {
+    // ResumeTest asks git about the repository's own .gitattributes, which marks the paths that change no run of Kestrel.
+    inputs.file("../../.gitattributes").withPathSensitivity(PathSensitivity.NONE).withPropertyName("gitattributes")
+}

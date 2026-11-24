@@ -26,6 +26,8 @@ tasks.test {
     // AuditRulesTest also reads the project's own rules and the models' manifest.
     inputs.file("../../audit/rules.txt").withPathSensitivity(PathSensitivity.NONE).withPropertyName("auditRules")
     inputs.file("../../models/manifest.json").withPathSensitivity(PathSensitivity.NONE).withPropertyName("modelManifest")
+    // BuildCommitTaskTest asks git about the repository's own .gitattributes, which marks the paths that change no run of Kestrel.
+    inputs.file("../../.gitattributes").withPathSensitivity(PathSensitivity.NONE).withPropertyName("gitattributes")
 }
 
 gradlePlugin {

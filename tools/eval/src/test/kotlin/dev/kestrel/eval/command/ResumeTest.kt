@@ -99,21 +99,46 @@ class ResumeTest {
     @Test
     fun aCommitThatChangedMoreThanTheToolIsRefusedAndOneThatChangedOnlyTheToolGoesOn() {
         val older = "a".repeat(40)
-        fake.gitDiff = "tools/eval/src/main/kotlin/dev/kestrel/eval/task/CalendarSteps.kt\napp/src/main/kotlin/dev/kestrel/app/MainActivity.kt\n"
+        fake.gitDiff = "app/src/main/kotlin/dev/kestrel/app/MainActivity.kt\n"
         assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--resume", halfDone(older).toString()))
         assertTrue(fake.output.contains("app/src/main/kotlin/dev/kestrel/app/MainActivity.kt"))
         assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
 
-        fake.gitDiff = "tools/eval/src/main/kotlin/dev/kestrel/eval/task/CalendarSteps.kt\ndocs/superpowers/plans/plan.md\nREADME.md\n"
+        fake.gitDiff = ""
         assertEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--resume", halfDone(older).toString()))
-        assertTrue(fake.processes.contains(listOf("git", "-C", fake.root.toString(), "diff", "--name-only", older, commit)))
+        assertTrue(fake.processes.contains(listOf("git", "-C", fake.root.toString(), "diff", "--name-only", older, commit) + Resume.KESTREL_PATHS))
         assertEquals(commit, SuiteCall.read(fake.root.resolve("eval-results").resolve("kestrel-api37-20261124-100000"))!!.commit)
+    }
+
+    @Test
+    fun onlyThePathsThatGitattributesMarksNeutralChangeNoKestrel() {
+        val repository = TestRepository()
+        repository.write("app/src/main/kotlin/A.kt", "1")
+        repository.write("eval/baseline.json", "{}")
+        repository.write("tools/eval/src/main/kotlin/T.kt", "1")
+        repository.write("docs/superpowers/plans/p.md", "1")
+        repository.write("README.md", "1")
+        val first = repository.commit()
+        // As when the first device's part of the baseline is committed before the other device's folder is resumed.
+        repository.write("eval/baseline.json", "{\"devices\":{}}")
+        repository.write("tools/eval/src/main/kotlin/T.kt", "2")
+        repository.write("docs/superpowers/plans/p.md", "2")
+        repository.write("core/agent/NOTES.md", "new")
+        val neutral = repository.commit()
+
+        assertEquals(emptyList<String>(), Resume.kestrelChanges(repository.environment, first, neutral))
+
+        repository.write("app/src/main/kotlin/A.kt", "2")
+        repository.write("eval/other.json", "{}")
+        val kestrel = repository.commit()
+        assertEquals(listOf("app/src/main/kotlin/A.kt", "eval/other.json"), Resume.kestrelChanges(repository.environment, neutral, kestrel))
     }
 
     @Test
     fun aResumeAcrossAToolCommitRunsTheCutShortTaskFromItsFirstRunAndNamesTheKeptTasks() {
         val older = "a".repeat(40)
-        fake.gitDiff = "tools/eval/src/main/kotlin/dev/kestrel/eval/task/ClockSteps.kt\n"
+        // The commits differ only in the tool, so git names no path of Kestrel's.
+        fake.gitDiff = ""
         val folder = folder(
             "kestrel-api37-20261124-100000", SuiteCall("kestrel-api37", live = false, runs = 2, tasks = pair, commit = older),
             "2026-11-24 10:00:00\tsuite\tstand-in-hotspot on kestrel-api37, 2 runs", line("stand-in-hotspot", 1), line("stand-in-hotspot", 2),
@@ -159,7 +184,7 @@ class ResumeTest {
         fake.gitDiff = "core/agent/src/main/kotlin/dev/kestrel/agent/Agent.kt\n"
 
         assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "R58N66RVD7Z", "--live", "--resume", legacy.toString()))
-        assertTrue(fake.processes.contains(listOf("git", "-C", fake.root.toString(), "diff", "--name-only", "a".repeat(40), commit)))
+        assertTrue(fake.processes.contains(listOf("git", "-C", fake.root.toString(), "diff", "--name-only", "a".repeat(40), commit) + Resume.KESTREL_PATHS))
         fake.reflog = ""
         assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "R58N66RVD7Z", "--live", "--resume", legacy.toString()))
         assertTrue(fake.output.contains("no commit"))

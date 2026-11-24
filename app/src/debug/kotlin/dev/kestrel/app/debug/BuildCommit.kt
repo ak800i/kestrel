@@ -3,8 +3,9 @@ package dev.kestrel.app.debug
 import android.content.Context
 
 /**
- * The commit of the worktree that this debug build came from, and whether that worktree had changes outside the tool and
- * the documentation, which the debug build writes into its assets as "<commit> <0|1>" (BuildCommitTask of build-logic).
+ * The commit of the worktree that this debug build came from, and whether that worktree had changes outside the paths
+ * that the repository's `.gitattributes` marks `kestrel-neutral` (the task suite's tool, its baseline and the
+ * documentation), which the debug build writes into its assets as "<commit> <0|1>" (BuildCommitTask of build-logic).
  * The hook `state` answers them as `commit=<commit> dirty=<0|1>`, or `commit=unknown dirty=unknown` when the asset is
  * missing or malformed, so that `:tools:eval` can tell which Kestrel ran a suite (review I2 of plan 6B).
  */

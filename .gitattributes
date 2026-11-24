@@ -4,3 +4,11 @@
 *.jar binary
 *.so binary
 *.png binary
+
+# The paths whose changes change no run of Kestrel: the task suite's tool, its baseline, the documentation and Markdown
+# files. This is their one definition: a debug build's dirty flag (build-logic's BuildCommitTask) and the commits that
+# :tools:eval compares (Resume.kestrelChanges) leave them out through git's pathspec ':(exclude,attr:kestrel-neutral)'.
+tools/eval/** kestrel-neutral
+eval/baseline.json kestrel-neutral
+docs/** kestrel-neutral
+*.md kestrel-neutral
