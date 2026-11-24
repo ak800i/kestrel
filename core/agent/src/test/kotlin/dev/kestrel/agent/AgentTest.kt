@@ -3,6 +3,7 @@ package dev.kestrel.agent
 import dev.kestrel.agent.loop.ScreenSteps
 import dev.kestrel.agent.loop.TaskRun
 import dev.kestrel.agent.loop.TaskText
+import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
@@ -697,6 +698,41 @@ class AgentTest {
             settings = AgentSettings(safety = SafetySettings(testMode = false), agentFree = AgentFreeApps(added = setOf("com.example.bank"))))
         assertEquals(EndReason.AGENT_FREE, bank.run("Check my balance").end)
         assertTrue(bank.model.requests.isEmpty())
+    }
+
+    // Kestrel's own screen in front of the finish's fresh look is waited for as before every observation: when it stays, or
+    // is still in front after the wait, the task stops as interrupted, not unverified, and its route notes get no strike;
+    // when it leaves, the finish is checked on the screen behind it (design 10.2 of sub-project 7).
+    @Test
+    fun kestrelsOwnScreenAtTheFinishIsWaitedForAndInterruptsTheTaskWithoutAStrike() = runTest {
+        val note = RouteNote(Screens.MESSENGER, "tap \"Ana Petrović\"", "0.9", "en", proposals = 2)
+        suspend fun finishBehindKestrel(vararg leaves: Boolean, behind: ScreenSnapshot? = null): Pair<TaskReport, Int> {
+            val harness = Harness(Screens.chats(), listOf(
+                call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+                call("say", null, null, null, "text" to "Almost done."),
+                finish("Opened.", "Hi"),
+            ))
+            harness.screen.onTap("Ana Petrović", Screens.chat("Ana Petrović", "Hi"))
+            harness.memory.notes[Screens.MESSENGER] = listOf(note)
+            harness.owner.onSay = { harness.screen.current = Screens.app(AgentFreeApps.KESTREL, "Safety") }
+            harness.owner.leaves += leaves.toList()
+            harness.owner.onLeave = { behind?.let { harness.screen.current = it } }
+            val report = harness.run("Open Ana's chat in Kestrel fixtures")
+            return report to harness.memory.notes[Screens.MESSENGER]!!.single().strikes
+        }
+
+        val (stayed, stayedStrikes) = finishBehindKestrel()
+        assertEquals(EndReason.INTERRUPTED, stayed.end)
+        assertEquals(Interruption.KESTREL_SCREEN, stayed.interruption)
+        assertEquals(0, stayedStrikes)
+
+        val (cameBack, cameBackStrikes) = finishBehindKestrel(true)
+        assertEquals(EndReason.INTERRUPTED, cameBack.end)
+        assertEquals(Interruption.KESTREL_SCREEN, cameBack.interruption)
+        assertEquals(0, cameBackStrikes)
+
+        val (left, _) = finishBehindKestrel(true, behind = Screens.chat("Ana Petrović", "Hi"))
+        assertEquals(EndReason.FINISHED, left.end)
     }
 
     @Test
