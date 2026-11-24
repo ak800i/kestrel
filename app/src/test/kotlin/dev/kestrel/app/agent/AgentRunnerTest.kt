@@ -5,6 +5,7 @@ import dev.kestrel.agent.AgentSettings
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.NoEyes
 import dev.kestrel.agent.port.OwnerPort
@@ -34,6 +35,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -418,5 +420,33 @@ class AgentRunnerTest {
 
         val ended = runner.ended(1)!!
         assertEquals(listOf(2, 1), listOf(ended.touches, ended.signals))
+    }
+
+    @Test
+    fun anInstalledWitnessGetsTheTasksOptionsAndItsEvidenceIsTheTasksEnd() = runTest {
+        val given = mutableListOf<Map<String, String>>()
+        val runner = runner(options = mapOf("marker" to "maple heron"))
+        runner.witnesses = { options ->
+            given += options
+            object : TaskWitness {
+                override fun said(text: String) = Unit
+
+                override fun watch(data: DataPort): DataPort = data
+
+                override val evidence: TaskEvidence get() = TaskEvidence(listOf("Opening Viber."), markerInData = true)
+            }
+        }
+
+        runner.run(1, "open Viber")
+        advanceUntilIdle()
+
+        assertEquals(listOf(mapOf("marker" to "maple heron")), given)
+        assertEquals(TaskEvidence(listOf("Opening Viber."), markerInData = true), runner.ended(1)!!.evidence)
+        // Without an installed witness, as in a release build, a task observes nothing.
+        val plain = runner()
+        plain.run(2, "open Viber")
+        advanceUntilIdle()
+        assertSame(TaskWitness.NONE, starts.last().witness)
+        assertEquals(TaskEvidence(), plain.ended(2)!!.evidence)
     }
 }

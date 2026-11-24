@@ -14,9 +14,9 @@ import android.os.Bundle
  * (design spec, Appendix A): a notification with a long text, which the shade can expand, and an action. With the extra
  * `cancel` it removes the notification instead. With the extra `headsUp` it posts a second notification on a channel of
  * high importance, which Android shows as a heads-up, with [MARKER] in its text, which no observation may hold (design
- * D9 of sub-project 5). With the extra `marker` it posts a notification titled "Kestrel test <marker>", which
- * :tools:eval's notification-read reads back (design D17 of sub-project 6). The tests grant the test app the notification
- * permission.
+ * D9 of sub-project 5). With the extra `marker` it posts a notification titled "Kestrel test <marker>" whose text is "A
+ * reminder about <marker>.", which :tools:eval's notification-read reads back (design D17 of sub-project 6). The tests
+ * grant the test app the notification permission.
  */
 class NotificationActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,7 +33,8 @@ class NotificationActivity : Activity() {
                 Notification.Builder(this, CHANNEL)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle("Kestrel test ${intent.getStringExtra(EXTRA_MARKER)}")
-                    .setContentText("A test notification of Kestrel's evaluation.")
+                    // The marker is in the body too, so that a reply that reads the body passes (plan 6B-basefix T4).
+                    .setContentText("A reminder about ${intent.getStringExtra(EXTRA_MARKER)}.")
                     .build(),
             )
         } else if (intent.getBooleanExtra(EXTRA_HEADS_UP, false)) {

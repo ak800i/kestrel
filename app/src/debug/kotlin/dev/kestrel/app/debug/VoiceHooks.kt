@@ -63,7 +63,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
         if (given != null) {
             if (event !is Event.Heard) throw HookError("only a transcript takes a tag; add --es event heard")
             val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
-            tag(graph, given, event, taskOptions(intent.getStringExtra(EXTRA_MODEL), live))
+            tag(graph, given, event, taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER)))
         }
         graph.listening.send(event)
         return if (given != null) "sent $name tag=$given" else "sent $name"
@@ -274,6 +274,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
             if (listening.steps == null) {
                 listening.steps = { heard, before, step -> tags.onStep(heard, before, step)?.let { tasks.put(it.task, it.options) } }
                 listening.taskOptions = tasks::take
+                // Each task's witness keeps what it said and watches its data tools for the run's marker (plan 6B-basefix).
+                graph.agent.witnesses = { options -> DebugTaskWitness.open(options) }
             }
             if (!tags.register(tag, event, readOf(event.text, event.named), options)) {
                 throw HookError("the tag $tag is in use; give each transcript a new tag")
@@ -282,11 +284,13 @@ internal class VoiceHooks(private val graph: AppGraph) {
 
         /**
          * The options that a tagged transcript passes to the task that it starts, from the hook's extras: --es model and
-         * --ez live, which sub-project 5's AgentRunner reads (its design's "Shared files and anchors", item 2).
+         * --ez live, which sub-project 5's AgentRunner reads (its design's "Shared files and anchors", item 2), and --es
+         * marker, a run's marker, which the task's [DebugTaskWitness] watches for (plan 6B-basefix).
          */
-        fun taskOptions(model: String?, live: Boolean?): Map<String, String> = buildMap {
+        fun taskOptions(model: String?, live: Boolean?, marker: String? = null): Map<String, String> = buildMap {
             model?.let { put("model", it) }
             live?.let { put("live", it.toString()) }
+            marker?.takeIf { it.isNotBlank() }?.let { put(DebugTaskWitness.MARKER, it) }
             // sub-project 5B
         }
 
@@ -332,5 +336,6 @@ internal class VoiceHooks(private val graph: AppGraph) {
         private const val EXTRA_QUIET = "quiet"
         private const val EXTRA_MODEL = "model"
         private const val EXTRA_LIVE = "live"
+        private const val EXTRA_MARKER = "marker"
     }
 }

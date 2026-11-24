@@ -47,6 +47,7 @@ class HookRulesTest {
     fun aTasksOptionsAreTheGivenExtrasAndAreReadOnce() {
         assertEquals(emptyMap<String, String>(), VoiceHooks.taskOptions(model = null, live = null))
         assertEquals(mapOf("model" to "test-model", "live" to "false"), VoiceHooks.taskOptions(model = "test-model", live = false))
+        assertEquals(mapOf(DebugTaskWitness.MARKER to "maple heron"), VoiceHooks.taskOptions(model = null, live = null, marker = "maple heron"))
 
         val store = TaskOptions()
         store.put(3, mapOf("live" to "true"))

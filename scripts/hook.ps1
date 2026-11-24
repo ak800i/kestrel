@@ -23,13 +23,13 @@
 #                                           off also stops a restore of the stored mode and stores Off, also while
 #                                           Kestrel is off, so that Kestrel does not come back at the next start of
 #                                           its process
-#   voice -Send heard -Text 'text' [-Named] [-Tag k [-Model id] [-Live]]
+#   voice -Send heard -Text 'text' [-Named] [-Tag k [-Model id] [-Live] [-Marker 'words']]
 #                                           sends a transcript, as if Kestrel had heard it; -Named as if the keyword
 #                                           spotter had heard "Kestrel" at its start; -Tag links the tag k (1 to 32
 #                                           letters, digits, '-' and '_', new in Kestrel's process) to it, for
-#                                           voice-state -Tag; -Model and -Live go with a task that the transcript
-#                                           starts, for sub-project 5's agent. On a phone, "yes, call" is refused and
-#                                           never sent
+#                                           voice-state -Tag; -Model, -Live and -Marker go with a task that the
+#                                           transcript starts, for sub-project 5's agent (-Marker for agent-task's
+#                                           markerInData=). On a phone, "yes, call" is refused and never sent
 #   voice-state -Tag k                      what the transcript with the tag k did: its role (pending, command, task,
 #                                           answer, cancel or none), its command's and its task's numbers, the
 #                                           command's kind and outcome, whether it asks,
@@ -234,7 +234,10 @@
 #                                           holds 2025550143, but "58 percent, about 7 hours" does not hold 587;
 #                                           ownerTouches= and signals= count the owner's touches that the touch watcher
 #                                           reported during the task and the signals among them without a finger (branch
-#                                           B's, a cancelled gesture)
+#                                           B's, a cancelled gesture). The marker and the digits count in the spoken
+#                                           reply and in what the task said with say; with -Marker also markerSaid=1
+#                                           when a say text held it, and markerInData=1 when a data tool's result held
+#                                           the marker that voice -Marker gave the task (none when it gave none)
 #   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category]
 #                                           answers the open question of that task as the owner's voice would, and ends its
 #                                           hand-over with continue or cancel; refused when that task asks nothing. With

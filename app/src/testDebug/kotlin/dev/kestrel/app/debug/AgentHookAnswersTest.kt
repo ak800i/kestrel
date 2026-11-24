@@ -4,6 +4,7 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.app.agent.AgentRunner
+import dev.kestrel.app.agent.TaskEvidence
 import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
@@ -33,7 +34,7 @@ class AgentHookAnswersTest {
 
         assertEquals(
             "state=done end=FINISHED steps=5 workMs=41000 credits=0.50 confirmed=1 unconfirmed=0 shareItems=0 recipient=match marker=1 " +
-                "beforeTestMode=0 model=scripted-light in=5000 out=250 cacheRead=2500 cacheWrite=0 ownerTouches=2 signals=1",
+                "beforeTestMode=0 model=scripted-light in=5000 out=250 cacheRead=2500 cacheWrite=0 ownerTouches=2 signals=1 markerSaid=0 markerInData=none",
             line,
         )
         assertFalse(line.contains("Ana"))
@@ -190,5 +191,18 @@ class AgentHookAnswersTest {
         assertEquals("pick-number", AgentHookAnswers.question(AnswerKind.PICK_NUMBER))
         assertEquals("free", AgentHookAnswers.question(AnswerKind.FREE))
         assertEquals("yes-no", AgentHookAnswers.question(AnswerKind.YES_NO))
+    }
+
+    @Test
+    fun theMarkerAndTheDigitsCountAlsoInWhatKestrelSaidDuringTheTask() {
+        val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 2)
+        val evidence = TaskEvidence(listOf("Kestrel test maple heron: a reminder about maple heron.", "Your battery is at 87 percent."), markerInData = true)
+
+        val line = AgentHookAnswers.result(AgentRunner.Ended(report, "I read your notifications.", evidence = evidence), "maple heron", null, "87")
+
+        assertTrue(line, line.contains(" marker=1 "))
+        assertTrue(line, line.endsWith(" ownerTouches=0 signals=0 markerSaid=1 markerInData=1 digits=1"))
+        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, "Kestrel test maple heron."), "maple heron", null).endsWith(" markerSaid=0 markerInData=none"))
+        assertFalse(line.contains("reminder"))
     }
 }

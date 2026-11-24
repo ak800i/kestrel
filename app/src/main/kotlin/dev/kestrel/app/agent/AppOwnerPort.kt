@@ -88,6 +88,8 @@ internal class AppOwnerPort(
     private val signals: HandOverSignals,
     private val askAndroid: suspend (List<String>) -> PermissionEnd,
     private val granted: (List<String>) -> PermissionEnd,
+    // What the debug build observes of the task, which hears every say text too (plan 6B-basefix).
+    private val witness: TaskWitness = TaskWitness.NONE,
     private val audioSettleMillis: Long = AUDIO_SETTLE_MILLIS,
     private val report: (String, Throwable) -> Unit = { what, error -> logFailure(what, error) },
 ) : TaskOwner {
@@ -118,7 +120,10 @@ internal class AppOwnerPort(
     override var asking: AnswerKind? = null
         private set
 
-    override suspend fun say(text: String) = send(Event.TaskSays(task, text))
+    override suspend fun say(text: String) {
+        witness.said(text)
+        send(Event.TaskSays(task, text))
+    }
 
     override suspend fun ask(question: String, kind: AnswerKind): Answer = questions.withLock {
         screen.forgetOwnActions()

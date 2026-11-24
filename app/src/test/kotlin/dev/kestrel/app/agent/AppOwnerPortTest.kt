@@ -3,6 +3,7 @@ package dev.kestrel.app.agent
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ConfirmEnd
+import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.PermissionEnd
@@ -326,5 +327,25 @@ class AppOwnerPortTest {
         owner.answered(null)
         assertEquals(Answer.Silence, number.await())
         assertNull(owner.asking)
+    }
+
+    @Test
+    fun whatKestrelSaysGoesToTheTasksWitnessToo() = runTest {
+        val heard = mutableListOf<String>()
+        val witness = object : TaskWitness {
+            override fun said(text: String) {
+                heard += text
+            }
+
+            override fun watch(data: DataPort): DataPort = data
+
+            override val evidence: TaskEvidence get() = TaskEvidence(heard.toList())
+        }
+        val witnessed = AppOwnerPort(1, { sent += it }, screen, audio, signals, { android.await() }, { PermissionEnd.PARTLY }, witness = witness)
+
+        witnessed.say("Your battery is at 87 percent.")
+
+        assertEquals(listOf<Event>(Event.TaskSays(1, "Your battery is at 87 percent.")), sent)
+        assertEquals(listOf("Your battery is at 87 percent."), heard)
     }
 }

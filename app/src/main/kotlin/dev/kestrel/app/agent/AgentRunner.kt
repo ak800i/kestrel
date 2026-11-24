@@ -64,10 +64,18 @@ internal class AgentRunner(
     /**
      * How task number n ended, for the debug hook `agent-task -Result`: its report, the sentence that Kestrel said at its
      * end, the owner's touches that the watcher reported during the task ([touches]) and how many of them were signals
-     * without a finger ([signals]: branch B's, or a cancelled gesture of Kestrel's).
+     * without a finger ([signals]: branch B's, or a cancelled gesture of Kestrel's), and what the task's witness observed
+     * ([evidence]; empty in a release build).
      */
-    internal data class Ended(val report: TaskReport, val spoken: String, val touches: Int = 0, val signals: Int = 0) {
-        override fun toString(): String = "Ended(report=$report, spoken=${spoken.length} characters, touches=$touches, signals=$signals)"
+    internal data class Ended(
+        val report: TaskReport,
+        val spoken: String,
+        val touches: Int = 0,
+        val signals: Int = 0,
+        val evidence: TaskEvidence = TaskEvidence(),
+    ) {
+        override fun toString(): String =
+            "Ended(report=$report, spoken=${spoken.length} characters, touches=$touches, signals=$signals, evidence=$evidence)"
     }
 
     /** Debug builds only: the model that the hook `agent-script` or a device test installed (design D28). */
@@ -77,6 +85,13 @@ internal class AgentRunner(
     /** Debug builds only: the self-chat aliases that the hook `agent-settings` set (design D18); empty otherwise. */
     @Volatile
     internal var selfChatAliases: Map<String, String> = emptyMap()
+
+    /**
+     * Debug builds only: makes the witness of each task from the task's options (plan 6B-basefix), which the debug hooks
+     * install with the task options' seam. Null in a release build, whose tasks get [TaskWitness.NONE].
+     */
+    @Volatile
+    internal var witnesses: ((options: Map<String, String>) -> TaskWitness)? = null
 
     private class Running(val task: Int) {
         lateinit var job: Job
@@ -210,7 +225,8 @@ internal class AgentRunner(
         try {
             val choice = choose(options) ?: return refuse(task, AgentTexts.couldNotStart(AgentTexts.TEST_BUILD))
             backstop.forget()
-            val start = TaskStart(task, newId(task), text, choice, selfChatAliases, backstop::acted)
+            val witness = witnesses?.invoke(options) ?: TaskWitness.NONE
+            val start = TaskStart(task, newId(task), text, choice, selfChatAliases, backstop::acted, witness = witness)
             val prepared = environment.prepare(start)
             if (prepared is Prepared.Refused) return refuse(task, prepared.sentence)
             val ports = prepared as Prepared.Ready
@@ -225,7 +241,7 @@ internal class AgentRunner(
                         val sentence = running.stopSentence?.let { "$it ${AgentTexts.ledger(result)}" }
                             ?: AgentTexts.sentence(result, ports.providerName)
                         result.recording?.let { kept = it to nowMillis() }
-                        record(task, Ended(result, sentence, running.touches, running.signals))
+                        record(task, Ended(result, sentence, running.touches, running.signals, witness.evidence))
                         if (offer && result.offerRoutine && result.recording != null) {
                             deferred = result to sentence
                         } else {

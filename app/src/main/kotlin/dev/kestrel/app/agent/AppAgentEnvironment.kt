@@ -91,7 +91,7 @@ internal class AppAgentEnvironment(
         }
         val agentSettings = agentSettings(start)
         val open: suspend (Intent) -> Boolean = { intent -> session()?.actions?.openIntent(intent) is ActionResult.Done }
-        val data = AndroidDataPort(context, open, agentSettings.agentFree::isAgentFree)
+        val data = start.witness.watch(AndroidDataPort(context, open, agentSettings.agentFree::isAgentFree))
         val owner = AppOwnerPort(
             start.task,
             send,
@@ -100,6 +100,7 @@ internal class AppAgentEnvironment(
             AppHandOverSignals(context, open, states) { session()?.let { ScreenTree.frontWindow(it.snapshots.current().snapshot)?.packageName } },
             askAndroid,
             { Permissions.granted(context, it) },
+            witness = start.witness,
         )
         val ports = AgentPorts(
             AppScreenPort(session, context.packageManager, showBadges, hideBadges, start.acted),

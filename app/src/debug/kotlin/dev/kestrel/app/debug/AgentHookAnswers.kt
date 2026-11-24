@@ -20,20 +20,30 @@ import java.util.Locale
  */
 internal object AgentHookAnswers {
     /**
-     * agent-task -Result's answer for a task that [ended]: its report's end and counts, whether its spoken sentence holds
-     * [marker], the owner's touches that the watcher reported (`ownerTouches=`) and the signals among them (`signals=`); with
-     * [digits] (agent-task -Digits), `digits=1|0` at its end.
+     * agent-task -Result's answer for a task that [ended]: its report's end and counts; `marker=1` when the sentence that
+     * Kestrel said at the end or one of its `say` texts holds [marker]'s words in order, because the owner hears both
+     * (design D29); the owner's touches that the watcher reported (`ownerTouches=`) and the signals among them
+     * (`signals=`); with [marker] also `markerSaid=1|0`, whether a `say` text held it, and `markerInData=1|0|none`, whether
+     * a data tool's result held the run's marker (none when the task had none); and with [digits] (agent-task -Digits),
+     * `digits=1|0` at its end, for the end's sentence and the `say` texts alike (plan 6B-basefix).
      */
     fun result(ended: AgentRunner.Ended, marker: String?, recipient: String?, digits: String? = null): String {
         val report = ended.report
+        val said = ended.evidence.said
+        val texts = said + ended.spoken
+        val inData = ended.evidence.markerInData?.let { seen -> if (seen) "1" else "0" } ?: "none"
         return "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
             "credits=${String.format(Locale.ROOT, "%.2f", report.credits)} confirmed=${report.confirmed} " +
             "unconfirmed=${report.unconfirmed} shareItems=${report.shareItems} recipient=${recipient(report.recipients, recipient)} " +
-            "marker=${marker(ended.spoken, marker)} beforeTestMode=${report.beforeTestMode} model=${word(report.modelId)} " +
+            "marker=${anyOf(texts) { marker(it, marker) }} beforeTestMode=${report.beforeTestMode} model=${word(report.modelId)} " +
             "in=${report.inputTokens} out=${report.outputTokens} cacheRead=${report.cacheRead} cacheWrite=${report.cacheWrite} " +
             "ownerTouches=${ended.touches} signals=${ended.signals}" +
-            (digits?.let { " digits=${digits(ended.spoken, it)}" } ?: "")
+            (marker?.let { wanted -> " markerSaid=${anyOf(said) { marker(it, wanted) }} markerInData=$inData" } ?: "") +
+            (digits?.let { wanted -> " digits=${anyOf(texts) { digits(it, wanted) }}" } ?: "")
     }
+
+    // 1 when one of [texts] gives 1, else 0; each text is compared alone, so that no match spans two of them.
+    private fun anyOf(texts: List<String>, test: (String) -> Int): Int = if (texts.any { test(it) == 1 }) 1 else 0
 
     /**
      * 1 when one number of the spoken reply holds the digits of [digits] in a row, from the start of one of its groups of
@@ -124,12 +134,7 @@ internal object AgentHookAnswers {
     }
 
     /** 1 when the spoken reply holds the marker's words in order, else 0 (design D29). */
-    fun marker(spoken: String, marker: String?): Int {
-        val wanted = marker?.let { Normalizer.words(it) }.orEmpty()
-        if (wanted.isEmpty()) return 0
-        val words = Normalizer.words(spoken)
-        return if ((0..words.size - wanted.size).any { start -> wanted.indices.all { words[start + it] == wanted[it] } }) 1 else 0
-    }
+    fun marker(spoken: String, marker: String?): Int = if (marker != null && MarkerWatch.holds(spoken, marker)) 1 else 0
 
     /**
      * The words that agent-answer says for [answer], as the owner's voice would: yes, no, confirm, cancel, continue, a

@@ -35,6 +35,8 @@ internal class TaskStart(
     val selfChatAliases: Map<String, String> = emptyMap(),
     val acted: () -> Unit = {},
     val local: Boolean = false,
+    /** What the debug build observes of the task; [TaskWitness.NONE] in a release build (plan 6B-basefix). */
+    val witness: TaskWitness = TaskWitness.NONE,
 ) {
     override fun toString(): String = "TaskStart(task=$task, text=${text.length} characters, model=${model?.javaClass?.simpleName}, local=$local)"
 }
