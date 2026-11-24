@@ -9,6 +9,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
+import java.nio.file.Path
 
 /** PCAPdroid's pinned download, its keys and its one-time setup, without the owner (design D11 of sub-project 6). */
 class EgressSetupTest {
@@ -48,59 +49,62 @@ class EgressSetupTest {
 
     @Test
     fun aNewDeviceIsSetUpByTheScriptsOwnTapsAndTheKeyIsReadFromPcapdroidsOwnNode() {
-        val run = FakeRun()
-        var installed = false
-        var running = false
-        var page = 0
-        run.adb.on("^pm list packages com\\.emanuelef\\.remote_capture$") { if (installed) "package:com.emanuelef.remote_capture" else "" }
-        run.adb.hostOut = { args ->
-            when {
-                args.first() == "install" -> "Success".also { installed = true }
-                args.take(3) == listOf("exec-out", "uiautomator", "dump") ->
-                    "<?xml version='1.0'?><hierarchy rotation=\"0\"><node text=\"${KEY.reversed()}\" package=\"com.example.other\" />" +
-                        "<node index=\"2\" text=\"$KEY\" resource-id=\"\" package=\"com.emanuelef.remote_capture\" /><node text=\"OK\" package=\"com.emanuelef.remote_capture\" /></hierarchy>"
-                else -> ""
-            }
-        }
-        val onboarding = listOf("Next", "Next", "Done")
-        val keySteps = listOf("Settings", "Control permissions", "More options", "Generate API key", "OK")
-        run.adb.hook("SCREEN_HAS") { extras ->
-            val label = extras["label"]
-            val count = when {
-                label == null -> 1
-                page < onboarding.size -> if (label == onboarding[page]) 1 else 0
-                else -> if (label == keySteps.getOrNull(page - onboarding.size)) 1 else 0
-            }
-            "count=$count app=com.emanuelef.remote_capture"
-        }
-        run.adb.hook("SCREEN_TAP") {
-            page++
-            "tapped=true count=1"
-        }
-        run.adb.on("^am start -n com\\.emanuelef\\.remote_capture/\\.activities\\.CaptureCtrl -e action (start|stop) ") {
-            running = it.groupValues[1] == "start"
-            ""
-        }
-        run.adb.on("^dumpsys activity services com\\.emanuelef\\.remote_capture$") {
-            if (running) "  * ServiceRecord{1a2b u0 com.emanuelef.remote_capture/.CaptureService}" else "  (nothing)"
-        }
+        // PCAPdroid 2.0.4's pages: a preference row is named after its title and summary, so only its title's text has
+        // the label, and a menu item counts twice, its row and its text.
+        val app = FakePcapdroid(
+            listOf(Shown("Next")),
+            listOf(Shown("Next")),
+            listOf(Shown("DONE")),
+            listOf(Shown("Settings")),
+            listOf(Shown("Control permissions Allow apps to control PCAPdroid"), Shown("Control permissions", clickable = false)),
+            listOf(Shown("More options")),
+            listOf(Shown("Generate API key"), Shown("Generate API key", clickable = false)),
+            listOf(Shown("OK")),
+        )
         val keys = PcapdroidKeys(folder.resolve("pcapdroid-keys.json"))
         val apk = folder.resolve("PCAPdroid_v2.0.4.apk")
 
-        assertEquals("set-up", EgressSetup(run.device, run.hooks, run.clock, keys) { apk }.run())
+        assertEquals("set-up", app.setup(keys, apk).run())
 
         assertEquals(KEY, keys.get("emulator-5554"))
-        assertTrue(run.adb.hostCommands.contains(listOf("install", "-r", apk.toString())))
-        assertTrue(run.adb.commands.containsAll(
+        assertTrue(app.run.adb.hostCommands.contains(listOf("install", "-r", apk.toString())))
+        val commands = app.run.adb.commands
+        assertTrue(commands.containsAll(
             listOf(
                 "pm grant com.emanuelef.remote_capture android.permission.POST_NOTIFICATIONS",
                 "appops set com.emanuelef.remote_capture ACTIVATE_VPN allow",
                 "pm grant com.emanuelef.remote_capture android.permission.ACCESS_LOCAL_NETWORK",
             ),
         ))
-        assertEquals(listOf("Next", "Next", "Done", "Settings", "Control permissions", "More options", "Generate API key", "OK"), run.adb.hookCalls("SCREEN_TAP").map { it["label"] })
-        assertFalse(running)
-        assertTrue(run.console.warnings.none { it.contains(KEY) })
+        val stopped = commands.indexOf("am force-stop com.emanuelef.remote_capture")
+        assertTrue(stopped >= 0 && stopped < commands.indexOfFirst { it.startsWith("monkey -p com.emanuelef.remote_capture ") })
+        assertEquals(listOf("Next", "Next", "DONE", "Settings", "Control permissions", "More options", "Generate API key", "OK"), app.taps())
+        assertFalse(app.running)
+        assertEquals("input keyevent KEYCODE_HOME", commands.last())
+        assertTrue(app.run.console.warnings.none { it.contains(KEY) })
+    }
+
+    @Test
+    fun theFirstLabelThatTapsWinsAndAStepThatCannotBePressedStopsWhereItIs() {
+        val done = FakePcapdroid(listOf(Shown("Done")), listOf(Shown("Settings")), refused = setOf("Settings"))
+        val stuck = assertThrows(IllegalStateException::class.java) { done.setup().run() }
+        assertTrue(stuck.message, stuck.message!!.contains("could not press Settings"))
+        assertEquals(listOf("DONE", "Done", "Settings"), done.taps())
+
+        val covered = FakePcapdroid(listOf(Shown("OK")), refused = setOf("OK"))
+        val first = assertThrows(IllegalStateException::class.java) { covered.setup().run() }
+        assertTrue(first.message, first.message!!.contains("cannot press"))
+        assertEquals(listOf("OK"), covered.taps())
+    }
+
+    @Test
+    fun aLabelThatShowsTwiceIsNeverTapped() {
+        val app = FakePcapdroid(listOf(Shown("DONE")), listOf(Shown("Settings"), Shown("Settings")))
+
+        val twice = assertThrows(IllegalStateException::class.java) { app.setup().run() }
+
+        assertTrue(twice.message, twice.message!!.contains("Settings"))
+        assertEquals(listOf("DONE"), app.taps())
     }
 
     @Test
@@ -123,6 +127,60 @@ class EgressSetupTest {
         assertEquals("checked", setup.run())
         assertTrue(run.adb.commands.none { it.startsWith("monkey") || it.startsWith("pm grant") })
         assertFalse(running)
+        assertEquals("input keyevent KEYCODE_HOME", run.adb.commands.last())
+    }
+
+    private class Shown(val label: String, val clickable: Boolean = true)
+
+    /**
+     * PCAPdroid behind the hooks, page by page, on a device without it: screen-has compares labels without letter case, as
+     * ScreenQuery does, and screen-tap presses only an exact label, as tapMatches does; a tap on a label in [refused] is
+     * answered as one in another window. A pressed label opens the next page.
+     */
+    private inner class FakePcapdroid(vararg pages: List<Shown>, refused: Set<String> = emptySet()) {
+        val run = FakeRun()
+        var running = false
+        private var installed = false
+        private var page = 0
+
+        init {
+            run.adb.on("^pm list packages com\\.emanuelef\\.remote_capture$") { if (installed) "package:com.emanuelef.remote_capture" else "" }
+            run.adb.hostOut = { args ->
+                when {
+                    args.first() == "install" -> "Success".also { installed = true }
+                    args.take(3) == listOf("exec-out", "uiautomator", "dump") ->
+                        "<?xml version='1.0'?><hierarchy rotation=\"0\"><node text=\"${KEY.reversed()}\" package=\"com.example.other\" />" +
+                            "<node index=\"2\" text=\"$KEY\" resource-id=\"\" package=\"com.emanuelef.remote_capture\" /><node text=\"OK\" package=\"com.emanuelef.remote_capture\" /></hierarchy>"
+                    else -> ""
+                }
+            }
+            run.adb.hook("SCREEN_HAS") { extras ->
+                val label = extras["label"]
+                val shown = pages.getOrNull(page).orEmpty().filter { it.label.equals(label, ignoreCase = true) && (extras["state"] != "clickable" || it.clickable) }
+                "count=${if (label == null) 1 else shown.size} app=com.emanuelef.remote_capture"
+            }
+            run.adb.hook("SCREEN_TAP") { extras ->
+                val label = extras["label"]
+                val matches = pages.getOrNull(page).orEmpty().count { it.label == label }
+                when {
+                    label in refused -> "tapped=false error=elsewhere"
+                    matches == 0 -> "tapped=false count=0"
+                    else -> "tapped=true count=$matches".also { page++ }
+                }
+            }
+            run.adb.on("^am start -n com\\.emanuelef\\.remote_capture/\\.activities\\.CaptureCtrl -e action (start|stop) ") {
+                running = it.groupValues[1] == "start"
+                ""
+            }
+            run.adb.on("^dumpsys activity services com\\.emanuelef\\.remote_capture$") {
+                if (running) "  * ServiceRecord{1a2b u0 com.emanuelef.remote_capture/.CaptureService}" else "  (nothing)"
+            }
+        }
+
+        fun setup(keys: PcapdroidKeys = PcapdroidKeys(folder.resolve("keys-${System.nanoTime()}.json")), apk: Path = folder.resolve("PCAPdroid_v2.0.4.apk")) =
+            EgressSetup(run.device, run.hooks, run.clock, keys) { apk }
+
+        fun taps(): List<String?> = run.adb.hookCalls("SCREEN_TAP").map { it["label"] }
     }
 
     private companion object {

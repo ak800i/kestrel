@@ -18,7 +18,7 @@ data class EgressResult(val connections: List<Connection>, val failures: List<St
  * The egress check (design D11 of sub-project 6): a connection passes when its name, from its ClientHello or else from
  * the capture's DNS answers for its remote address, is on the device's allowlist or matches the model download's hosts
  * (`*.domain` covers every host below the domain); a connection without a name, one outside both, and any packet of
- * another UID than Kestrel's fail. DNS to and from PCAPdroid's own server on port 53 is exempt from the UID rule,
+ * another UID than Kestrel's fail. DNS to and from PCAPdroid's DNS servers on port 53 is exempt from the UID rule,
  * because Android's resolver may send an app's queries under its own UID, and is read only for its answers.
  */
 object EgressCheck {

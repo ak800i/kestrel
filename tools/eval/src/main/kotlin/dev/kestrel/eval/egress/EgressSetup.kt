@@ -6,6 +6,7 @@ import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.DeviceCommandFailed
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.device.Refusal
+import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.Hooks
 import java.nio.file.Path
@@ -14,10 +15,12 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * PCAPdroid's one-time setup on a test device, which needs no owner (design D11 of sub-project 6): Private DNS off or
  * automatic; the pinned APK ([apk]) installed; its notification permission, the VPN op and on API 37 the local network
- * permission; its first start, whose pages the script's own taps pass ("Next", "Skip", "Done", "OK", "Continue", each
- * counted before its tap, at most 10 taps); a new API key by the script's own taps, read once from PCAPdroid's own node
+ * permission; its first start after a force-stop, whose pages the script's own taps pass ("Next", "Skip", "DONE", "Done",
+ * "OK", "Continue", each counted before its tap, at most 10 pages); a new API key by the script's own taps, each on the one
+ * element that shows with its label, read once from PCAPdroid's own node
  * of `uiautomator dump`, every other node dropped, into [keys]; and a capture started and stopped with it. A device that
- * has PCAPdroid and a working key is only checked. PCAPdroid stays installed, with its key (the owner's answer 4).
+ * has PCAPdroid and a working key is only checked. A step that screen-tap cannot press stops the setup there. PCAPdroid
+ * stays installed, with its key (the owner's answer 4), and the home screen is left in front.
  */
 class EgressSetup(
     private val device: Device,
@@ -26,12 +29,18 @@ class EgressSetup(
     private val keys: PcapdroidKeys,
     private val apk: () -> Path,
 ) {
-    /** "checked" for a device that was ready, "set-up" for one that this run set up. */
+    /** "checked" for a device that was ready, "set-up" for one that this run set up; either way, the home screen is left in front. */
     fun run(): String {
         val mode = device.read("settings get global private_dns_mode").joinToString("").trim()
         if (mode !in PRIVATE_DNS) throw Refusal("Private DNS is '$mode' on ${device.serial}: set it to off or automatic, because PCAPdroid cannot read the names of a private DNS server.")
         val known = keys.get(device.serial)
-        if (installed() && known != null && check(known)) return "checked"
+        val result = if (installed() && known != null && check(known)) "checked" else setUp()
+        // The capture's control brings PCAPdroid's task to the front.
+        device.idempotent("input keyevent KEYCODE_HOME")
+        return result
+    }
+
+    private fun setUp(): String {
         if (!installed()) {
             device.install(apk())
             if (!installed()) throw IllegalStateException("PCAPdroid did not install on ${device.serial}.")
@@ -59,13 +68,28 @@ class EgressSetup(
     }
 
     private fun firstStart() {
+        // A launcher intent brings back PCAPdroid's task as an earlier set-up or a failed one left it, so the key steps would
+        // not start on its main screen.
+        device.idempotent("am force-stop ${Pcapdroid.PACKAGE}")
         device.idempotent("monkey -p ${Pcapdroid.PACKAGE} -c android.intent.category.LAUNCHER 1")
         clock.sleep(3.seconds)
-        repeat(MAX_TAPS) {
-            val label = ONBOARDING.firstOrNull { hooks.screenHas(label = it).int("count") >= 1 } ?: return started()
-            tap(label, null)
-        }
+        repeat(MAX_TAPS) { if (!nextPage()) return started() }
         started()
+    }
+
+    /**
+     * Taps the first label of [ONBOARDING] that screen-has counts and screen-tap presses, and false when none is counted.
+     * screen-has compares labels without letter case and screen-tap exactly, so "DONE" is counted on a "Done" button too.
+     */
+    private fun nextPage(): Boolean {
+        var counted = false
+        for (label in ONBOARDING) {
+            if (hooks.screenHas(label = label).int("count") < 1) continue
+            counted = true
+            if (pressed(label, null) == null) return true
+        }
+        if (!counted) return false
+        throw IllegalStateException("PCAPdroid's first start shows a page that screen-tap cannot press on ${device.serial}: finish it there by hand once, and run egress-setup again.")
     }
 
     private fun started() {
@@ -86,11 +110,10 @@ class EgressSetup(
                 scrolls++
                 shown = step.firstOrNull { visible(it) }
             }
-            tap(shown ?: throw IllegalStateException("PCAPdroid showed none of ${step.joinToString()} on ${device.serial}."), Pcapdroid.PACKAGE)
+            tap(shown ?: throw IllegalStateException("PCAPdroid showed none of ${step.joinToString()} on ${device.serial}."))
         }
         val key = readKey()
-        CLOSE.firstOrNull { visible(it) }?.let { tap(it, Pcapdroid.PACKAGE) }
-        device.idempotent("input keyevent KEYCODE_HOME")
+        CLOSE.firstOrNull { visible(it) }?.let { tap(it) }
         return key
     }
 
@@ -104,16 +127,34 @@ class EgressSetup(
         return found.singleOrNull() ?: throw IllegalStateException("PCAPdroid's API key did not show once on ${device.serial} (${found.size} found).")
     }
 
-    // A menu item counts twice, its row and the row's text; screen-tap presses the first, the row.
-    private fun visible(label: String): Boolean = hooks.screenHas(packageName = Pcapdroid.PACKAGE, label = label).int("count") in 1..2
+    /**
+     * Whether PCAPdroid shows exactly one element that screen-tap would press for [label]: one clickable element, or none and
+     * one element at all, such as a preference's title, whose row is named after its title and summary and takes the tap.
+     * A label that shows more than once is never tapped.
+     */
+    private fun visible(label: String): Boolean {
+        val clickable = hooks.screenHas(packageName = Pcapdroid.PACKAGE, label = label, state = "clickable").int("count")
+        val count = if (clickable == 0) hooks.screenHas(packageName = Pcapdroid.PACKAGE, label = label).int("count") else clickable
+        if (count > 1) throw IllegalStateException("PCAPdroid shows $label $count times on ${device.serial}, so the script does not tap it.")
+        return count == 1
+    }
 
-    private fun tap(label: String, packageName: String?) {
-        try {
+    /** A key step's tap in PCAPdroid; a step that screen-tap cannot press stops the set-up there. */
+    private fun tap(label: String) {
+        val refused = pressed(label, Pcapdroid.PACKAGE) ?: return
+        throw IllegalStateException("screen-tap could not press $label in PCAPdroid on ${device.serial} ($refused).")
+    }
+
+    /** The script's own tap: null when it pressed [label], else screen-tap's answer. A lost answer counts as a tap, because the next count reads the screen back. */
+    private fun pressed(label: String, packageName: String?): HookAnswer? {
+        val answer = try {
             hooks.screenTap(label = label, packageName = packageName)
         } catch (e: HookLost) {
-            // The next count reads the screen back.
+            null
         }
+        if (answer != null && answer["tapped"] != "true") return answer
         clock.sleep(2.seconds)
+        return null
     }
 
     /** A capture of Kestrel's traffic started and stopped with [key], without a file. */
@@ -137,7 +178,6 @@ class EgressSetup(
 
     companion object {
         private val PRIVATE_DNS = setOf("null", "off", "opportunistic")
-        // screen-has compares labels without letter case and screen-tap exactly, so PCAPdroid's "DONE" comes before "Done".
         private val ONBOARDING = listOf("Next", "Skip", "DONE", "Done", "OK", "Continue")
 
         // PCAPdroid 2.0.4 shows Settings as a button of its main screen's bar, not in its menu.

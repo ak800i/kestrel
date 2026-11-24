@@ -47,7 +47,8 @@ class EgressCheckTest {
             PcapBuilder().apply {
                 udp("10.215.173.1", 33000, "10.215.173.2", 53, byteArrayOf(0), 1051)
                 udp("10.215.173.2", 53, "10.215.173.1", 33000, PcapBuilder.dnsAnswer("cdn-lfs.hf.co", null, "18.66.1.1"), 1051)
-                udp("fd00:0:0:0:0:0:0:1", 33001, "fd00:0:0:0:0:0:0:2", 53, byteArrayOf(0), 1051)
+                udp("fd00:2:fd00:1:fd00:1:fd00:1", 33001, "2620:fe:0:0:0:0:0:10", 53, byteArrayOf(0), 1051)
+                udp("2620:fe:0:0:0:0:0:10", 53, "fd00:2:fd00:1:fd00:1:fd00:1", 33001, PcapBuilder.dnsAnswer("api.githubcopilot.com", null, "140.82.112.3"), 1051)
                 tcp("10.215.173.1", 40001, "18.66.1.1", 443, byteArrayOf(0), kestrel)
                 tcp("10.215.173.1", 40002, "140.82.112.3", 443, PcapBuilder.clientHello("api.githubcopilot.com"), kestrel)
                 tcp("140.82.112.3", 443, "10.215.173.1", 40002, byteArrayOf(1, 1), kestrel)
@@ -71,6 +72,7 @@ class EgressCheckTest {
                 tcp("10.215.173.1", 40004, "140.82.112.4", 443, PcapBuilder.clientHello("example.org"), kestrel)
                 tcp("10.215.173.1", 40005, "140.82.112.5", 443, byteArrayOf(0), 1000)
                 tcp("10.215.173.1", 40006, "140.82.112.6", 443, PcapBuilder.clientHello("hf.co"), kestrel)
+                udp("fd00:2:fd00:1:fd00:1:fd00:1", 33002, "fd00:0:0:0:0:0:0:2", 53, byteArrayOf(0), 1051)
             }.bytes(),
         )
 
@@ -78,7 +80,10 @@ class EgressCheckTest {
 
         assertFalse(result.passed)
         assertEquals(
-            listOf("1 packet(s) of UID 1000, not Kestrel's", "tcp 93.184.216.34 port 443 has no name", "example.org is not on the allowlist", "hf.co is not on the allowlist"),
+            listOf(
+                "1 packet(s) of UID 1000, not Kestrel's", "1 packet(s) of UID 1051, not Kestrel's", "tcp 93.184.216.34 port 443 has no name",
+                "example.org is not on the allowlist", "hf.co is not on the allowlist",
+            ),
             result.failures,
         )
         assertTrue(EgressCheck.allowed("cdn-lfs.hf.co", listOf("*.hf.co")))
