@@ -718,4 +718,22 @@ class AgentTest {
         assertTrue(results.any { it.contains("no such fact") })
         assertTrue(results.any { it.contains("deleted") })
     }
+
+    // Plan 7A: one loop asks every question; the third interruption in a row counts as no answer and ends the row, so the
+    // next question is asked again after an interruption.
+    @Test
+    fun aQuestionInterruptedThreeTimesCountsAsNoAnswerAndTheNextStartsAfresh() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("remember", null, null, null, "key" to "gate code", "value" to "blue"),
+            call("ask_user", null, null, null, "question" to "Which chat?"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        harness.owner.answers += List(4) { Answer.Interrupted } + Answer.Text("Ana's")
+
+        harness.run("Remember the gate code")
+
+        assertEquals(5, harness.owner.asked.size)
+        assertTrue(harness.requestText(1).contains("Result: the owner said no."))
+        assertTrue(harness.requestText(2).contains("The owner said: \"Ana's\""))
+    }
 }

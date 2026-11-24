@@ -30,5 +30,8 @@ class AgentPorts(
     val goal: GoalPort,
     val history: HistoryPort,
 ) {
+    /** These ports with [owner] in the owner's place: a run's own owner port, which traces its dialogue (plan 7A). */
+    internal fun withOwner(owner: OwnerPort): AgentPorts = AgentPorts(screen, eyes, data, owner, model, apps, memory, log, clock, goal, history)
+
     override fun toString(): String = "AgentPorts"
 }

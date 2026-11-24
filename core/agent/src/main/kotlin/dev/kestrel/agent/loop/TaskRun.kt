@@ -6,8 +6,6 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.TaskRequest
-import dev.kestrel.agent.memory.Fact
-import dev.kestrel.agent.memory.FactKind
 import dev.kestrel.agent.memory.Recording
 import dev.kestrel.agent.memory.RoutineMatcher
 import dev.kestrel.agent.memory.RoutineReplayer
@@ -19,8 +17,6 @@ import dev.kestrel.agent.observe.ObservationInput
 import dev.kestrel.agent.observe.ObservationTable
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.observe.TableEntry
-import dev.kestrel.agent.port.Answer
-import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.GlobalKind
@@ -121,11 +117,18 @@ internal sealed interface Clearance {
 
 /**
  * One task's run (design D1 to D7, D13 to D16, D21 and D24): the loop of observation, model call, tool-call rules, safety
- * check, action and result, with the pause gates of D2, the limits and the escalation of D7, and the report of D24.
+ * check, action and result, with the pause gates of D2, the limits and the escalation of D7, and the report of D24. It
+ * tells the goal around it what the command's record needs through [trace] (plan 7A; design 8.1 of sub-project 7).
  */
-internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val task: TaskRequest) {
+internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task: TaskRequest) {
     val vault = Vault()
     val redactor = Redactor(vault)
+
+    /** What the run tells the goal around it for the command's record (plan 7A). */
+    val trace = RunTrace(given.goal, given.apps, vault, redactor) { kind, text -> log(kind, text) }
+
+    /** The given ports with the run's own owner port, which traces the dialogue (plan 7A). */
+    val ports: AgentPorts = given.withOwner(TracingOwner(given.owner, trace))
     val ledger = Ledger()
     val limits = Limits(ports.clock, ports.model.model.countsCredits)
     val progress = Progress()
@@ -136,6 +139,10 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private val screenSteps = ScreenSteps(this)
     private val dataSteps = DataSteps(this)
     private val looks = LookCloser(this)
+    private val dialogue = DialogueSteps(this)
+
+    /** The run's questions to the owner, which share one count of interruptions (D2). */
+    val questions = Questions(this)
     val memory = TaskMemory(ports.memory, ports.apps, ports.clock, redactor) { settings.closed(it) }
     private val recorded = mutableListOf<RoutineStep>()
     private var typedSecret = false
@@ -191,6 +198,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
 
     private suspend fun start() {
         log(TaskLog.Kind.START, "request: ${redactor.redact(task.text)}")
+        // A resumed goal's request is in its record already (design 7.6 of sub-project 7).
+        if (task.resume == null) trace.requested(task.text)
         val first = checkFront(fresh())
         remembering { memory.load() }
         val context = recalled(null) { memory.context(task.text) }
@@ -246,6 +255,8 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         checkLimits()
         // A resume during the cost question is observed before this turn's model call too (D2).
         if (resumePending) resumed()
+        // The step's number for the goal, once the waits before the step are over (design 10.5 of sub-project 7).
+        trace.stepStarted(replies + 1)
         val priced = callModel()
         replies++
         if (priced == null) {
@@ -304,6 +315,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         ))
         pendingPrompt = listOfNotNull(line, next?.text, data?.text).joinToString("\n")
         log(TaskLog.Kind.ACTION, "${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
+        done.data?.let { trace.data(done.tool, replies, it) }
         if (done.outcome is Outcome.DataOk) okDataSteps += replies
         if (done.text == OWNER_DID_IT_RESULT) ownerSteps += replies
         if (done.invalid) {
@@ -313,15 +325,18 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         if (done.executed) record(message, reply, target, signature, failed)
         progress.record(done.tool, done.outcome, done.target?.key, signature, done.data?.text, added = done.progress == true)
         ledger(done, outcome)
+        trace.ledger(ledger.lines)
         handle(escalation.afterStep(progress))
     }
 
-    // The task's record for routines (D23) and the labels that its steps acted on, for route notes (D22).
-    private fun record(message: ChatMessage.Assistant, reply: Reply.Act, target: TableEntry?, before: Signature, failed: Boolean) {
+    // The task's record for routines (D23), the labels that its steps acted on, for route notes (D22), and the apps that
+    // they acted in, for the command's record (design 8.1 of sub-project 7).
+    private suspend fun record(message: ChatMessage.Assistant, reply: Reply.Act, target: TableEntry?, before: Signature, failed: Boolean) {
         val call = reply.call
         if (call is AgentCall.TypeText && Vault.PLACEHOLDER.containsMatchIn(call.text)) typedSecret = true
         if (failed || reply.name in UNRECORDED) return
         memory.acted(target?.packageName, target?.label)
+        target?.packageName?.let { trace.acted(it) }
         val arguments = message.toolCalls.firstOrNull { it.id == reply.callId }?.arguments
         recorded += RoutineStep(
             tool = reply.name,
@@ -347,7 +362,9 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         val outcome = if (done.outcome is Outcome.AnotherScreen) Outcome.AnotherScreen(next?.title) else done.outcome
         val line = done.text ?: first.copy(outcome = outcome ?: Outcome.Answered).resultLine()
         log(TaskLog.Kind.ACTION, "routine ${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
+        done.data?.let { trace.data(done.tool, replies, it) }
         if (done.executed) ledger(done, outcome)
+        trace.ledger(ledger.lines)
     }
 
     internal suspend fun execute(call: AgentCall): Done = when (call) {
@@ -358,12 +375,12 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         is AgentCall.OpenSettings -> screenSteps.openSettings(call)
         is AgentCall.Wait -> screenSteps.wait(call)
         is AgentCall.LookCloser -> looks.step(call)
-        is AgentCall.AskUser -> askUser(call)
-        is AgentCall.Say -> say(call)
+        is AgentCall.AskUser -> dialogue.askUser(call)
+        is AgentCall.Say -> dialogue.say(call)
         is AgentCall.Finish -> finish(call)
         is AgentCall.Fail -> throw Ended(EndReason.FAILED_BY_MODEL, detail = spoken(call.reason))
-        is AgentCall.Remember -> remember(call)
-        is AgentCall.Forget -> forget(call)
+        is AgentCall.Remember -> dialogue.remember(call)
+        is AgentCall.Forget -> dialogue.forget(call)
         else -> dataSteps.run(call)
     }
 
@@ -419,14 +436,14 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         if (limits.repliesUsed(replies)) throw Ended(EndReason.STEPS)
         if (limits.timeUsed()) throw Ended(EndReason.TIME)
         val question = limits.creditQuestion() ?: return
-        if (askYesNo(question)) limits.allowMoreCredits() else throw Ended(EndReason.COST)
+        if (questions.yes(question)) limits.allowMoreCredits() else throw Ended(EndReason.COST)
     }
 
     private suspend fun handle(escalate: Escalate) {
         when (escalate) {
             Escalate.NOTHING -> Unit
             Escalate.SWITCHED -> log(TaskLog.Kind.ACTION, "switched to the versatile model")
-            Escalate.ASK_STUCK -> if (askYesNo(Limits.STUCK_QUESTION)) escalation.keepTrying(progress) else throw Ended(EndReason.STUCK)
+            Escalate.ASK_STUCK -> if (questions.yes(Limits.STUCK_QUESTION)) escalation.keepTrying(progress) else throw Ended(EndReason.STUCK)
             Escalate.END_INVALID -> throw Ended(EndReason.INVALID_CALLS)
             Escalate.END_STUCK -> throw Ended(EndReason.STUCK, detail = ports.model.model.versatile.unusable)
         }
@@ -519,30 +536,13 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
      */
     suspend fun gate(): Boolean = (limits.waiting { ports.owner.gate() } == Gate.RESUMED).also {
         if (it) {
-            interruptions = 0
+            questions.countAgain()
             resumePending = true
         }
     }
 
     // A resume that a gate inside a step saw (in `say`, `ask_user` or a yes/no question), until an observation shows it.
     private var resumePending = false
-
-    // A question that a touch or the wake word interrupted is asked again after the pause gate; the third interruption in
-    // a row without a pause counts as no answer, so that the loop never asks forever.
-    private var interruptions = 0
-
-    private fun interrupted(): Boolean = ++interruptions >= MAX_INTERRUPTIONS
-
-    suspend fun askYesNo(question: String): Boolean {
-        while (true) {
-            gate()
-            when (limits.waiting { ports.owner.ask(question, AnswerKind.YES_NO) }) {
-                Answer.Yes -> return true.also { interruptions = 0 }
-                Answer.Interrupted -> if (interrupted()) return false else continue
-                else -> return false.also { interruptions = 0 }
-            }
-        }
-    }
 
     /** Asks [confirmation] (D14); the time waiting for the owner does not count as work. */
     suspend fun confirm(confirmation: Confirmation): ConfirmEnd {
@@ -621,11 +621,11 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
                 }
                 if (gate()) return Clearance.Again
                 if (confirm(decision.confirmation) != ConfirmEnd.YES) {
-                    if (!interrupted()) return Clearance.Again
+                    if (!questions.interrupted()) return Clearance.Again
                     declined = true
                     throw Ended(EndReason.DECLINED)
                 }
-                interruptions = 0
+                questions.countAgain()
                 confirmed++
                 confirmedSerial = flow?.serial?.takeIf { shareTap }
                 confirmedRecipients = if (shareTap) chats else emptySet()
@@ -744,32 +744,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         else -> content
     }
 
-    // --- Dialogue ---
-
-    private suspend fun askUser(call: AgentCall.AskUser): Done {
-        while (true) {
-            gate()
-            val answer = limits.waiting { ports.owner.ask(spoken(call.question), AnswerKind.FREE) }
-            val text = when (answer) {
-                is Answer.Text -> answer.text
-                is Answer.Number -> answer.n.toString()
-                Answer.Yes -> "yes"
-                Answer.Interrupted -> if (interrupted()) null else continue
-                Answer.No, Answer.Silence -> null
-            }
-            interruptions = 0
-            if (text == null) return Done(call.tool, Outcome.NoAnswer)
-            safety = safety.withOwnerWords(text)
-            val said = Redacted.of(redactor, text)
-            return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner said: " + ScreenText.quote(said.text, ScreenText.VALUE_LIMIT)))
-        }
-    }
-
-    private suspend fun say(call: AgentCall.Say): Done {
-        gate()
-        limits.waiting { ports.owner.say(spoken(call.text)) }
-        return Done(call.tool, text = "Result: said.", summary = "Step $replies: said something to the owner.", last = "said", progress = false)
-    }
+    // --- Finishing ---
 
     private suspend fun finish(call: AgentCall.Finish): Done {
         // A lock or a call while the model answered: the check cannot run on the screen that the model saw (D21).
@@ -804,31 +779,6 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
     private fun recording(signature: String?): Recording? =
         if (typedSecret || recorded.isEmpty()) null
         else Recording(redactor.redact(task.text), recorded.toList(), signature, ports.clock.elapsedMillis())
-
-    // The `remember` and `forget` tools always ask the owner first (spec 11.4; D22); a store that fails changes nothing.
-    private suspend fun remember(call: AgentCall.Remember): Done {
-        val stored = askYesNo("Remember that ${spoken(call.key)} is ${spoken(call.value)}?")
-        val saved = stored && recalled(false) {
-            ports.memory.saveFact(Fact(call.key.trim(), call.value.trim(), FactKind.FACT, ports.clock.now().toInstant().toEpochMilli()))
-            true
-        }
-        val words = when {
-            saved -> "stored"
-            stored -> "Kestrel could not store it"
-            else -> "the owner said no"
-        }
-        return Done(call.tool, text = "Result: $words.", summary = "Step $replies: remember → $words.", last = "remember → $words", progress = saved)
-    }
-
-    private suspend fun forget(call: AgentCall.Forget): Done {
-        val fact = recalled(emptyList()) { ports.memory.facts() }.firstOrNull { Normalizer.normalize(it.key) == Normalizer.normalize(call.key) }
-        val words = when {
-            fact == null -> "no such fact"
-            askYesNo("Forget ${spoken(fact.key)}?") -> if (recalled(false) { ports.memory.deleteFact(fact.key) }) "deleted" else "no such fact"
-            else -> "the owner said no"
-        }
-        return Done(call.tool, text = "Result: $words.", summary = "Step $replies: forget → $words.", last = "forget → $words", progress = words == "deleted")
-    }
 
     /** Model text that Kestrel speaks (D24): placeholders as their kind's words, at most 600 characters. */
     fun spoken(text: String): String = vault.spoken(text).let { if (it.length > SPOKEN_LIMIT) it.take(SPOKEN_LIMIT - 1) + "…" else it }
@@ -941,7 +891,6 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
         const val CALL_PLACED = "You placed the call."
         private const val ANDROID = "android"
         private const val FRONT_CHECKS = 3
-        private const val MAX_INTERRUPTIONS = 3
         private val PRESSING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT)
         private val CRASHED = Regex("""(isn't responding|keeps stopping)$""")
         private const val OFFER_AT = 2
