@@ -396,8 +396,9 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     // The app that `open_deep_link`'s `app` names (spec 11.4): an installed package, or a name of exactly one of the
-    // launcher apps that open the link ([appNamed]). One query finds the apps that open the link. The link then goes to
-    // that app alone, so Android shows no chooser, and the launch check judges that app as the link's target.
+    // launcher apps that open the link ([appNamed]). One query finds the apps that open the link. The link then opens only
+    // in that app (the intent names its package); when two of its activities take the link, Android asks which one, among
+    // that app's activities only. The launch check judges that app as the link's target.
     private suspend fun linkApp(name: String, link: String): LinkApp {
         val wanted = name.trim()
         val apps = run.ports.apps.launcherApps()

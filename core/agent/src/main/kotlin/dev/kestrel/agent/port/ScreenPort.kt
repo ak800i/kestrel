@@ -18,8 +18,9 @@ interface ScreenPort {
 
     /**
      * The packages whose activities could handle [intent], from one query (`PackageManager.queryIntentActivities`);
-     * Android's chooser is none of them. A package here may still resolve to the chooser on its own, when two of its
-     * activities take [intent], so [resolve] with the package is what confirms one.
+     * Android's chooser is none of them. A package here takes [intent], and the launch check accepts it as the target of
+     * an intent that names it, even when two of its activities take [intent]: Android then asks which of that app's
+     * activities opens it, among that app's activities only.
      */
     suspend fun handlers(intent: IntentSpec): Set<String>
 
