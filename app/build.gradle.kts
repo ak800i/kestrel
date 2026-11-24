@@ -1,3 +1,4 @@
+import dev.kestrel.build.BuildCommitTask
 import dev.kestrel.build.CopyAssetsTask
 
 plugins {
@@ -83,6 +84,13 @@ androidComponents {
             folder.set("catalog")
         }
         variant.sources.assets?.addGeneratedSourceDirectory(catalog, CopyAssetsTask::outputDirectory)
+    }
+    // The debug build's commit and whether its worktree had changes, which the debug hook `state` answers (review I2 of plan 6B).
+    onVariants(selector().withBuildType("debug")) { variant ->
+        val commit = tasks.register<BuildCommitTask>("${variant.name}BuildCommit") {
+            repository.set(rootProject.layout.projectDirectory)
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(commit, BuildCommitTask::outputDirectory)
     }
 }
 

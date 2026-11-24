@@ -101,10 +101,10 @@ class TestHookTest {
         screen.open("ViewsActivity", "Views fixture")
         screen.awaitElement { it.label == "SEND" && it.clickable }
 
-        assertTrue(Regex(".* gridSize=none magnification=none keyboard=(shown|hidden)").matches(answer(hook("STATE"))))
+        assertTrue(Regex(".* gridSize=none magnification=none keyboard=(shown|hidden) $BUILD").matches(answer(hook("STATE"))))
         answer(hook("OVERLAY --es show grid"))
         try {
-            assertTrue(Regex(".* gridSize=\\d+x4 magnification=none keyboard=(shown|hidden)").matches(answer(hook("STATE"))))
+            assertTrue(Regex(".* gridSize=\\d+x4 magnification=none keyboard=(shown|hidden) $BUILD").matches(answer(hook("STATE"))))
         } finally {
             answer(hook("OVERLAY --es show none"))
         }
@@ -150,5 +150,10 @@ class TestHookTest {
     private fun answer(reply: String): String {
         assertTrue(reply, reply.contains("result=-1, data=\""))
         return reply.substringAfter("data=\"").substringBeforeLast('"')
+    }
+
+    private companion object {
+        /** The end of the state's answer: the build's commit and whether its worktree had changes. */
+        const val BUILD = "commit=([0-9a-f]{40}|unknown) dirty=(0|1|unknown)"
     }
 }

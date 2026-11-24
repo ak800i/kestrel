@@ -124,7 +124,8 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
 
     private suspend fun state(): String {
         val testMode = onOff(graph.settings.get(SettingKeys.SAFETY).testMode)
-        val session = graph.screen.value ?: return "screen=off testMode=$testMode"
+        val build = BuildCommit.read(context)
+        val session = graph.screen.value ?: return "screen=off testMode=$testMode $build"
         // Plan 4D, H4: whether an input method's window is on the screen, from Kestrel's current snapshot.
         val keyboard = session.snapshots.current().snapshot.windows.any { it.kind == WindowKind.INPUT_METHOD }
         return withContext(Dispatchers.Main) {
@@ -133,7 +134,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
                 "grid=${onOff(grid != null)} feedback=${onOff(session.feedbackText != null)} " +
                 "gridSize=${grid?.let { "${it.rows}x${it.columns}" } ?: "none"} " +
                 "magnification=${magnification(session.actions.zoomScale, session.system.magnifiedCentre())} " +
-                "keyboard=${if (keyboard) "shown" else "hidden"}"
+                "keyboard=${if (keyboard) "shown" else "hidden"} $build"
         }
     }
 

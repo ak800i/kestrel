@@ -1,7 +1,8 @@
 # Sends a test-hook command to Kestrel's debug build on a test device and prints the answer (design spec,
 # section 16.1). Commands and their options:
 #   state                                   whether the screen layer runs, test mode and the overlays, and (plan 4D) the
-#                                           grid's size, the magnification and whether the keyboard shows
+#                                           grid's size, the magnification and whether the keyboard shows; and the
+#                                           build's commit=<commit> dirty=<0|1>, unknown for a build without them
 #   test-mode -On true|false                switches test mode
 #   snapshot [-Out file.json]               what Kestrel reads on the screen, as JSON
 #   overlay -Show numbers|unlabeled|labels|grid|none
