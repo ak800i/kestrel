@@ -3,6 +3,7 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.DataResultText
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.observe.ScreenText
+import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.PermissionEnd
@@ -89,7 +90,9 @@ internal class DataSteps(private val run: TaskRun) {
             }
             val outcome = if (ok.lines.isEmpty()) Outcome.DataEmpty else Outcome.DataOk(ok.lines.size)
             val notes = sharePackage?.let { run.recalled(null) { run.memory.notesFor(it) } }?.let { Redacted.kestrel(it) }
-            return Done(call.tool, outcome, detail = detail(call), data = DataResultText.of(ok, run.redactor), after = after, extra = notes)
+            // add_contact adds nothing when the contact already has that number, and the report must not say it did.
+            val unchanged = call is AgentCall.AddContact && ok.lines.any { it.fixed == DataPort.ADDED_NOTHING }
+            return Done(call.tool, outcome, detail = detail(call), data = DataResultText.of(ok, run.redactor), after = after, extra = notes, unchanged = unchanged)
         }
     }
 
@@ -201,7 +204,7 @@ internal class DataSteps(private val run: TaskRun) {
 
     /** The ledger's line for a data step that changed something the owner can see (D24). */
     fun ledgerLine(done: Done): String? {
-        if (done.outcome !is Outcome.DataOk && done.outcome != Outcome.DataEmpty) return null
+        if (done.outcome !is Outcome.DataOk && done.outcome != Outcome.DataEmpty || done.unchanged) return null
         return when (done.tool) {
             Tools.SHARE_MEDIA -> "opened the share screen with ${done.detail}"
             Tools.COMPOSE_SMS -> "opened a new SMS"

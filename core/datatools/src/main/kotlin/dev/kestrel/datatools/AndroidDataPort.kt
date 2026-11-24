@@ -140,7 +140,7 @@ class AndroidDataPort(
             withContext(Dispatchers.IO) {
                 val fields = listOf(DataField("name", name), DataField("number", number))
                 if (ContactsWriter.duplicate(name, number, contacts.read())) {
-                    DataResult.Ok(listOf(DataLine("added nothing: a contact with this name already has this number", fields)))
+                    DataResult.Ok(listOf(DataLine(DataPort.ADDED_NOTHING, fields)))
                 } else {
                     writer.add(name, number) ?: return@withContext DataResult.Failed("Android did not add the contact")
                     DataResult.Ok(listOf(DataLine("added contact", fields)))

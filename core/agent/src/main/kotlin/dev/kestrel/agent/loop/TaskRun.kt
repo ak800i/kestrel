@@ -77,8 +77,9 @@ internal class Ended(
  * What one executed call did (design D6): its [outcome] on its [target] (for `StepResult`), or Kestrel's own result
  * [text] with its [summary] and [last] line; the snapshot [after] it, from which the next observation is built; a data
  * tool's [data] lines; an [extra] text below the result line; a [screenshot]; the [ocr] lines that `look_closer` read;
- * whether it made progress when the step decides that itself ([progress]); and whether it ran at all ([executed] is
- * false when a pause withdrew it).
+ * whether it made progress when the step decides that itself ([progress]); whether it ran at all ([executed] is
+ * false when a pause withdrew it); and whether a data tool that worked changed nothing ([unchanged]), so that the
+ * ledger names nothing.
  */
 internal class Done(
     val tool: String,
@@ -96,6 +97,7 @@ internal class Done(
     val progress: Boolean? = null,
     val invalid: Boolean = false,
     val executed: Boolean = true,
+    val unchanged: Boolean = false,
 )
 
 /** A send that the owner confirmed (design D14), kept in memory for the completion check; never logged. */

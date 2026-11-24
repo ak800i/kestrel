@@ -121,9 +121,10 @@ class DataToolsTest {
         val writer = dev.kestrel.datatools.contacts.ContactsWriter(resolver)
 
         assertTrue(writer.add(WRITER_NAME, WRITER_NUMBER) != null)
-        val details = AndroidContacts(resolver).details()
-        val found = FindContact.result(WRITER_NAME, details) as DataResult.Ok
-        val ref = found.lines.single().ref!!
+        val (details, line) = waitFor {
+            AndroidContacts(resolver).details().let { details -> (FindContact.result(WRITER_NAME, details) as DataResult.Ok).lines.singleOrNull()?.let { details to it } }
+        }
+        val ref = line.ref!!
         assertTrue(dev.kestrel.datatools.contacts.ContactsWriter.duplicate(WRITER_NAME, WRITER_NUMBER, details.map { it.contact }))
         val account = resolver.query(RawContacts.CONTENT_URI, arrayOf(RawContacts.ACCOUNT_TYPE), "${RawContacts.CONTACT_ID} = ?", arrayOf(ref), null)!!
             .use { cursor -> cursor.moveToFirst(); cursor.getString(0) }

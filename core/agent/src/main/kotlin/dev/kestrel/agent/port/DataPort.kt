@@ -47,6 +47,11 @@ interface DataPort {
 
     /** Drops the task's media item table. */
     fun forgetTask()
+
+    companion object {
+        /** The fixed text of the line that `addContact` returns when the contact was already there and it added nothing. */
+        const val ADDED_NOTHING = "added nothing: a contact with this name already has this number"
+    }
 }
 
 enum class MediaKinds { PHOTOS, VIDEOS, BOTH }

@@ -202,6 +202,10 @@ class AgentEndToEndTest {
         ))
         val task = AgentTests.run("delete the contact $CONTACT", delete)
         AgentTests.awaitAsking(task, TaskAsk.CONFIRM)
+        // kestrel-api37's contacts sync to the owner's Google account: the test answers only when find_contact found the
+        // test contact alone, so that the question names it and a yes can delete nothing else.
+        val found = AgentTests.texts(delete).lines().filter { FOUND_LINE.containsMatchIn(it) }
+        check(found.size == 1 && "name: \"$CONTACT\"" in found.single()) { "find_contact found ${found.size} contacts, not the test contact alone" }
         AgentTests.say(answer)
         return AgentTests.ended(task) to writerContacts()
     }
@@ -261,5 +265,8 @@ class AgentEndToEndTest {
         // A test contact of the contact tools' cases, with a fictional number.
         const val CONTACT = "Kestrel Writer Test"
         const val CONTACT_NUMBER = "+1 202 555 0188"
+
+        // A contact in find_contact's result, as "contact 1 (apps: Telegram) · name: …".
+        val FOUND_LINE = Regex("""\bcontact \d+ \(""")
     }
 }

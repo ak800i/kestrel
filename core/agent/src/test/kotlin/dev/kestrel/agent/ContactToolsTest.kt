@@ -3,6 +3,7 @@ package dev.kestrel.agent
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
+import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.safety.Mode
@@ -38,6 +39,22 @@ class ContactToolsTest {
 
         assertTrue(other.owner.confirmations.single().question.endsWith("Add the contact 'Maple Heron' with the number +1 202 555 0199? Say confirm or cancel."))
         assertTrue(other.data.calls.isEmpty())
+    }
+
+    @Test
+    fun anAddContactThatFindsTheContactAlreadyThereTellsTheReportNothingWasAdded() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("add_contact", null, null, null, "name" to "Maple Heron", "number" to "+12025550160"), finish(1)))
+        harness.data.answer("add_contact", DataResult.Ok(listOf(DataLine(DataPort.ADDED_NOTHING, added.lines.single().fields))))
+
+        val report = harness.run("add a contact maple heron with the number +1 202 555 0160")
+
+        assertEquals(EndReason.FINISHED, report.end)
+        assertTrue(report.ledger.toString(), report.ledger.none { it.startsWith("added") })
+        assertTrue(harness.lastRequestText().contains(DataPort.ADDED_NOTHING))
+
+        val new = Harness(Screens.chats(), listOf(call("add_contact", null, null, null, "name" to "Maple Heron", "number" to "+12025550160"), finish(1)))
+        new.data.answer("add_contact", added)
+        assertTrue(new.run("add a contact maple heron with the number +1 202 555 0160").ledger.contains("added the contact Maple Heron"))
     }
 
     @Test
