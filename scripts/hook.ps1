@@ -251,8 +251,9 @@
 #                                           Kestrel's files folder (:tools:eval copies it there), or removes it
 #   agent-state -Tag k                      the task's phase, its open question's kind, Kestrel's work, the hand-over, the
 #                                           category of the open confirmation, and the question's source (question=yes-no,
-#                                           free, pick-number, screenshot or none), which tells look_closer's screenshot
-#                                           question from the model's own free question
+#                                           free, pick-number, screenshot, limit or none), which tells look_closer's
+#                                           screenshot question from the model's own free question, and a round's
+#                                           "Continue?" at a limit (limit) from another yes-or-no question
 #   agent-cache [-Field anthropicMarks|responsesExplicit|chatCopilotMarks -On true|false]
 #                                           the agent's cache fields, after storing the one given
 #   agent-touch-source [-Rule NONE|FIELD|CREDITS] [-Branch A|B]

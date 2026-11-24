@@ -120,9 +120,10 @@ internal object AgentHookAnswers {
 
     /**
      * agent-state's `question=`: the kind that the agent asked the open question with, `yes-no`, `free` (the model's
-     * `ask_user`, or a routine's name), `pick-number` (look_closer's "Which number should I use?") or `screenshot`
-     * (look_closer's screenshot question, which the Orchestrator asks as a free question), so that :tools:eval answers each
-     * as the owner decided (plan 6B-basefix).
+     * `ask_user`, or a routine's name), `pick-number` (look_closer's "Which number should I use?"), `screenshot`
+     * (look_closer's screenshot question, which the Orchestrator asks as a free question) or `limit` (a round's "Continue?"
+     * at a limit, which the Orchestrator asks as a yes-or-no question; plan 7A), so that :tools:eval answers each as the
+     * owner decided (plan 6B-basefix).
      */
     fun question(kind: AnswerKind): String = kind.name.lowercase().replace('_', '-')
 
