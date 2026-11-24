@@ -6,19 +6,26 @@ import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.Hooks
+import dev.kestrel.eval.report.EgressSummary
 import dev.kestrel.eval.run.Restores
+import dev.kestrel.eval.run.Stopping
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * PCAPdroid's capture of Kestrel's traffic during a series (design D11 of sub-project 6). [start] starts it before the
- * first run with the device's key, after the restores that stop it and delete its file. [finish] stops it, waits until
- * its file stops growing, because PCAPdroid writes it after the stop, pulls it into the results folder, deletes it on
- * the device, reads the device's allowlist (at the start and now) and Kestrel's UID, and judges it into `egress.txt`.
- * Without a model (`expectNone`), any connection fails. The tool tells a running capture from PCAPdroid's service,
- * because PCAPdroid's status cannot answer adb. The start asks for `ip_mode both`, because PCAPdroid 2.0.4 captures
- * only IPv4 by default, which would miss Kestrel's IPv6 connections.
+ * PCAPdroid's capture of Kestrel's traffic during one call of a series (design D11 of sub-project 6), judged into a part
+ * of the results folder's egress check ([EgressParts]). [start] reads Kestrel's UID and starts the capture before the
+ * first run with the device's key, after the restore that puts it back. [finish] stops it, waits until its file stops
+ * growing, because PCAPdroid writes it after the stop, pulls it into the folder as `capture-<stamp>.pcap`, deletes it on
+ * the device, reads the device's allowlist (at the start and now), and judges it. Without a model (`expectNone`), any
+ * connection fails. A part that cannot be judged is recorded as unknown, with its reason.
+ *
+ * When the series ends early (an error, Ctrl+C), the restore judges the capture as [finish] would. Whatever the
+ * judgement did, the restore then stops a capture that this call started, even one whose service has not shown yet, and
+ * deletes the device's file once PCAPdroid's service has stopped and the file stopped growing. The tool tells a running
+ * capture from PCAPdroid's service, because PCAPdroid's status cannot answer adb. The start asks for `ip_mode both`,
+ * because PCAPdroid 2.0.4 captures only IPv4 by default, which would miss Kestrel's IPv6 connections.
  */
 class Capture(
     private val device: Device,
@@ -27,19 +34,33 @@ class Capture(
     private val clock: Clock,
     private val keys: PcapdroidKeys,
 ) {
-    private var key: String? = null
-    private var remote: String? = null
+    private lateinit var key: String
+    private lateinit var remote: String
+    private lateinit var folder: Path
+    private lateinit var stamp: String
+    private var expectNone = false
+    private var uid = 0
     private val allowlists = mutableListOf<HookAnswer>()
 
-    fun start(stamp: String) {
+    // Guarded by this object's lock, which the restore (on the shutdown hook's thread, too) and the main thread share.
+    private var capturing = false
+    private var judged = false
+    private var closed = false
+    private var result: EgressResult? = null
+
+    fun start(stamp: String, folder: Path, expectNone: Boolean) {
         val key = keys.get(device.serial)
         if (key == null || !Dumps.packageListed(device.read("pm list packages ${Pcapdroid.PACKAGE}"), Pcapdroid.PACKAGE)) {
             throw Refusal("PCAPdroid is not set up on ${device.serial}; run scripts\\eval.ps1 egress-setup --device ${device.serial} first.")
         }
+        uid = Dumps.userId(device.read("dumpsys package dev.kestrel")) ?: throw IllegalStateException("Kestrel's UID is not known on ${device.serial}.")
         val file = "kestrel-$stamp.pcap"
-        val remote = "$FOLDER/$file"
-        restores.push("PCAPdroid's capture file deleted", "Run: adb -s ${device.serial} shell rm -f $remote") { device.idempotent("rm -f $remote") }
-        restores.push("PCAPdroid's capture stopped", "Open PCAPdroid and stop its capture.") { if (EgressSetup.running(device)) EgressSetup.control(device, key, "stop") }
+        this.key = key
+        this.remote = "$FOLDER/$file"
+        this.folder = folder
+        this.stamp = stamp
+        this.expectNone = expectNone
+        restores.push("PCAPdroid's capture stopped, judged and its file deleted", "Open PCAPdroid, stop its capture, and delete Download/PCAPdroid/$file.") { close() }
         allowlists.add(hooks.networkAllowlist())
         restores.change("PCAPdroid's capture started", "Open PCAPdroid and stop its capture.") {
             EgressSetup.control(
@@ -48,29 +69,66 @@ class Capture(
             )
         }
         if (!waitFor(true)) throw IllegalStateException("PCAPdroid's capture did not start on ${device.serial}.")
-        this.key = key
-        this.remote = remote
+        synchronized(this) {
+            if (closed) throw Stopping("The capture was put back while it started, because :tools:eval is stopping.")
+            capturing = true
+            EgressParts.put(folder, EgressPart(stamp, reason = "the series ended before its capture was judged"))
+        }
     }
 
-    fun finish(folder: Path, expectNone: Boolean): EgressResult {
-        val key = checkNotNull(key) { "The capture did not start." }
-        val remote = checkNotNull(remote) { "The capture did not start." }
+    /** Stops the capture and judges it into the folder's part; a capture that cannot be judged throws, after its part says why. */
+    fun finish(): EgressResult = synchronized(this) {
+        check(capturing) { "The capture did not start." }
+        judge()
+    }
+
+    private fun judge(): EgressResult {
+        result?.let { return it }
+        judged = true
+        try {
+            stop()
+            waitStill(strict = true)
+            val local = folder.resolve("capture-$stamp.pcap")
+            device.pull(remote, local)
+            device.idempotent("rm -f $remote")
+            allowlists.add(hooks.networkAllowlist())
+            val checked = EgressCheck.judge(PcapReader.read(Files.readAllBytes(local)), uid, names("hosts"), names("modelHosts"))
+            val outcome = if (expectNone && checked.connections.isNotEmpty()) {
+                checked.copy(failures = checked.failures + "a run without a model made ${checked.connections.size} connection(s)")
+            } else {
+                checked
+            }
+            EgressParts.put(folder, EgressPart(stamp, EgressSummary(outcome.passed, outcome.connections.size, outcome.failures.size), outcome.text()))
+            result = outcome
+            return outcome
+        } catch (e: Exception) {
+            EgressParts.put(folder, EgressPart(stamp, reason = "the capture could not be judged: ${e.message ?: e.javaClass.simpleName}"))
+            throw e
+        }
+    }
+
+    /** The restore: the judgement if the series ended before [finish], then the device put back whatever it did. */
+    private fun close() = synchronized(this) {
+        closed = true
+        if (capturing && !judged) {
+            try {
+                judge()
+            } catch (e: Exception) {
+                // The part already says why; the device is put back below.
+            }
+        }
+        if (result == null || EgressSetup.running(device)) {
+            stop()
+            waitStill(strict = false)
+        }
+        device.idempotent("rm -f $remote")
+    }
+
+    private fun stop() {
         EgressSetup.control(device, key, "stop")
         if (!waitFor(false)) throw IllegalStateException("PCAPdroid's capture did not stop on ${device.serial}.")
-        waitStill(remote)
-        val local = folder.resolve("capture.pcap")
-        device.pull(remote, local)
-        device.idempotent("rm -f $remote")
-        allowlists.add(hooks.networkAllowlist())
-        val uid = Dumps.userId(device.read("dumpsys package dev.kestrel")) ?: throw IllegalStateException("Kestrel's UID is not known on ${device.serial}.")
-        val judged = EgressCheck.judge(PcapReader.read(Files.readAllBytes(local)), uid, names("hosts"), names("modelHosts"))
-        val result = if (expectNone && judged.connections.isNotEmpty()) {
-            judged.copy(failures = judged.failures + "a run without a model made ${judged.connections.size} connection(s)")
-        } else {
-            judged
-        }
-        Files.writeString(folder.resolve("egress.txt"), result.text())
-        return result
+        // The control brings PCAPdroid's task to the front.
+        device.idempotent("input keyevent KEYCODE_HOME")
     }
 
     private fun names(field: String): List<String> = allowlists.flatMap { it[field].orEmpty().split(',') }.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -83,16 +141,19 @@ class Capture(
         return false
     }
 
-    /** Waits until the file's size stays the same for 2 s, at most 30 s. */
-    private fun waitStill(remote: String) {
-        var last = -1L
+    /**
+     * Waits until the file's size stays the same for 2 s, at most 30 s. [strict] needs a file that stopped growing; the
+     * restore also takes a missing file (-1 twice), and goes on after 30 s, because PCAPdroid's service has stopped then.
+     */
+    private fun waitStill(strict: Boolean) {
+        var last = -2L
         repeat(15) {
-            val size = device.read("stat -c %s $remote").joinToString("").trim().toLongOrNull() ?: -1L
-            if (size > 0 && size == last) return
+            val size = device.read("stat -c %s $remote 2>/dev/null || echo -1").joinToString("").trim().toLongOrNull() ?: -1L
+            if (size == last && (size > 0 || !strict)) return
             last = size
             clock.sleep(2.seconds)
         }
-        throw IllegalStateException("PCAPdroid's capture file did not stop growing on ${device.serial}.")
+        if (strict) throw IllegalStateException("PCAPdroid's capture file did not stop growing on ${device.serial}.")
     }
 
     companion object {

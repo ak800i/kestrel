@@ -2,6 +2,7 @@ package dev.kestrel.eval.egress
 
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.command.FakeEnvironment
+import dev.kestrel.eval.device.AdbException
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.device.Refusal
@@ -30,7 +31,7 @@ class CaptureTest {
         val keys = PcapdroidKeys(folder.resolve("keys.json")).apply { put("emulator-5554", KEY) }
         val capture = Capture(run.device, run.hooks, run.restores, run.clock, keys)
 
-        capture.start("20261124-100000")
+        capture.start("20261124-100000", folder, expectNone = false)
         assertTrue(running())
         assertTrue(
             run.adb.commands.contains(
@@ -38,12 +39,12 @@ class CaptureTest {
                     "-e pcap_name kestrel-20261124-100000.pcap -e app_filter dev.kestrel -e dump_extensions true -e ip_mode both -e auto_block_private_dns true",
             ),
         )
-        val result = capture.finish(folder, expectNone = false)
+        val result = capture.finish()
 
         assertTrue(result.failures.toString(), result.passed)
         assertFalse(running())
         assertTrue(Files.readString(folder.resolve("egress.txt")).startsWith("host api.githubcopilot.com connections=1 "))
-        assertTrue(Files.isRegularFile(folder.resolve("capture.pcap")))
+        assertTrue(Files.isRegularFile(folder.resolve("capture-20261124-100000.pcap")))
         assertTrue(run.adb.commands.contains("rm -f /sdcard/Download/PCAPdroid/kestrel-20261124-100000.pcap"))
         assertTrue(run.restores.runAll().isEmpty())
         // Android 17 names the UID appId= in dumpsys package.
@@ -51,9 +52,66 @@ class CaptureTest {
 
         val dry = FakeRun()
         pcapdroid(dry.adb) { PcapBuilder().apply { tcp("10.215.173.1", 40002, "140.82.112.3", 443, PcapBuilder.clientHello("api.githubcopilot.com"), kestrel) }.bytes() }
-        val withoutModel = Capture(dry.device, dry.hooks, dry.restores, dry.clock, keys).apply { start("20261124-110000") }.finish(Files.createTempDirectory("eval-dry"), expectNone = true)
+        val withoutModel = Capture(dry.device, dry.hooks, dry.restores, dry.clock, keys).apply { start("20261124-110000", Files.createTempDirectory("eval-dry"), expectNone = true) }.finish()
         assertEquals(listOf("a run without a model made 1 connection(s)"), withoutModel.failures)
-        assertThrows(Refusal::class.java) { Capture(dry.device, dry.hooks, dry.restores, dry.clock, PcapdroidKeys(folder.resolve("none.json"))).start("x") }
+        assertThrows(Refusal::class.java) { Capture(dry.device, dry.hooks, dry.restores, dry.clock, PcapdroidKeys(folder.resolve("none.json"))).start("x", folder, expectNone = false) }
+    }
+
+    @Test
+    fun aSeriesThatEndsEarlyStillStopsPullsAndJudgesItsCaptureAndAStartThatHungIsStoppedToo() {
+        val run = FakeRun()
+        val running = pcapdroid(run.adb) { PcapBuilder().apply { tcp("10.215.173.1", 40002, "140.82.112.3", 443, PcapBuilder.clientHello("api.githubcopilot.com"), kestrel) }.bytes() }
+        val pull = run.adb.hostOut
+        var pulls = 0
+        run.adb.hostOut = { args -> if (args.first() == "pull" && pulls++ == 0) throw AdbException("device offline") else pull(args) }
+        val keys = PcapdroidKeys(folder.resolve("keys.json")).apply { put("emulator-5554", KEY) }
+
+        Capture(run.device, run.hooks, run.restores, run.clock, keys).start("20261124-120000", folder, expectNone = false)
+        // An error or Ctrl+C ends the series here: its restores run without finish().
+        assertTrue(run.restores.runAll().isEmpty())
+
+        assertFalse(running())
+        assertEquals(2, pulls)
+        assertTrue(Files.isRegularFile(folder.resolve("capture-20261124-120000.pcap")))
+        assertTrue(Files.readString(folder.resolve("egress.txt")).startsWith("host api.githubcopilot.com connections=1 "))
+        assertEquals(EgressSummary(true, 1, 0), EgressParts.summary(EgressParts.read(folder)))
+        val stop = run.adb.commands.indexOfLast { it.contains("CaptureCtrl -e action stop") }
+        assertTrue(run.adb.commands.indexOfLast { it == "input keyevent KEYCODE_HOME" } > stop)
+        assertTrue(run.adb.commands.indexOfLast { it == "rm -f /sdcard/Download/PCAPdroid/kestrel-20261124-120000.pcap" } > stop)
+
+        // PCAPdroid's service has not shown when the start gives up: the restore stops it all the same, and no part is recorded.
+        val slow = FakeRun()
+        pcapdroid(slow.adb) { PcapBuilder().bytes() }
+        slow.adb.on("^dumpsys activity services com\\.emanuelef\\.remote_capture$") { "" }
+        val none = Files.createTempDirectory("eval-slow")
+        assertThrows(IllegalStateException::class.java) { Capture(slow.device, slow.hooks, slow.restores, slow.clock, keys).start("20261124-130000", none, expectNone = false) }
+        assertTrue(slow.restores.runAll().isEmpty())
+        assertTrue(slow.adb.commands.any { it.contains("CaptureCtrl -e action stop") })
+        assertTrue(slow.adb.commands.contains("rm -f /sdcard/Download/PCAPdroid/kestrel-20261124-130000.pcap"))
+        assertTrue(EgressParts.read(none).isEmpty())
+    }
+
+    @Test
+    fun aCaptureThatCannotBeJudgedFailsTheSuiteWithItsReportAndAResumeKeepsTheResult() {
+        val fake = FakeEnvironment()
+        pcapdroid(fake.adb) { PcapBuilder().bytes() }
+        var size = 1000
+        fake.adb.on("^stat -c %s /sdcard/Download/PCAPdroid/kestrel-") { "${size++}" }
+        PcapdroidKeys(fake.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json")).put("emulator-5554", KEY)
+
+        assertEquals(Cli.EXIT_FAILED, fake.cli("suite", "--device", "emulator-5554", "--runs", "1", "--tasks", "stand-in-hotspot", "--egress"))
+
+        val results = fake.root.resolve("eval-results").resolve("kestrel-api37-20261123-120000")
+        val unknown = EgressSummary(false, 0, 0, unknown = 1)
+        assertEquals(unknown, Report.read(results.resolve("report.json")).egress)
+        assertTrue(fake.output.contains("task=stand-in-hotspot run=1 result=pass"))
+        assertTrue(fake.output.contains("egress=fail connections=0 failures=0 unknown=1"))
+        assertTrue(Files.readString(results.resolve("egress.txt")).contains("unknown: the capture could not be judged: PCAPdroid's capture file did not stop growing"))
+        assertTrue(fake.adb.commands.contains("rm -f /sdcard/Download/PCAPdroid/kestrel-20261123-120000.pcap"))
+
+        // A resume with no run left keeps the folder's result, never a report without one.
+        assertEquals(Cli.EXIT_FAILED, fake.cli("suite", "--device", "emulator-5554", "--resume", results.toString()))
+        assertEquals(unknown, Report.read(results.resolve("report.json")).egress)
     }
 
     @Test

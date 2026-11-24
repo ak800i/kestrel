@@ -86,8 +86,19 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
     fun pull(remote: String, local: Path) {
         read("true")
         Files.createDirectories(local.toAbsolutePath().parent)
-        val result = adb.host(listOf("pull", remote, local.toString()), PUSH_TIMEOUT)
-        if (result.exitCode != 0) throw DeviceCommandFailed("adb pull failed on $serial: ${complaint(result)}")
+        var reason = "no answer"
+        repeat(TRIES) { attempt ->
+            if (attempt > 0) clock.sleep(RETRY)
+            val result = try {
+                adb.host(listOf("pull", remote, local.toString()), PUSH_TIMEOUT)
+            } catch (e: AdbException) {
+                reason = e.message.orEmpty()
+                null
+            }
+            if (result != null && result.exitCode == 0) return
+            if (result != null) reason = complaint(result)
+        }
+        throw DeviceCommandFailed("adb pull failed on $serial: $reason")
     }
 
     /** The command inside the guard's check, as `Format-TestDeviceCommand` writes it. */

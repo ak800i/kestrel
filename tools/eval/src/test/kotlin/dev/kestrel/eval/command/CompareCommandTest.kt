@@ -5,6 +5,7 @@ import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.report.Baseline
 import dev.kestrel.eval.report.BaselinePart
 import dev.kestrel.eval.report.BaselineTask
+import dev.kestrel.eval.report.EgressSummary
 import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.TaskReport
 import dev.kestrel.eval.report.Tokens
@@ -70,6 +71,22 @@ class CompareCommandTest {
         assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", other))
         assertTrue(fake.output.contains("--record-baseline"))
         assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", folder("a71-20261124-140000", report("a71", "m1"))))
+    }
+
+    @Test
+    fun aFailedEgressCheckFailsTheComparisonOfTheFirstRunsOrOfTheReRuns() {
+        baseline("kestrel-api37")
+        val fell = folder("kestrel-api37-20261124-100000", report("kestrel-api37", "m1", mapOf("j" to 1)))
+        val leaked = CompareCommand(fake.environment, Command.Compare(listOf(fell), rerun = true, device = "emulator-5554")) { _, tasks ->
+            report("kestrel-api37", "m1", tasks = tasks).copy(egress = EgressSummary(false, 2, 1))
+        }
+
+        assertEquals(Cli.EXIT_FAILED, leaked.execute())
+        assertTrue(fake.output.contains("compare=kestrel-api37 result=pass"))
+        assertTrue(fake.output.contains("compare=kestrel-api37 egress=fail connections=2 failures=1 unknown=0"))
+
+        val unchecked = folder("kestrel-api37-20261124-110000", report("kestrel-api37", "m1").copy(egress = EgressSummary(false, 0, 0, unknown = 1)))
+        assertEquals(Cli.EXIT_FAILED, fake.cli("compare", unchecked))
     }
 
     @Test

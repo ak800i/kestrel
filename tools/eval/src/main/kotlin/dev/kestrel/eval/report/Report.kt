@@ -35,9 +35,13 @@ data class TaskReport(
 @Serializable
 data class Totals(val passes: Int, val runs: Int, val skipped: Int, val credits: Double, val unknownCredits: Int, val tokens: Tokens)
 
-/** The egress check's result in a report (design D11 of sub-project 6): counts only; `egress.txt` beside it names the hosts. */
+/**
+ * The egress check's result in a report (design D11 of sub-project 6): counts only; `egress.txt` beside it names the hosts.
+ * [unknown] counts the parts of the folder whose runs' traffic was not judged ([dev.kestrel.eval.egress.EgressParts]),
+ * each of which fails the check.
+ */
 @Serializable
-data class EgressSummary(val passed: Boolean, val connections: Int, val failures: Int)
+data class EgressSummary(val passed: Boolean, val connections: Int, val failures: Int, val unknown: Int = 0)
 
 /**
  * `report.json` of a results folder (design D10 of sub-project 6), the per-task fields of plan 6A; plan 6B adds the

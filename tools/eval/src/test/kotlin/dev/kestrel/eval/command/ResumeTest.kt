@@ -6,6 +6,7 @@ import dev.kestrel.eval.egress.PcapBuilder
 import dev.kestrel.eval.egress.PcapdroidKeys
 import dev.kestrel.eval.egress.fakePcapdroid
 import dev.kestrel.eval.report.Baseline
+import dev.kestrel.eval.report.EgressSummary
 import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.SuiteCall
@@ -201,6 +202,8 @@ class ResumeTest {
 
         assertEquals(3, runLines().count { it.startsWith("task=battery-level ") })
         val report = Report.read(folder.resolve("report.json"))
+        // The folder's earlier runs were not captured, so its egress check is unknown, beside the resumed runs' capture.
+        assertEquals(EgressSummary(false, 0, 0, unknown = 1), report.egress)
         assertEquals(suite.map { it.name }.toSet(), report.tasks.map { it.task }.toSet())
         val part = Baseline.read(fake.root.resolve("eval").resolve("baseline.json")).devices.getValue("kestrel-api37")
         assertEquals(report.tasks.filter { it.runs > 0 }.map { it.task }.toSet(), part.tasks.keys)

@@ -3,8 +3,9 @@ package dev.kestrel.eval.command
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.egress.Capture
+import dev.kestrel.eval.egress.EgressPart
+import dev.kestrel.eval.egress.EgressParts
 import dev.kestrel.eval.egress.PcapdroidKeys
-import dev.kestrel.eval.report.EgressSummary
 import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.ResultsFile
@@ -14,6 +15,7 @@ import dev.kestrel.eval.run.LineWriter
 import dev.kestrel.eval.run.RunOptions
 import dev.kestrel.eval.run.RunResult
 import dev.kestrel.eval.run.ScriptInstaller
+import dev.kestrel.eval.run.Stopping
 import dev.kestrel.eval.task.Catalogue
 import dev.kestrel.eval.task.InjectionFixtures
 import dev.kestrel.eval.task.Task
@@ -33,7 +35,9 @@ import kotlin.time.Duration.Companion.seconds
  * and names the kept tasks, when HEAD changed the tool since the folder's runs), then every other task whole after its
  * earlier lines were dropped, and stops when a task's runs name another model than the folder's, whose lines it takes out
  * again; its report is of the whole folder. With [recordBaseline], it runs only HEAD's Kestrel ([checkBaselineBuild]).
- * Returns 0 when no run failed (with [resume], of the whole folder), else 1.
+ * With [egress], each call that makes runs captures them ([Capture]) as a part of the folder's egress check
+ * ([EgressParts]); a resumed folder that has parts is captured again, and runs that no part covers make an unknown part.
+ * Returns 0 when no run failed (with [resume], of the whole folder) and the folder's egress check, if any, passed, else 1.
  */
 class SeriesCommand(
     private val environment: Environment,
@@ -90,12 +94,24 @@ class SeriesCommand(
         val todo = resumption?.runs ?: tasks.map { it.name to 1 }
         val byName = tasks.associateBy { it.name }
         var capture: Capture? = null
+        // A resumed folder whose earlier calls captured is captured again, so that the check covers all of its runs.
+        val capturing = egress || EgressParts.read(folder).isNotEmpty()
         fun finish(failures: Int): Int {
             val all = resumption?.kept.orEmpty().flatMap { block -> block.runs.map { it.line } } + writer.lines
-            val egressResult = capture?.finish(folder, expectNone = !live)
-            egressResult?.let { session.console.line("egress=${if (it.passed) "pass" else "fail"} connections=${it.connections.size} failures=${it.failures.size}") }
-            val summary = egressResult?.let { EgressSummary(it.passed, it.connections.size, it.failures.size) }
-            val report = Report.of(kind, head, live, start, environment.clock.now(), all).copy(egress = summary)
+            try {
+                capture?.finish()
+            } catch (e: Exception) {
+                if (e is Stopping) throw e
+                session.console.warn("The egress check could not judge the capture: ${e.message ?: e.javaClass.simpleName}")
+            }
+            if (capturing && all.isNotEmpty() && EgressParts.read(folder).isEmpty()) {
+                EgressParts.put(folder, EgressPart("before-$stamp", reason = "the folder's runs were not captured"))
+            }
+            val egressResult = EgressParts.summary(EgressParts.read(folder))
+            egressResult?.let {
+                session.console.line("egress=${if (it.passed) "pass" else "fail"} connections=${it.connections} failures=${it.failures}${if (it.unknown > 0) " unknown=${it.unknown}" else ""}")
+            }
+            val report = Report.of(kind, head, live, start, environment.clock.now(), all).copy(egress = egressResult)
             report.write(folder.resolve("report.json"))
             this.report = report
             this.folder = folder
@@ -116,7 +132,12 @@ class SeriesCommand(
             call.copy(kestrel = build).write(folder)
             if (recordBaseline) checkBaselineBuild(build, head, session)
             val keys = PcapdroidKeys(environment.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json"))
-            capture = if (egress) Capture(session.device, session.hooks, session.restores, environment.clock, keys).also { it.start(stamp) } else null
+            if (capturing) {
+                if (EgressParts.read(folder).isEmpty() && resumption?.kept.orEmpty().any { it.runs.isNotEmpty() }) {
+                    EgressParts.put(folder, EgressPart("before-$stamp", reason = "the runs before $stamp were not captured"))
+                }
+                capture = Capture(session.device, session.hooks, session.restores, environment.clock, keys).also { it.start(stamp, folder, expectNone = !live) }
+            }
             val runner = session.runner(RunOptions(live), writer)
             var failures = 0
             var model = resumed?.folder?.models?.singleOrNull()

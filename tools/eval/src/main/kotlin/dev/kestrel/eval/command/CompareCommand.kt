@@ -15,7 +15,8 @@ import java.util.Locale
  * fewer. With `--rerun`, a device that fails prints its first judgement, runs the tasks whose rate fell 3 more times
  * live ([rerun], a new folder beside the first), and is judged again on the 6 runs; re-runs on another device than the
  * folder's, or of another model than the device's part, are refused. Results of another model than the device's part
- * are refused, with the way to record a new part. Returns 0 when every device passed, else 1.
+ * are refused, with the way to record a new part. A report whose egress check failed or was not judged, the first or the
+ * re-runs', fails its device too. Returns 0 when every device passed, else 1.
  */
 class CompareCommand(
     private val environment: Environment,
@@ -39,6 +40,7 @@ class CompareCommand(
                 )
             }
             val first = report.tasks.associate { it.task to Rate(it.passes, it.runs) }
+            if (egressFailed(report)) failed = true
             var judgement = Comparison.judge(report.device, first, part, GAPS)
             val device = command.device
             if (!judgement.passed && command.rerun && device != null && judgement.fell.isNotEmpty()) {
@@ -48,6 +50,7 @@ class CompareCommand(
                 val again = rerun?.invoke(device, judgement.fell) ?: liveRerun(device, report.device, judgement.fell)
                 if (again.device != report.device) throw refusedDevice(again.device, report.device)
                 refuseOtherModel(again, part.model)
+                if (egressFailed(again)) failed = true
                 val more = again.tasks.associate { it.task to Rate(it.passes, it.runs) }
                 judgement = Comparison.judge(report.device, first.mapValues { (task, rate) -> more[task]?.let { rate + it } ?: rate }, part, GAPS, first)
             }
@@ -76,6 +79,14 @@ class CompareCommand(
 
     private fun refusedDevice(device: String, folder: String) =
         Refusal("compare --rerun's device is $device, and the results folder's is $folder; give --device the serial of $folder.")
+
+    /** Whether [report]'s egress check (design D11) failed or was not judged, which fails the comparison whatever the rates. */
+    private fun egressFailed(report: Report): Boolean {
+        val egress = report.egress ?: return false
+        if (egress.passed) return false
+        environment.out.println("compare=${report.device} egress=fail connections=${egress.connections} failures=${egress.failures} unknown=${egress.unknown}")
+        return true
+    }
 
     /** Results, the first or the re-runs', of another model than the device's part, which D10 does not compare. */
     private fun refuseOtherModel(report: Report, model: String) {
