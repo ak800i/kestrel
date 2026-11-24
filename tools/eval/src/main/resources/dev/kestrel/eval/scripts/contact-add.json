@@ -1,0 +1,4 @@
+[
+  {"tool": "add_contact", "arguments": {"name": "{marker}", "number": "{number}"}},
+  {"tool": "finish", "arguments": {"summary": "I added the contact {marker} with the number {number}.", "evidence": [{"step": 1}]}}
+]

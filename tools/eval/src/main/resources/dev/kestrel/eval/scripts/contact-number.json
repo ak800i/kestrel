@@ -1,0 +1,4 @@
+[
+  {"tool": "find_contact", "arguments": {"name": "Ana Test"}},
+  {"tool": "finish", "arguments": {"summary": "Ana Test's number is +1 202 555 0143.", "evidence": [{"step": 1}]}}
+]

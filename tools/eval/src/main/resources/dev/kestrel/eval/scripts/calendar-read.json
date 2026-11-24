@@ -1,0 +1,4 @@
+[
+  {"tool": "list_events", "arguments": {"from": "{date}", "to": "{date}"}},
+  {"tool": "finish", "arguments": {"summary": "Tomorrow you have Kestrel test {marker} from 10 to 11.", "evidence": [{"step": 1}]}}
+]
