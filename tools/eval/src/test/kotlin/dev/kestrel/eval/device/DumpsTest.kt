@@ -19,6 +19,24 @@ class DumpsTest {
 
         assertTrue(Dumps.wazeNavigating(dump))
         assertFalse(Dumps.wazeNavigating(listOf("  NotificationRecord(0x0b pkg=com.waze user=UserHandle{0} id=7)", "    flags=0x10")))
+        // Android 17 prints the flags as their names.
+        assertTrue(Dumps.wazeNavigating(listOf("  NotificationRecord(0x0b: pkg=com.waze user=UserHandle{0} id=7)", "    flags=FOREGROUND_SERVICE|ONGOING_EVENT|NO_CLEAR")))
+        assertFalse(Dumps.wazeNavigating(listOf("  NotificationRecord(0x0b: pkg=com.waze user=UserHandle{0} id=7)", "    flags=AUTO_CANCEL|LOCAL_ONLY")))
+    }
+
+    @Test
+    fun anOngoingNotificationByItsHexFlagsOrByTheirNames() {
+        val clock = "com.google.android.deskclock"
+        fun record(flags: String, packageName: String = clock) = listOf(
+            "    NotificationRecord(0x0df3595f: pkg=$packageName user=UserHandle{0} id=1 importance=2 key=0|$packageName|1|null|10350: Notification(channel=Timers defaults=0 flags=$flags color=0x00000000 vis=PUBLIC))",
+            "      flags=$flags",
+        )
+
+        assertTrue(Dumps.ongoingNotification(record("0x62"), clock))
+        assertTrue(Dumps.ongoingNotification(record("ONGOING_EVENT|LOCAL_ONLY|PROMOTED_ONGOING"), clock))
+        assertFalse(Dumps.ongoingNotification(record("LOCAL_ONLY|PROMOTED_ONGOING"), clock))
+        assertFalse(Dumps.ongoingNotification(record("0x10"), clock))
+        assertFalse(Dumps.ongoingNotification(record("ONGOING_EVENT|NO_CLEAR", "dev.kestrel") + record("AUTO_CANCEL"), clock))
     }
 
     @Test

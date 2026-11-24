@@ -3,29 +3,44 @@ package dev.kestrel.eval.task
 import dev.kestrel.eval.hook.HookLost
 import kotlin.time.Duration.Companion.seconds
 
-/** One way to reach an element of a real app: its exact [label] or a part of one ([contains]), tapped or, with [long], long-pressed. */
-data class TapCandidate(val label: String? = null, val contains: String? = null, val long: Boolean = false)
+/**
+ * One way to reach an element of a real app: its exact [label] or a part of one ([contains]), tapped or, with [long],
+ * long-pressed. With [className] or [state] (screen-has' states, such as "clickable"), the candidate names the one element
+ * of that class or state among those that the text names, such as an alarm's card among its time and its switch, or the
+ * clickable tab counter around its own inner copy.
+ */
+data class TapCandidate(val label: String? = null, val contains: String? = null, val long: Boolean = false, val className: String? = null, val state: String? = null)
 
 /**
  * The script's own taps in a real app (design D8 and D9 of sub-project 6), for what only the app can remove, such as a
  * test alarm. Each step lists candidates, tried in order. A candidate is tapped only while [packageName] is in front and
  * `screen-has` counts exactly one element that it names, so that a tap never picks one of several items, which may be
  * the owner's; `screen-tap -Package` checks the app in front again when it taps, and its answer must count exactly one
- * element too. A step that the screen does not show ends the taps, and so do a tap that counted another number and a
- * lost answer, which gives no count: a later step, such as a lone Delete, is never tapped for an item that an earlier
- * step did not select. A candidate's placeholders, such as "{time}", are filled from the run's values. The caller checks
- * the result on the device.
+ * element too. A candidate with a class or a state counts exactly one element of them, and is tapped only when that
+ * element is the first that its text names, where screen-tap taps, and when screen-tap's answer counts as many elements
+ * as `screen-has` counted for the text. A step that the screen does not show ends the taps, and so do a tap that counted
+ * another number and a lost answer, which gives no count: a later step, such as a lone Delete, is never tapped for an
+ * item that an earlier step did not select. A candidate's placeholders, such as "{time}", are filled from the run's
+ * values. The caller checks the result on the device.
  */
 class AppTaps(private val scope: RunScope, private val packageName: String) {
     /** Runs [steps] in their order; whether each of them tapped one element. */
     fun run(steps: List<List<TapCandidate>>): Boolean = steps.all { tap(it) }
 
-    private fun shown(candidate: TapCandidate): Boolean =
-        scope.hooks.screenHas(packageName = packageName, label = candidate.label?.let { scope.values.fill(it) }, contains = candidate.contains?.let { scope.values.fill(it) })
-            .int("count") == 1
+    /** The count that screen-tap's answer must give for [candidate], or null when the screen does not show it once. */
+    private fun shown(candidate: TapCandidate): Int? {
+        val label = candidate.label?.let { scope.values.fill(it) }
+        val contains = candidate.contains?.let { scope.values.fill(it) }
+        val named = scope.hooks.screenHas(packageName = packageName, label = label, contains = contains)
+        if (candidate.className == null && candidate.state == null) return 1.takeIf { named.int("count") == 1 }
+        val narrowed = scope.hooks.screenHas(packageName = packageName, label = label, contains = contains, className = candidate.className, state = candidate.state)
+        if (narrowed.int("count") != 1 || named.int("count") < 1) return null
+        return named.int("count").takeIf { named["bounds"].let { it != null && it != "none" && it == narrowed["bounds"] } }
+    }
 
     private fun tap(step: List<TapCandidate>): Boolean {
-        val candidate = step.firstOrNull { shown(it) } ?: return false
+        var expected: Int? = null
+        val candidate = step.firstOrNull { candidate -> shown(candidate)?.also { expected = it } != null } ?: return false
         val answer = try {
             scope.hooks.screenTap(candidate.label?.let { scope.values.fill(it) }, candidate.contains?.let { scope.values.fill(it) }, candidate.long, packageName)
         } catch (e: HookLost) {
@@ -33,7 +48,7 @@ class AppTaps(private val scope: RunScope, private val packageName: String) {
             return false
         }
         scope.clock.sleep(SETTLE)
-        return answer["tapped"] == "true" && answer.int("count") == 1
+        return answer["tapped"] == "true" && answer.int("count") == expected
     }
 
     private companion object {

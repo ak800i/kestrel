@@ -13,16 +13,20 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
- * A device's clock app for the tests, modelled on Google Clock: its package, `dumpsys alarm` at noon of 2026-11-23 in
- * Belgrade with [alarms], the [rows] of its list of alarms, each on a page of the list from its top, the page in view,
- * which a swipe changes, the hash of the list's first row in view, the app in front, its running timers and its ongoing
- * notification. A tap on a time expands the first row that holds it and collapses the others, as screen-tap picks the
- * first element whose label holds the text; Delete deletes the expanded row and its alarm, or on the timers page the
- * running timer.
+ * A device's clock app for the tests, modelled on Google Clock on kestrel-api37: its package, `dumpsys alarm` at noon of
+ * 2026-11-23 in Belgrade with [alarms], the [rows] of its list of alarms, each on a page of the list from its top, the
+ * page in view, which a swipe changes, the hash of the list's first row in view, the app in front, its running timers
+ * and its ongoing notification. Each row is a card whose label holds its time ("Alarm Tomorrow 6:45 AM Alarm is
+ * currently enabled."), with the time and the switch inside it, which hold the time too. The hooks match them as
+ * [FakeScreen] says: a tap on a card opens the alarm's editor sheet, which covers the list and shows the time, Delete and
+ * Save; the sheet's Delete deletes the alarm and its row. A tap on the time or the switch changes nothing here. On the
+ * timers page, Delete deletes the running timer.
  */
 class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) {
     /** A row of the list that shows [time]; [at] is its alarm's time in `dumpsys alarm` while it is switched on. */
-    class Row(val time: String, val page: Int, var expanded: Boolean = false, val at: Long? = null)
+    class Row(val time: String, val page: Int, val at: Long? = null)
+
+    private class Element(val label: String, val className: String, val bounds: String, val row: Row?, val delete: Boolean = false)
 
     val alarms = mutableListOf<String>()
     val rows = mutableListOf<Row>()
@@ -35,10 +39,14 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     var endless = false
     var unnamed = false
 
-    /** Whether a tap on a time leaves its row as it was, as when Google Clock opens its time picker instead. */
+    /** Whether a tap on a card leaves the list as it was, and whether it opens the sheet of the list's first row instead of its own. */
     var inert = false
+    var wrongSheet = false
     var front = clock
     var ongoing = false
+
+    /** The row whose editor sheet is open, or null on the list. */
+    var sheet: Row? = null
     private var screen = "alarms"
     private val zone = ZoneId.of("Europe/Belgrade")
     private val noon = at(23, 12, 0)
@@ -49,9 +57,12 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
             "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\n$clock/com.android.deskclock.HandleApiCalls"
         }
         run.adb.on("^dumpsys alarm$") { (listOf("  nowRTC=$noon=2026-11-23 12:00:00.000 nowELAPSED=$ELAPSED") + alarms).joinToString("\n") }
-        run.adb.on("^dumpsys notification$") { if (ongoing) "  NotificationRecord(0x0a1: pkg=$clock user=UserHandle{0} id=1)\n    flags=0x62" else "" }
+        run.adb.on("^dumpsys notification$") {
+            if (ongoing) "  NotificationRecord(0x0a1: pkg=$clock user=UserHandle{0} id=1)\n    flags=ONGOING_EVENT|LOCAL_ONLY|PROMOTED_ONGOING" else ""
+        }
         run.adb.on("^am start -W -a android.intent.action.SHOW_ALARMS ") {
             screen = "alarms"
+            sheet = null
             ""
         }
         run.adb.on("^am start -W -a android.intent.action.SHOW_TIMERS ") {
@@ -75,16 +86,34 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     fun at(day: Int, hour: Int, minute: Int): Long = ZonedDateTime.of(2026, 11, day, hour, minute, 0, 0, zone).toInstant().toEpochMilli()
 
     /** A row of the list at [time], switched off, as the owner's or Google Clock's own alarms of 8:30 and 9:00. */
-    fun row(time: String, page: Int = 0, expanded: Boolean = false) {
-        rows.add(Row(time, page, expanded))
+    fun row(time: String, page: Int = 0) {
+        rows.add(Row(time, page))
     }
 
-    /** An alarm clock of [packageName] at [hour]:[minute] on 2026-11-[day] in `dumpsys alarm`, without a row. */
+    /** An alarm clock of [packageName] at [hour]:[minute] on 2026-11-[day] in `dumpsys alarm`, without a row, with Google Clock's wakeups around it. */
     fun alarmAt(hour: Int, minute: Int, day: Int = 24, packageName: String = clock): Long {
         val time = at(day, hour, minute)
-        alarms.add("    RTC_WAKEUP #0: Alarm{5a1 type 0 origWhen $time whenElapsed ${ELAPSED + time - noon} $packageName}")
+        alarms.add(entry(time, packageName, clock = true))
+        // Google Clock's UPDATE_ALARM_INSTANCES wakeups, every 15 s after the alarm and half an hour before it, are no alarm clocks.
+        for (at in listOf(time - 1_800_000L, time + 15_000L, time + 30_000L)) alarms.add(entry(at, packageName, clock = false))
         return time
     }
+
+    /** A wakeup of [packageName] at [hour]:[minute] on 2026-11-[day] that is no alarm clock, as Google Clock's UPDATE_ALARM_INSTANCES. */
+    fun wakeupAt(hour: Int, minute: Int, day: Int = 24, packageName: String = clock) {
+        alarms.add(entry(at(day, hour, minute), packageName, clock = false))
+    }
+
+    private fun entry(time: Long, packageName: String, clock: Boolean): String {
+        val lines = listOf(
+            "    RTC_WAKEUP #0: Alarm{5a1 type 0 origWhen $time whenElapsed ${ELAPSED + time - noon} $packageName}",
+            "      tag=*walarm*:com.android.deskclock.action.UPDATE_ALARM_INSTANCES",
+        ) + if (clock) listOf("      Alarm clock:", "        triggerTime=2026-11-24 06:45:00.000") else emptyList()
+        return lines.joinToString("\n")
+    }
+
+    /** The number of alarm clocks in `dumpsys alarm`. */
+    fun clocks(): Int = alarms.count { it.contains("Alarm clock:") }
 
     /** An alarm that is switched on at [hour]:[minute] tomorrow, with its row, which shows [time]. */
     fun setAlarm(hour: Int, minute: Int, time: String = "$hour:%02d".format(minute), page: Int = 0) {
@@ -98,7 +127,26 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
         timers.add(line)
     }
 
-    private fun here(): List<Row> = rows.filter { it.page == position }
+    private fun elements(): List<Element> {
+        val open = sheet
+        return when {
+            screen == "timers" -> timers.map { Element("Delete", "android.widget.Button", "0,900,300,980", null, delete = true) }
+            open != null -> listOf(
+                Element("${open.time} AM Edit", "android.view.ViewGroup", "0,1000,1080,1155", open),
+                Element("${open.time} AM", "android.widget.TextView", "95,1000,394,1155", open),
+                Element("Delete", "android.widget.Button", "42,2179,235,2305", open, delete = true),
+                Element("Save", "android.widget.Button", "873,2179,1038,2305", open),
+            )
+            else -> rows.filter { it.page == position }.withIndex().flatMap { (index, row) ->
+                val top = 300 + 410 * index
+                listOf(
+                    Element("Alarm Tomorrow ${row.time} AM Alarm is currently enabled.", "androidx.cardview.widget.CardView", "42,$top,1038,${top + 400}", row),
+                    Element("${row.time} AM", "android.widget.TextView", "95,${top + 200},394,${top + 355}", row),
+                    Element("${row.time} AM alarm", "android.widget.Switch", "848,${top + 215},985,${top + 341}", row),
+                )
+            }
+        }
+    }
 
     private fun has(extras: Map<String, String>): String {
         if (extras["state"] == "scrollable") {
@@ -109,42 +157,35 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
             }
             return "count=${if (scrollable) 1 else 0} first=$first app=$front"
         }
-        val name = extras["label"] ?: extras["contains"]
-        val here = here()
-        fun top(row: Row) = 300 + 300 * here.indexOf(row)
-        val bounds = when {
-            screen == "timers" -> if (name == "Delete") timers.map { "0,900,300,980" } else emptyList()
-            name == "Collapse alarm" -> here.filter { it.expanded }.map { "900,${top(it)},1000,${top(it) + 100}" }
-            name == "Expand alarm" -> here.filterNot { it.expanded }.map { "900,${top(it)},1000,${top(it) + 100}" }
-            name == "Delete" -> here.filter { it.expanded }.map { "0,${top(it) + 200},300,${top(it) + 280}" }
-            else -> here.filter { it.time == name }.map { "0,${top(it)},700,${top(it) + 100}" }
+        val all = elements()
+        val className = extras["class"]
+        val found = all.filter { element ->
+            FakeScreen.has(listOf(element.label), extras) == 1 && (className == null || element.className.endsWith(".$className"))
         }
-        return "count=${bounds.size} bounds=${bounds.firstOrNull() ?: "none"} app=$front"
+        return "count=${found.size} bounds=${found.firstOrNull()?.bounds ?: "none"} app=$front"
     }
 
     private fun tap(extras: Map<String, String>): String {
-        val contains = extras["contains"]
-        val targets = when {
-            screen == "timers" -> if (extras["label"] == "Delete") timers.toList() else emptyList()
-            extras["label"] == "Delete" -> here().filter { it.expanded }
-            contains != null -> here().filter { it.time.contains(contains, ignoreCase = true) }
-            else -> emptyList()
-        }
-        when (val target = targets.firstOrNull()) {
-            null -> Unit
-            is String -> {
-                alarms.remove(target)
-                timers.remove(target)
+        val all = elements()
+        val matches = FakeScreen.taps(all.map { it.label }, extras)
+        val target = matches.firstOrNull()?.let { all[it] } ?: return "tapped=false count=0"
+        val row = target.row
+        when {
+            target.delete && row == null -> {
+                timers.removeFirstOrNull()?.let { alarms.remove(it) }
                 ongoing = false
             }
-            is Row -> if (extras["label"] == "Delete") {
-                rows.remove(target)
-                target.at?.let { at -> alarms.removeIf { it.contains("origWhen $at ") && it.endsWith("$clock}") } }
-            } else if (!inert) {
-                rows.forEach { it.expanded = it === target }
+            target.delete && row != null -> {
+                rows.remove(row)
+                row.at?.let { at ->
+                    val times = listOf(at - 1_800_000L, at, at + 15_000L, at + 30_000L)
+                    alarms.removeIf { line -> times.any { line.contains("origWhen $it ") } && line.contains("$clock}") }
+                }
+                sheet = null
             }
+            row != null && sheet == null && target.className.endsWith("CardView") && !inert -> sheet = if (wrongSheet) rows.first() else row
         }
-        return "tapped=${targets.isNotEmpty()} count=${targets.size}"
+        return "tapped=true count=${matches.size}"
     }
 
     companion object {
@@ -176,6 +217,37 @@ class ClockStepsTest {
         fun at(day: Int, hour: Int, minute: Int) = ZonedDateTime.of(2026, 11, day, hour, minute, 0, 0, zone).toInstant().toEpochMilli()
         assertEquals(at(24, 6, 45), Alarms.nextAt(at(23, 12, 0), zone, 6, 45))
         assertEquals(at(23, 6, 45), Alarms.nextAt(at(23, 5, 0), zone, 6, 45))
+    }
+
+    @Test
+    fun onlyAlarmClocksCountNeverTheClocksOtherWakeups() {
+        val dump = listOf(
+            "  nowRTC=1795086000000=2026-11-23 12:00:00.000 nowELAPSED=1000000",
+            "      RTC_WAKEUP #14: Alarm{33aeac9 type 0 origWhen 1795151700000 whenElapsed 66700000 com.google.android.deskclock}",
+            "        tag=*walarm*:com.android.deskclock.action.UPDATE_ALARM_INSTANCES",
+            "      RTC_WAKEUP #19: Alarm{e394fdf type 0 origWhen 1795153500000 whenElapsed 68500000 com.google.android.deskclock}",
+            "        tag=*walarm*:com.android.deskclock.action.UPDATE_ALARM_INSTANCES",
+            "        whenElapsed=+18h45m maxWhenElapsed=+18h45m",
+            "        Alarm clock:",
+            "          triggerTime=2026-11-24 06:45:00.000",
+            "      RTC_WAKEUP #20: Alarm{85718 type 0 origWhen 1795153515000 whenElapsed 68515000 com.google.android.deskclock}",
+            "        tag=*walarm*:com.android.deskclock.action.UPDATE_ALARM_INSTANCES",
+            "  Next wake from idle: Alarm{e394fdf type 0 origWhen 1795153500000 whenElapsed 68500000 com.google.android.deskclock}",
+            "    Alarm clock:",
+            "  Alarm clock:",
+        )
+
+        assertEquals(listOf(1795153500000L), AlarmCleanup.clocks(Alarms.parse(dump)!!, ClockApp.GOOGLE).distinct())
+
+        val run = FakeRun()
+        val phone = ClockPhone(run)
+        ClockFree().apply(run.scope)
+        // Google Clock's wakeups at the test's time and around an alarm of the owner's that was there before the run.
+        phone.wakeupAt(6, 45)
+        phone.wakeupAt(4, 45)
+        assertFalse(NextAlarmAt.passes(run.scope, none))
+        assertTrue(run.restores.runAll().isEmpty())
+        assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
     }
 
     @Test
@@ -214,7 +286,7 @@ class ClockStepsTest {
         assertEquals("6:45", run.scope.notes[ClockFree.SET_BEFORE])
         assertEquals(0, phone.position)
         assertTrue(run.restores.runAll().isEmpty())
-        assertEquals(1, phone.alarms.size)
+        assertEquals(1, phone.clocks())
         assertTrue(run.adb.hookCalls("SCREEN_TAP").isEmpty())
     }
 
@@ -278,8 +350,8 @@ class ClockStepsTest {
         phone.setAlarm(6, 45)
         assertTrue(NextAlarmAt.passes(run.scope, none))
 
-        // Google Clock's own alarms of 8:30 and 9:00, the first left expanded with its Delete.
-        phone.row("8:30", expanded = true)
+        // Google Clock's own alarms of 8:30 and 9:00.
+        phone.row("8:30")
         phone.row("9:00")
         val failures = run.restores.runAll()
         assertEquals(listOf("alarms that the run set at other times"), failures.map { it.what })
@@ -309,24 +381,30 @@ class ClockStepsTest {
         }
         val time = listOf(mapOf("contains" to "6:45", "package" to ClockApp.GOOGLE))
 
-        // The test alarm is set, but no row shows its time, and a row of the owner's is expanded with its Delete.
+        // The test alarm is set, but no card shows its time.
         failsAndKeeps({ phone ->
             phone.alarmAt(6, 45)
-            phone.row("8:30", expanded = true)
+            phone.row("8:30")
             phone.row("9:00")
         }, emptyList())
-        // Two rows show the time, in its two forms.
+        // Two cards show the time, in its two forms.
         failsAndKeeps({ phone ->
             phone.setAlarm(6, 45)
             phone.row("06:45")
         }, emptyList())
-        // The tap on the time does not expand its row, as when it opens a time picker, and another row is expanded.
+        // The tap on the card opens no sheet.
         failsAndKeeps({ phone ->
             phone.setAlarm(6, 45)
-            phone.row("8:30", expanded = true)
+            phone.row("8:30")
             phone.inert = true
         }, time)
-        // The tap on the time finds a second label that holds it, 16:45, so it answers a count of 2.
+        // The tap on the card opens the sheet of another alarm, whose Delete is never tapped.
+        failsAndKeeps({ phone ->
+            phone.row("8:30")
+            phone.setAlarm(6, 45)
+            phone.wrongSheet = true
+        }, time)
+        // The tap on the card finds labels of a second card that hold it, 16:45, which comes first, so it answers another count.
         failsAndKeeps({ phone ->
             phone.row("16:45")
             phone.setAlarm(6, 45)
@@ -364,7 +442,7 @@ class ClockStepsTest {
         assertEquals(listOf("alarms that the run set at other times"), failures.map { it.what })
         assertTrue(failures.single().reason, failures.single().reason.contains("2026-11-23 18:45"))
         assertFalse(failures.single().reason, failures.single().reason.contains("07:00"))
-        assertEquals(2, phone.alarms.size)
+        assertEquals(2, phone.clocks())
         assertTrue(run.adb.hookCalls("SCREEN_TAP").none { it["contains"] == "18:45" })
     }
 

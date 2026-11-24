@@ -18,8 +18,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 object Dumps {
     private val record = Regex("NotificationRecord\\(")
-    private val waze = Regex("\\bpkg=com\\.waze\\b")
-    private val flags = Regex("\\bflags=0x([0-9a-fA-F]+)")
+    private val flags = Regex("\\bflags=(0x[0-9a-fA-F]+|[A-Z_]+(?:\\|[A-Z_]+)*)")
     private val tethered = Regex("^\\s*(wlan|ap|swlan)\\S*\\s.*\\b(TetheredState|LocalHotspotState)\\b")
     private val press = Regex("^(send|share|call|delete|link) \\d+$")
     private val resumed = Regex("\\btopResumedActivity=ActivityRecord\\{\\S+ u\\d+ ([\\w.]+)/")
@@ -27,16 +26,8 @@ object Dumps {
     private val rowId = Regex("\\b_id=(\\d+)")
     private val callState = Regex("^mCallState=(\\d+)$")
 
-    /** Whether `dumpsys notification` lists a notification of Waze whose flags hold FLAG_ONGOING_EVENT (0x2), as navigation does. */
-    fun wazeNavigating(dump: List<String>): Boolean {
-        var inWaze = false
-        for (line in dump) {
-            if (record.containsMatchIn(line)) inWaze = waze.containsMatchIn(line)
-            val value = flags.find(line)?.groupValues?.get(1)
-            if (inWaze && value != null && (value.toLong(16) and 0x2L) != 0L) return true
-        }
-        return false
-    }
+    /** Whether `dumpsys notification` lists a notification of Waze whose flags hold FLAG_ONGOING_EVENT, as navigation does. */
+    fun wazeNavigating(dump: List<String>): Boolean = ongoingNotification(dump, "com.waze")
 
     /** Whether `dumpsys tethering` shows a Wi-Fi interface in TetheredState or LocalHotspotState. */
     fun hotspotOn(dump: List<String>): Boolean = dump.any { tethered.containsMatchIn(it) }
@@ -120,17 +111,22 @@ object Dumps {
     /** The battery's level in percent, from `dumpsys battery`'s line `level: 85`, or null without one. */
     fun batteryLevel(dump: List<String>): Int? = dump.firstNotNullOfOrNull { Regex("^\\s*level: (\\d+)\\s*$").find(it)?.groupValues?.get(1)?.toInt() }
 
-    /** Whether `dumpsys notification` lists a notification of [packageName] whose flags hold FLAG_ONGOING_EVENT (0x2), as a running timer's does. */
+    /**
+     * Whether `dumpsys notification` lists a notification of [packageName] whose flags hold FLAG_ONGOING_EVENT, as a running
+     * timer's does: `flags=0x62` before Android 17, `flags=ONGOING_EVENT|LOCAL_ONLY|…` from it.
+     */
     fun ongoingNotification(dump: List<String>, packageName: String): Boolean {
         val owner = Regex("\\bpkg=${Regex.escape(packageName)}(\\s|$)")
         var inPackage = false
         for (line in dump) {
             if (record.containsMatchIn(line)) inPackage = owner.containsMatchIn(line)
-            val value = flags.find(line)?.groupValues?.get(1)
-            if (inPackage && value != null && (value.toLong(16) and 0x2L) != 0L) return true
+            if (inPackage && flags.findAll(line).any { ongoing(it.groupValues[1]) }) return true
         }
         return false
     }
+
+    private fun ongoing(value: String): Boolean =
+        if (value.startsWith("0x")) (value.substring(2).toLongOrNull(16) ?: 0L) and 0x2L != 0L else value.split('|').contains("ONGOING_EVENT")
 
     private fun JsonObject.text(name: String): String? = this[name]?.jsonPrimitive?.contentOrNull
 }

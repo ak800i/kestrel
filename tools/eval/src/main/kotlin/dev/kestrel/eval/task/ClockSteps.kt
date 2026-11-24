@@ -26,9 +26,13 @@ object ClockApp {
     /** The key of [RunScope.notes] that holds the clock's package. */
     const val NOTE = "clock"
 
-    /** Google Clock's labels on an alarm's row, which Task 10 confirms on kestrel-api37: the expanded row's button that collapses it, and its Delete. */
-    const val COLLAPSE = "Collapse alarm"
+    /**
+     * Google Clock's labels, which Task 10 confirms on kestrel-api37: an alarm's card (a CardView whose label holds its
+     * time), which opens the alarm's editor sheet, and the sheet's Delete and Save.
+     */
+    const val CARD = "CardView"
     const val DELETE = "Delete"
+    const val SAVE = "Save"
 
     /** The clock app's package, from `cmd package resolve-activity`, or null when no app sets alarms. */
     fun find(scope: RunScope): String? =
@@ -84,17 +88,20 @@ internal object AlarmList {
     /** A time's two forms, "6:45" and a 24-hour clock's "06:45"; screen-has compares whole words, so it tells them apart. */
     fun forms(time: String): List<String> = listOf(time, "0$time")
 
-    /** Scrolls the list to its top, then reads it down to its end, or until [found] holds for a page ([Walk.FOUND]). */
-    fun walk(scope: RunScope, clock: String, forms: List<String>, found: (Page) -> Boolean): Walk {
-        val top = go(scope, clock, forms, UP) { false }
-        return if (top == Walk.ENDED) go(scope, clock, forms, DOWN, found) else top
+    /**
+     * Scrolls the list to its top, then reads it down to its end, or until [found] holds for a page ([Walk.FOUND]); with
+     * [className], a page counts only the elements of that class that hold a form, such as the alarms' cards.
+     */
+    fun walk(scope: RunScope, clock: String, forms: List<String>, className: String? = null, found: (Page) -> Boolean): Walk {
+        val top = go(scope, clock, forms, null, UP) { false }
+        return if (top == Walk.ENDED) go(scope, clock, forms, className, DOWN, found) else top
     }
 
     /** Scrolls the list to its top; whether the top showed. */
-    fun top(scope: RunScope, clock: String): Boolean = go(scope, clock, emptyList(), UP) { false } == Walk.ENDED
+    fun top(scope: RunScope, clock: String): Boolean = go(scope, clock, emptyList(), null, UP) { false } == Walk.ENDED
 
-    private fun go(scope: RunScope, clock: String, forms: List<String>, swipe: String, found: (Page) -> Boolean): Walk {
-        var page = read(scope, clock, forms) ?: return Walk.ELSEWHERE
+    private fun go(scope: RunScope, clock: String, forms: List<String>, className: String?, swipe: String, found: (Page) -> Boolean): Walk {
+        var page = read(scope, clock, forms, className) ?: return Walk.ELSEWHERE
         if (found(page)) return Walk.FOUND
         if (!page.scrolls) return Walk.ENDED
         var still = 0
@@ -103,7 +110,7 @@ internal object AlarmList {
             // A lost answer is read back by the next page.
             scope.device.once(swipe)
             scope.clock.sleep(1.seconds)
-            val next = read(scope, clock, forms) ?: return Walk.ELSEWHERE
+            val next = read(scope, clock, forms, className) ?: return Walk.ELSEWHERE
             if (found(next)) return Walk.FOUND
             still = if (next == page) still + 1 else 0
             if (still == 2) return Walk.ENDED
@@ -113,8 +120,8 @@ internal object AlarmList {
     }
 
     /** The page in view, or null when the clock app is not in front. */
-    private fun read(scope: RunScope, clock: String, forms: List<String>): Page? {
-        val answers = forms.associateWith { scope.hooks.screenHas(packageName = clock, contains = it) }
+    private fun read(scope: RunScope, clock: String, forms: List<String>, className: String?): Page? {
+        val answers = forms.associateWith { scope.hooks.screenHas(packageName = clock, contains = it, className = className) }
         val list = scope.hooks.screenHas(packageName = clock, state = "scrollable")
         if ((answers.values + list).any { it["app"] != clock }) return null
         return Page(answers.mapValues { it.value.int("count") }, list["first"]?.takeUnless { it == "none" }, list.int("count") > 0)
@@ -189,10 +196,11 @@ data class ClockFree(val times: List<String> = TIMES) : Setup {
 
 /**
  * The test alarm's deletion by Google Clock's own taps, checked in `dumpsys alarm` (design D9 of sub-project 6), and the
- * check for other alarms that the run set. Only the one row whose time is the test's, in one of its two forms, is
- * touched, and only when the list shows exactly one such row: a tap on its time expands it, and its Delete is tapped only
- * when it is the only expanded row (one Collapse button, on the time's line) and its Delete, the only one, lies below
- * the time. Anything else taps nothing more and fails the restore, which names what to do by hand.
+ * check for other alarms that the run set. Only the one card whose label holds the test's time, in one of its two forms,
+ * is touched, and only when the list shows exactly one such card: a tap on the card (not on its time, which opens a time
+ * picker, nor on its switch) opens the alarm's editor sheet, and the sheet's Delete is tapped only when the sheet shows
+ * the test's time. Anything else taps nothing more and fails the restore, which names what to do by hand. Only alarm
+ * clocks count, never the clock app's other wakeups.
  */
 internal object AlarmCleanup {
     /** Deletes the test alarm at [time] when it is set. */
@@ -220,46 +228,43 @@ internal object AlarmCleanup {
         check(new.isEmpty()) { "The run set ${new.size} other alarm(s) in $clock, at ${new.joinToString { format.format(Instant.ofEpochMilli(it)) }}; they stay." }
     }
 
-    /** The times of [clock]'s alarm clocks in [dump]. */
-    fun clocks(dump: AlarmDump, clock: String): List<Long> = dump.of(clock).filter { it.type <= 1 }.map { it.origWhen }
+    /** The times of [clock]'s alarm clocks in [dump], never its other wakeups. */
+    fun clocks(dump: AlarmDump, clock: String): List<Long> = dump.of(clock).filter { it.clock }.map { it.origWhen }
 
     /** Whether `dumpsys alarm` shows an alarm clock of [clock] at the next [hour]:[minute], or at the same time a day later. */
     fun set(scope: RunScope, clock: String, hour: Int, minute: Int): Boolean {
         val dump = checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }
         val next = Alarms.nextAt(dump.nowRtc, ClockApp.zone(scope), hour, minute)
-        return dump.of(clock).any { alarm -> alarm.type <= 1 && listOf(next, next + DAY).any { abs(alarm.origWhen - it) < MINUTE } }
+        return clocks(dump, clock).any { at -> listOf(next, next + DAY).any { abs(at - it) < MINUTE } }
     }
 
     private fun delete(scope: RunScope, clock: String, time: String): Boolean {
         var form: String? = null
         var several = false
-        val walk = AlarmList.walk(scope, clock, AlarmList.forms(time)) { page ->
+        val walk = AlarmList.walk(scope, clock, AlarmList.forms(time), ClockApp.CARD) { page ->
             val total = page.counts.values.sum()
             several = total > 1
             form = page.counts.entries.firstOrNull { it.value == 1 }?.key
             total > 0
         }
-        val row = form
-        if (walk != AlarmList.Walk.FOUND || several || row == null) return false
+        val card = form
+        if (walk != AlarmList.Walk.FOUND || several || card == null) return false
         val taps = AppTaps(scope, clock)
-        if (!expanded(scope, clock, row) && !taps.run(listOf(listOf(TapCandidate(contains = row))))) return false
-        return expanded(scope, clock, row) && taps.run(listOf(listOf(TapCandidate(label = ClockApp.DELETE))))
+        if (!taps.run(listOf(listOf(TapCandidate(contains = card, className = ClockApp.CARD))))) return false
+        return sheet(scope, clock, card) && taps.run(listOf(listOf(TapCandidate(label = ClockApp.DELETE))))
     }
 
-    /** Whether the only expanded row is the one that shows [form]: its one Collapse button on the time's line, and the one Delete below the time. */
-    private fun expanded(scope: RunScope, clock: String, form: String): Boolean {
-        val answers = listOf(
-            scope.hooks.screenHas(packageName = clock, contains = form),
-            scope.hooks.screenHas(packageName = clock, label = ClockApp.COLLAPSE),
-            scope.hooks.screenHas(packageName = clock, label = ClockApp.DELETE),
-        )
-        if (answers.any { it.int("count") != 1 || it["app"] != clock }) return false
-        val (time, collapse, delete) = answers.map { bounds(it) ?: return false }
-        return collapse[1] < time[3] && time[1] < collapse[3] && delete[1] >= time[3]
+    /**
+     * Whether the alarm's editor sheet is open on [form]: no card shows the time any more, because the sheet covers the
+     * list, the sheet shows it, and it has one Delete and one Save.
+     */
+    private fun sheet(scope: RunScope, clock: String, form: String): Boolean {
+        val card = scope.hooks.screenHas(packageName = clock, contains = form, className = ClockApp.CARD)
+        val shown = scope.hooks.screenHas(packageName = clock, contains = form)
+        val buttons = listOf(ClockApp.DELETE, ClockApp.SAVE).map { scope.hooks.screenHas(packageName = clock, label = it) }
+        if ((buttons + card + shown).any { it["app"] != clock }) return false
+        return card.int("count") == 0 && shown.int("count") >= 1 && buttons.all { it.int("count") == 1 }
     }
-
-    /** screen-has' bounds of the first element: left, top, right and bottom. */
-    private fun bounds(answer: HookAnswer): List<Int>? = answer["bounds"]?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.size == 4 }
 
     private const val MINUTE = 60_000L
     private const val DAY = 86_400_000L
