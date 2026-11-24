@@ -2572,7 +2572,7 @@ The port of the owner's two channels (design 5.3 and 11) and `ConversationOwner`
 
 **Interfaces:**
 - Consumes: Task 1's `InputChannel` and `ChannelAnswer`; `dev.kestrel.agent.port.OwnerPort` (with plan 7A's `leaveKestrel`), `Answer`, `AnswerKind` (with `LIMIT`), `ConfirmEnd`, `Gate`, `HandOverEnd`, `PermissionEnd`; `dev.kestrel.safety.Confirmation`, `HandOver`, `HandOverKind`, `Category`.
-- Produces (package `dev.kestrel.conversation.channel`): `interface OwnerChannel { val kind: InputChannel; suspend fun show(output: ChannelOutput); suspend fun ask(question: ChannelQuestion): ChannelAnswer; suspend fun handOver(handOver: HandOver): HandOverEnd; suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd; suspend fun leaveKestrel(): Boolean }`; `sealed interface ChannelOutput { data class Said(text); data class Shown(text); data class Report(command: Int, text) }`; `enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH }`; `data class ChannelQuestion(number: Int, text: String, kind: QuestionKind, spoken: String = text, choices: List<String> = emptyList(), confirmation: Confirmation? = null)`; `interface Dialogue { suspend fun say(text: String); suspend fun question(text: String, kind: QuestionKind, spoken: String = text): ChannelAnswer }`; `sealed interface DialogueEvent { Asked(number, kind); Answered(number); HandedOver(number); HandOverDone(number) }`; `class ConversationOwner(channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, voiceOn: StateFlow<Boolean>, routing: () -> Routing, events: (DialogueEvent) -> Unit) : OwnerPort, Dialogue` with `data class Routing(channel: InputChannel, speakTyped: Boolean)`, `suspend fun show(output: ChannelOutput)`, `fun answer(number: Int, answer: ChannelAnswer)`, `fun endHandOver(number: Int, end: HandOverEnd)`, `fun pause()`, `fun resume()`, `fun startWork()`, and the hooks' `asking: QuestionKind?`, `confirming: Category?`, `handOverKind: HandOverKind?`. Fixture: `class FakeChannel(kind: InputChannel) : OwnerChannel` (`shown`, `asked`, `answers`, `handOvers`, `handOverEnds`, `permissionEnds`, `leaves`, `onShow`, `texts()`).
+- Produces (package `dev.kestrel.conversation.channel`): `interface OwnerChannel { val kind: InputChannel; suspend fun show(output: ChannelOutput); suspend fun ask(question: ChannelQuestion): ChannelAnswer; suspend fun handOver(handOver: HandOver): HandOverEnd; suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd; suspend fun leaveKestrel(): Boolean }`; `sealed interface ChannelOutput { data class Said(text); data class Shown(text); data class Report(command: Int, text) }`; `enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH, DELETE_HISTORY }`; `data class ChannelQuestion(number: Int, text: String, kind: QuestionKind, spoken: String = text, choices: List<String> = emptyList(), confirmation: Confirmation? = null)`; `interface Dialogue { suspend fun say(text: String); suspend fun question(text: String, kind: QuestionKind, spoken: String = text): ChannelAnswer }`; `sealed interface DialogueEvent { Asked(number, kind); Answered(number); HandedOver(number); HandOverDone(number) }`; `class ConversationOwner(channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, voiceOn: StateFlow<Boolean>, routing: () -> Routing, events: (DialogueEvent) -> Unit) : OwnerPort, Dialogue` with `data class Routing(channel: InputChannel, speakTyped: Boolean)`, `suspend fun show(output: ChannelOutput)`, `fun answer(number: Int, answer: ChannelAnswer)`, `fun endHandOver(number: Int, end: HandOverEnd)`, `fun pause()`, `fun resume()`, `fun startWork()`, and the hooks' `asking: QuestionKind?`, `confirming: Category?`, `handOverKind: HandOverKind?`. Fixture: `class FakeChannel(kind: InputChannel) : OwnerChannel` (`shown`, `asked`, `answers`, `handOvers`, `handOverEnds`, `permissionEnds`, `leaves`, `onShow`, `texts()`).
 
 Counts: `:core:conversation` 47 + 14 = 61.
 
@@ -2634,8 +2634,12 @@ sealed interface ChannelOutput {
     }
 }
 
-/** A question's kind, which chooses the card's buttons and the waits (design 10.3 and 10.4 of sub-project 7). */
-enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH }
+/**
+ * A question's kind, which chooses the card's buttons, the waits and the spoken answers that count (design 10.3 and 10.4
+ * of sub-project 7). [DELETE_HISTORY] is "Delete the activity log, the network log and past conversations?", which only
+ * "yes" answers (plan 7D).
+ */
+enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH, DELETE_HISTORY }
 
 /**
  * A question to the owner: [number] names it, as "Reply…" does (design 12.2); [text] is the card's and the transcript's
@@ -5377,7 +5381,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 104 + 13 (`GoalRequestsTest` 4, `GoalRunnerTest` 9) = 117.
+Counts: `:core:conversation` 104 + 14 (`GoalRequestsTest` 4, `GoalRunnerTest` 10) = 118.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -5953,6 +5957,25 @@ class GoalRunnerTest {
     }
 
     @Test
+    fun aRoundReleasesBeforeItsEndReachesTheListener() = runTest {
+        val environment = environment(listSms, finish(1))
+        val releasedAtEnds = mutableListOf<Int>()
+        val ending = object : GoalListener by listener {
+            override fun ended(end: RoundEnd) {
+                releasedAtEnds += environment.released
+                listener.ended(end)
+            }
+        }
+
+        runner(environment).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), ending), plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        // Design D19 of sub-project 5: the end may start the next round at once, whose touch watcher this release must not stop.
+        assertEquals(listOf(1), releasedAtEnds)
+        assertEquals(EndReason.FINISHED, listener.ends.single().report.end)
+    }
+
+    @Test
     fun steeringReachesTheModelAtTheNextTurn() = runTest {
         val environment = environment(listSms, finish(1))
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
@@ -6285,7 +6308,8 @@ class GoalRunner(
         if (plan.resume == null) kept = null
         var ready: RoundSetup.Ready? = null
         var result: TaskReport? = null
-        try {
+        // The round runs until its agent reports, fails or is cancelled; then its end reaches the listener once, below.
+        val cancellation = try {
             screen.take()
             val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, history.port(plan.self), RoundPurpose.GOAL))
             if (setup is RoundSetup.Refused) {
@@ -6306,20 +6330,29 @@ class GoalRunner(
                     touches.cancel()
                 }
             }
-            finish(goal, prepared, owner, result ?: TaskReport(EndReason.KESTREL_ERROR))
+            null
         } catch (e: CancellationException) {
             // The agent reported before it rethrew; a cancellation before the agent ran still ends the round.
-            withContext(NonCancellable) { finish(goal, ready, owner, result ?: cancelled(e)) }
-            throw e
+            if (result == null) result = cancelled(e)
+            e
         } catch (e: Exception) {
             report("A goal's round", e)
-            finish(goal, ready, owner, result ?: TaskReport(EndReason.KESTREL_ERROR))
-        } finally {
-            ready?.let { withContext(NonCancellable) { release(it) } }
+            null
+        }
+        val end = result ?: TaskReport(EndReason.KESTREL_ERROR)
+        if (cancellation == null) {
+            finish(goal, ready, owner, end)
+        } else {
+            withContext(NonCancellable) { finish(goal, ready, owner, end) }
+            throw cancellation
         }
     }
 
+    // The round lets go of the screen before its end reaches the listener (design D19 of sub-project 5): the end can start
+    // the next round at once, and a release after it would stop that round's touch watcher. The listener gets the end on
+    // every path, also when the routine offer fails or a stop cancels it.
     private suspend fun finish(goal: RunningGoal, ready: RoundSetup.Ready?, owner: OwnerPort, result: TaskReport) {
+        ready?.let { withContext(NonCancellable) { release(it) } }
         val stop = goal.stopSentence
         val sentence = if (stop != null) "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}" else environment.sentence(result)
         if (result.end in HELD) {
@@ -6334,9 +6367,18 @@ class GoalRunner(
             return
         }
         // The offer follows the report, so the report is said first; the record keeps it as the goal's answer (D3).
-        owner.say(answer)
-        val offered = maker(ready, owner).offer(recording, ready.taskId)
-        goal.listener.ended(RoundEnd(goal.command, result, answer, (offered as? SaveResult.NotSaved)?.sentence))
+        var reply: String? = answer
+        try {
+            owner.say(answer)
+            reply = null
+            reply = (maker(ready, owner).offer(recording, ready.taskId) as? SaveResult.NotSaved)?.sentence
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            report("Offering a routine", e)
+        } finally {
+            goal.listener.ended(RoundEnd(goal.command, result, answer, reply))
+        }
     }
 
     private fun maker(ready: RoundSetup.Ready, owner: OwnerPort) =
@@ -6347,7 +6389,7 @@ class GoalRunner(
         return TaskReport(end = cancellation?.reason ?: EndReason.CANCELLED, interruption = cancellation?.interruption)
     }
 
-    // A failed release must not hide the round's end, which the listener has already.
+    // A failed release must not hide the round's end, which the listener gets right after it.
     private suspend fun release(ready: RoundSetup.Ready) {
         try {
             ready.release()
@@ -6373,12 +6415,12 @@ class GoalRunner(
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.goal.*`
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 117`.
+Expected: BUILD SUCCESSFUL; `core\conversation 118`.
 
 - [ ] **Step 7: Commit**
 
@@ -6401,7 +6443,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5's `HistorySearch.conversation` and `forgetAll`; Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`.
 
-Counts: `:core:conversation` 117 + 8 = 125.
+Counts: `:core:conversation` 118 + 8 = 126.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -6549,7 +6591,7 @@ class LocalRequestsTest {
         assertTrue(archive.keyDeleted)
         assertEquals(0, search.indexed)
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
-        assertEquals(Triple(question, QuestionKind.YES_NO, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
+        assertEquals(Triple(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
     }
 
     @Test
@@ -6696,7 +6738,7 @@ class LocalRequests(
 
     private suspend fun deleteHistory(dialogue: Dialogue): LocalOutcome {
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
-        if (dialogue.question(question, QuestionKind.YES_NO, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
+        if (dialogue.question(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
         return try {
             deleteLogs()
             store.deleteAll()
@@ -6734,7 +6776,7 @@ Expected: PASS, 8 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 125`.
+Expected: BUILD SUCCESSFUL; `core\conversation 126`.
 
 - [ ] **Step 6: Commit**
 
@@ -6757,7 +6799,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 125 + 14 = 139. `:core:agent`: G₀, unchanged.
+Counts: `:core:conversation` 126 + 14 = 140. `:core:agent`: G₀, unchanged.
 
 - [ ] **Step 1: Create the view**
 
@@ -7854,7 +7896,7 @@ Expected: PASS, 14 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 139` and `core\agent\build\test-results\test` G₀; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 140` and `core\agent\build\test-results\test` G₀; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -7867,7 +7909,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 139, from C₀ = 0 (Task 1: 7, Task 2: 10, Task 3: 9, Task 4: 12, Task 5: 9, Task 6: 14, Task 7: 43, Task 8: 13, Task 9: 8, Task 10: 14).
+- `:core:conversation`: C₀ + 140, from C₀ = 0 (Task 1: 7, Task 2: 10, Task 3: 9, Task 4: 12, Task 5: 9, Task 6: 14, Task 7: 43, Task 8: 14, Task 9: 8, Task 10: 14).
 - `:core:agent`: G₀, unchanged (Task 10, Step 6 runs it).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
 
@@ -7904,11 +7946,11 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - `engine.ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })`; `val owner: ConversationOwner`; `val view: StateFlow<ConversationView>`; `val restored: Restored?`; `suspend fun restore(): Restored` (once, at process start, before the accessibility service, the assistant service or the conversation screen can send input; inputs wait for it); `fun submit(input: OwnerInput)`; `fun signal(signal: PhoneSignal)`; `fun touched()`; `fun composing(active: Boolean)`; `fun awaitingCommand(active: Boolean)`; `fun replyOpened(question: Int)`; `fun endQuietTime()`; `fun outcome(command: Int): CommandOutcome?`; `MAX_OUTCOMES = 16`.
 - `engine.ConversationView(id, command, goal: GoalPhase?, step: Int?, asking: QuestionKind?, question: Int?, replyChannel, checklist: ChecklistSummary?, records, continuedAtWall, testMode, quiet: QuietClock)` with `continued`: the bar and the goal's notification draw "Step 12 · 3 of 7 · Replying to Mila" from `step` and `checklist` (design 10.5 and 10.6); `step` is null while no round of the goal works. `engine.ChecklistSummary(done, total, current: String?)`; `engine.CommandOutcome(command, report: TaskReport, answer: String?)`, whose `answer` is Kestrel's final words, also after a routine offer; `engine.Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`.
 - `onStep` for `CommandTags`: every effect that starts work under a new command number carries the owner's input that asked for it, on whatever step it comes, because a command that waited in `next` starts on a `GoalEnded`, `LocalEnded` or `Switched` step, not on its own `Input` step: `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)` (`input` is null when the owner answered "Continue the goal?" on its card), `RunLocal(command, record, request, input)` and `SwitchTo(command, id, input)`. `CommandTags` maps `input.id` to `command` from these effects, and the hook `agent-task -Result -Tag` reads `outcome(command)`. A round takes the debug options of the input that started or resumed it; a yes on the card keeps the latest.
-- `model.OwnerInput(id: Long, channel: InputChannel, intent: InputIntent, atMillis: Long, options: Map<String, String> = emptyMap())`; `model.InputIntent`: `Command(text)`, `Answer(answer: ChannelAnswer)`, `Stop`, `Continue`, `NewConversation`, `ContinuePast(topic: String?)`, `ContinueConversation(id)`, `DeleteHistory`, `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`; `model.ChannelAnswer`: `Yes`, `No`, `Text(text, leftScreen)`, `Pick(number)` (from 1), `Silence`, `Interrupted`. The channels read the owner's words: while `view.asking` is `YES_NO`, `CONFIRM`, `LIMIT`, `CONTINUE_GOAL` or `SWITCH`, a spoken or typed yes or no is `Answer(Yes)` or `Answer(No)`; for `PICK` a number is `Answer(Pick(n))`; for `FREE` and `SCREENSHOT` the words are `Answer(Text(words, leftScreen))`; the voice's answer waits (15 s and 35 s) end with `Answer(Silence)`. `Rules` enforces D9 (steering by voice needs "Kestrel"): the machine takes every `Command` that reaches it while a goal acts as steering.
+- `model.OwnerInput(id: Long, channel: InputChannel, intent: InputIntent, atMillis: Long, options: Map<String, String> = emptyMap())`; `model.InputIntent`: `Command(text)`, `Answer(answer: ChannelAnswer)`, `Stop`, `Continue`, `NewConversation`, `ContinuePast(topic: String?)`, `ContinueConversation(id)`, `DeleteHistory`, `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`; `model.ChannelAnswer`: `Yes`, `No`, `Text(text, leftScreen)`, `Pick(number)` (from 1), `Silence`, `Interrupted`. The channels read the owner's words: while `view.asking` is `YES_NO`, `CONFIRM`, `LIMIT`, `CONTINUE_GOAL` or `SWITCH`, a spoken or typed yes or no is `Answer(Yes)` or `Answer(No)`; for `DELETE_HISTORY` only "yes" itself is `Answer(Yes)` (not "continue" or "go on"), so that nothing but a yes deletes the history; for `PICK` a number is `Answer(Pick(n))`; for `FREE` and `SCREENSHOT` the words are `Answer(Text(words, leftScreen))`; the voice's answer waits (15 s and 35 s) end with `Answer(Silence)`. `Rules` enforces D9 (steering by voice needs "Kestrel"): the machine takes every `Command` that reaches it while a goal acts as steering.
 - `model.PhoneSignal { LOCKED, UNLOCKED, RINGING, CALL_ACTIVE, CALL_IDLE, AGENT_CALL }`: `PhoneSignals` sends `AGENT_CALL` instead of `CALL_ACTIVE` when the call backstop's verdict is to stop.
 - `model.ConversationSettings(quietSeconds = 60, followUpSeconds = 8, speakTypedReplies = false, retentionDays = 30, limits = GoalLimits())`, `@Serializable`, with `quietMillis`, `followUpMillis` (the follow-up window's length for `Rules`), `keptDays`, `roundLimits` (every read goes through these, which keep a stored value within the page's bounds), `QUIET_CHOICES`, `FOLLOW_UP_CHOICES`, `RETENTION_CHOICES`, `REPLIES`, `WORK_MINUTES` and `CREDITS`, for `SettingKeys.CONVERSATIONS`.
 - `channel.OwnerChannel { val kind: InputChannel; suspend fun show(output: ChannelOutput); suspend fun ask(question: ChannelQuestion): ChannelAnswer; suspend fun handOver(handOver: HandOver): HandOverEnd; suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd; suspend fun leaveKestrel(): Boolean }`, which `VoiceChannel` implements: `show(Said)` speaks and shows; `show(Shown)` only shows; `show(Report)` speaks the final reply and returns when its speech has ended (`Rules` opens the follow-up window there; a typed conversation's final reply that "Speak replies to typed commands" also speaks reaches `VoiceChannel` as `Said`, never as `Report`, so it opens no follow-up window, design 11); `ask` speaks `question.spoken` and returns only a card's answer (a confirmation's card, as today), the spoken answer coming as an input; `askPermission` says why and shows Android's permission dialog, which no other channel shows again: the card that `TextChannel` (plan 7F) gets for an open permission request once Kestrel is off is a hand-over's card (`handOver(HandOver.of(HandOverKind.PERMISSION))`, Continue and Cancel), whose Continue makes the owner check what Android granted, and `TextChannel.askPermission` shows Android's dialog only when it is the owner's channel, that is, when no channel has shown the dialog yet; "Continue the goal?" is spoken only once a voice session is open and the owner is back, while its card is `TextChannel`'s (plan 7F). While Kestrel is off (the `voiceOn` flow is false: the listening mode is `OFF`; the paused mode counts as on, because Kestrel still hears its name there and a goal keeps its speech and its voice answers), `VoiceChannel.ask` speaks nothing and shows only its own card (a confirmation's), and speaks its question once Kestrel is on again; every question, hand-over and permission request also goes to `TextChannel`'s card from the moment Kestrel turns off, and the card stays until it ends; the machine runs D21's waits for a question until Kestrel is on again; and a spoken conversation's `Said` and `Report` reach `VoiceChannel` as `Shown`, so nothing is spoken and no follow-up window opens; a typed conversation's replies with "Speak replies to typed commands" on still arrive as `Said` and are spoken (design 10.6 and 11).
-- `channel.ChannelOutput`: `Said(text)`, `Shown(text)`, `Report(command, text)`; `channel.ChannelQuestion(number, text, kind, spoken = text, choices = emptyList(), confirmation: Confirmation? = null)`; `channel.QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH }`; `channel.Dialogue`; `channel.DialogueEvent`.
+- `channel.ChannelOutput`: `Said(text)`, `Shown(text)`, `Report(command, text)`; `channel.ChannelQuestion(number, text, kind, spoken = text, choices = emptyList(), confirmation: Confirmation? = null)`; `channel.QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH, DELETE_HISTORY }`; `channel.Dialogue`; `channel.DialogueEvent`.
 - `channel.ConversationOwner` (made by the engine): the hooks read `asking: QuestionKind?`, `confirming: Category?` and `handOverKind: HandOverKind?`; `ConversationOwner.Routing(channel, speakTyped)`; the owner reads whether Kestrel is on from the engine.
 - `goal.GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`, which `AppGoalEnvironment` implements: `RoundStart(command, options, owner, goal, history, purpose: RoundPurpose)` (`RoundPurpose.GOAL` needs the screen, the touch watcher and the call backstop's `acted`; `ROUTINE` needs only the model and the memory); `RoundSetup.Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit)` (`offersRoutines` is false in a debuggable build; the conversation overrides `settings.safety.testMode`); `RoundSetup.Refused(sentence, end: EndReason)`, whose `end` is the goal's (`NO_PROFILE`, `MODEL_UNUSABLE`, …).
 - `goal.ScreenTurn { suspend fun take() }`, which `ScreenTurns` implements.
@@ -7930,6 +7972,6 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what is left out; `ContextBlockTest` checks the order, the caps, the largest records in Latin and Cyrillic at three budgets, the Ollama budget and the condensed records' stability.
 - **Safety.** No record holds a value or a placeholder (`RecordText`, tested in Tasks 2 and 3); the owner's words are only the records' requests, answers, steering and "continue" lines; test mode is fixed per conversation and overrides the round's settings (`GoalRunnerTest`), and a change of test mode closes the conversation after its goal (`ConversationMachineTest`); confirmations never carry, because every round is a new run of plan 7A; every new type prints no words (`ToStringTest`, `GoalRulesTest`).
 - **The owner's hard rule.** Each concern is its own unit: the pure machine and the engine that performs its effects; the quiet clock's rules in one place; the goal's phases apart from the conversation's lifecycle; the owner over the channels apart from the channels; the records' building, condensing and block apart; the bytes-level archive apart from the JSON store and the search. The design's sketch changed where a cleaner form exists ("Changes to the design"), and the ones that the owner hears are in "Decisions for the controller".
-- **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 139.
+- **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 140.
 - **Type consistency.** `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `RunLocal(command, record, request, input)`, `SwitchTo(command, id, input)` and `Close(id, keep)` are built by the machine (Task 7) and read by the engine (Task 10) with the same fields; `ConversationEvent.GoalEnded(command, report, answer, reply)` and `RoundEnd(command, report, answer, reply)` in Tasks 7, 8 and 10; `GoalListener.stepStarted(step)` in Tasks 8 and 10; `RoundPlan(record, earlier, text, resume, testMode, continuedAtWall, limits, options, self, zone)` in Tasks 8 and 10; `GoalRunner(environment, screen, history, clock, report)` in Tasks 8 and 10; `LocalRequests(memory, store, search, deleteLogs, routines, clock, report)` and `run(request, owner, dialogue)` in Tasks 9 and 10; `ConversationOwner(channels, permissions, routing, events)` in Tasks 6 and 10; `HistorySearch(store, retentionDays, clock)` in Tasks 5, 8, 9 and 10; `RecordBuilder.traced(record, entry, channel)` in Tasks 2 and 10; `ContextBlock.build(earlier, budget, zone, note)` in Tasks 3 and 8.
 - **The checker.** `files\plan3x-check.py` ran on this plan against `sp3` at `41d54522` with the command of "Before you start"; its result is in the controller's report.
