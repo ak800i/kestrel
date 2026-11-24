@@ -1,0 +1,54 @@
+package dev.kestrel.conversation.model
+
+import dev.kestrel.agent.goal.ResumeCause
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+
+/** A goal's phase (design 5.3 of sub-project 7); the last three are held (D17). */
+enum class GoalPhase { ACTING, ASKING, HANDED_OVER, PAUSED, PAUSED_AT_LIMIT, INTERRUPTED }
+
+/**
+ * Why a goal is held (D13 and D17 of sub-project 7), with the phase that it gives and how it resumes. A lock or a call
+ * pauses the round, which waits at its gate and goes on with a fresh look ([resume] is null); a limit, a touch, Kestrel's
+ * own screen or a restart ended the round, and the goal resumes in a new run with [resume] (design 7.6).
+ */
+enum class GoalHold(val phase: GoalPhase, val resume: ResumeCause?) {
+    LOCK(GoalPhase.PAUSED, null),
+    INCOMING_CALL(GoalPhase.PAUSED, null),
+    OUTGOING_CALL(GoalPhase.PAUSED, null),
+    LIMIT(GoalPhase.PAUSED_AT_LIMIT, ResumeCause.LIMIT),
+    TOUCH(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
+    KESTREL_SCREEN(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
+    RESTART(GoalPhase.INTERRUPTED, ResumeCause.RESTART),
+}
+
+/** How a goal whose round still runs is ending: "stop" ends it for good, a touch interrupts it (D13). */
+enum class GoalEnding { STOPPING, INTERRUPTING }
+
+/**
+ * The open goal (design 6.1 and 7.7 of sub-project 7): the [record] of the command that started it, its [phase], why it
+ * is held, when it last changed on the wall clock (a restored goal is held for 30 minutes from then, design 6.7), how
+ * many rounds it has had and how many steps its ended rounds took ([stepsBefore], which the bar's step adds to the running
+ * round's, design 10.5). [command] (the number of the input that started or last resumed it), [ending] and [handOver]
+ * (the open hand-over's number) belong to this process and are not stored.
+ */
+@Serializable
+data class GoalState(
+    val record: Int,
+    val phase: GoalPhase,
+    val changedAtWall: Long,
+    val hold: GoalHold? = null,
+    val rounds: Int = 1,
+    val stepsBefore: Int = 0,
+    @Transient val command: Int = 0,
+    @Transient val ending: GoalEnding? = null,
+    @Transient val handOver: Int? = null,
+) {
+    init {
+        require(hold?.phase == phase || (hold == null && phase !in HELD)) { "A goal is held exactly in a held phase, by its hold" }
+    }
+
+    companion object {
+        val HELD: Set<GoalPhase> = setOf(GoalPhase.PAUSED, GoalPhase.PAUSED_AT_LIMIT, GoalPhase.INTERRUPTED)
+    }
+}

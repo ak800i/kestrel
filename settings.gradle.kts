@@ -33,6 +33,7 @@ rootProject.name = "kestrel"
 include(":app")
 include(":core:agent")
 include(":core:commands")
+include(":core:conversation")
 include(":core:datatools")
 include(":core:perception")
 include(":core:privacy")
