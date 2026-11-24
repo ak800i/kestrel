@@ -736,4 +736,18 @@ class SafetyCheckTest {
         assertEquals("block", kind(SafetyCheck.decide(atAna, picker.snapshot(), inFlow, testMode, aliases)))
         assertEquals(false, SafetyCheck.testModeAllows(atAna, picker.snapshot(), inFlow, testMode, aliases))
     }
+
+    // Design 12.3 of sub-project 7: update_checklist and search_conversations act on nothing, so neither the screen in front,
+    // nor the allowance, nor test mode stops them, even where any tap would be a call.
+    @Test
+    fun theToolsThatActOnNothingRunInEveryModeAndTestModeLetsThemThrough() {
+        val dialer = TestScreen("com.google.android.dialer")
+        dialer.add(1800, "Call")
+        val records = Proposal("update_checklist", ActionKind.KESTREL_RECORDS, frontAppLabel = "Phone")
+
+        assertEquals(listOf("run", "run", "run"), Mode.entries.map { decide(records, dialer, nothing, it) })
+        val assessed = SafetyCheck.assess(records, dialer.snapshot(), nothing, standard.copy(testMode = true))
+        assertEquals(Category.READING, assessed.category)
+        assertEquals(Decision.Run, assessed.decision)
+    }
 }

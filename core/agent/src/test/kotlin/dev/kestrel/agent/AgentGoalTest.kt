@@ -10,6 +10,7 @@ import dev.kestrel.agent.loop.Redacted
 import dev.kestrel.agent.loop.TaskText
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.observe.ScreenText
+import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
@@ -247,6 +248,34 @@ class AgentGoalTest {
 
         assertTrue(harness.requestText(2).contains("Result: update_checklist failed: Step 1 cannot mark c1 done: c1 was added at step 2, after it."))
         assertEquals(emptyList<Checklist>(), harness.goal.checklists)
+    }
+
+    // Most of a goal's items are done on the screen: a tap that worked marks one done, a tap that failed cannot.
+    @Test
+    fun aScreenStepThatWorkedMarksAnItemDoneAndOneThatFailedCannot() = runTest {
+        val tap = call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading")
+        val harness = Harness(Screens.chats(), listOf(
+            checklist(item("Open Ana's chat", "doing"), item("Read her message", "todo")),
+            tap,
+            tap,
+            checklist(item("Open Ana's chat", "done", "id" to "c1", "step" to 2), item("Read her message", "todo", "id" to "c2")),
+            checklist(item("Open Ana's chat", "done", "id" to "c1", "step" to 3), item("Read her message", "todo", "id" to "c2")),
+            fail(),
+        ))
+        var taps = 0
+        harness.screen.outcome = { action -> ActionOutcome(done = action !is ScreenAction.Tap || ++taps > 1, method = "fake") }
+        harness.screen.onTap("Ana Petrović", Screens.chat("Ana Petrović", "Hi"))
+
+        val report = harness.run("Read Ana's newest message")
+
+        assertTrue(
+            harness.requestText(4).contains(
+                "Result: update_checklist failed: Step 2 cannot mark c1 done: name a step that acted on the screen without failing, a data step with a result or a step that the owner did.",
+            ),
+        )
+        assertTrue(harness.requestText(5).contains("Result: checklist saved, 1 of 2 done (c1, c2)."))
+        val saved = Checklist(listOf(ChecklistItem("c1", "Open Ana's chat", ItemState.DONE, step = 3), ChecklistItem("c2", "Read her message", ItemState.TODO)))
+        assertEquals(saved, report.checklist)
     }
 
     // A step that only talked did nothing that an item could be done by (design 7.2 of sub-project 7).

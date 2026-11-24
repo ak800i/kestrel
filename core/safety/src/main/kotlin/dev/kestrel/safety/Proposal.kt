@@ -56,11 +56,18 @@ enum class ActionKind {
     /** `delete_contact`: deleting (design D19 of sub-project 6). */
     DELETE_CONTACT,
 
-    /** `ask_user`, `say`, `finish`, `fail` and `update_checklist`, which only report to the owner and never act. */
+    /** `ask_user`, `say`, `finish` and `fail`. */
     DIALOGUE,
 
     /** `remember` and `forget`, which always ask the owner themselves (spec 11.4). */
     MEMORY,
+
+    /**
+     * `update_checklist` and `search_conversations`, which act on nothing on the phone and only write or read Kestrel's own
+     * records of the goal and the conversations (design 7.2, 9.4 and 12.3 of sub-project 7). The loop runs them itself, and
+     * the safety check rates them as reading.
+     */
+    KESTREL_RECORDS,
 }
 
 /** A point on the screen, in pixels. */
