@@ -104,6 +104,9 @@ class SuiteFolder private constructor(val path: Path, private val text: List<Str
 
     companion object {
         const val RUNS = "runs.txt"
+
+        /** The runs' detail lines (plan 6B-basefix), which --resume appends to and never rewrites. */
+        const val DETAILS = "details.txt"
         private val NAME = Regex("(a71|kestrel-api37)-(\\d{8}-\\d{6})")
         private val HEADER = Regex("(\\S+) on .+, (\\d+) runs")
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")

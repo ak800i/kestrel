@@ -127,7 +127,9 @@ class Runner(
             task.name, number, if (call) RunResult.FAIL else judged.result, state.answer, judged.check,
             reason, end.credits, asked = state.cancelled().joinToString(",").takeIf { reason == Reason.ASKED },
         )
-        writer.writeOnce(task.name, number, line)
+        if (writer.writeOnce(task.name, number, line)) {
+            writer.detail(RunDetail(task.name, number, state.asked.toList(), state.answer, state.markers, scope.putBack.applied, scope.putBack.stored).text())
+        }
         current = null
         restores.report(end.failures)
         error?.let { throw it }
@@ -169,7 +171,7 @@ class Runner(
         stopIfStopping()
         try {
             state.sent = true
-            hooks.voiceHeard("Kestrel, " + task.request.fill(scope.values), tag, options.live, options.model)
+            hooks.voiceHeard("Kestrel, " + task.request.fill(scope.values), tag, options.live, options.model, scope.values.marker)
         } catch (e: HookLost) {
             // A lost transcript is read back: the task with the tag exists, or the run stops without one.
             if (!exists(tag)) {
@@ -180,6 +182,8 @@ class Runner(
         }
         await(task, tag, state)
         val answer = state.answer
+        // For the detail line: whether a say text and a data tool's result held the run's marker.
+        if (answer != null) state.markers = quietly { hooks.agentTask(tag, marker = scope.values.marker) }
         var checked = false
         if (answer != null) {
             if (answer["end"] == "NO_PROFILE") state.refusal = Refusals.kind(hooks, tag)
@@ -355,6 +359,9 @@ class Runner(
 
         // The task's questions as the run met them, and its answers that reached Kestrel (T1).
         val record = AskedRecord()
+
+        // agent-task's answer with the run's marker, read once after the end, for the detail line.
+        var markers: HookAnswer? = null
 
         /** The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order. */
         val asked: List<Asked> get() = record.asked

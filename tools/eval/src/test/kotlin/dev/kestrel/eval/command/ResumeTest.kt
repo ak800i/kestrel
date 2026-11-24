@@ -26,7 +26,8 @@ class ResumeTest {
     private val pair = listOf("stand-in-hotspot", "stand-in-firefox")
     private val build = KestrelBuild(versionCode = 100, versionName = "1.0.0", lastUpdateTime = "2026-11-24 09:18:59", commit = commit, dirty = false)
 
-    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") }
+    // The run lines, without the detail lines that follow them.
+    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") && " result=" in it }
 
     private fun line(task: String, run: Int, model: String = "scripted", reason: String = "ok") =
         "2026-11-24 10:00:01\ttask\ttask=$task run=$run result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=$model in=0 out=0 cacheRead=0 cacheWrite=0 reason=$reason"

@@ -70,6 +70,9 @@ class RunScope(
 
     /** What a setup read for the run's checks, such as the Wi-Fi page's activity or the alarms before the run. */
     val notes: MutableMap<String, String> = mutableMapOf()
+
+    /** The settings that a restore found changed by the run and put back, which the run's detail line names (T6). */
+    val putBack: PutBack = PutBack()
 }
 
 /** What a setup step found: the device is ready, or it cannot run the task ([Untestable], which skips the run). */

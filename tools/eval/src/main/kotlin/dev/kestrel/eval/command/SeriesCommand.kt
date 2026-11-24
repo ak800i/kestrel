@@ -88,7 +88,7 @@ class SeriesCommand(
         val call = (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head)).copy(kestrel = recorded ?: KestrelBuild.installed(session.device))
         call.write(folder)
         val runsFile = ResultsFile(folder.resolve(SuiteFolder.RUNS), environment.clock)
-        val writer = LineWriter(session.console, runsFile)
+        val writer = LineWriter(session.console, runsFile, ResultsFile(folder.resolve(SuiteFolder.DETAILS), environment.clock))
         lines(writer)
         val start = resumed?.folder?.start ?: environment.clock.now()
         val todo = resumption?.runs ?: tasks.map { it.name to 1 }

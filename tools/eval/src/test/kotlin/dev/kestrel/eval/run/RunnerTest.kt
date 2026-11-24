@@ -79,8 +79,11 @@ class RunnerTest {
             "task=stand-in-hotspot run=1 result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=scripted in=10 out=2 cacheRead=0 cacheWrite=0 reason=ok",
             line.text(),
         )
-        assertEquals(listOf(line.text()), run.console.lines)
-        assertEquals(listOf(mapOf("event" to "heard", "text" to "Kestrel, turn on hotspot", "tag" to "t1")), run.adb.hookCalls("VOICE"))
+        assertEquals(
+            listOf(line.text(), "task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none"),
+            run.console.lines,
+        )
+        assertEquals(listOf(mapOf("event" to "heard", "text" to "Kestrel, turn on hotspot", "tag" to "t1", "marker" to "maple heron")), run.adb.hookCalls("VOICE"))
         assertEquals(listOf(mapOf("file" to "task.json"), mapOf("clear" to "true")), run.adb.hookCalls("AGENT_SCRIPT"))
         assertEquals("[{\"tool\": \"finish\", \"arguments\": {\"summary\": \"maple heron\"}}]", java.nio.file.Files.readString(run.scope.work.resolve("task.json")))
         assertEquals(listOf("fixture"), restored)
@@ -468,5 +471,33 @@ class RunnerTest {
         val closed = runner().run(task(), "[]", 2, "cedar otter")
         assertEquals(sent + 1, answers())
         assertTrue(closed.text(), closed.text().endsWith(" asked=free reason=asked"))
+    }
+
+    @Test
+    fun aRunsDetailLineNamesItsAnswersKestrelsCountsAndWhatARestorePutBack() {
+        val questions = ArrayDeque(listOf("phase=running asking=yes-no work=running-task handOver=none confirming=none question=yes-no"))
+        run.adb.hook("AGENT_STATE") { questions.removeFirstOrNull() ?: "phase=running asking=none work=running-task handOver=none confirming=none question=none" }
+        var polls = 0
+        run.adb.hook("AGENT_TASK") { extras ->
+            when {
+                extras["marker"] != null -> "state=done marker=1 markerSaid=1 markerInData=0"
+                ++polls < 3 -> "state=running"
+                else -> "$done ownerTouches=2 signals=1"
+            }
+        }
+        val setup = object : Setup {
+            override fun apply(scope: RunScope): SetupResult {
+                scope.restores.push("the display density", "") { scope.putBack.recordApplied("wm/density") }
+                return SetupResult.Ready
+            }
+        }
+
+        runner().run(task(setup = listOf(setup)), "[]", 1, "maple heron")
+
+        assertEquals(
+            listOf("task=stand-in-hotspot run=1 asked=yes-no:no ownerTouches=2 signals=1 markerSaid=1 markerInData=0 putBack=wm/density byHand=none"),
+            writer.details,
+        )
+        assertEquals("maple heron", run.adb.hookCalls("VOICE").single()["marker"])
     }
 }

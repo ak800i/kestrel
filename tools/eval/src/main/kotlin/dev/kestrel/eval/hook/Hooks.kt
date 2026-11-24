@@ -92,8 +92,11 @@ class Hooks(private val client: HookClient) {
     /** voice -Send [event]: an event of Kestrel's Orchestrator other than a transcript, such as toggle. */
     fun voiceSend(event: String): HookAnswer = act("voice", Extra.Text("event", event))
 
-    /** voice -Send heard: the transcript [text] with [tag], as if Kestrel had heard it; [live] and [model] go with its task. */
-    fun voiceHeard(text: String, tag: String, live: Boolean = false, model: String? = null): HookAnswer =
+    /**
+     * voice -Send heard: the transcript [text] with [tag], as if Kestrel had heard it; [live], [model] and the run's
+     * [marker] go with its task, the marker for agent-task's `markerInData=` (plan 6B-basefix).
+     */
+    fun voiceHeard(text: String, tag: String, live: Boolean = false, model: String? = null, marker: String? = null): HookAnswer =
         act(
             "voice",
             Extra.Text("event", "heard"),
@@ -101,6 +104,7 @@ class Hooks(private val client: HookClient) {
             Extra.Text("tag", tag),
             Extra.Flag("live", true).takeIf { live },
             model?.let { Extra.Text("model", it) },
+            marker?.let { Extra.Text("marker", it) },
         )
 
     /** provider-standin: the default profile's kind (none, copilot or other) and whether the stand-in runs. */
