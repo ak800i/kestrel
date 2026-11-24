@@ -107,7 +107,7 @@ class Cli(private val environment: Environment) {
         val USAGE: String = """
             |Usage: scripts\eval.ps1 <command> [options]
             |  run --device <serial> --task <name> [--runs n] [--live] [--model id] [--name first-name] [--dry-run] [--results file]
-            |  suite --device <serial> [--live] [--runs n] [--tasks a,b] [--compare] [--record-baseline] [--resume <results folder>]
+            |  suite --device <serial> [--live] [--runs n] [--tasks a,b] [--compare] [--record-baseline] [--egress] [--resume <results folder>]
             |  compare <results folder>... [--rerun --device <serial>]
             |  injection --device <serial> [--live] [--runs n]
             |  rehearse --device <serial> [--tasks a,b]

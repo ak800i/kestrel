@@ -1,5 +1,6 @@
 package dev.kestrel.eval.device
 
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -79,6 +80,14 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
         read("true")
         val result = adb.host(listOf("install", "-r", apk.toString()), PUSH_TIMEOUT)
         if (result.exitCode != 0) throw DeviceCommandFailed("adb install failed on $serial: ${complaint(result)}")
+    }
+
+    /** Copies [remote] of the device to [local] with `adb pull`, after the guard's check; a copy overwrites, so it may run twice. */
+    fun pull(remote: String, local: Path) {
+        read("true")
+        Files.createDirectories(local.toAbsolutePath().parent)
+        val result = adb.host(listOf("pull", remote, local.toString()), PUSH_TIMEOUT)
+        if (result.exitCode != 0) throw DeviceCommandFailed("adb pull failed on $serial: ${complaint(result)}")
     }
 
     /** The command inside the guard's check, as `Format-TestDeviceCommand` writes it. */

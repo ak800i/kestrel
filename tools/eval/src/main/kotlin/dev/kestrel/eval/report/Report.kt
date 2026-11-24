@@ -35,6 +35,10 @@ data class TaskReport(
 @Serializable
 data class Totals(val passes: Int, val runs: Int, val skipped: Int, val credits: Double, val unknownCredits: Int, val tokens: Tokens)
 
+/** The egress check's result in a report (design D11 of sub-project 6): counts only; `egress.txt` beside it names the hosts. */
+@Serializable
+data class EgressSummary(val passed: Boolean, val connections: Int, val failures: Int)
+
 /**
  * `report.json` of a results folder (design D10 of sub-project 6), the per-task fields of plan 6A; plan 6B adds the
  * egress check's result and plan 6C datamarking's state.
@@ -49,6 +53,7 @@ data class Report(
     val end: String,
     val tasks: List<TaskReport>,
     val totals: Totals,
+    val egress: EgressSummary? = null,
 ) {
     fun write(file: Path) {
         Files.createDirectories(file.toAbsolutePath().parent)

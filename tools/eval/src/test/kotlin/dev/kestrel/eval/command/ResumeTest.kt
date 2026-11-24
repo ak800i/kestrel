@@ -2,6 +2,9 @@ package dev.kestrel.eval.command
 
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.egress.PcapBuilder
+import dev.kestrel.eval.egress.PcapdroidKeys
+import dev.kestrel.eval.egress.fakePcapdroid
 import dev.kestrel.eval.report.Baseline
 import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
@@ -191,6 +194,9 @@ class ResumeTest {
         assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--live", "--record-baseline", "--resume", few.toString()))
         assertTrue(fake.output.contains("--record-baseline records a suite of every task"))
 
+        // A live suite captures its traffic with PCAPdroid (design D11 of sub-project 6).
+        fakePcapdroid(fake.adb, 10234) { PcapBuilder().bytes() }
+        PcapdroidKeys(fake.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json")).put("emulator-5554", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6")
         fake.cli("suite", "--device", "emulator-5554", "--live", "--record-baseline", "--resume", folder.toString())
 
         assertEquals(3, runLines().count { it.startsWith("task=battery-level ") })

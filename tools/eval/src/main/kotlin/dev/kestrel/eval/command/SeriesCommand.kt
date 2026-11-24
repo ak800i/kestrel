@@ -2,6 +2,9 @@ package dev.kestrel.eval.command
 
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Refusal
+import dev.kestrel.eval.egress.Capture
+import dev.kestrel.eval.egress.PcapdroidKeys
+import dev.kestrel.eval.report.EgressSummary
 import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.ResultsFile
@@ -39,6 +42,8 @@ class SeriesCommand(
     private val runs: Int,
     private val resume: String? = null,
     private val recordBaseline: Boolean = false,
+    /** Whether PCAPdroid captures the series (design D11): always for a live series, and for a dry run with `--egress`. */
+    private val egress: Boolean = live,
     private val pick: (DeviceKind) -> List<Task>,
 ) {
     /** The report and the folder of the series, once it ended. */
@@ -84,16 +89,20 @@ class SeriesCommand(
         val start = resumed?.folder?.start ?: environment.clock.now()
         val todo = resumption?.runs ?: tasks.map { it.name to 1 }
         val byName = tasks.associateBy { it.name }
+        var capture: Capture? = null
         fun finish(failures: Int): Int {
             val all = resumption?.kept.orEmpty().flatMap { block -> block.runs.map { it.line } } + writer.lines
-            val report = Report.of(kind, head, live, start, environment.clock.now(), all)
+            val egressResult = capture?.finish(folder, expectNone = !live)
+            egressResult?.let { session.console.line("egress=${if (it.passed) "pass" else "fail"} connections=${it.connections.size} failures=${it.failures.size}") }
+            val summary = egressResult?.let { EgressSummary(it.passed, it.connections.size, it.failures.size) }
+            val report = Report.of(kind, head, live, start, environment.clock.now(), all).copy(egress = summary)
             report.write(folder.resolve("report.json"))
             this.report = report
             this.folder = folder
             if (resumed != null) incomplete = SuiteFolder.read(folder).resume(tasks.map { it.name to count(it) }).runs.map { it.first }
             session.console.line("The results are in $folder.")
             val failed = if (resumed == null) failures > 0 else all.any { it.result == RunResult.FAIL }
-            return if (failed) 1 else 0
+            return if (failed || egressResult?.passed == false) 1 else 0
         }
         // A folder whose tasks all ended needs nothing of the device.
         if (todo.isEmpty()) {
@@ -106,6 +115,8 @@ class SeriesCommand(
             if (recorded != null && !recorded.sameInstall(build)) throw Refusal("Kestrel was installed again during the preflight; run a new suite.")
             call.copy(kestrel = build).write(folder)
             if (recordBaseline) checkBaselineBuild(build, head, session)
+            val keys = PcapdroidKeys(environment.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json"))
+            capture = if (egress) Capture(session.device, session.hooks, session.restores, environment.clock, keys).also { it.start(stamp) } else null
             val runner = session.runner(RunOptions(live), writer)
             var failures = 0
             var model = resumed?.folder?.models?.singleOrNull()
@@ -164,7 +175,7 @@ class SeriesCommand(
         private val STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
         fun suite(environment: Environment, command: Command.Suite): SeriesCommand =
-            SeriesCommand(environment, "suite", command.live, command.runs, command.resume, command.recordBaseline) { kind ->
+            SeriesCommand(environment, "suite", command.live, command.runs, command.resume, command.recordBaseline, command.live || command.egress) { kind ->
                 val suite = Catalogue.suite(kind, command.live)
                 val unknown = command.tasks.orEmpty().filter { name -> suite.none { it.name == name } }
                 if (unknown.isNotEmpty()) throw Refusal("The suite of ${kind.label} has no task ${unknown.joinToString()}.")
