@@ -2,6 +2,7 @@ package dev.kestrel.app.agent
 
 import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.AgentSettings
+import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ModelPort
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.safety.Category
@@ -66,6 +67,12 @@ internal interface TaskOwner : OwnerPort {
 
     /** The category of the confirmation that is open now, or null; the debug hook `agent-state` reads it (design D28). */
     val confirming: Category? get() = null
+
+    /**
+     * The kind of the question that is open now, or null; the debug hook `agent-state` reads it, so that :tools:eval
+     * answers look_closer's screenshot question apart from the model's own question (plan 6B-basefix).
+     */
+    val asking: AnswerKind? get() = null
 
     /** The task has ended: every wait ends, and the card and the bar's kept text go. */
     fun close()

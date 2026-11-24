@@ -1,6 +1,7 @@
 package dev.kestrel.app.debug
 
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.safety.AgentFreeApps
@@ -99,6 +100,14 @@ internal object AgentHookAnswers {
 
     /** network-allowlist's list of host names or patterns, sorted and joined with commas; `none` for an empty list. */
     fun hostList(hosts: Collection<String>): String = hosts.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted().joinToString(",").ifEmpty { "none" }
+
+    /**
+     * agent-state's `question=`: the kind that the agent asked the open question with, `yes-no`, `free` (the model's
+     * `ask_user`, or a routine's name), `pick-number` (look_closer's "Which number should I use?") or `screenshot`
+     * (look_closer's screenshot question, which the Orchestrator asks as a free question), so that :tools:eval answers each
+     * as the owner decided (plan 6B-basefix).
+     */
+    fun question(kind: AnswerKind): String = kind.name.lowercase().replace('_', '-')
 
     /** Whether one of the task's confirmed [recipients] is [wanted], compared folded: match, other, or none without either. */
     fun recipient(recipients: List<String>, wanted: String?): String = when {

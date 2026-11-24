@@ -121,7 +121,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val handOver = graph.agent.handOver(number)?.takeIf { current }?.name ?: "none"
         // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
         val confirming = graph.agent.confirming(number)?.takeIf { current }?.wire ?: "none"
-        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming"
+        // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
+        val question = graph.agent.asking(number)?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
+        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question"
     }
 
     // agent-cache --es field <anthropicMarks|responsesExplicit|chatCopilotMarks> --ez on <true|false>

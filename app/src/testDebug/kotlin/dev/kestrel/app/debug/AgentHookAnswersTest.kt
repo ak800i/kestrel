@@ -2,6 +2,7 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
@@ -179,4 +180,13 @@ class AgentHookAnswersTest {
             key = "k${label ?: description}", windowId = 1, parent = parent, text = label, contentDescription = description, viewId = viewId,
             label = label ?: description, bounds = IntRect(0, 0, 10, 10), clickable = clickable,
         )
+
+    // The wire names that :tools:eval's answers read (plan 6B-basefix).
+    @Test
+    fun theQuestionIsNamedByTheKindThatTheAgentAskedItWith() {
+        assertEquals("screenshot", AgentHookAnswers.question(AnswerKind.SCREENSHOT))
+        assertEquals("pick-number", AgentHookAnswers.question(AnswerKind.PICK_NUMBER))
+        assertEquals("free", AgentHookAnswers.question(AnswerKind.FREE))
+        assertEquals("yes-no", AgentHookAnswers.question(AnswerKind.YES_NO))
+    }
 }

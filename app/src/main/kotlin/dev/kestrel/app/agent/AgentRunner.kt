@@ -159,6 +159,9 @@ internal class AgentRunner(
     /** The category of the confirmation that task number [task] has open, or null (the debug hook `agent-state`). */
     internal fun confirming(task: Int): Category? = synchronized(lock) { current?.takeIf { it.task == task } }?.owner?.confirming
 
+    /** The kind of the question that task number [task] has open, or null (the debug hook `agent-state`). */
+    internal fun asking(task: Int): AnswerKind? = synchronized(lock) { current?.takeIf { it.task == task } }?.owner?.asking
+
     // The Rules keep a task's question or hand-over open until its TaskEnded arrives, so an effect for a task that no
     // longer runs, and whose end this runner never sent, ends it; a second TaskEnded for a task changes nothing.
     private fun steerOwner(running: Running?, task: Int, steer: (TaskOwner) -> Unit) {

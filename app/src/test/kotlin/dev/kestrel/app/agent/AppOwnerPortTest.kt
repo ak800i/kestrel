@@ -311,4 +311,20 @@ class AppOwnerPortTest {
     private companion object {
         const val SETTINGS = "com.android.settings"
     }
+
+    @Test
+    fun anOpenQuestionTellsItsKindUntilItEnds() = runTest {
+        val asked = started { owner.ask("May I send a screenshot of Settings to Copilot?", AnswerKind.SCREENSHOT) }
+        assertEquals(AnswerKind.SCREENSHOT, owner.asking)
+
+        owner.answered("no")
+        assertEquals(Answer.Text("no"), asked.await())
+        assertNull(owner.asking)
+
+        val number = started { owner.ask("Which number should I use?", AnswerKind.PICK_NUMBER) }
+        assertEquals(AnswerKind.PICK_NUMBER, owner.asking)
+        owner.answered(null)
+        assertEquals(Answer.Silence, number.await())
+        assertNull(owner.asking)
+    }
 }

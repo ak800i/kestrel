@@ -114,10 +114,15 @@ internal class AppOwnerPort(
     override var confirming: Category? = null
         private set
 
+    @Volatile
+    override var asking: AnswerKind? = null
+        private set
+
     override suspend fun say(text: String) = send(Event.TaskSays(task, text))
 
     override suspend fun ask(question: String, kind: AnswerKind): Answer = questions.withLock {
         screen.forgetOwnActions()
+        asking = kind
         try {
             val playing = kind == AnswerKind.SCREENSHOT && audio.playing()
             if (playing && !voiceAllowed()) {
@@ -134,6 +139,7 @@ internal class AppOwnerPort(
                 else -> Answer.Silence
             }
         } finally {
+            asking = null
             // A cancelled task's coroutine still lets the bar go before the report (D32 item 1).
             withContext(NonCancellable) { screen.releaseBar() }
         }
