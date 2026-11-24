@@ -20,9 +20,11 @@ class CompareCommandTest {
     private val fake = FakeEnvironment()
     private val names = ('a'..'j').map { "$it" }
 
+    /** A live report, whose egress check passed, as every live series writes one. */
     private fun report(device: String, model: String, changed: Map<String, Int> = emptyMap(), tasks: List<String> = names, runs: Int = 3): Report {
         val reports = tasks.map { TaskReport(it, changed[it] ?: runs, runs, emptyMap(), 4.0, 9000.0, 0.5, 0, Tokens()) }
-        return Report(device, "c".repeat(40), model, true, "2026-11-24T10:00", "2026-11-24T12:00", reports, Totals(reports.sumOf { it.passes }, reports.sumOf { it.runs }, 0, 5.0, 0, Tokens()))
+        val totals = Totals(reports.sumOf { it.passes }, reports.sumOf { it.runs }, 0, 5.0, 0, Tokens())
+        return Report(device, "c".repeat(40), model, true, "2026-11-24T10:00", "2026-11-24T12:00", reports, totals, egress = EgressSummary(true, 4, 0))
     }
 
     private fun folder(name: String, report: Report): String {
@@ -87,6 +89,23 @@ class CompareCommandTest {
 
         val unchecked = folder("kestrel-api37-20261124-110000", report("kestrel-api37", "m1").copy(egress = EgressSummary(false, 0, 0, unknown = 1)))
         assertEquals(Cli.EXIT_FAILED, fake.cli("compare", unchecked))
+    }
+
+    @Test
+    fun aLiveReportWithoutAnEgressResultWasNeverCapturedAndFailsAsUnknown() {
+        baseline("kestrel-api37")
+        val uncaptured = folder("kestrel-api37-20261124-100000", report("kestrel-api37", "m1").copy(egress = null))
+
+        assertEquals(Cli.EXIT_FAILED, fake.cli("compare", uncaptured))
+        assertTrue(fake.output.contains("compare=kestrel-api37 result=pass"))
+        assertTrue(fake.output.contains("compare=kestrel-api37 egress=unknown"))
+
+        // The re-runs' report too.
+        val fell = folder("kestrel-api37-20261124-110000", report("kestrel-api37", "m1", mapOf("j" to 1)))
+        val rerun = CompareCommand(fake.environment, Command.Compare(listOf(fell), rerun = true, device = "emulator-5554")) { _, tasks ->
+            report("kestrel-api37", "m1", tasks = tasks).copy(egress = null)
+        }
+        assertEquals(Cli.EXIT_FAILED, rerun.execute())
     }
 
     @Test

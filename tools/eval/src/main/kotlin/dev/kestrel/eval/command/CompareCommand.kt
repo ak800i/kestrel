@@ -16,7 +16,8 @@ import java.util.Locale
  * live ([rerun], a new folder beside the first), and is judged again on the 6 runs; re-runs on another device than the
  * folder's, or of another model than the device's part, are refused. Results of another model than the device's part
  * are refused, with the way to record a new part. A report whose egress check failed or was not judged, the first or the
- * re-runs', fails its device too. Returns 0 when every device passed, else 1.
+ * re-runs', fails its device too, and so does one without an egress result, because every live series captures, so
+ * such a report comes from a series that was never captured. Returns 0 when every device passed, else 1.
  */
 class CompareCommand(
     private val environment: Environment,
@@ -80,9 +81,16 @@ class CompareCommand(
     private fun refusedDevice(device: String, folder: String) =
         Refusal("compare --rerun's device is $device, and the results folder's is $folder; give --device the serial of $folder.")
 
-    /** Whether [report]'s egress check (design D11) failed or was not judged, which fails the comparison whatever the rates. */
+    /**
+     * Whether [report]'s egress check (design D11) failed, was not judged, or is missing, which fails the comparison
+     * whatever the rates: [execute] judges live reports only, and a live report without the check's result is unknown.
+     */
     private fun egressFailed(report: Report): Boolean {
-        val egress = report.egress ?: return false
+        val egress = report.egress
+        if (egress == null) {
+            environment.out.println("compare=${report.device} egress=unknown")
+            return true
+        }
         if (egress.passed) return false
         environment.out.println("compare=${report.device} egress=fail connections=${egress.connections} failures=${egress.failures} unknown=${egress.unknown}")
         return true
