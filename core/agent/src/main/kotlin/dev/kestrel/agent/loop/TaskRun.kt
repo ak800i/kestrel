@@ -227,7 +227,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         names = task.knownNames + memory.aliasKeys
         safety = OwnerWords.seeded(task, names, memory.usedValues)
         observation = observe(first, last = null, targetKey = null)
-        RoutineMatcher.match(task.text, recalled(emptyList()) { ports.memory.routines() }, memory.aliasKeys, task.knownNames)?.let { match ->
+        // A resumed goal replays no routine: it continues from its checklist (design 7.6 of sub-project 7).
+        if (task.resume == null) RoutineMatcher.match(task.text, recalled(emptyList()) { ports.memory.routines() }, memory.aliasKeys, task.knownNames)?.let { match ->
             log(TaskLog.Kind.START, "routine matched")
             routineNote = RoutineReplayer(this).replay(match)
                 ?: throw Ended(EndReason.FINISHED, summary = "I ran the routine '${match.routine.name}'.")

@@ -1,6 +1,11 @@
 package dev.kestrel.agent.loop
 
 import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.Checklist
+import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.ChecklistRules
+import dev.kestrel.agent.goal.ChecklistText
+import dev.kestrel.agent.goal.ResumeNote
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.safety.Redactor
@@ -31,12 +36,37 @@ internal object TaskText {
 
     /**
      * The task message of [task] at [date]. Only the owner's words are redacted here, so that the year is never read as a
-     * code; the [allowance]'s sentence and a routine's [note] are built from parts that were redacted already.
+     * code; the [allowance]'s sentence and a routine's [note] are built from parts that were redacted already. A resumed
+     * goal's message starts with Kestrel's own lines instead (design 7.6 of sub-project 7).
      */
     fun message(task: TaskRequest, date: String, allowance: TaskAllowance, note: String?, redactor: Redactor): Redacted {
-        val lead = if (task.conversation == null) "The owner's task: " else "The owner's new command: "
-        val owner = Redacted.of(redactor, lead + task.text).text
-        return Redacted.kestrel(listOfNotNull(owner, "Today is $date.", allowance.describe(), note).joinToString("\n"))
+        val resume = task.resume
+        val opening = if (resume == null) {
+            val lead = if (task.conversation == null) "The owner's task: " else "The owner's new command: "
+            listOf(Redacted.of(redactor, lead + task.text).text)
+        } else {
+            resumed(task, resume, redactor)
+        }
+        return Redacted.kestrel((opening + listOfNotNull("Today is $date.", allowance.describe(), note)).joinToString("\n"))
+    }
+
+    // A resumed goal's own lines (design 7.6 of sub-project 7): the goal, why it resumes, its checklist, what Kestrel did,
+    // the owner's steering of its earlier rounds, and a fresh look. The checklist's texts came from the model, so they are
+    // quoted as data; Kestrel's lines are not, and the steering is the owner's own words, whole.
+    private fun resumed(task: TaskRequest, resume: ResumeNote, redactor: Redactor): List<String> =
+        listOfNotNull(
+            Redacted.of(redactor, "The owner's goal: " + task.text).text,
+            "You are continuing this goal after ${resume.after.words}.",
+            task.checklist?.let(::checklistLine),
+            "What Kestrel did so far: ${resume.done.joinToString(", ").ifEmpty { "nothing yet" }}.",
+        ) + resume.steered.map { added(it, "in an earlier round", redactor) } + "Look at the screen afresh; it may have changed."
+
+    // A checklist of more than 20 items names only its open items, at most 20, and counts its closed ones as a records
+    // block does; they stay as they are and need no id from the model (design 7.2 and 8.3 of sub-project 7).
+    private fun checklistLine(checklist: Checklist): String {
+        fun named(items: List<ChecklistItem>) = items.joinToString(" · ") { "${it.id} [${it.state.wire}] ${ScreenText.quote(it.text, ChecklistRules.TEXT_LIMIT)}" }
+        if (checklist.items.size <= ChecklistRules.MAX_ITEMS) return "Its checklist: " + named(checklist.items)
+        return "Its checklist: ${ChecklistText.closed(checklist)}; open: " + named(checklist.open).ifEmpty { "none" }
     }
 
     /**
@@ -45,8 +75,12 @@ internal object TaskText {
      * redacted, quoted and escaped, and never cut, as his command's words in the task message are not.
      */
     fun steered(steer: Steer, step: Int, widened: String?, redactor: Redactor): Redacted {
-        val words = ScreenText.quoteWhole(Redacted.of(redactor, steer.text).text)
         val at = if (step == 0) "before the first step" else "at step $step"
-        return Redacted.kestrel(listOfNotNull("$OWNER_ADDED (${steer.channel.wire}) $at: $words", widened).joinToString("\n"))
+        return Redacted.kestrel(listOfNotNull(added(steer, at, redactor), widened).joinToString("\n"))
     }
+
+    // An owner's steer [at] a point of the goal, as the model reads it: his words redacted once, quoted and escaped, and
+    // never cut (design 7.3 of sub-project 7).
+    private fun added(steer: Steer, at: String, redactor: Redactor): String =
+        "$OWNER_ADDED (${steer.channel.wire}) $at: ${ScreenText.quoteWhole(Redacted.of(redactor, steer.text).text)}"
 }

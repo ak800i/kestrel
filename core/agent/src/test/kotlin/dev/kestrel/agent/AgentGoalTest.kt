@@ -6,12 +6,15 @@ import dev.kestrel.agent.goal.HistoryMatch
 import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.agent.goal.HistoryResult
 import dev.kestrel.agent.goal.ItemState
+import dev.kestrel.agent.goal.ResumeCause
+import dev.kestrel.agent.goal.ResumeNote
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.loop.Redacted
 import dev.kestrel.agent.loop.TaskText
 import dev.kestrel.agent.memory.Fact
+import dev.kestrel.agent.memory.Routine
 import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
@@ -388,5 +391,77 @@ class AgentGoalTest {
 
         assertTrue(harness.requestText(1).contains("Result: searched past conversations for Mila → failed: Kestrel could not read its past conversations."))
         assertTrue(harness.log.texts(TaskLog.Kind.ERROR).contains("history: java.lang.IllegalStateException"))
+    }
+
+    // Design 7.6 of sub-project 7: Kestrel's own lines start a resumed goal's run, and its request is in its record already.
+    @Test
+    fun aResumedGoalStartsWithItsOwnLinesAndAFreshLook() = runTest {
+        val harness = Harness(Screens.chats(), listOf(fail()))
+        val checklist = Checklist(listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 2), ChecklistItem("c2", "Reply to Mila", ItemState.DOING)))
+
+        harness.run(TaskRequest(Harness.ID, "Reply to Mila on Viber", checklist = checklist, resume = ResumeNote(ResumeCause.INTERRUPTION, listOf("opened Viber"))))
+
+        assertEquals(
+            "The owner's goal: Reply to Mila on Viber\n" +
+                "You are continuing this goal after an interruption.\n" +
+                "Its checklist: c1 [done] \"Open Viber\" · c2 [doing] \"Reply to Mila\"\n" +
+                "What Kestrel did so far: opened Viber.\n" +
+                "Look at the screen afresh; it may have changed.\n" +
+                "Today is Friday, 20 November 2026, 10:20.\n" +
+                "This task may send messages after the owner confirms.",
+            firstMessage(harness),
+        )
+        assertTrue(harness.goal.traces.none { it is TraceEntry.Requested })
+    }
+
+    @Test
+    fun aResumedGoalReplaysNoRoutineAndKeepsItsDoneItems() = runTest {
+        val routine = Routine(name = "Mila", phrasings = listOf("reply to mila"), slots = emptyList(), steps = emptyList())
+        val fresh = Harness(Screens.chats(), listOf(fail())).apply { memory.routines += routine }
+        val resumed = Harness(Screens.chats(), listOf(checklist(item("Open Viber", "done", "id" to "c1"), item("Reply", "doing")), fail()))
+        resumed.memory.routines += routine
+        val started = Checklist(listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 2)))
+
+        assertEquals(EndReason.FINISHED, fresh.run("Reply to Mila").end)
+        val report = resumed.run(TaskRequest(Harness.ID, "Reply to Mila", checklist = started, resume = ResumeNote(ResumeCause.RESTART, listOf("opened Viber"))))
+
+        assertEquals(EndReason.FAILED_BY_MODEL, report.end)
+        assertEquals(
+            listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 2), ChecklistItem("c2", "Reply", ItemState.DOING)),
+            resumed.goal.checklists.single().items,
+        )
+    }
+
+    // A long goal's resumed message names its open items and counts its closed ones, which stay as they are.
+    @Test
+    fun aLongGoalsResumedMessageNamesItsOpenItemsAndCountsItsClosedOnes() = runTest {
+        val harness = Harness(Screens.chats(), listOf(fail()))
+        val replied = (1..21).map { ChecklistItem("c$it", "Reply to chat $it", ItemState.DONE, step = it) }
+        val checklist = Checklist(replied + ChecklistItem("c22", "Reply to Mila", ItemState.DOING))
+
+        harness.run(TaskRequest(Harness.ID, "Answer all my chats", checklist = checklist, resume = ResumeNote(ResumeCause.LIMIT, emptyList())))
+
+        val message = firstMessage(harness)
+        assertTrue(message, message.contains("\nIts checklist: 21 done, 0 skipped, 0 failed; open: c22 [doing] \"Reply to Mila\"\nWhat Kestrel did so far: nothing yet.\n"))
+    }
+
+    // Plan 7B's request: the steering of the goal's earlier rounds is an instruction of the resumed run, in its order.
+    @Test
+    fun aResumedGoalNamesTheSteeringOfItsEarlierRoundsInOrder() = runTest {
+        val harness = Harness(Screens.chats(), listOf(fail()))
+        val steered = listOf(Steer("Also send it to Mila", SteerChannel.TYPED), Steer("Say \"see you\" at the end", SteerChannel.SPOKEN))
+
+        harness.run(TaskRequest(Harness.ID, "Send Ana the photo", resume = ResumeNote(ResumeCause.INTERRUPTION, listOf("opened Viber"), steered)))
+
+        val message = firstMessage(harness)
+        assertTrue(
+            message,
+            message.contains(
+                "What Kestrel did so far: opened Viber.\n" +
+                    "The owner added (typed) in an earlier round: \"Also send it to Mila\"\n" +
+                    "The owner added (spoken) in an earlier round: \"Say \\\"see you\\\" at the end\"\n" +
+                    "Look at the screen afresh; it may have changed.\n",
+            ),
+        )
     }
 }

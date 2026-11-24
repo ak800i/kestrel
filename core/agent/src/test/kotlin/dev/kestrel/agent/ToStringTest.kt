@@ -129,7 +129,7 @@ class ToStringTest {
             checklist,
             checklist.items.single(),
             ChecklistState.atStart(checklist),
-            ResumeNote(ResumeCause.LIMIT, listOf(marker)),
+            ResumeNote(ResumeCause.LIMIT, listOf(marker), listOf(Steer(marker, SteerChannel.TYPED))),
             HistoryQuery(marker),
             HistoryData(Tools.LIST_SMS, marker),
             match,
