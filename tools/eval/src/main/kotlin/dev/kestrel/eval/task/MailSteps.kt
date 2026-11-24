@@ -62,7 +62,10 @@ data object MailToSelf : Setup {
  * after 30 days; then a check that the inbox no longer shows the marker. On kestrel-api37 it then deletes up to three
  * other conversations whose rows hold "Kestrel test" and a word of the markers, the subject that only [MailToSelf]
  * writes, so that a test e-mail that an earlier run left goes too; on the A71 it touches only the run's own conversation. The labels are candidates
- * that Task 10 of plan 6B confirms on kestrel-api37 and Task 12 on the A71.
+ * that Task 10 of plan 6B confirms on kestrel-api37 and Task 12 on the A71. On kestrel-api37 Gmail's row joins its
+ * sender, subject and snippet with ", ", and its subject and snippet are elements of their own that hold the marker
+ * too, so the first candidates name a part of the row that spans two of them: `screen-has` counts it only on the row,
+ * and `screen-tap` finds it in the row's label.
  */
 object GmailTrash {
     const val SUBJECT = "Kestrel test"
@@ -76,7 +79,10 @@ object GmailTrash {
     fun delete(scope: RunScope, marker: String) {
         openInbox(scope)
         if (shows(scope, marker)) {
-            AppTaps(scope, MailToSelf.GMAIL).run(listOf(listOf(TapCandidate(contains = marker, long = true))) + DELETE)
+            // MailToSelf's subject ends with the marker and its body is the marker; email-self's script writes "Reminder
+            // about {marker}" and "A reminder about {marker}.".
+            val row = listOf("$marker, $marker", "$marker, A reminder about $marker", marker).map { TapCandidate(contains = it, long = true) }
+            AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)
             check(!shows(scope, marker)) { "The test e-mail is still in Gmail's inbox." }
         }
         if (scope.device.kind == DeviceKind.EMULATOR) sweep(scope)
@@ -100,8 +106,10 @@ object GmailTrash {
         for (word in Markers.WORDS) {
             if (deleted >= 3) return
             val subject = "$SUBJECT $word"
-            if (scope.hooks.screenHas(packageName = MailToSelf.GMAIL, contains = subject).int("count") != 1) continue
-            if (AppTaps(scope, MailToSelf.GMAIL).run(listOf(listOf(TapCandidate(contains = subject, long = true))) + DELETE)) deleted++
+            // The sender of an e-mail to oneself is "me" in the row.
+            val row = listOf("me, $subject", subject).map { TapCandidate(contains = it, long = true) }
+            if (row.none { scope.hooks.screenHas(packageName = MailToSelf.GMAIL, contains = it.contains).int("count") == 1 }) continue
+            if (AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)) deleted++
         }
     }
 }
