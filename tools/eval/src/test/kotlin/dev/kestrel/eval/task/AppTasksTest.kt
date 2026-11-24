@@ -45,7 +45,7 @@ class AppTasksTest {
                 front = "com.google.android.apps.nexuslauncher"
                 ""
             }
-            bench.adb.hook("SCREEN_HAS") { extras -> "count=${if (front == app && extras["contains"] in setOf("kestrel hovering", "Kalemegdan")) 1 else 0} app=$front" }
+            bench.adb.hook("SCREEN_HAS") { extras -> "count=${if (front == app && extras["contains"] in setOf("kestrel hovering", "Ada Ciganlija")) 1 else 0} app=$front" }
             var works = true
             bench.adb.hook("VOICE") {
                 if (works) front = app
@@ -145,7 +145,7 @@ class AppTasksTest {
                 val words = extras["contains"].orEmpty()
                 val count = when {
                     front == "org.mozilla.firefox" -> return@hook firefox.answer(extras)
-                    else -> if (words in setOf("kestrel hovering", "Kalemegdan", "1:04")) 1 else 0
+                    else -> if (words in setOf("kestrel hovering", "Ada Ciganlija", "1:04")) 1 else 0
                 }
                 "count=$count app=$front"
             }

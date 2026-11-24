@@ -8,7 +8,8 @@ import kotlin.time.Duration.Companion.seconds
  * YouTube's and Maps' searches stay in the secondary account's history, with no removal step (the owner's answer 1); the
  * newest photo is a test card that leaves with its folder. A rehearsal opens the page, the search or the photo by intent.
  * YouTube's question about notifications and Maps' about location are dismissed before the run without an answer
- * ([DismissPermissionPrompt]).
+ * ([DismissPermissionPrompt]). maps-place asks for a place that the system prompt's example of open_deep_link's app does
+ * not name, so that it tests the model and not the example (plan 6B-basefix T7).
  */
 object AppTasks {
     /** Google's YouTube, kestrel-api37's, and ReVanced's, the A71's (design Facts). */
@@ -45,14 +46,14 @@ object AppTasks {
     val MAPS_PLACE = Task(
         name = "maps-place",
         kind = TaskKind.SUITE,
-        request = Request("show Kalemegdan on Google Maps"),
+        request = Request("show Ada Ciganlija on Google Maps"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
         setup = listOf(Installed(listOf(MAPS)), ForceStop(MAPS), DismissPermissionPrompt(listOf(MAPS), DismissPermissionPrompt.LOCATION, "geo:0,0")),
-        check = listOf(Foreground(setOf(MAPS)), ScreenHas(packageName = MAPS, contains = "Kalemegdan")),
+        check = listOf(Foreground(setOf(MAPS)), ScreenHas(packageName = MAPS, contains = "Ada Ciganlija")),
         dryRun = DryRun("maps-place.json"),
-        rehearsal = Rehearsal.Steps(listOf(OpenUri("geo:0,0?q=Kalemegdan", MAPS, settle = 10.seconds))),
+        rehearsal = Rehearsal.Steps(listOf(OpenUri("geo:0,0?q=Ada%20Ciganlija", MAPS, settle = 10.seconds))),
     )
 
     val PHOTO_LATEST = Task(
