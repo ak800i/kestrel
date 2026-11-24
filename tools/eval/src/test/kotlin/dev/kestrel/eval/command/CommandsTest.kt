@@ -3,6 +3,8 @@ package dev.kestrel.eval.command
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.report.Report
+import dev.kestrel.eval.report.SuiteCall
+import dev.kestrel.eval.run.EvalAccess
 import dev.kestrel.eval.run.EvalPermissions
 import dev.kestrel.eval.task.ZenDump
 import kotlinx.serialization.json.Json
@@ -330,10 +332,20 @@ class CommandsTest {
 
         assertTrue(fake.output, fake.output.contains("android.permission.READ_CALL_LOG"))
         assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
-        assertEquals(EvalPermissions.SET.toSet() - "android.permission.READ_CALL_LOG", fake.adb.granted.getValue("dev.kestrel").toSet())
+        assertEquals(EvalPermissions.SET.filter { it.kind == EvalAccess.Kind.RUNTIME_PERMISSION }.map { it.id }.toSet() - "android.permission.READ_CALL_LOG", fake.adb.granted.getValue("dev.kestrel").toSet())
         // A series without a model grants nothing.
         val dry = FakeEnvironment()
         assertEquals(Cli.EXIT_PASSED, dry.cli("suite", "--device", "emulator-5554", "--runs", "1", "--tasks", "stand-in-hotspot"))
-        assertTrue(dry.adb.commands.none { it.startsWith("pm grant") })
+        assertTrue(dry.adb.commands.none { it.startsWith("pm grant") || it.startsWith("cmd notification allow_listener") })
+    }
+
+    @Test
+    fun aLiveSeriesRecordsTheKeptSetWithKestrelsNotificationAccessInSuiteJson() {
+        fake.cli("suite", "--device", "emulator-5554", "--live", "--runs", "1", "--tasks", "hotspot")
+
+        val call = SuiteCall.read(fake.root.resolve("eval-results").resolve("kestrel-api37-20261123-120000"))!!
+        assertEquals(EvalAccess.entries.associate { it.id to true }, call.permissions)
+        assertEquals(EvalAccess.NOTIFICATION_LISTENER.id, fake.adb.settings["secure/enabled_notification_listeners"])
+        assertTrue(fake.adb.commands.none { it.startsWith("pm revoke dev.kestrel ") || it.startsWith("cmd notification disallow_listener") })
     }
 }

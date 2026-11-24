@@ -158,7 +158,7 @@ class MessageStepsTest {
     }
 
     @Test
-    fun theTestNotificationIsPostedAndCancelledAndKestrelsNotificationAccessIsOnOnlyForTheRun() {
+    fun theTestNotificationIsPostedAndCancelled() {
         val run = FakeRun()
         var posted = false
         run.adb.on("^am start -W -n dev\\.kestrel\\.testapp/\\.NotificationActivity (.*)$") {
@@ -166,70 +166,12 @@ class MessageStepsTest {
             ""
         }
         run.adb.on("^dumpsys notification$") { if (posted) "  NotificationRecord(0x0b2: pkg=dev.kestrel.testapp user=UserHandle{0} id=3)" else "" }
-        var listeners = "com.example.watch/com.example.watch.Listener"
-        run.adb.on("^settings get secure enabled_notification_listeners$") { listeners }
-        run.adb.on("^cmd notification (allow|disallow)_listener (\\S+)$") { match ->
-            listeners = if (match.groupValues[1] == "allow") "$listeners:${match.groupValues[2]}" else listeners.split(':').filter { it != match.groupValues[2] }.joinToString(":")
-            ""
-        }
 
-        assertEquals(mapOf("listener" to "off"), NotificationAccess.probe(run.scope))
-        assertEquals(SetupResult.Ready, NotificationAccess.apply(run.scope))
         assertEquals(SetupResult.Ready, TestNotification.apply(run.scope))
         assertTrue(run.adb.commands.contains("am start -W -n dev.kestrel.testapp/.NotificationActivity --es marker 'maple heron'"))
-        assertEquals(mapOf("listener" to "on"), NotificationAccess.probe(run.scope))
+        assertTrue(posted)
         assertTrue(run.restores.runAll().isEmpty())
         assertFalse(posted)
-        assertEquals("com.example.watch/com.example.watch.Listener", listeners)
-    }
-
-    @Test
-    fun takingKestrelsNotificationAccessBackWaitsForTheSettingAndTurnsListeningBackOnAsItWas() {
-        for (before in listOf("listening", "paused")) {
-            val run = FakeRun()
-            var listeners = "com.example.watch/com.example.watch.Listener"
-            // Android 17 writes the setting a moment after disallow_listener, and Kestrel's process comes back with listening off.
-            var lag = 0
-            run.adb.on("^settings get secure enabled_notification_listeners$") {
-                if (lag > 0) {
-                    lag--
-                    "$listeners:${NotificationAccess.LISTENER}"
-                } else {
-                    listeners
-                }
-            }
-            var mode = before
-            var silent = 0
-            run.adb.on("^cmd notification (allow|disallow)_listener (\\S+)$") { match ->
-                if (match.groupValues[1] == "allow") {
-                    listeners = "$listeners:${match.groupValues[2]}"
-                } else {
-                    listeners = listeners.split(':').filter { it != match.groupValues[2] }.joinToString(":")
-                    lag = 2
-                    silent = 2
-                    mode = "off"
-                }
-                ""
-            }
-            run.adb.on("dev\\.kestrel\\.hook\\.VOICE_STATE") {
-                if (silent > 0) {
-                    silent--
-                    "Broadcasting: Intent { act=dev.kestrel.hook.VOICE_STATE }\nBroadcast completed: result=0"
-                } else {
-                    "Broadcasting: Intent { act=dev.kestrel.hook.VOICE_STATE }\nBroadcast completed: result=-1, data=\"mode=$mode work=idle\""
-                }
-            }
-            run.adb.hook("VOICE") { extras ->
-                if (extras["event"] == "toggle") mode = if (mode == "listening") "paused" else "listening"
-                "sent"
-            }
-
-            assertEquals(SetupResult.Ready, NotificationAccess.apply(run.scope))
-            assertTrue(run.restores.runAll().isEmpty())
-            assertEquals(if (before == "listening") "listening" else "off", mode)
-            assertEquals(mapOf("listener" to "off"), NotificationAccess.probe(run.scope))
-            assertEquals(if (before == "listening") 1 else 0, run.adb.hookCalls("VOICE").count { it["event"] == "toggle" })
-        }
     }
 
     @Test

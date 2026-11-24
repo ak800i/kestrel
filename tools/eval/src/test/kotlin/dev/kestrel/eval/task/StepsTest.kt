@@ -4,6 +4,7 @@ import dev.kestrel.eval.config.Redactions
 import dev.kestrel.eval.device.DeviceCommandFailed
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.run.EvalAccess
 import dev.kestrel.eval.run.Restores
 import dev.kestrel.eval.run.Stopping
 import org.junit.Assert.assertEquals
@@ -67,27 +68,32 @@ class StepsTest {
     }
 
     @Test
-    fun kestrelsPermissionsAreTheKeptSetGrantedWhenMissingAndNeverTakenBack() {
+    fun kestrelsAccessesAreTheKeptSetGivenWhenMissingAndNeverTakenBack() {
         for (device in listOf(run, FakeRun(DeviceKind.A71))) {
             device.adb.granted["dev.kestrel"] = mutableSetOf(IMAGES)
 
             assertEquals(SetupResult.Ready, KeptPermissions.MEDIA.apply(device.scope))
             assertEquals(SetupResult.Ready, KeptPermissions.MEDIA.apply(device.scope))
+            assertEquals(SetupResult.Ready, KeptPermissions.NOTIFICATIONS.apply(device.scope))
+            assertEquals(SetupResult.Ready, KeptPermissions.NOTIFICATIONS.apply(device.scope))
 
-            // Only the owner's set: no READ_MEDIA_VISUAL_USER_SELECTED on API 37 either, and no restore, whose revoke would end Kestrel's process.
+            // Only the owner's set: no READ_MEDIA_VISUAL_USER_SELECTED on API 37 either, and no restore, whose revoke or
+            // disallow_listener would end Kestrel's process.
             assertEquals(0, device.restores.size)
-            assertEquals(listOf("pm grant dev.kestrel $VIDEO"), device.adb.commands.filter { it.startsWith("pm ") })
+            assertEquals(
+                listOf("pm grant dev.kestrel $VIDEO", "cmd notification allow_listener ${EvalAccess.NOTIFICATION_LISTENER.id}"),
+                device.adb.commands.filter { it.startsWith("pm ") || it.startsWith("cmd notification") },
+            )
             assertEquals(setOf(IMAGES, VIDEO), device.adb.granted["dev.kestrel"])
         }
 
-        // A kept permission that Android does not grant fails the run's setup, with the install that exempts it.
+        // A kept access that Android does not give fails the run's setup, with what gives it.
         run.adb.refusedGrants += SMS
-        val message = assertThrows(IllegalStateException::class.java) { KeptPermissions(listOf(SMS)).apply(run.scope) }.message!!
+        val message = assertThrows(IllegalStateException::class.java) { KeptPermissions(listOf(EvalAccess.READ_SMS)).apply(run.scope) }.message!!
         assertTrue(message, message.contains(SMS) && message.contains("scripts\\install.ps1"))
         assertEquals(0, run.restores.size)
 
-        // Kestrel's permissions are only the kept set's, and only through KeptPermissions.
-        assertThrows(IllegalArgumentException::class.java) { KeptPermissions(listOf("android.permission.ACCESS_FINE_LOCATION")) }
+        // Kestrel's permissions are given only through KeptPermissions.
         assertThrows(IllegalArgumentException::class.java) { Grant("dev.kestrel", listOf(SMS)) }
     }
     @Test

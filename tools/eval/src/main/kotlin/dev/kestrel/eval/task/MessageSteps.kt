@@ -81,40 +81,6 @@ data object TestNotification : Setup {
     }
 }
 
-/**
- * Kestrel's notification access, which list_notifications needs, given for the run when Kestrel lacks it and taken back
- * afterwards (`cmd notification allow_listener` and `disallow_listener`). Android 17 writes the setting a moment after
- * `disallow_listener`, so the restore waits up to [SETTLE] until the setting no longer names Kestrel. Taking the access
- * back can end Kestrel's process, which may come back with listening off, so [Listening] turns listening on again.
- */
-data object NotificationAccess : Setup {
-    const val LISTENER = "dev.kestrel/dev.kestrel.datatools.notifications.KestrelNotificationListener"
-    private const val SHORT = "dev.kestrel/.datatools.notifications.KestrelNotificationListener"
-    private const val SETTLE = 10
-
-    override fun apply(scope: RunScope): SetupResult {
-        if (allowed(scope)) return SetupResult.Ready
-        val byHand = "Settings > Notifications > Device and app notifications: take back Kestrel's notification access."
-        Listening.keep(scope)
-        scope.restores.push("Kestrel's notification access taken back", byHand) {
-            scope.device.idempotent("cmd notification disallow_listener $LISTENER")
-            var reads = 0
-            while (allowed(scope)) {
-                check(++reads < SETTLE) { "Kestrel's notification access is still on." }
-                scope.clock.sleep(1.seconds)
-            }
-        }
-        scope.restores.change("Kestrel's notification access given", byHand) { scope.device.idempotent("cmd notification allow_listener $LISTENER") }
-        scope.clock.sleep(2.seconds)
-        if (!allowed(scope)) throw SetupFailed("Kestrel's notification access did not turn on.")
-        return SetupResult.Ready
-    }
-
-    override fun probe(scope: RunScope): Map<String, String> = mapOf("listener" to if (allowed(scope)) "on" else "off")
-
-    private fun allowed(scope: RunScope): Boolean = scope.setting("secure", "enabled_notification_listeners").split(':').any { it == LISTENER || it == SHORT }
-}
-
 /** The device's own Gmail address from the local configuration in `{address}`, for email-self (design D8); it changes nothing. */
 data object OwnAddress : Setup {
     override fun apply(scope: RunScope): SetupResult {

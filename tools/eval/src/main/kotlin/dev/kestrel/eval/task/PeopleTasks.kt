@@ -1,12 +1,13 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.run.EvalAccess
 import java.time.LocalTime
 
 /**
- * The suite's calendar and contacts tasks (design D8 of sub-project 6), on both devices. Kestrel needs the contacts
- * permissions that it lacks, which the run grants and takes back, because the permission dialog is a hand-over that a
- * script never answers. contact-add and contact-delete-declined use the agent's add_contact, find_contact and
+ * The suite's calendar and contacts tasks (design D8 of sub-project 6), on both devices. Kestrel needs the calendar and
+ * contacts permissions of the evaluation's kept set, which the run grants when Kestrel lacks them and keeps (KeptPermissions),
+ * because the permission dialog is a hand-over that a script never answers. contact-add and contact-delete-declined use the agent's add_contact, find_contact and
  * delete_contact (design D19), and contact-delete-declined passes only when Kestrel asked before the delete and the run
  * said no.
  */
@@ -14,8 +15,7 @@ object PeopleTasks {
     private val BOTH = setOf(DeviceKind.EMULATOR, DeviceKind.A71)
     private const val ANA = "Ana Test"
     private const val ANA_NUMBER = "+1 202 555 0143"
-    private const val READ = "android.permission.READ_CONTACTS"
-    val CONTACTS = listOf(READ, "android.permission.WRITE_CONTACTS")
+    private val CONTACTS = listOf(EvalAccess.READ_CONTACTS, EvalAccess.WRITE_CONTACTS)
 
     val CALENDAR_ADD = Task(
         name = "calendar-add",
@@ -37,7 +37,7 @@ object PeopleTasks {
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
-        setup = listOf(KeptPermissions(listOf("android.permission.READ_CALENDAR")), Tomorrow, CalendarEvent("Kestrel test {marker}", LocalTime.of(10, 0), LocalTime.of(11, 0))),
+        setup = listOf(KeptPermissions(listOf(EvalAccess.READ_CALENDAR)), Tomorrow, CalendarEvent("Kestrel test {marker}", LocalTime.of(10, 0), LocalTime.of(11, 0))),
         check = listOf(ReplyHas),
         dryRun = DryRun("calendar-read.json"),
         rehearsal = Rehearsal.SetupOnly("its check reads Kestrel's spoken reply"),
@@ -63,7 +63,7 @@ object PeopleTasks {
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
-        setup = listOf(KeptPermissions(listOf(READ)), DeviceContact(ANA, ANA_NUMBER)),
+        setup = listOf(KeptPermissions(listOf(EvalAccess.READ_CONTACTS)), DeviceContact(ANA, ANA_NUMBER)),
         check = listOf(ReplyHasDigits("2025550143")),
         dryRun = DryRun("contact-number.json"),
         rehearsal = Rehearsal.SetupOnly("its check reads Kestrel's spoken reply"),

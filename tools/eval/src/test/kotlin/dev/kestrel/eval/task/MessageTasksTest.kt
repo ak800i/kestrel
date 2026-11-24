@@ -2,6 +2,7 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.run.EvalAccess
 import dev.kestrel.eval.run.Reason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,7 +69,7 @@ class MessageTasksTest {
     }
 
     @Test
-    fun notificationReadNeedsTheTestAppAndLeavesNoNotificationOrAccess() {
+    fun notificationReadNeedsTheTestAppLeavesNoNotificationAndKeepsKestrelsNotificationAccess() {
         val bench = TaskBench()
         var posted = false
         bench.adb.on("^am start -W -n dev\\.kestrel\\.testapp/\\.NotificationActivity (.*)$") {
@@ -76,19 +77,16 @@ class MessageTasksTest {
             ""
         }
         bench.adb.on("^dumpsys notification$") { if (posted) "  NotificationRecord(0x0b2: pkg=dev.kestrel.testapp user=UserHandle{0} id=3)" else "" }
-        var listeners = ""
-        bench.adb.on("^settings get secure enabled_notification_listeners$") { listeners.ifEmpty { "null" } }
-        bench.adb.on("^cmd notification (allow|disallow)_listener (\\S+)$") { match ->
-            listeners = if (match.groupValues[1] == "allow") match.groupValues[2] else ""
-            ""
-        }
 
         assertEquals(Reason.OK, bench.run(MessageTasks.NOTIFICATION_READ).reason)
         bench.replyMarker = "0"
         assertEquals(Reason.CHECK, bench.run(MessageTasks.NOTIFICATION_READ).reason)
         bench.assertPutBack()
         assertFalse(posted)
-        assertEquals("", listeners)
+        // The access is part of the evaluation's kept set: given once, when Kestrel lacked it, and never taken back.
+        assertEquals(EvalAccess.NOTIFICATION_LISTENER.id, bench.adb.settings["secure/enabled_notification_listeners"])
+        assertEquals(1, bench.adb.commands.count { it == "cmd notification allow_listener ${EvalAccess.NOTIFICATION_LISTENER.id}" })
+        assertTrue(bench.adb.commands.none { it.startsWith("cmd notification disallow_listener") })
         assertTrue(bench.adb.commands.contains("pm grant dev.kestrel.testapp android.permission.POST_NOTIFICATIONS"))
         assertTrue(MessageTasks.NOTIFICATION_READ.needsTestApp)
         assertFalse(MessageTasks.EMAIL_SELF.needsTestApp)

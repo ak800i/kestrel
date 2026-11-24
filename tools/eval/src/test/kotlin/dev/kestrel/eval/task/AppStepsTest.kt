@@ -397,39 +397,6 @@ class AppStepsTest {
     }
 
     @Test
-    fun kestrelListensAgainAfterARestoreThatEndedItsProcess() {
-        // Kestrel's mode before the change, and whether its new process comes back listening by itself, as the spec asks.
-        for ((before, returns) in listOf("listening" to false, "off" to false, "listening" to true)) {
-            val run = FakeRun()
-            var reads = mutableListOf<String>()
-            var mode = before
-            run.adb.on("dev\\.kestrel\\.hook\\.VOICE_STATE") {
-                "Broadcasting: Intent { act=dev.kestrel.hook.VOICE_STATE }\nBroadcast completed: result=-1, data=\"mode=${reads.removeFirstOrNull() ?: mode} work=idle\""
-            }
-            run.adb.hook("VOICE") { extras ->
-                if (extras["event"] == "toggle") mode = if (mode == "listening") "paused" else "listening"
-                "sent"
-            }
-
-            Listening.keep(run.scope)
-            // The change's own restore ends Kestrel's process: one read still answers the old process, then the new one does not listen.
-            run.restores.push("a change that ends Kestrel's process", "nothing") {
-                if (!returns) {
-                    reads = mutableListOf("listening")
-                    mode = "off"
-                }
-            }
-            assertTrue(run.restores.runAll().isEmpty())
-
-            val toggled = if (before == "listening" && !returns) 1 else 0
-            assertEquals(if (before == "listening") "listening" else "off", mode)
-            assertEquals(toggled, run.adb.hookCalls("VOICE").size)
-            // A toggle that Kestrel needed is reported, because the spec has Kestrel come back in its mode by itself.
-            assertEquals(toggled, run.console.warnings.count { it.contains("Kestrel did not return to listening after its process restarted") })
-        }
-    }
-
-    @Test
     fun theRehearsalsViewerIsAGalleryThatIsInstalledAndEnabled() {
         val run = FakeRun(DeviceKind.A71)
         // Samsung Gallery is installed but disabled: `pm list packages` names it, `pm list packages -e` does not.

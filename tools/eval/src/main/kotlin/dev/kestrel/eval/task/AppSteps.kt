@@ -1,9 +1,8 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.Dumps
-import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
-import dev.kestrel.eval.hook.HookSilent
+import dev.kestrel.eval.run.EvalAccess
 import dev.kestrel.eval.run.EvalPermissions
 import java.util.Collections
 import kotlin.time.Duration
@@ -145,90 +144,30 @@ data class Grant(val packageName: String, val permissions: List<String>) : Setup
 }
 
 /**
- * The runtime [permissions] of Kestrel that a task needs, all of them in the evaluation's kept set
- * ([EvalPermissions.SET], the owner's decision of 2026-11-24): the ones that Kestrel lacks are granted and kept, with no
- * restore, because the set stays granted on both test devices and taking a permission back would end Kestrel's process.
- * A live series has granted the whole set before its first run, so this step then only reads it; a dry series or a
- * single run grants what its task needs. One that is still missing fails the run's setup. A task that needs a state of
- * Kestrel's permissions other than the kept set would need a step of its own that says so and restores the kept set;
- * no task does.
+ * The accesses of Kestrel that a task needs, all of them in the evaluation's kept set ([EvalPermissions.SET], the
+ * owner's decisions of 2026-11-24): its runtime permissions and its notification access. The ones that Kestrel lacks are
+ * given and kept, with no restore, because the set stays on both test devices and taking one back would end Kestrel's
+ * process. A live series has given the whole set before its first run, so this step then only reads it; a dry series or
+ * a single run gives what its task needs. One that is still missing fails the run's setup. A task that needs a state of
+ * Kestrel's accesses other than the kept set would need a step of its own that says so and restores the kept set; no
+ * task does.
  */
-data class KeptPermissions(val permissions: List<String>) : Setup {
+data class KeptPermissions(val accesses: List<EvalAccess>) : Setup {
     init {
-        require(permissions.isNotEmpty() && permissions.all { it in EvalPermissions.SET }) {
-            "Kestrel's permissions in a task are only those of the evaluation's kept set: ${permissions - EvalPermissions.SET.toSet()} is not in it."
-        }
+        require(accesses.isNotEmpty()) { "A task's KeptPermissions names at least one access of the kept set." }
     }
 
     override fun apply(scope: RunScope): SetupResult {
-        val missing = EvalPermissions.keep(scope.device, permissions).filterValues { !it }.keys
+        val missing = EvalPermissions.keep(scope.device, scope.clock, accesses).filterValues { !it }.keys
         check(missing.isEmpty()) { EvalPermissions.lacks(scope.device, missing) }
         return SetupResult.Ready
     }
 
     companion object {
         /** Photos and videos with full access, which makes the partial access (READ_MEDIA_VISUAL_USER_SELECTED) needless. */
-        val MEDIA = KeptPermissions(listOf("android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"))
-    }
-}
+        val MEDIA = KeptPermissions(listOf(EvalAccess.READ_MEDIA_IMAGES, EvalAccess.READ_MEDIA_VIDEO))
 
-/**
- * Kestrel's listening, which a restore that ends Kestrel's process can leave off: taking back its notification access
- * ends the process, and the process does not always come back listening. [keep], called before
- * such a change, pushes a restore that runs after the change's own restore and turns listening on again, when Kestrel
- * listened before the change.
- */
-object Listening {
-    private const val QUIET_READS = 3
-    private const val LISTENING_READS = 2
-    private val BACK = 90.seconds
-
-    /** Pushes the restore when Kestrel listens now; it changes nothing on the device. */
-    fun keep(scope: RunScope) {
-        if (mode(scope) != "listening") return
-        scope.restores.push("Kestrel listening again", "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} voice -Send toggle") { again(scope) }
-    }
-
-    /** Kestrel's listening mode (voice-state), or null while its process does not answer. */
-    fun mode(scope: RunScope): String? = try {
-        scope.hooks.voiceState()["mode"]
-    } catch (e: HookSilent) {
-        null
-    } catch (e: HookError) {
-        null
-    }
-
-    /**
-     * Waits up to [BACK] until Kestrel listens at [LISTENING_READS] reads in a row, 3 s apart, the first 3 s after the
-     * change's restore, so that a process that ends a moment later is not taken for one that listens. When its process
-     * answers and does not listen at [QUIET_READS] reads in a row, one toggle turns listening on; a lost answer of the
-     * toggle is read back by the next reads. The toggle comes with a warning, because the spec has Kestrel return to the
-     * mode that it had after Android ends its process, so that a defect of Kestrel stays visible in every run.
-     */
-    private fun again(scope: RunScope) {
-        val deadline = scope.clock.elapsed() + BACK
-        var quiet = 0
-        var listening = 0
-        var toggled = false
-        while (true) {
-            scope.clock.sleep(3.seconds)
-            val mode = mode(scope)
-            listening = if (mode == "listening") listening + 1 else 0
-            if (listening >= LISTENING_READS) return
-            quiet = if (mode == "off" || mode == "paused") quiet + 1 else 0
-            if (!toggled && quiet >= QUIET_READS) {
-                toggled = true
-                scope.console.warn(
-                    "Kestrel did not return to listening after its process restarted, as the spec says that it should; the run turns listening back on. " +
-                        "This may be a defect of Kestrel.",
-                )
-                try {
-                    scope.hooks.voiceSend("toggle")
-                } catch (e: HookLost) {
-                    // Read back by the next reads.
-                }
-            }
-            check(scope.clock.elapsed() < deadline) { "Kestrel does not listen again after its process ended." }
-        }
+        /** The notification access that list_notifications needs. */
+        val NOTIFICATIONS = KeptPermissions(listOf(EvalAccess.NOTIFICATION_LISTENER))
     }
 }

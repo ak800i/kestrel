@@ -129,8 +129,8 @@ class SeriesCommand(
         }
         return session.guarded {
             session.prepare(todo.map { byName.getValue(it.first) }, live)
-            // The owner's permission set for the evaluation, granted and kept before a live series (2026-11-24).
-            val permissions = if (live) EvalPermissions.grant(session.device) else null
+            // The owner's kept set for the evaluation, given and kept before a live series (2026-11-24).
+            val permissions = if (live) EvalPermissions.grant(session.device, environment.clock) else null
             val build = KestrelBuild.installed(session.device)?.let { KestrelBuild.withState(it, session.hooks.state()) }
             if (recorded != null && !recorded.sameInstall(build)) throw Refusal("Kestrel was installed again during the preflight; run a new suite.")
             call.copy(kestrel = build, permissions = permissions).write(folder)

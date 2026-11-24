@@ -56,8 +56,10 @@ class Preflight(
     }
 
     /**
-     * Waits up to 90 s until Kestrel listens. A restore that took back one of Kestrel's permissions ended its process;
-     * Android then binds its accessibility service again and Kestrel goes back to its stored listening mode by itself.
+     * Waits up to 90 s until Kestrel listens: before the first run, and before each run, because Kestrel's process may
+     * have ended since the run before, as when it crashed; Android then binds its accessibility service again and Kestrel
+     * goes back to its stored listening mode by itself. No step or restore takes back one of Kestrel's permissions or its
+     * notification access, which would end its process too: they are the evaluation's kept set ([EvalPermissions]).
      */
     fun waitListening() {
         val deadline = clock.elapsed() + LISTENING

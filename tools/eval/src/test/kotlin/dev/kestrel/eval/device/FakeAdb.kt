@@ -56,6 +56,16 @@ class FakeAdb(
      * such as READ_SMS, of an app that was installed without the installer's exemption.
      */
     val refusedGrants = mutableSetOf<String>()
+
+    /**
+     * The notification listeners that `cmd notification allow_listener` leaves disallowed with no error, as Android does
+     * when it restricts an app's settings. A change of the listeners shows in the secure setting enabled_notification_listeners,
+     * which lists them joined with ':', only after [listenerLag] more reads of it, as Android 17 writes it a moment later.
+     */
+    val refusedListeners = mutableSetOf<String>()
+    var listenerLag = 0
+    private var listenersShown: String? = null
+    private var lagLeft = 0
     val files = mutableMapOf<String, String>()
     private val handlers = mutableListOf<Pair<Regex, (MatchResult) -> String?>>()
     private val hooks = mutableMapOf<String, (Map<String, String>) -> Pair<Int, String>>()
@@ -161,6 +171,22 @@ class FakeAdb(
             val prefix = "${match.groupValues[1]}/"
             return settings.filterKeys { it.startsWith(prefix) }.entries.joinToString("\n") { "${it.key.removePrefix(prefix)}=${it.value}" }
         }
+        LISTENER.matchEntire(command)?.let { match ->
+            val (change, component) = match.destructured
+            val before = settings[LISTENERS]
+            val listeners = before?.split(':').orEmpty().filter { it.isNotEmpty() && it != component }
+            val after = if (change == "allow" && component !in refusedListeners) listeners + component else listeners
+            if (after.isEmpty()) settings.remove(LISTENERS) else settings[LISTENERS] = after.joinToString(":")
+            if (listenerLag > 0) {
+                listenersShown = before ?: "null"
+                lagLeft = listenerLag
+            }
+            return ""
+        }
+        if (command == "settings get secure enabled_notification_listeners" && lagLeft > 0) {
+            lagLeft--
+            return listenersShown
+        }
         if (command == "dumpsys window windows") return "  mGlobalConfiguration={${appliedFontScale()} ?mcc?mnc [en_US] ldltr sw411dp w411dp h864dp 420dpi nrml long port}"
         FONT_SCALE_WRITE.matchEntire(command)?.let { match ->
             writeFontScale(match.groupValues[2].takeIf { match.groupValues[1] == "put" }?.removeSurrounding("'"))
@@ -206,6 +232,8 @@ class FakeAdb(
         private val SETTINGS_GET = Regex("settings get (\\S+) (\\S+)")
         private val SETTINGS_PUT = Regex("settings put (\\S+) (\\S+) (.+)")
         private val PM_PERMISSION = Regex("pm (grant|revoke) (\\S+) (\\S+)")
+        private val LISTENER = Regex("cmd notification (allow|disallow)_listener (\\S+)")
+        private const val LISTENERS = "secure/enabled_notification_listeners"
         private val DUMPSYS_PACKAGE = Regex("dumpsys package (\\S+)")
         private val RUN_AS_CAT = Regex("run-as dev\\.kestrel cat (\\S+)")
         private val BROADCAST = Regex("am broadcast -n dev\\.kestrel/dev\\.kestrel\\.app\\.debug\\.TestHookReceiver -a dev\\.kestrel\\.hook\\.(\\S+)(.*)", RegexOption.DOT_MATCHES_ALL)

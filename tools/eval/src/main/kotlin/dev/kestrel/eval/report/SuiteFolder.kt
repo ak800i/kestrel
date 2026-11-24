@@ -21,7 +21,10 @@ data class SuiteCall(
     val tasks: List<String>,
     val commit: String,
     val kestrel: KestrelBuild? = null,
-    /** The evaluation's permission set and each one's state when the live series began (plan 6B-basefix); null without a model. */
+    /**
+     * The evaluation's kept set, Kestrel's seven data-tool permissions and its notification access, by their IDs, with each
+     * one's state when the live series began (plan 6B-basefix); null without a model.
+     */
     val permissions: Map<String, Boolean>? = null,
 ) {
     fun write(folder: Path) {
