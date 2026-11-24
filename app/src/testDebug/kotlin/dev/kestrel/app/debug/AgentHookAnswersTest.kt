@@ -71,6 +71,12 @@ class AgentHookAnswersTest {
         assertEquals(0, AgentHookAnswers.digits("Your battery is at 86 percent.", "87"))
         assertEquals(0, AgentHookAnswers.digits("No number here.", "87"))
         assertEquals(0, AgentHookAnswers.digits("87", null))
+        assertEquals(1, AgentHookAnswers.digits("Call (202) 555 0143 tomorrow.", "2025550143"))
+        assertEquals(1, AgentHookAnswers.digits("It is at 87.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("Your battery is at 58 percent, about 7 hours left.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("Room 187 is free.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("It costs 870 dinars.", "87"))
+        assertEquals(0, AgentHookAnswers.digits("At 10:58 it was 7 percent.", "587"))
         val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 1)
 
         assertTrue(AgentHookAnswers.result(report, "It is 87 percent.", null, null, "87").endsWith(" digits=1"))

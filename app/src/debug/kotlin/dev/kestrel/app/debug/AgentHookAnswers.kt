@@ -28,13 +28,59 @@ internal object AgentHookAnswers {
             (digits?.let { " digits=${digits(spoken, it)}" } ?: "")
 
     /**
-     * 1 when the spoken reply's ASCII digits, with every other character removed, hold the digits of [digits] in a row, else
-     * 0 (design D17 of sub-project 6): a phone number or a battery level said in any format, never the reply itself.
+     * 1 when one number of the spoken reply holds the digits of [digits] in a row, from the start of one of its groups of
+     * ASCII digits to the end of one, else 0 (design D17 of sub-project 6): a phone number or a battery level said in any
+     * format, never the reply itself. Groups belong to one number when only [NUMBER_SEPARATORS] stand between them, so
+     * "+1 202-555-0143" holds 2025550143, but "58 percent, about 7 hours" does not hold 587 and 187 does not hold 87.
      */
     fun digits(spoken: String, digits: String?): Int {
         val wanted = digits.orEmpty().filter { it in '0'..'9' }
         if (wanted.isEmpty()) return 0
-        return if (wanted in spoken.filter { it in '0'..'9' }) 1 else 0
+        return if (numbers(spoken).any { it.holds(wanted) }) 1 else 0
+    }
+
+    private val NUMBER_SEPARATORS = setOf(' ', '\u00A0', '-', '\u2010', '\u2011', '.', '(', ')', '[', ']', '+')
+
+    /** A number's digits with the offsets in them where its groups start and end. */
+    private class SpokenNumber(val digits: String, val starts: Set<Int>, val ends: Set<Int>) {
+        fun holds(wanted: String): Boolean = starts.any { start ->
+            ends.contains(start + wanted.length) && digits.startsWith(wanted, start)
+        }
+    }
+
+    private fun numbers(spoken: String): List<SpokenNumber> {
+        val numbers = mutableListOf<SpokenNumber>()
+        var digits = StringBuilder()
+        var starts = mutableSetOf<Int>()
+        var ends = mutableSetOf<Int>()
+        fun close() {
+            if (digits.isNotEmpty()) numbers += SpokenNumber(digits.toString(), starts, ends)
+            digits = StringBuilder()
+            starts = mutableSetOf()
+            ends = mutableSetOf()
+        }
+        var inGroup = false
+        for (char in spoken) {
+            when {
+                char in '0'..'9' -> {
+                    if (!inGroup) starts += digits.length
+                    digits.append(char)
+                    inGroup = true
+                }
+                char in NUMBER_SEPARATORS -> {
+                    if (inGroup) ends += digits.length
+                    inGroup = false
+                }
+                else -> {
+                    if (inGroup) ends += digits.length
+                    inGroup = false
+                    close()
+                }
+            }
+        }
+        if (inGroup) ends += digits.length
+        close()
+        return numbers
     }
 
     /**
