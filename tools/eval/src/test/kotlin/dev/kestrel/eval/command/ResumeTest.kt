@@ -105,6 +105,31 @@ class ResumeTest {
     }
 
     @Test
+    fun aResumeAcrossAToolCommitRunsTheCutShortTaskFromItsFirstRunAndNamesTheKeptTasks() {
+        val older = "a".repeat(40)
+        fake.gitDiff = "tools/eval/src/main/kotlin/dev/kestrel/eval/task/ClockSteps.kt\n"
+        val folder = folder(
+            "kestrel-api37-20261124-100000", SuiteCall("kestrel-api37", live = false, runs = 2, tasks = pair, commit = older),
+            "2026-11-24 10:00:00\tsuite\tstand-in-hotspot on kestrel-api37, 2 runs", line("stand-in-hotspot", 1), line("stand-in-hotspot", 2),
+            "2026-11-24 10:00:02\tsuite\tstand-in-firefox on kestrel-api37, 2 runs", line("stand-in-firefox", 1),
+        )
+        val before = runLines().size
+
+        assertEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--resume", folder.toString()))
+
+        assertEquals(listOf("task=stand-in-firefox run=1", "task=stand-in-firefox run=2"), runLines().drop(before).map { it.substringBefore(" result") })
+        val after = Files.readAllLines(folder.resolve("runs.txt")).map { it.split('\t').drop(1).joinToString("\t").substringBefore(" result") }
+        assertEquals(
+            listOf(
+                "suite\tstand-in-hotspot on kestrel-api37, 2 runs", "task\ttask=stand-in-hotspot run=1", "task\ttask=stand-in-hotspot run=2",
+                "suite\tstand-in-firefox on kestrel-api37, 2 runs", "task\ttask=stand-in-firefox run=1", "task\ttask=stand-in-firefox run=2",
+            ),
+            after,
+        )
+        assertTrue(fake.output.contains("stand-in-hotspot ran at $older"))
+    }
+
+    @Test
     fun aFolderFromBeforeSuiteJsonTakesTheCommitThatHeadWasAtItsTime() {
         val legacy = folder("a71-20261124-110919", null, "2026-11-24 10:00:00\tsuite\tdark-mode on the A71, 3 runs", line("dark-mode", 1, "m1"))
         fake.devices["R58N66RVD7Z"] = dev.kestrel.eval.device.FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)

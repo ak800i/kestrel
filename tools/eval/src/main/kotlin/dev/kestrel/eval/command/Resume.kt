@@ -14,9 +14,12 @@ import kotlin.time.Duration.Companion.seconds
  * call, one model in its runs, and a commit that differs from HEAD at most in the tool and the documentation
  * ([NEUTRAL]), because the baseline names one commit for the whole folder, HEAD's. [call] is the folder's suite with
  * HEAD's commit; a folder from before `suite.json` counts as the whole suite of its device, with the commit that git's
- * reflog shows for HEAD at the time of its name.
+ * reflog shows for HEAD at the time of its name. [commit] is the commit that the folder's runs ran at; when it is not
+ * HEAD's ([sameCommit] false), the task that was cut short runs whole again, and the kept tasks are named on the console.
  */
-class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall) {
+class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall, val commit: String) {
+    val sameCommit: Boolean get() = commit == call.commit
+
     companion object {
         /** Paths of a commit's changes that change no run of Kestrel: the tool, the documentation and Markdown files. */
         val NEUTRAL = listOf("tools/eval/", "docs/")
@@ -49,7 +52,7 @@ class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall) {
             if (recordBaseline && (call.runs != Comparison.RUNS || call.tasks.toSet() != suite.map { it.name }.toSet())) {
                 throw Refusal("--record-baseline records a suite of every task with ${Comparison.RUNS} runs, and ${folder.path} holds ${call.tasks.size} tasks with ${call.runs} runs.")
             }
-            return Resume(folder, call)
+            return Resume(folder, call, commit)
         }
 
         private fun with(live: Boolean) = if (live) "with --live" else "without --live"

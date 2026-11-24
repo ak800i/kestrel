@@ -24,7 +24,8 @@ import kotlin.time.Duration.Companion.seconds
  * `Get-SittingRuns` and `ConvertFrom-TaskLine` read, and `report.json`. `suite` runs the suite of the device (3 runs each
  * by default); `injection` the 14 fixtures on kestrel-api37 (once without a model, 5 times live, by default). With
  * [resume], a suite goes on in the folder of one that stopped ([Resume]): it keeps the tasks whose runs all have a line
- * that is not `reason=stopped`, runs the rest of the last task that was cut short, then every other task whole after its
+ * that is not `reason=stopped`, runs the rest of the last task that was cut short (all of it, and names the kept tasks,
+ * when HEAD changed the tool since the folder's runs), then every other task whole after its
  * earlier lines were dropped, and stops when a task's runs name another model than the folder's, whose lines it takes out
  * again; its report is of the whole folder. Returns 0 when no run failed (with [resume], of the whole folder), else 1.
  */
@@ -59,8 +60,14 @@ class SeriesCommand(
         fun count(task: Task) = task.runsAtMost?.let { minOf(it, runs) } ?: runs
         val stamp = environment.clock.now().format(STAMP)
         val folder: Path = resumed?.folder?.path ?: environment.root.resolve("eval-results").resolve("${kind.folder}${if (name == "injection") "-injection" else ""}-$stamp")
-        val resumption = resumed?.folder?.resume(tasks.map { it.name to count(it) })
+        val resumption = resumed?.folder?.resume(tasks.map { it.name to count(it) }, resumed.sameCommit)
         if (resumption != null && resumption.runs.isNotEmpty()) resumed.folder.rewrite(resumption.kept, stamp)
+        if (resumed != null && !resumed.sameCommit && resumption!!.kept.isNotEmpty()) {
+            session.console.line(
+                "${resumption.kept.joinToString { it.task }} ran at ${resumed.commit}, and HEAD $head changed the tool since: judge whether their " +
+                    "results still hold before --record-baseline, or remove their blocks from runs.txt and resume again.",
+            )
+        }
         (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head)).write(folder)
         val runsFile = ResultsFile(folder.resolve(SuiteFolder.RUNS), environment.clock)
         val writer = LineWriter(session.console, runsFile)

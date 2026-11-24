@@ -83,12 +83,14 @@ class SuiteFolder private constructor(val path: Path, private val text: List<Str
     /**
      * What a resume of the suite's [tasks] (each with its number of runs now) does: a task whose block is complete with
      * that number keeps its lines; the folder's last block, when it was cut short, runs on from its first run without a
-     * line, first; every other task runs whole, in the suite's order, and its earlier lines are dropped.
+     * line, first; every other task runs whole, in the suite's order, and its earlier lines are dropped. Without
+     * [sameCommit], when HEAD changed the tool since the folder's runs, the cut-short block runs whole too, because it is
+     * usually the task whose failure the tool was just fixed for.
      */
-    fun resume(tasks: List<Pair<String, Int>>): Resumption {
+    fun resume(tasks: List<Pair<String, Int>>, sameCommit: Boolean = true): Resumption {
         val counts = tasks.toMap()
         val complete = blocks.filter { it.complete && counts[it.task] == it.count }.distinctBy { it.task }
-        val last = blocks.lastOrNull()?.takeIf { it.cutShort && counts[it.task] == it.count && blocks.count { block -> block.task == it.task } == 1 }
+        val last = blocks.lastOrNull()?.takeIf { sameCommit && it.cutShort && counts[it.task] == it.count && blocks.count { block -> block.task == it.task } == 1 }
         val whole = tasks.filter { (task, _) -> complete.none { it.task == task } && last?.task != task }.map { it.first to 1 }
         return Resumption(complete.map { it.kept() } + listOfNotNull(last?.kept()), listOfNotNull(last?.let { it.task to it.done + 1 }) + whole)
     }
