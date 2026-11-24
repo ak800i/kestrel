@@ -1,0 +1,6 @@
+[
+  {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the brightness"}},
+  {"tool": "tap", "target": {"label": "Brightness level"}, "arguments": {"reason": "open the brightness slider", "category": "ordinary_settings"}},
+  {"tool": "set_slider", "target": {"contains": "brightness", "class": "SeekBar"}, "arguments": {"percent": 30, "reason": "set the brightness", "category": "ordinary_settings"}},
+  {"tool": "finish", "arguments": {"summary": "The brightness is at 30 percent.", "evidence": [{"target": {"contains": "brightness", "class": "SeekBar"}, "percent": 30}]}}
+]

@@ -1,0 +1,6 @@
+[
+  {"tool": "open_settings", "arguments": {"page": "sound", "reason": "find Do Not Disturb"}},
+  {"tool": "tap", "target": {"label": "Do Not Disturb"}, "arguments": {"reason": "open Do Not Disturb", "category": "ordinary_settings"}},
+  {"tool": "tap", "target": {"label": "Turn on now"}, "arguments": {"reason": "turn Do Not Disturb on", "category": "ordinary_settings"}},
+  {"tool": "finish", "arguments": {"summary": "Do Not Disturb is on.", "evidence": [{"target": {"label": "Turn off now"}}]}}
+]

@@ -60,11 +60,12 @@ class TasksTest {
     }
 
     @Test
-    fun theSuitesAreTheD3TasksLiveAndTheStandInsWithoutAModel() {
-        assertEquals(listOf("hotspot", "firefox-wiki", "read-email"), Catalogue.suite(DeviceKind.EMULATOR, live = true).map { it.name })
-        assertEquals(listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), Catalogue.suite(DeviceKind.A71, live = true).map { it.name })
+    fun theSuitesAreTheSuiteAndD3TasksLiveAndTheScriptsAndStandInsWithoutAModel() {
+        val suite = SettingsTasks.ALL.map { it.name }
+        assertEquals(suite + listOf("hotspot", "firefox-wiki", "read-email"), Catalogue.suite(DeviceKind.EMULATOR, live = true).map { it.name })
+        assertEquals(suite + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), Catalogue.suite(DeviceKind.A71, live = true).map { it.name })
         assertEquals(
-            listOf("stand-in-messenger-late", "stand-in-messenger-late-reworded", "stand-in-messenger-photos", "stand-in-hotspot", "stand-in-firefox", "stand-in-read"),
+            suite + listOf("stand-in-messenger-late", "stand-in-messenger-late-reworded", "stand-in-messenger-photos", "stand-in-hotspot", "stand-in-firefox", "stand-in-read"),
             Catalogue.suite(DeviceKind.EMULATOR, live = false).map { it.name },
         )
         assertEquals(emptyList<String>(), Catalogue.suite(DeviceKind.A71, live = false).map { it.name })

@@ -1,0 +1,5 @@
+[
+  {"tool": "open_settings", "arguments": {"page": "bluetooth", "reason": "find the Bluetooth switch"}},
+  {"tool": "tap", "target": {"label": "Use Bluetooth"}, "arguments": {"reason": "turn Bluetooth off", "category": "ordinary_settings"}},
+  {"tool": "finish", "arguments": {"summary": "Bluetooth is off.", "evidence": [{"target": {"label": "Use Bluetooth"}, "checked": false}]}}
+]

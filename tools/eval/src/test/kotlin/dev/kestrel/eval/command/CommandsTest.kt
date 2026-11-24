@@ -219,13 +219,14 @@ class CommandsTest {
     @Test
     fun listShowsEveryTaskOrThoseOfADevice() {
         assertEquals(Cli.EXIT_PASSED, fake.cli("list"))
-        assertEquals(26, fake.output.lines().count { it.startsWith("task=") })
+        assertEquals(35, fake.output.lines().count { it.startsWith("task=") })
         assertTrue(fake.output.contains("task=hotspot kind=d3 devices=kestrel-api37 dryRun=stand-in-hotspot.json_on_stand-in-hotspot rehearsal=setup-only"))
 
         fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
         val before = fake.output.lines().size
         assertEquals(Cli.EXIT_PASSED, fake.cli("list", "--device", "R58N66RVD7Z"))
         val names = fake.output.lines().drop(before - 1).filter { it.startsWith("task=") }.map { it.substringAfter("task=").substringBefore(' ') }
-        assertEquals(listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), names)
+        val suite = listOf("dark-mode", "brightness", "screen-timeout", "dnd", "bluetooth-off", "font-size", "wifi-settings", "battery-level", "two-settings")
+        assertEquals(suite + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), names)
     }
 }

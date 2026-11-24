@@ -83,5 +83,17 @@ object Dumps {
     fun appOpMode(lines: List<String>, op: String): String =
         lines.firstNotNullOfOrNull { Regex("^\\s*${Regex.escape(op)}:\\s*(\\w+)").find(it)?.groupValues?.get(1) } ?: "default"
 
+    /** The activity in front as `<package>/<class>`, from `dumpsys activity activities`, or null when none is resumed. */
+    fun resumedActivity(dump: List<String>): String? {
+        val names = listOf(
+            Regex("\\btopResumedActivity=ActivityRecord\\{\\S+ u\\d+ ([\\w.]+/[\\w.$]+)"),
+            Regex("\\bmResumedActivity: ActivityRecord\\{\\S+ u\\d+ ([\\w.]+/[\\w.$]+)"),
+        )
+        return names.firstNotNullOfOrNull { name -> dump.firstNotNullOfOrNull { name.find(it)?.groupValues?.get(1) } }
+    }
+
+    /** The battery's level in percent, from `dumpsys battery`'s line `level: 85`, or null without one. */
+    fun batteryLevel(dump: List<String>): Int? = dump.firstNotNullOfOrNull { Regex("^\\s*level: (\\d+)\\s*$").find(it)?.groupValues?.get(1)?.toInt() }
+
     private fun JsonObject.text(name: String): String? = this[name]?.jsonPrimitive?.contentOrNull
 }

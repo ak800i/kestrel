@@ -1,0 +1,6 @@
+[
+  {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the screen timeout"}},
+  {"tool": "tap", "target": {"label": "Screen timeout"}, "arguments": {"reason": "open the screen timeout", "category": "ordinary_settings"}},
+  {"tool": "tap", "target": {"label": "2 minutes"}, "arguments": {"reason": "choose 2 minutes", "category": "ordinary_settings"}},
+  {"tool": "finish", "arguments": {"summary": "The screen turns off after 2 minutes.", "evidence": [{"target": {"label": "2 minutes"}, "checked": true}]}}
+]

@@ -51,6 +51,9 @@ class RunScope(
 ) {
     /** The tag of the task that the run gave, once it gave one. */
     var tag: String? = null
+
+    /** What a setup read for the run's checks, such as the Wi-Fi page's activity or the alarms before the run. */
+    val notes: MutableMap<String, String> = mutableMapOf()
 }
 
 /** What a setup step found: the device is ready, or it cannot run the task ([Untestable], which skips the run). */

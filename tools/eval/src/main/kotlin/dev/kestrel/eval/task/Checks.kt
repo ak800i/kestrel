@@ -65,3 +65,16 @@ data object ReplyHas : Check {
         return scope.hooks.agentTask(tag, marker = scope.values.marker)["marker"] == "1"
     }
 }
+
+/**
+ * Kestrel's spoken reply holds [digits] in a row, with every other character of the reply removed, compared on the
+ * phone (agent-task -Digits answers 1 or 0); [digits] may hold the run's placeholders, such as "{number}".
+ */
+data class ReplyHasDigits(val digits: String) : Check {
+    override val needsTask: Boolean get() = true
+
+    override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
+        val tag = scope.tag ?: return false
+        return scope.hooks.agentTask(tag, digits = scope.values.fill(digits).filter { it.isDigit() })["digits"] == "1"
+    }
+}

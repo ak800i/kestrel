@@ -1,0 +1,5 @@
+[
+  {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the dark theme"}},
+  {"tool": "tap", "target": {"label": "Dark theme"}, "arguments": {"reason": "turn the dark theme on", "category": "ordinary_settings"}},
+  {"tool": "finish", "arguments": {"summary": "The dark theme is on.", "evidence": [{"target": {"label": "Dark theme"}, "checked": true}]}}
+]
