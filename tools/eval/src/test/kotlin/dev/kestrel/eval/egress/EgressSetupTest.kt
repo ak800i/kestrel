@@ -85,6 +85,23 @@ class EgressSetupTest {
     }
 
     @Test
+    fun aPcapdroidThatHasAKeyShowsItAndNeverDiscardsIt() {
+        val app = FakePcapdroid(
+            listOf(Shown("Settings")),
+            listOf(Shown("Control permissions")),
+            listOf(Shown("More options")),
+            listOf(Shown("Generate API key"), Shown("Show API key")),
+            listOf(Shown("OK")),
+        )
+        val keys = PcapdroidKeys(folder.resolve("lost-keys.json"))
+
+        assertEquals("set-up", app.setup(keys).run())
+
+        assertEquals(KEY, keys.get("emulator-5554"))
+        assertEquals(listOf("Settings", "Control permissions", "More options", "Show API key", "OK"), app.taps())
+    }
+
+    @Test
     fun theFirstLabelThatTapsWinsAndAStepThatCannotBePressedStopsWhereItIs() {
         val done = FakePcapdroid(listOf(Shown("Done")), listOf(Shown("Settings")), refused = setOf("Settings"))
         val stuck = assertThrows(IllegalStateException::class.java) { done.setup().run() }

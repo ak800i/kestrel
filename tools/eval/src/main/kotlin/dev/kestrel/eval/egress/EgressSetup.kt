@@ -16,8 +16,8 @@ import kotlin.time.Duration.Companion.seconds
  * PCAPdroid's one-time setup on a test device, which needs no owner (design D11 of sub-project 6): Private DNS off or
  * automatic; the pinned APK ([apk]) installed; its notification permission, the VPN op and on API 37 the local network
  * permission; its first start after a force-stop, whose pages the script's own taps pass ("Next", "Skip", "DONE", "Done",
- * "OK", "Continue", each counted before its tap, at most 10 pages); a new API key by the script's own taps, each on the one
- * element that shows with its label, read once from PCAPdroid's own node
+ * "OK", "Continue", each counted before its tap, at most 10 pages); its API key by the script's own taps, each on the one
+ * element that shows with its label (the key that PCAPdroid has, else a new one), read once from PCAPdroid's own node
  * of `uiautomator dump`, every other node dropped, into [keys]; and a capture started and stopped with it. A device that
  * has PCAPdroid and a working key is only checked. A step that screen-tap cannot press stops the setup there. PCAPdroid
  * stays installed, with its key (the owner's answer 4), and the home screen is left in front.
@@ -99,7 +99,7 @@ class EgressSetup(
         }
     }
 
-    /** Settings > Control permissions > its menu > "Generate API key", by the script's own taps; a step that does not show is looked for 3 scrolls further. */
+    /** Settings > Control permissions > its menu > "Show API key" or "Generate API key", by the script's own taps; a step that does not show is looked for 3 scrolls further. */
     private fun generateKey(): String {
         for (step in KEY_STEPS) {
             var shown = step.firstOrNull { visible(it) }
@@ -180,8 +180,9 @@ class EgressSetup(
         private val PRIVATE_DNS = setOf("null", "off", "opportunistic")
         private val ONBOARDING = listOf("Next", "Skip", "DONE", "Done", "OK", "Continue")
 
-        // PCAPdroid 2.0.4 shows Settings as a button of its main screen's bar, not in its menu.
-        private val KEY_STEPS = listOf(listOf("Settings"), listOf("Control permissions"), listOf("More options"), listOf("Generate API key"))
+        // PCAPdroid 2.0.4 shows Settings as a button of its main screen's bar, not in its menu. Its menu has "Show API key"
+        // only while it has a key, and then "Generate API key" would first ask to discard that key, so a key it has is shown.
+        private val KEY_STEPS = listOf(listOf("Settings"), listOf("Control permissions"), listOf("More options"), listOf("Show API key", "Generate API key"))
         private val CLOSE = listOf("OK", "Close")
         private const val MAX_TAPS = 10
         private val NODE = Regex("<node\\b[^>]*>")
