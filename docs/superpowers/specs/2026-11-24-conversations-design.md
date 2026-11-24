@@ -509,8 +509,9 @@ The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`
 The tool goes at the end of `Tools.ALL`, as spec 11.4 requires for a new tool.
 
 ```text
-update_checklist — "Write the goal's checklist: the steps to reach the owner's goal and the state of each. Send the whole
-list each time. Mark a step done only with the number of the step that did it."
+update_checklist — "Write the goal's checklist: the steps to reach the owner's goal and the state of each. Send every
+step that is still todo or doing each time; a step that is done, skipped or failed may be left out and stays as it is.
+Mark a step done only with the number of the step that did it."
   items (array, required), each an object:
     id     string   "The item's id from the last checklist result, such as c3; leave it out for a new item."
     text   string   "One step, in a few words; at most 120 characters."   (required)
@@ -526,9 +527,10 @@ list each time. Mark a step done only with the number of the step that did it."
 ```
 
 `ChecklistRules` (in `dev.kestrel.agent.goal`) checks each call by code:
-- 1 to 20 items, at most one `doing`, and the texts and reasons within their limits; a placeholder becomes its kind's words, as in `say`;
+- 1 to 20 items in a call, every item that is still todo or doing among them, at most one `doing`, and the texts and reasons within their limits; a placeholder becomes its kind's words, as in `say`;
 - a `done` item needs `step`: a step of this round whose action ran and did not fail, a data step with a result (`okDataSteps`), or a step that the owner finished after a hand-over (`ownerSteps`). An item that was done in the checklist that the round started with may stay done without a step;
-- an item named by `id` keeps its id, and its text may not change once it is done; a new item gets the next id;
+- an item named by `id` keeps its id, and its text may not change once it is done; a new item gets the next id and goes at the end;
+- an item that the call leaves out keeps its stored state, which must be `done`, `skipped` or `failed`, so the 20-item bound applies only to the items that a call sends, and a long goal's checklist has no limit on its length;
 - a `skipped` or `failed` item needs `why`.
 
 A valid call returns "Result: checklist saved, 3 of 7 done (c1 … c7)." and calls `GoalPort.checklistChanged`. An invalid call returns its reason and counts as an invalid tool call (spec 11.7). The system prompt tells the model to keep a checklist for a goal of more than two steps; a short task may finish without one.
