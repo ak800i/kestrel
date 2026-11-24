@@ -19,21 +19,33 @@ import kotlin.time.Duration.Companion.minutes
  * selected, the toolbar's Delete removes every selected row, and the inbox opened in a new task drops the selection.
  * Send puts the test e-mail of [MailToSelf] for the marker "maple heron" into [pending], from which mail reaches the inbox
  * at a screen-has for which [arrives] is true; the next [deleteMisses] screen-has for Delete count none, as while
- * Gmail's toolbar still moves.
+ * Gmail's toolbar still moves. The navigation drawer's Drafts row is "Drafts" with no draft and "Drafts, n" with n, beside
+ * its title "Drafts"; [drafts] holds Drafts' rows, whose selection the toolbar's "Discard drafts" discards after its
+ * question's OK.
  */
-class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>) {
+class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>, val drafts: MutableList<String> = mutableListOf()) {
     val selected = mutableSetOf<String>()
     val pending = mutableListOf<String>()
     var arrives: () -> Boolean = { true }
     var deleteMisses = 0
+    private var view = View.INBOX
 
-    // Each element's label and its row; the toolbar's Delete has none.
-    private fun elements(): List<Pair<String, String?>> =
-        (if (selected.isEmpty()) emptyList() else listOf("Delete" to null)) + inbox.flatMap { row -> listOf(row to row) + row.split(", ").drop(1).map { it to row } }
+    private enum class View { INBOX, DRAWER, DRAFTS, QUESTION }
+
+    private fun rows(list: List<String>): List<Pair<String, String?>> = list.flatMap { row -> listOf(row to row) + row.split(", ").drop(1).map { it to row } }
+
+    // Each element's label and its row; the toolbar's buttons, the drawer and the question have none.
+    private fun elements(): List<Pair<String, String?>> = when (view) {
+        View.INBOX -> listOf("Open navigation drawer" to null) + (if (selected.isEmpty()) emptyList() else listOf("Delete" to null)) + rows(inbox)
+        View.DRAWER -> listOf("Inbox" to null, (if (drafts.isEmpty()) "Drafts" else "Drafts, ${drafts.size}") to null, "Drafts" to null)
+        View.DRAFTS -> listOf("Open navigation drawer" to null) + (if (selected.isEmpty()) emptyList() else listOf("Discard drafts" to null)) + rows(drafts)
+        View.QUESTION -> listOf("Discard drafts from this conversation?" to null, "Cancel" to null, "OK" to null)
+    }
 
     init {
         adb.on("^am start -W -f 0x10008000 -n com\\.google\\.android\\.gm/\\.ConversationListActivityGmail$") {
             selected.clear()
+            view = View.INBOX
             ""
         }
         adb.hook("SCREEN_HAS") { extras ->
@@ -41,13 +53,18 @@ class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>) {
                 inbox.addAll(pending)
                 pending.clear()
             }
-            val count = if (extras["label"] == "Delete" && selected.isNotEmpty() && deleteMisses > 0) {
-                deleteMisses--
-                0
-            } else {
-                FakeScreen.has(elements().map { it.first }, extras)
+            val elements = elements()
+            val count = when {
+                extras["label"] == "Delete" && selected.isNotEmpty() && deleteMisses > 0 -> {
+                    deleteMisses--
+                    0
+                }
+                // The drawer's row is a LinearLayout, and its title a TextView.
+                extras["class"] == "LinearLayout" -> if (view == View.DRAWER) FakeScreen.has(listOf(elements[1].first), extras) else 0
+                else -> FakeScreen.has(elements.map { it.first }, extras)
             }
-            "count=$count app=${MailToSelf.GMAIL}"
+            val bounds = if (view == View.DRAWER && extras["label"] == "Drafts" && count >= 1) "0,1446,840,1573" else "none"
+            "count=$count app=${MailToSelf.GMAIL} bounds=$bounds"
         }
         adb.hook("SCREEN_TAP") hook@{ extras ->
             if (extras["label"] == "Send") {
@@ -56,8 +73,18 @@ class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>) {
             }
             val elements = elements()
             val matches = FakeScreen.taps(elements.map { it.first }, extras)
-            val row = elements[matches.firstOrNull() ?: return@hook "tapped=false count=0"].second
+            val index = matches.firstOrNull() ?: return@hook "tapped=false count=0"
+            val (label, row) = elements[index]
             when {
+                view == View.DRAWER -> if (label.startsWith("Drafts")) view = View.DRAFTS
+                label == "Open navigation drawer" -> view = View.DRAWER
+                label == "Discard drafts" -> view = View.QUESTION
+                label == "OK" -> {
+                    drafts.removeAll(selected)
+                    selected.clear()
+                    view = View.DRAFTS
+                }
+                label == "Cancel" -> view = View.DRAFTS
                 row == null -> {
                     inbox.removeAll(selected)
                     selected.clear()
@@ -69,7 +96,7 @@ class FakeGmail(adb: FakeAdb, val inbox: MutableList<String>) {
     }
 }
 
-fun fakeGmail(adb: FakeAdb, inbox: MutableList<String>): FakeGmail = FakeGmail(adb, inbox)
+fun fakeGmail(adb: FakeAdb, inbox: MutableList<String>, drafts: MutableList<String> = mutableListOf()): FakeGmail = FakeGmail(adb, inbox, drafts)
 
 /** The steps and checks of the SMS, e-mail and notification tasks (design D8, D9 and D17 of sub-project 6). */
 class MessageStepsTest {
@@ -218,6 +245,43 @@ class MessageStepsTest {
     }
 
     @Test
+    fun gmailDiscardsTheRunsDraftAloneAndOtherwiseSaysWhatToDoByHand() {
+        val runs = "Important, Draft, Reminder about maple heron, A reminder about maple heron., 8:33 AM"
+        val other = "Draft, Plans for the weekend, Notes, 8:00 AM"
+        for (kind in DeviceKind.entries) {
+            val run = FakeRun(kind)
+            val drafts = mutableListOf(runs, other)
+            fakeGmail(run.adb, mutableListOf("Ana, Lunch"), drafts)
+
+            GmailTrash.push(run.scope)
+
+            assertEquals(kind.label, emptyList<Any>(), run.restores.runAll())
+            assertEquals(kind.label, listOf(other), drafts)
+            assertEquals(kind.label, listOf("OK"), run.adb.hookCalls("SCREEN_TAP").mapNotNull { it["label"] }.filter { it == "OK" })
+            assertEquals("input keyevent KEYCODE_HOME", run.adb.commands.last())
+        }
+
+        // No draft of the run: Drafts opens, and nothing is pressed there.
+        val clean = FakeRun()
+        val drafts = mutableListOf(other)
+        fakeGmail(clean.adb, mutableListOf("Ana, Lunch"), drafts)
+        GmailTrash.push(clean.scope)
+        assertTrue(clean.restores.runAll().isEmpty())
+        assertEquals(1, drafts.size)
+        assertTrue(clean.adb.hookCalls("SCREEN_TAP").none { it["long"] == "true" || it["label"] == "Discard drafts" })
+
+        // Two rows of the run's draft: neither is pressed, and the restore fails with the step by hand.
+        val twice = FakeRun()
+        val both = mutableListOf(runs, runs)
+        fakeGmail(twice.adb, mutableListOf("Ana, Lunch"), both)
+        GmailTrash.push(twice.scope)
+        val failures = twice.restores.runAll()
+        assertEquals(listOf("Gmail: in Drafts, discard the draft \"maple heron\"."), failures.map { it.byHand })
+        assertEquals(2, both.size)
+        assertTrue(twice.adb.hookCalls("SCREEN_TAP").none { it["long"] == "true" })
+    }
+
+    @Test
     fun aLostAnswerOfGmailsLongPressIsTriedOnceMoreInTheInboxOpenedAgain() {
         for (losses in 1..2) {
             val run = FakeRun(DeviceKind.A71)
@@ -239,7 +303,8 @@ class MessageStepsTest {
                 assertEquals(2, inbox.size)
                 assertTrue(run.adb.hookCalls("SCREEN_TAP").none { it["label"] == "Delete" })
             }
-            assertEquals(2, run.adb.commands.count { it == "am start -W -f 0x10008000 -n com.google.android.gm/.ConversationListActivityGmail" })
+            // Twice for the inbox, and once for Drafts.
+            assertEquals(3, run.adb.commands.count { it == "am start -W -f 0x10008000 -n com.google.android.gm/.ConversationListActivityGmail" })
         }
     }
 

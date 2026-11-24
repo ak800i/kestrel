@@ -76,10 +76,22 @@ data object MailToSelf : Setup {
  *
  * A run pushes the deletion once. When the run's e-mail was sent ([expect]) but the inbox does not show it yet, the
  * deletion looks for it for up to a minute more, and says so when it never came.
+ *
+ * After the deletion, [discardDraft] looks at Gmail's Drafts, because a compose screen whose Send test mode blocked can
+ * become a draft: on kestrel-api37 Gmail keeps the compose screen of email-self's dry run open in its own task without a
+ * draft, and saves one when a changed compose screen is left. It discards only the draft whose row holds the run's
+ * marker, by the inbox's row rules, and when it cannot, its restore fails with the by-hand step.
  */
 object GmailTrash {
     const val SUBJECT = "Kestrel test"
     private val DELETE = listOf(listOf(TapCandidate(label = "Delete")))
+    private val DRAWER = listOf(TapCandidate(label = "Open navigation drawer"))
+
+    // The drawer's Drafts row, whose label is "Drafts" without a draft and "Drafts, 1" with one; its title is "Drafts".
+    private val DRAFTS = listOf(TapCandidate(label = "Drafts", className = "LinearLayout"), TapCandidate(label = "Drafts"))
+    private val DISCARD = listOf(TapCandidate(label = "Discard drafts"))
+    private const val DISCARD_QUESTION = "Discard drafts from this conversation?"
+    private val OK = listOf(TapCandidate(label = "OK"))
     private const val PUSHED = "gmail-trash"
     private const val SENT = "gmail-sent"
     private const val LOOKS = 12
@@ -88,6 +100,8 @@ object GmailTrash {
         val marker = scope.values.marker
         if (scope.notes[PUSHED] == marker) return
         scope.notes[PUSHED] = marker
+        // Pushed first, so that it runs after the deletion from the inbox.
+        scope.restores.push("the test draft in Gmail", "Gmail: in Drafts, discard the draft \"$marker\".") { discardDraft(scope, marker) }
         scope.restores.push("the test e-mail in Gmail", "Gmail: delete the conversation \"$marker\".") { delete(scope, marker) }
     }
 
@@ -99,9 +113,7 @@ object GmailTrash {
     fun delete(scope: RunScope, marker: String) {
         openInbox(scope)
         if (arrived(scope, marker)) {
-            // MailToSelf's subject ends with the marker and its body is the marker; email-self's script writes "Reminder
-            // about {marker}" and "A reminder about {marker}.".
-            val row = listOf("$marker, $marker", "$marker, A reminder about $marker", marker).map { TapCandidate(contains = it, long = true) }
+            val row = row(marker)
             if (!AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)) {
                 // A lost answer ends the taps; the inbox in a new task drops a selection that they may have left.
                 openInbox(scope)
@@ -114,6 +126,26 @@ object GmailTrash {
         if (scope.device.kind == DeviceKind.EMULATOR) sweep(scope)
         scope.device.idempotent("input keyevent KEYCODE_HOME")
     }
+
+    /**
+     * Gmail's Drafts, opened from the inbox's navigation drawer: the draft whose row holds the run's marker is
+     * long-pressed, discarded, and Gmail's question about it answered with OK; any other draft stays.
+     */
+    fun discardDraft(scope: RunScope, marker: String) {
+        openInbox(scope)
+        val taps = AppTaps(scope, MailToSelf.GMAIL)
+        check(taps.run(listOf(DRAWER, DRAFTS))) { "Gmail's Drafts did not open." }
+        if (shows(scope, marker)) {
+            if (taps.run(listOf(row(marker), DISCARD)) && shows(scope, DISCARD_QUESTION)) taps.run(listOf(OK))
+            check(!shows(scope, marker)) { "The test draft is still in Gmail's Drafts." }
+        }
+        scope.device.idempotent("input keyevent KEYCODE_HOME")
+    }
+
+    // MailToSelf's subject ends with the marker and its body is the marker; email-self's script writes "Reminder about
+    // {marker}" and "A reminder about {marker}.". Each candidate is long-pressed only when one element holds it.
+    private fun row(marker: String): List<TapCandidate> =
+        listOf("$marker, $marker", "$marker, A reminder about $marker", marker).map { TapCandidate(contains = it, long = true) }
 
     fun openInbox(scope: RunScope) {
         // In a new task (NEW_TASK and CLEAR_TASK), because Gmail's task may still show an e-mail.
