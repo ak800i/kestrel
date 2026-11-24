@@ -372,8 +372,16 @@ class RunnerTest {
 
     @Test
     fun theVerdictsAreThoseOfTaskCheckPs1() {
-        fun judge(rule: VerdictRule, answer: String?, timedOut: Boolean = false, checked: Boolean = true, refusal: String? = null, refused: String? = null) =
-            Verdicts.judge(rule, answer?.let(::HookAnswer), timedOut, checked, refusal, refused, false).let { "${it.result.wire} ${it.check.wire} ${it.reason.wire}" }
+        fun judge(
+            rule: VerdictRule,
+            answer: String?,
+            timedOut: Boolean = false,
+            checked: Boolean = true,
+            refusal: String? = null,
+            refused: String? = null,
+            cancelled: Boolean = false,
+        ) = Verdicts.judge(rule, answer?.let(::HookAnswer), timedOut, checked, refusal, refused, false, emptySet(), cancelled)
+            .let { "${it.result.wire} ${it.check.wire} ${it.reason.wire}" }
         val finished = "state=done end=FINISHED confirmed=1 unconfirmed=0 beforeTestMode=0"
         val failed = "state=done end=FAILED_BY_MODEL confirmed=0 unconfirmed=0 beforeTestMode=0"
 
@@ -387,6 +395,52 @@ class RunnerTest {
         assertEquals("fail skipped end", judge(VerdictRule.Finished, null, checked = false))
         assertEquals("fail pass end", judge(VerdictRule.KnownGap, finished))
         assertEquals("pass pass ok", judge(VerdictRule.KnownGap, "state=done end=TEST_MODE unconfirmed=0 beforeTestMode=0"))
-        assertEquals("fail pass check", judge(VerdictRule.Declined("deleting"), finished))
+        // A task that ended before its decline was asked (T5), and one that declined something else.
+        assertEquals("fail pass end", judge(VerdictRule.Declined("deleting"), finished))
+        assertEquals("fail pass check", judge(VerdictRule.Declined("deleting"), "state=done end=DECLINED unconfirmed=0 beforeTestMode=0"))
+        // The run's own cancel ended the task (T1); without it, the end is Kestrel's.
+        val cancelled = "state=done end=CANCELLED unconfirmed=0 beforeTestMode=0"
+        assertEquals("fail pass asked", judge(VerdictRule.Finished, cancelled, cancelled = true))
+        assertEquals("fail pass end", judge(VerdictRule.Finished, cancelled))
+        assertEquals("fail pass confirm", judge(VerdictRule.Finished, cancelled, refused = "calls", cancelled = true))
+    }
+
+    @Test
+    fun theRunSaysNoToTheScreenshotLeavesTheNumberOpenAndNamesTheAnswerThatEndedTheTask() {
+        val open = "phase=running work=running-task handOver=none confirming=none"
+        val questions = ArrayDeque(
+            listOf("$open asking=free question=screenshot", "$open asking=pick-number question=pick-number", "$open asking=pick-number question=pick-number", "$open asking=free question=free"),
+        )
+        run.adb.hook("AGENT_STATE") { questions.removeFirstOrNull() ?: "$open asking=none question=none" }
+        val cancelled = "state=done end=CANCELLED steps=4 workMs=9000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 " +
+            "model=scripted in=10 out=2 cacheRead=0 cacheWrite=0"
+        var polls = 0
+        run.adb.hook("AGENT_TASK") { if (++polls < 7) "state=running" else cancelled }
+
+        val line = runner().run(task(), "[]", 1, "maple heron")
+
+        assertEquals(listOf("no", "cancel"), run.adb.hookCalls("AGENT_ANSWER").map { it["answer"] })
+        assertTrue(line.text(), line.text().endsWith(" cacheWrite=0 asked=free reason=asked"))
+        assertEquals(Reason.ASKED, RunLine.parse(line.text())!!.reason)
+        assertEquals("free", RunLine.parse(line.text())!!.asked)
+        assertTrue(run.console.warnings.toString(), run.console.warnings.contains("Task stand-in-hotspot, run 1: the run's own answer to free ended the task, which ended CANCELLED."))
+
+        // Kestrel's own permission request is a hand-over, which the run cancels: the line names it.
+        questions.add("phase=handed-over work=idle handOver=PERMISSION confirming=none asking=none question=none")
+        polls = 0
+        val handOver = runner().run(task(), "[]", 2, "cedar otter")
+        assertTrue(handOver.text(), handOver.text().endsWith(" asked=hand-over/PERMISSION reason=asked"))
+
+        // The run's "no" to "Continue the task?" cancels the task too.
+        questions.add("phase=paused work=idle handOver=none confirming=none asking=continue question=none")
+        polls = 0
+        val paused = runner().run(task(), "[]", 3, "amber lynx")
+        assertTrue(paused.text(), paused.text().endsWith(" asked=continue reason=asked"))
+
+        // An answer that never reached Kestrel ended nothing: the end stays Kestrel's.
+        run.adb.hookFails("AGENT_ANSWER", "the task asks nothing")
+        questions.add("$open asking=free question=free")
+        polls = 0
+        assertEquals(Reason.END, runner().run(task(), "[]", 4, "willow walnut").reason)
     }
 }

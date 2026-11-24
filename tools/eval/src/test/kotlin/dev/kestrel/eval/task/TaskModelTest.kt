@@ -3,6 +3,7 @@ package dev.kestrel.eval.task
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.run.Markers
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -45,9 +46,22 @@ class TaskModelTest {
         assertEquals("no", reply("phase=running asking=yes-no work=running-task handOver=none confirming=none"))
         assertEquals("no", reply("phase=paused asking=continue work=idle handOver=none confirming=none"))
         assertEquals("cancel", reply("phase=running asking=free work=running-task handOver=none confirming=none"))
-        assertEquals("cancel", reply("phase=running asking=pick-number work=running-task handOver=none confirming=none"))
+        assertEquals("cancel", reply("phase=running asking=free work=running-task handOver=none confirming=none question=free"))
+        // The owner's decision P1: the screenshot question gets "no", and "Which number should I use?" no answer at all.
+        assertEquals("no", reply("phase=running asking=free work=running-task handOver=none confirming=none question=screenshot"))
+        assertNull(reply("phase=running asking=pick-number work=running-task handOver=none confirming=none question=pick-number"))
         assertEquals("cancel", reply("phase=handed-over asking=none work=idle handOver=CREDENTIALS confirming=none"))
         assertNull(reply("phase=running asking=none work=running-task handOver=none confirming=none"))
         assertEquals("cancel", Answers.NONE.reply(HookAnswer("asking=confirm confirming=sending")))
+
+        fun kind(state: String) = Answers.kind(HookAnswer(state))
+        assertEquals("screenshot", kind("asking=free question=screenshot handOver=none"))
+        assertEquals("free", kind("asking=free question=free handOver=none"))
+        assertEquals("pick-number", kind("asking=pick-number question=pick-number handOver=none"))
+        assertEquals("confirm/deleting", kind("asking=confirm confirming=deleting handOver=none"))
+        assertEquals("hand-over/PERMISSION", kind("phase=handed-over asking=none handOver=PERMISSION"))
+        assertNull(kind("asking=none handOver=none"))
+        assertTrue(Answers.endsTask("free", "cancel") && Answers.endsTask("hand-over/PERMISSION", "cancel") && Answers.endsTask("continue", "no"))
+        assertFalse(Answers.endsTask("yes-no", "no") || Answers.endsTask("screenshot", "no"))
     }
 }

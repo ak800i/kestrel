@@ -10,13 +10,19 @@ enum class CheckResult(val wire: String) { PASS("pass"), FAIL("fail"), SKIPPED("
 enum class Reason(val wire: String) {
     OK("ok"), TIMEOUT("timeout"), CHECK("check"), END("end"), UNTESTABLE("untestable"), LIMIT("limit"), CONFIRM("confirm"),
     CALL("call"), STOPPED("stopped"), SETUP("setup"), STALLED("stalled"),
+
+    /** The task ended CANCELLED after the run's own answer ended it, such as a "cancel" to a hand-over (plan 6B-basefix T1). */
+    ASKED("asked"),
 }
 
 /**
  * One run's line (design D6 of sub-project 6), exactly as task-check.ps1's `Format-TaskLine` wrote it, so that
  * scripts\a71-agent.ps1's readers of the lines keep working: `task=<name> run=<i> result=<pass|fail|skipped>
  * end=<EndReason|none> check=<pass|fail|skipped> steps= workMs= credits=<n|unknown> model= in= out= cacheRead= cacheWrite=
- * reason=<…>`, with only what the hooks answered. [credits], when given, replaces the answer's credits.
+ * reason=<…>`, with only what the hooks answered. [credits], when given, replaces the answer's credits. A run of
+ * `reason=asked` names the kinds of the questions and hand-overs that the run cancelled in [asked], written as
+ * `asked=<kinds>` right before `reason=` (plan 6B-basefix), such as `asked=hand-over/PERMISSION`; readers that take the
+ * line's pairs by name, as a71-agent.ps1's `ConvertFrom-TaskLine` does, read it unchanged.
  */
 data class RunLine(
     val task: String,
@@ -26,13 +32,15 @@ data class RunLine(
     val check: CheckResult,
     val reason: Reason,
     val credits: String? = null,
+    val asked: String? = null,
 ) {
     fun text(): String {
         fun field(name: String, default: String) = answer?.get(name) ?: default
         val spent = credits ?: field("credits", "0.00")
         return "task=$task run=$run result=${result.wire} end=${field("end", "none")} check=${check.wire} steps=${field("steps", "0")} " +
             "workMs=${field("workMs", "0")} credits=$spent model=${field("model", "none")} in=${field("in", "0")} " +
-            "out=${field("out", "0")} cacheRead=${field("cacheRead", "0")} cacheWrite=${field("cacheWrite", "0")} reason=${reason.wire}"
+            "out=${field("out", "0")} cacheRead=${field("cacheRead", "0")} cacheWrite=${field("cacheWrite", "0")} " +
+            "${asked?.let { "asked=$it " }.orEmpty()}reason=${reason.wire}"
     }
 
     companion object {
@@ -43,7 +51,7 @@ data class RunLine(
             val check = CheckResult.entries.firstOrNull { it.wire == fields["check"] } ?: return null
             val reason = Reason.entries.firstOrNull { it.wire == fields["reason"] } ?: return null
             val run = fields["run"]?.toIntOrNull() ?: return null
-            return RunLine(fields["task"] ?: return null, run, result, fields, check, reason)
+            return RunLine(fields["task"] ?: return null, run, result, fields, check, reason, asked = fields["asked"])
         }
     }
 }

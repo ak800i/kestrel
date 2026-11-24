@@ -16,7 +16,10 @@ class Hooks(private val client: HookClient) {
             recipient?.let { Extra.Text("recipient", it) }, digits?.let { Extra.Text("digits", it) },
         )
 
-    /** agent-state: the task's phase, its open question's kind, the hand-over and the open confirmation's category. */
+    /**
+     * agent-state: the task's phase, its open question's kind, the hand-over, the open confirmation's category and the
+     * question's source (`question=`, which tells look_closer's screenshot question from a free one; plan 6B-basefix).
+     */
     fun agentState(tag: String): HookAnswer = read("agent-state", Extra.Text("tag", tag))
 
     /** agent-answer: the owner's answer to the task's open question; a confirmation's answer carries the category that agent-state read. */

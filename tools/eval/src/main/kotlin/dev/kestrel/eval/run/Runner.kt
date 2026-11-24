@@ -10,6 +10,7 @@ import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.hook.Hooks
+import dev.kestrel.eval.task.Answers
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.RunValues
 import dev.kestrel.eval.task.SetupResult
@@ -121,9 +122,10 @@ class Runner(
         val call = state.call || end.after
         if (end.after) console.warn("Task ${task.name}, run $number: a call showed after the run; :tools:eval ended it with the end-call key.")
         val judged = verdict ?: Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
+        val reason = if (call) Reason.CALL else judged.reason
         val line = RunLine(
             task.name, number, if (call) RunResult.FAIL else judged.result, state.answer, judged.check,
-            if (call) Reason.CALL else judged.reason, end.credits,
+            reason, end.credits, asked = state.cancelled().joinToString(",").takeIf { reason == Reason.ASKED },
         )
         writer.writeOnce(task.name, number, line)
         current = null
@@ -190,7 +192,11 @@ class Runner(
         state.refused?.let {
             console.warn("Task ${task.name}, run $number: Kestrel asked to confirm an action of the category $it, which this task does not name; the run said cancel.")
         }
-        return Verdicts.judge(task.verdict, answer, state.timedOut, checked, state.refusal, state.refused, state.stalled, state.declined)
+        val cancelled = state.cancelled()
+        if (answer?.get("end") == "CANCELLED" && cancelled.isNotEmpty()) {
+            console.warn("Task ${task.name}, run $number: the run's own answer to ${cancelled.joinToString(", ")} ended the task, which ended CANCELLED.")
+        }
+        return Verdicts.judge(task.verdict, answer, state.timedOut, checked, state.refusal, state.refused, state.stalled, state.declined, cancelled.isNotEmpty())
     }
 
     /** The shutdown hook began, so no run and no task may start; the hook writes the lines of the runs left. */
@@ -204,6 +210,8 @@ class Runner(
         fun elapsed(): Duration = clock.elapsed() - start
         var heard = Duration.ZERO
         var quietUntil = Duration.ZERO
+        // Whether the open "Which number should I use?" is in the record already.
+        var silent = false
         while (elapsed() < LIMIT) {
             clock.sleep(POLL)
             val pairs = quietly { hooks.agentTask(tag) }
@@ -221,13 +229,24 @@ class Runner(
             }
             if (elapsed() < quietUntil) continue
             val asked = quietly { hooks.agentState(tag) } ?: continue
-            val reply = task.answers.reply(asked) ?: continue
+            val kind = Answers.kind(asked) ?: continue
+            val reply = task.answers.reply(asked)
+            if (reply == null) {
+                // "Which number should I use?" stays unanswered (the owner's decision P1), once in the run's record.
+                if (kind == Answers.PICK_NUMBER && !silent) state.asked.add(Asked(kind, null))
+                silent = kind == Answers.PICK_NUMBER
+                continue
+            }
+            silent = false
             val confirming = asked["confirming"].takeIf { asked["asking"] == "confirm" }
             // A confirmation that the task does not name was cancelled; outside the injection fixtures, whose defence it is, the run fails.
             if (confirming != null && reply == "cancel" && task.kind != TaskKind.INJECTION) state.refused = confirming
             if (confirming != null && reply == "no") state.declined.add(confirming)
             // A lost or refused answer is not sent again: the next poll answers only if the same question is still open.
-            quietly { hooks.agentAnswer(tag, reply, confirming) }
+            // Only an answer that reached Kestrel can have ended anything; one sent again to the same open question is
+            // recorded once.
+            val delivered = quietly { hooks.agentAnswer(tag, reply, confirming) } != null
+            if (delivered) Asked(kind, reply).let { if (state.asked.lastOrNull() != it) state.asked.add(it) }
             quietUntil = elapsed() + QUIET
         }
         state.timedOut = true
@@ -314,6 +333,12 @@ class Runner(
         var refusal: String? = null
         var refused: String? = null
         val declined = mutableSetOf<String>()
+
+        // The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order (T1).
+        val asked = mutableListOf<Asked>()
+
+        /** The kinds of the questions and hand-overs whose answer by the run ended the task, each once. */
+        fun cancelled(): List<String> = asked.filter { it.endsTask }.map { it.kind }.distinct()
     }
 
     private data class End(val after: Boolean, val credits: String, val failures: List<RestoreFailure>)
