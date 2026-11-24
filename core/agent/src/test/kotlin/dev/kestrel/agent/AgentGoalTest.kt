@@ -1,9 +1,12 @@
 package dev.kestrel.agent
 
+import dev.kestrel.agent.goal.Steer
+import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.loop.Redacted
 import dev.kestrel.agent.loop.TaskText
 import dev.kestrel.agent.memory.Fact
+import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
@@ -150,5 +153,55 @@ class AgentGoalTest {
 
         val asked = harness.owner.confirmations.single().question
         assertTrue(asked, asked.startsWith("You didn't ask me to copy text from the screen."))
+    }
+
+    private fun lastMessage(harness: Harness, request: Int): String =
+        (harness.model.requests[request].messages.last() as ChatMessage.User).parts.filterIsInstance<Part.Text>().single().text
+
+    @Test
+    fun steeringReachesTheModelAtTheNextTurnAfterTheStepThatRan() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("say", null, null, null, "text" to "Opening it."), fail()))
+        harness.owner.onSay = { harness.goal.steering += Steer("Also send it to Mila", SteerChannel.TYPED) }
+
+        harness.run("Send Ana a photo")
+
+        assertEquals(listOf("Opening it."), harness.owner.said)
+        assertFalse(harness.requestText(0).contains(TaskText.OWNER_ADDED))
+        assertEquals("The owner added (typed) at step 1: \"Also send it to Mila\"", lastMessage(harness, 1))
+    }
+
+    @Test
+    fun steeringIsTheOwnersOwnTextAndExtendsTheAllowance() = runTest {
+        val harness = Harness(Screens.chat("Ana Petrović", "Hi"), listOf(
+            call("type_text", "Type a message…", null, null, "text" to "I'm late", "reason" to "write it", "category" to "typing_request"),
+            call("tap", "Send", "Button", null, "reason" to "send it", "category" to "sending"),
+        ))
+        harness.goal.steering += Steer("Tell her that I'm late", SteerChannel.SPOKEN)
+
+        assertEquals(EndReason.DECLINED, harness.run("Open Ana's chat").end)
+
+        assertEquals(
+            "The owner added (spoken) before the first step: \"Tell her that I'm late\"\nThis task may send messages after the owner confirms.",
+            lastMessage(harness, 0),
+        )
+        assertEquals("I'm late", harness.screen.actions.filterIsInstance<ScreenAction.SetText>().single().text)
+        val asked = harness.owner.confirmations.single().question
+        assertFalse(asked, asked.contains("You didn't ask me to send anything."))
+    }
+
+    // The owner's steering and his answers are his own words, which are never cut, as his command's are not.
+    @Test
+    fun theOwnersLongWordsReachTheModelWhole() = runTest {
+        val stations = listOf("Novi Sad", "Inđija", "Stara Pazova", "Batajnica", "Zemun", "Novi Beograd")
+        val words = "Also tell her that " + stations.joinToString(", ") { "the train waited outside $it for a free track" }
+        val harness = Harness(Screens.chats(), listOf(call("ask_user", null, null, null, "question" to "Anything else?"), fail()))
+        harness.goal.steering += Steer(words, SteerChannel.TYPED)
+        harness.owner.answers += Answer.Text(words)
+
+        harness.run("Tell Ana that I'm late")
+
+        assertTrue(words.length > ScreenText.VALUE_LIMIT)
+        assertEquals("The owner added (typed) before the first step: \"$words\"", lastMessage(harness, 0))
+        assertTrue(harness.requestText(1).contains("The owner said: \"$words\""))
     }
 }

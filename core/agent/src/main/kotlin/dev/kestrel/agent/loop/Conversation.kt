@@ -64,6 +64,8 @@ class Step(
  * (tokens, with room for the reply) would be passed, the oldest shrunk steps go and one line says how many (D32 item 10).
  * The loop sets [budget] before each request to the window of the model that gets it, so that a switch of models
  * changes it (D7).
+ * An owner's message while the goal acts (design 7.3 of sub-project 7) is a user message after the last step, which
+ * never changes and is never left out, so it only appends to what the caches hold.
  * Every text in here is [Redacted] or an [Observation], which the observation builder redacted, so nothing is redacted
  * twice (D17).
  */
@@ -127,6 +129,14 @@ class Conversation(
         val summary = Redacted.kestrel(observation.firstScreen().replaceFirst(FIRST_SCREEN, AFTER_PAUSE))
         entries += Entry(number, null, emptyList(), null, note, observation, null, summary, null, null)
         settle()
+    }
+
+    /**
+     * The owner's [message] while the goal acts, after step [number] (design 7.3 of sub-project 7), in a user message of
+     * its own. It has no observation, so it never shrinks, and the budget of a local model never leaves it out.
+     */
+    fun addOwnerMessage(number: Int, message: Redacted) {
+        entries += Entry(number, null, emptyList(), null, message, null, null, null, null, null)
     }
 
     /**
@@ -213,10 +223,13 @@ class Conversation(
         val messages = mutableListOf<ChatMessage>()
         val reply = entry.reply
         if (reply == null) {
-            val body = when (entry.state) {
-                State.SHRUNK -> entry.summary!!.text
-                State.EARLIER -> listOfNotNull(entry.note?.text, entry.observation!!.earlier()).joinToString("\n")
-                State.FULL -> listOfNotNull(entry.note?.text, entry.observation!!.text).joinToString("\n")
+            val observation = entry.observation
+            val body = when {
+                // An owner's message (design 7.3 of sub-project 7).
+                observation == null -> entry.note!!.text
+                entry.state == State.SHRUNK -> entry.summary!!.text
+                entry.state == State.EARLIER -> listOfNotNull(entry.note?.text, observation.earlier()).joinToString("\n")
+                else -> listOfNotNull(entry.note?.text, observation.text).joinToString("\n")
             }
             messages += user(body)
         } else {
@@ -243,11 +256,11 @@ class Conversation(
         return result.text.text + "\n" + body
     }
 
-    // Removes the oldest step of the stable region after the first observation, whole (D32 items 8 and 10).
+    // Removes the oldest step of the stable region after the first observation, whole (D32 items 8 and 10); an owner's
+    // message stays (design 7.3 of sub-project 7).
     private fun leaveOutOldest(): Boolean {
-        val tail = boundary()
-        if (tail <= 1) return false
-        entries.removeAt(1)
+        val oldest = (1 until boundary()).firstOrNull { entries[it].reply != null || entries[it].observation != null } ?: return false
+        entries.removeAt(oldest)
         leftOut++
         return true
     }

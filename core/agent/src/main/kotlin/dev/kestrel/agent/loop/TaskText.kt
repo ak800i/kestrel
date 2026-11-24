@@ -1,6 +1,8 @@
 package dev.kestrel.agent.loop
 
 import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.Steer
+import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.safety.Redactor
 import dev.kestrel.safety.TaskAllowance
 
@@ -13,6 +15,9 @@ import dev.kestrel.safety.TaskAllowance
  */
 internal object TaskText {
     const val TEST_MODE_NOTE = "Test mode is on: Kestrel sends only to the owner's own chats, and it never calls anyone."
+
+    /** How an owner's message while the goal acts starts (design 7.3 of sub-project 7); the system prompt names it. */
+    const val OWNER_ADDED = "The owner added"
 
     /**
      * The context of [task]: the test-mode note when [testMode] is on, the records block as it came (each of its parts was
@@ -32,5 +37,16 @@ internal object TaskText {
         val lead = if (task.conversation == null) "The owner's task: " else "The owner's new command: "
         val owner = Redacted.of(redactor, lead + task.text).text
         return Redacted.kestrel(listOfNotNull(owner, "Today is $date.", allowance.describe(), note).joinToString("\n"))
+    }
+
+    /**
+     * The owner's [steer] after step [step], or before the first step when [step] is 0 (design 7.3 of sub-project 7),
+     * with [widened], the allowance's sentence, on a line of its own when the steer widened the allowance. His words are
+     * redacted, quoted and escaped, and never cut, as his command's words in the task message are not.
+     */
+    fun steered(steer: Steer, step: Int, widened: String?, redactor: Redactor): Redacted {
+        val words = ScreenText.quoteWhole(Redacted.of(redactor, steer.text).text)
+        val at = if (step == 0) "before the first step" else "at step $step"
+        return Redacted.kestrel(listOfNotNull("$OWNER_ADDED (${steer.channel.wire}) $at: $words", widened).joinToString("\n"))
     }
 }

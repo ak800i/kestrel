@@ -66,6 +66,12 @@ object ScreenText {
 
     fun quote(text: String, limit: Int): String = "\"" + escape(cut(text, limit)) + "\""
 
+    /**
+     * [text] quoted and escaped, but never cut: the owner's own words, whose length his input bounds (design 7.3 of
+     * sub-project 7).
+     */
+    fun quoteWhole(text: String): String = "\"" + escape(text) + "\""
+
     /** An estimate of the tokens: characters ÷ 3.5, or ÷ 2.5 for Cyrillic characters, rounded up. */
     fun tokens(text: String): Int {
         val cyrillic = text.count { it in '\u0400'..'\u04FF' }

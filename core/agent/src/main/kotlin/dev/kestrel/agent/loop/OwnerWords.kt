@@ -21,4 +21,11 @@ internal object OwnerWords {
             ownerDigits = listOf(TaskSafety.digitsOf(task.text)).filter { it.isNotEmpty() },
         ),
     ) { seeded, words -> seeded.withOwnerWords(words) }
+
+    /**
+     * [safety] after the owner's steering [text] while the goal acts (design 7.3 of sub-project 7): his words, and his
+     * command's verbs joined to the allowance, because steering is his command.
+     */
+    fun steered(safety: TaskSafety, text: String, names: Set<String>): TaskSafety =
+        safety.withOwnerWords(text).copy(allowance = safety.allowance + TaskAllowance.from(text, names))
 }

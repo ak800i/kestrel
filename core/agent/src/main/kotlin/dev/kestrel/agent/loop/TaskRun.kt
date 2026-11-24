@@ -241,6 +241,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         checkLimits()
         // A resume during the cost question is observed before this turn's model call too (D2).
         if (resumePending) resumed()
+        steer()
         // The step's number for the goal, once the waits before the step are over (design 10.5 of sub-project 7).
         trace.stepStarted(replies + 1)
         val priced = callModel()
@@ -258,6 +259,18 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
                 handle(escalation.invalid(progress))
             }
             is Reply.Act -> act(message, reply)
+        }
+    }
+
+    // The owner's steering since the last turn (design 7.3 of sub-project 7), each after the last step, which ran to its
+    // end before it.
+    private fun steer() {
+        for (steer in ports.goal.takeSteering()) {
+            val before = safety.allowance
+            safety = OwnerWords.steered(safety, steer.text, names)
+            val message = TaskText.steered(steer, replies, safety.allowance.describe().takeIf { safety.allowance != before }, redactor)
+            conversation.addOwnerMessage(replies, message)
+            pendingPrompt += "\n" + message.text
         }
     }
 

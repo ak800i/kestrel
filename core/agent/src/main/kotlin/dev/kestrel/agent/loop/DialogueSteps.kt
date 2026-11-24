@@ -24,7 +24,8 @@ internal class DialogueSteps(private val run: TaskRun) {
         if (text == null) return Done(call.tool, Outcome.NoAnswer)
         run.safety = run.safety.withOwnerWords(text)
         val said = Redacted.of(run.redactor, text)
-        return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner said: " + ScreenText.quote(said.text, ScreenText.VALUE_LIMIT)))
+        // His answer is his own words, never cut (design 7.3 of sub-project 7).
+        return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner said: " + ScreenText.quoteWhole(said.text)))
     }
 
     suspend fun say(call: AgentCall.Say): Done {

@@ -449,4 +449,45 @@ class ConversationTest {
         assertFalse(all.joinToString("\n").contains("483920"))
         assertNotNull(vault.valueOf("[OTP_1]"))
     }
+
+    // Design 7.3 of sub-project 7: an owner's message follows the last step and never changes.
+    @Test
+    fun anOwnersMessageFollowsTheLastStepAndNeverChanges() {
+        val first = observe(1, chat("Chats", "Ana Petrović"))
+        val second = observe(2, chat("Ana Petrović", "Hi"), first)
+        val third = observe(3, chat("Ana Petrović", "Hi", "See you"), second)
+        val fourth = observe(4, chat("Ana Petrović", "Hi", "See you", "Bye"), third)
+        val conversation = conversation(first)
+        conversation.add(tapStep(1, second))
+        val message = Redacted.kestrel("The owner added (typed) at step 1: \"Also Mila\"")
+
+        conversation.addOwnerMessage(1, message)
+
+        assertEquals(message.text, texts(request(conversation, 2)).last())
+        conversation.add(tapStep(2, third))
+        conversation.add(tapStep(3, fourth))
+        val later = texts(request(conversation, 4))
+        assertEquals(1, later.count { it == message.text })
+        assertEquals(later.indexOf("Step 1: tapped \"Ana\" (row) in Viber → another screen.") + 1, later.indexOf(message.text))
+    }
+
+    // Design 7.3 of sub-project 7: a local model's budget leaves out old steps whole, but never an owner's message.
+    @Test
+    fun aLocalModelsBudgetLeavesOutOldStepsButNeverAnOwnersMessage() {
+        val observations = mutableListOf(observe(1, chat("Chats", "Ana Petrović")))
+        for (step in 1..5) observations += observe(step + 1, chat("Ana Petrović", "Message $step"), observations.last())
+        val message = Redacted.kestrel("The owner added (spoken) at step 1: \"Also Mila\"")
+        fun built(budget: Int?) = conversation(observations[0], budget = budget, context = null).also { conversation ->
+            conversation.add(tapStep(1, observations[1]))
+            conversation.addOwnerMessage(1, message)
+            for (step in 2..5) conversation.add(tapStep(step, observations[step]))
+        }
+        val full = built(null).request(ToolChoice.REQUIRED, null, 6)!!
+
+        val tight = built(((tokensOf(full) - 2 * shrunkStepTokens() + Conversation.MAX_OUTPUT_TOKENS) / 0.9).toInt() + 1).request(ToolChoice.REQUIRED, null, 6)!!
+
+        ChatRequests.check(tight)
+        assertTrue(texts(tight).any { it.endsWith("earlier steps left out.)") })
+        assertTrue(texts(tight).contains(message.text))
+    }
 }
