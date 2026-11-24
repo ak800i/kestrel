@@ -386,6 +386,7 @@ class SettingsStepsTest {
         assertTrue(run.scope.putBack.applied.isEmpty())
         val warning = run.console.warnings.single()
         assertTrue(warning, warning.contains("system/font_size (set back to its value before the run), system/flip_font_style (added by the run, deleted)"))
+        assertTrue(warning, warning.contains("byHand="))
     }
 
     @Test
@@ -444,7 +445,7 @@ class SettingsStepsTest {
     }
 
     @Test
-    fun theTileThatSystemUiAddedIsRemovedThroughSystemUiAndItsOwnRecordIsNamedForTheHand() {
+    fun theTileThatSystemUiAddedIsRemovedThroughSystemUiAndItsOwnRecordIsNamedAsLeftChanged() {
         val run = FakeRun(DeviceKind.EMULATOR)
         // SystemUI's new pipeline (API 35 and later) applies set-tiles and stores the list itself.
         run.adb.on("^cmd statusbar set-tiles '(.*)'$") { run.adb.settings["secure/sysui_qs_tiles"] = it.groupValues[1]; "" }
@@ -458,12 +459,15 @@ class SettingsStepsTest {
         assertTrue(run.restores.runAll().isEmpty())
         assertEquals("internet,bt,custom(com.example/.Tile)", run.adb.settings["secure/sysui_qs_tiles"])
         assertTrue(run.adb.commands.toString(), run.adb.commands.contains("cmd statusbar set-tiles 'internet,bt,custom(com.example/.Tile)'"))
-        // SystemUI writes its own record back over any change, so the restore does not write it and says so.
+        // SystemUI writes its own record back over any change, so the restore does not write it: it stays changed, with its old value.
         assertTrue(run.adb.commands.toString(), run.adb.commands.none { it.startsWith("settings put secure qs_auto_tiles") })
+        assertEquals("work,font_scaling", run.adb.settings["secure/qs_auto_tiles"])
         assertEquals(listOf("secure/sysui_qs_tiles"), run.scope.putBack.applied)
-        assertEquals(listOf("secure/qs_auto_tiles"), run.scope.putBack.stored)
+        assertTrue(run.scope.putBack.stored.isEmpty())
+        assertEquals(listOf(LeftChanged("secure/qs_auto_tiles", "work")), run.scope.putBack.leftChanged)
         val warning = run.console.warnings.single()
-        assertTrue(warning, warning.contains("secure/qs_auto_tiles") && warning.contains("SystemUI"))
+        assertTrue(warning, warning.contains("secure/qs_auto_tiles") && warning.contains("SystemUI") && warning.contains("leftChanged="))
+        assertFalse(warning, warning.contains("byHand="))
     }
 
     @Test

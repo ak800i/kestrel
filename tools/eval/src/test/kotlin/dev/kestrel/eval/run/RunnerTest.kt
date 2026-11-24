@@ -80,7 +80,7 @@ class RunnerTest {
             line.text(),
         )
         assertEquals(
-            listOf(line.text(), "detail task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none"),
+            listOf(line.text(), "detail task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none leftChanged=none"),
             run.console.lines,
         )
         assertEquals(listOf(mapOf("event" to "heard", "text" to "Kestrel, turn on hotspot", "tag" to "t1", "marker" to "maple heron")), run.adb.hookCalls("VOICE"))
@@ -210,7 +210,7 @@ class RunnerTest {
         assertEquals(listOf("1 pass ok", "2 fail stopped", "3 fail stopped"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
         // Every run line has its detail line, also the runs that never started.
         assertEquals(
-            (2..3).map { "detail task=stand-in-hotspot run=$it asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none" },
+            (2..3).map { "detail task=stand-in-hotspot run=$it asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none leftChanged=none" },
             writer.details.drop(1),
         )
     }
@@ -354,6 +354,10 @@ class RunnerTest {
         val setup = object : Setup {
             override fun apply(scope: RunScope): SetupResult {
                 scope.restores.push("the font keys", "") { scope.putBack.recordStored("font") }
+                scope.restores.push("SystemUI's record", "") {
+                    scope.putBack.recordLeftChanged("secure/qs_auto_tiles", "work,custom(com.example/.Tile)")
+                    scope.putBack.recordLeftChanged("secure/flag", null)
+                }
                 return SetupResult.Ready
             }
         }
@@ -372,7 +376,8 @@ class RunnerTest {
         // The shutdown hook wrote the run's line and its detail line as one pair, after the run's restores had recorded.
         assertEquals(listOf(1, 1), atHook)
         assertEquals(
-            listOf("detail task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=font"),
+            listOf("detail task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=font " +
+                "leftChanged=secure/qs_auto_tiles:work%2Ccustom%28com.example%2F.Tile%29,secure/flag"),
             writer.details,
         )
         assertEquals(listOf("1 fail stopped"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
@@ -532,7 +537,7 @@ class RunnerTest {
         runner().run(task(setup = listOf(setup)), "[]", 1, "maple heron")
 
         assertEquals(
-            listOf("detail task=stand-in-hotspot run=1 asked=yes-no:no ownerTouches=2 signals=1 markerSaid=1 markerInData=0 putBack=wm/density byHand=none"),
+            listOf("detail task=stand-in-hotspot run=1 asked=yes-no:no ownerTouches=2 signals=1 markerSaid=1 markerInData=0 putBack=wm/density byHand=none leftChanged=none"),
             writer.details,
         )
         assertEquals("maple heron", run.adb.hookCalls("VOICE").single()["marker"])

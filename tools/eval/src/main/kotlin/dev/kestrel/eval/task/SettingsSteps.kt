@@ -120,10 +120,10 @@ enum class StoredEffect {
  * 6B-basefix T6): it changes nothing, and its one restore writes back each one that the run changed, deletes each one
  * that the run added, and reads them again. What the owner sees then depends on how Android applies each key, which
  * [effects] gives ([StoredEffect.BY_PAGE] for a key that it does not name, such as a vendor's): the restore names a key
- * that Android applies in [RunScope.putBack]'s applied list, puts a flag back silently, and names a key that only its
- * page applies in the stored list, with a warning that says what was set back and what was deleted. A key that stays
- * changed fails the restore, whose reason gives the command for each such key. Settings that have a step of their own are
- * [except], such as the font scale ([SettingsValue]) and the display density ([KeepDisplayDensity]).
+ * that Android applies in [RunScope.putBack]'s applied list (`putBack=`), puts a flag back silently, and names a key that
+ * only its page applies in the stored list (`byHand=`), with a warning that says what was set back and what was deleted.
+ * A key that stays changed fails the restore, whose reason gives the command for each such key. Settings that have a step
+ * of their own are [except], such as the font scale ([SettingsValue]) and the display density ([KeepDisplayDensity]).
  */
 data class KeepStoredSettings(
     val matching: Regex,
@@ -149,7 +149,7 @@ data class KeepStoredSettings(
             if (byPage.isNotEmpty()) {
                 val done = byPage.joinToString { if (before[it] == null) "$it (added by the run, deleted)" else "$it (set back to its value before the run)" }
                 scope.console.warn(
-                    "The run changed display settings that only their own Settings page applies: $done. The screen may show the " +
+                    "The run changed display settings that only their own Settings page applies (byHand=): $done. The screen may show the " +
                         "run's choice until a reboot, or until they are set again by hand in Settings > Display.",
                 )
             }
@@ -222,8 +222,9 @@ data class KeepStoredSettings(
  *   other): UserTileSpecRepository and UserAutoAddRepository hold the truth and write it back over any change of either
  *   setting. The tiles go back through SystemUI with `cmd statusbar set-tiles`, which StatusBarShellCommand has from API
  *   35 and CentralSurfacesCommandQueueCallbacks.setQsTiles hands to QSHost.changeTilesByUser. The record has no such
- *   command, so it cannot be put back while SystemUI runs: the restore names it in [RunScope.putBack]'s stored list and
- *   warns that SystemUI will not add those tiles by itself again.
+ *   command, so it cannot be put back while SystemUI runs: the restore leaves it, records it with its old value in
+ *   [RunScope.putBack]'s [PutBack.leftChanged] (`leftChanged=`), and warns that SystemUI will not add those tiles by
+ *   itself again.
  * Each of the two has a restore of its own, so that one that fails does not keep the other from running.
  */
 object KeepQuickSettingsTiles : Setup {
@@ -262,12 +263,12 @@ object KeepQuickSettingsTiles : Setup {
             val now = value(scope, AUTO_ADDED)
             if (now == before) return@push
             if (newPipeline) {
-                scope.putBack.recordStored(AUTO_ADDED.toString())
+                scope.putBack.recordLeftChanged(AUTO_ADDED.toString(), before)
                 val added = tiles(now) - tiles(before).toSet()
                 scope.console.warn(
                     "SystemUI recorded in $AUTO_ADDED that it added ${added.joinToString().ifEmpty { "tiles" }} by itself during the run, so it " +
                         "will not add them by itself again. It writes its own record back over any change while it runs, so the restore " +
-                        "could not put it back.",
+                        "could not put it back: it stays changed (leftChanged=), and its value before the run was ${before ?: "none"}.",
                 )
             } else {
                 scope.device.idempotent(undo)

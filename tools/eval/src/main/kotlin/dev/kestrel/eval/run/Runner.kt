@@ -376,7 +376,7 @@ class Runner(
         fun cancelled(): List<String> = record.cancelled()
 
         /** The run's detail line, from what it met and what its restores put back so far. */
-        fun detail(task: String, number: Int) = RunDetail(task, number, asked, answer, markers, putBack.applied, putBack.stored)
+        fun detail(task: String, number: Int) = RunDetail(task, number, asked, answer, markers, putBack.applied, putBack.stored, putBack.leftChanged)
     }
 
     private data class End(val after: Boolean, val credits: String, val failures: List<RestoreFailure>)
