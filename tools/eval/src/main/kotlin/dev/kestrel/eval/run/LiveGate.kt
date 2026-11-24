@@ -14,10 +14,10 @@ import dev.kestrel.eval.hook.Hooks
 class LiveGate(private val hooks: Hooks, private val restores: Restores, private val serial: String) {
     fun open() {
         val provider = hooks.providerStandin()
-        if (provider["profile"] != "copilot") {
-            throw Refusal("--live needs a Copilot profile as the default profile on $serial; its default profile is ${provider["profile"] ?: "unknown"}.")
+        if (provider.profile != "copilot") {
+            throw Refusal("--live needs a Copilot profile as the default profile on $serial; its default profile is ${provider.profile}.")
         }
-        if (provider["standin"] != "off") throw Refusal("--live needs the provider stand-in off on $serial: scripts\\hook.ps1 -Serial $serial provider-standin -On false.")
+        if (provider.standIn) throw Refusal("--live needs the provider stand-in off on $serial: scripts\\hook.ps1 -Serial $serial provider-standin -On false.")
         val before = hooks.agentLive()["live"] == "on"
         restores.push("the live session on $serial ${if (before) "open" else "closed"} again", "Run: scripts\\hook.ps1 -Serial $serial agent-live -On $before") {
             val answer = try {

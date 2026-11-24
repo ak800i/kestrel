@@ -236,7 +236,7 @@ class CommandsTest {
         fake.adb.hook("VOICE") { fake.accounts = 0; "sent" }
 
         assertEquals(Cli.EXIT_FAILED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1"))
-        assertTrue(fake.output.contains("ERROR: kestrel-api37's Google accounts (1 before, 0 now)"))
+        assertTrue(fake.output.contains("ERROR: kestrel-api37's owner data changed during the command: Google accounts 1 before, 0 now."))
     }
 
     @Test
@@ -246,7 +246,7 @@ class CommandsTest {
         assertEquals(Cli.EXIT_FAILED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-hotspot", "--runs", "1"))
 
         assertTrue(fake.output.contains("REFUSED: Kestrel's accessibility service is off on emulator-5554."))
-        assertTrue(fake.output.contains("ERROR: kestrel-api37's Google accounts (1 before, 0 now)"))
+        assertTrue(fake.output.contains("ERROR: kestrel-api37's owner data changed during the command: Google accounts 1 before, 0 now."))
     }
 
     @Test

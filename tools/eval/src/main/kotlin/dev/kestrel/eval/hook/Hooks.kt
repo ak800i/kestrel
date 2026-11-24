@@ -107,8 +107,8 @@ class Hooks(private val client: HookClient) {
             marker?.let { Extra.Text("marker", it) },
         )
 
-    /** provider-standin: the default profile's kind (none, copilot or other) and whether the stand-in runs. */
-    fun providerStandin(): HookAnswer = read("provider-standin")
+    /** provider-standin: whether the stand-in runs, and the default profile's kind, ID and credential ([ProviderState]). */
+    fun providerStandin(): ProviderState = ProviderState.from(read("provider-standin"))
 
     private fun read(command: String, vararg extras: Extra?): HookAnswer = client.call(command, extras.filterNotNull(), retry = true)
 

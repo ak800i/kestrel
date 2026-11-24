@@ -58,7 +58,7 @@ class FakeEnvironment {
             "  Package [dev.kestrel] (316e119):\n    userId=$KESTREL_UID\n    versionCode=100 minSdk=33 targetSdk=37\n    versionName=1.0.0\n    lastUpdateTime=$installed\n" + adb.runtimePermissions("dev.kestrel")
         }
         adb.hook("VOICE_STATE") { "mode=listening work=idle session=open clips=off" }
-        adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
+        adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1 id=profile-1 credential=present" }
         adb.hook("AGENT_LIVE") { extras -> extras["on"]?.let { live = if (it == "true") "on" else "off" }; "live=$live" }
         adb.hook("AGENT_SCRIPT") { extras -> if (extras["clear"] == "true") "script=none" else "script=installed replies=2" }
         adb.hook("VOICE") { "sent" }

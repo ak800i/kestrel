@@ -3,6 +3,7 @@ package dev.kestrel.eval.run
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.device.ShellResult
+import dev.kestrel.eval.hook.ProviderState
 import dev.kestrel.eval.task.FakeRun
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -99,13 +100,13 @@ class PreflightTest {
     fun theLiveGateNeedsACopilotProfileWithoutTheStandInAndPutsTheSessionBack() {
         var live = "off"
         run.adb.hook("AGENT_LIVE") { extras -> extras["on"]?.let { live = if (it == "true") "on" else "off" }; "live=$live" }
-        run.adb.hook("PROVIDER_STANDIN") { "standin=off profile=other copilot=0" }
+        run.adb.hook("PROVIDER_STANDIN") { "standin=off profile=other copilot=0 id=profile-2 credential=present" }
         assertThrows(Refusal::class.java) { LiveGate(run.hooks, run.restores, "emulator-5554").open() }
 
-        run.adb.hook("PROVIDER_STANDIN") { "standin=on profile=copilot copilot=1" }
+        run.adb.hook("PROVIDER_STANDIN") { "standin=on profile=copilot copilot=1 id=profile-1 credential=present" }
         assertThrows(Refusal::class.java) { LiveGate(run.hooks, run.restores, "emulator-5554").open() }
 
-        run.adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
+        run.adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1 id=profile-1 credential=present" }
         LiveGate(run.hooks, run.restores, "emulator-5554").open()
         assertEquals("on", live)
         run.restores.runAll()
@@ -122,15 +123,15 @@ class PreflightTest {
     fun theGuardStopsWhenTheEmulatorsGoogleAccountsOrProfileChanged() {
         var accounts = "    Account {name=pera@example.com, type=com.google}"
         run.adb.on("^dumpsys account$") { accounts }
-        run.adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
+        run.adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1 id=profile-1 credential=present" }
         val guard = AccountGuard(run.device, run.hooks)
 
         val before = guard.read()
         guard.check(before)
         accounts = ""
 
-        assertEquals(AccountGuard.Snapshot(1, "copilot"), before)
+        assertEquals(AccountGuard.Snapshot(1, ProviderState(false, "copilot", 1, "profile-1", "present")), before)
         val changed = assertThrows(AccountsChanged::class.java) { guard.check(before) }
-        assertTrue(changed.message!!.startsWith("kestrel-api37's Google accounts (1 before, 0 now)"))
+        assertEquals("kestrel-api37's owner data changed during the command: Google accounts 1 before, 0 now. Check the emulator by hand.", changed.message)
     }
 }

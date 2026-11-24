@@ -383,7 +383,8 @@ function Get-OwnerDataState([string]$Serial) {
 
 # Returns a message for each change of the owner's data between two answers of Get-OwnerDataState, during -During, such
 # as 'the tests'. Profiles that could not be read before are not compared; profiles that were read before and cannot be
-# read after count as a change, because they may be gone.
+# read after count as a change, because they may be gone. :tools:eval's AccountGuard compares the same fields in the same
+# way (tools\eval\src\main\kotlin\dev\kestrel\eval\run\AccountGuard.kt).
 function Get-OwnerDataChange($Before, $After, [string]$Serial, [string]$During) {
     if ($After.GoogleAccounts -ne $Before.GoogleAccounts) {
         "The number of Google accounts on $Serial changed during ${During}: $($Before.GoogleAccounts) before, $($After.GoogleAccounts) now."

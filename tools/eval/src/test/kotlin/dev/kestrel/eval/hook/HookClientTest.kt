@@ -57,12 +57,12 @@ class HookClientTest {
 
     @Test
     fun aHookThatReadsIsTriedAgainAndOneThatActsRunsOnce() {
-        adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1" }
+        adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1 id=profile-1 credential=present" }
         adb.hook("SCREEN_TAP") { "tapped=true count=1" }
         adb.loseNext("PROVIDER_STANDIN")
         adb.loseNext("SCREEN_TAP")
 
-        assertEquals("copilot", hooks.providerStandin()["profile"])
+        assertEquals("copilot", hooks.providerStandin().profile)
         assertThrows(HookLost::class.java) { hooks.screenTap("Send") }
         assertEquals(2, adb.hookCalls("PROVIDER_STANDIN").size)
         assertEquals(1, adb.hookCalls("SCREEN_TAP").size)
