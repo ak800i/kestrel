@@ -3,8 +3,15 @@ package dev.kestrel.eval.task
 import dev.kestrel.eval.device.Brightness
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.hook.HookAnswer
+import java.time.DateTimeException
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlin.math.abs
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** A setting's value as `settings get` gives it, "null" when the device has none. */
@@ -168,24 +175,35 @@ object Zen {
 
     /** What is on, or null when [dump] has no zen config with a manual rule. */
     fun on(dump: List<String>): On? {
+        val rules = rules(dump) ?: return null
+        return On(rules.any { it.manual && active(it.text, manual = true) }, rules.any { !it.manual && active(it.text, manual = false) })
+    }
+
+    /**
+     * The `conditionId` of each automatic rule that is not turned off, "" for one that shows none, or null when [dump]
+     * has no zen config with a manual rule.
+     */
+    fun enabledConditions(dump: List<String>): List<String>? =
+        rules(dump)?.filter { !it.manual && field(it.text, "enabled") != "FALSE" }?.map { field(it.text, "conditionId").orEmpty() }
+
+    private class Rule(val text: String, val manual: Boolean)
+
+    private fun rules(dump: List<String>): List<Rule>? {
         val start = dump.indexOfLast { it.trimStart().startsWith("mConfig=") }
         if (start < 0) return null
         val end = (start + 1 until dump.size).firstOrNull { dump[it].trimStart().startsWith("mSuppressedEffects=") } ?: dump.size
         val config = dump.subList(start, end).joinToString("\n").substringBefore("deletedRules=")
         if (!MANUAL.containsMatchIn(config)) return null
         val starts = Regex.escape(RULE).toRegex().findAll(config).map { it.range.first }.toList()
-        var manual = false
-        var automatic = false
-        starts.forEachIndexed { index, from ->
-            val rule = config.substring(from, starts.getOrElse(index + 1) { config.length })
-            val isManual = config.substring(0, from).endsWith("manualRule=")
-            if (active(rule, isManual)) if (isManual) manual = true else automatic = true
+        return starts.mapIndexed { index, from ->
+            Rule(config.substring(from, starts.getOrElse(index + 1) { config.length }), config.substring(0, from).endsWith("manualRule="))
         }
-        return On(manual, automatic)
     }
 
+    private fun field(rule: String, name: String) = Regex("[\\[,]$name=([^,\\]]*)").find(rule)?.groupValues?.get(1)
+
     private fun active(rule: String, manual: Boolean): Boolean {
-        fun field(name: String) = Regex("[\\[,]$name=([^,\\]]*)").find(rule)?.groupValues?.get(1)
+        fun field(name: String) = field(rule, name)
         val enabled = field("enabled") == "TRUE"
         val trueOrUnknown = field("state") == "STATE_TRUE" || field("state") == "STATE_UNKNOWN"
         return when (field("conditionOverride")) {
@@ -202,16 +220,49 @@ object Zen {
 }
 
 /**
+ * A Do Not Disturb schedule's days and start, from its `conditionId` as AOSP's `ZenModeConfig.toScheduleConditionId`
+ * writes it: `condition://android/schedule?days=1.2.3&start=22.0&end=7.0`, the days as `Calendar`'s (1 is Sunday).
+ */
+data class ZenSchedule(val days: Set<DayOfWeek>, val start: LocalTime) {
+    /** Whether it starts from a minute before [now], when the device may not have turned it on yet, to [window] after it. */
+    fun startsWithin(now: ZonedDateTime, window: Duration): Boolean {
+        val from = now.minusMinutes(1)
+        val to = now.plusSeconds(window.inWholeSeconds)
+        return (-1L..1L).map { now.toLocalDate().plusDays(it) }.filter { it.dayOfWeek in days }
+            .map { it.atTime(start).atZone(now.zone) }.any { !it.isBefore(from) && !it.isAfter(to) }
+    }
+
+    companion object {
+        private const val PREFIX = "condition://android/schedule?"
+
+        /** The schedule of [conditionId], or null when it is no schedule or one that this cannot read. */
+        fun of(conditionId: String): ZenSchedule? {
+            if (!conditionId.startsWith(PREFIX)) return null
+            val query = conditionId.removePrefix(PREFIX).split('&').associate { it.substringBefore('=') to it.substringAfter('=', "") }
+            val days = query["days"]?.split('.')?.map { it.toIntOrNull()?.takeIf { day -> day in 1..7 } ?: return null } ?: return null
+            val (hour, minute) = query["start"]?.split('.')?.takeIf { it.size == 2 }?.map { it.toIntOrNull() ?: return null } ?: return null
+            if (hour !in 0..23 || minute !in 0..59) return null
+            return ZenSchedule(days.map { if (it == 1) DayOfWeek.SUNDAY else DayOfWeek.of(it - 1) }.toSet(), LocalTime.of(hour, minute))
+        }
+    }
+}
+
+/**
  * Do Not Disturb on (priority only) or off for the run (`cmd notification set_dnd`). A device whose Do Not Disturb is on
  * already cannot run the task: a schedule may have turned it on, and `set_dnd` would put it back as a manual Do Not
- * Disturb without an end. The restore turns off only a manual Do Not Disturb, which the run's task turned on, and only
- * while no automatic rule is on ([Zen]): `set_dnd off` would snooze a schedule of the owner's that began during the run
- * for the rest of the night, so then the restore leaves Do Not Disturb as it is, and says so when the manual one is on too.
+ * Disturb without an end. Nor can a device with an automatic rule that is not turned off and could start during the run
+ * ([SOON]): a schedule that starts within 30 minutes, or any other rule, such as an event rule, whose start this cannot
+ * tell; then neither the run's restore nor a rehearsal's `set_dnd off` can leave the owner's rule as it was. When the
+ * zen config or the device's time cannot be read, the task is untestable too. The restore turns off only a manual Do
+ * Not Disturb, which the run's task turned on, and only while no automatic rule is on ([Zen]): `set_dnd off` would
+ * snooze a schedule of the owner's that began during the run for the rest of the night, so then the restore leaves Do
+ * Not Disturb as it is, and says so when the manual one is on too.
  */
 data class Dnd(val on: Boolean) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val before = NAMES[scope.setting("global", ZEN)] ?: return SetupResult.Untestable("it does not say its Do Not Disturb mode")
         if (before != "off") return SetupResult.Untestable("Do Not Disturb is on already, perhaps by a schedule, which the shell cannot put back as it was")
+        mayStart(scope)?.let { return SetupResult.Untestable(it) }
         val byHand = "Unless a schedule of the device has Do Not Disturb on, run: adb -s ${scope.device.serial} shell cmd notification set_dnd off"
         scope.restores.push("Do Not Disturb as before", byHand) { turnOff(scope) }
         scope.restores.change("Do Not Disturb ${if (on) "on" else "off"}", byHand) {
@@ -234,9 +285,30 @@ data class Dnd(val on: Boolean) : Setup {
 
     override fun probe(scope: RunScope): Map<String, String> = mapOf(ZEN to scope.setting("global", ZEN))
 
+    /** Why an automatic rule could start during the run, or null when none can. */
+    private fun mayStart(scope: RunScope): String? {
+        val conditions = Zen.enabledConditions(scope.device.read("dumpsys notification --zen")) ?: return "it does not say its Do Not Disturb rules"
+        if (conditions.isEmpty()) return null
+        val schedules = conditions.map { ZenSchedule.of(it) ?: return "an automatic Do Not Disturb rule of it, such as an event rule, could start during the run" }
+        val now = deviceNow(scope) ?: return "it does not say its time, so its Do Not Disturb schedules could start during the run"
+        return if (schedules.any { it.startsWithin(now, SOON) }) "a Do Not Disturb schedule of it starts within 30 minutes" else null
+    }
+
+    /** The device's time in its own zone, or null when it does not say either. */
+    private fun deviceNow(scope: RunScope): ZonedDateTime? {
+        val seconds = scope.device.read("date +%s").joinToString("").trim().toLongOrNull() ?: return null
+        val zone = try {
+            ZoneId.of(scope.device.read("getprop persist.sys.timezone").joinToString("").trim())
+        } catch (e: DateTimeException) {
+            return null
+        }
+        return Instant.ofEpochSecond(seconds).atZone(zone)
+    }
+
     companion object {
         const val ZEN = "zen_mode"
         private val NAMES = mapOf("0" to "off", "1" to "priority", "2" to "none", "3" to "alarms")
+        private val SOON = 30.minutes
     }
 }
 

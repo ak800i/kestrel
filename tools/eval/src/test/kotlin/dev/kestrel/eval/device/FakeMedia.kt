@@ -8,6 +8,9 @@ class FakeMedia(adb: FakeAdb) {
     val owner = mutableListOf("Row: 0 _id=12, datetaken=1700000000000, date_added=1700000000")
     val test = mutableListOf<String>()
 
+    /** The DATE_TAKEN that a scan gives the newest card: 13:04 of 2026-11-23 in +01:00, a minute before 13:05:30. */
+    var newestTaken = 1795435440000L
+
     init {
         adb.on("^date \\+%z$") { "+0100" }
         adb.on("^date \\+%Y-%m-%d$") { "2026-11-23" }
@@ -16,7 +19,11 @@ class FakeMedia(adb: FakeAdb) {
         }
         adb.on("^content query .* --where ") { test.joinToString("\n").ifEmpty { "No result found." } }
         // Noon of 2026-11-22 in +01:00 is 1795345200000 ms.
-        adb.on("^content call --uri content://media/ --method scan_file") { test.add("Row: ${test.size} _id=${100 + test.size}, datetaken=1795345200000, date_added=1795345300"); "" }
+        adb.on("^content call --uri content://media/ --method scan_file --arg (\\S+)$") {
+            val taken = if (it.groupValues[1].endsWith("kestrel_test_newest.jpg")) newestTaken else 1795345200000L
+            test.add("Row: ${test.size} _id=${100 + test.size}, datetaken=$taken, date_added=1795345300")
+            ""
+        }
         adb.on("^rm -rf ") { test.clear(); "" }
     }
 }

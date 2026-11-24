@@ -14,6 +14,22 @@ object Gallery {
 
     /** The key of [RunScope.notes] that holds the test photo's time, as `h:mm` and `H:mm`. */
     const val TIMES = "photo-times"
+
+    /**
+     * The galleries' activities that show one photo and never the grid: those that a VIEW intent opens. Candidates that
+     * Task 10 of plan 6B confirms on kestrel-api37 and Task 12 on the A71.
+     */
+    val VIEWERS = setOf(
+        "$PHOTOS/com.google.android.apps.photos.pager.HostPhotoPagerActivity",
+        "$SAMSUNG/com.samsung.android.gallery.app.activity.external.GalleryExternalActivity",
+    )
+
+    /** Whether [activity], as `dumpsys activity` gives it ("package/.Class" or "package/full.Class"), is one of [VIEWERS]. */
+    fun viewer(activity: String): Boolean {
+        val packageName = activity.substringBefore('/')
+        val name = activity.substringAfter('/')
+        return "$packageName/${if (name.startsWith(".")) packageName + name else name}" in VIEWERS
+    }
 }
 
 /**
@@ -47,7 +63,7 @@ data object NewestPhoto : Setup {
 /** A rehearsal's viewer: the test photo opened in the device's gallery by its media `_id`; the gallery is stopped afterwards. */
 data object ViewNewestPhoto : Setup {
     override fun apply(scope: RunScope): SetupResult {
-        val gallery = Gallery.PACKAGES.firstOrNull { Dumps.packageListed(scope.device.read("pm list packages $it"), it) } ?: return SetupResult.Untestable("no gallery is installed")
+        val gallery = Gallery.PACKAGES.firstOrNull { Installed.enabled(scope, it) } ?: return SetupResult.Untestable("no gallery is installed")
         val id = Dumps.largestRowId(scope.device.read("content query --uri ${TestPhotos.IMAGES} --projection _id --where ${TestPhotos.WHERE}"))
         if (id == 0L) throw SetupFailed("The test photo is not in the media store.")
         scope.restores.push("$gallery stopped", "Close the gallery.") { scope.device.idempotent("am force-stop $gallery") }
@@ -62,15 +78,20 @@ data object ViewNewestPhoto : Setup {
 
 /**
  * The newest photo shows in a gallery's viewer (design D8 of sub-project 6): a gallery of [Gallery.PACKAGES] is in front,
- * and its screen holds the card's time; or, for a viewer that shows no time, Kestrel's tree of the screen holds exactly
- * one image that covers most of the gallery's window, the test card, because the setup made it the newest item.
+ * and Kestrel's tree of the screen holds exactly one image that covers most of the gallery's window, the test card,
+ * because the setup made it the newest item; or the gallery's viewer activity ([Gallery.VIEWERS]) is in front and its
+ * screen holds the card's time. The time alone does not count, because a gallery's grid describes its thumbnails with
+ * their times too, such as Google Photos' "Photo taken on Nov 23, 2026 1:04:00 PM".
  */
 data object PhotoViewer : Check {
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
-        val front = Dumps.resumedPackage(scope.device.read("dumpsys activity activities"))
+        val activity = Dumps.resumedActivity(scope.device.read("dumpsys activity activities")) ?: return false
+        val front = activity.substringBefore('/')
         if (front !in Gallery.PACKAGES) return false
-        val times = scope.notes[Gallery.TIMES]?.split(',').orEmpty()
-        if (times.any { scope.hooks.screenHas(packageName = front, contains = it).int("count") >= 1 }) return true
+        if (Gallery.viewer(activity)) {
+            val times = scope.notes[Gallery.TIMES]?.split(',').orEmpty()
+            if (times.any { scope.hooks.screenHas(packageName = front, contains = it).int("count") >= 1 }) return true
+        }
         val path = scope.hooks.agentTree()["path"] ?: return false
         return Dumps.largeImageCount(scope.device.read("run-as dev.kestrel cat $path").joinToString("\n")) == 1
     }

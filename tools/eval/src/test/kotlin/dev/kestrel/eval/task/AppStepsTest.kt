@@ -6,19 +6,47 @@ import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.device.FakeMedia
 import dev.kestrel.eval.device.TestPhotos
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.run.Stopping
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
 
 /**
- * Firefox for the tests: its tabs by title, its tabs tray, which the tab counter opens, and each tab's close button,
- * "Close tab <title>", which the hooks count and tap.
+ * Firefox for the tests: its tabs by title, the newest in front. Outside the tabs tray the screen shows the front tab's
+ * title and the tab counter, "2 open tabs. Tap to switch tabs." or "1 open tab. …", which opens the tray; the tray shows
+ * each tab's title and its close button, "Close tab <title>". The hooks match them as [FakeScreen] says.
  */
 class FakeFirefox(adb: FakeAdb) {
     val tabs = mutableListOf("Wikipedia, Common kestrel")
     var tray = false
+
+    /** What a tap on the tab counter does after it opened the tray. */
+    var onTrayTap: () -> Unit = {}
+
+    fun labels(): List<String> = if (tray) {
+        tabs.flatMap { listOf(it, "Close tab $it") }
+    } else {
+        listOfNotNull(tabs.lastOrNull(), if (tabs.size == 1) "1 open tab. Tap to switch tabs." else "${tabs.size} open tabs. Tap to switch tabs.")
+    }
+
+    fun has(extras: Map<String, String>): Int = FakeScreen.has(labels(), extras)
+
+    fun tap(extras: Map<String, String>): String {
+        val labels = labels()
+        val matches = FakeScreen.taps(labels, extras)
+        val label = labels[matches.firstOrNull() ?: return "tapped=false count=0"]
+        when {
+            label.startsWith("Close tab ") -> tabs.remove(label.removePrefix("Close tab "))
+            label.contains("open tab") -> {
+                tray = true
+                onTrayTap()
+            }
+        }
+        return "tapped=true count=${matches.size}"
+    }
 
     init {
         adb.on("^monkey -p org\\.mozilla\\.firefox ") {
@@ -29,22 +57,13 @@ class FakeFirefox(adb: FakeAdb) {
             tray = false
             ""
         }
-        adb.hook("SCREEN_HAS") { extras ->
-            val contains = extras["contains"].orEmpty()
-            val count = when {
-                contains == "open tabs" -> if (tray) 0 else 1
-                contains.startsWith("Close tab ") -> if (tray) tabs.count { it.contains(contains.removePrefix("Close tab ").substringAfterLast(' ')) } else 0
-                contains.isNotEmpty() -> tabs.count { it.contains(contains) }
-                else -> 0
-            }
-            "count=$count app=${D3Tasks.FIREFOX}"
-        }
-        adb.hook("SCREEN_TAP") { extras ->
-            val contains = extras["contains"].orEmpty()
-            if (contains == "open tabs") tray = true
-            if (contains.startsWith("Close tab ")) tabs.remove(tabs.first { it.contains("ak800i") })
-            "tapped=true count=1"
-        }
+        adb.hook("SCREEN_HAS") { extras -> "count=${has(extras)} app=${D3Tasks.FIREFOX}" }
+        adb.hook("SCREEN_TAP") { extras -> tap(extras) }
+    }
+
+    companion object {
+        /** The title that GitHub gives the repository's page. */
+        const val GITHUB = "GitHub - ak800i/kestrel: A private, voice-first assistant"
     }
 }
 
@@ -69,15 +88,51 @@ class AppStepsTest {
 
         assertEquals(SetupResult.Ready, FirefoxTab().apply(run.scope))
         assertEquals("am force-stop org.mozilla.firefox", run.adb.commands.last())
-        firefox.tabs.add("GitHub - ak800i/kestrel")
+        firefox.tabs.add(FakeFirefox.GITHUB)
         assertTrue(run.restores.runAll().isEmpty())
         assertEquals(listOf("Wikipedia, Common kestrel"), firefox.tabs)
-        assertEquals(listOf("open tabs", "open tabs", "Close tab GitHub ak800i"), run.adb.hookCalls("SCREEN_TAP").map { it["contains"] })
+        assertEquals(listOf("open tab", "open tabs", "Close tab GitHub - ak800i"), run.adb.hookCalls("SCREEN_TAP").map { it["contains"] })
 
-        firefox.tabs.add("GitHub - ak800i/kestrel")
+        firefox.tabs.add(FakeFirefox.GITHUB)
         assertTrue(FirefoxTab().apply(run.scope) is SetupResult.Untestable)
         assertTrue(run.restores.runAll().isEmpty())
         assertEquals(2, firefox.tabs.size)
+    }
+
+    @Test
+    fun ctrlCWhileFirefoxsTabsTrayOpensStopsFirefoxOnlyAfterTheSetupsChangeAndNoChangeFollows() {
+        val run = FakeRun()
+        val firefox = FakeFirefox(run.adb)
+        var hook: Thread? = null
+        firefox.onTrayTap = { if (hook == null) hook = run.ctrlC() }
+
+        assertThrows(Stopping::class.java) { FirefoxTab().apply(run.scope) }
+        hook!!.join(10_000)
+
+        // Only the restore stops Firefox, after the tray opened; the setup's own stop is a change, which may not start now.
+        assertEquals(listOf("am force-stop org.mozilla.firefox"), run.adb.commands.filter { it.startsWith("am force-stop") })
+        assertTrue(run.adb.commands.indexOf("am force-stop org.mozilla.firefox") > run.adb.commands.indexOfFirst { it.contains("hook.SCREEN_TAP") })
+        assertFalse(firefox.tray)
+    }
+
+    @Test
+    fun theRehearsalsViewerIsAGalleryThatIsInstalledAndEnabled() {
+        val run = FakeRun(DeviceKind.A71)
+        // Samsung Gallery is installed but disabled: `pm list packages` names it, `pm list packages -e` does not.
+        run.adb.on("^pm list packages (-e )?(\\S+)$") {
+            val enabled = it.groupValues[1].isNotEmpty()
+            when (it.groupValues[2]) {
+                Gallery.SAMSUNG -> if (enabled) "" else "package:${Gallery.SAMSUNG}"
+                Gallery.PHOTOS -> "package:${Gallery.PHOTOS}"
+                else -> ""
+            }
+        }
+        run.adb.on("^content query --uri ${Regex.escape(TestPhotos.IMAGES)} --projection _id ") { "Row: 0 _id=42" }
+
+        assertEquals(SetupResult.Ready, ViewNewestPhoto.apply(run.scope))
+        assertTrue(run.adb.commands.any { it.startsWith("am start -W -a android.intent.action.VIEW -d ${TestPhotos.IMAGES}/42 ") && it.endsWith(" -p ${Gallery.PHOTOS}") })
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals("am force-stop ${Gallery.PHOTOS}", run.adb.commands.last())
     }
 
     @Test
@@ -118,6 +173,35 @@ class AppStepsTest {
         times = 1
         front = "com.sec.android.app.launcher"
         assertFalse(PhotoViewer.passes(run.scope, none))
+    }
+
+    @Test
+    fun theCardsTimeCountsOnlyInAViewerAndNeverOnGooglePhotosGrid() {
+        val run = FakeRun()
+        var activity = "com.google.android.apps.photos/.home.HomeActivity"
+        run.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 $activity t4}" }
+        // The grid's first thumbnail is described as "Photo taken on Nov 23, 2026 1:04:00 PM".
+        run.adb.hook("SCREEN_HAS") { extras -> "count=${FakeScreen.has(listOf("Photo taken on Nov 23, 2026 1:04:00 PM"), extras)} app=${Gallery.PHOTOS}" }
+        run.adb.hook("AGENT_TREE") { "tree=written path=cache/agent-tree.json windows=1 elements=2" }
+        run.adb.files["cache/agent-tree.json"] = TREE.replace("com.sec.android.gallery3d", Gallery.PHOTOS).replace("[0,200,1080,2000]", "[0,200,300,500]")
+        run.scope.notes[Gallery.TIMES] = "1:04,13:04"
+
+        assertFalse(PhotoViewer.passes(run.scope, none))
+        activity = "com.google.android.apps.photos/.pager.HostPhotoPagerActivity"
+        assertTrue(PhotoViewer.passes(run.scope, none))
+    }
+
+    @Test
+    fun aNewestCardThatAndroidDatesAtAnotherTimeFailsTheSetupAndLeaves() {
+        val run = FakeRun()
+        val media = FakeMedia(run.adb)
+        run.adb.on("^date \\+%Y-%m-%dT%H:%M:%S$") { "2026-11-23T13:05:30" }
+        // Android took the copy's time, 13:05:30, instead of the card's 13:04.
+        media.newestTaken = 1795435530000L
+
+        assertThrows(SetupFailed::class.java) { NewestPhoto.apply(run.scope) }
+        assertEquals(0, media.test.size)
+        assertTrue(run.restores.runAll().isEmpty())
     }
 
     @Test

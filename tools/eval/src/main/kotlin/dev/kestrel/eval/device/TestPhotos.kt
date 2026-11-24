@@ -2,6 +2,7 @@ package dev.kestrel.eval.device
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -70,7 +71,8 @@ class TestPhotos(private val device: Device, private val work: Path) {
     /**
      * Puts one card taken a minute ago on the device's clock into the folder and indexes it, so that it is the newest image
      * (plan 6B: photo-latest), and returns its time. It shares nothing, so it has no refusal of a day that holds the
-     * owner's photos; it removes what it copied when Android does not index the card. Each change runs inside [change].
+     * owner's photos; it removes what it copied when Android does not index the card or dates it at another minute than
+     * its own, which a viewer would show. Each change runs inside [change].
      */
     fun addNewest(change: (() -> Unit) -> Unit = { it() }): LocalDateTime {
         val offset = PhotoCard.exifOffset(device.read("date +%z").joinToString("").trim())
@@ -89,6 +91,13 @@ class TestPhotos(private val device: Device, private val work: Path) {
             }
             val test = rows(" --where $WHERE")
             if (test.size != 1) throw IllegalStateException("Android indexed ${test.size} of the 1 test photo.")
+            // A viewer shows the time that Android gave the card, which must be the card's, to the minute.
+            val time = test.single().time()
+            val wanted = taken.toInstant(ZoneOffset.of(offset)).toEpochMilli()
+            if (time == null || Math.floorDiv(time, MINUTE) != wanted / MINUTE) {
+                val given = time?.let { Instant.ofEpochMilli(it).atOffset(ZoneOffset.of(offset)).toLocalDateTime() }
+                throw IllegalStateException("Android dated the test photo ${given ?: "nowhere"} instead of $taken.")
+            }
         } catch (e: Exception) {
             try {
                 remove(before)
@@ -126,5 +135,6 @@ class TestPhotos(private val device: Device, private val work: Path) {
         const val WHERE = "'_data LIKE '\\''$FOLDER/%'\\'''"
         private val TOUCH = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
         private val ROW = Regex("^Row: \\d+ ")
+        private const val MINUTE = 60_000L
     }
 }

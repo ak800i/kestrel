@@ -96,10 +96,14 @@ data object OwnAddress : Setup {
     }
 }
 
-/** email-self's restore, pushed before the run: Gmail's own deletion of the conversation that holds the run's marker ([GmailTrash]). */
+/**
+ * email-self's restore, pushed before the run: Gmail's own deletion of the conversation that holds the run's marker
+ * ([GmailTrash]), which waits for the e-mail that Kestrel's task may have sent.
+ */
 data object MailCleanup : Setup {
     override fun apply(scope: RunScope): SetupResult {
         GmailTrash.push(scope)
+        GmailTrash.expect(scope)
         return SetupResult.Ready
     }
 }

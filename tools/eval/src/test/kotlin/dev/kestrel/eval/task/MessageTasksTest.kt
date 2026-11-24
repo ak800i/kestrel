@@ -41,7 +41,7 @@ class MessageTasksTest {
         bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{9f3e2b1 u0 com.google.android.gm/.ComposeActivityGmail t12}" }
         var works = true
         bench.adb.hook("VOICE") { extras ->
-            if (works && extras["text"] == "Kestrel, email me a reminder about maple heron") inbox.add("Pera, Reminder about maple heron, A reminder about maple heron")
+            if (works && extras["text"] == "Kestrel, email me a reminder about maple heron") inbox.add("me, Reminder about maple heron, A reminder about maple heron")
             "sent"
         }
 

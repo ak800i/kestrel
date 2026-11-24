@@ -18,7 +18,7 @@ class AppTasksTest {
         bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 org.mozilla.firefox/.App t4}" }
         var works = true
         bench.adb.hook("VOICE") { extras ->
-            if (works && extras["text"] == "Kestrel, open github.com/ak800i/kestrel in Firefox") firefox.tabs.add("GitHub - ak800i/kestrel")
+            if (works && extras["text"] == "Kestrel, open github.com/ak800i/kestrel in Firefox") firefox.tabs.add(FakeFirefox.GITHUB)
             "sent"
         }
 
@@ -86,18 +86,25 @@ class AppTasksTest {
         bench.adb.on("^date \\+%Y-%m-%dT%H:%M:%S$") { "2026-11-23T13:05:30" }
         bench.adb.on("^pm list packages ") { "package:${Gallery.PHOTOS}" }
         var front = "com.google.android.apps.nexuslauncher"
-        bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 $front/.Main t4}" }
+        // The activity in front, when it is not the app's main one: the viewer that a VIEW intent opens.
+        var activity: String? = null
+        bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{a1 u0 ${activity ?: "$front/.Main"} t4}" }
         bench.adb.on("^am start -W -a android.intent.action.VIEW -d content://media/external/images/media/") {
             front = Gallery.PHOTOS
+            activity = "${Gallery.PHOTOS}/.pager.HostPhotoPagerActivity"
             ""
         }
         bench.adb.on("^input keyevent KEYCODE_HOME$") {
             front = "com.google.android.apps.nexuslauncher"
+            activity = null
             ""
         }
         bench.adb.hook("SCREEN_HAS") { extras -> "count=${if (front == Gallery.PHOTOS && extras["contains"] == "1:04") 1 else 0} app=$front" }
-        bench.adb.hook("AGENT_TREE") { "tree=written path=cache/agent-tree.json windows=1 elements=0" }
-        bench.adb.files["cache/agent-tree.json"] = """{"windows":[],"elements":[]}"""
+        bench.adb.hook("AGENT_TREE") { "tree=written path=cache/agent-tree.json windows=1 elements=1" }
+        // Kestrel's tap on the newest photo opens it in Photos' own activity, where it covers the window.
+        val viewer = """{"windows":[{"id":4,"kind":"APPLICATION","packageName":"${Gallery.PHOTOS}","active":true,"bounds":[0,0,1080,2400]}],
+            "elements":[{"windowId":4,"className":"android.widget.ImageView","bounds":[0,200,1080,2000]}]}"""
+        bench.adb.on("^run-as dev\\.kestrel cat cache/agent-tree\\.json$") { if (front == Gallery.PHOTOS) viewer else """{"windows":[],"elements":[]}""" }
         var works = true
         bench.adb.hook("VOICE") {
             if (works) front = Gallery.PHOTOS
@@ -117,15 +124,14 @@ class AppTasksTest {
             bench.adb.on("^pm list packages ") { "package:org.mozilla.firefox\npackage:com.google.android.youtube\npackage:${AppTasks.MAPS}\npackage:${Gallery.PHOTOS}" }
             bench.adb.on("^am start -W -a android.intent.action.VIEW -d '(\\S+)' -p (\\S+)$") { match ->
                 front = match.groupValues[2]
-                if (front == "org.mozilla.firefox") firefox.tabs.add("GitHub - ak800i/kestrel")
+                activity = null
+                if (front == "org.mozilla.firefox") firefox.tabs.add(FakeFirefox.GITHUB)
                 ""
             }
             bench.adb.hook("SCREEN_HAS") { extras ->
                 val words = extras["contains"].orEmpty()
                 val count = when {
-                    front == "org.mozilla.firefox" && words == "open tabs" -> if (firefox.tray) 0 else 1
-                    front == "org.mozilla.firefox" && words.startsWith("Close tab ") -> if (firefox.tray) firefox.tabs.count { it.contains("ak800i") } else 0
-                    front == "org.mozilla.firefox" -> firefox.tabs.count { it.contains(words) }
+                    front == "org.mozilla.firefox" -> firefox.has(extras)
                     else -> if (words in setOf("kestrel hovering", "Kalemegdan", "1:04")) 1 else 0
                 }
                 "count=$count app=$front"

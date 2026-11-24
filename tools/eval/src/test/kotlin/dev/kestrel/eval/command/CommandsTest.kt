@@ -3,6 +3,7 @@ package dev.kestrel.eval.command
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.report.Report
+import dev.kestrel.eval.task.ZenDump
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -155,6 +156,20 @@ class CommandsTest {
         assertEquals(listOf("rehearse=inject-11 result=pass reason=ok"), fake.output.lines().filter { it.startsWith("rehearse=") })
         assertEquals(Cli.EXIT_PASSED, code)
         assertEquals(emptyList<Int>(), contacts)
+    }
+
+    @Test
+    fun dndsRehearsalStopsAtItsSetupWhenTheOwnersScheduleCouldStartDuringIt() {
+        fake.adb.settings["global/zen_mode"] = "0"
+        fake.adb.on("^dumpsys notification --zen$") { ZenDump.android13(null, ZenDump.rule13("EVERY_NIGHT_DEFAULT_RULE", null)) }
+        ZenDump.clock(fake.adb, 21, 45)
+
+        val code = fake.cli("rehearse", "--device", "emulator-5554", "--tasks", "dnd")
+
+        assertEquals(listOf("rehearse=dnd result=skipped reason=untestable"), fake.output.lines().filter { it.startsWith("rehearse=") })
+        assertEquals(Cli.EXIT_PASSED, code)
+        // Neither the rehearsal's set_dnd priority nor its undo, set_dnd off, which would snooze the schedule.
+        assertTrue(fake.adb.commands.none { it.startsWith("cmd notification set_dnd") })
     }
 
     @Test

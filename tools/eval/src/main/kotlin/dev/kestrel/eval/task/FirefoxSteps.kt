@@ -30,8 +30,11 @@ object Firefox {
     /** The tab counter: "3 open tabs. Tap to switch tabs.", "1 open tab. …", or a button "Tabs". */
     val COUNTER = listOf(TapCandidate(contains = "open tabs"), TapCandidate(contains = "open tab"), TapCandidate(label = "Tabs"))
 
-    /** The close button of the one tab of [page] in the tray, "Close tab <title>". */
-    fun closeTaps(page: String): List<TapCandidate> = listOf(TapCandidate(contains = "Close tab GitHub $page"), TapCandidate(contains = "Close tab $page"))
+    /**
+     * The close button of the one tab of [page] in the tray, "Close tab <title>"; GitHub titles the page "GitHub -
+     * ak800i/kestrel: …". Each candidate is a text that both `screen-has` (words) and `screen-tap` (the raw label) find.
+     */
+    fun closeTaps(page: String): List<TapCandidate> = listOf(TapCandidate(contains = "Close tab GitHub - $page"), TapCandidate(contains = "Close tab $page"))
 
     /** Starts Firefox and opens its tabs tray; whether the tab counter was tapped. */
     fun openTray(scope: RunScope): Boolean {
@@ -51,9 +54,9 @@ object Firefox {
 data class FirefoxTab(val page: String = "ak800i") : Setup {
     override fun apply(scope: RunScope): SetupResult {
         scope.restores.push("Firefox stopped", "Close Firefox.") { scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}") }
-        val opened = Firefox.openTray(scope)
+        val opened = scope.restores.change("Firefox's tabs tray opened", "Close Firefox.") { Firefox.openTray(scope) }
         val before = opened && Firefox.shows(scope, page)
-        scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}")
+        scope.restores.change("Firefox stopped again", "Close Firefox.") { scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}") }
         if (!opened) return SetupResult.Untestable("Firefox's tabs tray did not open")
         if (before) return SetupResult.Untestable("Firefox already has a tab of $page, which the run would not tell from its own")
         scope.restores.push("the run's tab in Firefox", "Firefox: close the tab of $page.") {

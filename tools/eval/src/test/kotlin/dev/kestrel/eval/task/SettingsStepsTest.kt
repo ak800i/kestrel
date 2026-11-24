@@ -3,12 +3,15 @@ package dev.kestrel.eval.task
 import dev.kestrel.eval.device.Brightness
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Dumps
+import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.hook.HookAnswer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.ZoneId
+import java.time.ZonedDateTime
 
 /** The settings tasks' steps and checks against a scripted device (design D4 and D8 of sub-project 6). */
 class SettingsStepsTest {
@@ -56,6 +59,7 @@ class SettingsStepsTest {
         }
         run.adb.settings["global/zen_mode"] = "3"
         run.adb.on("^dumpsys notification --zen$") { ZenDump.manual(run.adb.settings["global/zen_mode"] != "0") }
+        ZenDump.clock(run.adb, 12, 0)
 
         assertTrue(UiNightMode(on = false).apply(run.scope) is SetupResult.Untestable)
         assertEquals(0, run.restores.size)
@@ -111,6 +115,7 @@ class SettingsStepsTest {
         run.adb.settings["global/zen_mode"] = "0"
         var dump = ZenDump.manual(false)
         run.adb.on("^dumpsys notification --zen$") { dump }
+        ZenDump.clock(run.adb, 12, 0)
         run.adb.on("^cmd notification set_dnd (\\w+)$") {
             run.adb.settings["global/zen_mode"] = if (it.groupValues[1] == "off") "0" else "1"
             dump = ZenDump.manual(it.groupValues[1] != "off")
@@ -151,6 +156,63 @@ class SettingsStepsTest {
         assertEquals(1, run.restores.runAll().size)
         assertEquals("1", run.adb.settings["global/zen_mode"])
         assertTrue(run.adb.commands.drop(from).none { it.startsWith("cmd notification") })
+    }
+
+    @Test
+    fun doNotDisturbIsUntestableWhenAnAutomaticRuleCouldStartDuringTheRun() {
+        val run = FakeRun(DeviceKind.A71)
+        run.adb.settings["global/zen_mode"] = "0"
+        var dump = ""
+        run.adb.on("^dumpsys notification --zen$") { dump }
+        run.adb.on("^cmd notification set_dnd (\\w+)$") { "" }
+        // Dnd's setup on [zen] at [hour]:[minute]: Ready or Untestable, and on Untestable no restore and no set_dnd.
+        fun ready(zen: String, hour: Int, minute: Int, days: Long = 0): Boolean {
+            dump = zen
+            ZenDump.clock(run.adb, hour, minute, days)
+            val from = run.adb.commands.size
+            val result = Dnd(on = false).apply(run.scope)
+            if (result is SetupResult.Untestable) {
+                assertEquals(0, run.restores.size)
+                assertTrue(run.adb.commands.drop(from).none { it.startsWith("cmd notification set_dnd") })
+            }
+            assertTrue(run.restores.runAll().isEmpty())
+            return result == SetupResult.Ready
+        }
+        val nightly = ZenDump.android13(null, ZenDump.rule13("EVERY_NIGHT_DEFAULT_RULE", null))
+
+        assertTrue(ready(nightly, 12, 0))
+        assertFalse(ready(nightly, 21, 45))
+        assertFalse(ready(nightly, 21, 30))
+        assertTrue(ready(nightly, 21, 29))
+        // A schedule that is turned off, or that the owner snoozed tonight, after it began, does not start again.
+        assertTrue(ready(ZenDump.android13(null, ZenDump.rule13("a", null, enabled = false)), 21, 45))
+        assertTrue(ready(ZenDump.android13(null, ZenDump.rule13("a", "STATE_TRUE", snoozing = true)), 23, 0))
+        assertFalse(ready(ZenDump.modesUi(ZenDump.ruleUi(null, null), ZenDump.ruleUi("a", null)), 21, 45))
+        assertTrue(ready(ZenDump.modesUi(ZenDump.ruleUi(null, null), ZenDump.ruleUi("a", null)), 12, 0))
+
+        // Tuesday's 00:10 starts within 30 minutes of Monday's 23:50; Wednesday's does not.
+        val tuesday = ZenDump.android13(null, ZenDump.rule13("a", null, conditionId = "condition://android/schedule?days=3&start=0.10&end=6.0"))
+        assertFalse(ready(tuesday, 23, 50))
+        assertTrue(ready(tuesday, 23, 50, days = 1))
+
+        // An event rule, an app's rule and a schedule that this cannot read could start at any time.
+        assertFalse(ready(ZenDump.android13(null, ZenDump.rule13("a", null, conditionId = ZenDump.EVENTS)), 12, 0))
+        assertFalse(ready(ZenDump.android13(null, ZenDump.rule13("a", null, conditionId = "condition://com.example.focus/mode?id=1")), 12, 0))
+        assertFalse(ready(ZenDump.android13(null, ZenDump.rule13("a", null, conditionId = "condition://android/schedule?days=&start=22.0&end=7.0")), 12, 0))
+
+        // A dump that does not say the rules, or a clock that does not say the time, makes the task untestable too.
+        assertFalse(ready("  Notification listeners:", 12, 0))
+        dump = nightly
+        run.adb.props.remove("persist.sys.timezone")
+        assertTrue(Dnd(on = false).apply(run.scope) is SetupResult.Untestable)
+        run.adb.props["persist.sys.timezone"] = "Europe/Belgrade"
+        run.adb.on("^date \\+%s$") { "" }
+        assertTrue(Dnd(on = false).apply(run.scope) is SetupResult.Untestable)
+        assertEquals(0, run.restores.size)
+        // Without an enabled rule, the device's time is not needed.
+        dump = ZenDump.manual(false).replace("enabled=TRUE", "enabled=FALSE")
+        assertEquals(SetupResult.Ready, Dnd(on = false).apply(run.scope))
+        assertTrue(run.restores.runAll().isEmpty())
     }
 
     @Test
@@ -262,19 +324,30 @@ class SettingsStepsTest {
  * A71), [modesUi] with it, where ZenModeConfig prints itself over several lines and the manual rule is always there.
  */
 internal object ZenDump {
-    private const val RULE = "name=Sleeping,zenMode=ZEN_MODE_IMPORTANT_INTERRUPTIONS,conditionId=condition://android/schedule?days=1.2.3.4.5.6.7&start=22.0&end=7.0," +
+    /** The owner's bedtime schedule, every day from 22:00 to 7:00. */
+    const val NIGHTLY = "condition://android/schedule?days=1.2.3.4.5.6.7&start=22.0&end=7.0&exitAtAlarm=true"
+    const val EVENTS = "condition://android/event?userId=-10000&calendar=&reply=1"
+
+    private fun rule(conditionId: String) = "name=Sleeping,zenMode=ZEN_MODE_IMPORTANT_INTERRUPTIONS,conditionId=$conditionId," +
         "pkg=android,component=null,configActivity=null,creationTime=1,enabler=null,zenPolicy=null,modified=false"
 
-    private fun condition(state: String?) = state?.let { "Condition[state=$it,id=condition://android/schedule,summary=...,line1=,line2=,icon=0,flags=2]" }
+    private fun condition(state: String?, conditionId: String) = state?.let { "Condition[state=$it,id=$conditionId,summary=...,line1=,line2=,icon=0,flags=2]" }
 
     /** A rule of Android 13, whose condition has [state] (none when null). */
-    fun rule13(id: String?, state: String?, enabled: Boolean = true, snoozing: Boolean = false) =
-        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},snoozing=$snoozing,$RULE,condition=${condition(state)}]"
+    fun rule13(id: String?, state: String?, enabled: Boolean = true, snoozing: Boolean = false, conditionId: String = NIGHTLY) =
+        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},snoozing=$snoozing,${rule(conditionId)},condition=${condition(state, conditionId)}]"
 
     /** A rule with modes UI, whose condition has [state] (none when null). */
-    fun ruleUi(id: String?, state: String?, override: String = "OVERRIDE_NONE", enabled: Boolean = true) =
-        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},conditionOverride=$override,$RULE,condition=${condition(state)}," +
-            "deviceEffects=null,allowManualInvocation=true,iconResName=null,triggerDescription=null,type=1]"
+    fun ruleUi(id: String?, state: String?, override: String = "OVERRIDE_NONE", enabled: Boolean = true, conditionId: String = NIGHTLY) =
+        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},conditionOverride=$override,${rule(conditionId)}," +
+            "condition=${condition(state, conditionId)},deviceEffects=null,allowManualInvocation=true,iconResName=null,triggerDescription=null,type=1]"
+
+    /** The device's clock at [hour]:[minute] on Monday 23 November 2026 plus [days], in Belgrade, as `date +%s` and `persist.sys.timezone` give it. */
+    fun clock(adb: FakeAdb, hour: Int, minute: Int, days: Long = 0) {
+        adb.props["persist.sys.timezone"] = "Europe/Belgrade"
+        val now = ZonedDateTime.of(2026, 11, 23, hour, minute, 0, 0, ZoneId.of("Europe/Belgrade")).plusDays(days)
+        adb.on("^date \\+%s$") { "${now.toEpochSecond()}" }
+    }
 
     fun android13(manual: String?, vararg automatic: String): String {
         val config = (

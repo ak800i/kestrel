@@ -14,7 +14,9 @@ import kotlin.time.Duration.Companion.seconds
  * only when Gmail is in front (else the setup fails), and Gmail's inbox, opened in a new task, until it shows the e-mail,
  * at most 2 minutes. When another app is in front of
  * the inbox at three polls in a row, such as Android's permission dialog, the setup fails at once with that app's
- * package. [GmailTrash], pushed before the e-mail exists, deletes it after the run (design D9 of sub-project 6).
+ * package. [GmailTrash], pushed before the e-mail exists, deletes it after the run (design D9 of sub-project 6). The
+ * send, from the compose screen to the tap on Send, and the inbox's opening are changes ([dev.kestrel.eval.run.Restores.change]):
+ * after Ctrl+C, the restore runs only once the send is over, and no inbox opens after it.
  */
 data object MailToSelf : Setup {
     const val GMAIL = "com.google.android.gm"
@@ -24,21 +26,25 @@ data object MailToSelf : Setup {
             ?: return SetupResult.Untestable("corpus\\owner\\a71-config.json gives no address of this device's Gmail account")
         val marker = scope.values.marker
         GmailTrash.push(scope)
-        // once answers null for a failed command as for a lost answer, so Gmail must be in front before the tap: the hook
-        // would tap the Send of whatever app is. A lost answer of the tap is read back by the inbox below.
-        scope.device.once("am start -W -a android.intent.action.SENDTO -d 'mailto:$address?subject=${encode("Kestrel test $marker")}&body=${encode(marker)}' -p $GMAIL")
-        scope.clock.sleep(2.seconds)
-        if (Dumps.resumedPackage(scope.device.read("dumpsys activity activities")) != GMAIL) throw SetupFailed("Gmail's compose screen did not open.")
-        val tapped = try {
-            // Only while Gmail is in front, which the hook checks again on every screen that its tap acts on (plan 6B).
-            scope.hooks.screenTap(label = "Send", packageName = GMAIL)["tapped"] == "true"
-        } catch (e: HookLost) {
-            true
+        val byHand = "Gmail: delete the conversation \"$marker\"."
+        scope.restores.change("the test e-mail sent", byHand) {
+            // once answers null for a failed command as for a lost answer, so Gmail must be in front before the tap: the hook
+            // would tap the Send of whatever app is. A lost answer of the tap is read back by the inbox below.
+            scope.device.once("am start -W -a android.intent.action.SENDTO -d 'mailto:$address?subject=${encode("Kestrel test $marker")}&body=${encode(marker)}' -p $GMAIL")
+            scope.clock.sleep(2.seconds)
+            if (Dumps.resumedPackage(scope.device.read("dumpsys activity activities")) != GMAIL) throw SetupFailed("Gmail's compose screen did not open.")
+            val tapped = try {
+                // Only while Gmail is in front, which the hook checks again on every screen that its tap acts on (plan 6B).
+                scope.hooks.screenTap(label = "Send", packageName = GMAIL)["tapped"] == "true"
+            } catch (e: HookLost) {
+                true
+            }
+            if (!tapped) throw SetupFailed("Gmail's Send was not tapped.")
+            GmailTrash.expect(scope)
         }
-        if (!tapped) throw SetupFailed("Gmail's Send was not tapped.")
         // In a new task (NEW_TASK and CLEAR_TASK), because after a run Gmail's task still shows the e-mail that Kestrel
         // opened, and Android would only deliver the intent to it.
-        scope.device.idempotent("am start -W -f 0x10008000 -n $GMAIL/.ConversationListActivityGmail")
+        scope.restores.change("Gmail's inbox opened", byHand) { scope.device.idempotent("am start -W -f 0x10008000 -n $GMAIL/.ConversationListActivityGmail") }
         val deadline = scope.clock.elapsed() + 2.minutes
         var elsewhere = 0
         while (true) {
@@ -65,25 +71,45 @@ data object MailToSelf : Setup {
  * that Task 10 of plan 6B confirms on kestrel-api37 and Task 12 on the A71. On kestrel-api37 Gmail's row joins its
  * sender, subject and snippet with ", ", and its subject and snippet are elements of their own that hold the marker
  * too, so the first candidates name a part of the row that spans two of them: `screen-has` counts it only on the row,
- * and `screen-tap` finds it in the row's label.
+ * and `screen-tap` finds it in the row's label. Delete is only the exact label: a part of a label could name a row,
+ * which a tap in Gmail's selection mode would select too.
+ *
+ * A run pushes the deletion once. When the run's e-mail was sent ([expect]) but the inbox does not show it yet, the
+ * deletion looks for it for up to a minute more, and says so when it never came.
  */
 object GmailTrash {
     const val SUBJECT = "Kestrel test"
-    private val DELETE = listOf(listOf(TapCandidate(label = "Delete"), TapCandidate(contains = "Delete")))
+    private val DELETE = listOf(listOf(TapCandidate(label = "Delete")))
+    private const val PUSHED = "gmail-trash"
+    private const val SENT = "gmail-sent"
+    private const val LOOKS = 12
 
     fun push(scope: RunScope) {
         val marker = scope.values.marker
+        if (scope.notes[PUSHED] == marker) return
+        scope.notes[PUSHED] = marker
         scope.restores.push("the test e-mail in Gmail", "Gmail: delete the conversation \"$marker\".") { delete(scope, marker) }
+    }
+
+    /** The run's e-mail is on its way, sent by the script or perhaps by Kestrel's task, so the deletion waits for it. */
+    fun expect(scope: RunScope) {
+        scope.notes[SENT] = scope.values.marker
     }
 
     fun delete(scope: RunScope, marker: String) {
         openInbox(scope)
-        if (shows(scope, marker)) {
+        if (arrived(scope, marker)) {
             // MailToSelf's subject ends with the marker and its body is the marker; email-self's script writes "Reminder
             // about {marker}" and "A reminder about {marker}.".
             val row = listOf("$marker, $marker", "$marker, A reminder about $marker", marker).map { TapCandidate(contains = it, long = true) }
-            AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)
+            if (!AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)) {
+                // A lost answer ends the taps; the inbox in a new task drops a selection that they may have left.
+                openInbox(scope)
+                if (shows(scope, marker)) AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)
+            }
             check(!shows(scope, marker)) { "The test e-mail is still in Gmail's inbox." }
+        } else if (scope.notes[SENT] == marker) {
+            scope.console.warn("Gmail: the test e-mail \"$marker\" did not reach the inbox within a minute of the run's end, so it was not deleted. If it comes, delete it by hand.")
         }
         if (scope.device.kind == DeviceKind.EMULATOR) sweep(scope)
         scope.device.idempotent("input keyevent KEYCODE_HOME")
@@ -97,6 +123,17 @@ object GmailTrash {
 
     fun shows(scope: RunScope, text: String): Boolean = scope.hooks.screenHas(packageName = MailToSelf.GMAIL, contains = text).int("count") >= 1
 
+    /** Whether the inbox shows [marker], at once or, when the run's e-mail was sent, within [LOOKS] looks 5 s apart. */
+    private fun arrived(scope: RunScope, marker: String): Boolean {
+        if (shows(scope, marker)) return true
+        if (scope.notes[SENT] != marker) return false
+        repeat(LOOKS) {
+            scope.clock.sleep(5.seconds)
+            if (shows(scope, marker)) return true
+        }
+        return false
+    }
+
     /**
      * Only a row that holds "Kestrel test" and a word of the markers right after it, as [MailToSelf]'s subjects do, and
      * that the inbox shows once, is long-pressed, so that a real conversation about Kestrel's tests stays.
@@ -109,6 +146,8 @@ object GmailTrash {
             // The sender of an e-mail to oneself is "me" in the row.
             val row = listOf("me, $subject", subject).map { TapCandidate(contains = it, long = true) }
             if (row.none { scope.hooks.screenHas(packageName = MailToSelf.GMAIL, contains = it.contains).int("count") == 1 }) continue
+            // A new inbox drops the selection that an earlier word's taps may have left, so that Delete trashes only this row.
+            openInbox(scope)
             if (AppTaps(scope, MailToSelf.GMAIL).run(listOf(row) + DELETE)) deleted++
         }
     }
