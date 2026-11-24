@@ -76,6 +76,28 @@ class SuiteFolderTest {
     }
 
     @Test
+    fun aResumeKeepsOnlyTheDetailLinesOfTheKeptRunsAfterACopyOfThemAsTheyWere() {
+        write(
+            header("dark-mode", 2), line("dark-mode", 1), line("dark-mode", 2),
+            header("alarm", 1), line("alarm", 1, "fail", "stopped"),
+            // An older tool appended run 1 again after its stopped line: the kept line is the second, so is its detail line.
+            header("dnd", 2), line("dnd", 1, "fail", "stopped"), line("dnd", 1), line("dnd", 2, "fail", "stopped"),
+        )
+        fun detail(task: String, run: Int, touches: Int) =
+            "2026-11-24 11:00:01\tdetail\tdetail task=$task run=$run asked=none ownerTouches=$touches signals=none markerSaid=none markerInData=none putBack=none byHand=none"
+        val details = listOf(detail("dark-mode", 1, 1), detail("dark-mode", 2, 2), detail("alarm", 1, 3), detail("dnd", 1, 4), detail("dnd", 1, 5), detail("dnd", 2, 6))
+        Files.write(folder.resolve("details.txt"), details)
+        val read = SuiteFolder.read(folder)
+
+        val resume = read.resume(listOf("dark-mode" to 2, "alarm" to 1, "dnd" to 2))
+        assertEquals(listOf("dark-mode", "dnd"), resume.kept.map { it.task })
+        read.rewrite(resume.kept, "20261124-120000")
+
+        assertEquals(listOf(detail("dark-mode", 1, 1), detail("dark-mode", 2, 2), detail("dnd", 1, 5)), Files.readAllLines(folder.resolve("details.txt")))
+        assertEquals(details, Files.readAllLines(folder.resolve("details-before-resume-20261124-120000.txt")))
+    }
+
+    @Test
     fun aTaskWhoseRunsNowDifferOrThatIsNotTheLastIsRunWhole() {
         write(
             header("dark-mode", 3), line("dark-mode", 1),

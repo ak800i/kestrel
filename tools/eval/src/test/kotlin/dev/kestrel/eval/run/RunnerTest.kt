@@ -80,7 +80,7 @@ class RunnerTest {
             line.text(),
         )
         assertEquals(
-            listOf(line.text(), "task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none"),
+            listOf(line.text(), "detail task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none"),
             run.console.lines,
         )
         assertEquals(listOf(mapOf("event" to "heard", "text" to "Kestrel, turn on hotspot", "tag" to "t1", "marker" to "maple heron")), run.adb.hookCalls("VOICE"))
@@ -208,6 +208,11 @@ class RunnerTest {
         assertThrows(IllegalStateException::class.java) { runner().runAll(task(), "[]", 3) }
 
         assertEquals(listOf("1 pass ok", "2 fail stopped", "3 fail stopped"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
+        // Every run line has its detail line, also the runs that never started.
+        assertEquals(
+            (2..3).map { "detail task=stand-in-hotspot run=$it asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none" },
+            writer.details.drop(1),
+        )
     }
 
     @Test
@@ -316,7 +321,7 @@ class RunnerTest {
         assertThrows(DeviceChanged::class.java) { runner(live = true).runAll(task(), null, 1) }
 
         assertEquals(listOf("1 fail stopped unknown"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire} ${it.credits}" })
-        assertFalse(writer.writeOnce("stand-in-hotspot", 1, RunLine("stand-in-hotspot", 1, RunResult.FAIL, null, CheckResult.SKIPPED, Reason.STOPPED)))
+        assertFalse(writer.writeOnce("stand-in-hotspot", 1, RunLine("stand-in-hotspot", 1, RunResult.FAIL, null, CheckResult.SKIPPED, Reason.STOPPED), RunDetail.empty("stand-in-hotspot", 1)))
         assertEquals(1, writer.lines.size)
     }
 
@@ -339,6 +344,38 @@ class RunnerTest {
 
         assertTrue(cleared)
         assertEquals(listOf("1 fail stopped 0.00"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire} ${it.credits}" })
+    }
+
+    @Test
+    fun ctrlCDuringARunWritesItsLineAndItsDetailLineTogetherWithWhatItsRestoresPutBack() {
+        var stopped = false
+        run.adb.hook("VOICE") { extras -> if (extras["text"] == "stop") stopped = true; "sent" }
+        run.adb.hook("AGENT_TASK") { if (stopped) "state=done end=STOPPED steps=2 workMs=4000 credits=0.00" else "state=running" }
+        val setup = object : Setup {
+            override fun apply(scope: RunScope): SetupResult {
+                scope.restores.push("the font keys", "") { scope.putBack.recordStored("font") }
+                return SetupResult.Ready
+            }
+        }
+        val atHook = mutableListOf<Int>()
+        var interrupted = false
+        run.clock.onSleep = {
+            if (!interrupted) {
+                interrupted = true
+                run.restores.report(run.restores.runAll())
+                atHook += listOf(writer.lines.size, writer.details.size)
+            }
+        }
+
+        runner().runAll(task(setup = listOf(setup)), "[]", 1)
+
+        // The shutdown hook wrote the run's line and its detail line as one pair, after the run's restores had recorded.
+        assertEquals(listOf(1, 1), atHook)
+        assertEquals(
+            listOf("detail task=stand-in-hotspot run=1 asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=font"),
+            writer.details,
+        )
+        assertEquals(listOf("1 fail stopped"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
     }
 
     @Test
@@ -495,7 +532,7 @@ class RunnerTest {
         runner().run(task(setup = listOf(setup)), "[]", 1, "maple heron")
 
         assertEquals(
-            listOf("task=stand-in-hotspot run=1 asked=yes-no:no ownerTouches=2 signals=1 markerSaid=1 markerInData=0 putBack=wm/density byHand=none"),
+            listOf("detail task=stand-in-hotspot run=1 asked=yes-no:no ownerTouches=2 signals=1 markerSaid=1 markerInData=0 putBack=wm/density byHand=none"),
             writer.details,
         )
         assertEquals("maple heron", run.adb.hookCalls("VOICE").single()["marker"])

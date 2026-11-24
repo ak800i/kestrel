@@ -11,6 +11,7 @@ import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.task.Answers
+import dev.kestrel.eval.task.PutBack
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.RunValues
 import dev.kestrel.eval.task.SetupResult
@@ -62,7 +63,8 @@ class Runner(
 
     /**
      * Runs [task] [runs] times, a known gap once, with the scripted model's [script] when the runs are not live, and
-     * returns how many runs failed. Its bottom restore writes `result=fail reason=stopped` for each run without a line, so
+     * returns how many runs failed. Its bottom restore writes `result=fail reason=stopped` for each run without a line, and
+     * the run's detail line with it (with what the run under way knew and what its restores put back), so
      * that an error or Ctrl+C never leaves a run out of the results: the run that was under way with its own credits (after
      * its stop, which runs first: `unknown` for a live task without credits, or when they cannot be read), the runs that
      * never started with 0.00, as task-check.ps1's `Close-TaskRun` wrote them. A resumed suite runs only the runs from
@@ -77,14 +79,17 @@ class Runner(
             val running = current
             for (number in first..count) {
                 if (writer.wrote(task.name, number)) continue
-                val spent = running?.takeIf { it.first == number }?.let {
+                // The run under way keeps what it knew, and what its restores, which ran first, put back.
+                val under = running?.takeIf { it.first == number }?.second
+                val spent = under?.let {
                     try {
-                        credits(it.second)
+                        credits(it)
                     } catch (e: Exception) {
                         "unknown"
                     }
                 }
-                writer.writeOnce(task.name, number, RunLine(task.name, number, RunResult.FAIL, null, CheckResult.SKIPPED, Reason.STOPPED, spent))
+                val line = RunLine(task.name, number, RunResult.FAIL, null, CheckResult.SKIPPED, Reason.STOPPED, spent)
+                writer.writeOnce(task.name, number, line, under?.detail(task.name, number) ?: RunDetail.empty(task.name, number))
             }
         }
         var failures = 0
@@ -103,12 +108,12 @@ class Runner(
     }
 
     /**
-     * Run [number] of [task] with [marker]; writes its line, unless the shutdown hook already wrote the run's line after
-     * Ctrl+C, and returns it.
+     * Run [number] of [task] with [marker]; writes its line and its detail line, unless the shutdown hook already wrote
+     * them after Ctrl+C, and returns the run line.
      */
     fun run(task: Task, script: String?, number: Int, marker: String): RunLine {
         val scope = RunScope(device, hooks, restores, clock, console, config, work, RunValues(marker, name = options.name))
-        val state = RunState()
+        val state = RunState(scope.putBack)
         current = number to state
         val mark = restores.mark()
         var verdict: Verdict? = null
@@ -127,9 +132,7 @@ class Runner(
             task.name, number, if (call) RunResult.FAIL else judged.result, state.answer, judged.check,
             reason, end.credits, asked = state.cancelled().joinToString(",").takeIf { reason == Reason.ASKED },
         )
-        if (writer.writeOnce(task.name, number, line)) {
-            writer.detail(RunDetail(task.name, number, state.asked.toList(), state.answer, state.markers, scope.putBack.applied, scope.putBack.stored).text())
-        }
+        writer.writeOnce(task.name, number, line, state.detail(task.name, number))
         current = null
         restores.report(end.failures)
         error?.let { throw it }
@@ -343,13 +346,15 @@ class Runner(
         null
     }
 
-    private class RunState {
+    /** What a run met; the shutdown hook's restores read it too, for the task's stop, the credits and the detail line. */
+    private class RunState(private val putBack: PutBack) {
         var call = false
         var tag: String? = null
 
-        // Read by the shutdown hook's stop restore.
         @Volatile
         var sent = false
+
+        @Volatile
         var answer: HookAnswer? = null
         var timedOut = false
         var stalled = false
@@ -361,6 +366,7 @@ class Runner(
         val record = AskedRecord()
 
         // agent-task's answer with the run's marker, read once after the end, for the detail line.
+        @Volatile
         var markers: HookAnswer? = null
 
         /** The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order. */
@@ -368,6 +374,9 @@ class Runner(
 
         /** The kinds of the questions and hand-overs whose answer by the run ended the task, each once. */
         fun cancelled(): List<String> = record.cancelled()
+
+        /** The run's detail line, from what it met and what its restores put back so far. */
+        fun detail(task: String, number: Int) = RunDetail(task, number, asked, answer, markers, putBack.applied, putBack.stored)
     }
 
     private data class End(val after: Boolean, val credits: String, val failures: List<RestoreFailure>)

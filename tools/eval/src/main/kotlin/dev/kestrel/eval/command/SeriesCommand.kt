@@ -27,8 +27,8 @@ import kotlin.time.Duration.Companion.seconds
  * A series of tasks into a new results folder `eval-results\<device>[-injection]-<yyyyMMdd-HHmmss>\` (design D6 and D10
  * of sub-project 6): `suite.json` with what the series was asked for ([SuiteCall]) and the Kestrel build that ran it
  * ([KestrelBuild]), `runs.txt` in `Add-SessionResult`'s form, with the line `<task> on <the A71|kestrel-api37>, <n> runs`
- * before each task's run lines, which a71-agent.ps1's `Get-SittingRuns` and `ConvertFrom-TaskLine` read, and
- * `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures on
+ * before each task's run lines, which a71-agent.ps1's `Get-SittingRuns` and `ConvertFrom-TaskLine` read, `details.txt`
+ * with each run's detail line ([dev.kestrel.eval.run.RunDetail]), one for each run line, and `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures on
  * kestrel-api37 (once without a model, 5 times live, by default). With [resume], a suite goes on in the folder of one
  * that stopped ([Resume]), and only while the Kestrel install that ran it is still the device's: it keeps the tasks
  * whose runs all have a line that is not `reason=stopped`, runs the rest of the last task that was cut short (all of it,
@@ -88,7 +88,8 @@ class SeriesCommand(
         val call = (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head)).copy(kestrel = recorded ?: KestrelBuild.installed(session.device))
         call.write(folder)
         val runsFile = ResultsFile(folder.resolve(SuiteFolder.RUNS), environment.clock)
-        val writer = LineWriter(session.console, runsFile, ResultsFile(folder.resolve(SuiteFolder.DETAILS), environment.clock))
+        val detailsFile = ResultsFile(folder.resolve(SuiteFolder.DETAILS), environment.clock)
+        val writer = LineWriter(session.console, runsFile, detailsFile)
         lines(writer)
         val start = resumed?.folder?.start ?: environment.clock.now()
         val todo = resumption?.runs ?: tasks.map { it.name to 1 }
@@ -143,6 +144,7 @@ class SeriesCommand(
             var model = resumed?.folder?.models?.singleOrNull()
             for ((task, first) in todo.map { byName.getValue(it.first) to it.second }) {
                 val mark = SuiteFolder.lines(runsFile.path)
+                val detailMark = SuiteFolder.lines(detailsFile.path)
                 val before = writer.lines.size
                 if (first == 1) runsFile.append(name, "${task.name} on ${kind.label}, ${count(task)} runs")
                 failures += runner.runAll(task, if (live) null else ScriptInstaller.resource(task.dryRun!!.script), runs, first)
@@ -152,9 +154,10 @@ class SeriesCommand(
                 val other = named.firstOrNull { it != expected }
                 if (other != null) {
                     SuiteFolder.truncate(runsFile.path, mark)
+                    SuiteFolder.truncate(detailsFile.path, detailMark)
                     throw Refusal(
                         "The folder's runs used the model $expected, and this call's runs of ${task.name} used $other; their lines were taken out of " +
-                            "runs.txt again. Make $expected the default profile's model again, or run a new suite.",
+                            "runs.txt and details.txt again. Make $expected the default profile's model again, or run a new suite.",
                     )
                 }
                 model = expected

@@ -26,8 +26,7 @@ class ResumeTest {
     private val pair = listOf("stand-in-hotspot", "stand-in-firefox")
     private val build = KestrelBuild(versionCode = 100, versionName = "1.0.0", lastUpdateTime = "2026-11-24 09:18:59", commit = commit, dirty = false)
 
-    // The run lines, without the detail lines that follow them.
-    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") && " result=" in it }
+    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") }
 
     private fun line(task: String, run: Int, model: String = "scripted", reason: String = "ok") =
         "2026-11-24 10:00:01\ttask\ttask=$task run=$run result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=$model in=0 out=0 cacheRead=0 cacheWrite=0 reason=$reason"
@@ -74,6 +73,10 @@ class ResumeTest {
         assertEquals(listOf(2, 2), report.tasks.map { it.passes })
         assertEquals(commit, report.commit)
         assertTrue(Files.list(folder).use { files -> files.anyMatch { it.fileName.toString().startsWith("runs-before-resume-") } })
+        // details.txt keeps exactly one detail line for each run line of runs.txt, in the same order.
+        val details = Files.readAllLines(folder.resolve("details.txt")).map { it.substringAfter("\tdetail\tdetail ").substringBefore(" asked=") }
+        assertEquals(after.filter { it.startsWith("task\t") }.map { it.removePrefix("task\t") }, details)
+        assertTrue(Files.list(folder).use { files -> files.anyMatch { it.fileName.toString().startsWith("details-before-resume-") } })
 
         // A folder whose tasks all ended runs nothing more.
         val ended = runLines().size
@@ -195,10 +198,13 @@ class ResumeTest {
     fun runsOfAnotherModelThanTheFoldersAreTakenOutAgainAndRefused() {
         val folder = halfDone(model = "scripted-light")
         val kept = Files.readAllLines(folder.resolve("runs.txt"))
+        val detail = { run: Int -> "2026-11-24 10:00:01\tdetail\tdetail task=stand-in-hotspot run=$run asked=none ownerTouches=none signals=none markerSaid=none markerInData=none putBack=none byHand=none" }
+        Files.write(folder.resolve("details.txt"), listOf(detail(1), detail(2)))
 
         assertNotEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--resume", folder.toString()))
         assertTrue(fake.output.contains("scripted-light"))
         assertEquals(kept, Files.readAllLines(folder.resolve("runs.txt")))
+        assertEquals(listOf(detail(1), detail(2)), Files.readAllLines(folder.resolve("details.txt")))
 
         val mixed = folder("kestrel-api37-20261124-110000", SuiteCall("kestrel-api37", live = false, runs = 2, tasks = pair, commit = commit),
             "2026-11-24 10:00:00\tsuite\tstand-in-hotspot on kestrel-api37, 2 runs", line("stand-in-hotspot", 1, "m1"), line("stand-in-hotspot", 2, "m2"))

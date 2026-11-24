@@ -2,6 +2,7 @@ package dev.kestrel.eval.report
 
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.run.Reason
+import dev.kestrel.eval.run.RunDetail
 import dev.kestrel.eval.run.RunLine
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -28,8 +29,8 @@ data class SuiteCall(val device: String, val live: Boolean, val runs: Int, val t
     }
 }
 
-/** A run's line in runs.txt: the file's [text] and the [line] read from it. */
-data class RunEntry(val text: String, val line: RunLine)
+/** A run's line in runs.txt: the file's [text], the [line] read from it, and the run's line in details.txt ([detail]), if any. */
+data class RunEntry(val text: String, val line: RunLine, val detail: String? = null)
 
 /**
  * A task's part of runs.txt: its line "<task> on <device>, <n> runs" ([header]) and the run lines after it. [done] counts
@@ -95,17 +96,25 @@ class SuiteFolder private constructor(val path: Path, private val text: List<Str
         return Resumption(complete.map { it.kept() } + listOfNotNull(last?.kept()), listOfNotNull(last?.let { it.task to it.done + 1 }) + whole)
     }
 
-    /** Writes runs.txt with [kept]'s lines only, after a copy of it as it was, `runs-before-resume-<stamp>.txt`. */
+    /**
+     * Writes runs.txt with [kept]'s lines only, after a copy of it as it was, `runs-before-resume-<stamp>.txt`, and
+     * details.txt, when the folder has one, with only the kept runs' detail lines, after a copy `details-before-resume-<stamp>.txt`,
+     * so that details.txt keeps one detail line for each run line.
+     */
     fun rewrite(kept: List<TaskBlock>, stamp: String) {
         val file = path.resolve(RUNS)
         Files.copy(file, path.resolve("runs-before-resume-$stamp.txt"), StandardCopyOption.REPLACE_EXISTING)
         write(file, kept.flatMap { block -> listOf(block.header) + block.runs.map { it.text } })
+        val details = path.resolve(DETAILS)
+        if (!Files.isRegularFile(details)) return
+        Files.copy(details, path.resolve("details-before-resume-$stamp.txt"), StandardCopyOption.REPLACE_EXISTING)
+        write(details, kept.flatMap { block -> block.runs.mapNotNull { it.detail } })
     }
 
     companion object {
         const val RUNS = "runs.txt"
 
-        /** The runs' detail lines (plan 6B-basefix), which --resume appends to and never rewrites. */
+        /** The runs' detail lines (plan 6B-basefix), one for each run line of runs.txt, which --resume rewrites with it. */
         const val DETAILS = "details.txt"
         private val NAME = Regex("(a71|kestrel-api37)-(\\d{8}-\\d{6})")
         private val HEADER = Regex("(\\S+) on .+, (\\d+) runs")
@@ -115,6 +124,9 @@ class SuiteFolder private constructor(val path: Path, private val text: List<Str
             val file = path.resolve(RUNS)
             if (!Files.isRegularFile(file)) throw Refusal("$path has no runs.txt, so it is no results folder of a suite.")
             val text = Files.readAllLines(file, Charsets.UTF_8).filter { it.isNotBlank() }
+            val details = details(path.resolve(DETAILS))
+            // A run's lines pair in their order: its n-th run line in runs.txt with its n-th detail line in details.txt.
+            val seen = mutableMapOf<Pair<String, Int>, Int>()
             val blocks = mutableListOf<TaskBlock>()
             for (raw in text) {
                 val parts = raw.split('\t', limit = 3)
@@ -123,12 +135,23 @@ class SuiteFolder private constructor(val path: Path, private val text: List<Str
                     "suite" -> HEADER.matchEntire(parts[2])?.let { blocks.add(TaskBlock(it.groupValues[1], it.groupValues[2].toInt(), raw, emptyList())) }
                     "task" -> {
                         val line = RunLine.parse(parts[2]) ?: continue
+                        val run = line.task to line.run
+                        val ordinal = seen.getOrDefault(run, 0).also { seen[run] = it + 1 }
                         val at = blocks.indexOfLast { it.task == line.task }
-                        if (at >= 0) blocks[at] = blocks[at].copy(runs = blocks[at].runs + RunEntry(raw, line))
+                        if (at >= 0) blocks[at] = blocks[at].copy(runs = blocks[at].runs + RunEntry(raw, line, details[run]?.getOrNull(ordinal)))
                     }
                 }
             }
             return SuiteFolder(path, text, blocks)
+        }
+
+        /** The detail lines of [file] by the task and the run that they name, each run's in their order; none without a file. */
+        private fun details(file: Path): Map<Pair<String, Int>, List<String>> {
+            if (!Files.isRegularFile(file)) return emptyMap()
+            return Files.readAllLines(file, Charsets.UTF_8).mapNotNull { raw ->
+                val parts = raw.split('\t', limit = 3)
+                RunDetail.runOf(parts.last())?.takeIf { parts.size == 3 && parts[1] == "detail" }?.let { it to raw }
+            }.groupBy({ it.first }, { it.second })
         }
 
         /** Keeps the first [count] lines of [file], dropping those that came after them. */

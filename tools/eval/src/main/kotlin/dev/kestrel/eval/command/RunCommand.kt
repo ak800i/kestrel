@@ -5,6 +5,7 @@ import dev.kestrel.eval.report.ResultsFile
 import dev.kestrel.eval.run.CheckResult
 import dev.kestrel.eval.run.LineWriter
 import dev.kestrel.eval.run.Reason
+import dev.kestrel.eval.run.RunDetail
 import dev.kestrel.eval.run.RunLine
 import dev.kestrel.eval.run.RunOptions
 import dev.kestrel.eval.run.RunResult
@@ -27,14 +28,14 @@ class RunCommand(private val environment: Environment, private val command: Comm
         lines(writer)
         val dryRun = task.dryRun
         if (!command.live && dryRun == null) {
-            writer.write(RunLine(task.name, 1, RunResult.SKIPPED, null, CheckResult.SKIPPED, Reason.UNTESTABLE))
+            writer.writeOnce(task.name, 1, RunLine(task.name, 1, RunResult.SKIPPED, null, CheckResult.SKIPPED, Reason.UNTESTABLE), RunDetail.empty(task.name, 1))
             session.console.line("Task ${task.name} has no form without a model, so it runs only with --live.")
             return 0
         }
         val executed = if (command.live) task else dryRun!!.standIn?.let { Catalogue.find(it) } ?: task
         // Before the preflight, so that a task that this device does not run installs nothing and changes no setting.
         if (session.device.kind !in executed.devices) {
-            writer.write(RunLine(executed.name, 1, RunResult.SKIPPED, null, CheckResult.SKIPPED, Reason.UNTESTABLE))
+            writer.writeOnce(executed.name, 1, RunLine(executed.name, 1, RunResult.SKIPPED, null, CheckResult.SKIPPED, Reason.UNTESTABLE), RunDetail.empty(executed.name, 1))
             session.console.line("Task ${executed.name} does not run on ${session.device.kind.label}; scripts\\eval.ps1 list --device ${session.device.serial} shows the tasks that it runs.")
             return 0
         }

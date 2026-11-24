@@ -46,7 +46,7 @@ class RunLineTest {
         val file = folder.root.toPath().resolve("owner").resolve("agent-sitting2.txt")
         val writer = LineWriter(FakeConsole(), ResultsFile(file, clock))
 
-        writer.write(RunLine("hotspot", 1, RunResult.PASS, HookAnswer("state=done end=FINISHED credits=1.25"), CheckResult.PASS, Reason.OK))
+        writer.writeOnce("hotspot", 1, RunLine("hotspot", 1, RunResult.PASS, HookAnswer("state=done end=FINISHED credits=1.25"), CheckResult.PASS, Reason.OK), RunDetail.empty("hotspot", 1))
 
         val line = Files.readAllLines(file).single()
         assertEquals("2026-11-23 12:00:00\ttask\ttask=hotspot run=1 result=pass end=FINISHED check=pass steps=0 workMs=0 credits=1.25 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok", line)

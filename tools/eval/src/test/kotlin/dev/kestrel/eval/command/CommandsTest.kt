@@ -15,8 +15,7 @@ import java.nio.file.Files
 class CommandsTest {
     private val fake = FakeEnvironment()
 
-    // The run lines, without the detail lines that follow them.
-    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") && " result=" in it }
+    private fun runLines(): List<String> = fake.output.lines().filter { it.startsWith("task=") }
 
     @Test
     fun aCommandLineThatTheToolDoesNotTakeIsRefusedWithTheUsage() {
@@ -103,7 +102,7 @@ class CommandsTest {
         val runs = Files.readAllLines(folder.resolve("runs.txt"))
         assertEquals(6, runs.size)
         // The detail lines go into their own file, one per run, so that runs.txt keeps only what a71-agent.ps1 reads.
-        assertEquals(4, Files.readAllLines(folder.resolve("details.txt")).count { it.contains("\tdetail\ttask=") })
+        assertEquals(4, Files.readAllLines(folder.resolve("details.txt")).count { it.contains("\tdetail\tdetail task=") })
         // a71-agent.ps1's Get-SittingRuns reads the device from these lines, and ConvertFrom-TaskLine the runs.
         assertTrue(Regex("\tstand-in-hotspot on (the A71|kestrel-api37), \\d+ runs$").containsMatchIn(runs[0]))
         assertTrue(runs[0].contains("\tsuite\tstand-in-hotspot on kestrel-api37, 2 runs"))
