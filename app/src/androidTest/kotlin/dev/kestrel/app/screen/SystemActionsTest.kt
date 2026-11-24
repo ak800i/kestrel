@@ -101,9 +101,9 @@ class SystemActionsTest {
         assertEquals(ActionResult.Failed("Android does not let Kestrel open it."), actions.openIntent(link("file:///sdcard/Download/note.txt")))
     }
 
-    // A link as the agent's launch check sends it: kept to [packageName] with CATEGORY_BROWSABLE, or to the app that takes it.
+    // A link in the form of the agent's links: a VIEW intent with CATEGORY_BROWSABLE, kept to [packageName] when one is given.
     private fun link(uri: String, packageName: String? = null): Intent =
-        IntentSpecs.toIntent(IntentSpec(IntentSpec.VIEW, uri, packageName, browsable = packageName != null))
+        IntentSpecs.toIntent(IntentSpec(IntentSpec.VIEW, uri, packageName, browsable = true))
 
     @Test
     fun openAppFailsForAnAppThatIsNotInstalled() = runBlocking {
