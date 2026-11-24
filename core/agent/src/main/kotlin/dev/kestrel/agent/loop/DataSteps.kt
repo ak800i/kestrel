@@ -14,6 +14,7 @@ import dev.kestrel.agent.tools.Tools
 import dev.kestrel.commands.text.NamePick
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.commands.text.Pick
+import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOver
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.SafetyCheck
@@ -34,6 +35,13 @@ internal class DataSteps(private val run: TaskRun) {
     // find_media's note on partial photo access, which the owner hears once before a share uses the items (D12).
     private var mediaNote: String? = null
 
+    // The newest find_contact's contacts, by their number there, with Kestrel's handles (design D19 of sub-project 6).
+    private var found: List<FoundContact> = emptyList()
+
+    private class FoundContact(val ref: String?, val name: String, val number: String?) {
+        override fun toString(): String = "FoundContact(ref=${ref != null}, name=${name.length} chars)"
+    }
+
     suspend fun run(asked: AgentCall): Done {
         val call = resolved(asked)
         var sharePackage: String? = null
@@ -49,21 +57,28 @@ internal class DataSteps(private val run: TaskRun) {
             }
             if (call.items.size > MAX_SILENT_SHARE && !run.askYesNo("Share ${call.items.size} items?")) throw Ended(EndReason.DECLINED)
         }
+        // delete_contact names a contact of the newest find_contact by its number there; its ID stays on the phone.
+        val contact = (call as? AgentCall.DeleteContact)?.let { delete ->
+            if (found.isEmpty()) return Done(call.tool, Outcome.Failed(ActionMapper.FIND_FIRST))
+            found.getOrNull(delete.contact - 1) ?: return Done(call.tool, Outcome.Failed("find_contact's newest result has no contact ${delete.contact}"))
+        }
         while (true) {
             if (run.gate()) return Done(call.tool, text = "Result: ${ScreenSteps.PAUSED}", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", after = run.fresh(), progress = false, executed = false)
             val before = run.fresh()
             var proposal = ActionMapper.proposal(call, run.observation.table, run.observation.appLabel, receivingPackage = sharePackage, receivingAppLabel = receivingLabel)
             if (call is AgentCall.ShareMedia) proposal = proposal.copy(shareCount = count(call.items))
-            when (val clearance = run.decide(proposal, before, call.tool, null)) {
+            if (contact != null) proposal = proposal.copy(contactName = contact.name, contactNumber = contact.number)
+            val go = when (val clearance = run.decide(proposal, before, call.tool, null)) {
                 Clearance.Again -> continue
                 is Clearance.Stop -> return clearance.done
-                is Clearance.Go -> Unit
+                is Clearance.Go -> clearance
             }
             val front = ScreenTree.frontWindow(before)?.packageName
-            val result = runAllowed(call, sharePackage, front) ?: return Done(call.tool, Outcome.PermissionRefused)
+            val result = runAllowed(call, sharePackage, front, contact?.ref) ?: return Done(call.tool, Outcome.PermissionRefused)
             if (result is DataResult.Failed) return Done(call.tool, Outcome.Failed(result.reason), detail = detail(call))
             val ok = result as DataResult.Ok
             remember(call, ok)
+            if (contact != null) deleted(go, contact)
             // A share or a new SMS always starts the share flow, also when `DataPort` names no package (D14).
             val opens = call is AgentCall.ShareMedia || call is AgentCall.ComposeSms
             val after = if (opens || ok.opened != null) {
@@ -79,9 +94,9 @@ internal class DataSteps(private val run: TaskRun) {
     }
 
     // Runs the tool; asks for a missing permission or access once and runs it again. Null: the owner refused (D12).
-    private suspend fun runAllowed(call: AgentCall, sharePackage: String?, front: String?): DataResult? {
+    private suspend fun runAllowed(call: AgentCall, sharePackage: String?, front: String?, contactRef: String? = null): DataResult? {
         val today = run.ports.clock.now().toLocalDate()
-        val first = ActionMapper.runData(call, run.ports.data, today, sharePackage) ?: return DataResult.Failed(NOT_DATA)
+        val first = ActionMapper.runData(call, run.ports.data, today, sharePackage, contactRef) ?: return DataResult.Failed(NOT_DATA)
         when (first) {
             is DataResult.NeedsPermission -> {
                 val end = run.limits.waiting { run.ports.owner.askPermission(first.permissions, why(call)) }
@@ -101,7 +116,7 @@ internal class DataSteps(private val run: TaskRun) {
             run.ports.screen.act(ScreenAction.OpenApp(front))
             run.ports.screen.waitForFront(front, ScreenSteps.FRONT_WAIT_MILLIS)
         }
-        val again = ActionMapper.runData(call, run.ports.data, today, sharePackage) ?: return DataResult.Failed(NOT_DATA)
+        val again = ActionMapper.runData(call, run.ports.data, today, sharePackage, contactRef) ?: return DataResult.Failed(NOT_DATA)
         return when (again) {
             is DataResult.NeedsPermission -> null
             is DataResult.NeedsAccess -> DataResult.Failed(NO_ACCESS)
@@ -133,6 +148,13 @@ internal class DataSteps(private val run: TaskRun) {
     private suspend fun remember(call: AgentCall, ok: DataResult.Ok) {
         if (call is AgentCall.FindContact) {
             run.remembering { run.memory.foundContacts(ok.lines.flatMap { line -> line.fields.filter { it.name == NAME_FIELD }.map { it.value } }) }
+            found = ok.lines.map { line ->
+                FoundContact(
+                    line.ref,
+                    line.fields.firstOrNull { it.name == NAME_FIELD }?.value.orEmpty(),
+                    line.fields.firstOrNull { it.name == PHONE_FIELD }?.value?.substringBefore(" ("),
+                )
+            }
         }
         if (call is AgentCall.FindMedia) {
             mediaNote = ok.note
@@ -143,6 +165,18 @@ internal class DataSteps(private val run: TaskRun) {
         }
     }
 
+    // A contact that delete_contact deleted counts as a delete on the screen does (design D19 of sub-project 6): after the
+    // owner's yes as a confirmed delete, which the report names; without one, only in Full-auto, as an unconfirmed one.
+    private fun deleted(go: Clearance.Go, contact: FoundContact) {
+        val yes = go.confirmation
+        if (yes != null) {
+            run.sent(yes, share = false, items = 0, covered = false)
+            return
+        }
+        if (go.category == Category.DELETING) run.unconfirmed++
+        run.ledger.add("deleted ${contact.name}")
+    }
+
     private fun count(items: List<String>): ShareCount {
         val video = items.count { videos[it] == true }
         return ShareCount(photos = items.size - video, videos = video)
@@ -151,6 +185,8 @@ internal class DataSteps(private val run: TaskRun) {
     /** The short argument text of a data step, which its result line and summary name (D6); already redacted. */
     private fun detail(call: AgentCall): String? = when (call) {
         is AgentCall.FindContact -> run.redactor.redact(call.name)
+        is AgentCall.AddContact -> run.redactor.redact(call.name)
+        is AgentCall.DeleteContact -> "contact ${call.contact}"
         is AgentCall.FindMedia -> listOfNotNull(call.day, call.until?.let { "to $it" }).joinToString(" ") + ", " + call.kinds.name.lowercase(Locale.ROOT)
         is AgentCall.ShareMedia -> "${call.items.size} items"
         is AgentCall.ListEvents -> "${call.from} to ${call.to}"
@@ -171,6 +207,7 @@ internal class DataSteps(private val run: TaskRun) {
             Tools.COMPOSE_SMS -> "opened a new SMS"
             Tools.NAVIGATE -> "opened the route in ${if (done.detail == "waze") "Waze" else "Google Maps"}"
             Tools.CREATE_EVENT -> "opened a new calendar event"
+            Tools.ADD_CONTACT -> "added the contact ${done.detail}"
             Tools.SET_ALARM -> "set an alarm for ${done.detail}"
             Tools.SET_TIMER -> "set a timer"
             Tools.MEDIA_CONTROL -> "pressed ${done.detail}"
@@ -180,6 +217,7 @@ internal class DataSteps(private val run: TaskRun) {
 
     private fun why(call: AgentCall): String = when (call) {
         is AgentCall.FindContact -> "To find a contact, Kestrel needs access to your contacts."
+        is AgentCall.AddContact, is AgentCall.DeleteContact -> "To add or delete a contact, Kestrel needs access to your contacts."
         is AgentCall.FindMedia, is AgentCall.ShareMedia -> "To find your photos and videos, Kestrel needs access to them."
         is AgentCall.ListEvents -> "To read your calendar, Kestrel needs access to it."
         is AgentCall.ListSms -> "To read your messages, Kestrel needs access to your SMS."
@@ -197,6 +235,9 @@ internal class DataSteps(private val run: TaskRun) {
 
         /** The field of a `find_contact` line that holds the contact's name (5B's contract). */
         const val NAME_FIELD = "name"
+
+        /** The field of a `find_contact` line that holds a number with its kind, as "+1 202 555 0143 (mobile)". */
+        const val PHONE_FIELD = "phone"
         private const val NOT_DATA = "this is not a data tool"
         private const val NO_ACCESS = "Kestrel still has no notification access"
     }

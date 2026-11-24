@@ -114,6 +114,17 @@ sealed interface AgentCall {
         override fun toString(): String = "FindMedia(day=${day.length} chars, until=${until?.length ?: 0} chars, kinds=$kinds)"
     }
 
+    data class AddContact(val name: String, val number: String) : AgentCall {
+        override val tool: String get() = Tools.ADD_CONTACT
+
+        override fun toString(): String = "AddContact(name=${name.length} chars, number=${number.length} chars)"
+    }
+
+    /** [contact] is the contact's number in the task's newest `find_contact` result (design D19 of sub-project 6). */
+    data class DeleteContact(val contact: Int) : AgentCall {
+        override val tool: String get() = Tools.DELETE_CONTACT
+    }
+
     data class ShareMedia(val app: String, val items: List<String>) : AgentCall {
         override val tool: String get() = Tools.SHARE_MEDIA
 

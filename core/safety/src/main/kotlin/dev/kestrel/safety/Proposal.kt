@@ -50,6 +50,12 @@ enum class ActionKind {
     SHARE_MEDIA,
     COMPOSE_SMS,
 
+    /** `add_contact`: typing the request, or typing screen text (design D19 of sub-project 6). */
+    ADD_CONTACT,
+
+    /** `delete_contact`: deleting (design D19 of sub-project 6). */
+    DELETE_CONTACT,
+
     /** `ask_user`, `say`, `finish` and `fail`. */
     DIALOGUE,
 
@@ -89,8 +95,11 @@ data class Proposal(
     val receivingAppLabel: String? = null,
     /** `set_slider`'s percent, which its question names (design D19 of sub-project 6). */
     val percent: Int? = null,
+    /** The contact that `add_contact` adds or `delete_contact` deletes, by its name and its (first) number. */
+    val contactName: String? = null,
+    val contactNumber: String? = null,
 ) {
     override fun toString(): String =
         "Proposal(tool=$tool, kind=$kind, declared=$declared, target=${targetKey != null}, point=${point != null}, " +
-            "textLength=${text?.length ?: 0}, linkLength=${link?.length ?: 0}, percent=$percent)"
+            "textLength=${text?.length ?: 0}, linkLength=${link?.length ?: 0}, percent=$percent, contact=${contactName != null})"
 }

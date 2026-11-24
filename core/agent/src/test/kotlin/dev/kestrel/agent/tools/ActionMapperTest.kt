@@ -151,6 +151,21 @@ class ActionMapperTest {
         assertEquals(emptyList<String>(), SharePackages.of("Signal"))
     }
 
+    @Test
+    fun theContactToolsRunThroughThePortAndADeleteNeedsTheContactsHandle() = kotlinx.coroutines.test.runTest {
+        val data = RecordingData()
+        val today = LocalDate.of(2026, 11, 24)
+
+        ActionMapper.runData(AgentCall.AddContact("Maple Heron", "+1 202 555 0160"), data, today)
+        ActionMapper.runData(AgentCall.DeleteContact(1), data, today, contactRef = "41")
+        val missing = ActionMapper.runData(AgentCall.DeleteContact(1), data, today)
+
+        assertEquals(listOf("addContact", "deleteContact 41"), data.calls)
+        assertEquals(dev.kestrel.agent.port.DataResult.Failed("Call find_contact first."), missing)
+        assertEquals(dev.kestrel.safety.ActionKind.DELETE_CONTACT, ActionMapper.proposal(AgentCall.DeleteContact(1), table, "Chat").kind)
+        assertEquals("+1 202 555 0160", ActionMapper.proposal(AgentCall.AddContact("Maple Heron", "+1 202 555 0160"), table, "Chat").contactNumber)
+    }
+
     /** Records each call; answers every tool with an empty result. */
     private class RecordingData : DataPort {
         val calls = mutableListOf<String>()
@@ -170,6 +185,8 @@ class ActionMapperTest {
         override suspend fun getLocation() = ok.also { calls += "getLocation" }
         override suspend fun mediaControl(action: MediaAction) = ok.also { calls += "mediaControl" }
         override suspend fun navigate(app: NavigationApp, to: String, mode: TravelMode?) = ok.also { calls += "navigate" }
+        override suspend fun addContact(name: String, number: String) = ok.also { calls += "addContact" }
+        override suspend fun deleteContact(ref: String) = ok.also { calls += "deleteContact $ref" }
         override fun forgetTask() = Unit
     }
 }

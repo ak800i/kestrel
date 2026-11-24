@@ -80,6 +80,8 @@ class ToStringTest {
             RoutineMatch(routine, mapOf("text" to marker)),
             SaveResult.NotSaved(marker),
             AgentCall.Tap(1, marker, Category.READING),
+            AgentCall.AddContact(marker, marker),
+            DataLine(marker, listOf(DataField("name", marker)), ref = marker),
             // The types of Tasks 6 and 7 that carry screen text, data or the owner's words.
             observation,
             observation.table,

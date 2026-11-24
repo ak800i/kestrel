@@ -32,6 +32,9 @@
     <!-- Optional, asked for at the first "call [name]": the contacts, which Kestrel reads and matches only on the phone
          (design spec, section 13.6). -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Optional, asked together with READ_CONTACTS at the agent's first add_contact or delete_contact (design D19 of
+         sub-project 6): the agent adds a contact to the phone's own contacts and deletes one that find_contact found. -->
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <!-- Granted at install, for SignInService, which keeps a sign-in running while the browser is in front (design D10 of
          sub-project 4; prototype P5). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />

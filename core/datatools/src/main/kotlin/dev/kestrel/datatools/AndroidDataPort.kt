@@ -8,6 +8,7 @@ import android.location.LocationManager
 import android.media.AudioManager
 import android.os.Build
 import dev.kestrel.agent.port.AccessKind
+import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.DataResult
@@ -20,6 +21,7 @@ import dev.kestrel.datatools.calendar.CalendarTool
 import dev.kestrel.datatools.calls.CallLogTool
 import dev.kestrel.datatools.clock.ClockIntents
 import dev.kestrel.datatools.contacts.AndroidContacts
+import dev.kestrel.datatools.contacts.ContactsWriter
 import dev.kestrel.datatools.contacts.FindContact
 import dev.kestrel.datatools.contacts.contactsAccess
 import dev.kestrel.datatools.location.GpsLocation
@@ -58,6 +60,7 @@ class AndroidDataPort(
     private val granted: (String) -> Boolean = { app.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     private val contactsAllowed = contactsAccess(app)
     private val contacts = AndroidContacts(resolver)
+    private val writer = ContactsWriter(resolver)
     private val media = MediaTool(resolver, granted)
     private val mediaCalls = AfterCalls(media::forget)
     private val calendar = CalendarTool(resolver, granted)
@@ -130,6 +133,34 @@ class AndroidDataPort(
         return opened(fellBack + NavigationIntents.MAPS_RESULT, NavigationIntents.GOOGLE_MAPS)
     }
 
+    // add_contact and delete_contact ask for both contacts permissions together (design D19 of sub-project 6).
+    override suspend fun addContact(name: String, number: String): DataResult {
+        if (!CONTACT_TOOLS.all(granted)) return DataResult.NeedsPermission(CONTACT_TOOLS)
+        return DataPortRules.guarded(CONTACT_TOOLS) {
+            withContext(Dispatchers.IO) {
+                val fields = listOf(DataField("name", name), DataField("number", number))
+                if (ContactsWriter.duplicate(name, number, contacts.read())) {
+                    DataResult.Ok(listOf(DataLine("added nothing: a contact with this name already has this number", fields)))
+                } else {
+                    writer.add(name, number) ?: return@withContext DataResult.Failed("Android did not add the contact")
+                    DataResult.Ok(listOf(DataLine("added contact", fields)))
+                }
+            }
+        }
+    }
+
+    override suspend fun deleteContact(ref: String): DataResult {
+        if (!CONTACT_TOOLS.all(granted)) return DataResult.NeedsPermission(CONTACT_TOOLS)
+        val id = ref.toLongOrNull() ?: return DataResult.Failed("Kestrel has no such contact")
+        return DataPortRules.guarded(CONTACT_TOOLS) {
+            if (withContext(Dispatchers.IO) { writer.delete(id) }) {
+                DataResult.Ok(listOf(DataLine("deleted the contact", emptyList())))
+            } else {
+                DataResult.Failed("the contact is no longer there")
+            }
+        }
+    }
+
     /** Drops the media table once no `find_media` or `share_media` runs, so after the task's coroutine has stopped. */
     override fun forgetTask() = mediaCalls.request()
 
@@ -160,6 +191,7 @@ class AndroidDataPort(
         const val CONNECT_MILLIS = 2_000L
 
         val CONTACTS = listOf(Manifest.permission.READ_CONTACTS)
+        val CONTACT_TOOLS = listOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)
         val LOCATION = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
     }
 }

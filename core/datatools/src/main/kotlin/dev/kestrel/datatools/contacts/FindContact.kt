@@ -36,6 +36,7 @@ object FindContact {
             names.drop(1).map { DataField("other name", it) } +
             details.contact.numbers.map { DataField("phone", "${it.number} (${it.kind})") } +
             details.emails.map { DataField("e-mail", it) }
-        return DataLine(fixed, fields)
+        // The contact's ID stays on the phone as the line's handle, which delete_contact uses (design D19 of sub-project 6).
+        return DataLine(fixed, fields, ref = details.contact.id.toString())
     }
 }

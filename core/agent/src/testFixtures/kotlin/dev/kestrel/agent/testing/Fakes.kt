@@ -174,8 +174,11 @@ class FakeData : DataPort {
     val results = mutableMapOf<String, ArrayDeque<DataResult>>()
     val calls = mutableListOf<String>()
 
-    /** The name that `find_contact` and the place that `navigate` got, in order. */
+    /** The name that `find_contact` and `add_contact` and the place that `navigate` got, in order. */
     val names = mutableListOf<String>()
+
+    /** The handles that `delete_contact` got, in order. */
+    val refs = mutableListOf<String>()
     var forgotten = false
 
     /** Runs on every call, before its answer: a test may change the screen here, as an intent would. */
@@ -206,6 +209,8 @@ class FakeData : DataPort {
     override suspend fun getLocation() = next("get_location")
     override suspend fun mediaControl(action: MediaAction) = next("media_control")
     override suspend fun navigate(app: NavigationApp, to: String, mode: TravelMode?) = next("navigate").also { names += to }
+    override suspend fun addContact(name: String, number: String) = next("add_contact").also { names += name }
+    override suspend fun deleteContact(ref: String) = next("delete_contact").also { refs += ref }
 
     override fun forgetTask() {
         forgotten = true

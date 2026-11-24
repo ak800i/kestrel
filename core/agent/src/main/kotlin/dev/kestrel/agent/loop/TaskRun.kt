@@ -195,6 +195,7 @@ internal class TaskRun(val ports: AgentPorts, val settings: AgentSettings, val t
             allowance = TaskAllowance.from(task.text, task.knownNames + memory.aliasKeys),
             ownerWords = Normalizer.words(task.text).toSet(),
             memoryValues = memory.usedValues,
+            ownerDigits = listOf(TaskSafety.digitsOf(task.text)).filter { it.isNotEmpty() },
         )
         observation = observe(first, last = null, targetKey = null)
         RoutineMatcher.match(task.text, recalled(emptyList()) { ports.memory.routines() }, memory.aliasKeys, task.knownNames)?.let { match ->

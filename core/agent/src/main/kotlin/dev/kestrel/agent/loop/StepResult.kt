@@ -227,6 +227,7 @@ data class StepResult(
         private val DATA_TOOLS = setOf(
             Tools.FIND_CONTACT, Tools.FIND_MEDIA, Tools.SHARE_MEDIA, Tools.LIST_EVENTS, Tools.CREATE_EVENT, Tools.SET_ALARM, Tools.SET_TIMER,
             Tools.LIST_NOTIFICATIONS, Tools.LIST_SMS, Tools.COMPOSE_SMS, Tools.LIST_CALLS, Tools.GET_LOCATION, Tools.MEDIA_CONTROL, Tools.NAVIGATE,
+            Tools.ADD_CONTACT, Tools.DELETE_CONTACT,
         )
 
         /** A shown label cut at 40 characters inside its quotes, never inside an escape. */

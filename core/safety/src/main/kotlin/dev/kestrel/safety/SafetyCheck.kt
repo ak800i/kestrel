@@ -111,6 +111,7 @@ object SafetyCheck {
 
         // Typing: the request's words or memory's values, else text from the screen.
         if (proposal.kind == ActionKind.TYPE) raise(typing(proposal.text.orEmpty(), task), Source.TYPING)
+        if (proposal.kind == ActionKind.ADD_CONTACT) raise(contactTyping(proposal.contactName.orEmpty(), proposal.contactNumber.orEmpty(), task), Source.TYPING)
 
         // Links.
         if (proposal.kind == ActionKind.OPEN_URL || proposal.kind == ActionKind.OPEN_DEEP_LINK) {
@@ -245,7 +246,24 @@ object SafetyCheck {
     /** The tools whose category code fixes (design D13, review A I7). */
     private fun fixed(kind: ActionKind): Category = when (kind) {
         ActionKind.SETTINGS_DATA -> Category.ORDINARY_SETTINGS
+        ActionKind.DELETE_CONTACT -> Category.DELETING
         else -> Category.READING
+    }
+
+    /**
+     * `add_contact` types the request when every word of the name is among the owner's words or a memory value that the task
+     * used, and the number's digits occur in a row among the digits of the owner's texts or of those values; otherwise it
+     * types screen text, which Standard mode asks about, because a contact from a screen could make a later "call <name>"
+     * reach a stranger (design D19 of sub-project 6).
+     */
+    private fun contactTyping(name: String, number: String, task: TaskSafety): Category {
+        val words = Normalizer.words(name)
+        val known = task.ownerWords + task.memoryValues.flatMap { Normalizer.words(it) }
+        val digits = TaskSafety.digitsOf(number)
+        val sources = task.ownerDigits + task.memoryValues.map(TaskSafety::digitsOf)
+        val named = words.isNotEmpty() && words.all { it in known }
+        val numbered = digits.isNotEmpty() && sources.any { digits in it }
+        return if (named && numbered) Category.TYPING_REQUEST else Category.TYPING_SCREEN_TEXT
     }
 
     /**

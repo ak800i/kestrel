@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.provider.ContactsContract
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -165,6 +166,75 @@ class AgentEndToEndTest {
         return uri
     }
 
+    // The contact tools need both contacts permissions, which a test cannot take back from Kestrel without ending its
+    // process; the plan's step grants them before these tests and takes back those that Kestrel lacked before.
+    private fun assumeContacts() {
+        assumeTrue("Only on kestrel-api37", screen.shell("getprop ro.boot.qemu.avd_name").trim() == "kestrel-api37")
+        assumeTrue(
+            "Grant Kestrel READ_CONTACTS and WRITE_CONTACTS before this test",
+            listOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS).all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED },
+        )
+    }
+
+    private fun writerContacts(): Int = context.contentResolver.query(
+        ContactsContract.RawContacts.CONTENT_URI, arrayOf(ContactsContract.RawContacts._ID),
+        "${ContactsContract.RawContacts.DISPLAY_NAME_PRIMARY} = ? AND ${ContactsContract.RawContacts.DELETED} = 0", arrayOf(CONTACT), null,
+    )?.use { it.count } ?: 0
+
+    private fun removeWriterContacts() {
+        context.contentResolver.delete(ContactsContract.RawContacts.CONTENT_URI, "${ContactsContract.RawContacts.DISPLAY_NAME_PRIMARY} = ?", arrayOf(CONTACT))
+    }
+
+    private fun addThenDelete(answer: String): Pair<AgentRunner.Ended, Int> {
+        screen.open("MessengerActivity", "Chats")
+        val add = ScriptedModel(listOf(
+            call("add_contact", null, null, null, "name" to CONTACT, "number" to CONTACT_NUMBER),
+            call("finish", null, null, null, "summary" to "I added the contact.", "evidence" to listOf(mapOf("step" to 1))),
+        ))
+        val added = AgentTests.ended(AgentTests.run("add a contact $CONTACT with the number $CONTACT_NUMBER", add))
+        assertEquals(EndReason.FINISHED, added.report.end)
+        assertEquals(0, added.report.confirmed)
+        assertEquals(1, writerContacts())
+        val delete = ScriptedModel(listOf(
+            call("find_contact", null, null, null, "name" to CONTACT),
+            call("delete_contact", null, null, null, "contact" to 1),
+            call("finish", null, null, null, "summary" to "I deleted the contact.", "evidence" to listOf(mapOf("step" to 2))),
+        ))
+        val task = AgentTests.run("delete the contact $CONTACT", delete)
+        AgentTests.awaitAsking(task, TaskAsk.CONFIRM)
+        AgentTests.say(answer)
+        return AgentTests.ended(task) to writerContacts()
+    }
+
+    @Test
+    fun aContactIsAddedWithoutAQuestionAndDeletedAfterTheOwnersYes() {
+        assumeContacts()
+        try {
+            val (deleted, left) = addThenDelete("confirm")
+
+            assertEquals(EndReason.FINISHED, deleted.report.end)
+            assertEquals(1, deleted.report.confirmed)
+            assertEquals(0, deleted.report.unconfirmed)
+            assertEquals(0, left)
+        } finally {
+            removeWriterContacts()
+        }
+    }
+
+    @Test
+    fun aContactIsKeptAfterTheOwnersNo() {
+        assumeContacts()
+        try {
+            val (declined, left) = addThenDelete("no")
+
+            assertEquals(EndReason.DECLINED, declined.report.end)
+            assertEquals(0, declined.report.unconfirmed)
+            assertEquals(1, left)
+        } finally {
+            removeWriterContacts()
+        }
+    }
+
     @Test
     fun theAgentStaysOutOfKestrelsOwnApp() = runBlocking {
         // Kestrel's settings in front: the task stops before any action (design D16; D32 item 16).
@@ -187,5 +257,9 @@ class AgentEndToEndTest {
     private companion object {
         // The owner's fictional name in the fixture's WhatsApp-like self-chat (FixtureChats.OWNER_NAME).
         const val OWNER = "Test Owner"
+
+        // A test contact of the contact tools' cases, with a fictional number.
+        const val CONTACT = "Kestrel Writer Test"
+        const val CONTACT_NUMBER = "+1 202 555 0188"
     }
 }

@@ -253,6 +253,33 @@ class SafetyCheckTest {
     }
 
     @Test
+    fun theContactToolsAreTypingAndDeletingTestModeLetsThemThroughAndAContactsAppStaysACall() {
+        val screen = TestScreen()
+        val task = TaskSafety.start("add a contact maple heron with the number +1 202 555 0160")
+        val deleteTask = TaskSafety.start("delete the contact Ana Test")
+        fun add(name: String, number: String) = Proposal("add_contact", ActionKind.ADD_CONTACT, contactName = name, contactNumber = number, frontAppLabel = "Chat")
+        val delete = Proposal("delete_contact", ActionKind.DELETE_CONTACT, contactName = "Ana Test", contactNumber = "+1 202 555 0143", frontAppLabel = "Chat")
+
+        assertEquals("run", decide(add("Maple Heron", "+12025550160"), screen, task))
+        assertEquals("confirm", decide(add("Maple Heron", "+1 202 555 0199"), screen, task))
+        assertEquals("confirm", decide(add("Marko", "+12025550160"), screen, task))
+        assertEquals(listOf("confirm", "confirm", "run"), Mode.entries.map { decide(delete, screen, deleteTask, it) })
+        val asked = SafetyCheck.decide(delete, screen.snapshot(), deleteTask, standard) as Decision.Confirm
+        assertEquals("Delete the contact 'Ana Test' (+1 202 555 0143)? Say confirm or cancel.", asked.confirmation.question)
+        assertEquals(Category.DELETING, asked.confirmation.category)
+        val outside = SafetyCheck.decide(delete, screen.snapshot(), task, standard.copy(mode = Mode.FULL_AUTO)) as Decision.Confirm
+        assertEquals("You didn't ask me to delete anything. Delete the contact 'Ana Test' (+1 202 555 0143)? Say confirm or cancel.", outside.confirmation.question)
+        val testMode = standard.copy(testMode = true, mode = Mode.FULL_AUTO)
+        assertEquals(Decision.Run, SafetyCheck.decide(add("Maple Heron", "+12025550160"), screen.snapshot(), task, testMode))
+        assertEquals(Decision.Run, SafetyCheck.decide(delete, screen.snapshot(), deleteTask, testMode))
+        // The contacts apps stay guarded: every acting step there is a call, which is handed over.
+        val contacts = TestScreen("com.google.android.contacts")
+        assertEquals("handover:CALL", decide(tap(contacts.add(1800, "Save")), contacts))
+        assertEquals(listOf("12025550160"), task.ownerDigits)
+        assertEquals(listOf("12025550160", "0641234567"), task.withOwnerWords("064 123 4567").ownerDigits)
+    }
+
+    @Test
     fun credentialsAndPaymentsAreHandedOver() {
         val login = TestScreen()
         val password = login.add(600, null, editable = true, password = true, hint = "Password")

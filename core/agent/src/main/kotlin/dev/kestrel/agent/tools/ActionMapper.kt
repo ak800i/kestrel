@@ -71,6 +71,9 @@ object ActionMapper {
             is AgentCall.SetAlarm, is AgentCall.SetTimer, is AgentCall.CreateEvent, is AgentCall.MediaControl, is AgentCall.Navigate ->
                 of(ActionKind.SETTINGS_DATA)
             is AgentCall.ShareMedia -> of(ActionKind.SHARE_MEDIA).copy(receivingPackage = receivingPackage, receivingAppLabel = receivingAppLabel)
+            is AgentCall.AddContact -> of(ActionKind.ADD_CONTACT).copy(contactName = call.name, contactNumber = call.number)
+            // DataSteps adds the found contact's name and number, which only it knows.
+            is AgentCall.DeleteContact -> of(ActionKind.DELETE_CONTACT)
             is AgentCall.ComposeSms -> of(ActionKind.COMPOSE_SMS, text = call.text).copy(receivingPackage = receivingPackage, receivingAppLabel = receivingAppLabel)
             is AgentCall.AskUser, is AgentCall.Say, is AgentCall.Finish, is AgentCall.Fail -> of(ActionKind.DIALOGUE)
             is AgentCall.Remember, is AgentCall.Forget -> of(ActionKind.MEMORY)
@@ -125,9 +128,11 @@ object ActionMapper {
 
     /**
      * Runs a data tool, or returns null for a call that is none. `share_media` needs [sharePackage], the package that the
-     * loop resolved from the app's name.
+     * loop resolved from the app's name, and `delete_contact` [contactRef], the handle of the found contact that it names.
      */
-    suspend fun runData(call: AgentCall, port: DataPort, today: LocalDate, sharePackage: String? = null): DataResult? = when (call) {
+    suspend fun runData(call: AgentCall, port: DataPort, today: LocalDate, sharePackage: String? = null, contactRef: String? = null): DataResult? = when (call) {
+        is AgentCall.AddContact -> port.addContact(call.name, call.number)
+        is AgentCall.DeleteContact -> contactRef?.let { port.deleteContact(it) } ?: DataResult.Failed(FIND_FIRST)
         is AgentCall.FindContact -> port.findContact(call.name)
         is AgentCall.FindMedia -> {
             val from = Dates.day(call.day, today)
@@ -157,6 +162,9 @@ object ActionMapper {
     }
 
     private const val BAD_DATE = "The date is not valid."
+
+    /** The sentence of a `delete_contact` without an earlier `find_contact` (design D19 of sub-project 6). */
+    const val FIND_FIRST = "Call find_contact first."
 
     /**
      * The largest scrollable entry of the front window (design D10), so that a dialog's or a picker's list wins over the

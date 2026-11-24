@@ -61,6 +61,15 @@ object ConfirmationBuilder {
                 return ask("Open $receiver's share screen with ${items(proposal.shareCount)}?", null)
             }
             ActionKind.COMPOSE_SMS -> return ask("Open the messages app with a text message?", null)
+            ActionKind.ADD_CONTACT -> {
+                val name = proposal.contactName.orEmpty()
+                val number = proposal.contactNumber.orEmpty()
+                return ask("Add the contact '$name' with the number $number?", "$name $number")
+            }
+            ActionKind.DELETE_CONTACT -> {
+                val name = proposal.contactName.orEmpty()
+                return ask("Delete the contact '$name'${proposal.contactNumber?.let { " ($it)" }.orEmpty()}?", name)
+            }
             ActionKind.SET_SLIDER -> {
                 val percent = proposal.percent ?: 0
                 return ask("Set '${element?.let { ScreenTree.name(it) } ?: "the slider"}' to $percent% in $app?", "$percent")

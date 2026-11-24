@@ -39,6 +39,12 @@ interface DataPort {
 
     suspend fun navigate(app: NavigationApp, to: String, mode: TravelMode?): DataResult
 
+    /** Adds a contact to the phone's own contacts, or nothing when it has that number already (design D19 of sub-project 6). */
+    suspend fun addContact(name: String, number: String): DataResult
+
+    /** Deletes the contact whose handle [ref] a `find_contact` line of this task carried, with every account's copy of it. */
+    suspend fun deleteContact(ref: String): DataResult
+
     /** Drops the task's media item table. */
     fun forgetTask()
 }
@@ -72,9 +78,12 @@ sealed interface DataResult {
     }
 }
 
-/** One item: [fixed] is Kestrel's own text, the [fields] are untrusted. */
-data class DataLine(val fixed: String, val fields: List<DataField>) {
-    override fun toString(): String = "DataLine(fixed=${fixed.length} chars, fields=${fields.size})"
+/**
+ * One item: [fixed] is Kestrel's own text, the [fields] are untrusted, and [ref] is Kestrel's own handle of the item, such
+ * as a found contact's ID, which stays on the phone and never reaches the model (design D19 of sub-project 6).
+ */
+data class DataLine(val fixed: String, val fields: List<DataField>, val ref: String? = null) {
+    override fun toString(): String = "DataLine(fixed=${fixed.length} chars, fields=${fields.size}, ref=${ref != null})"
 }
 
 data class DataField(val name: String, val value: String) {

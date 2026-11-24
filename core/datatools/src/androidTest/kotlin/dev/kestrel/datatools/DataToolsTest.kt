@@ -117,6 +117,23 @@ class DataToolsTest {
     }
 
     @Test
+    fun contactsWriterAddsALocalContactThatFindContactFindsAndDeletesItAgain() {
+        val writer = dev.kestrel.datatools.contacts.ContactsWriter(resolver)
+
+        assertTrue(writer.add(WRITER_NAME, WRITER_NUMBER) != null)
+        val details = AndroidContacts(resolver).details()
+        val found = FindContact.result(WRITER_NAME, details) as DataResult.Ok
+        val ref = found.lines.single().ref!!
+        assertTrue(dev.kestrel.datatools.contacts.ContactsWriter.duplicate(WRITER_NAME, WRITER_NUMBER, details.map { it.contact }))
+        val account = resolver.query(RawContacts.CONTENT_URI, arrayOf(RawContacts.ACCOUNT_TYPE), "${RawContacts.CONTACT_ID} = ?", arrayOf(ref), null)!!
+            .use { cursor -> cursor.moveToFirst(); cursor.getString(0) }
+        assertEquals(null, account)
+
+        assertTrue(writer.delete(ref.toLong()))
+        assertTrue((FindContact.result(WRITER_NAME, AndroidContacts(resolver).details()) as DataResult.Ok).lines.isEmpty())
+    }
+
+    @Test
     fun findMediaFindsTheTestPhotosOfTheirDayAndBuildsTheirShareIntent() {
         addTestPhoto(1, DAY.atTime(12, 0))
         addTestPhoto(2, DAY.atTime(12, 5))
@@ -355,6 +372,8 @@ class DataToolsTest {
         resolver.delete(testCalendars(), "${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.ACCOUNT_TYPE} = ?", arrayOf(TEST_ACCOUNT, CalendarContract.ACCOUNT_TYPE_LOCAL))
         val rawContacts = RawContacts.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
         resolver.delete(rawContacts, "${RawContacts.ACCOUNT_NAME} = ? AND ${RawContacts.ACCOUNT_TYPE} = ?", arrayOf(TEST_ACCOUNT, TEST_ACCOUNT_TYPE))
+        // ContactsWriter's local contact, which has no account.
+        resolver.delete(rawContacts, "${RawContacts.ACCOUNT_TYPE} IS NULL AND ${RawContacts.DISPLAY_NAME_PRIMARY} = ?", arrayOf(WRITER_NAME))
         resolver.delete(
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
             "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
@@ -394,6 +413,8 @@ class DataToolsTest {
 
         // The fictional number of design D28.
         const val NUMBER = "+1 202 555 0143"
+        const val WRITER_NAME = "Kestrel Writer Test"
+        const val WRITER_NUMBER = "+1 202 555 0188"
         const val TELEGRAM = "vnd.android.cursor.item/vnd.org.telegram.messenger.android.profile"
 
         // A public place in Belgrade (Slavija), as in :app's AgentLocationTest.

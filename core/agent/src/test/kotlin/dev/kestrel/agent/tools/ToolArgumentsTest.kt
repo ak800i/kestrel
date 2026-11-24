@@ -125,6 +125,16 @@ class ToolArgumentsTest {
     }
 
     @Test
+    fun aContactHasANameAndAPhoneNumberAndADeleteNamesAFoundContactsNumber() {
+        assertEquals(AgentCall.AddContact("Maple Heron", "+1 (202) 555-0160"), valid("add_contact", """{"name": "Maple Heron", "number": "+1 (202) 555-0160"}"""))
+        assertEquals("The argument name is longer than 80 characters.", invalid("add_contact", """{"name": "${"a".repeat(81)}", "number": "123"}"""))
+        assertEquals("The argument number must be a phone number of 3 to 20 digits.", invalid("add_contact", """{"name": "Ana", "number": "call me"}"""))
+        assertEquals("The argument number must be a phone number of 3 to 20 digits.", invalid("add_contact", """{"name": "Ana", "number": "12"}"""))
+        assertEquals(AgentCall.DeleteContact(2), valid("delete_contact", """{"contact": 2}"""))
+        assertEquals("The argument contact must be from 1 to 20.", invalid("delete_contact", """{"contact": 0}"""))
+    }
+
+    @Test
     fun aSlidersTargetMustBeASliderAndItsPercentFrom0To100() {
         val tree = TestTree("com.android.settings")
         tree.add(200, "Done", clickable = true, className = "android.widget.Button")

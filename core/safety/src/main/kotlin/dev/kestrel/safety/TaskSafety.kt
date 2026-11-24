@@ -41,9 +41,15 @@ data class TaskSafety(
     val trail: ProtectedTrail? = null,
     val flows: Int = 0,
     val secrets: Map<String, String> = emptyMap(),
+    /**
+     * The digits of the owner's request and answers, each text's in their order, so that `add_contact` can tell whether a
+     * number's digits occur in a row among them (design D19 of sub-project 6).
+     */
+    val ownerDigits: List<String> = emptyList(),
 ) {
     /** Adds the words of an answer of the owner's, so that typing them is typing the request. */
-    fun withOwnerWords(text: String): TaskSafety = copy(ownerWords = ownerWords + Normalizer.words(text))
+    fun withOwnerWords(text: String): TaskSafety =
+        copy(ownerWords = ownerWords + Normalizer.words(text), ownerDigits = ownerDigits + listOf(digitsOf(text)).filter { it.isNotEmpty() })
 
     /**
      * Remembers a vault's [value] that the task typed after the owner's yes, with the [words] that name its kind
@@ -74,7 +80,10 @@ data class TaskSafety(
     companion object {
         /** The state at a task's start, from the owner's [request] and the [knownNames] of memory and the contacts. */
         fun start(request: String, knownNames: Set<String> = emptySet()): TaskSafety =
-            TaskSafety(TaskAllowance.from(request, knownNames), ownerWords = Normalizer.words(request).toSet())
+            TaskSafety(TaskAllowance.from(request, knownNames), ownerWords = Normalizer.words(request).toSet(), ownerDigits = listOf(digitsOf(request)).filter { it.isNotEmpty() })
+
+        /** The ASCII digits of [text] in their order, every other character left out. */
+        fun digitsOf(text: String): String = text.filter { it in '0'..'9' }
     }
 }
 

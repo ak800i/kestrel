@@ -48,6 +48,8 @@ object Tools {
     const val REMEMBER = "remember"
     const val FORGET = "forget"
     const val SET_SLIDER = "set_slider"
+    const val ADD_CONTACT = "add_contact"
+    const val DELETE_CONTACT = "delete_contact"
 
     /** The tools whose call declares a category: those that act on an element. */
     val WITH_CATEGORY: Set<String> = setOf(TAP, LONG_PRESS, TYPE_TEXT, SCROLL, SWIPE, SET_SLIDER)
@@ -62,6 +64,8 @@ object Tools {
     internal const val WAIT_MAX = 10
     internal const val LIST_MAX = 20
     internal const val TIMER_MAX = 86_400
+    internal const val NAME_LIMIT = 80
+    internal const val NUMBER_LIMIT = 40
 
     internal val DIRECTIONS = listOf("up", "down", "left", "right")
     internal val DAYS = listOf("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -296,6 +300,21 @@ object Tools {
                 category,
             ),
             listOf("target", "percent", "reason", "category"),
+        ),
+        tool(
+            ADD_CONTACT,
+            "Add a contact with a name and a phone number to the phone's own contacts, which no online account syncs. Use it instead of a contacts app.",
+            listOf(
+                "name" to string("The contact's name; at most $NAME_LIMIT characters."),
+                "number" to string("The phone number, with digits, spaces, dashes, brackets and a leading +; at most $NUMBER_LIMIT characters."),
+            ),
+            listOf("name", "number"),
+        ),
+        tool(
+            DELETE_CONTACT,
+            "Delete a contact that the task's newest find_contact result lists, by its number there: 2 for contact 2. Use it instead of a contacts app.",
+            listOf("contact" to integer("The contact's number in the newest find_contact result.")),
+            listOf("contact"),
         ),
     )
 

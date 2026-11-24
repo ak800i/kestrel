@@ -175,10 +175,21 @@ object ToolArguments {
         Tools.FAIL -> AgentCall.Fail(r.string("reason", Tools.FAIL_LIMIT))
         Tools.REMEMBER -> AgentCall.Remember(r.string("key"), r.string("value"))
         Tools.SET_SLIDER -> AgentCall.SetSlider(r.target(slider = true), r.int("percent", 0..100), reason(r), category(r))
+        Tools.ADD_CONTACT -> AgentCall.AddContact(r.string("name", Tools.NAME_LIMIT), number(r))
+        Tools.DELETE_CONTACT -> AgentCall.DeleteContact(r.int("contact", 1..Tools.LIST_MAX))
         else -> AgentCall.Forget(r.string("key"))
     }
 
     private fun reason(r: Reader): String = r.string("reason", Tools.REASON_LIMIT)
+
+    /** add_contact's number: digits with a leading `+`, spaces, dashes and brackets, 3 to 20 digits (design D19 of sub-project 6). */
+    private fun number(r: Reader): String {
+        val text = r.string("number", Tools.NUMBER_LIMIT).trim()
+        if (!PHONE.matches(text) || text.count { it in '0'..'9' } !in 3..20) throw Bad("The argument number must be a phone number of 3 to 20 digits.")
+        return text
+    }
+
+    private val PHONE = Regex("\\+?[0-9 ()\\-]+")
 
     private fun category(r: Reader): Category = r.choice("category", CATEGORIES)
 
