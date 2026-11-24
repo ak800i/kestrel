@@ -136,6 +136,14 @@ class SettingsStepsTest {
         // Kestrel's manual Do Not Disturb goes off again.
         assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.manual(true)))
         assertEquals("0", run.adb.settings["global/zen_mode"])
+        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.manual(true, enabler = "dev.kestrel")))
+        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.android13(ZenDump.rule13(null, null, enabler = "com.android.shell"))))
+
+        // A routine or an app of the owner's turned the manual Do Not Disturb on during the run: it stays, with a word.
+        assertEquals(emptyList<String>(), restoreAfter(ZenDump.manual(true, enabler = "com.samsung.android.app.routines")))
+        assertEquals("1", run.adb.settings["global/zen_mode"])
+        assertEquals(1, run.console.warnings.size)
+        run.console.warnings.clear()
 
         // The owner's schedule began during the run: set_dnd off would snooze it for the night, so both stay on, with a word.
         val schedule = ZenDump.rule13("EVERY_NIGHT_DEFAULT_RULE", "STATE_TRUE")
@@ -328,18 +336,19 @@ internal object ZenDump {
     const val NIGHTLY = "condition://android/schedule?days=1.2.3.4.5.6.7&start=22.0&end=7.0&exitAtAlarm=true"
     const val EVENTS = "condition://android/event?userId=-10000&calendar=&reply=1"
 
-    private fun rule(conditionId: String) = "name=Sleeping,zenMode=ZEN_MODE_IMPORTANT_INTERRUPTIONS,conditionId=$conditionId," +
-        "pkg=android,component=null,configActivity=null,creationTime=1,enabler=null,zenPolicy=null,modified=false"
+    private fun rule(conditionId: String, enabler: String?) = "name=Sleeping,zenMode=ZEN_MODE_IMPORTANT_INTERRUPTIONS,conditionId=$conditionId," +
+        "pkg=android,component=null,configActivity=null,creationTime=1,enabler=$enabler,zenPolicy=ZenPolicy{priorityCategories=[reminders=disallow ], " +
+        "interruptionType=[alarms=all ]},modified=false"
 
     private fun condition(state: String?, conditionId: String) = state?.let { "Condition[state=$it,id=$conditionId,summary=...,line1=,line2=,icon=0,flags=2]" }
 
-    /** A rule of Android 13, whose condition has [state] (none when null). */
-    fun rule13(id: String?, state: String?, enabled: Boolean = true, snoozing: Boolean = false, conditionId: String = NIGHTLY) =
-        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},snoozing=$snoozing,${rule(conditionId)},condition=${condition(state, conditionId)}]"
+    /** A rule of Android 13, whose condition has [state] (none when null), turned on by [enabler]. */
+    fun rule13(id: String?, state: String?, enabled: Boolean = true, snoozing: Boolean = false, conditionId: String = NIGHTLY, enabler: String? = null) =
+        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},snoozing=$snoozing,${rule(conditionId, enabler)},condition=${condition(state, conditionId)}]"
 
-    /** A rule with modes UI, whose condition has [state] (none when null). */
-    fun ruleUi(id: String?, state: String?, override: String = "OVERRIDE_NONE", enabled: Boolean = true, conditionId: String = NIGHTLY) =
-        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},conditionOverride=$override,${rule(conditionId)}," +
+    /** A rule with modes UI, whose condition has [state] (none when null), turned on by [enabler]. */
+    fun ruleUi(id: String?, state: String?, override: String = "OVERRIDE_NONE", enabled: Boolean = true, conditionId: String = NIGHTLY, enabler: String? = null) =
+        "ZenRule[id=$id,state=${state ?: "STATE_FALSE"},enabled=${"$enabled".uppercase()},conditionOverride=$override,${rule(conditionId, enabler)}," +
             "condition=${condition(state, conditionId)},deviceEffects=null,allowManualInvocation=true,iconResName=null,triggerDescription=null,type=1]"
 
     /** The device's clock at [hour]:[minute] on Monday 23 November 2026 plus [days], in Belgrade, as `date +%s` and `persist.sys.timezone` give it. */
@@ -365,6 +374,10 @@ internal object ZenDump {
         "    mZenMode=ZEN_MODE_OFF\n    mConfig=ZenModeConfig[user=0\nhasPriorityChannels=false,allowPriorityChannels=true,\nautomaticRules={\n" +
             automatic.joinToString(",\n") { "a=$it" } + "}" + ",\nmanualRule=$manual,\ndeletedRules={${deleted?.let { "\nd=$it" }.orEmpty()}}]\n    mSuppressedEffects=0"
 
-    /** Do Not Disturb [on] by the manual rule as `set_dnd` leaves it on Android 13, or off, beside a schedule that is off. */
-    fun manual(on: Boolean) = android13(if (on) rule13(null, null) else null, rule13("EVERY_NIGHT_DEFAULT_RULE", null))
+    /**
+     * Do Not Disturb [on] by the manual rule as `set_dnd` leaves it on Android 13 (turned on by [enabler], the shell's
+     * package for `set_dnd`), or off, beside a schedule that is off.
+     */
+    fun manual(on: Boolean, enabler: String = "com.android.shell") =
+        android13(if (on) rule13(null, null, enabler = enabler) else null, rule13("EVERY_NIGHT_DEFAULT_RULE", null))
 }
