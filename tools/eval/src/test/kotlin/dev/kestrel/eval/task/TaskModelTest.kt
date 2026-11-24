@@ -18,6 +18,8 @@ class TaskModelTest {
         assertEquals("send Mira a Telegram message that I'm 10 minutes late for maple heron", Request("send {name} a Telegram message that I'm 10 minutes late for {marker}").fill(values))
         assertEquals("I told \\\"Mira\\\" ", RunValues("m", name = "\"Mira\"").fill("I told {name} ", json = true))
         assertEquals("The run has no value for {time}.", assertThrows(IllegalStateException::class.java) { values.fill("at {time}") }.message)
+        // A link's marker is percent-encoded, so that the link stays one that Kestrel can read.
+        assertEquals("mailto:a@example.com?subject=about%20maple%20heron", values.fill("mailto:a@example.com?subject=about%20{marker_url}"))
     }
 
     @Test

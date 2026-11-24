@@ -7,11 +7,12 @@ import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.Console
 import dev.kestrel.eval.run.Restores
+import java.net.URLEncoder
 import java.nio.file.Path
 
 /**
  * The values of one run (design D4 of sub-project 6) that fill the placeholders of a request and a script: `{marker}`,
- * two words of the run, and `{name}`, `{time}`, `{number}` and `{address}`, which a setup step sets; plan 6B adds
+ * two words of the run (`{marker_url}` percent-encoded, for a link), and `{name}`, `{time}`, `{number}` and `{address}`, which a setup step sets; plan 6B adds
  * `{date}` (tomorrow as YYYY-MM-DD), `{hour}` and `{minute}` (an alarm's numbers), which a script's data tools need.
  */
 class RunValues(
@@ -28,6 +29,8 @@ class RunValues(
     fun fill(text: String, json: Boolean = false): String = PLACEHOLDER.replace(text) { match ->
         val value = when (match.groupValues[1]) {
             "marker" -> marker
+            // The marker inside a link, whose space a link may not hold.
+            "marker_url" -> URLEncoder.encode(marker, Charsets.UTF_8).replace("+", "%20")
             "name" -> name
             "time" -> time
             "number" -> number
@@ -40,7 +43,7 @@ class RunValues(
     }
 
     private companion object {
-        val PLACEHOLDER = Regex("\\{(marker|name|time|number|address|date|hour|minute)\\}")
+        val PLACEHOLDER = Regex("\\{(marker|marker_url|name|time|number|address|date|hour|minute)\\}")
     }
 }
 
