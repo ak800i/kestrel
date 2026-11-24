@@ -183,27 +183,36 @@ object SelfChats {
      * Whether a `mailto:` link writes only to the owner, as Gmail's Send to his own address does (spec 12.7): every
      * recipient in its path and in its `to`, `cc` and `bcc` parameters, decoded, is one of [SafetySettings.ownerEmails],
      * there is at least one, and it has no fragment and no parameter but those, `subject` and `body`, so that nothing that
-     * an app could read as a recipient goes unchecked.
+     * an app could read as a recipient goes unchecked. The query is read in both ways that apps read it, and both must
+     * pass: Kestrel's, which splits it and then decodes each part, and `android.net.MailTo.parse`'s, which AOSP's Email
+     * and other apps use: it decodes the whole query, splits that on `&` and `=`, and decodes each part again, so that an
+     * encoded `%26cc%3D` in a body becomes a Cc.
      */
     fun mailtoToOwner(link: String, settings: SafetySettings): Boolean {
         val text = link.trim()
         if (!text.startsWith("mailto:", ignoreCase = true) || '#' in text) return false
         val rest = text.substring("mailto:".length)
-        val recipients = LinkCheck.decode(rest.substringBefore('?'), plusIsSpace = false)?.split(',')?.toMutableList() ?: return false
+        val path = LinkCheck.decode(rest.substringBefore('?'), plusIsSpace = false) ?: return false
         val query = rest.substringAfter('?', "")
-        if (query.isNotEmpty()) {
-            for (parameter in query.split('&')) {
-                val name = LinkCheck.decode(parameter.substringBefore('='), plusIsSpace = false)?.lowercase() ?: return false
-                val value = LinkCheck.decode(parameter.substringAfter('=', ""), plusIsSpace = false) ?: return false
-                when (name) {
-                    in RECIPIENT_FIELDS -> recipients += value.split(',')
-                    "subject", "body" -> Unit
-                    else -> return false
-                }
+        val kestrels = query.split('&').map { it.substringBefore('=') to it.substringAfter('=', "") }
+        val whole = LinkCheck.decode(query, plusIsSpace = false) ?: return false
+        val mailTos = whole.split('&').map { parameter -> parameter.split('=').let { it[0] to it.getOrElse(1) { "" } } }
+        val mine = settings.ownerEmails.map { it.trim().lowercase() }.toSet()
+        return listOf(kestrels, mailTos).all { parameters -> toOwner(path, parameters.takeIf { query.isNotEmpty() }.orEmpty(), mine) }
+    }
+
+    private fun toOwner(path: String, parameters: List<Pair<String, String>>, mine: Set<String>): Boolean {
+        val recipients = path.split(',').toMutableList()
+        for ((encodedName, encodedValue) in parameters) {
+            val name = LinkCheck.decode(encodedName, plusIsSpace = false)?.lowercase() ?: return false
+            val value = LinkCheck.decode(encodedValue, plusIsSpace = false) ?: return false
+            when (name) {
+                in RECIPIENT_FIELDS -> recipients += value.split(',')
+                "subject", "body" -> Unit
+                else -> return false
             }
         }
         val addresses = recipients.map { it.trim() }.filter { it.isNotEmpty() }
-        val mine = settings.ownerEmails.map { it.trim().lowercase() }.toSet()
         return addresses.isNotEmpty() && addresses.all { EMAIL.matches(it) && it.lowercase() in mine }
     }
 }

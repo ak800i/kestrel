@@ -615,6 +615,9 @@ class SafetyCheckTest {
             "mailto:Ana%20Petrovi%C4%87?subject=a%20reminder",
             "mailto:?subject=a%20reminder",
             "mailto:owner@example.com?subject=a%20reminder#cc=ana@example.com",
+            // android.net.MailTo.parse decodes the whole query before it splits it, and reads these as a Cc and a To.
+            "mailto:owner@example.com?body=hi%26cc%3Dana%40example.com",
+            "mailto:owner@example.com?subject=a%20reminder&body=x%26to%3Dana@example.com",
         )) {
             assertEquals(link, "Test mode: Kestrel only sends to your own chats.", (SafetyCheck.decide(mail(link), home.snapshot(), everything, testMode) as Decision.Block).reason)
         }
