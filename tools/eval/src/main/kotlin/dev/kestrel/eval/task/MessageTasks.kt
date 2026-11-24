@@ -5,8 +5,10 @@ import dev.kestrel.eval.device.DeviceKind
 /**
  * The suite's SMS, e-mail and notification tasks (design D8 of sub-project 6). sms-read runs on kestrel-api37 only,
  * whose console sends the test SMS. email-self writes the owner's own address into Kestrel's memory and test mode, and
- * confirms typing and sending, because the body holds words beyond the request; its e-mail leaves through Gmail's own
- * deletion. notification-read needs `:testapp` on the device for its notification.
+ * confirms typing and sending, because the body holds words beyond the request; an e-mail that left anyway goes
+ * through Gmail's own deletion. email-self is a known gap of this baseline: test mode blocks Kestrel's Send in Gmail
+ * until Gmail's self-send rule is pinned (a reviewed follow-up), so it runs once and passes when test mode ended it with
+ * no e-mail sent. notification-read needs `:testapp` on the device for its notification.
  */
 object MessageTasks {
     private val BOTH = setOf(DeviceKind.EMULATOR, DeviceKind.A71)
@@ -30,11 +32,13 @@ object MessageTasks {
         request = Request("email me a reminder about {marker}"),
         devices = BOTH,
         answers = Answers(confirm = setOf("typing_screen_text", "sending")),
-        verdict = VerdictRule.Finished,
+        verdict = VerdictRule.KnownGap,
         setup = listOf(OwnAddress, OwnerEmails, MemoryAlias("my e-mail address", "{address}"), MailCleanup),
-        check = listOf(MailArrived),
+        check = listOf(NoMail),
         dryRun = DryRun("email-self.json"),
-        rehearsal = Rehearsal.Steps(listOf(MailToSelf)),
+        rehearsal = Rehearsal.SetupOnly("its known gap's check reads that test mode stopped Kestrel's send, which only a task makes"),
+        runsAtMost = 1,
+        gap = "the follow-up that pins Gmail's self-send rule in test mode",
     )
 
     val NOTIFICATION_READ = Task(

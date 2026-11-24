@@ -121,28 +121,36 @@ class SettingsStepsTest {
             dump = ZenDump.manual(it.groupValues[1] != "off")
             ""
         }
-        // A run whose task left Do Not Disturb on as [atTheEnd] shows it; the restore's own set_dnd commands.
-        fun restoreAfter(atTheEnd: String): List<String> {
+        // A run whose task left Do Not Disturb on as [atTheEnd] shows it; the restore's own set_dnd commands, and [failed] restores.
+        fun restoreAfter(atTheEnd: String, failed: Int = 0): List<String> {
             run.adb.settings["global/zen_mode"] = "0"
             dump = ZenDump.manual(false)
             assertEquals(SetupResult.Ready, Dnd(on = false).apply(run.scope))
             run.adb.settings["global/zen_mode"] = "1"
             dump = atTheEnd
             val from = run.adb.commands.size
-            assertTrue(run.restores.runAll().isEmpty())
+            val failures = run.restores.runAll()
+            assertEquals(failed, failures.size)
+            run.restores.report(failures)
             return run.adb.commands.drop(from).filter { it.startsWith("cmd notification") }
         }
 
-        // Kestrel's manual Do Not Disturb goes off again.
-        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.manual(true)))
-        assertEquals("0", run.adb.settings["global/zen_mode"])
-        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.manual(true, enabler = "dev.kestrel")))
-        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.android13(ZenDump.rule13(null, null, enabler = "com.android.shell"))))
+        // Kestrel turns Do Not Disturb on through Settings or the Quick Settings tile, which leave no enabler or name
+        // Settings or System UI; a rehearsal's set_dnd names the shell. Each goes off again.
+        for (enabler in listOf(null, "", "com.android.settings", "com.android.systemui", "com.android.shell", "dev.kestrel")) {
+            assertEquals("enabler $enabler", listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.manual(true, enabler = enabler)))
+            assertEquals("0", run.adb.settings["global/zen_mode"])
+        }
+        assertEquals(listOf("cmd notification set_dnd off"), restoreAfter(ZenDump.modesUi(ZenDump.ruleUi(null, "STATE_TRUE"), ZenDump.ruleUi("a", null))))
+        assertTrue(run.console.warnings.isEmpty())
 
-        // A routine or an app of the owner's turned the manual Do Not Disturb on during the run: it stays, with a word.
-        assertEquals(emptyList<String>(), restoreAfter(ZenDump.manual(true, enabler = "com.samsung.android.app.routines")))
+        // A routine or an app of the owner's turned the manual Do Not Disturb on during the run: it stays, and the
+        // restore fails, so that the by-hand command shows.
+        assertEquals(emptyList<String>(), restoreAfter(ZenDump.manual(true, enabler = "com.samsung.android.app.routines"), failed = 1))
         assertEquals("1", run.adb.settings["global/zen_mode"])
         assertEquals(1, run.console.warnings.size)
+        assertTrue(run.console.warnings.single().startsWith("Not put back: Do Not Disturb as before"))
+        assertTrue(run.console.warnings.single().contains("cmd notification set_dnd off"))
         run.console.warnings.clear()
 
         // The owner's schedule began during the run: set_dnd off would snooze it for the night, so both stay on, with a word.
@@ -378,6 +386,6 @@ internal object ZenDump {
      * Do Not Disturb [on] by the manual rule as `set_dnd` leaves it on Android 13 (turned on by [enabler], the shell's
      * package for `set_dnd`), or off, beside a schedule that is off.
      */
-    fun manual(on: Boolean, enabler: String = "com.android.shell") =
+    fun manual(on: Boolean, enabler: String? = "com.android.shell") =
         android13(if (on) rule13(null, null, enabler = enabler) else null, rule13("EVERY_NIGHT_DEFAULT_RULE", null))
 }

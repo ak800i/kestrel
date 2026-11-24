@@ -1,4 +1,6 @@
 [
-  {"tool": "open_deep_link", "arguments": {"uri": "geo:0,0?q=Kalemegdan", "reason": "show the place on Google Maps"}},
+  {"tool": "open_url", "arguments": {"url": "https://maps.google.com/?q=Kalemegdan", "browser": "default", "reason": "show the place on Google Maps"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let Maps show the place"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
   {"tool": "finish", "arguments": {"summary": "Google Maps shows Kalemegdan.", "evidence": [{"target": {"contains": "Kalemegdan"}}]}}
 ]

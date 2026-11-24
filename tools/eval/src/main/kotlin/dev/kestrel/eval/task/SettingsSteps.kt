@@ -256,10 +256,11 @@ data class ZenSchedule(val days: Set<DayOfWeek>, val start: LocalTime) {
  * Disturb without an end. Nor can a device with an automatic rule that is not turned off and could start during the run
  * ([SOON]): a schedule that starts within 30 minutes, or any other rule, such as an event rule, whose start this cannot
  * tell; then neither the run's restore nor a rehearsal's `set_dnd off` can leave the owner's rule as it was. When the
- * zen config or the device's time cannot be read, the task is untestable too. The restore turns off only a manual Do
- * Not Disturb that the shell (a rehearsal's `set_dnd`) or Kestrel turned on, as the manual rule's `enabler` says, so
- * that one that a routine or an app of the owner's turned on during the run stays, with a word; and only while no
- * automatic rule is on ([Zen]): `set_dnd off` would
+ * zen config or the device's time cannot be read, the task is untestable too. The restore turns off a manual Do Not
+ * Disturb that the run turned on: one with no enabler or one of [ENABLERS], because Kestrel turns it on through Settings
+ * or the Quick Settings tile, and the setup required Do Not Disturb off. One that another app, such as a routine of the
+ * owner's, turned on during the run stays, and the restore fails, so that the run says "Not put back:" with the command
+ * that turns it off by hand. The restore does so only while no automatic rule is on ([Zen]): `set_dnd off` would
  * snooze a schedule of the owner's that began during the run for the rest of the night, so then the restore leaves Do
  * Not Disturb as it is, and says so when the manual one is on too.
  */
@@ -286,11 +287,8 @@ data class Dnd(val on: Boolean) : Setup {
                 "Do Not Disturb: a schedule of the device began during the run, so the run left Do Not Disturb on, also the task's own. " +
                     "When the schedule ends, turn Do Not Disturb off if it stays on.",
             )
-            zen.manual && enabler in ENABLERS -> scope.device.idempotent("cmd notification set_dnd off")
-            zen.manual -> scope.console.warn(
-                "Do Not Disturb: ${enabler ?: "an app that the device does not name"} turned it on during the run, not the run itself, so the run left it on. " +
-                    "Turn it off if it should be off.",
-            )
+            zen.manual && (enabler == null || enabler in ENABLERS) -> scope.device.idempotent("cmd notification set_dnd off")
+            zen.manual -> throw IllegalStateException("$enabler turned Do Not Disturb on during the run, not the run itself, so the run left it on")
         }
     }
 
@@ -321,8 +319,12 @@ data class Dnd(val on: Boolean) : Setup {
         private val NAMES = mapOf("0" to "off", "1" to "priority", "2" to "none", "3" to "alarms")
         private val SOON = 30.minutes
 
-        /** The packages whose manual Do Not Disturb the restore turns off: the shell's (`set_dnd`, a rehearsal) and Kestrel's (recheck-6b-dnd M1). */
-        val ENABLERS = setOf("com.android.shell", "dev.kestrel")
+        /**
+         * The enablers of a manual Do Not Disturb that the restore turns off, besides none: Kestrel turns it on through
+         * Settings or the Quick Settings tile, which record no enabler or Settings' or System UI's package, a rehearsal's
+         * `set_dnd` records the shell's, and Kestrel's own package stays for an API that it may use later.
+         */
+        val ENABLERS = setOf("com.android.settings", "com.android.systemui", "com.android.shell", "dev.kestrel")
     }
 }
 

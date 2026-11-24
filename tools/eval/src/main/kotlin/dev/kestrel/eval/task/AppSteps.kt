@@ -179,7 +179,8 @@ object Listening {
      * Waits up to [BACK] until Kestrel listens at [LISTENING_READS] reads in a row, 3 s apart, the first 3 s after the
      * change's restore, so that a process that ends a moment later is not taken for one that listens. When its process
      * answers and does not listen at [QUIET_READS] reads in a row, one toggle turns listening on; a lost answer of the
-     * toggle is read back by the next reads.
+     * toggle is read back by the next reads. The toggle comes with a warning, because the spec has Kestrel return to the
+     * mode that it had after Android ends its process, so that a defect of Kestrel stays visible in every run.
      */
     private fun again(scope: RunScope) {
         val deadline = scope.clock.elapsed() + BACK
@@ -194,6 +195,10 @@ object Listening {
             quiet = if (mode == "off" || mode == "paused") quiet + 1 else 0
             if (!toggled && quiet >= QUIET_READS) {
                 toggled = true
+                scope.console.warn(
+                    "Kestrel did not return to listening after its process restarted, as the spec says that it should; the run turns listening back on. " +
+                        "This may be a defect of Kestrel.",
+                )
                 try {
                     scope.hooks.voiceSend("toggle")
                 } catch (e: HookLost) {

@@ -57,7 +57,7 @@ object Firefox {
     }
 
     /** Starts Firefox from its launcher and waits until its tab counter shows, at most [START] s. */
-    private fun start(scope: RunScope) {
+    fun start(scope: RunScope) {
         scope.device.idempotent("monkey -p ${D3Tasks.FIREFOX} -c android.intent.category.LAUNCHER 1")
         for (second in 1..START) {
             scope.clock.sleep(1.seconds)
@@ -71,14 +71,41 @@ object Firefox {
 
     private const val START = 15
 
+    /**
+     * The tab counter's label with a number of tabs, in the words that screen-has compares: kestrel-api37's "Non-private
+     * Tabs Open: 76.", and older ones' "76 open tabs." and "1 open tab.". Each form's first entry tells which one shows.
+     */
+    private val COUNTS: List<Pair<String, (Int) -> String>> = listOf(
+        "Tabs Open" to { tabs -> "Tabs Open $tabs" },
+        "open tabs" to { tabs -> "$tabs open tabs" },
+        "open tab" to { tabs -> "$tabs open tab" },
+    )
+    private const val MOST_TABS = 500
+
+    /**
+     * The number of tabs that the tab counter shows, or null when it shows none of [COUNTS]' forms with a number up to
+     * [MOST_TABS]. screen-has answers no text, so this asks for each number in turn.
+     */
+    fun tabs(scope: RunScope): Int? {
+        val form = COUNTS.firstOrNull { shows(scope, it.first) }?.second ?: return null
+        return (1..MOST_TABS).firstOrNull { shows(scope, form(it)) }
+    }
+
+    /** Whether the tab counter shows [tabs] tabs. */
+    fun showsTabs(scope: RunScope, tabs: Int): Boolean = COUNTS.any { shows(scope, it.second(tabs)) }
+
     fun shows(scope: RunScope, text: String): Boolean = scope.hooks.screenHas(packageName = D3Tasks.FIREFOX, contains = text).int("count") >= 1
 
     /**
-     * Closes Firefox's selected tab with the "Close tab" of the tab counter's menu, only while Firefox is in front and its
-     * address bar shows [address], and checks that Firefox said "Tab closed"; it fails, naming what is left, otherwise.
+     * Closes the tab that the rehearsal's open made: none when Firefox still has the [before] tabs that it had before the
+     * open, as when it selected a tab of the page that it had already; else Firefox's selected tab, with the "Close tab" of
+     * the tab counter's menu, only while Firefox is in front, its address bar shows [address] and it has exactly one tab
+     * more, and checks that Firefox said "Tab closed". It fails, naming what is left, otherwise.
      */
-    fun closeSelected(scope: RunScope, address: String) {
+    fun closeOwnTab(scope: RunScope, address: String, before: Int) {
         if (Dumps.resumedPackage(scope.device.read("dumpsys activity activities")) != D3Tasks.FIREFOX) start(scope)
+        if (showsTabs(scope, before)) return
+        check(showsTabs(scope, before + 1)) { "Firefox does not have the one tab more that the rehearsal's page would have opened, so no tab was closed." }
         check(shows(scope, address)) { "Firefox's selected tab does not show $address, so no tab was closed." }
         val menu = COUNTER.map { it.copy(long = true) }
         check(AppTaps(scope, D3Tasks.FIREFOX).run(listOf(menu, listOf(TapCandidate(label = CLOSE))))) { "Firefox's Close tab was not tapped." }
@@ -116,16 +143,20 @@ data class FirefoxTab(val page: String = "ak800i", val title: String = GITHUB) :
 
 /**
  * A rehearsal's page in a new tab of Firefox, which Firefox selects (firefox-wiki's, which plan 6A's rehearsal left
- * open): [uri] opened by intent, and after the check the selected tab closed through the tab counter's menu
- * ([Firefox.closeSelected]), only while the address bar shows [address], before Firefox is stopped. The owner's tabs of the
- * same page stay, because they are not selected.
+ * open): Firefox started and its tabs counted, [uri] opened by intent, and after the check the tab that the open made
+ * closed through the tab counter's menu ([Firefox.closeOwnTab]), only when Firefox has one tab more than before the open
+ * and its address bar shows [address], before Firefox is stopped. So a tab of the same page that an earlier run left,
+ * which Firefox may select instead of opening a new one, stays, and so do the owner's other tabs, because they are not
+ * selected. Without a number on the tab counter the task is untestable.
  */
 data class FirefoxNewTab(val uri: String, val address: String, val settle: Duration = 10.seconds) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         // Set inside the change, which the shutdown hook awaits before it runs the restore: a page that was never asked for closes no tab.
         val asked = AtomicBoolean(false)
         scope.restores.push("Firefox stopped", "Close Firefox.") { scope.device.idempotent("am force-stop ${D3Tasks.FIREFOX}") }
-        scope.restores.push("the rehearsal's tab in Firefox", "Firefox: close the tab of $address.") { if (asked.get()) Firefox.closeSelected(scope, address) }
+        scope.restores.change("Firefox started", "Close Firefox.") { Firefox.start(scope) }
+        val tabs = Firefox.tabs(scope) ?: return SetupResult.Untestable("Firefox's tab counter shows no number of tabs")
+        scope.restores.push("the rehearsal's tab in Firefox", "Firefox: close the tab of $address.") { if (asked.get()) Firefox.closeOwnTab(scope, address, tabs) }
         // A lost answer needs no read-back here: the task's checks read the screen next, and the restore reads the address.
         scope.restores.change("a page opened in Firefox", "Close Firefox.") {
             asked.set(true)

@@ -21,8 +21,8 @@ object Sms {
     fun delete(scope: RunScope, ids: List<Long>) {
         if (ids.isEmpty()) return
         val before = mode(scope)
-        if (before != "allow") scope.device.idempotent("appops set $SHELL WRITE_SMS allow")
         try {
+            if (before != "allow") scope.device.idempotent("appops set $SHELL WRITE_SMS allow")
             for (id in ids) scope.device.idempotent("content delete --uri content://sms --where ${shellQuoted("_id=$id")}")
         } finally {
             if (before != "allow") scope.device.idempotent("appops set $SHELL WRITE_SMS $before")
@@ -160,5 +160,13 @@ data object MailArrived : Check {
             if (scope.clock.elapsed() > deadline) return false
             scope.clock.sleep(5.seconds)
         }
+    }
+}
+
+/** No e-mail of the run reached Gmail's inbox: the inbox, opened in a new task, does not show the run's marker; email-self's known gap. */
+data object NoMail : Check {
+    override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
+        GmailTrash.openInbox(scope)
+        return !GmailTrash.shows(scope, scope.values.marker)
     }
 }

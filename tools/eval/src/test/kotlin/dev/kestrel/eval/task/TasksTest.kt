@@ -51,7 +51,7 @@ class TasksTest {
         assertEquals(setOf(DeviceKind.EMULATOR, DeviceKind.A71), devices("firefox-wiki"))
         assertEquals(setOf(DeviceKind.EMULATOR, DeviceKind.A71), devices("read-email"))
         assertTrue(Catalogue.ALL.filter { it.kind == TaskKind.STAND_IN }.all { it.devices == setOf(DeviceKind.EMULATOR) })
-        assertEquals(listOf("telegram-photos", "stand-in-messenger-photos"), Catalogue.ALL.filter { it.gap != null }.map { it.name })
+        assertEquals(listOf("email-self", "telegram-photos", "stand-in-messenger-photos"), Catalogue.ALL.filter { it.gap != null }.map { it.name })
         assertTrue(Catalogue.ALL.filter { it.gap != null }.all { it.runsAtMost == 1 && it.verdict == VerdictRule.KnownGap })
         // Typing a text before the send asks first in Standard mode, so the Telegram tasks and their stand-ins confirm both, and no task confirms a call.
         for (name in listOf("telegram-late", "telegram-photos", "stand-in-messenger-late", "stand-in-messenger-photos")) {
@@ -63,7 +63,7 @@ class TasksTest {
     @Test
     fun theSuitesAreTheSuiteAndD3TasksLiveAndTheScriptsAndStandInsWithoutAModel() {
         val suite = (SettingsTasks.ALL + ClockTasks.ALL + PeopleTasks.ALL + MessageTasks.ALL + AppTasks.ALL).map { it.name }
-        // Design D8: kestrel-api37 runs 26 tasks live and the A71 27, one of them the known gap.
+        // Design D8: kestrel-api37 runs 26 tasks live and the A71 27; email-self is a known gap on both, and telegram-photos on the A71.
         assertEquals(23, suite.size)
         assertEquals(26, Catalogue.suite(DeviceKind.EMULATOR, live = true).size)
         assertEquals(27, Catalogue.suite(DeviceKind.A71, live = true).size)

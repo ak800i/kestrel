@@ -179,13 +179,51 @@ class AppStepsTest {
             run.adb.hookCalls("SCREEN_TAP"),
         )
 
-        // A page that did not open leaves the selected tab, which is not the page's, and the restore says so.
+        // A page that did not open added no tab, so no tab is closed, and nothing is left to put back.
         opens = false
         for (step in steps) assertEquals(SetupResult.Ready, step.apply(run.scope))
-        val failures = run.restores.runAll()
-        assertEquals(listOf("the rehearsal's tab in Firefox"), failures.map { it.what })
+        assertTrue(run.restores.runAll().isEmpty())
         assertEquals(listOf(FakeFirefox.WIKI, FakeFirefox.GITHUB), firefox.titles())
         assertEquals(2, run.adb.hookCalls("SCREEN_TAP").size)
+
+        // An earlier run's tab of the page is selected, as on kestrel-api37, where Firefox then selects it and opens no
+        // new tab: that tab stays.
+        firefox.open(FakeFirefox.WIKI, FakeFirefox.WIKI_ADDRESS)
+        for (step in steps) assertEquals(SetupResult.Ready, step.apply(run.scope))
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(FakeFirefox.WIKI, FakeFirefox.GITHUB, FakeFirefox.WIKI), firefox.titles())
+        assertEquals(2, run.adb.hookCalls("SCREEN_TAP").size)
+        // A page that opened added a tab, and only that one is closed.
+        opens = true
+        for (step in steps) assertEquals(SetupResult.Ready, step.apply(run.scope))
+        assertEquals(4, firefox.tabs.size)
+        assertTrue(run.restores.runAll().isEmpty())
+        assertEquals(listOf(FakeFirefox.WIKI, FakeFirefox.GITHUB, FakeFirefox.WIKI), firefox.titles())
+
+        // One tab more, but the selected tab is not the page's, or two tabs more: no tab is closed, and the restore says so.
+        for (extra in listOf(listOf(FakeFirefox.GITHUB to FakeFirefox.GITHUB_ADDRESS), listOf(FakeFirefox.WIKI to FakeFirefox.WIKI_ADDRESS, FakeFirefox.WIKI to FakeFirefox.WIKI_ADDRESS))) {
+            opens = false
+            for (step in steps) assertEquals(SetupResult.Ready, step.apply(run.scope))
+            val before = firefox.titles()
+            for ((title, address) in extra) firefox.open(title, address)
+            val taps = run.adb.hookCalls("SCREEN_TAP").size
+            assertEquals(listOf("the rehearsal's tab in Firefox"), run.restores.runAll().map { it.what })
+            assertEquals(before + extra.map { it.first }, firefox.titles())
+            assertEquals(taps, run.adb.hookCalls("SCREEN_TAP").size)
+            repeat(extra.size) { firefox.tabs.removeAt(firefox.tabs.lastIndex) }
+            run.console.warnings.clear()
+        }
+    }
+
+    @Test
+    fun firefoxWikisRehearsalIsUntestableWhenTheTabCounterSaysNoNumber() {
+        val run = FakeRun()
+        FakeFirefox(run.adb)
+        run.adb.hook("SCREEN_HAS") { "count=0 app=${D3Tasks.FIREFOX}" }
+
+        assertTrue(FirefoxNewTab("https://en.wikipedia.org/wiki/Common_kestrel", FakeFirefox.WIKI_ADDRESS).apply(run.scope) is SetupResult.Untestable)
+        assertTrue(run.adb.commands.none { it.startsWith("am start") })
+        assertTrue(run.restores.runAll().isEmpty())
     }
 
     @Test
@@ -244,7 +282,8 @@ class AppStepsTest {
 
     @Test
     fun kestrelListensAgainAfterTheRestoreThatTookBackItsPermissionEndedItsProcess() {
-        for (before in listOf("listening", "off")) {
+        // Kestrel's mode before the change, and whether its new process comes back listening by itself, as the spec asks.
+        for ((before, returns) in listOf("listening" to false, "off" to false, "listening" to true)) {
             val run = FakeRun()
             var granted = false
             run.adb.on("^dumpsys package dev\\.kestrel$") { "      android.permission.READ_SMS: granted=$granted" }
@@ -253,7 +292,7 @@ class AppStepsTest {
             var mode = before
             run.adb.on("^pm (grant|revoke) dev\\.kestrel android\\.permission\\.READ_SMS$") {
                 granted = it.groupValues[1] == "grant"
-                if (!granted) {
+                if (!granted && !returns) {
                     reads = mutableListOf("listening")
                     mode = "off"
                 }
@@ -270,9 +309,12 @@ class AppStepsTest {
             assertEquals(SetupResult.Ready, Grant("dev.kestrel", listOf("android.permission.READ_SMS")).apply(run.scope))
             assertTrue(run.restores.runAll().isEmpty())
 
+            val toggled = if (before == "listening" && !returns) 1 else 0
             assertFalse(granted)
             assertEquals(if (before == "listening") "listening" else "off", mode)
-            assertEquals(if (before == "listening") 1 else 0, run.adb.hookCalls("VOICE").size)
+            assertEquals(toggled, run.adb.hookCalls("VOICE").size)
+            // A toggle that Kestrel needed is reported, because the spec has Kestrel come back in its mode by itself.
+            assertEquals(toggled, run.console.warnings.count { it.contains("Kestrel did not return to listening after its process restarted") })
         }
     }
 

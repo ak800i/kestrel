@@ -2,7 +2,6 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.device.DeviceKind
-import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.run.Reason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,30 +33,37 @@ class MessageTasksTest {
     }
 
     @Test
-    fun emailSelfConfirmsTypingAndSendingAndLeavesNoTestEmailAndItsRehearsalPasses() {
+    fun emailSelfIsAKnownGapThatPassesWhenTestModeStopsKestrelsSendAndLeavesNoTestEmail() {
         val bench = TaskBench(config = config)
         val inbox = mutableListOf("Ana, Lunch")
         fakeGmail(bench.adb, inbox)
         bench.adb.on("^dumpsys activity activities$") { "  topResumedActivity=ActivityRecord{9f3e2b1 u0 com.google.android.gm/.ComposeActivityGmail t12}" }
-        var works = true
+        var sends = false
         bench.adb.hook("VOICE") { extras ->
-            if (works && extras["text"] == "Kestrel, email me a reminder about maple heron") inbox.add("me, Reminder about maple heron, A reminder about maple heron")
+            if (sends && extras["text"] == "Kestrel, email me a reminder about maple heron") inbox.add("me, Reminder about maple heron, A reminder about maple heron")
             "sent"
         }
+        // Test mode blocks Kestrel's Send in Gmail until Gmail's self-send rule is pinned, after the typing was confirmed.
+        val stopped = "state=done end=TEST_MODE steps=2 workMs=9000 credits=0.00 confirmed=1 unconfirmed=0 shareItems=0 beforeTestMode=0 model=scripted"
+        bench.end = stopped
 
         assertEquals(setOf("typing_screen_text", "sending"), MessageTasks.EMAIL_SELF.answers.confirm)
+        assertEquals(VerdictRule.KnownGap, MessageTasks.EMAIL_SELF.verdict)
+        assertEquals(1, MessageTasks.EMAIL_SELF.runsAtMost)
+        assertTrue(MessageTasks.EMAIL_SELF.gap!!.contains("Gmail's self-send rule"))
         assertEquals(Reason.OK, bench.run(MessageTasks.EMAIL_SELF).reason)
         assertEquals(mapOf("add" to "true", "key" to "my e-mail address", "text" to "pera.second@example.com"), bench.adb.hookCalls("AGENT_MEMORY").first { it["add"] == "true" })
         assertEquals(listOf("Ana, Lunch"), inbox)
-        works = false
+        // An e-mail that left after all fails the run, and leaves too.
+        sends = true
         assertEquals(Reason.CHECK, bench.run(MessageTasks.EMAIL_SELF).reason)
-        bench.assertPutBack()
-
-        val scope = bench.run.scope
-        for (step in MessageTasks.EMAIL_SELF.setup + (MessageTasks.EMAIL_SELF.rehearsal as Rehearsal.Steps).steps) assertEquals(SetupResult.Ready, step.apply(scope))
-        assertTrue(MessageTasks.EMAIL_SELF.check.all { it.passes(scope, HookAnswer.EMPTY) })
-        assertTrue(bench.run.restores.runAll().isEmpty())
         assertEquals(listOf("Ana, Lunch"), inbox)
+        // A task that finished is no pass of the known gap.
+        sends = false
+        bench.end = stopped.replace("TEST_MODE", "FINISHED")
+        assertEquals(Reason.END, bench.run(MessageTasks.EMAIL_SELF).reason)
+        bench.assertPutBack()
+        assertTrue(MessageTasks.EMAIL_SELF.rehearsal is Rehearsal.SetupOnly)
     }
 
     @Test

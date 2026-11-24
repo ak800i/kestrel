@@ -107,6 +107,22 @@ class MessageStepsTest {
     }
 
     @Test
+    fun anAllowOfWriteSmsWhoseAnswerIsLostIsPutBackToo() {
+        val run = FakeRun()
+        var mode = "ignore"
+        run.adb.on("^appops get com\\.android\\.shell WRITE_SMS$") { "WRITE_SMS: $mode; time=+1h ago" }
+        // Each allow takes effect, and each of its answers is lost.
+        run.adb.on("^appops set com\\.android\\.shell WRITE_SMS (\\w+)$") {
+            mode = it.groupValues[1]
+            if (mode == "allow") null else ""
+        }
+
+        assertThrows(Exception::class.java) { Sms.delete(run.scope, listOf(7L)) }
+        assertEquals("ignore", mode)
+        assertTrue(run.adb.commands.none { it.startsWith("content delete") })
+    }
+
+    @Test
     fun theTestNotificationIsPostedAndCancelledAndKestrelsNotificationAccessIsOnOnlyForTheRun() {
         val run = FakeRun()
         var posted = false
