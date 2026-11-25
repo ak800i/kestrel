@@ -241,11 +241,22 @@ class CallCommandsTest {
         // The number field has the focus, but its input type is a phone number's, so plan 3B's dictation leaves a bare
         // "call" to the phone part. A number names any element, so "expand", "collapse" and "drag" with the call button's
         // number need the yes too, and so does a scroll, whose gesture starts in the phone app's window. Only "no" answers.
+        // A tap names the call button by the label that Kestrel reads for it, because the phone app's versions name it
+        // differently: "dial" until version 216 of the emulator's image, "Call" from version 247, which Play installed.
+        val tapCall = "tap ${callButtonLabel()}"
         assertEquals(Outcome.DONE, CommandTests.say("show numbers").outcome)
-        val number = badge { it.viewId?.endsWith(":id/dialpad_voice_call_button") == true }
-        for (said in listOf("call", "tap dial", "expand $number", "collapse $number", "drag $number to $number", "scroll down")) {
-            assertEquals(said, PhoneCommandTexts.EMERGENCY_QUESTION, CommandTests.ask(said))
-            assertEquals(said, Outcome.CANCELLED, CommandTests.answer("no").outcome)
+        val number = badge { it.viewId?.endsWith(CALL_BUTTON) == true }
+        val phrases = listOf(
+            "call" to "call",
+            tapCall to "tap with the call button's label",
+            "expand $number" to "expand",
+            "collapse $number" to "collapse",
+            "drag $number to $number" to "drag",
+            "scroll down" to "scroll down",
+        )
+        for ((said, what) in phrases) {
+            assertEquals(what, PhoneCommandTexts.EMERGENCY_QUESTION, CommandTests.ask(said))
+            assertEquals(what, Outcome.CANCELLED, CommandTests.answer("no").outcome)
         }
         // The digit keys and the delete key need no yes, so that the owner can correct the number by voice.
         assertEquals(Outcome.DONE, CommandTests.say("tap ${badge { it.viewId?.endsWith(":id/five") == true }}").outcome)
@@ -259,7 +270,7 @@ class CallCommandsTest {
         // that took only the digits, or let an unreadable field through, would press Call here.
         screen.session.actions.setText(digits.key, "abc")
         screen.awaitElement { it.key == digits.key && it.text == "abc" }
-        assertEquals(PhoneCommandTexts.EMERGENCY_QUESTION, CommandTests.ask("tap dial"))
+        assertEquals(PhoneCommandTexts.EMERGENCY_QUESTION, CommandTests.ask(tapCall))
         assertEquals(Outcome.CANCELLED, CommandTests.answer("no").outcome)
         Thread.sleep(COUNTDOWN_AND_MORE)
         assertTrue(listening.state.value.mode == Mode.LISTENING)
@@ -296,6 +307,12 @@ class CallCommandsTest {
         CommandTests.awaitSaid(CommandTexts.SCREEN_CHANGED)
         Thread.sleep(1_000)
         assertTrue(screen.session.snapshots.current().snapshot.elements.none { it.label == "Emergency call pressed" })
+    }
+
+    // The label of the phone app's call button as Kestrel's snapshot gives it, in the lower case of a transcript.
+    private suspend fun callButtonLabel(): String {
+        val label = screen.awaitElement { it.viewId?.endsWith(CALL_BUTTON) == true }.label
+        return checkNotNull(label?.lowercase()?.takeIf { it.isNotBlank() }) { "The phone app's call button has no label" }
     }
 
     // The number that the numbers overlay shows on the element that [which] picks, once the numbers have followed the screen
@@ -366,6 +383,9 @@ class CallCommandsTest {
         // A short number that is no emergency number, and an ordinary one that takes the place of the emergency number.
         const val SHORT = "123"
         const val ORDINARY = "0640000000"
+
+        // The view ID of the phone app's call button, under its package.
+        const val CALL_BUTTON = ":id/dialpad_voice_call_button"
 
         // The phone app's cold start on the emulator takes about 4 s.
         const val REPLACE_MILLIS = 10_000L
