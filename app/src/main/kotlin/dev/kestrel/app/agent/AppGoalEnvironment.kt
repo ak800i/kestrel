@@ -64,8 +64,12 @@ internal class AppGoalEnvironment(
 ) : GoalEnvironment {
     private val apps = AndroidApps(context)
 
-    /** What the debug hooks read of each round (plan 6B-basefix). */
-    internal val evidences = RoundEvidences()
+    /**
+     * Debug builds only: what the debug hooks read of each round (plan 6B-basefix), which they install with [witnesses].
+     * Null in a release build, which records nothing that only the hooks read.
+     */
+    @Volatile
+    internal var evidences: RoundEvidences? = null
 
     /** Debug builds only: the self-chat aliases that the hook `agent-settings` set (design D18); empty otherwise. */
     @Volatile
@@ -104,7 +108,7 @@ internal class AppGoalEnvironment(
         val log = LogTaskLog(taskId, appendLog, report)
         backstop.forget()
         val witness = witnesses?.invoke(start.options) ?: TaskWitness.NONE
-        val round = evidences.start(start.command, witness)
+        val round = evidences?.start(start.command, witness)
         val data = witness.watch(AndroidDataPort(context, agentSettings.agentFree::isAgentFree))
         val ports = AgentPorts(
             AppScreenPort(session, context.packageManager, showBadges, hideBadges, backstop::acted),
@@ -126,7 +130,7 @@ internal class AppGoalEnvironment(
         }
         val touches = screen.touches.filter { it.owner }
             .onEach { touch ->
-                round.touched(signal = touch.deviceId == OwnActions.SIGNAL_DEVICE)
+                round?.touched(signal = touch.deviceId == OwnActions.SIGNAL_DEVICE)
                 touch.sinceNodeActionMillis?.takeIf { it <= OwnActions.LATE_ECHO_MILLIS }?.let {
                     log.write(TaskLog.Kind.ACTION, "possible late echo after $it ms")
                 }

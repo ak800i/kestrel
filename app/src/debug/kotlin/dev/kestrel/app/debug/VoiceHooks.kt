@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Build
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.agent.RoundEvidences
 import dev.kestrel.app.commands.EmergencyGuard
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.KokoroSpeed
@@ -288,6 +289,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
             if (listening.steps != null) return
             listening.inputs = tags::input
             graph.conversationSteps = tags::onConversationStep
+            graph.goalEnvironment.evidences = RoundEvidences()
             graph.goalEnvironment.witnesses = { options -> DebugTaskWitness.open(options) }
             listening.steps = tags::onStep
         }

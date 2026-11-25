@@ -53,7 +53,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         if (!intent.getBooleanExtra(EXTRA_RESULT, false)) throw HookError("add --ez result true")
         val (_, number) = taggedTask(intent)
         val outcome = graph.conversations.outcome(number) ?: return "state=running"
-        val round = graph.goalEnvironment.evidences.of(number) ?: RoundEvidences.Evidence()
+        val round = graph.goalEnvironment.evidences?.of(number) ?: RoundEvidences.Evidence()
         val ended = AgentHookAnswers.Ended(outcome.report, outcome.answer, round.touches, round.signals, round.witness)
         return AgentHookAnswers.result(ended, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS))
     }

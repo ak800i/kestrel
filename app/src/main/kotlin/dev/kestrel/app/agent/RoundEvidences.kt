@@ -4,7 +4,8 @@ package dev.kestrel.app.agent
  * What the debug hooks read of the newest [MAX] rounds, by the command that started each (plan 6B-basefix; design 14.4
  * of sub-project 7): the owner's touches that the watcher reported during the round, how many of them were signals
  * without a finger (branch B's, or a gesture of Kestrel's that a touch cancelled), and what the round's witness
- * observed. A release build reads none of it. toString prints only counts.
+ * observed. Only the debug hooks install it (`AppGoalEnvironment.evidences`), so a release build records none of it.
+ * toString prints only counts.
  */
 internal class RoundEvidences {
     /** Command [command]'s round as the hooks read it. */
