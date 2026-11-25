@@ -146,6 +146,26 @@ class LocalRequestsTest {
         assertEquals(Triple(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
     }
 
+    // Design 9.7 of sub-project 7: when the archive's transaction does not commit, the logs are already gone, every
+    // conversation stays, Kestrel says that it couldn't delete the history, and the failure is reported once.
+    @Test
+    fun deleteHistoryThatTheArchiveCannotCommitKeepsEveryConversationSaysSoAndReportsOnce() = scope.runTest {
+        closed(1, "Ambar dinner", day)
+        val failure = IOException("the disk failed")
+        archive.failures["deleteAll"] = failure
+        val reported = mutableListOf<Throwable>()
+        val local = LocalRequests(memory, store, search, { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> reported += error }
+        dialogue.answers += ChannelAnswer.Yes
+
+        assertEquals(LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
+        assertEquals(1, reported.size)
+        assertTrue(reported.single() is IOException)
+        assertEquals(failure.message, reported.single().message)
+        assertEquals(1, logsDeleted)
+        assertEquals(1, store.list().size)
+        assertFalse(archive.keyErased)
+    }
+
     // Design 9.2 and 9.6 of sub-project 7: while the index of past conversations is rebuilt, or cannot be read, Kestrel says
     // so and asks nothing.
     @Test
