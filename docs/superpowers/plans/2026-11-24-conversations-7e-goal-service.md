@@ -59,7 +59,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 - **Open.** The notification's tap and its Open open Kestrel's launcher activity through `ListeningService.openKestrel`, which plan 7F points at `ConversationActivity`. While the goal acts, the owner's pull of the shade is a touch for the touch watcher (a device test checks it), and Kestrel's own screen in front holds the goal at the round's gate (design 10.2), so the tap interrupts the goal without code of its own.
 - **The owner's stop in "Active apps".** Android's Task Manager stops the whole app without a callback, and its documentation names `ApplicationExitInfo.REASON_USER_REQUESTED` as the record to look for at the next start; Android gives the same reason for a force stop in Settings and for removing the app from the recent apps, which are the owner's stops too, and no public sub-reason tells them apart. Before Android 14, an update of the app gave that reason as well; from Android 14 an update gives `REASON_PACKAGE_UPDATED`. Kestrel reads the record once, with the reader that listening's restore already uses, and gives it one reading for both restores (the controller's decision of 2026-11-25): a `REASON_USER_REQUESTED` is the owner's stop, so listening stays off and a restored goal ends, except on Android 13 within a minute of Kestrel's last install or update, before or after it, where it cannot be told from the update: listening stays off as before, and the goal is held and asks "Continue the goal?", as for any other end. The restore (plan 7B) ends the goal as "stop" does only when that stop came after the conversation's snapshot was saved.
 - **Android 13.** The service starts with no type there (`startForeground(id, notification, 0)`), also while Kestrel speaks, because Android 13 neither checks types nor hardens background audio. The platform's `startForeground(int, Notification, int)` exists from API 29, so the plan calls it directly instead of `ServiceCompat`.
-- **The whole first search's speed.** Plan 7C left open where the whole first search over a filled archive is measured on the A71 (design 4.3 and R3). This plan carries it: `ConversationSearchSpeedTest` (Task 7) writes the archive in one instrumentation run and times the first search in a second run, a new process, as after a start of Kestrel; Task 9 runs it on the A71.
+- **The whole first search's speed.** Plan 7C measures the archive's share of the first search; the whole search is measured here (design 4.3 and R3). `ConversationSearchSpeedTest` (Task 7) writes 30 heavy days with R3's fixture in one instrumentation run and times their last close, times the first search once the index has been read in a second run, and a search right after a start in a third, each a new process; Task 9 runs it on the A71, where a search over 1 s at 30 days goes to the owner.
 - **The checks of Android's rules run outside the instrumentation.** Android lets an instrumentation started from the shell start foreground services from the background, and the instrumented process has a standing that Android's audio hardening may not apply to, so the device tests check the plumbing, and the controller's steps check the starts and the audio themselves with the hooks: the spoken start, the notification's Continue tapped in SystemUI's shade, the start after a restart, the audio focus with and without the service, and the owner's stop.
 
 ## File structure
@@ -72,7 +72,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 | `app/src/main/kotlin/dev/kestrel/app/listen/ExitRecords.kt`, `listen/Listening.kt`; `app/src/main/kotlin/dev/kestrel/app/conversation/ProcessEnds.kt` (new); `AppGraph.kt`, `KestrelApplication.kt`; tests `app/src/test/kotlin/dev/kestrel/app/listen/ExitRecordsTest.kt`, `listen/ListeningTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/ProcessEndsTest.kt` (new) | Task 4: one reader and one reading of how Kestrel's last process ended, for both restores |
 | `app/src/main/kotlin/dev/kestrel/app/goal/GoalNotification.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalService.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalActionReceiver.kt` (new); `AndroidManifest.xml`, `AppGraph.kt`; device test `app/src/androidTest/kotlin/dev/kestrel/app/conversation/GoalServiceTest.kt` (new) | Task 5: the service, its notification, its buttons and the wiring |
 | debug `FocusProbe.kt`, `GoalServiceAnswers.kt`, `NoticeButtons.kt`, `GoalServiceHooks.kt` (new), `TestHooks.kt`; JVM tests `app/src/testDebug/kotlin/dev/kestrel/app/debug/GoalServiceAnswersTest.kt`, `app/src/testDebug/kotlin/dev/kestrel/app/debug/NoticeButtonsTest.kt` (new); device test `app/src/androidTest/kotlin/dev/kestrel/app/debug/GoalServiceHooksTest.kt` (new) | Task 6: the hooks `goal-service-state` and `goal-control` |
-| device test `app/src/androidTest/kotlin/dev/kestrel/app/conversation/ConversationSearchSpeedTest.kt` (new) | Task 7: the whole first search's speed |
+| device test `app/src/androidTest/kotlin/dev/kestrel/app/conversation/ConversationSearchSpeedTest.kt` (new) | Task 7: the whole first search's speed, a close and a search right after a start |
 | none in git but `.superpowers\sdd\progress.md` (device steps) | Task 8: the checks on kestrel-api37 (the controller's steps) |
 | none in git but `.superpowers\sdd\progress.md` (device steps) | Task 9: the checks on the A71 (waits for the owner) |
 
@@ -80,7 +80,7 @@ Every main path of `:app` is below `app/src/main/kotlin/dev/kestrel/app/`, every
 
 ## The restore's `ProcessEnd` in plan 7B
 
-The owner's stop in Android's "Active apps" ends a restored goal as "stop" ends it (the controller's decision of 2026-11-25, review item I4). What the restore needs for it was written here first and is now in plan 7B itself: its Task 7 creates `model/ProcessEnd.kt` (`OwnerStopped(atWall)`, `Other`), gives `ConversationEvent.Restored` its `previous: ProcessEnd = ProcessEnd.Other`, and makes the machine and `GoalRules.restored(state, stored, now, ownerStopped)` end a goal with `EndHeldGoal(EndReason.CANCELLED)` after `OwnerStopped` at or after the snapshot's `lastWall`, with `ConversationMachineTest.theOwnersStopOfKestrelEndsTheRestoredGoalAsStopDoesAndAsksNothing`; its Task 10 gives `ConversationEngine.restore(previous: ProcessEnd = ProcessEnd.Other)`, with `ConversationEngineTest.aRestoreAfterTheOwnersStopEndsTheGoalWithItsReportAndAsksNothing`. This plan's Task 4 gives `restore()` its argument, and "Before you start" checks for both.
+The owner's stop in Android's "Active apps" ends a restored goal as "stop" ends it (the controller's decision of 2026-11-25, review item I4). What the restore needs for it was written here first and is now in plan 7B itself: its Task 7 creates `model/ProcessEnd.kt` (`OwnerStopped(atWall)`, `Other`), gives `ConversationEvent.Restored` its `previous: ProcessEnd = ProcessEnd.Other`, and makes the machine end a restored goal through `GoalRules.restored(state, stored, heldSince, now, end = EndReason.CANCELLED)`, which gives `EndHeldGoal(EndReason.CANCELLED)`, after `OwnerStopped` at or after the snapshot's `lastWall`, with `ConversationMachineTest.theOwnersStopOfKestrelEndsTheRestoredGoalAsStopDoesAndAsksNothing`; its Task 10 gives `ConversationEngine.restore(previous: ProcessEnd = ProcessEnd.Other)`, with `ConversationEngineTest.aRestoreAfterTheOwnersStopEndsTheGoalWithItsReportAndAsksNothing`. This plan's Task 4 gives `restore()` its argument, and "Before you start" checks for both.
 
 ---
 
@@ -128,13 +128,20 @@ with:
         assertEquals(GoalPhase.INTERRUPTED, held.state.goal!!.phase)
         assertEquals(listOf(ChannelOutput.Said("$sentence ${ConversationTexts.CONTINUE_IN_NOTIFICATION}")), held.outputs())
 
-        // A held goal keeps its hold and its 30 minutes; Kestrel says why its service is missing and how to go on.
+        // A held goal keeps its hold and its 30 minutes; Kestrel says why its service is missing and how to go on, at once
+        // while the owner is there.
+        val said = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.CONTINUE_IN_NOTIFICATION}")
+        val touchedHeld = ended(step(acting(), ConversationEvent.Touched).state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH)).state
+        val toldNow = step(touchedHeld, ConversationEvent.BackgroundRefused(1))
+        assertEquals(touchedHeld.goal, toldNow.state.goal)
+        assertEquals(listOf(said), toldNow.outputs())
+        // A lock paused the goal, so the words wait until the owner is back; the record has them at once.
         val paused = signal(acting(), PhoneSignal.LOCKED).state
         val told = step(paused, ConversationEvent.BackgroundRefused(1))
-        val said = "${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.CONTINUE_IN_NOTIFICATION}"
         assertEquals(paused.goal, told.state.goal)
-        assertEquals(listOf(ChannelOutput.Said(said)), told.outputs())
-        assertEquals(ConversationEffect.AddLine(1, LineKind.KESTREL_SAID, said, null), told.effect<ConversationEffect.AddLine>())
+        assertTrue(told.outputs().isEmpty())
+        assertEquals(ConversationEffect.AddLine(1, LineKind.KESTREL_SAID, said.text, null), told.effect<ConversationEffect.AddLine>())
+        assertEquals(said, signal(told.state, PhoneSignal.UNLOCKED).outputs().first())
         assertTrue(step(idle, ConversationEvent.BackgroundRefused(0)).effects.isEmpty())
     }
 
@@ -397,7 +404,7 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/GoalRules
 
 ```kotlin
         if (!interrupts) return MachineStep(state)
-        return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.INTERRUPTING)), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
+        return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
     }
 ```
 
@@ -405,30 +412,28 @@ with:
 
 ```kotlin
         if (!interrupts) return MachineStep(state)
-        return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.INTERRUPTING)), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
+        return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
     }
 
     /**
      * Android refused the goal service (plan 7E; design 10.6 of sub-project 7). A goal whose round works (it acts, asks or
      * has handed a step over) cannot go on in the background, so its round is interrupted and the goal held, and Kestrel
-     * says why and how to go on after the round's report. A held goal, also one that a lock or a call paused, keeps its
-     * hold and its 30 minutes, and Kestrel says only why and how to go on. A refusal of another command's start, which
-     * came late, changes nothing.
+     * says why and how to go on after the round's report. A held goal, also one that a lock or a call paused or a restart
+     * left, keeps its hold and its 30 minutes, and Kestrel says only why and how to go on: at once when the owner is there,
+     * else after what it keeps for him already, when he is back (as [held] does); the record has the words at once. A
+     * refusal of another command's start, which came late, changes nothing.
      */
     fun backgroundRefused(state: ConversationState, command: Int): MachineStep {
         val goal = state.goal ?: return MachineStep(state)
         if (goal.ending != null || goal.command != command) return MachineStep(state)
-        if (goal.hold != null) {
-            val text = "${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.CONTINUE_IN_NOTIFICATION}"
-            return MachineStep(
-                state,
-                listOf(ConversationEffect.Output(ChannelOutput.Said(text)), ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, text, null)),
-            )
+        if (goal.hold == null) {
+            return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.BACKGROUND_REFUSED)))
         }
-        return MachineStep(
-            state.copy(goal = goal.copy(ending = GoalEnding.INTERRUPTING)),
-            listOf(ConversationEffect.InterruptGoal(Interruption.BACKGROUND_REFUSED)),
-        )
+        val words = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.CONTINUE_IN_NOTIFICATION}")
+        val line = ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, words.text, null)
+        if (state.phone.present) return MachineStep(state, listOf(ConversationEffect.Output(words), line))
+        val kept = ChannelOutput.Said(listOfNotNull(state.heldWords?.text, words.text).joinToString(" "))
+        return MachineStep(state.copy(heldWords = kept), listOf(line))
     }
 ```
 
@@ -453,16 +458,14 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-            testMode = current.testMode,
-            quiet = current.quiet,
+            keptForOwner = current.heldReport != null || current.heldWords != null,
         )
 ```
 
 with:
 
 ```kotlin
-            testMode = current.testMode,
-            quiet = current.quiet,
+            keptForOwner = current.heldReport != null || current.heldWords != null,
             hold = current.goal?.hold,
             goalEnding = current.goal?.ending,
         )
@@ -485,30 +488,28 @@ import dev.kestrel.conversation.model.GoalPhase
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
 
 ```kotlin
- * conversation was continued, its test mode, and the quiet clock. toString prints no words.
+ * 7D's `ConversationSignals` keeps watching the phone. toString prints no words.
 ```
 
 with:
 
 ```kotlin
- * conversation was continued, its test mode, the quiet clock, why a held goal is held ([hold], which the goal
- * notification names) and whether the goal is ending ([goalEnding], for which the goal service does not start; plan 7E).
- * toString prints no words.
+ * 7D's `ConversationSignals` keeps watching the phone, why a held goal is held ([hold], which the goal notification names)
+ * and whether the goal is ending ([goalEnding], for which the goal service does not start; plan 7E). toString prints no
+ * words.
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
 
 ```kotlin
-    val testMode: Boolean = true,
-    val quiet: QuietClock = QuietClock.Off,
+    val keptForOwner: Boolean = false,
 ) {
 ```
 
 with:
 
 ```kotlin
-    val testMode: Boolean = true,
-    val quiet: QuietClock = QuietClock.Off,
+    val keptForOwner: Boolean = false,
     val hold: GoalHold? = null,
     val goalEnding: GoalEnding? = null,
 ) {
@@ -517,13 +518,13 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
 
 ```kotlin
-        "ConversationView(open=${id != null}, command=$command, goal=$goal, step=$step, asking=$asking, records=${records.size}, quiet=$quiet)"
+            "kept=$keptForOwner)"
 ```
 
 with:
 
 ```kotlin
-        "ConversationView(open=${id != null}, command=$command, goal=$goal, hold=$hold, ending=$goalEnding, step=$step, asking=$asking, records=${records.size}, quiet=$quiet)"
+            "kept=$keptForOwner, hold=$hold, ending=$goalEnding)"
 ```
 
 - [ ] **Step 5: The round's sentence**
@@ -980,6 +981,9 @@ class GoalForegroundTest {
 
         views.value = ConversationView(command = 1, quiet = QuietClock.Held(HoldReason.REPLYING))
         assertEquals(GoalNotices.CLOSING, foreground.shown.value?.notice)
+        // A final reply kept until the owner is back keeps the service, also when its conversation closed meanwhile.
+        views.value = ConversationView(command = 1, keptForOwner = true)
+        assertEquals(GoalNotices.CLOSING, foreground.shown.value?.notice)
         views.value = ConversationView(command = 1, quiet = QuietClock.Running(1, 0))
         assertNull(foreground.shown.value)
         foreground.destroyed()
@@ -1274,7 +1278,8 @@ internal class GoalForeground(
                 goal = view.goal,
                 stopping = view.goalEnding == GoalEnding.STOPPING,
                 command = view.command,
-                replying = view.goal == null && view.quiet == REPLYING,
+                // The final reply is said, or kept until the owner is there (plan 7B), also after the conversation closed.
+                replying = view.goal == null && (view.quiet == REPLYING || view.keptForOwner),
                 notice = GoalNotices.of(view),
             )
         }
@@ -3001,16 +3006,21 @@ git commit -m "feat(app): the hooks goal-service-state and goal-control, which r
 
 ---
 
-### Task 7: The whole first search's speed
+### Task 7: The whole first search's speed, a close and a search right after a start
 
-Design 4.3 of sub-project 7 asks that the first search over 30 days of conversations takes at most 1 s on the A71, and that the archive's share of it takes at most 500 ms (R3, settled on 2026-11-25). Plan 7C measures the archive's share; this plan measures the whole first search. `ConversationSearchSpeedTest` runs twice, each time in a new process, as `scripts\connected-test.ps1` starts the instrumentation anew. With `kestrelSearchSpeed=write` it saves 300 closed conversations of three commands through plan 7B's store into plan 7C's archive, in a test database with a test key, so that the store keeps the index of past conversations with them (design 9.2), and leaves them; this run is not timed, and on the A71 it takes some seconds, because each save of a closed conversation encrypts the whole index again (R3). With `kestrelSearchSpeed=search` it times the first search through a new store and a new `HistorySearch`, as after a start of Kestrel, so that the JSON, Deflate and AES code, Room and the key's handle are loaded for the first time: the store's first read of the index, the open conversation and the stamp, the index's decoding, the ranking, and the read of the best matches' bodies in one call (design 9.4). Then it deletes the database and erases the key. It is a measurement: without its argument it skips itself, and Tasks 8 and 9 run it.
+Design 4.3 of sub-project 7 asks that the first search over 30 days of conversations takes at most 1 s on the A71, and that the archive's share of it takes at most 500 ms; design R3 estimates it for 30 days of heavy use (300 conversations, 600 commands of about 300 different words each, about 25,000 different words in all), with an index of about 450 KB in two shards. Plan 7C measures the archive's share; this plan measures the whole search, a close and a search right after a start, with R3's fixture. `ConversationSearchSpeedTest` runs three times, each time in a new process, as `scripts\connected-test.ps1` starts the instrumentation anew:
+- With `kestrelSearchSpeed=write` it saves the 300 conversations through plan 7B's store into plan 7C's archive, in a test database with a test key, oldest first, as closes add them: each close encodes and encrypts one shard of the index, the newest, again (design 9.2), so the run takes about a minute and a half on the A71. It times the last close, of a conversation that was open, with the index at its full size, and leaves an open conversation of today.
+- With `kestrelSearchSpeed=search` a new store reads the index in the background (its shards and the table's stamp, decoded), and `list()` waits for it; then the first search is timed: the ranking over the shards and the read of the best matches' bodies in one call (design 9.4).
+- With `kestrelSearchSpeed=start` a new store and a new `HistorySearch` time a search right after a start, R3's worst case: the restore reads only the open conversation, and the search waits for the index, which the store reads in the background meanwhile. Then the run deletes the database and erases the key.
+
+In each run the JSON, Deflate and AES code, Room and the key's handle are loaded for the first time. It is a measurement: without its argument it skips itself, and Tasks 8 and 9 run it.
 
 **Files:**
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/conversation/ConversationSearchSpeedTest.kt` (device)
 
 **Interfaces:**
-- Consumes: plan 7B's `ArchivedConversationStore(archive, scope, noted)`, `ConversationStore.save` and `list()`, `HistorySearch(store, retentionDays, clock)`, `HistorySearch.search(query, excluding)` with `HistoryResult.rebuilding`, `ConversationSnapshot`, `CommandRecord`, `RecordLine`, `LineKind`, `DataNote`, `AppUse`, `ConversationId.random()`; plan 7A's `HistoryQuery` and `HistoryPort.MAX_MATCHES`; plan 7C's `RoomRecordArchive(table)`, `ConversationArchiveStore(dao, key)`, `KeystoreErasableKey.of(alias)` with `erase()`, `KestrelDatabase.conversationDao()`, `AndroidConversationClock`.
-- Produces: the instrumentation argument `kestrelSearchSpeed=write|search`, the test database `test-search-speed.db` and the test key `kestrel.test.search-speed`, which the `write` run leaves for the `search` run, the log tag `KestrelSearch` and the log lines `wrote 300 conversations` and `searched 300 conversations in <ms> ms`, which Tasks 8 and 9 read.
+- Consumes: plan 7B's `ArchivedConversationStore(archive, scope, noted)`, `ConversationStore.save`, `open()` and `list()`, `HistorySearch(store, retentionDays, clock)`, `HistorySearch.search(query, excluding)` with `HistoryResult.unavailable`, `ConversationSnapshot`, `CommandRecord`, `RecordLine`, `LineKind`, `DataNote(tool, step, text, items)`, `AppUse`, `ConversationId.random()`; plan 7A's `HistoryQuery` and `HistoryPort.MAX_MATCHES`; plan 7C's `RoomRecordArchive(table)`, `ConversationArchiveStore(dao, key)`, `KeystoreErasableKey.of(alias)` with `erase()`, `KestrelDatabase.conversationDao()`, `AndroidConversationClock`.
+- Produces: the instrumentation argument `kestrelSearchSpeed=write|search|start`, the test database `test-search-speed.db` and the test key `kestrel.test.search-speed`, which the `write` run leaves for the two others and the `start` run deletes, the log tag `KestrelSearch` and its lines `wrote 300 conversations in <s> s`, `closed a conversation in <ms> ms`, `read the index in <ms> ms`, `searched 300 conversations in <ms> ms`, `restored the open conversation in <ms> ms` and `searched right after a start in <ms> ms`, which Tasks 8 and 9 read.
 
 Counts: `:app` JVM A₀ + 18, unchanged. Device tests: AD₀ + 10 + 1 = AD₀ + 11 (`ConversationSearchSpeedTest` 1, skipped without its argument).
 
@@ -3029,6 +3039,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.goal.HistoryPort
 import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.goal.HistoryResult
 import dev.kestrel.conversation.model.AppUse
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
@@ -3045,32 +3056,42 @@ import dev.kestrel.privacy.db.KestrelDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.random.Random
 
 /**
- * How long the first search over 30 days of past conversations takes (design 4.3 and R3 of sub-project 7; plan 7E), in two
- * instrumentation runs, each a new process. With kestrelSearchSpeed=write, 300 closed conversations of three commands
- * each, about 15 KB of JSON each, are saved through plan 7B's store into plan 7C's archive in a test database with a test
- * key, with the index of past conversations that the store keeps beside them (design 9.2), and they stay for the next run.
- * With kestrelSearchSpeed=search, a new store and a new search time the first search, as after a start of Kestrel, with
- * nothing loaded before: the store's first read of the index and the open conversation, the index's decoding, the ranking
- * and the read of the best matches' bodies (design 9.4); afterwards the run deletes the database and erases the key. It is
- * a measurement: it fails only when the index is missing or the search does not find the conversations that hold the
- * words, and it logs under the tag KestrelSearch. It never uses Kestrel's own database or key.
+ * How long the first search over 30 days of past conversations takes, a close, and a search right after a start (design
+ * 4.3 and R3 of sub-project 7; plan 7E), in three instrumentation runs, each a new process, with design R3's fixture:
+ * 300 closed conversations of two commands, each command with about 300 words drawn evenly from 25,000 made-up words with
+ * a fixed seed, so that the index of past conversations has the size of 30 heavy days (about 450 KB in two shards).
+ * - kestrelSearchSpeed=write saves them through plan 7B's store into plan 7C's archive in a test database with a test key,
+ *   oldest first, so that each close encodes and encrypts the index's newest shard again, times the last close, and leaves
+ *   an open conversation of today.
+ * - kestrelSearchSpeed=search lets a new store read the index in the background and times the first search after it.
+ * - kestrelSearchSpeed=start times a search right after a new store's start, which waits for the index while the store
+ *   reads it; the restore reads only the open conversation. Afterwards the run deletes the database and erases the key.
+ * It is a measurement: it fails only when the store could not use the index or the search does not find the
+ * conversations that hold the words, and it logs under the tag KestrelSearch. It never uses Kestrel's own database or key.
  */
 @RunWith(AndroidJUnit4::class)
 class ConversationSearchSpeedTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val random = Random(SEED)
+    private val vocabulary: List<String> by lazy { generateSequence { word() }.distinct().take(VOCABULARY).toList() }
 
     @Test
     fun measuresTheFirstSearchOver30DaysOfConversations() = runBlocking<Unit> {
         val mode = InstrumentationRegistry.getArguments().getString("kestrelSearchSpeed")
-        assumeTrue("Runs with -Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write, then =search", mode == "write" || mode == "search")
-        if (mode == "write") write() else search()
+        assumeTrue("Runs with -Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write, then =search, then =start", mode != null && mode in MODES)
+        when (mode) {
+            "write" -> write()
+            "search" -> search()
+            else -> start()
+        }
     }
 
     private suspend fun CoroutineScope.write() {
@@ -3080,27 +3101,60 @@ class ConversationSearchSpeedTest {
         val written = database()
         try {
             val store = store(written, this)
-            for (n in 0 until CONVERSATIONS) store.save(conversation(n, now - DAYS * DAY_MILLIS * n / CONVERSATIONS))
-            // The index of past conversations holds every one of them, so the next run's store reads it and rebuilds nothing.
+            // The store has read the empty archive, so that each close writes the index's newest shard at once.
+            assertTrue(store.list().isEmpty())
+            val started = SystemClock.elapsedRealtime()
+            for (n in CONVERSATIONS - 1 downTo 1) store.save(conversation(n, now - DAYS * DAY_MILLIS * n / CONVERSATIONS))
+            val newest = conversation(0, now - 60_000L)
+            store.save(newest.copy(open = true))
+            val closing = SystemClock.elapsedRealtime()
+            store.save(newest)
+            val closed = SystemClock.elapsedRealtime()
+            val today = CommandRecord(1, now - 30_000L, InputChannel.VOICE, "Turn on dark mode", answer = "Dark mode is on.", end = EndReason.FINISHED)
+            store.save(ConversationSnapshot(ConversationId.random(), now - 30_000L, now, open = true, testMode = true, records = listOf(today)))
             assertEquals(CONVERSATIONS, store.list().size)
+
+            Log.i(TAG, "wrote $CONVERSATIONS conversations in ${(closed - started) / 1_000} s")
+            Log.i(TAG, "closed a conversation in ${closed - closing} ms")
         } finally {
             written.close()
         }
-        Log.i(TAG, "wrote $CONVERSATIONS conversations")
     }
 
     private suspend fun CoroutineScope.search() {
         val read = database()
         try {
-            val search = HistorySearch(store(read, this), { DAYS.toInt() }, AndroidConversationClock)
-            val started = SystemClock.elapsedRealtime()
-            val found = search.search(HistoryQuery("restaurant Mila"))
-            val millis = SystemClock.elapsedRealtime() - started
+            val opened = SystemClock.elapsedRealtime()
+            val store = store(read, this)
+            // list() waits while the store reads the index in the background.
+            assertEquals(CONVERSATIONS, store.list().size)
+            val loaded = SystemClock.elapsedRealtime()
+            val found = HistorySearch(store, { DAYS.toInt() }, AndroidConversationClock).search(HistoryQuery(QUERY))
+            val searched = SystemClock.elapsedRealtime()
 
-            Log.i(TAG, "searched $CONVERSATIONS conversations in $millis ms")
-            assertFalse("The store found no usable index and rebuilds it, so the search did not run", found.rebuilding)
-            assertEquals(HistoryPort.MAX_MATCHES, found.matches.size)
-            assertTrue(found.more)
+            Log.i(TAG, "read the index in ${loaded - opened} ms")
+            Log.i(TAG, "searched $CONVERSATIONS conversations in ${searched - loaded} ms")
+            assertFound(found)
+        } finally {
+            read.close()
+        }
+    }
+
+    private suspend fun CoroutineScope.start() {
+        val read = database()
+        try {
+            val started = SystemClock.elapsedRealtime()
+            val store = store(read, this)
+            val open = store.open()
+            val restored = SystemClock.elapsedRealtime()
+            // The search waits while the store reads the index in the background.
+            val found = HistorySearch(store, { DAYS.toInt() }, AndroidConversationClock).search(HistoryQuery(QUERY))
+            val searched = SystemClock.elapsedRealtime()
+
+            Log.i(TAG, "restored the open conversation in ${restored - started} ms")
+            Log.i(TAG, "searched right after a start in ${searched - started} ms")
+            assertEquals("Turn on dark mode", open?.records?.single()?.request)
+            assertFound(found)
         } finally {
             read.close()
             context.deleteDatabase(FILE)
@@ -3108,26 +3162,32 @@ class ConversationSearchSpeedTest {
         }
     }
 
+    private fun assertFound(found: HistoryResult) {
+        assertNull("The store could not use the index, so the search did not run", found.unavailable)
+        assertEquals(HistoryPort.MAX_MATCHES, found.matches.size)
+        assertTrue(found.more)
+    }
+
     private fun database() = Room.databaseBuilder(context, KestrelDatabase::class.java, FILE).build()
 
-    // The store's scope is the test's own, so that a rebuild that it started would end before the run does.
+    // The store's scope is the test's own, so that its reading of the index in the background ends before the run does.
     private fun store(database: KestrelDatabase, scope: CoroutineScope) =
         ArchivedConversationStore(RoomRecordArchive(ConversationArchiveStore(database.conversationDao(), KeystoreErasableKey.of(ALIAS))), scope) {}
 
-    // Three commands of the sizes of real ones: a request, an answer, four lines and two data notes each. The first command
+    // Two commands, each with about 300 words in its request, its lines, its answer and its data notes. The first command
     // of every tenth conversation names the restaurant that the search looks for.
     private fun conversation(n: Int, last: Long): ConversationSnapshot {
-        val records = List(3) { index ->
-            val request = if (n % 10 == 0 && index == 0) "Find the restaurant Mila sent me last week" else "Check my calendar for meeting $n-$index"
+        val records = List(COMMANDS) { index ->
+            val request = if (n % 10 == 0 && index == 0) "Find the restaurant Mila sent me last week" else "Check ${words(6)}"
             CommandRecord(
                 number = index + 1,
-                atWall = last - (3 - index) * 60_000L,
+                atWall = last - (COMMANDS - index) * 60_000L,
                 channel = InputChannel.VOICE,
                 request = request,
-                lines = List(4) { RecordLine(LineKind.KESTREL_SAID, filler("Line $it", 200)) },
-                answer = filler("The answer", 200),
+                lines = List(2) { RecordLine(LineKind.KESTREL_SAID, words(20)) },
+                answer = words(30),
                 end = EndReason.FINISHED,
-                data = List(2) { DataNote("list_sms", it + 1, filler("from: \"Ana\" · body: \"note $it\"", 1_800)) },
+                data = List(2) { DataNote("list_sms", it + 1, words(120), items = 10) },
                 apps = listOf(AppUse("Viber", "com.viber.voip")),
                 ledger = listOf("opened Viber"),
             )
@@ -3135,15 +3195,29 @@ class ConversationSearchSpeedTest {
         return ConversationSnapshot(ConversationId.random(), last - 300_000L, last, open = false, testMode = true, records = records)
     }
 
-    private fun filler(start: String, length: Int): String = "$start ${"lorem ipsum dolor sit amet ".repeat(length / 27 + 1)}".take(length)
+    private fun words(count: Int): String = List(count) { vocabulary[random.nextInt(VOCABULARY)] }.joinToString(" ")
+
+    // A made-up word of 4 to 10 letters that starts as words often do and then alternates vowels and consonants.
+    private fun word(): String = buildString {
+        append(FIRST[random.nextInt(FIRST.length)])
+        repeat(3 + random.nextInt(7)) { append(if (it % 2 == 0) VOWELS[random.nextInt(VOWELS.length)] else CONSONANTS[random.nextInt(CONSONANTS.length)]) }
+    }
 
     private companion object {
         const val TAG = "KestrelSearch"
         const val FILE = "test-search-speed.db"
         const val ALIAS = "kestrel.test.search-speed"
+        const val QUERY = "restaurant Mila"
         const val CONVERSATIONS = 300
+        const val COMMANDS = 2
+        const val VOCABULARY = 25_000
+        const val SEED = 25_112_026L
         const val DAYS = 30L
         const val DAY_MILLIS = 24L * 60 * 60 * 1000
+        const val FIRST = "ssscccppbbtttmmaddrrffhhgglwweiouvnkjy"
+        const val VOWELS = "aeiouaeioy"
+        const val CONSONANTS = "rstlnmdkpbgvzcfhj"
+        val MODES = setOf("write", "search", "start")
     }
 }
 ```
@@ -3157,14 +3231,14 @@ Expected: BUILD SUCCESSFUL; `device` AD₀ + 11. Tasks 8 and 9 run it.
 
 ```bash
 git add app/src/androidTest/kotlin/dev/kestrel/app/conversation/ConversationSearchSpeedTest.kt
-git commit -m "test(app): the whole first search over 30 days of past conversations, written in one run and timed in a new process (plan 7E)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "test(app): the first search over 30 heavy days of past conversations, a close and a search right after a start, each timed in a new process (plan 7E)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
 ### Task 8: The checks on kestrel-api37 (the controller's steps)
 
-Design 15.2 of sub-project 7 on kestrel-api37: the device tests of this plan and the regression of the agent's, the hooks' and the voice's device tests; the call pause with listening off, which needs Kestrel's phone-state permission for one run; the whole first search's speed; and, outside the instrumentation, Android's own rules (main spec S9 and B5): the spoken start while `ListeningService` runs, the audio focus with listening off with and without the speech's types and after the goal's end, the held goal's Continue pressed in SystemUI's shade, the start after a restart with "Continue the goal?" and its Continue, and the owner's stop in "Active apps". For every start, the step keeps the lines of `dumpsys activity services` that say which exemption Android used. The typed start from `ConversationActivity` is plan 7F's (see "Decisions for the controller", item 2). This task changes no file in git.
+Design 15.2 of sub-project 7 on kestrel-api37: the device tests of this plan and the regression of the agent's, the hooks' and the voice's device tests; the call pause with listening off, which needs Kestrel's phone-state permission for one run; the whole first search's speed, a close and a search right after a start; and, outside the instrumentation, Android's own rules (main spec S9 and B5): the spoken start while `ListeningService` runs, the audio focus with listening off with and without the speech's types and after the goal's end, the held goal's Continue pressed in SystemUI's shade, the start after a restart with "Continue the goal?" and its Continue, and the owner's stop in "Active apps". For every start, the step keeps the lines of `dumpsys activity services` that say which exemption Android used. The typed start from `ConversationActivity` is plan 7F's (see "Decisions for the controller", item 2). This task changes no file in git.
 
 **Files:**
 - None in git; Step 11 writes `.superpowers\sdd\progress.md`.
@@ -3204,12 +3278,12 @@ The test needs Kestrel's `READ_PHONE_STATE`, which is not in the kept set and st
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; $line = { "$(@(& $adb -s emulator-5554 shell dumpsys package dev.kestrel | Select-String 'android\.permission\.READ_PHONE_STATE:') -join ' | ')".Trim() }; $before = & $line; "phone state before: $before"; $had = $before -match 'granted=true'; if (-not $had) { & $adb -s emulator-5554 shell pm grant dev.kestrel android.permission.READ_PHONE_STATE }; scripts\connected-test.ps1 -Serial emulator-5554 :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.conversation.GoalServiceTest'; "exit: $LASTEXITCODE"; if (-not $had) { & $adb -s emulator-5554 shell pm revoke dev.kestrel android.permission.READ_PHONE_STATE }; $after = & $line; "phone state after: $after"; "same: $($after -eq $before)"; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL and `exit: 0`; all 8 tests of `GoalServiceTest` pass, none skipped (the call test placed a call to the emulator's fake network and ended it); `same: True`. When the lines differ only by the flag `USER_SET`, which `pm revoke` sets, clear it with `& $adb -s emulator-5554 shell pm clear-permission-flags dev.kestrel android.permission.READ_PHONE_STATE user-set` and compare again. Any other difference, or a failure: stop and ask the controller.
 
-- [ ] **Step 6: The whole first search's speed**
+- [ ] **Step 6: The whole first search's speed, a close and a search right after a start**
 
-The measurement runs twice, each in a new process: the first run writes the test archive, and the second times the first search over it and then deletes it.
+The measurement runs three times, each in a new process: the first run writes the test archive of 30 heavy days and times its last close, the second times the first search once the index has been read, and the third times a search right after a start and then deletes the archive.
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; & $adb -s emulator-5554 logcat -c; foreach ($mode in 'write', 'search') { scripts\connected-test.ps1 -Serial emulator-5554 :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.conversation.ConversationSearchSpeedTest' "-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=$mode"; "exit ${mode}: $LASTEXITCODE" }; & $adb -s emulator-5554 logcat -d -s KestrelSearch:I; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL twice, `exit write: 0` and `exit search: 0`; the lines `wrote 300 conversations` and `searched 300 conversations in <n> ms`. The emulator's Keystore runs on the PC, so this time is only noted; the A71's decides (Task 9).
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; & $adb -s emulator-5554 logcat -c; foreach ($mode in 'write', 'search', 'start') { scripts\connected-test.ps1 -Serial emulator-5554 :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.conversation.ConversationSearchSpeedTest' "-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=$mode"; "exit ${mode}: $LASTEXITCODE" }; & $adb -s emulator-5554 logcat -d -s KestrelSearch:I; scripts\gradle.ps1 --stop`
+Expected: BUILD SUCCESSFUL three times, `exit write: 0`, `exit search: 0` and `exit start: 0`; the lines `wrote 300 conversations in <s> s`, `closed a conversation in <ms> ms`, `read the index in <ms> ms`, `searched 300 conversations in <ms> ms`, `restored the open conversation in <ms> ms` and `searched right after a start in <ms> ms`. The emulator's Keystore runs on the PC, so these times are only noted; the A71's decide (Task 9).
 
 - [ ] **Step 7: The spoken start, background audio, a held goal's Continue from the notification, and Stop**
 
@@ -3252,13 +3326,13 @@ Expected: a `voice-state` line whose `mode=` is the mode of Step 1; the accessib
 
 - [ ] **Step 11: Note the results**
 
-Add to `.superpowers\sdd\progress.md`, under "## Plan 7E": the build's commit on kestrel-api37; the counts of Tasks 1 to 7; the numbers of tests that passed and were skipped in Steps 3 to 6; the search's time of Step 6; and S9's findings on kestrel-api37: for each of the spoken start (Step 7), the start from the notification's Continue (Step 7) and the start at a restart (Step 8), whether Android allowed it (`refusals=0`) or refused it, with the types that Android applied (`androidTypes=`) and the `allowStartForeground` and `allowWhileInUse` lines; the audio focus for `speak` and `focus` while the goal worked, after the restart, and after the goal's end, with the audio service's lines and the assistant role's holders; whether the pull of the shade held the goal (Step 3); and the reason and sub-reason of the owner's stop with the restore's answer (Step 9).
+Add to `.superpowers\sdd\progress.md`, under "## Plan 7E": the build's commit on kestrel-api37; the counts of Tasks 1 to 7; the numbers of tests that passed and were skipped in Steps 3 to 6; the times of Step 6 (the write run, the close, the index's read, the first search, the restore and the search right after a start); and S9's findings on kestrel-api37: for each of the spoken start (Step 7), the start from the notification's Continue (Step 7) and the start at a restart (Step 8), whether Android allowed it (`refusals=0`) or refused it, with the types that Android applied (`androidTypes=`) and the `allowStartForeground` and `allowWhileInUse` lines; the audio focus for `speak` and `focus` while the goal worked, after the restart, and after the goal's end, with the audio service's lines and the assistant role's holders; whether the pull of the shade held the goal (Step 3); and the reason and sub-reason of the owner's stop with the restore's answer (Step 9).
 
 ---
 
 ### Task 9: The checks on the A71 (waits for the owner)
 
-Design 15.2 of sub-project 7 on the A71 (Android 13, One UI 5.1), within AGENTS.md's limits: the goal service's starts on Android 13, where the service has no type (spike S9: the spoken start, the start from the notification's Continue, and the start after a restart), the audio focus with listening off (Android 13 has no background-audio hardening, so the record only shows that nothing refuses it), the owner's stop in "Active apps" with the reason that Android 13 records for it, and the whole first search over a filled archive against design 4.3's 1 s. The typed goal with listening off and the typed start need plan 7F's conversation screen, so plan 7F's A71 checks carry them (see "Decisions for the controller", item 2). Every earlier task is complete and green without this one; this task waits until the owner is back and the A71 is on USB.
+Design 15.2 of sub-project 7 on the A71 (Android 13, One UI 5.1), within AGENTS.md's limits: the goal service's starts on Android 13, where the service has no type (spike S9: the spoken start, the start from the notification's Continue, and the start after a restart), the audio focus with listening off (Android 13 has no background-audio hardening, so the record only shows that nothing refuses it), the owner's stop in "Active apps" with the reason that Android 13 records for it, and the whole first search over an archive of 30 heavy days against design 4.3's 1 s, with a close and a search right after a start. The typed goal with listening off and the typed start need plan 7F's conversation screen, so plan 7F's A71 checks carry them (see "Decisions for the controller", item 2). Every earlier task is complete and green without this one; this task waits until the owner is back and the A71 is on USB.
 
 The checks call no one, send no message, change none of the owner's accounts, put every setting back, and answer only kinds and counts. The hook `goal-control do=tap` reads the shade's notifications on the phone, in memory only, and presses only Kestrel's own button, by its key, checked again at the press. Kestrel speaks its stand-in replies aloud on the A71. The conversations of the checks stay in Kestrel's past conversations on the A71, under their test requests, until their retention ends.
 
@@ -3289,8 +3363,8 @@ Expected: a `Success` line of `adb install`; `commit=<HEAD>` and `dirty=0`; `kes
 
 - [ ] **Step 4: The whole first search's speed on the A71**
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; & $adb -s R58N66RVD7Z logcat -c; foreach ($mode in 'write', 'search') { scripts\connected-test.ps1 -Serial R58N66RVD7Z :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.conversation.ConversationSearchSpeedTest' "-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=$mode"; "exit ${mode}: $LASTEXITCODE" }; & $adb -s R58N66RVD7Z logcat -d -s KestrelSearch:I; scripts\gradle.ps1 --stop`
-Expected: `scripts\connected-test.ps1` accepts the A71 as a test device; `exit write: 0` and `exit search: 0`; the lines `wrote 300 conversations` and `searched 300 conversations in <n> ms`. When `.superpowers\sdd\progress.md` has no A71 time of plan 7C's `ConversationArchiveSpeedTest` yet, run that measurement too, as plan 7C's Task 8, Step 5 says. Design 4.3: the whole first search takes at most 1,000 ms on the A71 (R3 expects about 300 ms); when it takes more, the controller takes the time, with plan 7C's time of the archive's share, to the owner.
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; & $adb -s R58N66RVD7Z logcat -c; foreach ($mode in 'write', 'search', 'start') { scripts\connected-test.ps1 -Serial R58N66RVD7Z :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.conversation.ConversationSearchSpeedTest' "-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=$mode"; "exit ${mode}: $LASTEXITCODE" }; & $adb -s R58N66RVD7Z logcat -d -s KestrelSearch:I; scripts\gradle.ps1 --stop`
+Expected: `scripts\connected-test.ps1` accepts the A71 as a test device; `exit write: 0`, `exit search: 0` and `exit start: 0`; the six lines of Task 8, Step 6. The write run takes about a minute and a half on the A71 (design R3: each close encodes and encrypts one shard). When `.superpowers\sdd\progress.md` has no A71 time of plan 7C's `ConversationArchiveSpeedTest` yet, run that measurement too, as plan 7C's Task 8, Step 5 says. Design 4.3 and R3 at 30 days: the first search (`searched 300 conversations`, R3's estimate about 0.32 s) and the search right after a start (`searched right after a start`, about 0.64 s) take at most 1,000 ms each, and a close (`closed a conversation`) about 0.4 s at most. When either search takes more than 1,000 ms, the controller takes the times, with plan 7C's time of the archive's share, to the owner.
 
 - [ ] **Step 5: The spoken start, the audio focus, a held goal's Continue from the notification, and Stop, on Android 13**
 
@@ -3318,7 +3392,7 @@ Expected: `stay on:` the value of Step 2; the accessibility setting of Step 2; a
 
 - [ ] **Step 9: Note the results**
 
-Add to `.superpowers\sdd\progress.md`, under "## Plan 7E": the build's commit on the A71; whether this install moved the A71's database to version 3; whether Kestrel had `POST_NOTIFICATIONS`; the whole first search's time on the A71 against design 4.3's 1,000 ms (and plan 7C's read time, if Step 4 measured it); S9's findings on Android 13 for the spoken start, the start from the notification's Continue and the start at a restart, with the service's `allowStartForeground` and `allowWhileInUse` lines, and the audio focus; and the reason and sub-reason of the owner's stop with the restore's answer. When every start was allowed on both devices, S9 holds as the design expects; otherwise the controller takes the findings to the owner, with the refused starts and their contexts.
+Add to `.superpowers\sdd\progress.md`, under "## Plan 7E": the build's commit on the A71; whether this install moved the A71's database to version 3; whether Kestrel had `POST_NOTIFICATIONS`; the times of Step 4 on the A71 (the write run, the close, the index's read, the first search, the restore and the search right after a start) against design 4.3's 1,000 ms and R3's estimates (and plan 7C's read time, if Step 4 measured it); S9's findings on Android 13 for the spoken start, the start from the notification's Continue and the start at a restart, with the service's `allowStartForeground` and `allowWhileInUse` lines, and the audio focus; and the reason and sub-reason of the owner's stop with the restore's answer. When every start was allowed on both devices, S9 holds as the design expects; otherwise the controller takes the findings to the owner, with the refused starts and their contexts.
 
 ---
 
@@ -3347,14 +3421,14 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 - The hooks `dev.kestrel.hook.GOAL_SERVICE_STATE` (answer: `service=… notice=… posted=… actions=… progress=… types=… applied=… android=… androidTypes=… starts=<n> refusals=<n> focus=… focusBy=… focusTypes=…`) and `dev.kestrel.hook.GOAL_CONTROL --es do tap --es action stop|open|continue|cancel` (`tapped=<action>`), `--es do touch` (`touch=sent`) and `--es do speak|focus` (`speak=sent`, `focus=sent`). Plan 7G adds them to `scripts\hook.ps1` as `goal-service-state` and `goal-control -Do tap|touch|speak|focus [-Action …]`, with Pester cases in `scripts\test-scripts.ps1`.
 - Plan 7F's typed start check (design 10.6 and 15.2): with `ConversationActivity` in front and listening off, a typed command (plan 7F's `conversation-type`, or the screen itself), then `GOAL_SERVICE_STATE` expects `service=running … starts=1 refusals=0`, with the service's `allowStartForeground` and `allowWhileInUse` lines and a `do=speak` after the screen went to the back; on kestrel-api37 as Task 8, Step 7 does, and on the A71 as Task 9, Step 5 does, together with design 15.2's typed goal with listening off.
 - Plan 7G's tasks `interrupt-continue` and `resume-after-death` may use `GOAL_CONTROL --es do touch` or a real tap, `crash`, `CONVERSATION_CONTROL --es do restore-check` and `GOAL_CONTROL --es do tap --es action continue`, as Task 8, Steps 7 and 8, do; `resume-after-death` carries design 15.2's check that a yes after a restart continues from the checklist with a fresh observation. An interruption by Android's refusal ends a round as `end=INTERRUPTED`, as a touch does.
-- `ConversationSearchSpeedTest` with `-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write`, then `=search`, logging `wrote 300 conversations` and `searched 300 conversations in <ms> ms` under `KestrelSearch`.
+- `ConversationSearchSpeedTest` with `-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write`, then `=search`, then `=start`, logging `wrote 300 conversations in <s> s`, `closed a conversation in <ms> ms`, `read the index in <ms> ms`, `searched 300 conversations in <ms> ms`, `restored the open conversation in <ms> ms` and `searched right after a start in <ms> ms` under `KestrelSearch`.
 - `GoalServiceTest`'s helpers (`press(label)` sends a button's PendingIntent; `awaitShown` reads the notification's title, text and buttons) are the pattern for plan 7F's device tests of the notification beside the screen.
 
 ## Decisions for the controller
 
 1. **Task 1 changes `:core:agent` and `:core:conversation`, and plan 7B carries the restore's `ProcessEnd`.** Design 10.6's refused start needs a cause of its own (`Interruption.BACKGROUND_REFUSED`, `GoalHold.BACKGROUND_REFUSED`), the machine's rule and the engine's way in with the refused command, and the view's `hold` and `goalEnding`; the owner's stop needs the restore's `ProcessEnd`. Recommendation: accept; the alternatives (reusing the touch's interruption, or a hold kept only in `:app`) would give a wrong sentence or a second owner of the goal's state.
 2. **The typed start and the A71's typed goal with listening off move to plan 7F.** `ConversationActivity` and `TextChannel` are plan 7F's, so plan 7E cannot start a goal from them. Recommendation: plan 7F's last tasks carry design 10.6's typed start on kestrel-api37 and the A71, with this plan's hooks, and design 15.2's typed goal with listening off on the A71.
-3. **Plan 7E measures the whole first search** (plan 7C's "Left open"), in two runs so that the search runs in a new process. Recommendation: yes, so that design 4.3's 1 s is judged on the whole first search after a start, not only the archive's read.
+3. **Plan 7E measures the whole first search, a close and a search right after a start** (plan 7C's "Left open" and design R3), with R3's fixture of 30 heavy days, in three runs so that each timed part runs in a new process. Recommendation: yes, so that design 4.3's 1 s is judged on the whole search after a start, not only the archive's read; when either search takes more than 1 s on the A71 at 30 days, the controller takes it to the owner.
 4. **Every start or resume of a goal's work starts the service again, also while it runs.** This is how design 10.6's three starts come from the owner's own contexts, and how a running service may gain while-in-use from the owner's action, which Android 17 asks of background audio (main spec B5); Task 8 records the standing that Android gave each start. Recommendation: accept.
 5. **The service stays until the goal's final reply has been said**, showing "Kestrel finished the goal" without buttons, also for hours when the report waits for the owner's return while the phone is locked. Recommendation: accept; otherwise a typed goal's spoken report with listening off would lose its service on Android 17.
 6. **The notification's buttons keep the conversation's reply channel, and a button that the notification no longer shows does nothing.** Recommendation: accept.
@@ -3368,7 +3442,8 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 ## Self-review
 
 - **Spec coverage.** Design 10.6: `GoalService` for every open goal in every phase with listening on or off (D19; Tasks 3 and 5, `GoalServiceTest.aGoalRunsTheServiceWithListeningOnAndOffUntilItsFinalReply`); the notification on the channel "Goals" with "Kestrel is working", the current item, the progress bar, Stop and Open, and with a held goal "Continue the goal?" with Cancel and Continue, the lock screen's "Kestrel is working on a task" (Tasks 2 and 5); its buttons through a receiver that only Kestrel's notification reaches, only for the buttons that it shows, Continue only after the owner's unlock, no `RemoteInput` (Task 5); a tap opens Kestrel's screen, and while the goal acts the pull of the shade interrupts it (`aPullOfTheShadeWhileTheGoalActsIsATouchThatHoldsTheGoal`); `specialUse` with its property and permission, the Android 13 path, `mediaPlayback` while speaking (Tasks 3 and 5), and Android 17's background audio checked outside the instrumentation (Tasks 6 and 8); the three starts and the refusal's sentence and hold, with the held goal posted without the service (Tasks 1, 3, 5, 8 and 9; the typed start in plan 7F, decision 2). Design 6.5 and 14.4: the lock and call pauses with listening off ask "Continue the goal?", answered from the notification (Task 5's lock and call tests; plan 7D's `ConversationSignals`). Design 6.7 and 15.2: "Continue the goal?" after a restart and its Continue (Task 8, Step 8; Task 9, Step 6), the checklist's continuation in plan 7G. The owner's decision on "Active apps": plan 7B's `ProcessEnd`, Task 4, Task 8, Step 9 and Task 9, Step 7. Design 15.2's A71 list: the three starts (Task 9; typed in 7F) and the first search (Tasks 7 and 9). R2: Tasks 8 and 9 note S9's findings, with the exemption that Android used.
-- **The review of 2026-11-25.** M1: the hook's `speak` and `focus` with the control after the goal's end and the audio service's lines (Tasks 6 and 8), the device test that says what it checks, and the comments on while-in-use. I1: Cancel before Continue. I2: Continue asks for the unlock. I3: the press by key with its guard. I4: plan 7B's `ProcessEnd` and Task 4. I5: a stopped service shows nothing, and the posted notice. I6: two runs. Minor 1: a refused new start leaves a running service. Minor 2: the refusal names its command, and the receiver checks the button. Minor 3: `id=`, `credential=present`, the mode and the permission's line. Minor 4: the wait for the new process and the binding, and the exemption's lines. Minor 5: `POST_NOTIFICATIONS` read on the A71, and the swiped notification (decision 12). Minor 6: the refusal's sentence names the notification's Continue, which exists. Minor 7: the checklist's continuation in plan 7G, and the pull of the shade. Minor 8: "Kestrel finished the goal". Minor 9: the waits for the starts and the service, and the mode after the crash.
+- **The review of 2026-11-25.** M1: the hook's `speak` and `focus` with the control after the goal's end and the audio service's lines (Tasks 6 and 8), the device test that says what it checks, and the comments on while-in-use. I1: Cancel before Continue. I2: Continue asks for the unlock. I3: the press by key with its guard. I4: plan 7B's `ProcessEnd` and Task 4. I5: a stopped service shows nothing, and the posted notice. I6: separate runs, each a new process (now three: write, search, start). Minor 1: a refused new start leaves a running service. Minor 2: the refusal names its command, and the receiver checks the button. Minor 3: `id=`, `credential=present`, the mode and the permission's line. Minor 4: the wait for the new process and the binding, and the exemption's lines. Minor 5: `POST_NOTIFICATIONS` read on the A71, and the swiped notification (decision 12). Minor 6: the refusal's sentence names the notification's Continue, which exists. Minor 7: the checklist's continuation in plan 7G, and the pull of the shade. Minor 8: "Kestrel finished the goal". Minor 9: the waits for the starts and the service, and the mode after the crash.
+- **The rebase of 2026-11-25 (plan 7B's Task 7 as built, and the archive's index in shards).** Task 1 follows plan 7B's `GoalRules` (`ending(...)`, `PhoneState.present`, `heldWords`) and `ConversationView.keptForOwner`: a refusal's words for a held goal wait until the owner is there, and the goal service stays while a final reply is kept for him. Task 7 reads `HistoryResult.unavailable`, uses R3's fixture of 30 heavy days, and times a close and a search right after a start besides the first search.
 - **The re-review of 2026-11-25.** N1: one reader of the exit record (`AndroidExitRecords`, built once in the app graph) and one reading of reason 10 for both restores, with `ExitReason.UNCLEAR_STOP` on Android 13 near an update, after which listening stays off (`ListeningTest.kestrelStaysOffAfterAStopThatCannotBeToldFromAnUpdate`) and the goal is held (Task 4). N2: Task 8, Step 9 and Task 9, Step 7 end the earlier conversation first and expect `commands=1`. N3: Task 9, Step 7 prints `lastUpdateTime` beside the exit record's time and names Step 4's install. N4: the minute around an update counts on both sides, with its cases in `ExitRecordsTest`. N5: Task 8, Step 7 records the assistant role's holders, and decision 12 says that the posted notification outlives the process. N6: the amendments are now in plan 7B's Tasks 7 and 10.
 - **Placeholders.** Each step has its code or its command; Task 8, Step 10 and Task 9, Step 8 take values that their Steps 1 and 2 printed, which the steps name.
 - **Type consistency.** `Interruption.BACKGROUND_REFUSED`, `GoalHold.BACKGROUND_REFUSED`, `ConversationEvent.BackgroundRefused(command)`, `GoalRules.backgroundRefused(state, command)`, `ConversationEngine.backgroundRefused(command)`, `ConversationView.hold` and `goalEnding`, `ConversationTexts.BACKGROUND_REFUSED` and `CONTINUE_IN_NOTIFICATION` (Task 1); `ProcessEnd` and `restore(previous)` (plan 7B) and `ExitReason.UNCLEAR_STOP`, `exitReasonOf`, `processEndOf`, `readProcessEnd` and `AppGraph.previousProcessEnd` (Task 4); `GoalNotice(kind, title, text, progress, actions)`, `NoticeKind`, `NoticeProgress(done, total)`, `GoalAction(label, intent, resumes)` with `broadcast` and `ofBroadcast`, `GoalNotices.CLOSING` and `of` (Task 2); `ForegroundType`, `ServiceState`, `Shown(notice, types)`, `GoalServiceEvent.Viewed(goal, stopping, command, replying, notice)`, `GoalServiceCommand.Start` and `HoldGoal(command)`, `GoalServiceRules.next/shown/posted/types`, `GoalServiceStatus(service, notice, posted, types, applied, starts, refusals)` and `GoalForeground(start, holdGoal, sdk, report)` with `follow`, `started`, `applied`, `failed`, `destroyed`, `whileSpeaking`, `status`, `notice`, `shown` and `posted` (Task 3) are the names of Tasks 5 and 6; `GoalNotification` and `GoalService.start` and `runningTypes` (Task 5) are the names of Task 6 and the tests; `FocusResult(granted, speaking, types)` and `FocusProbe` (Task 6).
