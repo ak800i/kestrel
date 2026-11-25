@@ -1297,7 +1297,9 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
 import dev.kestrel.safety.HandOver
@@ -1337,7 +1339,7 @@ class VoiceChannelTest {
     // output waits until the one before it has ended, in the order in which they came.
     @Test
     fun spokenOutputsPlayOneAfterAnotherInTheOrderInWhichTheyCame() = runTest {
-        val tooLate = ConversationTexts.cameTooLate("and to Ana")
+        val tooLate = ConversationTexts.cameTooLate(SteeringMessage.of("and to Ana", InputChannel.VOICE))
         voice.holds = true
         val report = async { channel.show(ChannelOutput.Report(3, "Done.")) }
         runCurrent()
@@ -1360,7 +1362,7 @@ class VoiceChannelTest {
     // late" sentence behind a goal's final words; only the outputs that come after the stop play.
     @Test
     fun aStopDropsTheSpokenOutputsThatWaitAndOnlyLaterOnesPlay() = runTest {
-        val tooLate = ConversationTexts.cameTooLate("and to Ana")
+        val tooLate = ConversationTexts.cameTooLate(SteeringMessage.of("and to Ana", InputChannel.VOICE))
         voice.holds = true
         val report = async { channel.show(ChannelOutput.Report(3, "Done.")) }
         runCurrent()
@@ -9624,7 +9626,7 @@ internal class CommandTags {
             tags[tag]?.let { tags[tag] = it.copy(role = Role.TASK, task = command) }
         }
         val input = (event as? ConversationEvent.Input)?.input ?: return
-        if (input.id in started || step.state.next?.id == input.id) return
+        if (input.id in started || step.state.waiting.any { it.id == input.id }) return
         val tag = inputs.remove(input.id) ?: return
         tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE) }
     }
@@ -11649,8 +11651,8 @@ Design 14.4 of sub-project 7: `conversation-state` reads the open conversation i
 - Test: create `app/src/testDebug/kotlin/dev/kestrel/app/debug/ConversationHookAnswersTest.kt` and `app/src/androidTest/kotlin/dev/kestrel/app/debug/ConversationHooksTest.kt`; modify `app/src/androidTest/kotlin/dev/kestrel/app/voice/VoiceHookTest.kt`
 
 **Interfaces:**
-- Consumes: Task 3's `AppGraph.conversations`, `InputIds` and `AgentTaskHooks.state`; Task 4's `Work.FOLLOWING_UP`; plan 7B's `ConversationView`, `ChecklistSummary`, `QuietClock`, `Restored`, `ConversationEngine.submit`, `endQuietTime` and `restored`, and `ConversationSettings` with `quietMillis`, `roundLimits`, `REPLIES`, `WORK_MINUTES` and `CREDITS`; plan 7C's `SettingKeys.CONVERSATIONS`.
-- Produces: the hooks `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`internal class ConversationHooks(graph: AppGraph)` with `COMMANDS`); `internal object ConversationHookAnswers` with `state(view, settings, now): String`, `checklist(summary: ChecklistSummary?): String`, `limits(settings, text: String?): ConversationSettings?`, `limitsText(limits: GoalLimits): String` and `restored(restored: Restored?): String`; `voice-state`'s `followUp=`; `agent-state`'s `checklist=` and `conversation=`. Plan 7G adds the hooks to `scripts\hook.ps1` (see "Decisions for the controller", item 5).
+- Consumes: Task 3's `AppGraph.conversations`, `InputIds` and `AgentTaskHooks.state`; Task 4's `Work.FOLLOWING_UP`; plan 7B's `ConversationView`, `ChecklistSummary`, `QuietClock`, `RestoreResult`, `ConversationEngine.submit`, `endQuietTime` and `restored`, and `ConversationSettings` with `quietMillis`, `roundLimits`, `REPLIES`, `WORK_MINUTES` and `CREDITS`; plan 7C's `SettingKeys.CONVERSATIONS`.
+- Produces: the hooks `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`internal class ConversationHooks(graph: AppGraph)` with `COMMANDS`); `internal object ConversationHookAnswers` with `state(view, settings, now): String`, `checklist(summary: ChecklistSummary?): String`, `limits(settings, text: String?): ConversationSettings?`, `limitsText(limits: GoalLimits): String` and `restored(restored: RestoreResult?): String`; `voice-state`'s `followUp=`; `agent-state`'s `checklist=` and `conversation=`. Plan 7G adds the hooks to `scripts\hook.ps1` (see "Decisions for the controller", item 5).
 
 Counts: `:app` JVM A₅ + 2 (`ConversationHookAnswersTest` 2). Device tests: AD₀ + 2 + 2 = AD₀ + 4 (`ConversationHooksTest` 2; `VoiceHookTest` changes a pattern).
 
@@ -11664,7 +11666,7 @@ package dev.kestrel.app.debug
 import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.conversation.engine.ChecklistSummary
 import dev.kestrel.conversation.engine.ConversationView
-import dev.kestrel.conversation.engine.Restored
+import dev.kestrel.conversation.engine.RestoreResult
 import dev.kestrel.conversation.machine.HoldReason
 import dev.kestrel.conversation.machine.QuietClock
 import dev.kestrel.conversation.model.CommandRecord
@@ -11710,7 +11712,7 @@ class ConversationHookAnswersTest {
         assertTrue(ConversationHookAnswers.state(held, settings, now).contains(" quiet=held quietLeft=none "))
         assertEquals("3/7", ConversationHookAnswers.checklist(open.checklist))
         assertEquals("none", ConversationHookAnswers.checklist(null))
-        assertEquals("goal-held", ConversationHookAnswers.restored(Restored.GOAL_HELD))
+        assertEquals("goal-held", ConversationHookAnswers.restored(RestoreResult.GOAL_HELD))
         assertEquals("pending", ConversationHookAnswers.restored(null))
     }
 
@@ -11836,7 +11838,7 @@ package dev.kestrel.app.debug
 import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.conversation.engine.ChecklistSummary
 import dev.kestrel.conversation.engine.ConversationView
-import dev.kestrel.conversation.engine.Restored
+import dev.kestrel.conversation.engine.RestoreResult
 import dev.kestrel.conversation.machine.QuietClock
 import dev.kestrel.conversation.model.ConversationSettings
 
@@ -11886,7 +11888,7 @@ internal object ConversationHookAnswers {
     fun limitsText(limits: GoalLimits): String = "${limits.replies}/${limits.workMinutes}/${limits.credits}"
 
     /** What the restore at the process's start found, as "goal-held"; pending before it has run. */
-    fun restored(restored: Restored?): String = restored?.name?.lowercase()?.replace('_', '-') ?: "pending"
+    fun restored(restored: RestoreResult?): String = restored?.name?.lowercase()?.replace('_', '-') ?: "pending"
 
     private fun yesNo(value: Boolean) = if (value) "yes" else "no"
 
@@ -12035,7 +12037,7 @@ git commit -m "feat(app): the hooks conversation-state and conversation-control,
 
 Design 9.7 of sub-project 7, as the controller settled it on 2026-11-24: the settings page's "Delete history" deletes what "Kestrel, delete history" deletes after a yes: both logs, every past conversation with the index of past conversations and the archive's key `kestrel.conversations`, and the open conversation, which closes. The page asks its own question, as today, now with the design's words ("Delete the activity log, the network log and past conversations?"), and the conversation asks nothing more and says nothing on a channel. While a goal is open or one of Kestrel's own requests runs, the conversation leaves everything alone, as it does for "delete history" by voice, and the page says why. Plan 7F adds only the typed "delete history".
 
-This is the one task of this plan that changes `:core:conversation`: plan 7B's engine had no way in for a deletion that the owner already confirmed. `LocalRequests.deleteAll(stored)` is the deletion that both ways share: once the engine's writer has stored every write queued before it (plan 7B's barrier, `stored()`), it deletes through the store both logs, every conversation and the index of past conversations in the archive's one transaction, and then the archive's key (plan 7C, `ae33cfda`). `ConversationEngine.deleteHistory()` closes the open conversation at once through the machine's new `ConversationEvent.HistoryDeleted`, unkept, and runs that deletion beside the loop, as "delete history" by voice runs it, so that the loop never waits for the store. Until the deletion has ended, no write reaches the engine's writer: the open conversation's changes wait as during a switch, and the closes and the switches wait in their order. So a save that was asked before the request and still waits is deleted too, and a command after the request opens a conversation that stays, also when it closes before the deletion ended. While a switch runs, the request is refused, as while one of Kestrel's own requests runs, because the switch is that request's end. If handling the request or the end of its deletion fails, the engine still settles both, so that the page never waits for ever and no write stays held. When nothing could be deleted, the engine stores the conversation that the request closed as closed, as any close keeps it.
+This is the one task of this plan that changes `:core:conversation`: plan 7B's engine had no way in for a deletion that the owner already confirmed. `LocalRequests.deleteAll(stored)` is the deletion that both ways share: once the engine's writer has stored every write queued before it (plan 7B's barrier, `stored()`), it deletes through the store both logs, every conversation and the index of past conversations in the archive's one transaction, and then the archive's key (plan 7C, `ae33cfda`). `ConversationEngine.deleteHistory()` closes the open conversation at once through the machine's new `ConversationEvent.HistoryDeleted`, unkept, and runs that deletion beside the loop, as "delete history" by voice runs it, so that the loop never waits for the store. Until the deletion has ended, no write reaches the engine's writer: the open conversation's changes wait as during a switch, and the closes and the switches wait in their order. So a save that was asked before the request and still waits is deleted too, and a command after the request opens a conversation that stays, also when it closes before the deletion ended. While a switch runs, the request is refused too, because the switch is the end of one of Kestrel's own requests, whose run lasts until the switch has ended. If handling the request or the end of its deletion fails, the engine still settles both, so that the page never waits for ever and no write stays held. When nothing could be deleted, the engine stores the conversation that the request closed as closed, as any close keeps it.
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/HistoryDeletion.kt`
@@ -12167,7 +12169,7 @@ with:
         engine.endQuietTime()
         runCurrent()
         val reopening = CompletableDeferred<Unit>()
-        gated.reopening = reopening
+        gated.reopenGate = reopening
 
         engine.submit(input(InputChannel.VOICE, InputIntent.ContinuePast("latest SMS")))
         runCurrent()
@@ -12192,24 +12194,18 @@ In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/Conversati
     // A store whose saves wait for [gate] while it is set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null
-        val calls = mutableListOf<String>()
+        var reopenGate: CompletableDeferred<Unit>? = null
 ```
 
 with:
 
 ```kotlin
-    // A store whose saves wait for [gate], whose switches wait for [reopening] and whose deletion waits for [deleting],
+    // A store whose saves wait for [gate], whose switches wait for [reopenGate] and whose deletion waits for [deleting],
     // while they are set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null
-        var reopening: CompletableDeferred<Unit>? = null
+        var reopenGate: CompletableDeferred<Unit>? = null
         var deleting: CompletableDeferred<Unit>? = null
-        val calls = mutableListOf<String>()
-
-        override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? {
-            reopening?.await()
-            return inner.reopen(id, closing, nowWall, testMode)
-        }
 ```
 
 In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, replace:
@@ -12393,14 +12389,14 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
     }
 ```
 
 with:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
 
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
@@ -12418,19 +12414,19 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-    // save of it would open it again.
-    private var switching = false
+    private var switchClosing: ConversationSnapshot? = null
+    private var switchChosen: ConversationSnapshot? = null
 ```
 
 with:
 
 ```kotlin
-    // save of it would open it again.
-    private var switching = false
+    private var switchClosing: ConversationSnapshot? = null
+    private var switchChosen: ConversationSnapshot? = null
 
     // While the settings page's "Delete history" runs, no write reaches the writer, so that none comes between the writer's
     // barrier that the deletion waits for and the deletion: the open conversation's changes wait as during a switch
-    // ([persist]), and the closes and the switches wait in [heldWrites], in their order, until the deletion ended.
+    // ([persist]), and the closes, the switches and their undoing wait in [heldWrites], in their order, until the deletion ended.
     private var deletions = 0
     private val heldWrites = mutableListOf<Write>()
 ```
@@ -12508,10 +12504,10 @@ with:
     // Design 9.7: the page's question stands for the conversation's. The open conversation closes unkept at once, and the
     // deletion runs beside the loop, as "delete history" by voice does, after the writer's barrier ([stored]): so a save
     // that still waits is deleted too. No write reaches the writer until it ended ([send]), so a command after the request
-    // opens a conversation that stays. While a switch runs, the request is refused, as while one of Kestrel's own requests
-    // runs: the switch is that request's end. The job starts atomically, so that its end comes back on every path.
+    // opens a conversation that stays. A switch is the end of one of Kestrel's own requests, whose run lasts until the
+    // switch ended, so the request is refused then too. The job starts atomically, so that its end comes back on every path.
     private fun deleteHistory(done: CompletableDeferred<HistoryDeletion>) {
-        if (state.goal != null || state.local != null || switching) {
+        if (state.goal != null || state.local != null) {
             done.complete(HistoryDeletion.REFUSED)
             return
         }
@@ -12567,7 +12563,8 @@ with:
         }
     }
 
-    // A close or a switch for the writer; while the settings page's "Delete history" runs, it waits in [heldWrites].
+    // A close, a switch or its undoing for the writer; while the settings page's "Delete history" runs, it waits in
+    // [heldWrites].
     private fun send(write: Write) {
         if (deletions > 0) heldWrites += write else writes.trySend(write)
     }
@@ -12578,17 +12575,29 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        val closing = before.id?.takeIf { it == recordsOf }?.let { snapshot(before, open = false) }
-        switching = true
+        switchChosen = null
         writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
 ```
 
 with:
 
 ```kotlin
-        val closing = before.id?.takeIf { it == recordsOf }?.let { snapshot(before, open = false) }
-        switching = true
+        switchChosen = null
         send(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+        switchChosen?.let { writes.trySend(Write.Save(it, emptyList())) }
+        switchClosing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
+```
+
+with:
+
+```kotlin
+        switchChosen?.let { send(Write.Save(it, emptyList())) }
+        switchClosing?.let { send(Write.Save(it.copy(open = true), emptyList())) }
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -12851,7 +12860,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 - `:app` JVM (with `app/src/testDebug`): A₀ + 23 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 5, Task 2 + 3, Task 3 + 2 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
-- `:core:conversation`: C₀ + 4 (`ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`50b99c61`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
+- `:core:conversation`: C₀ + 4 (`ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
 
 ## Interfaces for 7E and 7F
 
