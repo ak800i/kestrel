@@ -55,7 +55,7 @@ object ContextBlock {
         if (!fill.take(opening, reserve = listOfNotNull(everyRecord))) return null
         val newest = earlier.lastOrNull() ?: return block(opening)
 
-        val items = Part(newest.checklist?.open.orEmpty().map { listOf(RecordLines.item(it)) }, RecordLines::moreItems)
+        val items = Part(newest.checklist?.open.orEmpty().map { listOf(RecordLines.item(it)) }, ::openLeftOut)
         val data = newestFirst(newest.data.map { RecordLines.data(it, DATA_CAP) }, DATA, newest.droppedData) {
             RecordLines.leftOut(it, "data note", "data notes")
         }
@@ -68,7 +68,7 @@ object ContextBlock {
         val older = Part(earlier.dropLast(1).asReversed().map { RecordCondenser.lines(it, zone) }, ::olderLeftOut)
         val parts = listOf(items, data, lines, ledger, older)
 
-        val head = if (fill.hold(parts)) HEAD_CAPS.map { head(newest, zone, it) }.firstOrNull { fill.take(it) } else null
+        val head = if (fill.hold(parts)) HEAD_CAPS.asSequence().map { head(newest, zone, it) }.firstOrNull { fill.take(it) } else null
         if (head == null) return block(opening + listOfNotNull(everyRecord))
         val shownItems = fill.fill(items)
         val shownData = fill.fill(data)
@@ -97,6 +97,10 @@ object ContextBlock {
         val offered = all.takeLast(most)
         return Part(offered.asReversed().map(::listOf), count, notOffered = all.size - offered.size + dropped)
     }
+
+    // The open items' count line, which reads the same whether some items come before it or none.
+    private fun openLeftOut(count: Int): String =
+        "    ($count open ${if (count == 1) "item is" else "items are"} left out.)"
 
     private fun olderLeftOut(count: Int): String =
         "($count earlier ${if (count == 1) "command of this conversation is" else "commands of this conversation are"} left out; " +
@@ -158,7 +162,8 @@ object ContextBlock {
                 taken += item
             }
             val count = part.countLine(taken.size)
-            check(count == null || take(listOf(count))) { "A part's count line did not fit in the room kept for it" }
+            val counted = count == null || take(listOf(count))
+            check(counted) { "A part's count line did not fit in the room kept for it" }
             return Shown(taken, count)
         }
     }

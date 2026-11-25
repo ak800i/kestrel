@@ -1292,7 +1292,7 @@ git commit -m "feat(conversation): a command's record from the run's traces, wit
 - Consumes: Task 2's `RecordLines` and `RecordCondenser`; `dev.kestrel.agent.TaskRequest.CONVERSATION_HEADER`, `dev.kestrel.agent.loop.Redacted.kestrel`, `dev.kestrel.agent.observe.ScreenText.tokens`, `dev.kestrel.agent.port.ModelInfo`.
 - Produces: `object ContextBlock { const val BUDGET = 2_000; const val REQUEST_CAP = 400; const val ANSWER_CAP = 400; const val DATA = 5; const val DATA_CAP = 600; const val LINES = 10; const val LINE_CAP = 300; const val LEDGER = 5; const val LEDGER_CAP = 200; fun budget(model: ModelInfo): Int; fun build(earlier: List<CommandRecord>, budget: Int, zone: ZoneId, note: String? = null): Redacted? }`. `build` gives null for a first command without a note, and when the budget cannot hold the header, the note and the line that counts every record; its text starts with `TaskRequest.CONVERSATION_HEADER`, then the note, then the left-out older commands' line, the older records condensed (oldest first) and the newest record; `ScreenText.tokens` of its text never passes `budget`, and each part that leaves something out (the open items, the data notes, the lines, the ledger lines and the older records) has the one line that counts it.
 
-Counts: `:core:conversation` 22 + 9 = 31.
+Counts: `:core:conversation` 22 + 11 = 33.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1355,6 +1355,32 @@ class ContextBlockTest {
     }
 
     @Test
+    fun aBudgetThatHoldsNoHeadGivesTheLineThatCountsEveryRecordAndASmallerOneGivesNoBlock() {
+        val earlier = listOf(record(1))
+        val smallest = (1..ContextBlock.BUDGET).first { ContextBlock.build(earlier, it, zone) != null }
+
+        assertNull(ContextBlock.build(earlier, 30, zone))
+        assertEquals(
+            "${TaskRequest.CONVERSATION_HEADER}\n(1 earlier command of this conversation is left out; search_conversations finds them.)",
+            text(earlier, smallest),
+        )
+    }
+
+    @Test
+    fun theOlderRecordsThatDoNotFitAreCountedBeforeTheOnesShown() {
+        val earlier = (1..7).map { record(it) }
+        val blocks = (1..ContextBlock.BUDGET).mapNotNull { ContextBlock.build(earlier, it, zone)?.text }
+
+        val partial = blocks.first { it.contains("Command 6, at") }
+        val left = "(5 earlier commands of this conversation are left out; search_conversations finds them.)"
+        assertFalse(partial.contains("Command 5, at"))
+        assertTrue(partial.indexOf(left) in 0 until partial.indexOf("Command 6, at"))
+        assertTrue(partial.indexOf("Command 6, at") < partial.indexOf("Command 7, at"))
+        assertFalse(blocks.last().contains("left out"))
+        blocks.forEach { assertEverythingShownOrCounted(it, earlier) }
+    }
+
+    @Test
     fun theNewestRecordShowsItsCapsAndTheOlderOnesAreCondensed() {
         val block = text(listOf(record(1, data = listOf(DataNote("list_sms", 1, "a\nb", items = 2))), record(2, request = "x".repeat(500))))
 
@@ -1372,10 +1398,14 @@ class ContextBlockTest {
         val closed = (1..13).map { ChecklistItem("c$it", "Step $it", if (it == 13) ItemState.SKIPPED else ItemState.DONE, step = it, why = if (it == 13) "Not needed" else null) }
         val open = listOf(ChecklistItem("c14", "Reply to Mila", ItemState.DOING), ChecklistItem("c15", "Archive the thread", ItemState.TODO))
 
-        val block = text(listOf(record(1, checklist = Checklist(closed + open))))
+        val earlier = listOf(record(1, checklist = Checklist(closed + open)))
+        val block = text(earlier)
+        // The smallest budget that shows the head leaves no room for an item, only for the line that counts them.
+        val tight = (1..ContextBlock.BUDGET).firstNotNullOf { budget -> ContextBlock.build(earlier, budget, zone)?.text?.takeIf { it.contains("Command 1, at") } }
 
         assertTrue(block.contains("  Checklist: 12 done, 1 skipped, 0 failed; open:\n    c14 [doing] \"Reply to Mila\"\n    c15 [todo] \"Archive the thread\""))
         assertFalse(block.contains("Step 3"))
+        assertTrue(tight.contains("  Checklist: 12 done, 1 skipped, 0 failed; open:\n    (2 open items are left out.)"))
     }
 
     @Test
@@ -1398,6 +1428,7 @@ class ContextBlockTest {
             assertTrue(block.contains("  Data from list_sms at step 5: "))
             assertEverythingShownOrCounted(block, earlier)
             assertTrue("$letter: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= ContextBlock.BUDGET)
+            assertEveryBudgetOfTheSweep(earlier)
         }
     }
 
@@ -1422,13 +1453,26 @@ class ContextBlockTest {
                 droppedData = 2,
             )
             val earlier = (1..7).map { largest.copy(number = it) }
-            for (budget in listOf(ContextBlock.BUDGET, 600, 256)) {
-                val block = text(earlier, budget, note = "This conversation was continued on Friday, 20 November 2026; test mode is on now.")
-                assertTrue("$letter $budget: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= budget)
-                assertTrue(block.startsWith(TaskRequest.CONVERSATION_HEADER))
-                assertEverythingShownOrCounted(block, earlier)
-            }
+            assertEveryBudgetOfTheSweep(earlier, note = "This conversation was continued on Friday, 20 November 2026; test mode is on now.")
         }
+    }
+
+    // At every budget of the sweep, the block fits, starts with the header and counts whatever it leaves out; a budget that
+    // gives no block is smaller than every budget that gives one, and the largest gives one.
+    private fun assertEveryBudgetOfTheSweep(earlier: List<CommandRecord>, note: String? = null) {
+        var blocks = 0
+        for (budget in 20..ContextBlock.BUDGET step 9) {
+            val block = ContextBlock.build(earlier, budget, zone, note)?.text
+            if (block == null) {
+                assertEquals("no block at $budget after a block at a smaller budget", 0, blocks)
+                continue
+            }
+            blocks++
+            assertTrue("$budget: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= budget)
+            assertTrue(block.startsWith(TaskRequest.CONVERSATION_HEADER))
+            assertEverythingShownOrCounted(block, earlier)
+        }
+        assertTrue(ContextBlock.build(earlier, ContextBlock.BUDGET, zone, note) != null)
     }
 
     // Design 8.3: whatever a part of the block leaves out, one line counts it, so the shown and the counted add up to the
@@ -1439,7 +1483,7 @@ class ContextBlockTest {
         assertEquals("records", earlier.size, heads + counted(block, "\\((\\d+) earlier commands? of this conversation (?:is|are) left out; search_conversations finds them\\.\\)"))
         if (heads == 0) return
         val rows = block.lines()
-        assertEquals("open items", newest.checklist?.open.orEmpty().size, rows.count { it.matches(Regex("^ {4}c\\d+ \\[.*")) } + counted(block, "\\(and (\\d+) more open items?\\)"))
+        assertEquals("open items", newest.checklist?.open.orEmpty().size, rows.count { it.matches(Regex("^ {4}c\\d+ \\[.*")) } + counted(block, "\\((\\d+) open items? (?:is|are) left out\\.\\)"))
         assertEquals("data notes", newest.data.size + newest.droppedData, rows.count { it.startsWith("  Data from ") } + counted(block, "\\((\\d+) earlier data notes? of this command (?:is|are) left out\\.\\)"))
         assertEquals("lines", newest.lines.size + newest.droppedLines, rows.count { it.startsWith("  Kestrel said: ") || it.startsWith("  The owner added (") } + counted(block, "\\((\\d+) earlier lines? of this command (?:is|are) left out\\.\\)"))
         assertEquals("ledger", newest.ledger.size, rows.count { it.startsWith("  Kestrel did: ") } + counted(block, "\\((\\d+) earlier ledger lines? of this command (?:is|are) left out\\.\\)"))
@@ -1565,7 +1609,7 @@ object ContextBlock {
         if (!fill.take(opening, reserve = listOfNotNull(everyRecord))) return null
         val newest = earlier.lastOrNull() ?: return block(opening)
 
-        val items = Part(newest.checklist?.open.orEmpty().map { listOf(RecordLines.item(it)) }, RecordLines::moreItems)
+        val items = Part(newest.checklist?.open.orEmpty().map { listOf(RecordLines.item(it)) }, ::openLeftOut)
         val data = newestFirst(newest.data.map { RecordLines.data(it, DATA_CAP) }, DATA, newest.droppedData) {
             RecordLines.leftOut(it, "data note", "data notes")
         }
@@ -1578,7 +1622,7 @@ object ContextBlock {
         val older = Part(earlier.dropLast(1).asReversed().map { RecordCondenser.lines(it, zone) }, ::olderLeftOut)
         val parts = listOf(items, data, lines, ledger, older)
 
-        val head = if (fill.hold(parts)) HEAD_CAPS.map { head(newest, zone, it) }.firstOrNull { fill.take(it) } else null
+        val head = if (fill.hold(parts)) HEAD_CAPS.asSequence().map { head(newest, zone, it) }.firstOrNull { fill.take(it) } else null
         if (head == null) return block(opening + listOfNotNull(everyRecord))
         val shownItems = fill.fill(items)
         val shownData = fill.fill(data)
@@ -1607,6 +1651,10 @@ object ContextBlock {
         val offered = all.takeLast(most)
         return Part(offered.asReversed().map(::listOf), count, notOffered = all.size - offered.size + dropped)
     }
+
+    // The open items' count line, which reads the same whether some items come before it or none.
+    private fun openLeftOut(count: Int): String =
+        "    ($count open ${if (count == 1) "item is" else "items are"} left out.)"
 
     private fun olderLeftOut(count: Int): String =
         "($count earlier ${if (count == 1) "command of this conversation is" else "commands of this conversation are"} left out; " +
@@ -1668,7 +1716,8 @@ object ContextBlock {
                 taken += item
             }
             val count = part.countLine(taken.size)
-            check(count == null || take(listOf(count))) { "A part's count line did not fit in the room kept for it" }
+            val counted = count == null || take(listOf(count))
+            check(counted) { "A part's count line did not fit in the room kept for it" }
             return Shown(taken, count)
         }
     }
@@ -1678,12 +1727,12 @@ object ContextBlock {
 - [ ] **Step 4: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.context.ContextBlockTest`
-Expected: PASS, 9 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 31`.
+Expected: BUILD SUCCESSFUL; `core\conversation 33`.
 
 - [ ] **Step 6: Commit**
 
@@ -1706,7 +1755,7 @@ The conversations' store (design 9.1 to 9.3): `RecordArchive` is the bytes-level
 - Consumes: Task 1's `ConversationSnapshot`, `ConversationId`, `CommandRecord`.
 - Produces: `interface dev.kestrel.conversation.engine.ConversationClock { fun wallMillis(): Long; fun zone(): ZoneId }`. Package `dev.kestrel.conversation.store`: `interface RecordArchive { suspend fun readAll(): List<ArchiveEntry>; suspend fun write(rows: List<ArchiveRow>); suspend fun delete(id: String); suspend fun deleteAll(); suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int }`; `data class ArchiveHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)`; `class ArchiveRow(val header: ArchiveHeader, val payload: ByteArray)`; `sealed interface ArchiveEntry { val header: ArchiveHeader; class Readable(header, val payload: ByteArray); class Unreadable(header); class Unknown(header) }`; `interface ConversationStore { suspend fun open(): ConversationSnapshot?; suspend fun save(snapshot: ConversationSnapshot); suspend fun list(): List<ConversationSummary>; suspend fun get(id: ConversationId): ConversationSnapshot?; suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?; suspend fun delete(id: ConversationId); suspend fun deleteAll(); suspend fun purge(retentionDays: Int, nowWall: Long): Int; suspend fun closedSince(sinceWall: Long): List<ConversationSnapshot> }`; `data class ConversationSummary(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?)`; `class ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore` with `ArchivedConversationStore.KIND = "conversation"` and `DAY_MILLIS`; `class Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which checks the wall clock every hour. Fixtures (`dev.kestrel.conversation.testing`): `class MemoryArchive : RecordArchive` (`rows`, `unreadable`, `unknown`, `transactions`, `calls`, `keyDeleted`, `payload(id)`); `class ManualConversationClock(elapsed: () -> Long = { 0L }, var base: Long = BASE, var zone: ZoneId = BELGRADE) : ConversationClock` with `BASE` (20 November 2026, 10:20 in Belgrade) and `BELGRADE`.
 
-Counts: `:core:conversation` 31 + 12 (`ArchivedConversationStoreTest` 10, `RetentionTest` 2) = 43.
+Counts: `:core:conversation` 33 + 12 (`ArchivedConversationStoreTest` 10, `RetentionTest` 2) = 45.
 
 - [ ] **Step 1: Create the clock, the ports and the fixtures**
 
@@ -2396,7 +2445,7 @@ Expected: PASS, 12 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 43`.
+Expected: BUILD SUCCESSFUL; `core\conversation 45`.
 
 - [ ] **Step 7: Commit**
 
@@ -2419,7 +2468,7 @@ git commit -m "feat(conversation): the conversations' store behind the archive's
 - Consumes: Task 4's `ConversationStore`, `ConversationClock` and the fixtures; `dev.kestrel.agent.goal.HistoryPort`, `HistoryQuery`, `HistoryResult`, `HistoryMatch`, `HistoryData` (plan 7A); `dev.kestrel.commands.text.Normalizer`, `LabelMatcher`, `MatchRules`.
 - Produces: `data class RecordRef(val conversation: ConversationId, val record: Int)`; `data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val firstRequest: String)`; `class HistorySearch(store: ConversationStore, retentionDays: () -> Int, clock: ConversationClock)` with `suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult`, `fun port(excluding: RecordRef?): HistoryPort`, `suspend fun conversation(topic: String?): ConversationMatch?`, `fun forgetAll()` and `val indexed: Int`.
 
-Counts: `:core:conversation` 43 + 9 = 52.
+Counts: `:core:conversation` 45 + 9 = 54.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2742,7 +2791,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 52`.
+Expected: BUILD SUCCESSFUL; `core\conversation 54`.
 
 - [ ] **Step 6: Commit**
 
@@ -2765,7 +2814,7 @@ The port of the owner's two channels (design 5.3 and 11) and `ConversationOwner`
 - Consumes: Task 1's `InputChannel` and `ChannelAnswer`; `dev.kestrel.agent.port.OwnerPort` (with plan 7A's `leaveKestrel`), `Answer`, `AnswerKind` (with `LIMIT`), `ConfirmEnd`, `Gate`, `HandOverEnd`, `PermissionEnd`; `dev.kestrel.safety.Confirmation`, `HandOver`, `HandOverKind`, `Category`.
 - Produces (package `dev.kestrel.conversation.channel`): `interface OwnerChannel { val kind: InputChannel; suspend fun show(output: ChannelOutput); suspend fun ask(question: ChannelQuestion): ChannelAnswer; suspend fun handOver(handOver: HandOver): HandOverEnd; suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd; suspend fun leaveKestrel(): Boolean }`; `sealed interface ChannelOutput { data class Said(text); data class Shown(text); data class Report(command: Int, text) }`; `enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH, DELETE_HISTORY }`; `data class ChannelQuestion(number: Int, text: String, kind: QuestionKind, spoken: String = text, choices: List<String> = emptyList(), confirmation: Confirmation? = null)`; `interface Dialogue { suspend fun say(text: String); suspend fun question(text: String, kind: QuestionKind, spoken: String = text): ChannelAnswer }`; `sealed interface DialogueEvent { Asked(number, kind); Answered(number); HandedOver(number); HandOverDone(number) }`; `class ConversationOwner(channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, voiceOn: StateFlow<Boolean>, routing: () -> Routing, events: (DialogueEvent) -> Unit) : OwnerPort, Dialogue` with `data class Routing(channel: InputChannel, speakTyped: Boolean)`, `suspend fun show(output: ChannelOutput)`, `fun answer(number: Int, answer: ChannelAnswer)`, `fun endHandOver(number: Int, end: HandOverEnd)`, `fun pause()`, `fun resume()`, `fun startWork()`, and the hooks' `asking: QuestionKind?`, `confirming: Category?`, `handOverKind: HandOverKind?`. Fixture: `class FakeChannel(kind: InputChannel) : OwnerChannel` (`shown`, `asked`, `answers`, `handOvers`, `handOverEnds`, `permissionEnds`, `leaves`, `onShow`, `texts()`).
 
-Counts: `:core:conversation` 52 + 14 = 66.
+Counts: `:core:conversation` 54 + 14 = 68.
 
 - [ ] **Step 1: Create the channel's port, the dialogue and the fake channel**
 
@@ -3542,7 +3591,7 @@ Expected: PASS, 14 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 66`.
+Expected: BUILD SUCCESSFUL; `core\conversation 68`.
 
 - [ ] **Step 7: Commit**
 
@@ -3602,7 +3651,7 @@ The other 52 cases of `RulesTest` are the voice's own (the listening modes, the 
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
 - Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput)`; `data class PhoneState(locked, ringing, inCall)` with `away`; `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
-Counts: `:core:conversation` 66 + 43 (`QuietClockTest` 6, `ConversationMachineTest` 22, `GoalRulesTest` 15) = 109.
+Counts: `:core:conversation` 68 + 43 (`QuietClockTest` 6, `ConversationMachineTest` 22, `GoalRulesTest` 15) = 111.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5549,7 +5598,7 @@ Expected: PASS, 43 tests.
 - [ ] **Step 7: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 109`.
+Expected: BUILD SUCCESSFUL; `core\conversation 111`.
 
 - [ ] **Step 8: Commit**
 
@@ -5572,7 +5621,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 109 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 124.
+Counts: `:core:conversation` 111 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 126.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -6649,7 +6698,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 124`.
+Expected: BUILD SUCCESSFUL; `core\conversation 126`.
 
 - [ ] **Step 7: Commit**
 
@@ -6672,7 +6721,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5's `HistorySearch.conversation` and `forgetAll`; Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`.
 
-Counts: `:core:conversation` 124 + 8 = 132.
+Counts: `:core:conversation` 126 + 8 = 134.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -7005,7 +7054,7 @@ Expected: PASS, 8 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 132`.
+Expected: BUILD SUCCESSFUL; `core\conversation 134`.
 
 - [ ] **Step 6: Commit**
 
@@ -7028,7 +7077,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 132 + 14 = 146. `:core:agent`: G₀, unchanged.
+Counts: `:core:conversation` 134 + 14 = 148. `:core:agent`: G₀, unchanged.
 
 - [ ] **Step 1: Create the view**
 
@@ -8125,7 +8174,7 @@ Expected: PASS, 14 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 146` and `core\agent\build\test-results\test` G₀; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 148` and `core\agent\build\test-results\test` G₀; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -8138,7 +8187,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 146, from C₀ = 0 (Task 1: 7, Task 2: 15, Task 3: 9, Task 4: 12, Task 5: 9, Task 6: 14, Task 7: 43, Task 8: 15, Task 9: 8, Task 10: 14).
+- `:core:conversation`: C₀ + 148, from C₀ = 0 (Task 1: 7, Task 2: 15, Task 3: 11, Task 4: 12, Task 5: 9, Task 6: 14, Task 7: 43, Task 8: 15, Task 9: 8, Task 10: 14).
 - `:core:agent`: G₀, unchanged (Task 10, Step 6 runs it).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
 
@@ -8198,9 +8247,9 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - **The design's plan 7B row.** The module and its build file (Task 1); `model` (Task 1); `ConversationMachine` with `QuietClock` and `GoalRules` (Task 7); `ConversationEngine` (Task 10); `GoalRunner`, `RunningGoal` and `SteeringInbox` (Task 8); `RecordBuilder` and `RecordCondenser` (Task 2) and `ContextBlock` (Task 3); `ConversationOwner` (Task 6); `LocalRequests` with "new conversation" (the machine, Task 7) and continuing a past conversation (Tasks 7, 9 and 10); `ConversationStore`, `ArchivedConversationStore`, `Retention` and the `RecordArchive` port (Task 4); `HistorySearch` (Task 5). JVM only, with `ScriptedModel`, fake channels and a fake archive.
 - **Every rule of the lifecycle has a JVM test.** The quiet clock's start, holds, end, older timers, signals and changes (`QuietClockTest`); every row of design 6.4 (`ConversationMachineTest`); touches, locks, calls, holds of 30 minutes, "Continue the goal?", the hand-over's 3 minutes, the backstop and the typed waits (`GoalRulesTest`); the follow-up window's interaction with the engine, which holds the quiet clock until the spoken reply ends (`ConversationEngineTest.theQuietClockWaitsUntilTheSpokenReplyHasEnded`); continuing a past conversation from none, from an open one, refused with a goal open, and gone (`ConversationMachineTest`, `LocalRequestsTest`, `ConversationEngineTest`); process-death restore without a goal inside and after the quiet time, with a goal inside and after 30 minutes (`ConversationMachineTest`), and end to end with its checklist and its steering (`ConversationEngineTest`); the moved `RulesTest` cases, by name, each with its test here or its rewrite in plan 7D (Task 7's table, which lists all 124 cases); the bar's step across rounds and a restart (`GoalRunnerTest`, `ConversationEngineTest`); a hand-over that a lock met as it opened (`GoalRulesTest`); a switch from an open conversation and "delete history" end to end (`ConversationEngineTest`).
 - **Plan 7A's interfaces, as consumed.** A record's final ledger is its rounds' reports' ledgers, which hold every line, also those of a step that a round's end cut and the shares that Kestrel could not see go; the `Did` traces are the live view while a round runs (`RecordBuilderTest`). A question that an interruption cut and the run asked again is a line each time (`RecordBuilderTest`). A data note names the goal's step, counted across its rounds as the bar counts it, or a replayed routine's own step as "routine step n", because plan 7A numbers a routine's steps and each run's from 1 (`RecordBuilderTest`, `ConversationEngineTest`). Late steering: kept for a held goal's next round, named in the final reply of a goal that ended for good (`GoalRunnerTest`). A resumed run's `ResumeNote.steered` carries every steer that the goal's earlier rounds took, also one that an interruption cut before the model acted on it (`GoalRequestsTest`, `ConversationEngineTest`). A resumed run's `ownerHistory` and `carried`: the earlier commands' words and allowance, then the goal's own inputs and steering's allowance, its first command as `text`, the block without the goal's own record (`GoalRequestsTest`). `TracingOwner`: `ConversationOwner` traces nothing of a run's dialogue; only the conversation's own lines ("Continue the goal?", a hold's sentence) and memory requests (`RecordedOwner`) enter records. `Interruption` chooses the hold (`TOUCH`, `KESTREL_SCREEN`), never a sentence. `GoalPort`, `HistoryPort`, `Checklist`, `GoalLimits`, `ResumeNote` and `TaskRequest`'s fields are used as plan 7A defines them.
-- **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what each part leaves out on one line, in room that it keeps before it fills; `ContextBlockTest` checks the order, the caps, that what is shown and what is counted add up, for a heavy newest record at the default budget and for the largest records in Latin and Cyrillic at three budgets, the Ollama budget and the condensed records' stability.
+- **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what each part leaves out on one line, in room that it keeps before it fills; `ContextBlockTest` checks the order, the caps, that what is shown and what is counted add up, for a heavy newest record and for the largest records in Latin and Cyrillic at every 9th budget from 20 to 2,000, older records partly shown and the rest counted, the block that only counts every record and the budget too small for any block, the Ollama budget and the condensed records' stability.
 - **Safety.** No record holds a value or a placeholder (`RecordText`, tested in Tasks 2 and 3); the owner's words are only the records' requests, answers, steering and "continue" lines; test mode is fixed per conversation and overrides the round's settings (`GoalRunnerTest`), and a change of test mode closes the conversation after its goal (`ConversationMachineTest`); confirmations never carry, because every round is a new run of plan 7A; every new type prints no words (`ToStringTest`, `GoalRulesTest`).
 - **The owner's hard rule.** Each concern is its own unit: the pure machine and the engine that performs its effects; the quiet clock's rules in one place; the goal's phases apart from the conversation's lifecycle; the owner over the channels apart from the channels; the records' building, condensing and block apart; the bytes-level archive apart from the JSON store and the search. The design's sketch changed where a cleaner form exists ("Changes to the design"), and the ones that the owner hears are in "Decisions for the controller".
-- **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 146.
+- **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 148.
 - **Type consistency.** `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `RunLocal(command, record, request, input)`, `SwitchTo(command, id, input)` and `Close(id, keep)` are built by the machine (Task 7) and read by the engine (Task 10) with the same fields; `ConversationEvent.GoalEnded(command, report, answer, reply)` and `RoundEnd(command, report, answer, reply)` in Tasks 7, 8 and 10; `GoalListener.stepStarted(step)` in Tasks 8 and 10; `RoundPlan(record, earlier, text, resume, testMode, continuedAtWall, limits, options, self, zone)` in Tasks 8 and 10; `GoalRunner(environment, screen, history, clock, report)` in Tasks 8 and 10; `LocalRequests(memory, store, search, deleteLogs, routines, clock, report)` and `run(request, owner, dialogue)` in Tasks 9 and 10; `ConversationOwner(channels, permissions, routing, events)` in Tasks 6 and 10; `HistorySearch(store, retentionDays, clock)` in Tasks 5, 8, 9 and 10; `RecordBuilder.traced(record, entry, channel)` in Tasks 2 and 10; `ContextBlock.build(earlier, budget, zone, note)` in Tasks 3 and 8.
 - **The checker.** `files\plan3x-check.py` ran on this plan against `sp3` at `41d54522` with the command of "Before you start"; its result is in the controller's report.

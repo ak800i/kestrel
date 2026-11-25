@@ -54,6 +54,32 @@ class ContextBlockTest {
     }
 
     @Test
+    fun aBudgetThatHoldsNoHeadGivesTheLineThatCountsEveryRecordAndASmallerOneGivesNoBlock() {
+        val earlier = listOf(record(1))
+        val smallest = (1..ContextBlock.BUDGET).first { ContextBlock.build(earlier, it, zone) != null }
+
+        assertNull(ContextBlock.build(earlier, 30, zone))
+        assertEquals(
+            "${TaskRequest.CONVERSATION_HEADER}\n(1 earlier command of this conversation is left out; search_conversations finds them.)",
+            text(earlier, smallest),
+        )
+    }
+
+    @Test
+    fun theOlderRecordsThatDoNotFitAreCountedBeforeTheOnesShown() {
+        val earlier = (1..7).map { record(it) }
+        val blocks = (1..ContextBlock.BUDGET).mapNotNull { ContextBlock.build(earlier, it, zone)?.text }
+
+        val partial = blocks.first { it.contains("Command 6, at") }
+        val left = "(5 earlier commands of this conversation are left out; search_conversations finds them.)"
+        assertFalse(partial.contains("Command 5, at"))
+        assertTrue(partial.indexOf(left) in 0 until partial.indexOf("Command 6, at"))
+        assertTrue(partial.indexOf("Command 6, at") < partial.indexOf("Command 7, at"))
+        assertFalse(blocks.last().contains("left out"))
+        blocks.forEach { assertEverythingShownOrCounted(it, earlier) }
+    }
+
+    @Test
     fun theNewestRecordShowsItsCapsAndTheOlderOnesAreCondensed() {
         val block = text(listOf(record(1, data = listOf(DataNote("list_sms", 1, "a\nb", items = 2))), record(2, request = "x".repeat(500))))
 
@@ -71,10 +97,14 @@ class ContextBlockTest {
         val closed = (1..13).map { ChecklistItem("c$it", "Step $it", if (it == 13) ItemState.SKIPPED else ItemState.DONE, step = it, why = if (it == 13) "Not needed" else null) }
         val open = listOf(ChecklistItem("c14", "Reply to Mila", ItemState.DOING), ChecklistItem("c15", "Archive the thread", ItemState.TODO))
 
-        val block = text(listOf(record(1, checklist = Checklist(closed + open))))
+        val earlier = listOf(record(1, checklist = Checklist(closed + open)))
+        val block = text(earlier)
+        // The smallest budget that shows the head leaves no room for an item, only for the line that counts them.
+        val tight = (1..ContextBlock.BUDGET).firstNotNullOf { budget -> ContextBlock.build(earlier, budget, zone)?.text?.takeIf { it.contains("Command 1, at") } }
 
         assertTrue(block.contains("  Checklist: 12 done, 1 skipped, 0 failed; open:\n    c14 [doing] \"Reply to Mila\"\n    c15 [todo] \"Archive the thread\""))
         assertFalse(block.contains("Step 3"))
+        assertTrue(tight.contains("  Checklist: 12 done, 1 skipped, 0 failed; open:\n    (2 open items are left out.)"))
     }
 
     @Test
@@ -97,6 +127,7 @@ class ContextBlockTest {
             assertTrue(block.contains("  Data from list_sms at step 5: "))
             assertEverythingShownOrCounted(block, earlier)
             assertTrue("$letter: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= ContextBlock.BUDGET)
+            assertEveryBudgetOfTheSweep(earlier)
         }
     }
 
@@ -121,13 +152,26 @@ class ContextBlockTest {
                 droppedData = 2,
             )
             val earlier = (1..7).map { largest.copy(number = it) }
-            for (budget in listOf(ContextBlock.BUDGET, 600, 256)) {
-                val block = text(earlier, budget, note = "This conversation was continued on Friday, 20 November 2026; test mode is on now.")
-                assertTrue("$letter $budget: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= budget)
-                assertTrue(block.startsWith(TaskRequest.CONVERSATION_HEADER))
-                assertEverythingShownOrCounted(block, earlier)
-            }
+            assertEveryBudgetOfTheSweep(earlier, note = "This conversation was continued on Friday, 20 November 2026; test mode is on now.")
         }
+    }
+
+    // At every budget of the sweep, the block fits, starts with the header and counts whatever it leaves out; a budget that
+    // gives no block is smaller than every budget that gives one, and the largest gives one.
+    private fun assertEveryBudgetOfTheSweep(earlier: List<CommandRecord>, note: String? = null) {
+        var blocks = 0
+        for (budget in 20..ContextBlock.BUDGET step 9) {
+            val block = ContextBlock.build(earlier, budget, zone, note)?.text
+            if (block == null) {
+                assertEquals("no block at $budget after a block at a smaller budget", 0, blocks)
+                continue
+            }
+            blocks++
+            assertTrue("$budget: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= budget)
+            assertTrue(block.startsWith(TaskRequest.CONVERSATION_HEADER))
+            assertEverythingShownOrCounted(block, earlier)
+        }
+        assertTrue(ContextBlock.build(earlier, ContextBlock.BUDGET, zone, note) != null)
     }
 
     // Design 8.3: whatever a part of the block leaves out, one line counts it, so the shown and the counted add up to the
@@ -138,7 +182,7 @@ class ContextBlockTest {
         assertEquals("records", earlier.size, heads + counted(block, "\\((\\d+) earlier commands? of this conversation (?:is|are) left out; search_conversations finds them\\.\\)"))
         if (heads == 0) return
         val rows = block.lines()
-        assertEquals("open items", newest.checklist?.open.orEmpty().size, rows.count { it.matches(Regex("^ {4}c\\d+ \\[.*")) } + counted(block, "\\(and (\\d+) more open items?\\)"))
+        assertEquals("open items", newest.checklist?.open.orEmpty().size, rows.count { it.matches(Regex("^ {4}c\\d+ \\[.*")) } + counted(block, "\\((\\d+) open items? (?:is|are) left out\\.\\)"))
         assertEquals("data notes", newest.data.size + newest.droppedData, rows.count { it.startsWith("  Data from ") } + counted(block, "\\((\\d+) earlier data notes? of this command (?:is|are) left out\\.\\)"))
         assertEquals("lines", newest.lines.size + newest.droppedLines, rows.count { it.startsWith("  Kestrel said: ") || it.startsWith("  The owner added (") } + counted(block, "\\((\\d+) earlier lines? of this command (?:is|are) left out\\.\\)"))
         assertEquals("ledger", newest.ledger.size, rows.count { it.startsWith("  Kestrel did: ") } + counted(block, "\\((\\d+) earlier ledger lines? of this command (?:is|are) left out\\.\\)"))
