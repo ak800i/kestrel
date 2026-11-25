@@ -8320,9 +8320,9 @@ internal class GoalOwner(
         owner.say(text)
     }
 
-    override suspend fun ask(question: String, kind: AnswerKind): Answer {
+    override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer {
         watcher.forgetOwnActions()
-        return owner.ask(question, kind)
+        return owner.ask(question, kind, choices, highest)
     }
 
     override suspend fun confirm(confirmation: Confirmation): ConfirmEnd {
