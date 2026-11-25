@@ -266,7 +266,9 @@ class ConversationArchiveStoreTest {
         val watched = object : ErasableKey {
             override val guard = key.guard
 
-            override fun get(): SecretKey = key.get().also { if (++decrypted == 1) reading.cancel() }
+            override fun get(): SecretKey = key.get()
+
+            override fun <T> withExisting(block: (SecretKey?) -> T): T = key.withExisting(block).also { if (++decrypted == 1) reading.cancel() }
 
             override fun erase() = key.erase()
         }
@@ -286,7 +288,9 @@ class ConversationArchiveStoreTest {
         val watched = object : ErasableKey {
             override val guard = key.guard
 
-            override fun get(): SecretKey = key.get().also { threads += Thread.currentThread() }
+            override fun get(): SecretKey = key.get()
+
+            override fun <T> withExisting(block: (SecretKey?) -> T): T = key.withExisting(block).also { threads += Thread.currentThread() }
 
             override fun erase() = key.erase()
         }
@@ -304,6 +308,28 @@ class ConversationArchiveStoreTest {
         }
     }
 
+    // Design 9.7 of sub-project 7: a read never makes the key. Between the key's erasure and the rows' deletion, a read that
+    // overlaps "delete history" finds every row failing its check, no readable shard, and a later format still unknown.
+    @Test
+    fun aReadWithoutTheKeyMakesNoKeyAndFindsTheRowsUnreadable() = runTest {
+        write(
+            PlainConversation(opened("a", last = 2), byteArrayOf(1)),
+            PlainConversation(closed("b", last = 1), byteArrayOf(2)),
+            index = IndexUpdate.Update(mapOf("0" to byteArrayOf(3)), emptySet()),
+        )
+        dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
+        key.erase()
+
+        assertTrue(store.open() is StoredConversation.FailedCheck)
+        assertEquals(
+            mapOf("a" to StoredConversation.FailedCheck::class, "b" to StoredConversation.FailedCheck::class, "later" to StoredConversation.UnknownFormat::class),
+            store.read(listOf("a", "b", "later")).associate { it.header.id to it::class },
+        )
+        assertTrue(store.shards().single() is StoredShard.Unreadable)
+        assertEquals(1, key.made)
+        assertFalse(key.exists)
+    }
+
     private fun opened(id: String, last: Long) = ConversationHeader(id, openedMillis = last - 1, lastMillis = last, open = true, commands = 1)
 
     private fun closed(id: String, last: Long) = opened(id, last).copy(open = false)
@@ -312,20 +338,35 @@ class ConversationArchiveStoreTest {
     private fun laterFormat() = byteArrayOf(2) + ByteArray(40)
 }
 
-/** An [ErasableKey] in memory; [erase] makes a new key, as Keystore does at the next use. */
+/** An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes. */
 private class MemoryKey : ErasableKey {
     override val guard = Mutex()
 
     @Volatile
     var erased = 0
         private set
-    private var key = newKey()
 
-    override fun get(): SecretKey = key
+    @Volatile
+    var made = 0
+        private set
+    private var key: SecretKey? = null
 
+    val exists: Boolean
+        @Synchronized get() = key != null
+
+    @Synchronized
+    override fun get(): SecretKey = key ?: newKey().also {
+        key = it
+        made++
+    }
+
+    @Synchronized
+    override fun <T> withExisting(block: (SecretKey?) -> T): T = block(key)
+
+    @Synchronized
     override fun erase() {
         erased++
-        key = newKey()
+        key = null
     }
 
     private fun newKey(): SecretKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()

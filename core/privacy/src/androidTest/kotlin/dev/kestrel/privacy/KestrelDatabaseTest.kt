@@ -134,19 +134,26 @@ class KestrelDatabaseTest {
         assertEquals(listOf("a", "b"), dao.closedIds())
     }
 
-    // Design 9.3 of sub-project 7: retention deletes by the table's own times, never the open row, with the shards in one transaction.
+    // Design 9.3 of sub-project 7: retention deletes by the table's own times, keeps the rows at both limits and the open
+    // row, and changes the shards in one transaction.
     @Test
     fun purgeDeletesTheClosedRowsOutsideTheWindowAndChangesTheShards() {
         val dao = db.conversationDao()
         dao.write(
-            listOf(conversation("old", last = 5, open = false), conversation("kept", last = 50, open = false), conversation("ahead", last = 500, open = false), conversation("open", last = 1, open = true)),
+            listOf(
+                conversation("before", last = 9, open = false),
+                conversation("oldest", last = 10, open = false),
+                conversation("newest", last = 100, open = false),
+                conversation("after", last = 101, open = false),
+                conversation("open", last = 1, open = true),
+            ),
             emptyList(),
             IndexRowUpdate.Update(listOf(shard("0", 1)), emptyList()),
         )
 
         assertEquals(2, dao.purge(oldest = 10, newest = 100, index = IndexRowUpdate.Update(listOf(shard("0", 2)), emptyList())))
 
-        assertEquals(setOf("kept", "open"), dao.rows(listOf("old", "kept", "ahead", "open")).map { it.id }.toSet())
+        assertEquals(setOf("oldest", "newest", "open"), dao.rows(listOf("before", "oldest", "newest", "after", "open")).map { it.id }.toSet())
         assertArrayEquals(byteArrayOf(2), dao.shards().single().payload)
     }
 

@@ -84,12 +84,19 @@ class ConversationChange(val conversations: List<PlainConversation>, val deleted
  * retention.
  *
  * Every read runs its query and decrypts its rows on [dispatcher], on one thread, with no hop between the two, because a
- * Keystore operation after a hop costs about twice as much on the A71 (design R3): a restore is one Keystore operation, the
- * index one per shard, and a body one more. The stamp is a plain query. A read stops between two rows when its caller is cancelled. Reads take no lock,
- * because they store nothing, so that a rebuild's long read never holds up a write; a read that overlaps [deleteAll] may
- * see a row fail its check, and its caller orders the two (plan 7B's store does). Writes and [deleteAll] run under the
- * key's [ErasableKey.guard], which every user of the key shares, so that [deleteAll] never erases the key between the
- * encryption of a write and its row. The functions are safe to call from the main thread.
+ * Keystore operation after a hop costs about twice as much on the A71 (design R3): a restore is one Keystore operation,
+ * the index one per shard, and a body one more. The stamp is a plain query. A read stops between two rows when its caller
+ * is cancelled. Reads take no guard, because they store nothing, so that a rebuild's long read never holds up a write.
+ * Writes and [deleteAll] run under the key's [ErasableKey.guard], which every user of the key shares, so that [deleteAll]
+ * never erases the key between the encryption of a write and its row. The functions are safe to call from the main thread.
+ *
+ * Only a write makes the key: a read decrypts each row with the key as it is ([ErasableKey.withExisting]), and the key's
+ * erasure waits for a decryption that has started. So a read that overlaps [deleteAll] ("delete history") never fails
+ * because the key went, and never makes a new key. It sees each row as one of three: as it was, before the erasure; once
+ * the key is gone and until the rows are deleted, a conversation as [StoredConversation.FailedCheck] (one in a format that
+ * this version cannot read stays [StoredConversation.UnknownFormat]) and a shard as [StoredShard.Unreadable]; and
+ * afterwards not at all. Its caller orders the two (plan 7B's store does). A read with no key at all sees the same as in
+ * the second case.
  *
  * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
  * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process; when
@@ -101,7 +108,8 @@ class ConversationArchiveStore(
     private val onUnknownFormat: suspend () -> Unit = {},
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
-    private val cipher = AesGcmFieldCipher { key.get() }
+    // Writes encrypt with this cipher, which makes the key when there is none; reads decrypt with the key as it is.
+    private val sealing = AesGcmFieldCipher { key.get() }
 
     // The ids of the rows in an unknown format whose report was made, so that each is reported once per process; a report
     // that failed or was cancelled is made again at the next read. Used only under [reports].
@@ -141,7 +149,7 @@ class ConversationArchiveStore(
             withContext(dispatcher) {
                 val rows = change.conversations.map {
                     val header = it.header
-                    ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, cipher.encrypt(it.payload, associatedData(header.id)))
+                    ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, sealing.encrypt(it.payload, associatedData(header.id)))
                 }
                 dao.write(rows, change.deleted.toList(), encrypted(change.index))
             }
@@ -182,7 +190,7 @@ class ConversationArchiveStore(
         is IndexUpdate.Replace -> IndexRowUpdate.Replace(update.shards.map { (name, payload) -> shardRow(name, payload) })
     }
 
-    private fun shardRow(name: String, payload: ByteArray) = ConversationIndexRow(name, cipher.encrypt(payload, indexData(name)))
+    private fun shardRow(name: String, payload: ByteArray) = ConversationIndexRow(name, sealing.encrypt(payload, indexData(name)))
 
     // Each conversation in an unknown format that has not been reported in this process yet, once its read has ended.
     private suspend fun report(conversations: List<StoredConversation>) {
@@ -200,7 +208,7 @@ class ConversationArchiveStore(
     private fun stored(row: ConversationRow): StoredConversation {
         val header = ConversationHeader(row.id, row.openedMillis, row.lastMillis, row.open, row.commands)
         return try {
-            StoredConversation.Readable(header, cipher.decrypt(row.payload, associatedData(row.id)))
+            StoredConversation.Readable(header, opened(row.payload, associatedData(row.id)))
         } catch (e: AEADBadTagException) {
             StoredConversation.FailedCheck(header)
         } catch (e: IllegalArgumentException) {
@@ -209,12 +217,16 @@ class ConversationArchiveStore(
     }
 
     private fun shard(row: ConversationIndexRow): StoredShard = try {
-        StoredShard.Readable(row.name, cipher.decrypt(row.payload, indexData(row.name)))
+        StoredShard.Readable(row.name, opened(row.payload, indexData(row.name)))
     } catch (e: AEADBadTagException) {
         StoredShard.Unreadable(row.name)
     } catch (e: IllegalArgumentException) {
         StoredShard.Unreadable(row.name)
     }
+
+    // Decrypts with the key as it is, or fails the check when there is none, so that a read never makes the key.
+    private fun opened(ciphertext: ByteArray, associatedData: ByteArray): ByteArray =
+        key.withExisting { existing -> AesGcmFieldCipher { existing }.decrypt(ciphertext, associatedData) }
 
     private fun associatedData(id: String) = "conversations/$id".encodeToByteArray()
 

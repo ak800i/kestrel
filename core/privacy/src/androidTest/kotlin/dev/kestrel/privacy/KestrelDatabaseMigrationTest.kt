@@ -11,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /**
  * The database's migrations from each earlier version (design spec, section 13.4; design 9.2 of sub-project 7). Each test
@@ -25,7 +26,10 @@ class KestrelDatabaseMigrationTest {
 
     @After
     fun deleteTheTestDatabase() {
-        instrumentation.targetContext.deleteDatabase(MIGRATED)
+        val context = instrumentation.targetContext
+        context.deleteDatabase(MIGRATED)
+        // Room's lock file beside the database, which deleteDatabase leaves.
+        File("${context.getDatabasePath(MIGRATED).path}.lck").delete()
     }
 
     @Test

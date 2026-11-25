@@ -26,8 +26,7 @@ object KeystoreKeys {
      */
     @Synchronized
     fun getOrCreate(alias: String, strongBox: Boolean = false): SecretKey {
-        val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        (keyStore.getKey(alias, null) as SecretKey?)?.let { return it }
+        find(alias)?.let { return it }
         if (strongBox) {
             try {
                 return generate(alias, strongBox = true)
@@ -38,9 +37,13 @@ object KeystoreKeys {
         return generate(alias, strongBox = false)
     }
 
+    /** Returns the key [alias], or null when it does not exist; never makes one. */
+    @Synchronized
+    fun find(alias: String): SecretKey? = KeyStore.getInstance(PROVIDER).apply { load(null) }.getKey(alias, null) as SecretKey?
+
     /**
      * Deletes the key [alias] when it exists, so that nothing that it encrypted can be read again (crypto-shredding, design
-     * 9.7 of sub-project 7). The next [getOrCreate] makes a new key.
+     * 9.7 of sub-project 7). The next [getOrCreate] makes a new key; [find] finds none.
      */
     @Synchronized
     fun delete(alias: String) {

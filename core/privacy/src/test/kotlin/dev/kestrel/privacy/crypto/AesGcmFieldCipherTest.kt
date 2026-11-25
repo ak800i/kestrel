@@ -61,6 +61,18 @@ class AesGcmFieldCipherTest {
         assertEquals("Unknown ciphertext format", error.message)
     }
 
+    // Design 9.7 of sub-project 7: once a key is erased, a value fails its check, and a later format is still told apart.
+    @Test
+    fun withoutAKeyAValueFailsItsCheckAndNothingIsEncrypted() {
+        val sealed = cipher.encrypt("hello".encodeToByteArray(), place)
+        val keyless = AesGcmFieldCipher { null }
+
+        assertThrows(AEADBadTagException::class.java) { keyless.decrypt(sealed, place) }
+        sealed[0] = 2
+        assertThrows(IllegalArgumentException::class.java) { keyless.decrypt(sealed, place) }
+        assertThrows(IllegalStateException::class.java) { keyless.encrypt("hello".encodeToByteArray(), place) }
+    }
+
     @Test
     fun emptyValueRoundTrips() {
         assertArrayEquals(ByteArray(0), cipher.decrypt(cipher.encrypt(ByteArray(0), place), place))
