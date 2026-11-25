@@ -11,10 +11,12 @@ import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.KestrelApplication
+import dev.kestrel.app.conversation.ConversationTests
 import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.SAMPLE_RATE
 import dev.kestrel.voice.Synthesizer
 import dev.kestrel.voice.VoiceOptions
@@ -148,12 +150,19 @@ internal object VoiceTests {
     fun startListening(microphone: ClipMicrophone) {
         val listening = graph.listening
         check(listening.state.value.mode == Mode.OFF) { "Listening is already on" }
+        // The conversation that the device keeps, also from an earlier suite, must not take a transcript: through the
+        // follow-up window, "Continue the goal?" or a report kept for the owner. A test that needs a conversation opens it.
+        ConversationTests.close()
         useMicrophone(microphone)
         listening.send(Event.Toggle)
-        // Loading the models takes several seconds.
-        check(waitUntil(60_000) { listening.sessionOpen.value }) {
-            "The voice session did not open; the mode is ${listening.state.value.mode}"
-        }
+        // Loading the models takes several seconds. The Orchestrator then reads no open conversation, so no follow-up
+        // window can open.
+        check(
+            waitUntil(60_000) {
+                val state = listening.state.value
+                listening.sessionOpen.value && state.work == Work.IDLE && !state.conversation.open
+            },
+        ) { "The voice session did not open idle; the state is ${listening.state.value}" }
         check(waitUntil(5_000) { microphone.recording }) { "The microphone does not record" }
     }
 

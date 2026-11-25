@@ -45,7 +45,10 @@ internal object ConversationTests {
         endWork()
         val conversations = graph.conversations
         if (conversations.view.value.id != null) conversations.endQuietTime()
-        await(CLOSE_MILLIS, "The conversation did not close") { it.id == null && !it.keptForOwner }
+        await(CLOSE_MILLIS, "The conversation did not close") { it.id == null }
+        await(CLOSE_MILLIS, "A report is kept for an owner whom the conversation does not count as present (unlocked, no call)") {
+            !it.keptForOwner
+        }
     }
 
     private fun stoppable(view: ConversationView): Boolean = view.goal != null || view.ownRequest || view.question != null
