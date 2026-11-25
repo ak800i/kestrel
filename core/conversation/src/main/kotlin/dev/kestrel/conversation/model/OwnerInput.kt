@@ -25,8 +25,12 @@ sealed interface InputIntent {
         override fun toString(): String = "Command(${text.length} chars)"
     }
 
-    /** The answer to the open question as the channel read it; [ChannelAnswer.Silence] when the voice's wait ended. */
-    data class Answer(val answer: ChannelAnswer) : InputIntent
+    /**
+     * The answer to the open question as the channel read it; [ChannelAnswer.Silence] when the voice's wait ended. A button
+     * on the conversation screen's copy of a card names its [question], and answers no other (plan 7F); the voice's and the
+     * typed words' answers name none and answer the open question.
+     */
+    data class Answer(val answer: ChannelAnswer, val question: Int? = null) : InputIntent
 
     /** "Stop", "cancel", the screen's Stop and Cancel buttons and the notification's Stop. */
     data object Stop : InputIntent

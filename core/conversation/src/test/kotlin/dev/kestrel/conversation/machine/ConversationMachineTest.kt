@@ -89,6 +89,18 @@ class ConversationMachineTest : MachineTesting() {
         assertNull(answered.question)
     }
 
+    // Plan 7F: a button on the screen's copy of a card names its question, so that a tap that came late answers no other.
+    @Test
+    fun anAnswerThatNamesAnotherQuestionAnswersNothing() {
+        val asking = asked(acting(), 4, QuestionKind.YES_NO)
+
+        assertEquals(
+            ConversationEffect.AnswerQuestion(4, ChannelAnswer.Yes, leftScreen = true),
+            step(asking, typed(InputIntent.Answer(ChannelAnswer.Yes, question = 4))).effect<ConversationEffect.AnswerQuestion>(),
+        )
+        assertFalse(step(asking, typed(InputIntent.Answer(ChannelAnswer.Yes, question = 3))).has<ConversationEffect.AnswerQuestion>())
+    }
+
     @Test
     fun duringAHandOverACommandWaitsContinueEndsItAndStopEndsTheGoal() {
         val handed = step(acting(), ConversationEvent.Dialogue(DialogueEvent.HandedOver(7))).state

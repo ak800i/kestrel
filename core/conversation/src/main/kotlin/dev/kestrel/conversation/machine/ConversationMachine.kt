@@ -81,7 +81,13 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val answering = if (continuing) state.copy(continueAnswer = input) else state
         val typed = input.channel == InputChannel.TEXT
         return when (val intent = input.intent) {
-            is InputIntent.Answer -> MachineStep(answering, listOf(ConversationEffect.AnswerQuestion(open.number, intent.answer, leftScreen = typed)))
+            // A screen button that names another question came late: the question that it answered has gone (plan 7F).
+            is InputIntent.Answer ->
+                if (intent.question != null && intent.question != open.number) {
+                    MachineStep(state)
+                } else {
+                    MachineStep(answering, listOf(ConversationEffect.AnswerQuestion(open.number, intent.answer, leftScreen = typed)))
+                }
             is InputIntent.Command ->
                 if (continuing) {
                     null
