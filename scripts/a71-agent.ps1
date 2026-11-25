@@ -903,6 +903,34 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
     }
 }
 
+# Restarts kestrel-api37 with its window ($Window) or without one, through Restart-KestrelEmulator, which closes it only
+# after its console named kestrel-api37 and brings Android back from its Quick Boot snapshot. The owner's data on it (the
+# Google accounts and Kestrel's profiles, AGENTS.md) is read just before and compared just after, so that only the
+# restart is checked, not the owner's item between two restarts. Throws when the restart or the comparison fails.
+function Switch-EmulatorWindow([string]$StepName, [bool]$Window) {
+    $how = if ($Window) { 'with its window' } else { 'without a window' }
+    $before = Get-OwnerDataState $EmulatorSerial
+    $problem = Restart-KestrelEmulator -Serial $EmulatorSerial -Window $Window
+    if ($problem) { throw "kestrel-api37 could not be restarted $how`: $problem" }
+    $changes = @(Compare-OwnerData -Serial $EmulatorSerial -Before $before -During "the sitting's restart of kestrel-api37 $how")
+    if ($changes) { throw "The owner's data on kestrel-api37 changed in its restart $how`: $($changes -join ' ')" }
+    Add-Result $StepName "kestrel-api37 restarted $how; the owner's data there as before"
+}
+
+# Runs $Body, an item of the owner's in kestrel-api37's window. scripts\start-emulator.ps1 starts kestrel-api37 without
+# a window, because the window links its clipboard to this computer's (README), so when its console answers 'headless'
+# the sitting restarts it with its window first, and without one again afterwards, also when $Body fails or the owner
+# stops the sitting. An emulator that already has its window is left as it is.
+function Invoke-EmulatorWindowItem([string]$StepName, [scriptblock]$Body) {
+    if ((Get-EmulatorWindowType $EmulatorSerial) -ne 'headless') { return & $Body }
+    Switch-EmulatorWindow $StepName $true
+    try {
+        & $Body
+    } finally {
+        Switch-EmulatorWindow $StepName $false
+    }
+}
+
 # kestrel-api37's Google account and its apps for the owner's step of sitting 1. The emulator holds the owner's own
 # account (emulatorGmailAddress equals gmailAddress), which the script never signs in or out, so he is asked for nothing
 # there; only for a test account of another address, when the emulator has no Google account, does he sign it in, as
@@ -923,13 +951,18 @@ function Invoke-EmulatorAccountItem {
             Add-Result owner 'kestrel-api37 has no Google account, so Waze''s install and the e-mail task there are skipped'
             return
         }
-        if ((Request-OwnerItem 'Item 3, 2 to 5 minutes: in the emulator''s window on this computer, use the mouse: Settings > Passwords and accounts > Add account > Google, and sign in with the test Google account. Then open the Play Store, tap your profile picture, Settings > Network preferences > Auto-update apps, choose "Don''t auto-update apps" and tap Done. Press Enter when that is done (s skips).' 'skip') -ne 'go') { return }
-        if ((Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) -lt 1) {
+        $item = Invoke-EmulatorWindowItem owner {
+            $answer = Request-OwnerItem 'Item 3, 2 to 5 minutes: in the emulator''s window on this computer, use the mouse: Settings > Passwords and accounts > Add account > Google, and sign in with the test Google account. Then open the Play Store, tap your profile picture, Settings > Network preferences > Auto-update apps, choose "Don''t auto-update apps" and tap Done. Press Enter when that is done (s skips).' 'skip'
+            $signed = $answer -eq 'go' -and (Get-GoogleAccountCount @(Invoke-Device $EmulatorSerial 'dumpsys account')) -ge 1
+            # Recorded at once, so that sitting 2 removes the test account also when the restart or an install below fails.
+            if ($signed) { Set-AgentRecord $recordFile 'emulatorAccount' $true }
+            [pscustomobject]@{ Answer = $answer; Signed = $signed }
+        }
+        if ($item.Answer -ne 'go') { return }
+        if (-not $item.Signed) {
             Add-Result owner 'kestrel-api37 has no Google account, so Waze and the e-mail task run on the A71 only'
             return
         }
-        # Recorded first, so that sitting 2 removes the test account also when an install below fails.
-        Set-AgentRecord $recordFile 'emulatorAccount' $true
     } else {
         Add-Result owner "kestrel-api37 already has a Google account$(if ($own) { ', the owner''s own, which the sittings never sign in or out' }), so the owner is not asked"
     }
@@ -1870,20 +1903,25 @@ function Invoke-OwnerStep2 {
             Add-Result owner "${name}: no Copilot sign-in in a dry run, which runs the stand-in variants with the scripted model"
             continue
         }
-        if (-not (Unlock-Device $device)) { throw "$name is locked, and the sitting could not unlock it" }
-        Invoke-Device $device 'am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE PROVIDERS' | Out-Null
         $prompt = if ($device -eq $EmulatorSerial) {
             'Kestrel''s Copilot sign-in on kestrel-api37, about 3 minutes: in the emulator''s window on this computer, Kestrel''s page "Providers and profiles" is open. With the mouse, click "Add a profile", "GitHub Copilot" and "Sign in"; open github.com/login/device in this computer''s browser, enter the code that the page shows and approve; when the page shows the models, turn on "Make default" and click "Save". Press Enter when the page shows the profile (s skips).'
         } else {
             'Kestrel''s Copilot sign-in on the A71, about 3 minutes: on the A71, Kestrel''s page "Providers and profiles" is open. Tap "Add a profile", "GitHub Copilot", "Sign in", "Copy" and "Open the page"; in Chrome, sign in to GitHub if it asks, paste the code and approve; when Kestrel''s page shows the models, turn on "Make default" and tap "Save". Press Enter when the page shows the profile (s skips).'
         }
-        $kind = $null
-        $asked = $true
-        for ($try = 1; $try -le 3 -and $kind -ne 'copilot'; $try++) {
-            if ((Request-OwnerItem $prompt) -eq 'skip') { break }
-            $kind = (ConvertFrom-HookPairs (Invoke-DeviceHook $device provider-standin))['profile']
-            $prompt = "The default profile of $name is $kind, not a Copilot profile. Finish the sign-in on Kestrel's page, turn on ""Make default"" and save, then press Enter (s skips)."
+        $signIn = {
+            if (-not (Unlock-Device $device)) { throw "$name is locked, and the sitting could not unlock it" }
+            Invoke-Device $device 'am start -n dev.kestrel/.app.MainActivity --es dev.kestrel.app.extra.PAGE PROVIDERS' | Out-Null
+            $kind = $null
+            for ($try = 1; $try -le 3 -and $kind -ne 'copilot'; $try++) {
+                if ((Request-OwnerItem $prompt) -eq 'skip') { break }
+                $kind = (ConvertFrom-HookPairs (Invoke-DeviceHook $device provider-standin))['profile']
+                $prompt = "The default profile of $name is $kind, not a Copilot profile. Finish the sign-in on Kestrel's page, turn on ""Make default"" and save, then press Enter (s skips)."
+            }
+            $kind
         }
+        $asked = $true
+        # The owner signs in on kestrel-api37 in its window, which it has only for this item (Invoke-EmulatorWindowItem).
+        $kind = if ($device -eq $EmulatorSerial) { Invoke-EmulatorWindowItem owner $signIn } else { & $signIn }
         Add-Result owner "${name}: $(if ($kind -eq 'copilot') { 'the default profile is a Copilot profile' } elseif ($kind) { "the default profile is $kind, so its live runs fail" } else { 'the Copilot sign-in skipped, so its live runs fail' })"
     }
     # The comparison's model is checked at the start, so that the owner, when he is here, can choose another one (design

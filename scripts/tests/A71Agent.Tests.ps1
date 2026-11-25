@@ -35,6 +35,8 @@ BeforeAll {
     $helpers += @('Get-TelegramPackage', 'Get-AuthenticatorPackage', 'Close-LiveSession', 'Close-LiveSessionsAtStart')
     # Telegram's Saved Messages, reached from a new task without typing (fix-5c-final).
     $helpers += @('Start-AppNewTask', 'Open-TelegramSavedMessages')
+    # kestrel-api37's window for the owner's items there, which it has only for them (review of the headless emulator, I1).
+    $helpers += @('Switch-EmulatorWindow', 'Invoke-EmulatorWindowItem')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -841,6 +843,7 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Mock Invoke-Device { $commands.Add("$Device $Command") }
         Mock Invoke-Device { '    Account {name=someone@example.com, type=com.google}' } -ParameterFilter { $Device -eq $EmulatorSerial -and $Command -eq 'dumpsys account' }
         Mock Invoke-Device { '      android.permission.POST_NOTIFICATIONS: granted=true' } -ParameterFilter { $Command -eq 'dumpsys package com.google.android.gm' }
+        Mock Get-EmulatorWindowType { 'qtwindow' }
     }
 
     It 'grants the photos and videos and gives notification access as the evaluation''s kept set, which no restore takes back, and revokes only the location that it granted' {
@@ -1070,6 +1073,69 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Should -Invoke Request-OwnerItem -Times 1 -Exactly
     }
 
+    It 'gives the owner kestrel-api37''s window only for his item there: restarts it with its window before, and without one after, with the owner''s data checked around each restart' {
+        Mock Get-EmulatorWindowType { 'headless' }
+        $events = [System.Collections.Generic.List[string]]::new()
+        Mock Restart-KestrelEmulator { $events.Add("restart window=$Window") }
+        Mock Get-OwnerDataState { $events.Add('read owner data'); 'state' }
+        Mock Compare-OwnerData { $events.Add('compare owner data') }
+        Mock Unlock-Device { $events.Add('unlock'); $true }
+        Mock Request-OwnerItem { $events.Add('ask'); 'go' }
+        Mock Test-CompareModel { $true }
+        Mock Get-DefaultProfileKind { if ($Device -eq $EmulatorSerial) { 'none' } else { 'copilot' } }
+        Mock Invoke-DeviceHook { 'standin=off profile=copilot copilot=1' } -ParameterFilter { $Command -eq 'provider-standin' }
+
+        Invoke-OwnerStep2
+
+        @($events) | Should -Be @('read owner data', 'restart window=True', 'compare owner data', 'unlock', 'ask', 'read owner data', 'restart window=False', 'compare owner data')
+        $results | Should -Contain 'owner: kestrel-api37 restarted with its window; the owner''s data there as before'
+        $results | Should -Contain 'owner: kestrel-api37 restarted without a window; the owner''s data there as before'
+        $results | Should -Contain 'owner: kestrel-api37: the default profile is a Copilot profile'
+
+        # The window goes away again also when the owner stops the sitting; an emulator that has its window keeps it.
+        $events.Clear()
+        Mock Request-OwnerItem { throw 'The owner stopped the sitting.' }
+        { Invoke-OwnerStep2 } | Should -Throw 'The owner stopped the sitting.'
+        @($events | Where-Object { $_ -like 'restart*' }) | Should -Be @('restart window=True', 'restart window=False')
+        $events.Clear()
+        Mock Get-EmulatorWindowType { 'qtwindow' }
+        Mock Request-OwnerItem { 'go' }
+        Invoke-OwnerStep2
+        Should -Invoke Restart-KestrelEmulator -Times 4 -Exactly
+    }
+
+    It 'stops before the owner''s item when kestrel-api37 could not be restarted with its window, or its owner''s data changed in the restart' {
+        Mock Get-EmulatorWindowType { 'headless' }
+        Mock Get-OwnerDataState { 'state' }
+        Mock Compare-OwnerData { }
+        Mock Request-OwnerItem { 'go' }
+        Mock Restart-KestrelEmulator { 'kestrel-api37 started again as ''emulator-5556'', not as emulator-5554' }
+
+        { Invoke-EmulatorWindowItem owner { Request-OwnerItem 'item' } } | Should -Throw 'kestrel-api37 could not be restarted with its window: kestrel-api37 started again as*'
+
+        Mock Restart-KestrelEmulator { }
+        Mock Compare-OwnerData { 'emulator-5554: 0 Google accounts, not 1' }
+        { Invoke-EmulatorWindowItem owner { Request-OwnerItem 'item' } } | Should -Throw 'The owner''s data on kestrel-api37 changed in its restart with its window*'
+        Should -Invoke Request-OwnerItem -Times 0 -Exactly
+    }
+
+    It 'records the test account that the owner signed in on kestrel-api37 in its window before the restart without one' {
+        Set-AgentRecord $recordFile 'emulatorPlay' $true
+        $config.emulatorGmailAddress = 'kestrel.test@example.com'
+        Mock Get-EmulatorWindowType { 'headless' }
+        Mock Get-OwnerDataState { 'state' }
+        Mock Compare-OwnerData { }
+        Mock Install-FromPlay { $true }
+        Mock Test-Installed { $true }
+        $signedIn = @{ Done = $false }
+        Mock Invoke-Device { if ($signedIn.Done) { '    Account {name=kestrel.test@example.com, type=com.google}' } } -ParameterFilter { $Device -eq $EmulatorSerial -and $Command -eq 'dumpsys account' }
+        Mock Request-OwnerItem { $signedIn.Done = $true; 'go' }
+        Mock Restart-KestrelEmulator { if (-not $Window) { (Read-AgentRecord $recordFile).emulatorAccount | Should -BeTrue; 'it did not start again' } }
+
+        { Invoke-EmulatorAccountItem } | Should -Throw '*restarted without a window: it did not start again'
+
+        (Read-AgentRecord $recordFile).emulatorAccount | Should -BeTrue
+    }
     It 'skips Telegram on kestrel-api37 and WhatsApp on both devices in the recordings, and opens Gmail on the emulator''s own account only with Drafts counted' {
         Mock Unlock-Device { $true }
         Mock Test-Installed { $true }

@@ -76,8 +76,8 @@
 # owner and skips the step earbuds. -DryRun runs the session on kestrel-api37 without the owner: it
 # sends each clip's text through the voice hook in place of the speaker, plays no sound, runs listen-check.ps1 without
 # -Reboot, skips voice-test.ps1 and the earbuds, shortens the waits and the battery measures to a minute, and turns the
-# emulator's host audio input off, so that this computer's microphone reaches no step, and on again at its end. -Step
-# runs only the named steps, also as one text separated by commas.
+# emulator's host audio input off, so that this computer's microphone reaches no step, and back as the emulator started
+# with it at its end. -Step runs only the named steps, also as one text separated by commas.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-session.ps1 -Serial R58N12345AB
 #Requires -Version 7.3
@@ -435,12 +435,9 @@ function Initialize-Session {
     Invoke-Checked 'svc power stayon true' | Out-Null
     if ($DryRun) {
         # The emulator's microphone carries this computer's sound, which would count in the steps' measures and could
-        # start commands, so a dry run turns the host audio input off. The console cannot read the setting, so the restore
-        # turns it back on, as kestrel-api37 had it when the dry runs of 2026-11-19 heard this computer's microphone.
-        Register-Restore 'the host audio input of kestrel-api37' "Run: & '$adb' -s $Serial emu avd hostmicon" $null {
-            Set-EmulatorHostMicrophone -Serial $Serial -On $true
-        } | Out-Null
-        Set-EmulatorHostMicrophone -Serial $Serial -On $false
+        # start commands, so a dry run turns the host audio input off. The restore puts back the state that the emulator
+        # started with (Get-EmulatorHostMicrophone): off without a window, as scripts\start-emulator.ps1 starts it.
+        Disable-EmulatorHostMicrophone -Serial $Serial
     }
     $script:sessionStart = Get-DeviceTime
 }

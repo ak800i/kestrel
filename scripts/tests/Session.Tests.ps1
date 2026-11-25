@@ -468,6 +468,39 @@ Describe 'The host audio input of kestrel-api37 in the dry runs' {
 
         { Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false } | Should -Throw 'The emulator''s console did not take ''avd hostmicoff''.'
     }
+
+    It 'reads the start state: off without a window unless the option -allow-host-audio is given, and the window''s checkbox in AVD.conf with one' {
+        $line = 'qemu-system-x86_64-headless.exe -avd kestrel-api37 -no-window'
+        Get-EmulatorStartMicrophone -WindowType headless -CommandLine $line -AvdSettings @('[perAvd]', 'mic\allow_real_audio=true') | Should -BeFalse
+        Get-EmulatorStartMicrophone -WindowType headless -CommandLine "$line -allow-host-audio" -AvdSettings @() | Should -BeTrue
+        Get-EmulatorStartMicrophone -WindowType headless -CommandLine "$line -allow-host-audio-x" -AvdSettings @() | Should -BeFalse
+
+        Get-EmulatorStartMicrophone -WindowType qtwindow -CommandLine '' -AvdSettings @('[perAvd]', 'mic\available=false', 'mic\allow_real_audio=true') | Should -BeTrue
+        Get-EmulatorStartMicrophone -WindowType qtwindow -CommandLine '' -AvdSettings @('[perAvd]', 'mic\allow_real_audio=false') | Should -BeFalse
+        Get-EmulatorStartMicrophone -WindowType qtwindow -CommandLine '' -AvdSettings @('[other]', 'mic\allow_real_audio=true') | Should -BeFalse
+        Get-EmulatorStartMicrophone -WindowType qtwindow -CommandLine '' -AvdSettings @() | Should -BeFalse
+        { Get-EmulatorStartMicrophone -WindowType '' -CommandLine '' -AvdSettings @() } | Should -Throw 'Unknown window type*'
+    }
+
+    It 'turns it off for a dry run, with a restore that puts back the state that the emulator started with' {
+        $registered = [System.Collections.Generic.List[object]]::new()
+        function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$Action) {
+            $registered.Add([pscustomobject]@{ What = $What; ByHand = $ByHand; Data = $Data; Action = $Action })
+        }
+        foreach ($on in $false, $true) {
+            $registered.Clear()
+            $console.Calls.Clear()
+            function Get-EmulatorHostMicrophone { $on }
+
+            Disable-EmulatorHostMicrophone -Serial 'emulator-5554'
+
+            $command = if ($on) { 'hostmicon' } else { 'hostmicoff' }
+            $registered[0].ByHand | Should -Be "Run: & 'Invoke-FakeConsole' -s emulator-5554 emu avd $command"
+            @($console.Calls) | Should -Be @('-s emulator-5554 emu avd name', '-s emulator-5554 emu avd hostmicoff')
+            & $registered[0].Action $registered[0].Data
+            $console.Calls[-1] | Should -Be "-s emulator-5554 emu avd $command"
+        }
+    }
 }
 
 Describe 'The owner''s settings and the test PIN' {

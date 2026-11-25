@@ -353,25 +353,12 @@ function Get-RestoreTime {
 
 # Closes the emulator kestrel-api37 and starts it again from a cold boot, in place of a reboot inside the emulator,
 # which has crashed or frozen this computer's emulator. Kestrel stores each mode when it changes, so its process ends as
-# in a reboot. Returns nothing when the emulator answers again with the same serial, and otherwise why the check fails.
+# in a reboot. It comes back without a window, as scripts\start-emulator.ps1 starts it. Returns nothing when the emulator
+# answers again with the same serial, and otherwise why the check fails.
 function Restart-Emulator {
     # Kestrel's stored mode must be on the emulator's disk, and not only in Android's memory, when the emulator ends.
     Invoke-Checked 'sync' | Out-Null
-    $kill = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'kill' -TimeoutSeconds 30
-    if (-not $kill.Completed) { return "'adb emu kill' did not return within 30 s, so the emulator may have frozen" }
-    # The emulator saves its Quick Boot snapshot before it ends.
-    $deadline = (Get-Date).AddMinutes(2)
-    while ((Get-EmulatorProcess 'kestrel-api37') -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-    $left = @(Get-EmulatorProcess 'kestrel-api37')
-    if ($left) { return "kestrel-api37 did not close within 2 minutes of 'adb emu kill' (its qemu process has the ID $($left[0].ProcessId))" }
-    try {
-        $started = "$(& "$PSScriptRoot\start-emulator.ps1" -ColdBoot | Select-Object -Last 1)".Trim()
-    } catch {
-        return "the emulator did not start again: $($_.Exception.Message)"
-    }
-    if ($started -ne $Serial) { return "kestrel-api37 started again as '$started', not as $Serial" }
-    # The serial now names a new emulator, so the device check runs again before any other command.
-    try { Assert-TestDevice -Serial $Serial } catch { return $_.Exception.Message }
+    Restart-KestrelEmulator -Serial $Serial -Window $false -ColdBoot
 }
 
 # The riids of Kestrel's recordings that 'dumpsys audio' lists now.

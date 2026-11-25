@@ -9,7 +9,7 @@
 # so an older clip can replace a newer one a moment later (ClipboardHookTest failed so in plan 7E's Task 8), and every
 # clip of the tests would also replace the owner's Windows clipboard. -Window starts the emulator with its window, for a
 # plan step in which the owner works in it; close it afterwards and start it again without -Window. When kestrel-api37
-# already runs, the script warns if it runs otherwise than asked.
+# already runs, the script warns if it runs otherwise than asked: its console tells the window type ('avd windowtype').
 param([switch]$ColdBoot, [switch]$Window)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
@@ -20,18 +20,10 @@ $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
 if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: & '$adb' -s $serial emu kill" }
-if ($serial) {
-    foreach ($process in @(Get-EmulatorProcess $name)) {
-        $warning = Get-EmulatorWindowWarning -AvdName $name -ProcessName $process.Name -Window $Window.IsPresent `
-            -ClipboardSharing (Test-EmulatorClipboardSharing) -CloseCommand "& '$adb' -s $serial emu kill"
-        if ($warning) { Write-Warning $warning }
-    }
-}
+$started = $null
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
-    $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
-        Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($name))(\s|$)" }
-    $started = $null
+    $running = Get-EmulatorProcess $name
     if ($ColdBoot -and $running) { Write-Warning "$name is still starting or closing, so -ColdBoot does nothing." }
     if (-not $running) {
         $emulator = Join-Path $env:ANDROID_HOME 'emulator\emulator.exe'
@@ -54,6 +46,12 @@ if (-not $serial) {
         $serial = Find-EmulatorSerial $name
     } until ($serial -or (Get-Date) -gt $deadline)
     if (-not $serial) { throw "$name did not appear in adb within 5 minutes" }
+}
+# An emulator that this script did not start may run otherwise than asked, also one that was still booting.
+if (-not $started) {
+    $warning = Get-EmulatorWindowWarning -AvdName $name -WindowType (Get-EmulatorWindowType $serial) -Window $Window.IsPresent `
+        -ClipboardSharing (Test-EmulatorClipboardSharing) -CloseCommand "& '$adb' -s $serial emu kill"
+    if ($warning) { Write-Warning $warning }
 }
 # Windows PowerShell 5.1 would stop at adb's first error line, such as "device offline" while Android starts.
 $ErrorActionPreference = 'Continue'

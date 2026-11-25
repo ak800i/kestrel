@@ -485,8 +485,8 @@ function Get-BargeInVolumes([int]$Owner) {
 # Turns the host audio input of the emulator kestrel-api37 on or off through its console ('avd hostmicon' and 'avd
 # hostmicoff'), so that a dry run of the A71 sessions hears only the texts that it sends, and not the sound of this
 # computer's microphone, which can start a command of its own during a check. The console has no command that reads
-# the setting. Throws for every device but kestrel-api37, and when the console does not answer OK. Get-Adb comes from
-# scripts\lib\Kestrel.ps1.
+# the setting (Get-EmulatorHostMicrophone reads the state that the emulator started with). Throws for every device but
+# kestrel-api37, and when the console does not answer OK. Get-Adb comes from scripts\lib\Kestrel.ps1.
 function Set-EmulatorHostMicrophone([string]$Serial, [bool]$On) {
     $adb = Get-Adb
     # Windows PowerShell 5.1 would stop at adb's first error line.
@@ -498,6 +498,49 @@ function Set-EmulatorHostMicrophone([string]$Serial, [bool]$On) {
     if ($answer -notcontains 'OK' -or @($answer | Where-Object { $_ -like 'KO*' }).Count -gt 0) {
         throw "The emulator's console did not take 'avd $command'."
     }
+}
+
+# Whether the emulator started with its host audio input on. Neither its console nor its gRPC service reads the input's
+# state, but the start state follows from how it was started: an emulator without a window ($WindowType 'headless')
+# has it on only with the option -allow-host-audio in its qemu process's $CommandLine; one with its window ('qtwindow')
+# takes the window's checkbox "Virtual microphone uses host audio input", which the window keeps as
+# 'mic\allow_real_audio' in the [perAvd] section of the AVD's AVD.conf ($AvdSettings, its lines), off when missing.
+function Get-EmulatorStartMicrophone([string]$WindowType, [string]$CommandLine, [string[]]$AvdSettings) {
+    if ($WindowType -eq 'headless') { return $CommandLine -match '(^|\s)-allow-host-audio(\s|$)' }
+    if ($WindowType -ne 'qtwindow') { throw "Unknown window type '$WindowType'." }
+    $section = ''
+    foreach ($line in $AvdSettings) {
+        $text = "$line".Trim()
+        if ($text -match '^\[(.+)\]$') { $section = $Matches[1]; continue }
+        if ($section -eq 'perAvd' -and $text -match '^mic\\allow_real_audio\s*=\s*(\S+)$') { return $Matches[1] -eq 'true' }
+    }
+    return $false
+}
+
+# Whether kestrel-api37 on $Serial started with its host audio input on (Get-EmulatorStartMicrophone), so that a script
+# that turns the input off for its run can put it back as it found it. Only a script changes the input through the
+# console, and each one puts it back, so the start state is the state that the script finds. Get-AvdHome,
+# Get-EmulatorProcess and Get-EmulatorWindowType come from scripts\lib\Kestrel.ps1.
+function Get-EmulatorHostMicrophone([string]$Serial) {
+    $type = Get-EmulatorWindowType $Serial
+    $process = @(Get-EmulatorProcess 'kestrel-api37')
+    if ($process.Count -ne 1) { throw "Found $($process.Count) qemu processes of kestrel-api37, not 1." }
+    $settings = Join-Path (Get-AvdHome) 'kestrel-api37.avd\AVD.conf'
+    $lines = if (Test-Path -LiteralPath $settings) { @(Get-Content -LiteralPath $settings) } else { @() }
+    Get-EmulatorStartMicrophone -WindowType $type -CommandLine "$($process[0].CommandLine)" -AvdSettings $lines
+}
+
+# For a dry run of the A71 sessions: turns kestrel-api37's host audio input off, so that this computer's sound reaches
+# no step, after it registered, through the calling script's Register-Restore, the restore that puts back the state that
+# the emulator started with (Get-EmulatorHostMicrophone): off when scripts\start-emulator.ps1 started it without a window.
+function Disable-EmulatorHostMicrophone([string]$Serial) {
+    $on = Get-EmulatorHostMicrophone -Serial $Serial
+    $command = if ($on) { 'hostmicon' } else { 'hostmicoff' }
+    Register-Restore 'the host audio input of kestrel-api37' "Run: & '$(Get-Adb)' -s $Serial emu avd $command" ([pscustomobject]@{ Serial = $Serial; On = $on }) {
+        param($Data)
+        Set-EmulatorHostMicrophone -Serial $Data.Serial -On $Data.On
+    } | Out-Null
+    Set-EmulatorHostMicrophone -Serial $Serial -On $false
 }
 
 # The newest record of PowerShell's error list $Error, or $null when the list is empty, for Remove-NewErrorRecord.

@@ -355,20 +355,43 @@ function Get-EmulatorProcess([string]$AvdName) {
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($AvdName))(\s|$)" }
 }
 
-# Whether the emulator's setting "Enable clipboard sharing" (Extended controls > Settings) is on. It is one setting for
-# every AVD of this Windows user, and the emulator treats a missing value as on. Only an emulator with a window uses it.
+# Whether the emulator's setting "Enable clipboard sharing" (Extended controls > Settings) is on, from its stored $Value:
+# the emulator treats a missing value as on (winsys-qt.cpp reads it with the default true), and only 'false' as off.
+function ConvertFrom-ClipboardSharingValue($Value) {
+    return ($null -eq $Value) -or ("$Value" -ne 'false')
+}
+
+# Whether the emulator's setting "Enable clipboard sharing" is on now. It is one setting for every AVD of this Windows
+# user, and only an emulator with a window uses it.
 function Test-EmulatorClipboardSharing {
     $value = (Get-ItemProperty 'HKCU:\Software\Android Open Source Project\Emulator\set' -Name clipboardSharing `
             -ErrorAction SilentlyContinue).clipboardSharing
-    return ($null -eq $value) -or ("$value" -ne 'false')
+    ConvertFrom-ClipboardSharingValue $value
 }
 
-# The warning for a running emulator whose qemu process is $ProcessName ('qemu-system-x86_64.exe' with a window,
-# 'qemu-system-x86_64-headless.exe' without one), when scripts\start-emulator.ps1 was asked for a window ($Window) or
-# not, and the clipboard sharing is $ClipboardSharing; $null when it runs as asked. $CloseCommand closes the emulator.
-function Get-EmulatorWindowWarning([string]$AvdName, [string]$ProcessName, [bool]$Window, [bool]$ClipboardSharing,
+# The window type in the answer of the emulator's console to 'avd windowtype' ('windowtype=headless' for an emulator
+# started with -no-window, 'windowtype=qtwindow' for one with its window). Throws for any other answer.
+function ConvertFrom-WindowTypeAnswer([string[]]$Lines) {
+    foreach ($line in $Lines) {
+        if ("$line".Trim() -match '^windowtype=(headless|qtwindow)$') { return $Matches[1] }
+    }
+    throw "Not an answer of the emulator's console to 'avd windowtype': '$($Lines -join ' ')'"
+}
+
+# Whether the emulator $Serial runs without a window ('headless') or with one ('qtwindow'), as its console answers.
+function Get-EmulatorWindowType([string]$Serial) {
+    $adb = Get-Adb
+    # Windows PowerShell 5.1 would stop at adb's first error line.
+    $ErrorActionPreference = 'Continue'
+    ConvertFrom-WindowTypeAnswer @(& $adb -s $Serial emu avd windowtype 2>$null)
+}
+
+# The warning for a running emulator whose window type is $WindowType (Get-EmulatorWindowType), when
+# scripts\start-emulator.ps1 was asked for a window ($Window) or not, and the clipboard sharing is $ClipboardSharing;
+# $null when it runs as asked. $CloseCommand closes the emulator.
+function Get-EmulatorWindowWarning([string]$AvdName, [string]$WindowType, [bool]$Window, [bool]$ClipboardSharing,
     [string]$CloseCommand) {
-    $headless = $ProcessName -match '-headless'
+    $headless = $WindowType -eq 'headless'
     if ($Window -and $headless) {
         return "$AvdName runs without a window. To get one, close it with $CloseCommand and run " +
             'scripts\start-emulator.ps1 -Window.'
@@ -381,6 +404,36 @@ function Get-EmulatorWindowWarning([string]$AvdName, [string]$ProcessName, [bool
     return $null
 }
 
+# Closes the emulator kestrel-api37 on $Serial and starts it again through scripts\start-emulator.ps1, with its window
+# when $Window, and from a cold boot when $ColdBoot. It closes nothing unless the console names kestrel-api37. A start
+# that is not cold brings Android back from the Quick Boot snapshot that the emulator saves when it closes, so its apps
+# and settings are as they were. Returns nothing when kestrel-api37 answers again with the same serial and the asked
+# window type, and otherwise why not.
+function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBoot) {
+    $adb = Get-Adb
+    $name = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'avd', 'name' -TimeoutSeconds 30
+    if (-not $name.Completed -or "$($name.Output)".Trim() -notmatch '^kestrel-api37\b') {
+        return "$Serial is not the emulator kestrel-api37, so it was not closed"
+    }
+    $kill = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'kill' -TimeoutSeconds 30
+    if (-not $kill.Completed) { return "'adb emu kill' did not return within 30 s, so the emulator may have frozen" }
+    # The emulator saves its Quick Boot snapshot before it ends.
+    $deadline = (Get-Date).AddMinutes(2)
+    while ((Get-EmulatorProcess 'kestrel-api37') -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+    $left = @(Get-EmulatorProcess 'kestrel-api37')
+    if ($left) { return "kestrel-api37 did not close within 2 minutes of 'adb emu kill' (its qemu process has the ID $($left[0].ProcessId))" }
+    try {
+        $started = "$(& "$PSScriptRoot\..\start-emulator.ps1" -ColdBoot:$ColdBoot -Window:$Window | Select-Object -Last 1)".Trim()
+    } catch {
+        return "the emulator did not start again: $($_.Exception.Message)"
+    }
+    if ($started -ne $Serial) { return "kestrel-api37 started again as '$started', not as $Serial" }
+    # The serial now names a new emulator, so the device check runs again before any other command.
+    try { Assert-TestDevice -Serial $Serial } catch { return $_.Exception.Message }
+    $type = Get-EmulatorWindowType $Serial
+    $wanted = if ($Window) { 'qtwindow' } else { 'headless' }
+    if ($type -ne $wanted) { return "kestrel-api37 started again as $type, not as $wanted" }
+}
 # Reads the index of a stream's volume from the answer of 'cmd media_session volume --stream <stream> --get', whose line
 # reads '[V] volume is 7 in range [0..25]'. Throws when the answer has no such line.
 function Get-StreamVolume([string[]]$Lines) {

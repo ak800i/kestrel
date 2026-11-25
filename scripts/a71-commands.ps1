@@ -68,7 +68,8 @@
 # kestrel-api37: it unlocks with 'wm dismiss-keyguard' and needs no PIN, taps the clock in place of the owner's finger, deletes
 # the rows of its calls in the call log, and plays no sound: its air pass and corpus pass say each
 # clip's text into Kestrel's stand-in microphone (voice-clip -Text), through the same speech path on the phone, and its
-# host audio input is off, and on again at its end. -Step runs only the named steps, also as one text separated by commas.
+# host audio input is off, and back as the emulator started with it at its end. -Step runs only the named steps, also as
+# one text separated by commas.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does. After Ctrl+C, it ends with exit code 1.
 # Example: scripts\a71-commands.ps1 -Serial R58N12345AB
 #Requires -Version 7.3
@@ -522,12 +523,9 @@ function Initialize-Session {
     } | Out-Null
     Invoke-Checked 'svc power stayon true' | Out-Null
     if ($DryRun) {
-        # The emulator's microphone carries this computer's sound. The console cannot read the setting, so the restore turns
-        # it back on, as kestrel-api37 had it when the dry runs of 2026-11-19 heard this computer's microphone.
-        Register-Restore 'the host audio input of kestrel-api37' "Run: & '$adb' -s $Serial emu avd hostmicon" $null {
-            Set-EmulatorHostMicrophone -Serial $Serial -On $true
-        } | Out-Null
-        Set-EmulatorHostMicrophone -Serial $Serial -On $false
+        # The emulator's microphone carries this computer's sound. The restore puts back the state that the emulator
+        # started with (Get-EmulatorHostMicrophone): off without a window, as scripts\start-emulator.ps1 starts it.
+        Disable-EmulatorHostMicrophone -Serial $Serial
     }
     # Kestrel's accessibility service, next to the owner's other services.
     $enabled = if ($accessibility.Contains('enabled_accessibility_services')) { "$($accessibility['enabled_accessibility_services'])" } else { 'null' }
