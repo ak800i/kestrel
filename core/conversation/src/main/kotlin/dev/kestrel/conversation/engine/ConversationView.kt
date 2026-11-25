@@ -25,8 +25,10 @@ import dev.kestrel.conversation.model.InputChannel
  * that the voice stops it before the command in "Stop. Kestrel, …", why a held goal is held ([hold], which the goal
  * notification names), whether the goal is ending ([goalEnding], for which the goal service does not start), and the open
  * goal's record number ([goalRecord], which with [id] names the goal across Kestrel's processes, for the notification's
- * buttons), and whether the working goal's round waits behind the owner's instant command ([waitsBehindCommand], which the
- * goal notification says, because the bar belongs to the command then; plan 7E). toString prints no words.
+ * buttons), the number of the input that started or last resumed the open goal ([goalCommand], with which the goal service
+ * names the goal whose start Android refused, so that a late refusal never touches a newer goal), and whether the working
+ * goal's round waits behind the owner's instant command ([waitsBehindCommand], which the goal notification says, because
+ * the bar belongs to the command then; plan 7E). toString prints no words.
  */
 data class ConversationView(
     val id: ConversationId? = null,
@@ -46,6 +48,7 @@ data class ConversationView(
     val hold: GoalHold? = null,
     val goalEnding: GoalEnding? = null,
     val goalRecord: Int? = null,
+    val goalCommand: Int? = null,
     val waitsBehindCommand: Boolean = false,
 ) {
     /** The owner continued the conversation from the list or by name (D23). */
@@ -53,7 +56,7 @@ data class ConversationView(
 
     override fun toString(): String =
         "ConversationView(open=${id != null}, command=$command, goal=$goal, step=$step, asking=$asking, records=${records.size}, quiet=$quiet, " +
-            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding, goalRecord=$goalRecord, behind=$waitsBehindCommand)"
+            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding, goalRecord=$goalRecord, goalCommand=$goalCommand, behind=$waitsBehindCommand)"
 }
 
 /** A goal's checklist for the bar and the notification (design 10.5 and 10.6): done of total, and the current item. */

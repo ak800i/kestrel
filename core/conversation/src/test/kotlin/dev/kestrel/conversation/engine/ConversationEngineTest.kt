@@ -346,7 +346,7 @@ class ConversationEngineTest {
         runCurrent()
         assertEquals(GoalPhase.ACTING, engine.view.value.goal)
 
-        engine.backgroundRefused(engine.view.value.command)
+        engine.backgroundRefused(checkNotNull(engine.view.value.goalCommand))
         runCurrent()
 
         // Plan 7E; design 10.6 of sub-project 7: the goal is held as interrupted, and the view names why.

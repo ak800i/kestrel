@@ -952,6 +952,7 @@ class ConversationEngine(
             hold = current.goal?.hold,
             goalEnding = current.goal?.ending,
             goalRecord = current.goal?.record,
+            goalCommand = current.goal?.command,
             waitsBehindCommand = own && roundBehindCommand && current.goal?.phase in WORKING,
         )
     }
