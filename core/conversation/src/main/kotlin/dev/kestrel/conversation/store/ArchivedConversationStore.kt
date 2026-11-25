@@ -7,10 +7,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.util.IdentityHashMap
 
@@ -60,8 +62,9 @@ enum class ArchiveNote {
  * older snapshot that a holder saves, or closes in [reopen], after a deletion of the conversation is left out, and when the
  * store reads the archive again and finds such a conversation, it deletes it again before it shows anything. "Delete
  * history" ([deleteAll]) works on the archive alone, every row and the index in one transaction and then the key, so it has
- * one outcome whatever the store holds: after it completed, no snapshot of a conversation that this process held is written
- * again; when it did not complete, it marks nothing, and every conversation stays as the archive has it.
+ * one outcome whatever the store holds: once the archive's deletion has started, a cancellation cannot split it from the
+ * marking of the deleted conversations, so that after it no snapshot of a conversation that this process held is written
+ * again; when the archive's call fails, it marks nothing, and every conversation stays as the archive has it.
  */
 class ArchivedConversationStore(
     private val archive: RecordArchive,
@@ -156,20 +159,27 @@ class ArchivedConversationStore(
         }
     }
 
+    /**
+     * Deletes every conversation in the archive alone (design 9.7). Once it has the lock, the archive's deletion and the
+     * marking of the deleted conversations run as one unit that cancellation cannot split, the generation's raise first; a
+     * caller's cancellation takes effect after it. When the archive's call fails, it marks nothing.
+     */
     override suspend fun deleteAll() = mutex.withLock {
-        generation++
-        stopWork()
-        try {
-            archive.deleteAll()
-        } catch (e: Throwable) {
-            forget()
-            throw e
+        withContext(NonCancellable) {
+            generation++
+            stopWork()
+            try {
+                archive.deleteAll()
+            } catch (e: Throwable) {
+                forget()
+                throw e
+            }
+            // Only now that every row is gone: a snapshot that a holder keeps of one of them is never written back.
+            deleted += held
+            (past as? Past.Failed)?.retry?.cancel()
+            opened = Opened(null, null)
+            past = ready(PastIndex.EMPTY)
         }
-        // Only now that every row is gone: a snapshot that a holder keeps of one of them is never written back.
-        deleted += held
-        (past as? Past.Failed)?.retry?.cancel()
-        opened = Opened(null, null)
-        past = ready(PastIndex.EMPTY)
     }
 
     override suspend fun purge(retentionDays: Int, nowWall: Long): Int = mutex.withLock {

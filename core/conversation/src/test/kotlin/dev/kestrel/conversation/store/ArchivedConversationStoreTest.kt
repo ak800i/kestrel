@@ -13,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -307,24 +308,46 @@ class ArchivedConversationStoreTest {
         assertEquals(before + 1, watched.generation)
     }
 
-    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back. The
-    // store marks nothing, as after any "delete history" that did not complete, and shows what the archive holds.
+    // Design 9.7: a "stop" can cancel "delete history" while the archive deletes. Once the archive's deletion has started,
+    // it and the store's marking of the deleted conversations run as one unit that the cancellation cannot split; the
+    // cancellation takes effect after it. So the outcome is a completed deletion, and a later save of the open conversation
+    // writes nothing back.
     @Test
-    fun aDeleteAllCancelledAfterTheArchiveDeletedMarksNothingAndShowsWhatTheArchiveHolds() = test {
-        store.save(conversation(1, now - 2_000))
+    fun deleteHistoryCancelledWhileTheArchiveDeletesCompletesAndNothingComesBack() = test {
+        val deleting = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val gated = ArchivedConversationStore(
+            object : RecordArchive by archive {
+                override suspend fun deleteAll() {
+                    deleting.complete(Unit)
+                    gate.await()
+                    archive.deleteAll()
+                }
+            },
+            backgroundScope,
+        ) { notes += it }
+        gated.save(conversation(1, now - 2_000))
         val open = conversation(2, now - 1_000, open = true)
-        store.save(open)
-        archive.interruptions["deleteAll"] = CancellationException("stop")
+        gated.save(open)
+        val before = gated.generation
+        val deletion = launch { gated.deleteAll() }
+        deleting.await()
 
-        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is CancellationException)
+        deletion.cancel()
+        gate.complete(Unit)
+        deletion.join()
 
-        assertTrue(store.list().isEmpty())
-        assertNull(store.open())
-        assertNull(store.reopen(id(1), null, now, testMode = true))
-        // The owner was told that the history was not deleted, so the conversation that he goes on with is saved again.
-        store.save(open.copy(lastWall = now))
-        assertEquals(setOf(id(2).value), archive.rows.keys)
-        assertEquals(id(2), fresh().open()!!.id)
+        assertTrue(deletion.isCancelled)
+        assertEquals(before + 1, gated.generation)
+        assertTrue(archive.rows.isEmpty())
+        assertTrue(archive.shards.isEmpty())
+        assertTrue(archive.keyErased)
+        assertNull(gated.open())
+        assertTrue(gated.list().isEmpty())
+        gated.save(open.copy(lastWall = now))
+        assertNull(gated.reopen(id(1), open, now, testMode = true))
+        assertTrue(archive.rows.isEmpty())
+        assertTrue(notes.isEmpty())
     }
 
     // Design 9.7: "delete history" works on the archive alone. One that fails before the index is ready, while the store

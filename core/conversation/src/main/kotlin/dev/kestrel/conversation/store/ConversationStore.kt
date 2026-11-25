@@ -45,8 +45,9 @@ interface ConversationStore {
     suspend fun delete(id: ConversationId)
 
     /**
-     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). When
-     * it throws, it has marked nothing, and every conversation stays as the archive has it.
+     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). Once
+     * the archive's deletion has started, a cancellation takes effect only after it, and the outcome is a completed
+     * deletion. When the archive's call fails, it has marked nothing, and every conversation stays as the archive has it.
      */
     suspend fun deleteAll()
 
