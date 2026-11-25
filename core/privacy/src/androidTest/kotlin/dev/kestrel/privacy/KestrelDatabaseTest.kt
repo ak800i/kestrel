@@ -3,7 +3,6 @@ package dev.kestrel.privacy
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.kestrel.privacy.db.ConversationHeader
 import dev.kestrel.privacy.db.ConversationRow
 import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.db.LogEntryRow
@@ -90,7 +89,7 @@ class KestrelDatabaseTest {
         dao.write(listOf(conversation("a", last = 1, open = true)))
         dao.write(listOf(conversation("b", last = 2, open = true)))
 
-        assertEquals(listOf("b" to true, "a" to false), dao.headers().map { it.id to it.open })
+        assertEquals(listOf("b" to true, "a" to false), dao.all().map { it.id to it.open })
     }
 
     // Design 9.6 of sub-project 7: a switch writes the closed and the opened conversation in one transaction.
@@ -101,8 +100,9 @@ class KestrelDatabaseTest {
 
         dao.write(listOf(conversation("b", last = 3, open = false), conversation("a", last = 3, open = true)))
 
-        assertEquals(setOf("a" to true, "b" to false), dao.headers().map { it.id to it.open }.toSet())
-        assertEquals(3L, dao.get("b")!!.lastMillis)
+        val rows = dao.all()
+        assertEquals(setOf("a" to true, "b" to false), rows.map { it.id to it.open }.toSet())
+        assertEquals(3L, rows.single { it.id == "b" }.lastMillis)
     }
 
     // Design 9.3 of sub-project 7: the open conversation is never purged, however old it is.
@@ -120,8 +120,9 @@ class KestrelDatabaseTest {
         )
 
         assertEquals(2, dao.deleteOutside(oldest = 100, newest = 200))
-        assertEquals(listOf("last", "first", "open"), dao.headers().map { it.id })
-        assertEquals(ConversationHeader("last", openedMillis = 199, lastMillis = 200, open = false, commands = 2), dao.headers().first())
+        val rows = dao.all()
+        assertEquals(listOf("last", "first", "open"), rows.map { it.id })
+        assertEquals(listOf<Any>(199L, 200L, false, 2), rows.first().let { listOf(it.openedMillis, it.lastMillis, it.open, it.commands) })
     }
 
     private fun conversation(id: String, last: Long, open: Boolean) =

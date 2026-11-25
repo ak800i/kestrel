@@ -21,7 +21,7 @@ import org.junit.runner.RunWith
 /**
  * How long the first read of 30 days of past conversations takes (design 4.3 and R3 of sub-project 7): 300 closed
  * conversations of 12 KB each are written to a database file and read back as plan 7B's store reads them at its first use
- * (every header, then each row), through a new store, as after a start of Kestrel, so that each row is decrypted once
+ * (every row in one query, `readAll`), through a new store, as after a start of Kestrel, so that each row is decrypted once
  * through the Keystore. It is a measurement: it fails only when a conversation does not read back, and it logs the time
  * under the tag KestrelArchive. Plan 7C's Task 8 decides on the A71's time. It runs only with the instrumentation argument
  * kestrelArchiveSpeed=true. It uses a test-named database file and a test key of this library's own test app, never
@@ -63,7 +63,7 @@ class ConversationArchiveSpeedTest {
         val (millis, readable) = try {
             val reader = ConversationArchiveStore(read.conversationDao(), KeystoreErasableKey.of(alias))
             val started = SystemClock.elapsedRealtime()
-            val conversations = reader.headers().map { reader.read(it.id) }
+            val conversations = reader.readAll()
             (SystemClock.elapsedRealtime() - started) to conversations.count { it is StoredConversation.Readable }
         } finally {
             read.close()

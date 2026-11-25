@@ -109,10 +109,10 @@ class PrivacyStoreTest {
 
             store.conversations.deleteAll()
 
-            assertEquals(emptyList<ConversationHeader>(), store.conversations.headers())
+            assertTrue(store.conversations.readAll().isEmpty())
             assertFalse(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
             store.conversations.write(listOf(PlainConversation(header, "second".encodeToByteArray())))
-            val read = store.conversations.read(header.id) as StoredConversation.Readable
+            val read = store.conversations.readAll().single() as StoredConversation.Readable
             assertEquals("second", read.payload.decodeToString())
         } finally {
             store.conversations.deleteAll()
@@ -129,9 +129,9 @@ class PrivacyStoreTest {
             // A later version's ciphertext: its first byte names a format that this version does not know.
             dao.write(listOf(ConversationRow(id, 1, 2, open = false, commands = 1, payload = byteArrayOf(2) + ByteArray(40))))
 
-            assertTrue(store.conversations.read(id) is StoredConversation.UnknownFormat)
+            assertTrue(store.conversations.readAll().single { it.header.id == id } is StoredConversation.UnknownFormat)
 
-            assertEquals(id, dao.get(id)?.id)
+            assertTrue(dao.all().any { it.id == id })
             val entry = store.logs.activity().single()
             assertEquals(ActivityKind.ERROR, entry.event.kind)
             assertEquals("A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it", entry.event.text)

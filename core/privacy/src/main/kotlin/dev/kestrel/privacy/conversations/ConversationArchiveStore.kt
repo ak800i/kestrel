@@ -58,11 +58,11 @@ class ConversationArchiveStore(
     // that failed or was cancelled is made again at the next read. Used only under the key's guard.
     private val reportedUnknown = mutableSetOf<String>()
 
-    /** Every conversation's plain fields, the newest last change first. */
-    suspend fun headers(): List<ConversationHeader> = locked { dao.headers() }
-
-    /** The conversation [id], or null when there is none. */
-    suspend fun read(id: String): StoredConversation? = locked { dao.get(id)?.let { stored(it) } }
+    /**
+     * Every conversation, the newest last change first, read in one query and decrypted in one pass on [dispatcher]: each
+     * one's payload, or the mark that it failed its check or is in a format that this version cannot read.
+     */
+    suspend fun readAll(): List<StoredConversation> = locked { dao.all().map { stored(it) } }
 
     /**
      * Stores [conversations], each replacing its earlier row, in one transaction. Before an open one is stored, every other

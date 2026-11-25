@@ -27,13 +27,14 @@ class ConversationRow(
 )
 
 /**
- * The plain columns of a conversation's row, without its payload. Its [open] is the one truth about whether the
- * conversation is open (design 6.1 of sub-project 7): the conversation's store reads it from here; the payload does not hold it.
+ * The plain fields of a conversation's row, without its payload, as the archive takes and gives them. Its [open] is the
+ * one truth about whether the conversation is open (design 6.1 of sub-project 7): the conversation's store reads it from
+ * here; the payload does not hold it.
  */
 data class ConversationHeader(
     val id: String,
-    @ColumnInfo(name = "opened_millis") val openedMillis: Long,
-    @ColumnInfo(name = "last_millis") val lastMillis: Long,
+    val openedMillis: Long,
+    val lastMillis: Long,
     val open: Boolean,
     val commands: Int,
 )
@@ -56,12 +57,12 @@ abstract class ConversationDao {
         }
     }
 
-    /** Every conversation's plain columns, the newest last change first. */
-    @Query("SELECT id, opened_millis, last_millis, open, commands FROM conversations ORDER BY last_millis DESC")
-    abstract suspend fun headers(): List<ConversationHeader>
-
-    @Query("SELECT * FROM conversations WHERE id = :id")
-    abstract suspend fun get(id: String): ConversationRow?
+    /**
+     * Every conversation's row, the newest last change first, in one query: the first read of the archive (design 4.3 and
+     * R3 of sub-project 7), which one query per row would make many times slower.
+     */
+    @Query("SELECT * FROM conversations ORDER BY last_millis DESC")
+    abstract suspend fun all(): List<ConversationRow>
 
     @Query("DELETE FROM conversations WHERE id = :id")
     abstract suspend fun delete(id: String): Int

@@ -39,9 +39,9 @@ Plan 7C merges **after** plan 7B. Its Tasks 1 to 4 may run while plan 7B is carr
 
 ## Before you start
 
-- Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed. This plan was written against `sp3` at `a4558faf`, which holds plan 7B as committed at `9ddf3385` and changed at `a4558faf` (`docs\superpowers\plans\2026-11-24-conversations-7b-core.md`). Of the files that this plan changes, only `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` and the design may move before Task 5.
+- Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed. This plan was written against `sp3` at `a4558faf`, which holds plan 7B as committed at `9ddf3385` and changed at `a4558faf` (`docs\superpowers\plans\2026-11-24-conversations-7b-core.md`); plan 7B's port changed again at `26737eb7` (see "Plan 7B as committed"). Of the files that this plan changes, only `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` and the design may move before Task 5.
 - At the start of Task 1, and again at the start of Task 5, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7c-archive.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7c-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`. For Task 5, also set `$env:START_TASK = '5'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plan 6B-basefix, 7A or 7B moved or changed, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the earlier plans left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
-- At the start of Task 5, check that plan 7B as merged has the types of "Interfaces consumed from plan 7B" below, with these signatures: `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\store\*.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationClock.kt -Pattern 'interface RecordArchive|suspend fun read\(id: String\): ArchiveEntry\?|suspend fun write\(rows: List<ArchiveRow>\)|class Unknown\(|class ArchivedConversationStore\(|class Retention\(|suspend fun keepPurging\(days: Flow<Int>\)|interface ConversationClock'`. Expected: 8 matches. If one is missing or differs, stop and ask the controller. Also check that plan 7B's store reads `open` from the row (see "Plan 7B as committed"): `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\store\ArchivedConversationStore.kt -SimpleMatch -Pattern 'copy(open = entry.header.open)'` gives 1 match, and `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\model\ConversationSnapshot.kt -SimpleMatch -Pattern '@Transient val open'` gives 1 match. Otherwise stop and ask the controller, because Task 5's `theTablesOpenColumnDecidesWhichConversationIsOpen` tests it.
+- At the start of Task 5, check that plan 7B as merged has the types of "Interfaces consumed from plan 7B" below, with these signatures: `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\store\*.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationClock.kt -Pattern 'interface RecordArchive|suspend fun readAll\(\): List<ArchiveEntry>|suspend fun write\(rows: List<ArchiveRow>\)|class Unknown\(|class ArchivedConversationStore\(|class Retention\(|suspend fun keepPurging\(days: Flow<Int>\)|interface ConversationClock'`. Expected: 8 matches. If one is missing or differs, stop and ask the controller. Also check that plan 7B's store reads `open` from the row (see "Plan 7B as committed"): `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\store\ArchivedConversationStore.kt -SimpleMatch -Pattern 'copy(open = entry.header.open)'` gives 1 match, and `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\model\ConversationSnapshot.kt -SimpleMatch -Pattern '@Transient val open'` gives 1 match. Otherwise stop and ask the controller, because Task 5's `theTablesOpenColumnDecidesWhichConversationIsOpen` tests it.
 - Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :app:testDebugUnitTest`, then `foreach ($dir in 'core\privacy\build\test-results\testDebugUnitTest', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `foreach ($dir in 'core\privacy\src\androidTest', 'app\src\androidTest') { "$dir $(@(Get-ChildItem $dir -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)" }`, then `scripts\gradle.ps1 --stop`. These are P₀ (`:core:privacy` JVM), A₀ (`:app` JVM, with `app/src/testDebug`), D₀ (`:core:privacy`'s device tests, 19 at `a4558faf`) and AD₀ (`:app`'s device tests, 443 at `a4558faf`). Each task gives its counts as "N + k", where N is the count before the task. If a count differs, stop and ask the controller.
 - Before each task, check that every text that the task replaces exists, and exists once, in its file as the earlier tasks left it; and run `git status --short`. The worktree may hold other agents' uncommitted files. If a text is missing, or a file that the task changes shows changes that are not the task's own, stop and ask the controller.
 - A device that runs a build with Task 1 has its database at version 3. Room cannot open it with an older build (there is no migration down), and a destructive fallback would delete the owner's profile. So from Task 8 on, never install a build without this plan on kestrel-api37, and never install one on the A71 after a later plan has brought this plan there. Task 8, Step 2 writes this rule into AGENTS.md, so that work from the `main` worktree, which shares kestrel-api37, keeps it too.
@@ -51,10 +51,10 @@ Plan 7C merges **after** plan 7B. Its Tasks 1 to 4 may run while plan 7B is carr
 Tasks 5 and 6 use these types of `:core:conversation`, as plan 7B (committed at `9ddf3385`, changed at `a4558faf`) defines them in its "Interfaces for 7C and 7D":
 
 - package `dev.kestrel.conversation.store`:
-  - `interface RecordArchive { suspend fun headers(): List<ArchiveHeader>; suspend fun read(id: String): ArchiveEntry?; suspend fun write(rows: List<ArchiveRow>); suspend fun delete(id: String); suspend fun deleteAll(); suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int }`: `headers()` lists every row, the newest `lastMillis` first; `read(id)` gives null when there is no row; `write(rows)` inserts or replaces all of them in one transaction; `deleteAll()` deletes every row, the open one too, and the key `kestrel.conversations`; `deleteOutside` deletes only closed rows whose last change is before `oldestMillis` or after `newestMillis`.
+  - `interface RecordArchive { suspend fun readAll(): List<ArchiveEntry>; suspend fun write(rows: List<ArchiveRow>); suspend fun delete(id: String); suspend fun deleteAll(); suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int }`: `readAll()` gives every row in one call, the newest `lastMillis` first, each as its kind of entry; `write(rows)` inserts or replaces all of them in one transaction; `deleteAll()` deletes every row, the open one too, and the key `kestrel.conversations`; `deleteOutside` deletes only closed rows whose last change is before `oldestMillis` or after `newestMillis`.
   - `data class ArchiveHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)`; `class ArchiveRow(val header: ArchiveHeader, val payload: ByteArray)` (the payload is the snapshot's JSON in UTF-8).
   - `sealed interface ArchiveEntry { val header: ArchiveHeader }` with `class Readable(header, val payload: ByteArray)`, `class Unreadable(header)` (the payload failed its check: the store deletes the row and reports it to its `unreadable` by `KIND`) and `class Unknown(header)` (the payload is in a format that this version cannot read: the store leaves the conversation out and keeps the row; the archive has reported it).
-  - `class ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore`, with `ArchivedConversationStore.KIND = "conversation"` and `DAY_MILLIS`; it decodes each row once per process, and takes whether a conversation is open from the row's header, the table's `open` column: `ConversationSnapshot.open` is `@Transient`, so the snapshot's JSON never holds it.
+  - `class ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore`, with `ArchivedConversationStore.KIND = "conversation"` and `DAY_MILLIS`; it reads every row in one `readAll()` at its first use, decodes each row once per process, and takes whether a conversation is open from the row's header, the table's `open` column: `ConversationSnapshot.open` is `@Transient`, so the snapshot's JSON never holds it.
   - `class Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which purges at once and at each change of `days`, and checks the wall clock every hour and purges once a day has passed or the clock went back; a failure goes to `report` and the job goes on.
 - package `dev.kestrel.conversation.engine`: `interface ConversationClock { fun wallMillis(): Long; fun zone(): ZoneId }`.
 - package `dev.kestrel.conversation.model`: `@Serializable data class ConversationSettings(val quietSeconds: Int = 60, val followUpSeconds: Int = 8, val speakTypedReplies: Boolean = false, val retentionDays: Int = 30, val limits: GoalLimits = GoalLimits())`, whose read properties `keptDays` (the retention within `RETENTION_CHOICES`, 1 to 365 days), `quietMillis`, `followUpMillis` and `roundLimits` are what Kestrel reads, never the raw fields: a damaged stored value is read within its bounds.
@@ -64,7 +64,9 @@ Tasks 5 and 6 use these types of `:core:conversation`, as plan 7B (committed at 
 
 Plan 7B as committed at `9ddf3385` has what this plan needs from it: `ArchiveEntry.Unknown`, which its store leaves out without deleting the row; the KDoc lines that name plan 7C as the plan that runs `Retention` and makes `AndroidConversationClock`; and `Retention`'s hourly check of the wall clock.
 
-Plan 7B's commit `a4558faf` follows this plan's review (its finding I4): the table's `open` column is the one truth about whether a conversation is open. `ConversationSnapshot.open` is `@Transient`, so the snapshot's JSON never holds it; `ArchivedConversationStore.decoded` takes it from the entry's header (`copy(open = entry.header.open)`); and plan 7B's `ArchivedConversationStoreTest.aConversationIsOpenOnlyWhenItsRowSaysSo` checks a row that is closed in its header while an older payload still says open. A later difference from plan 7B goes into `progress.md`.
+Plan 7B's commit `a4558faf` follows this plan's review (its finding I4): the table's `open` column is the one truth about whether a conversation is open. `ConversationSnapshot.open` is `@Transient`, so the snapshot's JSON never holds it; `ArchivedConversationStore.decoded` takes it from the entry's header (`copy(open = entry.header.open)`); and plan 7B's `ArchivedConversationStoreTest.aConversationIsOpenOnlyWhenItsRowSaysSo` checks a row that is closed in its header while an older payload still says open.
+
+Plan 7B's commit `26737eb7` makes the store's first use one call to the archive: the A71 read 300 conversations of 12 KB in 14.9 s, of which 300 queries of one row each took 1.8 s, where one query of the same rows took 23 ms. `RecordArchive.readAll()` replaces `headers()` and `read(id)`, which had no other caller; this plan's `ConversationDao.all()` and `ConversationArchiveStore.readAll()` replace their `headers()` and `get`/`read` for the same reason, and `ConversationArchiveSpeedTest` measures `readAll` in a new store. The Keystore's decryption of each row is the owner's later decision; this change leaves the cipher as it is. A later difference from plan 7B goes into `progress.md`.
 
 ## Not in this plan
 
@@ -77,13 +79,13 @@ Plan 7B's commit `a4558faf` follows this plan's review (its finding I4): the tab
 
 The controller accepted these on 2026-11-24; Task 7 writes them into the design's sections 9.1 and 9.2.
 
-- **The table decides which conversation is open.** The design's `ConversationDao` is an interface with `@Upsert put`, `openOne`, `closedSince` and `closeAll()`. Here it is an abstract class whose `write(rows)` stores all the rows in one transaction and, for each open row, closes every other open row first. The table's `open` column is the one truth about whether a conversation is open: plan 7B's store takes `open` from a row's header, and the snapshot's JSON does not hold it (see "Plan 7B as committed"), and `deleteOutside` reads the same column. So "at most one conversation is open" (design 6.1) holds for everything that reads the archive, whatever its callers write, also for a row that plan 7B's store cannot read and so does not know. Its plain `@Upsert` and `UPDATE` queries are protected. `openOne`, `closedSince` and `closeAll` are not added: plan 7B's store reads every row once through `headers()` and `get`, and closes a conversation by writing its snapshot as closed.
-- **What `ConversationArchiveStore` offers.** The design lists "encrypt, decrypt, put, headers, get, delete, purge". Here it offers exactly what plan 7B's port needs: `headers()`, `read(id)`, `write(conversations)`, `delete(id)`, `deleteAll()` and `deleteOutside(oldestMillis, newestMillis)`. Encryption and decryption stay inside, so no caller handles a ciphertext. The plain fields travel as the table's own `ConversationHeader`.
-- **Two kinds of unreadable conversation.** `read` tells a payload that fails its check (`FailedCheck`, which plan 7B's store deletes and reports) from one in a format that this version cannot read (`UnknownFormat`, which is kept for a later version and reported once per process by the archive, as `SettingsStore` and `CredentialStore` do). The activity log's texts are "A conversation could not be read, so Kestrel deleted it" (from plan 7B's `KIND`) and "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it".
+- **The table decides which conversation is open.** The design's `ConversationDao` is an interface with `@Upsert put`, `openOne`, `closedSince` and `closeAll()`. Here it is an abstract class whose `write(rows)` stores all the rows in one transaction and, for each open row, closes every other open row first. The table's `open` column is the one truth about whether a conversation is open: plan 7B's store takes `open` from a row's header, and the snapshot's JSON does not hold it (see "Plan 7B as committed"), and `deleteOutside` reads the same column. So "at most one conversation is open" (design 6.1) holds for everything that reads the archive, whatever its callers write, also for a row that plan 7B's store cannot read and so does not know. Its plain `@Upsert` and `UPDATE` queries are protected. `openOne`, `closedSince` and `closeAll` are not added: plan 7B's store reads every row once, all of them in one query (`all()`), and closes a conversation by writing its snapshot as closed. Nor are the design's `headers()` and `get(id)`: one query per row made the A71's first read of 300 rows take 1.8 s of queries where one query for all of them took 23 ms, so no caller reads a row alone.
+- **What `ConversationArchiveStore` offers.** The design lists "encrypt, decrypt, put, headers, get, delete, purge". Here it offers exactly what plan 7B's port needs: `readAll()`, `write(conversations)`, `delete(id)`, `deleteAll()` and `deleteOutside(oldestMillis, newestMillis)`. Encryption and decryption stay inside, so no caller handles a ciphertext. The plain fields travel as the table's own `ConversationHeader`.
+- **Two kinds of unreadable conversation.** `readAll` tells a payload that fails its check (`FailedCheck`, which plan 7B's store deletes and reports) from one in a format that this version cannot read (`UnknownFormat`, which is kept for a later version and reported once per process by the archive, as `SettingsStore` and `CredentialStore` do). The activity log's texts are "A conversation could not be read, so Kestrel deleted it" (from plan 7B's `KIND`) and "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it".
 - **The key is erasable and never in StrongBox.** `ErasableKey` (`guard`, `get()`, `erase()`) is the key's own type. `KeystoreErasableKey.of(alias)` gives one key object per alias and process, by construction: it keeps the Keystore key after its first use, as `PrivacyStore`'s `by lazy` keys do, until `erase()` deletes it from Keystore, so that no part of the process, not even a second `PrivacyStore`, keeps a key that another erased. `KeystoreKeys` gains `delete(alias)`. StrongBox's slower operations would make the first read of hundreds of conversations slow (R3), and the data key is not in StrongBox either.
 - **One lock for the key.** Every function of `ConversationArchiveStore` runs under the key's own lock, `ErasableKey.guard`, which is process-wide with the key, so that "delete history" can never erase the key between the encryption of a write and its row, which would leave a row that no key opens, also not from a second `PrivacyStore` of the same process.
 - **The purge job runs for the life of the process.** `KestrelApplication` starts plan 7B's `Retention` in `AppGraph.scope`. Unlike the logs' purge, which the accessibility service keeps, it runs with the service on or off, as design 9.3 says ("while the process runs").
-- **The archive's speed is measured in `:core:privacy`.** The device test `ConversationArchiveSpeedTest` writes 300 closed conversations of 12 KB to a database file and reads them as plan 7B's store does at its first use (`headers()`, then `read` for each), through a new store, as after a start of Kestrel. It runs only with the instrumentation argument `kestrelArchiveSpeed=true`, so that the routine runs stay quick. It is a measurement: it fails only when a conversation does not read back, and it logs the time under the tag `KestrelArchive`. One rule decides, in Task 8: above 500 ms on the A71, the archive's share of design 4.3's 1 s, R3's fallback goes to the owner; the emulator's time is only noted. It needs no install of Kestrel, so it can run on the A71.
+- **The archive's speed is measured in `:core:privacy`.** The device test `ConversationArchiveSpeedTest` writes 300 closed conversations of 12 KB to a database file and reads them as plan 7B's store does at its first use (`readAll()`, every row in one query), through a new store, as after a start of Kestrel. It runs only with the instrumentation argument `kestrelArchiveSpeed=true`, so that the routine runs stay quick. It is a measurement: it fails only when a conversation does not read back, and it logs the time under the tag `KestrelArchive`. One rule decides, in Task 8: above 500 ms on the A71, the archive's share of design 4.3's 1 s, R3's fallback goes to the owner; the emulator's time is only noted. It needs no install of Kestrel, so it can run on the A71.
 
 ## File structure
 
@@ -113,7 +115,7 @@ Kestrel's database gets the table of design 9.2, one row per conversation, with 
 
 **Interfaces:**
 - Consumes: `KestrelDatabase` at version 2 with `AutoMigration(from = 1, to = 2)`; `MigrationTestHelper(instrumentation, KestrelDatabase::class.java)`.
-- Produces: package `dev.kestrel.privacy.db`: `class ConversationRow(id: String, openedMillis: Long, lastMillis: Long, open: Boolean, commands: Int, payload: ByteArray)` (table `conversations`, columns `id`, `opened_millis`, `last_millis`, `open`, `commands`, `payload`, index on `last_millis`); `data class ConversationHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)`; `abstract class ConversationDao` with `open suspend fun write(rows: List<ConversationRow>)` (one transaction; each open row closes every other open row first), `suspend fun headers(): List<ConversationHeader>` (newest `last_millis` first), `suspend fun get(id: String): ConversationRow?`, `suspend fun delete(id: String): Int`, `suspend fun deleteOutside(oldest: Long, newest: Long): Int` (closed rows only), `suspend fun deleteAll(): Int`, and the protected `upsert(row)` and `closeOthers(id): Int`; `KestrelDatabase.conversationDao(): ConversationDao` at version 3 with `AutoMigration(from = 2, to = 3)`. Task 3 uses the DAO; Task 3's fake DAO overrides its abstract functions and keeps its `write`.
+- Produces: package `dev.kestrel.privacy.db`: `class ConversationRow(id: String, openedMillis: Long, lastMillis: Long, open: Boolean, commands: Int, payload: ByteArray)` (table `conversations`, columns `id`, `opened_millis`, `last_millis`, `open`, `commands`, `payload`, index on `last_millis`); `data class ConversationHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)` (a row's plain fields, which the archive takes and gives; no query reads it, because the first read needs whole rows); `abstract class ConversationDao` with `open suspend fun write(rows: List<ConversationRow>)` (one transaction; each open row closes every other open row first), `suspend fun all(): List<ConversationRow>` (every row in one query, newest `last_millis` first), `suspend fun delete(id: String): Int`, `suspend fun deleteOutside(oldest: Long, newest: Long): Int` (closed rows only), `suspend fun deleteAll(): Int`, and the protected `upsert(row)` and `closeOthers(id): Int`; `KestrelDatabase.conversationDao(): ConversationDao` at version 3 with `AutoMigration(from = 2, to = 3)`. Task 3 uses the DAO; Task 3's fake DAO overrides its abstract functions and keeps its `write`.
 
 Counts: `:core:privacy` JVM unchanged (P₀). `:core:privacy` device tests D₀ + 4 (`KestrelDatabaseTest` + 3, `KestrelDatabaseMigrationTest` 2, `CredentialStoreTest` − 1).
 
@@ -298,7 +300,6 @@ import dev.kestrel.privacy.db.SettingRow
 with:
 
 ```kotlin
-import dev.kestrel.privacy.db.ConversationHeader
 import dev.kestrel.privacy.db.ConversationRow
 import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.db.LogEntryRow
@@ -315,7 +316,7 @@ Add these tests to `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/Kest
         dao.write(listOf(conversation("a", last = 1, open = true)))
         dao.write(listOf(conversation("b", last = 2, open = true)))
 
-        assertEquals(listOf("b" to true, "a" to false), dao.headers().map { it.id to it.open })
+        assertEquals(listOf("b" to true, "a" to false), dao.all().map { it.id to it.open })
     }
 
     // Design 9.6 of sub-project 7: a switch writes the closed and the opened conversation in one transaction.
@@ -326,8 +327,9 @@ Add these tests to `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/Kest
 
         dao.write(listOf(conversation("b", last = 3, open = false), conversation("a", last = 3, open = true)))
 
-        assertEquals(setOf("a" to true, "b" to false), dao.headers().map { it.id to it.open }.toSet())
-        assertEquals(3L, dao.get("b")!!.lastMillis)
+        val rows = dao.all()
+        assertEquals(setOf("a" to true, "b" to false), rows.map { it.id to it.open }.toSet())
+        assertEquals(3L, rows.single { it.id == "b" }.lastMillis)
     }
 
     // Design 9.3 of sub-project 7: the open conversation is never purged, however old it is.
@@ -345,8 +347,9 @@ Add these tests to `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/Kest
         )
 
         assertEquals(2, dao.deleteOutside(oldest = 100, newest = 200))
-        assertEquals(listOf("last", "first", "open"), dao.headers().map { it.id })
-        assertEquals(ConversationHeader("last", openedMillis = 199, lastMillis = 200, open = false, commands = 2), dao.headers().first())
+        val rows = dao.all()
+        assertEquals(listOf("last", "first", "open"), rows.map { it.id })
+        assertEquals(listOf<Any>(199L, 200L, false, 2), rows.first().let { listOf(it.openedMillis, it.lastMillis, it.open, it.commands) })
     }
 
     private fun conversation(id: String, last: Long, open: Boolean) =
@@ -356,7 +359,7 @@ Add these tests to `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/Kest
 - [ ] **Step 2: Compile the device tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:privacy:compileDebugAndroidTestKotlin`
-Expected: FAIL, the compiler reports `Unresolved reference 'ConversationHeader'`, `Unresolved reference 'ConversationRow'` and `Unresolved reference 'conversationDao'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'ConversationRow'` and `Unresolved reference 'conversationDao'`.
 
 - [ ] **Step 3: Add the table and version 3**
 
@@ -392,13 +395,14 @@ class ConversationRow(
 )
 
 /**
- * The plain columns of a conversation's row, without its payload. Its [open] is the one truth about whether the
- * conversation is open (design 6.1 of sub-project 7): the conversation's store reads it from here; the payload does not hold it.
+ * The plain fields of a conversation's row, without its payload, as the archive takes and gives them. Its [open] is the
+ * one truth about whether the conversation is open (design 6.1 of sub-project 7): the conversation's store reads it from
+ * here; the payload does not hold it.
  */
 data class ConversationHeader(
     val id: String,
-    @ColumnInfo(name = "opened_millis") val openedMillis: Long,
-    @ColumnInfo(name = "last_millis") val lastMillis: Long,
+    val openedMillis: Long,
+    val lastMillis: Long,
     val open: Boolean,
     val commands: Int,
 )
@@ -421,12 +425,12 @@ abstract class ConversationDao {
         }
     }
 
-    /** Every conversation's plain columns, the newest last change first. */
-    @Query("SELECT id, opened_millis, last_millis, open, commands FROM conversations ORDER BY last_millis DESC")
-    abstract suspend fun headers(): List<ConversationHeader>
-
-    @Query("SELECT * FROM conversations WHERE id = :id")
-    abstract suspend fun get(id: String): ConversationRow?
+    /**
+     * Every conversation's row, the newest last change first, in one query: the first read of the archive (design 4.3 and
+     * R3 of sub-project 7), which one query per row would make many times slower.
+     */
+    @Query("SELECT * FROM conversations ORDER BY last_millis DESC")
+    abstract suspend fun all(): List<ConversationRow>
 
     @Query("DELETE FROM conversations WHERE id = :id")
     abstract suspend fun delete(id: String): Int
@@ -752,7 +756,7 @@ git commit -m "feat(privacy): the key kestrel.conversations is erasable, so that
 
 ### Task 3: `ConversationArchiveStore`, the archive that knows only bytes
 
-The store of design 9.2: it encrypts each payload under the erasable key, bound to its conversation's id, and writes several conversations in one transaction; it reads a payload back, or says whether it failed its check or is in a format that this version cannot read; it keeps the latter and reports it by its kind only; and it erases the key with the rows. It never sees what a payload holds, and it never deletes a row on its own: plan 7B's store decides that.
+The store of design 9.2: it encrypts each payload under the erasable key, bound to its conversation's id, and writes several conversations in one transaction; it reads every conversation back in one query, each one's payload, or the mark that it failed its check or is in a format that this version cannot read; it keeps the latter and reports it by its kind only; and it erases the key with the rows. It never sees what a payload holds, and it never deletes a row on its own: plan 7B's store decides that.
 
 **Files:**
 - Create: `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`
@@ -760,7 +764,7 @@ The store of design 9.2: it encrypts each payload under the erasable key, bound 
 
 **Interfaces:**
 - Consumes: Task 1's `ConversationDao`, `ConversationRow` and `ConversationHeader`; Task 2's `ErasableKey` with its `guard`; `AesGcmFieldCipher`, whose `decrypt` throws `AEADBadTagException` for a payload that fails its check and `IllegalArgumentException` for an unknown format.
-- Produces: package `dev.kestrel.privacy.conversations`: `class PlainConversation(val header: ConversationHeader, val payload: ByteArray)`; `sealed interface StoredConversation { val header: ConversationHeader }` with `class Readable(header, val payload: ByteArray)`, `class FailedCheck(header)` and `class UnknownFormat(header)`; `class ConversationArchiveStore(dao: ConversationDao, key: ErasableKey, onUnknownFormat: suspend () -> Unit = {}, dispatcher: CoroutineDispatcher = Dispatchers.IO)` with `suspend fun headers(): List<ConversationHeader>`, `suspend fun read(id: String): StoredConversation?`, `suspend fun write(conversations: List<PlainConversation>)`, `suspend fun delete(id: String)`, `suspend fun deleteAll()` and `suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int`. Task 4 builds it in `PrivacyStore`; Task 5 wraps it in `RoomRecordArchive`.
+- Produces: package `dev.kestrel.privacy.conversations`: `class PlainConversation(val header: ConversationHeader, val payload: ByteArray)`; `sealed interface StoredConversation { val header: ConversationHeader }` with `class Readable(header, val payload: ByteArray)`, `class FailedCheck(header)` and `class UnknownFormat(header)`; `class ConversationArchiveStore(dao: ConversationDao, key: ErasableKey, onUnknownFormat: suspend () -> Unit = {}, dispatcher: CoroutineDispatcher = Dispatchers.IO)` with `suspend fun readAll(): List<StoredConversation>` (every conversation, the newest last change first, read in one query and decrypted under the key's guard in one `withContext`), `suspend fun write(conversations: List<PlainConversation>)`, `suspend fun delete(id: String)`, `suspend fun deleteAll()` and `suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int`. Task 4 builds it in `PrivacyStore`; Task 5 wraps it in `RoomRecordArchive`.
 
 Counts: `:core:privacy` JVM N + 10 (P₀ + 10). Device tests unchanged.
 
@@ -787,7 +791,6 @@ import kotlinx.coroutines.withContext
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -804,19 +807,19 @@ class ConversationArchiveStoreTest {
     private val store = ConversationArchiveStore(dao, key, onUnknownFormat = { unknownFormats++ }, dispatcher = Dispatchers.Unconfined)
 
     @Test
-    fun aConversationReadsBackWithItsPlainFieldsUntilItIsDeleted() = runTest {
+    fun everyConversationReadsBackNewestFirstWithItsPlainFieldsUntilItIsDeleted() = runTest {
+        store.write(listOf(PlainConversation(closed("b", last = 25), "other".encodeToByteArray())))
         store.write(listOf(PlainConversation(opened("a", last = 20), "first".encodeToByteArray())))
         val changed = opened("a", last = 30).copy(commands = 3)
         store.write(listOf(PlainConversation(changed, "second".encodeToByteArray())))
 
-        val stored = store.read("a") as StoredConversation.Readable
-        assertEquals(changed, stored.header)
-        assertArrayEquals("second".encodeToByteArray(), stored.payload)
-        assertEquals(listOf(changed), store.headers())
+        val stored = store.readAll().map { it as StoredConversation.Readable }
+        assertEquals(listOf(changed, closed("b", last = 25)), stored.map { it.header })
+        assertArrayEquals("second".encodeToByteArray(), stored[0].payload)
+        assertArrayEquals("other".encodeToByteArray(), stored[1].payload)
 
         store.delete("a")
-        assertNull(store.read("a"))
-        assertTrue(store.headers().isEmpty())
+        assertEquals(listOf("b"), store.readAll().map { it.header.id })
     }
 
     @Test
@@ -834,7 +837,7 @@ class ConversationArchiveStoreTest {
 
         store.write(listOf(PlainConversation(closed("a", last = 3), byteArrayOf(1)), PlainConversation(opened("b", last = 3), byteArrayOf(2))))
 
-        assertEquals(setOf("a" to false, "b" to true), store.headers().map { it.id to it.open }.toSet())
+        assertEquals(setOf("a" to false, "b" to true), store.readAll().map { it.header.id to it.header.open }.toSet())
         assertEquals(before + 1, dao.transactions)
     }
 
@@ -844,7 +847,7 @@ class ConversationArchiveStoreTest {
 
         store.write(listOf(PlainConversation(opened("a", last = 3), byteArrayOf(1))))
 
-        assertEquals(listOf("a" to true, "later" to false), store.headers().map { it.id to it.open })
+        assertEquals(listOf("a" to true, "later" to false), store.readAll().map { it.header.id to it.header.open })
     }
 
     // Design 9.2 of sub-project 7: plan 7B's store deletes a payload that fails its check and reports it by its kind.
@@ -854,10 +857,11 @@ class ConversationArchiveStoreTest {
         val row = dao.rows.getValue("a")
         dao.rows["moved"] = ConversationRow("moved", row.openedMillis, row.lastMillis, open = false, commands = row.commands, payload = row.payload)
 
-        val read = store.read("moved")
+        val read = store.readAll().associateBy { it.header.id }
 
-        assertTrue(read is StoredConversation.FailedCheck)
-        assertEquals(closed("moved", last = 1), read!!.header)
+        assertTrue(read.getValue("a") is StoredConversation.Readable)
+        assertTrue(read.getValue("moved") is StoredConversation.FailedCheck)
+        assertEquals(closed("moved", last = 1), read.getValue("moved").header)
         assertTrue("moved" in dao.rows)
         assertEquals(0, unknownFormats)
     }
@@ -866,8 +870,8 @@ class ConversationArchiveStoreTest {
     fun aConversationInAnUnknownFormatIsKeptAndReportedOncePerProcess() = runTest {
         dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
 
-        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
-        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
+        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
+        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
 
         assertTrue("later" in dao.rows)
         assertEquals(1, unknownFormats)
@@ -879,9 +883,9 @@ class ConversationArchiveStoreTest {
         val store = ConversationArchiveStore(dao, key, onUnknownFormat = { if (++reports == 1) throw IOException("the log is unavailable") }, dispatcher = Dispatchers.Unconfined)
         dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
 
-        assertTrue(runCatching { store.read("later") }.exceptionOrNull() is IOException)
-        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
-        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
+        assertTrue(runCatching { store.readAll() }.exceptionOrNull() is IOException)
+        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
+        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
 
         assertEquals(2, reports)
     }
@@ -897,7 +901,7 @@ class ConversationArchiveStoreTest {
         assertTrue(dao.rows.isEmpty())
         assertEquals(1, key.erased)
         dao.rows["a"] = copy
-        assertTrue(store.read("a") is StoredConversation.FailedCheck)
+        assertTrue(store.readAll().single() is StoredConversation.FailedCheck)
     }
 
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then open.
@@ -932,7 +936,7 @@ class ConversationArchiveStoreTest {
         Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
             val store = ConversationArchiveStore(dao, watched, dispatcher = dispatcher)
             store.write(listOf(PlainConversation(closed("a", last = 1), byteArrayOf(1))))
-            store.read("a")
+            store.readAll()
 
             assertEquals(setOf(withContext(dispatcher) { Thread.currentThread() }), threads.toSet())
         }
@@ -977,10 +981,7 @@ private class FakeConversationDao : ConversationDao() {
         super.write(rows)
     }
 
-    override suspend fun headers(): List<ConversationHeader> =
-        rows.values.sortedByDescending { it.lastMillis }.map { ConversationHeader(it.id, it.openedMillis, it.lastMillis, it.open, it.commands) }
-
-    override suspend fun get(id: String): ConversationRow? = rows[id]
+    override suspend fun all(): List<ConversationRow> = rows.values.sortedByDescending { it.lastMillis }
 
     override suspend fun delete(id: String): Int = if (rows.remove(id) != null) 1 else 0
 
@@ -1075,11 +1076,11 @@ class ConversationArchiveStore(
     // that failed or was cancelled is made again at the next read. Used only under the key's guard.
     private val reportedUnknown = mutableSetOf<String>()
 
-    /** Every conversation's plain fields, the newest last change first. */
-    suspend fun headers(): List<ConversationHeader> = locked { dao.headers() }
-
-    /** The conversation [id], or null when there is none. */
-    suspend fun read(id: String): StoredConversation? = locked { dao.get(id)?.let { stored(it) } }
+    /**
+     * Every conversation, the newest last change first, read in one query and decrypted in one pass on [dispatcher]: each
+     * one's payload, or the mark that it failed its check or is in a format that this version cannot read.
+     */
+    suspend fun readAll(): List<StoredConversation> = locked { dao.all().map { stored(it) } }
 
     /**
      * Stores [conversations], each replacing its earlier row, in one transaction. Before an open one is stored, every other
@@ -1164,7 +1165,7 @@ git commit -m "feat(privacy): the archive of conversations encrypts each payload
 
 ### Task 4: `PrivacyStore.conversations`, its report of a kept conversation, and the first read's speed
 
-`PrivacyStore` builds the archive on Kestrel's database with the key `kestrel.conversations`, and writes a conversation that it keeps unread into the activity log by its kind only (design 9.2). A device test measures design R3's risk: the first read of 30 days of conversations through the Keystore, as plan 7B's store reads them.
+`PrivacyStore` builds the archive on Kestrel's database with the key `kestrel.conversations`, and writes a conversation that it keeps unread into the activity log by its kind only (design 9.2). A device test measures design R3's risk: the first read of 30 days of conversations through the Keystore, as plan 7B's store reads them: every row in one `readAll()`, in a new store, as after a start of Kestrel.
 
 **Files:**
 - Modify: `core/privacy/src/main/kotlin/dev/kestrel/privacy/PrivacyStore.kt`
@@ -1172,7 +1173,7 @@ git commit -m "feat(privacy): the archive of conversations encrypts each payload
 - Create: `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/ConversationArchiveSpeedTest.kt`
 
 **Interfaces:**
-- Consumes: Task 1's `KestrelDatabase.conversationDao()`, `ConversationRow`, `ConversationHeader`; Task 2's `KeystoreErasableKey` and `KeystoreKeys.CONVERSATIONS_KEY`; Task 3's `ConversationArchiveStore`, `PlainConversation` and `StoredConversation`.
+- Consumes: Task 1's `KestrelDatabase.conversationDao()` (with `all()`), `ConversationRow`, `ConversationHeader`; Task 2's `KeystoreErasableKey` and `KeystoreKeys.CONVERSATIONS_KEY`; Task 3's `ConversationArchiveStore` (with `readAll()`), `PlainConversation` and `StoredConversation`.
 - Produces: `PrivacyStore.conversations: ConversationArchiveStore`. The activity log's text "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it". The instrumentation argument `kestrelArchiveSpeed=true`, the log tag `KestrelArchive` and the log line `read <n> conversations of 12 KB in <ms> ms`, which Task 8 reads. Task 6 gives `PrivacyStore.conversations` to Task 5's `RoomRecordArchive`.
 
 Counts: `:core:privacy` JVM unchanged. `:core:privacy` device tests N + 3 (`PrivacyStoreTest` + 2, `ConversationArchiveSpeedTest` 1, which is skipped without its argument).
@@ -1229,10 +1230,10 @@ Add these tests to `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/Priv
 
             store.conversations.deleteAll()
 
-            assertEquals(emptyList<ConversationHeader>(), store.conversations.headers())
+            assertTrue(store.conversations.readAll().isEmpty())
             assertFalse(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
             store.conversations.write(listOf(PlainConversation(header, "second".encodeToByteArray())))
-            val read = store.conversations.read(header.id) as StoredConversation.Readable
+            val read = store.conversations.readAll().single() as StoredConversation.Readable
             assertEquals("second", read.payload.decodeToString())
         } finally {
             store.conversations.deleteAll()
@@ -1249,9 +1250,9 @@ Add these tests to `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/Priv
             // A later version's ciphertext: its first byte names a format that this version does not know.
             dao.write(listOf(ConversationRow(id, 1, 2, open = false, commands = 1, payload = byteArrayOf(2) + ByteArray(40))))
 
-            assertTrue(store.conversations.read(id) is StoredConversation.UnknownFormat)
+            assertTrue(store.conversations.readAll().single { it.header.id == id } is StoredConversation.UnknownFormat)
 
-            assertEquals(id, dao.get(id)?.id)
+            assertTrue(dao.all().any { it.id == id })
             val entry = store.logs.activity().single()
             assertEquals(ActivityKind.ERROR, entry.event.kind)
             assertEquals("A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it", entry.event.text)
@@ -1287,7 +1288,7 @@ import org.junit.runner.RunWith
 /**
  * How long the first read of 30 days of past conversations takes (design 4.3 and R3 of sub-project 7): 300 closed
  * conversations of 12 KB each are written to a database file and read back as plan 7B's store reads them at its first use
- * (every header, then each row), through a new store, as after a start of Kestrel, so that each row is decrypted once
+ * (every row in one query, `readAll`), through a new store, as after a start of Kestrel, so that each row is decrypted once
  * through the Keystore. It is a measurement: it fails only when a conversation does not read back, and it logs the time
  * under the tag KestrelArchive. Plan 7C's Task 8 decides on the A71's time. It runs only with the instrumentation argument
  * kestrelArchiveSpeed=true. It uses a test-named database file and a test key of this library's own test app, never
@@ -1329,7 +1330,7 @@ class ConversationArchiveSpeedTest {
         val (millis, readable) = try {
             val reader = ConversationArchiveStore(read.conversationDao(), KeystoreErasableKey.of(alias))
             val started = SystemClock.elapsedRealtime()
-            val conversations = reader.headers().map { reader.read(it.id) }
+            val conversations = reader.readAll()
             (SystemClock.elapsedRealtime() - started) to conversations.count { it is StoredConversation.Readable }
         } finally {
             read.close()
@@ -1452,7 +1453,7 @@ git commit -m "feat(privacy): PrivacyStore keeps past conversations under the ke
 
 ### Task 5: `RoomRecordArchive`, plan 7B's port on the archive
 
-Starts only after plan 7B as committed and changed at `a4558faf` is carried out (see "Before you start"). `:app` implements `:core:conversation`'s `RecordArchive` with `:core:privacy`'s archive (design 5.1 and 9.2): the snapshot's JSON travels as the bytes that plan 7B's store gives, the plain fields as they are, and each kind of stored conversation as its kind of entry.
+Starts only after plan 7B as committed and changed at `a4558faf` and `26737eb7` is carried out (see "Before you start"). `:app` implements `:core:conversation`'s `RecordArchive` with `:core:privacy`'s archive (design 5.1 and 9.2): the snapshot's JSON travels as the bytes that plan 7B's store gives, the plain fields as they are, and each kind of stored conversation as its kind of entry.
 
 **Files:**
 - Modify: `app/build.gradle.kts`
@@ -1460,7 +1461,7 @@ Starts only after plan 7B as committed and changed at `a4558faf` is carried out 
 - Create: `app/src/androidTest/kotlin/dev/kestrel/app/conversation/RoomRecordArchiveTest.kt`
 
 **Interfaces:**
-- Consumes: plan 7B's `RecordArchive`, `ArchiveHeader`, `ArchiveRow`, `ArchiveEntry` (with `Unknown`), and `ArchivedConversationStore`, `ConversationSnapshot` (whose `open` is `@Transient`) and `ConversationId`, whose store takes `open` from the header (sections "Interfaces consumed from plan 7B" and "Plan 7B as committed"); Task 3's `ConversationArchiveStore`, `PlainConversation` and `StoredConversation`; Task 1's `ConversationHeader`, `ConversationRow` and `KestrelDatabase.conversationDao()`; Task 2's `KeystoreErasableKey.of`.
+- Consumes: plan 7B's `RecordArchive` (with `readAll`), `ArchiveHeader`, `ArchiveRow`, `ArchiveEntry` (with `Unknown`), and `ArchivedConversationStore`, `ConversationSnapshot` (whose `open` is `@Transient`) and `ConversationId`, whose store takes `open` from the header (sections "Interfaces consumed from plan 7B" and "Plan 7B as committed"); Task 3's `ConversationArchiveStore`, `PlainConversation` and `StoredConversation`; Task 1's `ConversationHeader`, `ConversationRow` and `KestrelDatabase.conversationDao()`; Task 2's `KeystoreErasableKey.of`.
 - Produces: `:app`'s dependency on `:core:conversation`; package `dev.kestrel.app.conversation`: `internal class RoomRecordArchive(table: ConversationArchiveStore) : RecordArchive`. Task 6 builds it on `PrivacyStore.conversations`.
 
 Counts: `:app` JVM unchanged (A₀). `:app` device tests AD₀ + 4 (`RoomRecordArchiveTest` 4), run in Task 8.
@@ -1489,7 +1490,6 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -1519,20 +1519,19 @@ class RoomRecordArchiveTest {
     fun everyFieldTravelsThroughTheEncryptedTable() = runBlocking {
         archive.write(listOf(row(past, """{"request":"Пошаљи Мили поруку 🙂"}"""), row(current, """{"request":"Turn on dark mode"}""")))
 
-        assertEquals(listOf(current, past), archive.headers())
-        val read = archive.read(past.id) as ArchiveEntry.Readable
-        assertEquals(past, read.header)
-        assertEquals("""{"request":"Пошаљи Мили поруку 🙂"}""", read.payload.decodeToString())
-        assertFalse(database.conversationDao().get(past.id)!!.payload.decodeToString(throwOnInvalidSequence = false).contains("Мили"))
-        assertNull(archive.read("ffffffffffffffffffffffffffffffff"))
+        val read = archive.readAll()
+        assertEquals(listOf(current, past), read.map { it.header })
+        assertEquals("""{"request":"Пошаљи Мили поруку 🙂"}""", (read[1] as ArchiveEntry.Readable).payload.decodeToString())
+        assertEquals("""{"request":"Turn on dark mode"}""", (read[0] as ArchiveEntry.Readable).payload.decodeToString())
+        assertFalse(database.conversationDao().all().single { it.id == past.id }.payload.decodeToString(throwOnInvalidSequence = false).contains("Мили"))
 
         // A switch (design 9.6): the open conversation closes and the past one opens, in one write.
         archive.write(listOf(row(current.copy(open = false, lastMillis = 50), "{}"), row(past.copy(open = true, lastMillis = 50), "{}")))
-        assertEquals(setOf(current.id to false, past.id to true), archive.headers().map { it.id to it.open }.toSet())
+        assertEquals(setOf(current.id to false, past.id to true), archive.readAll().map { it.header.id to it.header.open }.toSet())
 
         assertEquals(1, archive.deleteOutside(oldestMillis = 51, newestMillis = 60))
         archive.delete(past.id)
-        assertEquals(emptyList<ArchiveHeader>(), archive.headers())
+        assertTrue(archive.readAll().isEmpty())
     }
 
     // Design 9.2 of sub-project 7: plan 7B's store deletes an Unreadable entry and leaves an Unknown one out.
@@ -1540,17 +1539,17 @@ class RoomRecordArchiveTest {
     fun eachKindOfUnreadableConversationBecomesItsKindOfEntry() = runBlocking {
         archive.write(listOf(row(past, "{}")))
         val dao = database.conversationDao()
-        val sealed = dao.get(past.id)!!.payload
+        val sealed = dao.all().single().payload
         dao.write(listOf(ConversationRow("moved", 1, 2, open = false, commands = 1, payload = sealed)))
         // A later version's ciphertext: its first byte names a format that this version does not know.
         dao.write(listOf(ConversationRow("later", 1, 2, open = false, commands = 1, payload = byteArrayOf(2) + ByteArray(40))))
 
-        val moved = archive.read("moved")
-        val later = archive.read("later")
+        val read = archive.readAll().associateBy { it.header.id }
 
-        assertTrue(moved is ArchiveEntry.Unreadable)
-        assertEquals(ArchiveHeader("moved", 1, 2, open = false, commands = 1), moved!!.header)
-        assertTrue(later is ArchiveEntry.Unknown)
+        assertTrue(read.getValue(past.id) is ArchiveEntry.Readable)
+        assertTrue(read.getValue("moved") is ArchiveEntry.Unreadable)
+        assertEquals(ArchiveHeader("moved", 1, 2, open = false, commands = 1), read.getValue("moved").header)
+        assertTrue(read.getValue("later") is ArchiveEntry.Unknown)
     }
 
     // Design 9.7 of sub-project 7: deleting through the port erases the archive's key with its rows.
@@ -1562,7 +1561,7 @@ class RoomRecordArchiveTest {
 
         archive.deleteAll()
 
-        assertEquals(emptyList<ArchiveHeader>(), archive.headers())
+        assertTrue(archive.readAll().isEmpty())
         assertFalse(keyStore.containsAlias(alias))
     }
 
@@ -1579,7 +1578,7 @@ class RoomRecordArchiveTest {
 
         val restarted = ArchivedConversationStore(archive) {}
 
-        assertEquals(listOf(current.id to true, past.id to false), archive.headers().map { it.id to it.open })
+        assertEquals(listOf(current.id to true, past.id to false), archive.readAll().map { it.header.id to it.header.open })
         assertEquals(second.id, restarted.open()?.id)
         assertEquals(listOf(first.id), restarted.list().map { it.id })
     }
@@ -1628,20 +1627,12 @@ import dev.kestrel.privacy.db.ConversationHeader
 /**
  * :core:conversation's archive on :core:privacy's encrypted table (design 9.2 of sub-project 7). The payload, the
  * snapshot's JSON, travels as the bytes that the conversation's store gives, and the table encrypts it under the key
- * kestrel.conversations; the plain fields stay plain, for sorting and retention. A payload that fails its check becomes
- * [ArchiveEntry.Unreadable], which the conversation's store deletes and reports; one in a format that this version cannot
- * read becomes [ArchiveEntry.Unknown], which it leaves out and the table keeps.
+ * kestrel.conversations; the plain fields stay plain, for sorting and retention. Every row is read in one query. A payload
+ * that fails its check becomes [ArchiveEntry.Unreadable], which the conversation's store deletes and reports; one in a
+ * format that this version cannot read becomes [ArchiveEntry.Unknown], which it leaves out and the table keeps.
  */
 internal class RoomRecordArchive(private val table: ConversationArchiveStore) : RecordArchive {
-    override suspend fun headers(): List<ArchiveHeader> = table.headers().map { it.archived() }
-
-    override suspend fun read(id: String): ArchiveEntry? =
-        when (val stored = table.read(id)) {
-            null -> null
-            is StoredConversation.Readable -> ArchiveEntry.Readable(stored.header.archived(), stored.payload)
-            is StoredConversation.FailedCheck -> ArchiveEntry.Unreadable(stored.header.archived())
-            is StoredConversation.UnknownFormat -> ArchiveEntry.Unknown(stored.header.archived())
-        }
+    override suspend fun readAll(): List<ArchiveEntry> = table.readAll().map { it.archived() }
 
     override suspend fun write(rows: List<ArchiveRow>) {
         table.write(rows.map { PlainConversation(it.header.plain(), it.payload) })
@@ -1657,6 +1648,13 @@ internal class RoomRecordArchive(private val table: ConversationArchiveStore) : 
 
     override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int = table.deleteOutside(oldestMillis, newestMillis)
 }
+
+private fun StoredConversation.archived(): ArchiveEntry =
+    when (this) {
+        is StoredConversation.Readable -> ArchiveEntry.Readable(header.archived(), payload)
+        is StoredConversation.FailedCheck -> ArchiveEntry.Unreadable(header.archived())
+        is StoredConversation.UnknownFormat -> ArchiveEntry.Unknown(header.archived())
+    }
 
 private fun ConversationHeader.archived() = ArchiveHeader(id, openedMillis, lastMillis, open, commands)
 
@@ -1929,22 +1927,16 @@ In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
 with:
 
 ```markdown
-data class ConversationHeader(
-    val id: String,
-    @ColumnInfo(name = "opened_millis") val openedMillis: Long,
-    @ColumnInfo(name = "last_millis") val lastMillis: Long,
-    val open: Boolean,
-    val commands: Int,
-)
+// A row's plain fields, which the archive takes and gives with each payload.
+data class ConversationHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)
 
 // The table keeps at most one conversation open (6.1): write closes the other open rows in the same transaction.
 @Dao abstract class ConversationDao {
     @Transaction open suspend fun write(rows: List<ConversationRow>) {
         for (row in rows) { if (row.open) closeOthers(row.id); upsert(row) }
     }
-    @Query("SELECT id, opened_millis, last_millis, open, commands FROM conversations ORDER BY last_millis DESC")
-    abstract suspend fun headers(): List<ConversationHeader>
-    @Query("SELECT * FROM conversations WHERE id = :id") abstract suspend fun get(id: String): ConversationRow?
+    // The first read takes every row in one query (4.3, R3); no caller reads one row alone.
+    @Query("SELECT * FROM conversations ORDER BY last_millis DESC") abstract suspend fun all(): List<ConversationRow>
     @Query("DELETE FROM conversations WHERE id = :id") abstract suspend fun delete(id: String): Int
     @Query("DELETE FROM conversations WHERE open = 0 AND (last_millis < :oldest OR last_millis > :newest)")
     abstract suspend fun deleteOutside(oldest: Long, newest: Long): Int
@@ -1963,7 +1955,7 @@ In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
 with:
 
 ```markdown
-`:core:privacy` offers it as `ConversationArchiveStore` (`headers`, `read`, `write`, `delete`, `deleteAll`, `deleteOutside`), which knows only bytes and keeps the encryption and decryption inside. Its `read` gives a conversation's payload, or says that the payload failed its check, or that it is in a format that this version cannot read. `:app`'s `RoomRecordArchive` implements `:core:conversation`'s `RecordArchive` port with it, and `ArchivedConversationStore` does the JSON. A payload that fails its check, or does not decode, is deleted by `ArchivedConversationStore` and reported to the activity log by its kind only. A payload in a format that this version cannot read is kept for a later version of Kestrel, left out, and reported to the activity log once per process by its kind only, as `SettingsStore` does with a setting. The table's `open` column is the one truth about which conversation is open: `ArchivedConversationStore` takes `open` from a row's header, and the snapshot's JSON does not hold it, and `deleteOutside` reads the same column. `deleteAll` deletes every row and then erases the key. Every function of `ConversationArchiveStore` runs under the key's own lock, which is process-wide with the key, so that the key is never erased between the encryption of a write and its row.
+`:core:privacy` offers it as `ConversationArchiveStore` (`readAll`, `write`, `delete`, `deleteAll`, `deleteOutside`), which knows only bytes and keeps the encryption and decryption inside. Its `readAll` reads every conversation in one query, the newest change first, and gives each one's payload, or says that the payload failed its check, or that it is in a format that this version cannot read. `:app`'s `RoomRecordArchive` implements `:core:conversation`'s `RecordArchive` port with it, and `ArchivedConversationStore` does the JSON. A payload that fails its check, or does not decode, is deleted by `ArchivedConversationStore` and reported to the activity log by its kind only. A payload in a format that this version cannot read is kept for a later version of Kestrel, left out, and reported to the activity log once per process by its kind only, as `SettingsStore` does with a setting. The table's `open` column is the one truth about which conversation is open: `ArchivedConversationStore` takes `open` from a row's header, and the snapshot's JSON does not hold it, and `deleteOutside` reads the same column. `deleteAll` deletes every row and then erases the key. Every function of `ConversationArchiveStore` runs under the key's own lock, which is process-wide with the key, so that the key is never erased between the encryption of a write and its row.
 ```
 
 In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
@@ -1990,8 +1982,8 @@ with:
 
 - [ ] **Step 3: Check the design's words**
 
-Run: `$spec = 'docs\superpowers\specs\2026-11-24-conversations-design.md'; foreach ($text in 'closeAll', 'openOne', 'encrypt, decrypt, put', '@Dao interface ConversationDao', 'never made in StrongBox', 'protected abstract suspend fun closeOthers', 'kept for a later version of Kestrel', 'suspend fun closedSince(sinceWall: Long)', 'the one truth about which conversation is open') { "$text : $((Select-String -Path $spec -SimpleMatch -CaseSensitive -Pattern $text).Count)" }`
-Expected: `closeAll : 0`, `openOne : 0`, `encrypt, decrypt, put : 0`, `@Dao interface ConversationDao : 0`, and 1 for each of the other five.
+Run: `$spec = 'docs\superpowers\specs\2026-11-24-conversations-design.md'; foreach ($text in 'closeAll', 'openOne', 'encrypt, decrypt, put', '@Dao interface ConversationDao', 'fun headers()', 'never made in StrongBox', 'protected abstract suspend fun closeOthers', 'abstract suspend fun all(): List<ConversationRow>', 'kept for a later version of Kestrel', 'suspend fun closedSince(sinceWall: Long)', 'the one truth about which conversation is open') { "$text : $((Select-String -Path $spec -SimpleMatch -CaseSensitive -Pattern $text).Count)" }`
+Expected: `closeAll : 0`, `openOne : 0`, `encrypt, decrypt, put : 0`, `@Dao interface ConversationDao : 0`, `fun headers() : 0`, and 1 for each of the other six.
 
 - [ ] **Step 4: Commit**
 
@@ -2087,5 +2079,5 @@ Write both times into `.superpowers\sdd\progress.md`. This is the one rule that 
 
 - **Spec coverage.** Design 9.1: the table in `kestrel.db` (Task 1), one row per conversation with the snapshot's JSON as an encrypted payload under `kestrel.conversations` with the associated data `conversations/<id>` (Tasks 2 to 5), the separate key for "delete history" (Tasks 2, 3, 4), the plain fields (Task 1); the snapshot's `version` is plan 7B's. Design 9.2: version 3 with `AutoMigration(from = 2, to = 3)` (Task 1, checked against the real database in Task 8), `ConversationRow` and `ConversationDao` (Task 1), `ConversationArchiveStore` knowing only bytes (Task 3), `RoomRecordArchive` (Task 5), a payload that fails its tag deleted and reported by kind only (plan 7B's store, wired with its text in Task 6; told apart from an unknown format in Tasks 3 and 5), and the section's text (Task 7). Design 9.3: plan 7B's `Retention` and `ConversationStore.purge` choose the range, `deleteOutside` keeps the open conversation (Task 1), and the job runs from Kestrel's start (Task 6). Design 9.7's storage part: rows and key (Tasks 2, 3, 4, 5). Design 5.6's archive lines (Task 6). Design 15.2's store line: the migration with the real Keystore and "delete history" removing rows and key (Tasks 1, 2, 4, 8). R3: Tasks 4 and 8.
 - **Placeholders.** Every step shows its code or its command; the generated `3.json` is checked by its version, its columns and its index.
-- **Type consistency.** `ConversationHeader(id, openedMillis, lastMillis, open, commands)` and `ConversationRow(id, openedMillis, lastMillis, open, commands, payload)` are the same in Tasks 1, 3, 4, 5 and 7; `ConversationArchiveStore`'s six functions, `PlainConversation` and `StoredConversation`'s three kinds are those that Tasks 4 and 5 use; `ConversationDao.write` is the one that Tasks 3, 4 and 5 call; `KeystoreErasableKey.of(alias)`, its `guard` and `erase()` are those of Tasks 2, 3, 4 and 5; `RecordArchive`'s six functions, `ArchiveEntry`'s three kinds, `ArchivedConversationStore(archive, unreadable)`, `ConversationSnapshot`, `Retention(store, clock, report).keepPurging(days)` and `ConversationSettings.keptDays` in Tasks 5 and 6 are those of plan 7B as committed at `9ddf3385` and changed at `a4558faf`.
+- **Type consistency.** `ConversationHeader(id, openedMillis, lastMillis, open, commands)` and `ConversationRow(id, openedMillis, lastMillis, open, commands, payload)` are the same in Tasks 1, 3, 4, 5 and 7; `ConversationArchiveStore`'s five functions, `PlainConversation` and `StoredConversation`'s three kinds are those that Tasks 4 and 5 use; `ConversationDao.write` is the one that Tasks 3, 4 and 5 call, and `ConversationDao.all()` the one query that reads rows, in Task 3's `readAll` and in the tests of Tasks 1, 4 and 5; `KeystoreErasableKey.of(alias)`, its `guard` and `erase()` are those of Tasks 2, 3, 4 and 5; `RecordArchive`'s five functions, `ArchiveEntry`'s three kinds, `ArchivedConversationStore(archive, unreadable)`, `ConversationSnapshot`, `Retention(store, clock, report).keepPurging(days)` and `ConversationSettings.keptDays` in Tasks 5 and 6 are those of plan 7B as committed at `9ddf3385` and changed at `a4558faf` and `26737eb7`.
 
