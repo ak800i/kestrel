@@ -37,6 +37,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             is ConversationEvent.Dialogue -> GoalRules.dialogue(state, event.event)
             is ConversationEvent.GoalEnded -> goalEnded(state, event.end, now)
             ConversationEvent.Touched -> GoalRules.touched(state)
+            is ConversationEvent.BackgroundRefused -> GoalRules.backgroundRefused(state, event.command)
             is ConversationEvent.ReplyShown -> MachineStep(if (state.replying == event.command) state.copy(replying = null) else state)
             is ConversationEvent.TimerEnded ->
                 if (event.timer == Timer.QUIET) quietEnded(state, event.number) else GoalRules.timerEnded(state, event.timer, event.number)

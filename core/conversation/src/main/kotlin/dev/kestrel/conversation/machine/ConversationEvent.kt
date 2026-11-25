@@ -24,6 +24,12 @@ sealed interface ConversationEvent {
     /** The touch watcher saw the owner's touch while a goal ran (D13). */
     data object Touched : ConversationEvent
 
+    /**
+     * Android refused to start the goal service for the goal of command [command] (plan 7E; design 10.6): that goal is held
+     * as interrupted while its round works, and keeps its hold while it is held; any other goal is left alone.
+     */
+    data class BackgroundRefused(val command: Int) : ConversationEvent
+
     /** The final reply of [command] has been spoken or shown. */
     data class ReplyShown(val command: Int) : ConversationEvent
 

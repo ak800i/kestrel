@@ -116,6 +116,41 @@ class GoalRulesTest : MachineTesting() {
     }
 
     @Test
+    fun androidsRefusalHoldsAWorkingGoalAsInterruptedAndLeavesAHeldGoalsHold() {
+        // Plan 7E; design 10.6 of sub-project 7: a goal that acts, asks or has handed a step over cannot go on in the
+        // background, so its round is interrupted with Android's refusal as its cause.
+        val refusing = step(acting(), ConversationEvent.BackgroundRefused(1))
+        assertEquals(ConversationEffect.InterruptGoal(Interruption.BACKGROUND_REFUSED), refusing.effect<ConversationEffect.InterruptGoal>())
+        assertTrue(step(refusing.state, ConversationEvent.BackgroundRefused(1)).effects.isEmpty())
+        val handedOver = step(acting(), ConversationEvent.Dialogue(DialogueEvent.HandedOver(2))).state
+        assertTrue(step(handedOver, ConversationEvent.BackgroundRefused(1)).has<ConversationEffect.InterruptGoal>())
+        // A late refusal of an older command's start never touches this goal.
+        assertTrue(step(acting(), ConversationEvent.BackgroundRefused(2)).effects.isEmpty())
+
+        val sentence = "Android didn't let me start working in the background. I opened Viber."
+        val held = ended(refusing.state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.BACKGROUND_REFUSED), sentence)
+        assertEquals(GoalHold.BACKGROUND_REFUSED, held.state.goal!!.hold)
+        assertEquals(GoalPhase.INTERRUPTED, held.state.goal!!.phase)
+        assertEquals(listOf(ChannelOutput.Said("$sentence ${ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)}")), held.outputs())
+
+        // A held goal keeps its hold and its 30 minutes; Kestrel says why its service is missing and how to go on, at once
+        // while the owner is there.
+        val said = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)}")
+        val touchedHeld = ended(step(acting(), ConversationEvent.Touched).state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH)).state
+        val toldNow = step(touchedHeld, ConversationEvent.BackgroundRefused(1))
+        assertEquals(touchedHeld.goal, toldNow.state.goal)
+        assertEquals(listOf(said), toldNow.outputs())
+        // A lock paused the goal, so the words wait until the owner is back; the record has them at once.
+        val paused = signal(acting(), PhoneSignal.LOCKED).state
+        val told = step(paused, ConversationEvent.BackgroundRefused(1))
+        assertEquals(paused.goal, told.state.goal)
+        assertTrue(told.outputs().isEmpty())
+        assertEquals(ConversationEffect.AddLine(id, 1, LineKind.KESTREL_SAID, said.text, null), told.effect<ConversationEffect.AddLine>())
+        assertEquals(said, signal(told.state, PhoneSignal.UNLOCKED).outputs().first())
+        assertTrue(step(idle, ConversationEvent.BackgroundRefused(0)).effects.isEmpty())
+    }
+
+    @Test
     fun touchesDuringAHandOverAReplyOrAHeldGoalInterruptNothing() {
         assertTrue(step(step(acting(), ConversationEvent.Dialogue(DialogueEvent.HandedOver(2))).state, ConversationEvent.Touched).effects.isEmpty())
 

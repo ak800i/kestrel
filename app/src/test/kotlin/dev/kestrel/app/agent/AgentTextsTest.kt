@@ -52,7 +52,8 @@ class AgentTextsTest {
         )
     }
 
-    // Plan 7A: an interruption says that Kestrel stopped, and why when Kestrel's own screen stayed in front.
+    // Plan 7A: an interruption says that Kestrel stopped, and why when Kestrel's own screen stayed in front; plan 7E: an
+    // interruption by Android's refusal of the goal service says that, and the conversation adds how to go on.
     @Test
     fun anInterruptionSaysThatKestrelStoppedAndWhy() {
         assertEquals(
@@ -62,6 +63,10 @@ class AgentTextsTest {
         assertEquals(
             "I stopped. I didn't change anything.",
             AgentTexts.sentence(TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), "Copilot"),
+        )
+        assertEquals(
+            "Android didn't let me start working in the background. I opened Viber.",
+            AgentTexts.sentence(TaskReport(EndReason.INTERRUPTED, interruption = Interruption.BACKGROUND_REFUSED, ledger = listOf("opened Viber")), "Copilot"),
         )
     }
 }

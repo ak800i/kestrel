@@ -13,7 +13,8 @@ enum class GoalPhase { ACTING, ASKING, HANDED_OVER, PAUSED, PAUSED_AT_LIMIT, INT
 /**
  * Why a goal is held (D13 and D17 of sub-project 7), with the phase that it gives and how it resumes. A lock or a call
  * pauses the round, which waits at its gate and goes on with a fresh look ([resume] is null); a limit, a touch, Kestrel's
- * own screen or a restart ended the round, and the goal resumes in a new run with [resume] (design 7.6).
+ * own screen, a restart or Android's refusal of the goal service (plan 7E) ended the round, and the goal resumes in a new
+ * run with [resume] (design 7.6).
  */
 enum class GoalHold(val phase: GoalPhase, val resume: ResumeCause?) {
     LOCK(GoalPhase.PAUSED, null),
@@ -23,6 +24,7 @@ enum class GoalHold(val phase: GoalPhase, val resume: ResumeCause?) {
     TOUCH(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
     KESTREL_SCREEN(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
     RESTART(GoalPhase.INTERRUPTED, ResumeCause.RESTART),
+    BACKGROUND_REFUSED(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
     ;
 
     companion object {
@@ -33,7 +35,11 @@ enum class GoalHold(val phase: GoalPhase, val resume: ResumeCause?) {
          */
         fun of(report: TaskReport): GoalHold? = when (report.end) {
             EndReason.PAUSED_AT_LIMIT -> LIMIT
-            EndReason.INTERRUPTED -> if (report.interruption == Interruption.KESTREL_SCREEN) KESTREL_SCREEN else TOUCH
+            EndReason.INTERRUPTED -> when (report.interruption) {
+                Interruption.KESTREL_SCREEN -> KESTREL_SCREEN
+                Interruption.BACKGROUND_REFUSED -> BACKGROUND_REFUSED
+                Interruption.TOUCH, null -> TOUCH
+            }
             else -> null
         }
     }

@@ -283,6 +283,18 @@ class ConversationEngine(
     /** The touch watcher saw the owner's touch during a goal (D13). */
     fun touched() = post(ConversationEvent.Touched)
 
+    /**
+     * Android refused to start the goal service for the goal of command [command], the view's `command` when the start was
+     * asked (plan 7E; design 10.6 of sub-project 7). Any thread; never blocks.
+     */
+    fun backgroundRefused(command: Int) = post(ConversationEvent.BackgroundRefused(command))
+
+    /**
+     * Returns once [restore] has run, with the restored conversation in [view] (plan 7E): a tap on the goal notification
+     * that started Kestrel's process is judged against the restored goal, not against the empty view before it.
+     */
+    suspend fun awaitRestored() = started.await()
+
     /** The conversation screen's field holds text while the screen is in front (design 6.2). */
     fun composing(active: Boolean) = post(ConversationEvent.Composing(active))
 
@@ -912,6 +924,9 @@ class ConversationEngine(
             quiet = current.quiet,
             keptForOwner = current.heldReports.isNotEmpty() || current.heldWords != null,
             ownRequest = current.local?.cancelled == false,
+            hold = current.goal?.hold,
+            goalEnding = current.goal?.ending,
+            goalRecord = current.goal?.record,
         )
     }
 

@@ -65,6 +65,12 @@ enum class Interruption {
 
     /** Kestrel's own screen stayed in front of the app that the run would observe, longer than the owner port waits. */
     KESTREL_SCREEN,
+
+    /**
+     * Android refused the goal service, so the goal could not go on working in the background (plan 7E; design 10.6 of
+     * sub-project 7).
+     */
+    BACKGROUND_REFUSED,
 }
 
 /**

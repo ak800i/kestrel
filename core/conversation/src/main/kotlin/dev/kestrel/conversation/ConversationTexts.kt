@@ -30,6 +30,15 @@ object ConversationTexts {
     const val NOTHING_CHANGED = "I didn't change anything."
     const val GO_ON = "Say 'Kestrel, continue' or tap Continue to go on, or cancel."
     const val LEAVE_KESTREL = "Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'."
+
+    /** Android refused the goal service (plan 7E; design 10.6): why the goal stopped. */
+    const val BACKGROUND_REFUSED = "Android didn't let me start working in the background."
+
+    /**
+     * How the owner goes on after a refusal: the Continue of the held goal's notification, which Kestrel posts without the
+     * service (plan 7E). Plan 7F makes it design 10.6's "Open Kestrel and tap Continue." with the conversation screen.
+     */
+    const val CONTINUE_IN_NOTIFICATION = "Tap Continue in Kestrel's notification."
     const val NOT_FOUND = "I didn't find a conversation about that."
     const val GONE = "That conversation is no longer kept."
     const val REBUILDING_PAST = "I'm still rebuilding the index of your past conversations and can't search them yet."
@@ -49,8 +58,12 @@ object ConversationTexts {
     /** A command during a hand-over: typed, the screen's buttons; spoken, the words. */
     fun finishHandOverFirst(channel: InputChannel): String = if (channel == InputChannel.TEXT) FINISH_HAND_OVER_TYPED else FINISH_HAND_OVER_SPOKEN
 
-    /** How the owner goes on with a goal that [hold] holds after its round ended (design 6.5 and 10.2). */
-    fun held(hold: GoalHold): String = if (hold == GoalHold.KESTREL_SCREEN) LEAVE_KESTREL else GO_ON
+    /** How the owner goes on with a goal that [hold] holds (design 6.5, 10.2 and 10.6); the goal notification shows it too. */
+    fun held(hold: GoalHold): String = when (hold) {
+        GoalHold.KESTREL_SCREEN -> LEAVE_KESTREL
+        GoalHold.BACKGROUND_REFUSED -> CONTINUE_IN_NOTIFICATION
+        GoalHold.LOCK, GoalHold.INCOMING_CALL, GoalHold.OUTGOING_CALL, GoalHold.LIMIT, GoalHold.TOUCH, GoalHold.RESTART -> GO_ON
+    }
 
     /**
      * The end of a final reply that names the steering that came too late for the goal (plan 7A's "Interfaces for 7B"),

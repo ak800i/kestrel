@@ -117,6 +117,28 @@ internal object GoalRules {
         return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
     }
 
+    /**
+     * Android refused the goal service (plan 7E; design 10.6 of sub-project 7). A goal whose round works (it acts, asks or
+     * has handed a step over) cannot go on in the background, so its round is interrupted and the goal held, and Kestrel
+     * says why and how to go on after the round's report. A held goal, also one that a lock or a call paused or a restart
+     * left, keeps its hold and its 30 minutes, and Kestrel says only why and how to go on: at once when the owner is there,
+     * else after what it keeps for him already, when he is back (as [held] does); the record has the words at once. A
+     * refusal of another command's start, which came late, changes nothing.
+     */
+    fun backgroundRefused(state: ConversationState, command: Int): MachineStep {
+        val goal = state.goal ?: return MachineStep(state)
+        if (goal.ending != null || goal.command != command) return MachineStep(state)
+        if (goal.hold == null) {
+            return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.BACKGROUND_REFUSED)))
+        }
+        // How to go on is the hold's own sentence, which plan 7F changes in ConversationTexts alone.
+        val words = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)}")
+        val line = ConversationEffect.AddLine(state.openId, goal.record, LineKind.KESTREL_SAID, words.text, null)
+        if (state.phone.present) return MachineStep(state, listOf(ConversationEffect.Output(words), line))
+        val kept = ChannelOutput.Said(listOfNotNull(state.heldWords?.text, words.text).joinToString(" "))
+        return MachineStep(state.copy(heldWords = kept), listOf(line))
+    }
+
     fun signal(state: ConversationState, signal: PhoneSignal, now: Long): MachineStep {
         val phone = state.phone
         return when (signal) {

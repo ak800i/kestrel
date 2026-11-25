@@ -1,6 +1,7 @@
 package dev.kestrel.conversation.engine
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.TaskRequest
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
@@ -30,6 +31,7 @@ import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.GoalHold
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
@@ -331,6 +333,59 @@ class ConversationEngineTest {
         assertTrue(voice.asked.isEmpty() && text.asked.isEmpty())
         assertTrue(environment.starts.isEmpty())
         assertEquals(EndReason.CANCELLED, engine.view.value.records.single().end)
+    }
+
+    @Test
+    fun androidsRefusalOfTheGoalServiceHoldsTheGoalAndContinueResumesIt() = scope.runTest {
+        val speaking = CompletableDeferred<Unit>()
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
+        val environment = environment(say("On it."), listSms, finish(1))
+        val engine = engine(environment)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.ACTING, engine.view.value.goal)
+
+        engine.backgroundRefused(engine.view.value.command)
+        runCurrent()
+
+        // Plan 7E; design 10.6 of sub-project 7: the goal is held as interrupted, and the view names why.
+        assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
+        assertEquals(GoalHold.BACKGROUND_REFUSED, engine.view.value.hold)
+        assertEquals(1, engine.view.value.goalRecord)
+        assertEquals(Interruption.BACKGROUND_REFUSED, engine.outcome(1)!!.report.interruption)
+        assertTrue(text.texts().last().endsWith(ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)))
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
+        runCurrent()
+        assertNull(engine.view.value.goal)
+        assertNull(engine.view.value.hold)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
+    // Plan 7E: a tap on the goal notification can start Kestrel's process; the receiver waits until the conversation is
+    // restored, and then reads the restored goal, which the view names by its conversation and its record.
+    @Test
+    fun awaitRestoredReturnsOnceTheRestoreHasRunWithTheRestoredGoalInTheView() = scope.runTest {
+        val now = ManualConversationClock.BASE
+        val id = ConversationId("0123456789abcdef0123456789abcdef")
+        val record = CommandRecord(1, now - 60_000, InputChannel.TEXT, "Archive my newsletters")
+        store.save(ConversationSnapshot(id, now - 60_000, now - 30_000, open = true, testMode = false, records = listOf(record), goal = GoalState(1, GoalPhase.ACTING, now - 30_000)))
+        val engine = engine(environment(), ArchivedConversationStore(archive, backgroundScope) {})
+        var seen: ConversationView? = null
+        launch {
+            engine.awaitRestored()
+            seen = engine.view.value
+        }
+        runCurrent()
+        assertNull(seen)
+
+        assertEquals(RestoreResult.GOAL_HELD, engine.restore())
+        runCurrent()
+
+        assertEquals(id, seen?.id)
+        assertEquals(GoalPhase.INTERRUPTED, seen?.goal)
+        assertEquals(1, seen?.goalRecord)
     }
 
     @Test
