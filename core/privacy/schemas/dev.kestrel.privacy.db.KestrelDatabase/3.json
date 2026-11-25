@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 3,
-    "identityHash": "bf473c01fc03a1636b4ff0ee852961cb",
+    "identityHash": "ad1d40a91456cfd3a17c4bb86294f892",
     "entities": [
       {
         "tableName": "log_entries",
@@ -167,11 +167,35 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_conversations_last_millis` ON `${TABLE_NAME}` (`last_millis`)"
           }
         ]
+      },
+      {
+        "tableName": "conversation_index",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`name` TEXT NOT NULL, `payload` BLOB NOT NULL, PRIMARY KEY(`name`))",
+        "fields": [
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "name"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bf473c01fc03a1636b4ff0ee852961cb')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ad1d40a91456cfd3a17c4bb86294f892')"
     ]
   }
 }

@@ -3,16 +3,20 @@ package dev.kestrel.privacy.conversations
 import dev.kestrel.privacy.crypto.ErasableKey
 import dev.kestrel.privacy.db.ConversationDao
 import dev.kestrel.privacy.db.ConversationHeader
+import dev.kestrel.privacy.db.ConversationIndexRow
 import dev.kestrel.privacy.db.ConversationRow
-import kotlinx.coroutines.CompletableDeferred
+import dev.kestrel.privacy.db.ConversationStamp
+import dev.kestrel.privacy.db.IndexRowUpdate
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,7 +24,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
@@ -31,38 +37,94 @@ class ConversationArchiveStoreTest {
     private var unknownFormats = 0
     private val store = ConversationArchiveStore(dao, key, onUnknownFormat = { unknownFormats++ }, dispatcher = Dispatchers.Unconfined)
 
+    private suspend fun write(vararg conversations: PlainConversation, deleted: List<String> = emptyList(), index: IndexUpdate = IndexUpdate.Keep) =
+        store.write(ConversationChange(conversations.toList(), deleted, index))
+
     @Test
-    fun everyConversationReadsBackNewestFirstWithItsPlainFieldsUntilItIsDeleted() = runTest {
-        store.write(listOf(PlainConversation(closed("b", last = 25), "other".encodeToByteArray())))
-        store.write(listOf(PlainConversation(opened("a", last = 20), "first".encodeToByteArray())))
+    fun everyConversationReadsBackWithItsPlainFieldsUntilItIsDeleted() = runTest {
+        write(PlainConversation(closed("b", last = 25), "other".encodeToByteArray()))
+        write(PlainConversation(opened("a", last = 20), "first".encodeToByteArray()))
         val changed = opened("a", last = 30).copy(commands = 3)
-        store.write(listOf(PlainConversation(changed, "second".encodeToByteArray())))
+        write(PlainConversation(changed, "second".encodeToByteArray()), PlainConversation(closed("c", last = 5), "older".encodeToByteArray()))
 
-        val stored = store.readAll().map { it as StoredConversation.Readable }
-        assertEquals(listOf(changed, closed("b", last = 25)), stored.map { it.header })
-        assertArrayEquals("second".encodeToByteArray(), stored[0].payload)
-        assertArrayEquals("other".encodeToByteArray(), stored[1].payload)
+        val stored = store.read(listOf("a", "b")).associateBy { it.header.id }.mapValues { it.value as StoredConversation.Readable }
+        assertEquals(changed, stored.getValue("a").header)
+        assertEquals(closed("b", last = 25), stored.getValue("b").header)
+        assertArrayEquals("second".encodeToByteArray(), stored.getValue("a").payload)
+        assertArrayEquals("other".encodeToByteArray(), stored.getValue("b").payload)
+        assertEquals(listOf("c", "b"), store.closedIds())
 
-        store.delete("a")
-        assertEquals(listOf("b"), store.readAll().map { it.header.id })
+        write(deleted = listOf("a"))
+        assertTrue(store.read(listOf("a")).isEmpty())
+        assertEquals(null, store.open())
     }
 
     @Test
-    fun storesThePayloadEncrypted() = runTest {
-        store.write(listOf(PlainConversation(closed("a", last = 1), "a secret request".encodeToByteArray())))
+    fun storesThePayloadsAndTheIndexEncrypted() = runTest {
+        write(PlainConversation(closed("a", last = 1), "a secret request".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to "a secret word".encodeToByteArray()), emptySet()))
 
         assertFalse(dao.rows.getValue("a").payload.decodeToString(throwOnInvalidSequence = false).contains("secret"))
+        assertFalse(dao.shards.getValue("0").payload.decodeToString(throwOnInvalidSequence = false).contains("secret"))
+    }
+
+    // Design 9.2 of sub-project 7: a restore reads the open conversation alone; the shards and the stamp are read apart.
+    @Test
+    fun theOpenConversationTheShardsAndTheStampOfTheClosedRowsAreReadApart() = runTest {
+        assertTrue(store.shards().isEmpty())
+
+        write(
+            PlainConversation(closed("a", last = 10), byteArrayOf(1)),
+            PlainConversation(closed("b", last = 30), byteArrayOf(2)),
+            PlainConversation(opened("c", last = 40), "open".encodeToByteArray()),
+            index = IndexUpdate.Update(mapOf("0" to "zero".encodeToByteArray(), "1" to "one".encodeToByteArray()), emptySet()),
+        )
+        assertEquals("open", (store.open() as StoredConversation.Readable).payload.decodeToString())
+        assertEquals(mapOf("0" to "zero", "1" to "one"), store.shards().associate { it.name to (it as StoredShard.Readable).payload.decodeToString() })
+        assertEquals(ConversationStamp(closed = 2, newest = 30, total = 40), store.stamp())
+
+        write(index = IndexUpdate.Update(mapOf("1" to "new".encodeToByteArray()), setOf("0")))
+        assertEquals(mapOf("1" to "new"), store.shards().associate { it.name to (it as StoredShard.Readable).payload.decodeToString() })
+        write(index = IndexUpdate.Replace(emptyMap()))
+        assertTrue(store.shards().isEmpty())
+    }
+
+    @Test
+    fun aReadGivesOnlyTheConversationsThatItAsksFor() = runTest {
+        write(PlainConversation(closed("a", last = 1), byteArrayOf(1)), PlainConversation(closed("b", last = 2), byteArrayOf(2)), PlainConversation(closed("c", last = 3), byteArrayOf(3)))
+
+        assertEquals(setOf("a", "c"), store.read(listOf("a", "c", "gone")).map { it.header.id }.toSet())
     }
 
     // Design 6.1 and 9.6 of sub-project 7: a switch closes one conversation and opens another in the same write.
     @Test
-    fun oneWriteSwitchesTheOpenConversation() = runTest {
-        store.write(listOf(PlainConversation(opened("a", last = 1), byteArrayOf(1)), PlainConversation(closed("b", last = 2), byteArrayOf(2))))
+    fun oneWriteSwitchesTheOpenConversationAndReplacesTheIndex() = runTest {
+        write(PlainConversation(opened("a", last = 1), byteArrayOf(1)), PlainConversation(closed("b", last = 2), byteArrayOf(2)), index = IndexUpdate.Replace(mapOf("0" to byteArrayOf(5), "1" to byteArrayOf(6))))
         val before = dao.transactions
 
-        store.write(listOf(PlainConversation(closed("a", last = 3), byteArrayOf(1)), PlainConversation(opened("b", last = 3), byteArrayOf(2))))
+        write(PlainConversation(closed("a", last = 3), byteArrayOf(1)), PlainConversation(opened("b", last = 3), byteArrayOf(2)), index = IndexUpdate.Replace(mapOf("2" to byteArrayOf(7))))
 
-        assertEquals(setOf("a" to false, "b" to true), store.readAll().map { it.header.id to it.header.open }.toSet())
+        assertEquals(setOf("a" to false, "b" to true), store.read(listOf("a", "b")).map { it.header.id to it.header.open }.toSet())
+        assertEquals(listOf("2"), store.shards().map { it.name })
+        assertArrayEquals(byteArrayOf(7), (store.shards().single() as StoredShard.Readable).payload)
+        assertEquals(before + 1, dao.transactions)
+    }
+
+    // Design 9.3 of sub-project 7: retention deletes by the table's own times, in one transaction with the index.
+    @Test
+    fun purgeDeletesTheClosedRowsOutsideTheWindowWithTheIndexInOneTransaction() = runTest {
+        write(
+            PlainConversation(closed("old", last = 5), byteArrayOf(1)),
+            PlainConversation(closed("kept", last = 50), byteArrayOf(2)),
+            PlainConversation(closed("ahead", last = 500), byteArrayOf(3)),
+            PlainConversation(opened("open", last = 1), byteArrayOf(4)),
+            index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()),
+        )
+        val before = dao.transactions
+
+        assertEquals(2, store.purge(oldest = 10, newest = 100, index = IndexUpdate.Update(mapOf("0" to byteArrayOf(2)), emptySet())))
+
+        assertEquals(setOf("kept", "open"), dao.rows.keys)
+        assertArrayEquals(byteArrayOf(2), (store.shards().single() as StoredShard.Readable).payload)
         assertEquals(before + 1, dao.transactions)
     }
 
@@ -70,19 +132,19 @@ class ConversationArchiveStoreTest {
     fun anOpenConversationClosesAnOpenRowThatTheCallerDoesNotKnow() = runTest {
         dao.rows["later"] = ConversationRow("later", 1, 2, open = true, commands = 1, payload = laterFormat())
 
-        store.write(listOf(PlainConversation(opened("a", last = 3), byteArrayOf(1))))
+        write(PlainConversation(opened("a", last = 3), byteArrayOf(1)))
 
-        assertEquals(listOf("a" to true, "later" to false), store.readAll().map { it.header.id to it.header.open })
+        assertEquals(listOf("a" to true, "later" to false), store.read(listOf("a", "later")).map { it.header.id to it.header.open })
     }
 
     // Design 9.2 of sub-project 7: plan 7B's store deletes a payload that fails its check and reports it by its kind.
     @Test
     fun aPayloadMovedToAnotherConversationFailsItsCheckAndStaysForTheCallerToDelete() = runTest {
-        store.write(listOf(PlainConversation(closed("a", last = 1), "words".encodeToByteArray())))
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()))
         val row = dao.rows.getValue("a")
         dao.rows["moved"] = ConversationRow("moved", row.openedMillis, row.lastMillis, open = false, commands = row.commands, payload = row.payload)
 
-        val read = store.readAll().associateBy { it.header.id }
+        val read = store.read(listOf("a", "moved")).associateBy { it.header.id }
 
         assertTrue(read.getValue("a") is StoredConversation.Readable)
         assertTrue(read.getValue("moved") is StoredConversation.FailedCheck)
@@ -91,12 +153,31 @@ class ConversationArchiveStoreTest {
         assertEquals(0, unknownFormats)
     }
 
+    // The shards and the conversations are bound to their places: no payload opens in another's.
+    @Test
+    fun aShardInAnotherPlaceOrInAnotherFormatCannotBeRead() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to "zero".encodeToByteArray(), "1" to "one".encodeToByteArray()), emptySet()))
+        val zero = dao.shards.getValue("0").payload
+        val one = dao.shards.getValue("1").payload
+        val conversation = dao.rows.getValue("a").payload
+
+        dao.rows["a"] = ConversationRow("a", 0, 1, open = false, commands = 1, payload = zero)
+        dao.shards["0"] = ConversationIndexRow("0", one)
+        dao.shards["1"] = ConversationIndexRow("1", conversation)
+        assertTrue(store.read(listOf("a")).single() is StoredConversation.FailedCheck)
+        assertTrue(store.shards().all { it is StoredShard.Unreadable })
+
+        dao.shards["0"] = ConversationIndexRow("0", laterFormat())
+        assertTrue(store.shards().first { it.name == "0" } is StoredShard.Unreadable)
+        assertEquals(0, unknownFormats)
+    }
+
     @Test
     fun aConversationInAnUnknownFormatIsKeptAndReportedOncePerProcess() = runTest {
         dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
 
-        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
-        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
+        assertTrue(store.read(listOf("later")).single() is StoredConversation.UnknownFormat)
+        assertTrue(store.read(listOf("later")).single() is StoredConversation.UnknownFormat)
 
         assertTrue("later" in dao.rows)
         assertEquals(1, unknownFormats)
@@ -106,50 +187,101 @@ class ConversationArchiveStoreTest {
     fun aReportOfAnUnknownFormatThatFailsIsMadeAgainAtTheNextRead() = runTest {
         var reports = 0
         val store = ConversationArchiveStore(dao, key, onUnknownFormat = { if (++reports == 1) throw IOException("the log is unavailable") }, dispatcher = Dispatchers.Unconfined)
-        dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
+        dao.rows["later"] = ConversationRow("later", 1, 2, open = true, commands = 1, payload = laterFormat())
 
-        assertTrue(runCatching { store.readAll() }.exceptionOrNull() is IOException)
-        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
-        assertTrue(store.readAll().single() is StoredConversation.UnknownFormat)
+        assertTrue(runCatching { store.open() }.exceptionOrNull() is IOException)
+        assertTrue(store.open() is StoredConversation.UnknownFormat)
+        assertTrue(store.read(listOf("later")).single() is StoredConversation.UnknownFormat)
 
         assertEquals(2, reports)
     }
 
-    // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read.
+    // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read. The key goes
+    // first, so that a deletion cut short leaves only rows that no key opens.
     @Test
-    fun deleteAllErasesTheRowsAndTheKeySoThatACopyOfARowCannotBeRead() = runTest {
-        store.write(listOf(PlainConversation(closed("a", last = 1), "words".encodeToByteArray())))
+    fun deleteAllErasesTheKeyFirstAndThenTheRowsAndTheIndexSoThatACopyCannotBeRead() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()))
         val copy = dao.rows.getValue("a")
+        val shard = dao.shards.getValue("0")
+        var erasedBeforeTheRowsWent = false
+        dao.beforeDeleteAll = { erasedBeforeTheRowsWent = key.erased == 1 }
 
         store.deleteAll()
 
+        assertTrue(erasedBeforeTheRowsWent)
         assertTrue(dao.rows.isEmpty())
-        assertEquals(1, key.erased)
+        assertTrue(dao.shards.isEmpty())
         dao.rows["a"] = copy
-        assertTrue(store.readAll().single() is StoredConversation.FailedCheck)
+        dao.shards["0"] = shard
+        assertTrue(store.read(listOf("a")).single() is StoredConversation.FailedCheck)
+        assertTrue(store.shards().single() is StoredShard.Unreadable)
     }
 
-    // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then open.
+    // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
+    // open. The pause can only let a wrong order pass, never fail a right one.
     @Test
     fun deleteAllWaitsForAWriteThatHasStartedSoThatNoRowOutlivesTheKey() = runTest {
-        val gate = CompletableDeferred<Unit>()
-        dao.beforeUpsert = { gate.await() }
-        val write = launch { store.write(listOf(PlainConversation(closed("a", last = 1), byteArrayOf(1)))) }
-        runCurrent()
-        val delete = launch { store.deleteAll() }
-        runCurrent()
-        assertEquals(0, key.erased)
+        val written = CountDownLatch(1)
+        val gate = CountDownLatch(1)
+        dao.beforeUpsert = { written.countDown(); gate.await(5, TimeUnit.SECONDS) }
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
+            val store = ConversationArchiveStore(dao, key, dispatcher = dispatcher)
+            val write = launch(Dispatchers.Default) { store.write(ConversationChange(listOf(PlainConversation(closed("a", last = 1), byteArrayOf(1))), emptyList(), IndexUpdate.Keep)) }
+            assertTrue(written.await(5, TimeUnit.SECONDS))
+            val delete = launch(Dispatchers.Default) { store.deleteAll() }
+            Thread.sleep(100)
+            assertEquals(0, key.erased)
 
-        gate.complete(Unit)
-        write.join()
-        delete.join()
+            gate.countDown()
+            write.join()
+            delete.join()
+        }
 
         assertEquals(1, key.erased)
         assertTrue(dao.rows.isEmpty())
     }
 
+    // Design R3 of sub-project 7: a write that holds the key's guard never holds up a read, such as a rebuild's.
     @Test
-    fun runsTheCipherOnTheStoresDispatcher() = runTest {
+    fun aReadDoesNotWaitForTheKeysGuard() = runTest {
+        write(PlainConversation(closed("a", last = 1), byteArrayOf(1)))
+        key.guard.lock()
+        try {
+            withTimeout(1_000) {
+                assertEquals(listOf("a"), store.read(listOf("a")).map { it.header.id })
+                assertTrue(store.shards().isEmpty())
+                assertEquals(listOf("a"), store.closedIds())
+            }
+        } finally {
+            key.guard.unlock()
+        }
+    }
+
+    // Design 9.2 of sub-project 7: "delete history" stops a rebuild, whose read then decrypts no more rows.
+    @Test
+    fun aCancelledReadStopsBetweenTwoRows() = runTest {
+        write(PlainConversation(closed("a", last = 1), byteArrayOf(1)), PlainConversation(closed("b", last = 2), byteArrayOf(2)), PlainConversation(closed("c", last = 3), byteArrayOf(3)))
+        var decrypted = 0
+        lateinit var reading: Job
+        val watched = object : ErasableKey {
+            override val guard = key.guard
+
+            override fun get(): SecretKey = key.get().also { if (++decrypted == 1) reading.cancel() }
+
+            override fun erase() = key.erase()
+        }
+        val store = ConversationArchiveStore(dao, watched, dispatcher = Dispatchers.Unconfined)
+        reading = launch(start = CoroutineStart.LAZY) { store.read(listOf("a", "b", "c")) }
+
+        reading.join()
+
+        assertTrue(reading.isCancelled)
+        assertEquals(1, decrypted)
+    }
+
+    // Design R3 of sub-project 7: a Keystore operation right after a hop to another thread costs about twice as much.
+    @Test
+    fun eachReadRunsItsQueryAndItsDecryptionOnOneThreadOfTheStoresDispatcher() = runTest {
         val threads = CopyOnWriteArrayList<Thread>()
         val watched = object : ErasableKey {
             override val guard = key.guard
@@ -158,11 +290,16 @@ class ConversationArchiveStoreTest {
 
             override fun erase() = key.erase()
         }
+        dao.onQuery = { threads += Thread.currentThread() }
         Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
             val store = ConversationArchiveStore(dao, watched, dispatcher = dispatcher)
-            store.write(listOf(PlainConversation(closed("a", last = 1), byteArrayOf(1))))
-            store.readAll()
+            store.write(ConversationChange(listOf(PlainConversation(opened("a", last = 1), byteArrayOf(1))), emptyList(), IndexUpdate.Update(mapOf("0" to byteArrayOf(2)), emptySet())))
+            threads.clear()
+            store.open()
+            store.shards()
+            store.read(listOf("a"))
 
+            assertEquals(6, threads.size)
             assertEquals(setOf(withContext(dispatcher) { Thread.currentThread() }), threads.toSet())
         }
     }
@@ -178,6 +315,8 @@ class ConversationArchiveStoreTest {
 /** An [ErasableKey] in memory; [erase] makes a new key, as Keystore does at the next use. */
 private class MemoryKey : ErasableKey {
     override val guard = Mutex()
+
+    @Volatile
     var erased = 0
         private set
     private var key = newKey()
@@ -193,39 +332,72 @@ private class MemoryKey : ErasableKey {
 }
 
 /**
- * Mimics the SQL in [ConversationDao]; KestrelDatabaseTest checks the real queries and the transaction on a device. Its
- * write is the DAO's own, so these tests run it; [transactions] counts its calls.
+ * Mimics the SQL in [ConversationDao]; KestrelDatabaseTest checks the real queries and the transactions on a device. Its
+ * write, purge and deleteAll are the DAO's own, so these tests run them; [transactions] counts the writes and the
+ * purges, and [onQuery] hears each query that reads rows.
  */
 private class FakeConversationDao : ConversationDao() {
     val rows = linkedMapOf<String, ConversationRow>()
-    var beforeUpsert: suspend () -> Unit = {}
+    val shards = linkedMapOf<String, ConversationIndexRow>()
+    var beforeUpsert: () -> Unit = {}
+    var beforeDeleteAll: () -> Unit = {}
+    var onQuery: () -> Unit = {}
     var transactions = 0
 
-    override suspend fun write(rows: List<ConversationRow>) {
+    override fun write(rows: List<ConversationRow>, deleted: List<String>, index: IndexRowUpdate) {
         transactions++
-        super.write(rows)
+        super.write(rows, deleted, index)
     }
 
-    override suspend fun all(): List<ConversationRow> = rows.values.sortedByDescending { it.lastMillis }
-
-    override suspend fun delete(id: String): Int = if (rows.remove(id) != null) 1 else 0
-
-    override suspend fun deleteOutside(oldest: Long, newest: Long): Int {
-        val outside = rows.values.filter { !it.open && (it.lastMillis < oldest || it.lastMillis > newest) }.map { it.id }
-        outside.forEach { rows.remove(it) }
-        return outside.size
+    override fun purge(oldest: Long, newest: Long, index: IndexRowUpdate): Int {
+        transactions++
+        return super.purge(oldest, newest, index)
     }
 
-    override suspend fun deleteAll(): Int = rows.size.also { rows.clear() }
+    override fun deleteAll() {
+        beforeDeleteAll()
+        super.deleteAll()
+    }
 
-    override suspend fun upsert(row: ConversationRow) {
+    override fun open(): ConversationRow? = rows.values.firstOrNull { it.open }.also { onQuery() }
+
+    override fun rows(ids: List<String>): List<ConversationRow> = ids.mapNotNull { rows[it] }.also { onQuery() }
+
+    override fun closedIds(): List<String> = rows.values.filter { !it.open }.sortedBy { it.lastMillis }.map { it.id }
+
+    override fun shards(): List<ConversationIndexRow> = shards.values.toList().also { onQuery() }
+
+    override fun stamp(): ConversationStamp {
+        val closed = rows.values.filter { !it.open }.map { it.lastMillis }
+        return ConversationStamp(closed.size, closed.maxOrNull() ?: 0, closed.sum())
+    }
+
+    override fun delete(id: String): Int = if (rows.remove(id) != null) 1 else 0
+
+    override fun deleteClosedOutside(oldest: Long, newest: Long): Int {
+        val gone = rows.values.filter { !it.open && (it.lastMillis < oldest || it.lastMillis > newest) }.map { it.id }
+        gone.forEach { rows.remove(it) }
+        return gone.size
+    }
+
+    override fun upsert(row: ConversationRow) {
         beforeUpsert()
         rows[row.id] = row
     }
 
-    override suspend fun closeOthers(id: String): Int {
+    override fun closeOthers(id: String): Int {
         val others = rows.values.filter { it.open && it.id != id }
         others.forEach { rows[it.id] = ConversationRow(it.id, it.openedMillis, it.lastMillis, open = false, commands = it.commands, payload = it.payload) }
         return others.size
     }
+
+    override fun upsertIndex(row: ConversationIndexRow) {
+        shards[row.name] = row
+    }
+
+    override fun deleteIndex(name: String): Int = if (shards.remove(name) != null) 1 else 0
+
+    override fun deleteConversations(): Int = rows.size.also { rows.clear() }
+
+    override fun deleteIndexes(): Int = shards.size.also { shards.clear() }
 }

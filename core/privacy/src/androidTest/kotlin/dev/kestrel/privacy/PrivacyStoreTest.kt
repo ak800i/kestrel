@@ -6,10 +6,13 @@ import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.crypto.KeystoreKeys
+import dev.kestrel.privacy.conversations.ConversationChange
+import dev.kestrel.privacy.conversations.IndexUpdate
 import dev.kestrel.privacy.conversations.PlainConversation
 import dev.kestrel.privacy.conversations.StoredConversation
 import dev.kestrel.privacy.db.ConversationHeader
 import dev.kestrel.privacy.db.ConversationRow
+import dev.kestrel.privacy.db.IndexRowUpdate
 import dev.kestrel.privacy.db.CredentialRow
 import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.logs.ActivityKind
@@ -104,15 +107,16 @@ class PrivacyStoreTest {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val header = ConversationHeader("test-conversation-${System.nanoTime()}", 1, 2, open = false, commands = 1)
         try {
-            store.conversations.write(listOf(PlainConversation(header, "first".encodeToByteArray())))
+            store.conversations.write(ConversationChange(listOf(PlainConversation(header, "first".encodeToByteArray())), emptyList(), IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet())))
             assertTrue(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
 
             store.conversations.deleteAll()
 
-            assertTrue(store.conversations.readAll().isEmpty())
+            assertTrue(store.conversations.read(listOf(header.id)).isEmpty())
+            assertTrue(store.conversations.shards().isEmpty())
             assertFalse(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
-            store.conversations.write(listOf(PlainConversation(header, "second".encodeToByteArray())))
-            val read = store.conversations.readAll().single() as StoredConversation.Readable
+            store.conversations.write(ConversationChange(listOf(PlainConversation(header, "second".encodeToByteArray())), emptyList(), IndexUpdate.Keep))
+            val read = store.conversations.read(listOf(header.id)).single() as StoredConversation.Readable
             assertEquals("second", read.payload.decodeToString())
         } finally {
             store.conversations.deleteAll()
@@ -127,16 +131,16 @@ class PrivacyStoreTest {
         val dao = KestrelDatabase.get(context).conversationDao()
         try {
             // A later version's ciphertext: its first byte names a format that this version does not know.
-            dao.write(listOf(ConversationRow(id, 1, 2, open = false, commands = 1, payload = byteArrayOf(2) + ByteArray(40))))
+            dao.write(listOf(ConversationRow(id, 1, 2, open = false, commands = 1, payload = byteArrayOf(2) + ByteArray(40))), emptyList(), IndexRowUpdate.Keep)
 
-            assertTrue(store.conversations.readAll().single { it.header.id == id } is StoredConversation.UnknownFormat)
+            assertTrue(store.conversations.read(listOf(id)).single() is StoredConversation.UnknownFormat)
 
-            assertTrue(dao.all().any { it.id == id })
+            assertEquals(listOf(id), dao.rows(listOf(id)).map { it.id })
             val entry = store.logs.activity().single()
             assertEquals(ActivityKind.ERROR, entry.event.kind)
             assertEquals("A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it", entry.event.text)
         } finally {
-            store.conversations.delete(id)
+            store.conversations.write(ConversationChange(emptyList(), listOf(id), IndexUpdate.Keep))
         }
     }
 

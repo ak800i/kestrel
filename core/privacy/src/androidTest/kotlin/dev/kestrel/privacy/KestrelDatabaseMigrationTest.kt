@@ -42,7 +42,7 @@ class KestrelDatabaseMigrationTest {
     }
 
     @Test
-    fun version2MigratesToVersion3WithItsRowsAndAnEmptyConversationsTable() {
+    fun version2MigratesToVersion3WithItsRowsAndEmptyTablesOfConversationsAndTheirIndex() {
         migrations.createDatabase(MIGRATED, 2).apply {
             execSQL("INSERT INTO settings (name, payload) VALUES ('test-volume', X'07')")
             execSQL("INSERT INTO credentials (id, payload) VALUES ('test-credential', X'08')")
@@ -57,6 +57,7 @@ class KestrelDatabaseMigrationTest {
         assertArrayEquals(byteArrayOf(8), migrated.blob("SELECT payload FROM credentials WHERE id = 'test-credential'"))
         assertArrayEquals(byteArrayOf(9), migrated.blob("SELECT payload FROM log_entries WHERE log = 'activity'"))
         assertEquals(0, migrated.count("conversations"))
+        assertEquals(0, migrated.count("conversation_index"))
     }
 
     private fun SupportSQLiteDatabase.blob(sql: String): ByteArray =

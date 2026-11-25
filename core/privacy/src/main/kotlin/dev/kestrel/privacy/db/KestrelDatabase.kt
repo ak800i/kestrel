@@ -7,11 +7,11 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
- * Version 2 adds the table `credentials` (sub-project 4), and version 3 the table `conversations` (plan 7C of sub-project
- * 7). Room migrates each earlier version by itself.
+ * Version 2 adds the table `credentials` (sub-project 4), and version 3 the tables `conversations` and `conversation_index`
+ * (plan 7C of sub-project 7). Room migrates each earlier version by itself.
  */
 @Database(
-    entities = [LogEntryRow::class, SettingRow::class, CredentialRow::class, ConversationRow::class],
+    entities = [LogEntryRow::class, SettingRow::class, CredentialRow::class, ConversationRow::class, ConversationIndexRow::class],
     version = 3,
     exportSchema = true,
     autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
