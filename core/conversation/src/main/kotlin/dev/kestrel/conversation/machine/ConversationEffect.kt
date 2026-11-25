@@ -48,8 +48,10 @@ sealed interface ConversationEffect {
         override fun toString(): String = "CancelGoal(reason=$reason, sentence=${sentence?.length})"
     }
 
-    /** Ends a held goal, whose round has ended already, with [reason] and its partial report. */
-    data class EndHeldGoal(val reason: EndReason) : ConversationEffect
+    /** Ends a held goal, whose round has ended already, with [reason] and its partial report; [sentence] as [CancelGoal]'s. */
+    data class EndHeldGoal(val reason: EndReason, val sentence: String? = null) : ConversationEffect {
+        override fun toString(): String = "EndHeldGoal(reason=$reason, sentence=${sentence?.length})"
+    }
 
     /** Answers question [number]; [leftScreen] when the owner gave the answer on Kestrel's own screen, a typed input (design 10.3). */
     data class AnswerQuestion(val number: Int, val answer: ChannelAnswer, val leftScreen: Boolean = false) : ConversationEffect

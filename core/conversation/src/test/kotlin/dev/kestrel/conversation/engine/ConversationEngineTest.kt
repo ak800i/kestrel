@@ -819,6 +819,26 @@ class ConversationEngineTest {
         assertEquals(EndReason.CANCELLED, engine.outcome(1)!!.report.end)
     }
 
+    // The call backstop that comes while a touch interrupts the round still ends the goal, and its end keeps the backstop's
+    // sentence (review of plan 7B: n1).
+    @Test
+    fun theCallBackstopEndsATouchedGoalWithItsSentence() = scope.runTest {
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) awaitCancellation() }
+        val engine = engine(environment(say("On it."), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.touched()
+        engine.signal(PhoneSignal.AGENT_CALL)
+        runCurrent()
+
+        assertNull(engine.view.value.goal)
+        val record = engine.view.value.records.single()
+        assertEquals(EndReason.CANCELLED, record.end)
+        assertTrue(record.answer!!.startsWith(ConversationTexts.CALL_STARTED))
+    }
+
     // A "stop" while the store switches to a past conversation cancels the switch: the conversation that was open stays
     // open, and the past one is kept as it was (review of plan 7B: M3).
     @Test

@@ -53,7 +53,7 @@ class ModelTest {
 
     @Test
     fun theProcessesOwnPartsOfAGoalAreNotStored() {
-        val goal = GoalState(2, GoalPhase.HANDED_OVER, 5, command = 7, ending = GoalEnding.STOPPING, handOver = 3)
+        val goal = GoalState(2, GoalPhase.HANDED_OVER, 5, command = 7, ending = GoalEnding.STOPPING, handOver = 3, stop = GoalStop(EndReason.CANCELLED))
 
         val decoded = json.decodeFromString(GoalState.serializer(), json.encodeToString(GoalState.serializer(), goal))
 

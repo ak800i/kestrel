@@ -124,7 +124,7 @@ class ConversationEngine(
          * The switch's transaction ended: [snapshot] is the open conversation now, or it was gone (null), or the store
          * [failed]. [chosen] is the conversation that it opened as it was before, for a "stop" that came meanwhile.
          */
-        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
     }
 
     // What the writer does with the store, in the loop's order, beside the loop.
@@ -167,11 +167,10 @@ class ConversationEngine(
     private val unsaved = mutableListOf<CompletableDeferred<Unit>>()
 
     // While the writer switches to a past conversation, the conversation that the switch closes is not saved again: a later
-    // save of it would open it again. [switchClosing] is that conversation as the switch stored it closed, and
-    // [switchChosen] the one that it opened as it was before, for a "stop" that came meanwhile.
+    // save of it would open it again. [switchEnd] is the switch's end only while the machine takes it, so that a "stop"
+    // that came meanwhile can undo it; no copy of a conversation stays once the switch has ended.
     private var switching = false
-    private var switchClosing: ConversationSnapshot? = null
-    private var switchChosen: ConversationSnapshot? = null
+    private var switchEnd: Message.Reopened? = null
 
     // The running round's newest step, which the view and the snapshot add to the goal's earlier steps (design 10.5).
     private var roundStep: Int? = null
@@ -346,7 +345,7 @@ class ConversationEngine(
             ConversationEffect.ResumePausedGoal -> owner.resume()
             is ConversationEffect.InterruptGoal -> running?.interrupt(effect.cause)
             is ConversationEffect.CancelGoal -> running?.cancel(effect.reason, effect.sentence)
-            is ConversationEffect.EndHeldGoal -> endHeld(effect.reason)
+            is ConversationEffect.EndHeldGoal -> endHeld(effect.reason, effect.sentence)
             is ConversationEffect.AnswerQuestion -> owner.answer(effect.number, effect.answer, effect.leftScreen)
             is ConversationEffect.EndHandOver -> owner.endHandOver(effect.number, effect.end)
             ConversationEffect.AskContinueGoal -> askContinue()
@@ -440,10 +439,10 @@ class ConversationEngine(
     }
 
     // The inbox closes with the goal's final words; what waited in it is named in them as too late.
-    private fun endHeld(reason: EndReason) {
+    private fun endHeld(reason: EndReason, sentence: String?) {
         val held = checkNotNull(state.goal) { "Only an open goal ends" }
         val record = goalRecord(checkNotNull(state.id) { "A goal belongs to an open conversation" }, held)
-        ended(goals.endHeld(held.command, record, running?.inbox?.close().orEmpty(), reason))
+        ended(goals.endHeld(held.command, record, running?.inbox?.close().orEmpty(), reason, sentence))
     }
 
     private fun goalRecord(id: ConversationId, goal: GoalState): CommandRecord =
@@ -501,8 +500,6 @@ class ConversationEngine(
     private fun switchTo(id: ConversationId, before: ConversationState) {
         val closing = before.id?.takeIf { it == recordsOf }?.let { snapshot(before, open = false) }
         switching = true
-        switchClosing = closing
-        switchChosen = null
         writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
     }
 
@@ -510,23 +507,26 @@ class ConversationEngine(
     // that it opened become the open ones only by its effect (OpenSwitched).
     private fun reopened(message: Message.Reopened) {
         switching = false
-        switchChosen = message.chosen
         val opened = message.snapshot
         val sentence = when {
             message.failed -> ConversationTexts.COULD_NOT
             opened == null -> ConversationTexts.GONE
             else -> ConversationTexts.backIn(ConversationTexts.day(opened.openedAtWall, clock.zone()))
         }
-        process(ConversationEvent.Switched(opened, sentence, failed = message.failed))
+        switchEnd = message
+        try {
+            process(ConversationEvent.Switched(opened, sentence, failed = message.failed))
+        } finally {
+            switchEnd = null
+        }
     }
 
     // A "stop" came while the store switched: the conversation that the switch opened is stored closed as it was, and the
     // one that was open, whose records the engine kept, open again.
     private fun undoSwitch() {
-        switchChosen?.let { writes.trySend(Write.Save(it, emptyList())) }
-        switchClosing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
-        switchChosen = null
-        switchClosing = null
+        val end = checkNotNull(switchEnd) { "Only a switch's end undoes it" }
+        end.chosen?.let { writes.trySend(Write.Save(it, emptyList())) }
+        end.closing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
     }
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {
@@ -721,10 +721,10 @@ class ConversationEngine(
                     throw e
                 } catch (e: Exception) {
                     report("Continuing a conversation", e)
-                    inbox.trySend(Message.Reopened(null, null, failed = true))
+                    inbox.trySend(Message.Reopened(null, null, null, failed = true))
                     return
                 }
-                inbox.trySend(Message.Reopened(opened, chosen, failed = false))
+                inbox.trySend(Message.Reopened(opened, chosen, write.closing, failed = false))
             }
         }
     }

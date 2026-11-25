@@ -178,18 +178,19 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         return MachineStep(state.copy(command = command, local = LocalRun(command, null, input)), listOf(ConversationEffect.SwitchTo(command, id, input)))
     }
 
-    // The machine alone decides whether a round's end holds the goal (GoalHold.of): a goal that "stop" or a change of test
-    // mode is ending is not held, but ends as a held goal that "stop" ends, with its partial report and the steering that
-    // waited named in its final words (EndHeldGoal; review of plan 7B: I1).
+    // The machine alone decides whether a round's end holds the goal (GoalHold.of): a goal that is stopping ("stop", a
+    // change of test mode, the call backstop, the end of a hold) is not held, but ends as a held goal with its first stop's
+    // reason and sentence, its partial report and the steering that waited named in its final words (EndHeldGoal; review
+    // of plan 7B: I1 and n1).
     private fun goalEnded(state: ConversationState, round: RoundEnd, now: Long): MachineStep {
         val goal = state.goal?.takeIf { it.command == round.command } ?: return MachineStep(state)
         val hold = GoalHold.of(round.report)
         if (hold != null) {
             // The bar's step counts on across the goal's rounds (design 10.5).
             val counted = goal.copy(stepsBefore = goal.stepsBefore + round.report.steps)
-            if (goal.ending != GoalEnding.STOPPING && !state.closeAfterWork) return GoalRules.held(state, counted, hold, round.reply, now).then { runWaiting(it, now) }
-            val stopping = counted.copy(phase = hold.phase, hold = hold, changedAtWall = now, ending = GoalEnding.STOPPING, handOver = null)
-            return MachineStep(state.copy(goal = stopping, question = null), listOf(ConversationEffect.EndHeldGoal(EndReason.CANCELLED)))
+            val stop = goal.stop ?: return GoalRules.held(state, counted, hold, round.reply, now).then { runWaiting(it, now) }
+            val stopping = counted.copy(phase = hold.phase, hold = hold, changedAtWall = now, handOver = null)
+            return MachineStep(state.copy(goal = stopping, question = null), listOf(ConversationEffect.EndHeldGoal(stop.reason, stop.sentence)))
         }
         val recorded = endGoal(state, goal, round.report.end, round.answer)
         val sentence = round.reply
@@ -387,7 +388,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         state.testMode,
         state.continuedAtWall,
         state.commands,
-        state.goal?.copy(command = 0, ending = null, handOver = null),
+        state.goal?.copy(command = 0, ending = null, handOver = null, stop = null),
         (state.quiet as? QuietClock.Running)?.sinceWall,
         state.replyChannel,
     )

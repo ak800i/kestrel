@@ -12,6 +12,7 @@ import dev.kestrel.conversation.model.GoalEnding
 import dev.kestrel.conversation.model.GoalHold
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.GoalState
+import dev.kestrel.conversation.model.GoalStop
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
@@ -38,16 +39,23 @@ internal object GoalRules {
     const val REPLY_MILLIS = 5L * 60 * 1000
 
     /** "Stop" ends the goal in every phase with its report, and drops a command that waited for it. */
-    fun stop(state: ConversationState): MachineStep {
-        val goal = state.goal ?: return MachineStep(state.copy(waiting = emptyList()))
-        if (goal.ending == GoalEnding.STOPPING) return MachineStep(state.copy(waiting = emptyList()))
-        val stopped = ending(state, goal, GoalEnding.STOPPING).copy(waiting = emptyList())
+    fun stop(state: ConversationState): MachineStep = stopGoal(state.copy(waiting = emptyList()), GoalStop(EndReason.CANCELLED))
+
+    /**
+     * The one way in which a goal starts to end for good, with [stop]: "stop", the call backstop, the end of a hold, a
+     * restore that ends the goal. A round that runs or is paused is cancelled with it; a held goal, whose round has ended,
+     * ends with its partial report. A goal that is stopping already keeps its first stop, which also ends the goal when its
+     * round ends held meanwhile (`ConversationMachine.goalEnded`).
+     */
+    fun stopGoal(state: ConversationState, stop: GoalStop): MachineStep {
+        val goal = state.goal ?: return MachineStep(state)
+        if (goal.ending == GoalEnding.STOPPING) return MachineStep(state)
         val effect = if (goal.hold != null && goal.phase != GoalPhase.PAUSED) {
-            ConversationEffect.EndHeldGoal(EndReason.CANCELLED)
+            ConversationEffect.EndHeldGoal(stop.reason, stop.sentence)
         } else {
-            ConversationEffect.CancelGoal(EndReason.CANCELLED)
+            ConversationEffect.CancelGoal(stop.reason, stop.sentence)
         }
-        return MachineStep(stopped, listOf(effect)).then(::withdrawContinue)
+        return MachineStep(ending(state, goal, GoalEnding.STOPPING, stop), listOf(effect)).then(::withdrawContinue)
     }
 
     /** A paused round goes on: its gate opens and it looks at the screen afresh. */
@@ -87,7 +95,7 @@ internal object GoalRules {
         val waits = !state.phone.present
         return MachineStep(
             state.copy(
-                goal = goal.copy(phase = hold.phase, hold = hold, changedAtWall = now, ending = null, handOver = null),
+                goal = goal.copy(phase = hold.phase, hold = hold, changedAtWall = now, ending = null, handOver = null, stop = null),
                 question = null,
                 heldWords = words.takeIf { waits },
                 timers = state.timers.copy(hold = number),
@@ -210,9 +218,7 @@ internal object GoalRules {
         val goal = GoalState(stored.record, GoalPhase.INTERRUPTED, heldSince, GoalHold.RESTART, stored.rounds, stored.stepsBefore)
         val left = HOLD_MILLIS - maxOf(0L, now - heldSince)
         val ends = end ?: EndReason.PAUSED_TOO_LONG.takeIf { left <= 0 }
-        if (ends != null) {
-            return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(ConversationEffect.EndHeldGoal(ends)))
-        }
+        if (ends != null) return stopGoal(state.copy(goal = goal), GoalStop(ends))
         val number = state.timers.hold + 1
         val held = MachineStep(
             state.copy(goal = goal, timers = state.timers.copy(hold = number)),
@@ -282,14 +288,12 @@ internal object GoalRules {
         }
     }
 
-    // The call backstop's verdict (D13 of sub-project 5): a call that the agent started ends the goal; it is no interruption.
+    // The call backstop's verdict (D13 of sub-project 5): a call that the agent started ends the goal; it is no
+    // interruption, so it ends a goal whose round a touch is interrupting too.
     private fun agentCall(state: ConversationState): MachineStep {
         val goal = state.goal ?: return MachineStep(state)
-        if (goal.ending != null || (goal.phase != GoalPhase.ACTING && goal.phase != GoalPhase.ASKING)) return MachineStep(state)
-        return MachineStep(
-            ending(state, goal, GoalEnding.STOPPING),
-            listOf(ConversationEffect.CancelGoal(EndReason.CANCELLED, ConversationTexts.CALL_STARTED)),
-        )
+        if (goal.phase != GoalPhase.ACTING && goal.phase != GoalPhase.ASKING) return MachineStep(state)
+        return stopGoal(state, GoalStop(EndReason.CANCELLED, ConversationTexts.CALL_STARTED))
     }
 
     // A question opened: a goal that acts now asks (the conversation's own questions leave its phase alone), and a typed
@@ -321,18 +325,13 @@ internal object GoalRules {
     private fun holdEnded(state: ConversationState, number: Int): MachineStep {
         val goal = state.goal ?: return MachineStep(state)
         if (number != state.timers.hold || goal.hold == null || goal.ending != null) return MachineStep(state)
-        val effect = if (goal.phase == GoalPhase.PAUSED) {
-            ConversationEffect.CancelGoal(EndReason.PAUSED_TOO_LONG)
-        } else {
-            ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG)
-        }
-        return MachineStep(ending(state, goal, GoalEnding.STOPPING), listOf(effect)).then(::withdrawContinue)
+        return stopGoal(state, GoalStop(EndReason.PAUSED_TOO_LONG))
     }
 
     // The goal starts to end: it acts until its round has ended, a question of its own goes with the round, and how to go
     // on with it is no longer for the owner.
-    private fun ending(state: ConversationState, goal: GoalState, ending: GoalEnding): ConversationState = state.copy(
-        goal = goal.copy(phase = if (goal.phase == GoalPhase.ASKING) GoalPhase.ACTING else goal.phase, ending = ending),
+    private fun ending(state: ConversationState, goal: GoalState, ending: GoalEnding, stop: GoalStop? = null): ConversationState = state.copy(
+        goal = goal.copy(phase = if (goal.phase == GoalPhase.ASKING) GoalPhase.ACTING else goal.phase, ending = ending, stop = stop),
         question = questionAfter(state, goal),
         heldWords = null,
     )

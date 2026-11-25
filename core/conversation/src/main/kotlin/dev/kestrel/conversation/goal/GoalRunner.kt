@@ -72,12 +72,13 @@ class GoalRunner(
     }
 
     /**
-     * The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4). The
-     * caller closes the goal's inbox and gives what waited in it as [pending], which the answer names as too late.
+     * The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4), with
+     * Kestrel's [sentence] in place of the reason when the stop gave one, as for a running round. The caller closes the
+     * goal's inbox and gives what waited in it as [pending], which the answer names as too late.
      */
-    fun endHeld(command: Int, record: CommandRecord, pending: List<SteeringMessage>, reason: EndReason): RoundEnd {
+    fun endHeld(command: Int, record: CommandRecord, pending: List<SteeringMessage>, reason: EndReason, sentence: String?): RoundEnd {
         val result = TaskReport(end = reason, ledger = record.ledger, checklist = record.checklist)
-        val answer = environment.sentence(result) + ConversationTexts.tooLate(pending)
+        val answer = (if (sentence == null) environment.sentence(result) else stopped(sentence, result)) + ConversationTexts.tooLate(pending)
         return RoundEnd(command, result, answer, answer)
     }
 
@@ -200,11 +201,15 @@ class GoalRunner(
         val stop = goal.stopSentence
         val sentence = when {
             refused != null -> refused
-            stop != null -> "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}"
+            stop != null -> stopped(stop, result)
             else -> environment.sentence(result)
         }
         return if (GoalHold.of(result) != null) sentence else sentence + ConversationTexts.tooLate(goal.inbox.close())
     }
+
+    // A stop's own sentence replaces the report's reason; what the goal did follows it.
+    private fun stopped(sentence: String, result: TaskReport): String =
+        "$sentence ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}"
 
     // The routine offer of design D23 of sub-project 5, after the report was said: the sentence that it ends with, if any.
     private suspend fun offered(ready: RoundSetup.Ready, owner: OwnerPort, recording: Recording): String? =

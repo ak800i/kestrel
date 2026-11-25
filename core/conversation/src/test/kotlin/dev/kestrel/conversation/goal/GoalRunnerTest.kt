@@ -2,6 +2,7 @@ package dev.kestrel.conversation.goal
 
 import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.Checklist
@@ -291,13 +292,25 @@ class GoalRunnerTest {
         val checklist = Checklist(listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 1)))
         val held = record().copy(ledger = listOf("opened Viber"), checklist = checklist)
 
-        val end = runner(environment()).endHeld(3, held, listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE)), EndReason.PAUSED_TOO_LONG)
+        val end = runner(environment()).endHeld(3, held, listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE)), EndReason.PAUSED_TOO_LONG, null)
 
         assertEquals(3, end.command)
         assertEquals(EndReason.PAUSED_TOO_LONG, end.report.end)
         assertEquals(listOf("opened Viber"), end.report.ledger)
         assertEquals(checklist, end.report.checklist)
         assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE))), end.answer)
+    }
+
+    // The call backstop's sentence replaces the report's reason for a held goal too, as it does for a running round (n1).
+    @Test
+    fun aHeldGoalThatTheCallBackstopEndsSaysItsSentence() = runTest {
+        val held = record().copy(ledger = listOf("opened Viber"))
+
+        val end = runner(environment()).endHeld(3, held, emptyList(), EndReason.CANCELLED, ConversationTexts.CALL_STARTED)
+
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals("${ConversationTexts.CALL_STARTED} ${Ledger.sentence(listOf("opened Viber"))}", end.answer)
+        assertEquals(end.answer, end.reply)
     }
 
     // A goal that ended for good has given its final words, which named what waited: its inbox takes no later message, so

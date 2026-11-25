@@ -55,6 +55,27 @@ class GoalRulesTest : MachineTesting() {
         assertFalse(paused.has<ConversationEffect.EndRecord>())
     }
 
+    // The stop that came first keeps its reason and Kestrel's sentence until the goal has ended, also when the round that it
+    // stops ends held: the call backstop's that a limit's pause or a touch overtook, and the end of a lock's 30 minutes that
+    // a limit's pause overtook (review of plan 7B: n1).
+    @Test
+    fun theFirstStopKeepsItsReasonAndItsSentenceWhenTheRoundEndsHeld() {
+        val called = signal(acting(), PhoneSignal.AGENT_CALL).state
+        val limited = ended(called, TaskReport(EndReason.PAUSED_AT_LIMIT), null)
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED, ConversationTexts.CALL_STARTED), limited.effect<ConversationEffect.EndHeldGoal>())
+        assertFalse(limited.has<ConversationEffect.EndRecord>())
+        assertTrue(step(limited.state, typed(InputIntent.Stop)).effects.isEmpty())
+
+        val backstop = signal(step(acting(), ConversationEvent.Touched).state, PhoneSignal.AGENT_CALL)
+        assertEquals(ConversationEffect.CancelGoal(EndReason.CANCELLED, ConversationTexts.CALL_STARTED), backstop.effect<ConversationEffect.CancelGoal>())
+        val interrupted = ended(backstop.state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), null)
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED, ConversationTexts.CALL_STARTED), interrupted.effect<ConversationEffect.EndHeldGoal>())
+
+        val expired = step(signal(acting(), PhoneSignal.LOCKED).state, ConversationEvent.TimerEnded(Timer.HOLD, 1)).state
+        val late = ended(expired, TaskReport(EndReason.PAUSED_AT_LIMIT), null)
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG), late.effect<ConversationEffect.EndHeldGoal>())
+    }
+
     private fun signal(state: ConversationState, signal: PhoneSignal): MachineStep = step(state, ConversationEvent.Signal(signal))
 
     @Test

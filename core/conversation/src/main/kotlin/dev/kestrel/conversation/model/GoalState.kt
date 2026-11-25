@@ -43,11 +43,20 @@ enum class GoalHold(val phase: GoalPhase, val resume: ResumeCause?) {
 enum class GoalEnding { STOPPING, INTERRUPTING }
 
 /**
+ * Why a goal that is [GoalEnding.STOPPING] ends: [reason], and Kestrel's [sentence] that replaces the report's reason, as
+ * the call backstop's does. The goal keeps the first stop until it has ended, also when its round ends held meanwhile (a
+ * limit's pause or a touch that the stop overtook), so that the end keeps the stop's exact reason and its sentence.
+ */
+data class GoalStop(val reason: EndReason, val sentence: String? = null) {
+    override fun toString(): String = "GoalStop(reason=$reason, sentence=${sentence?.length})"
+}
+
+/**
  * The open goal (design 6.1 and 7.7 of sub-project 7): the [record] of the command that started it, its [phase], why it
  * is held, when it last changed on the wall clock (a restored goal is held for 30 minutes from then, design 6.7), how
  * many rounds it has had and how many steps its ended rounds took ([stepsBefore], which the bar's step adds to the running
- * round's, design 10.5). [command] (the number of the input that started or last resumed it), [ending] and [handOver]
- * (the open hand-over's number) belong to this process and are not stored.
+ * round's, design 10.5). [command] (the number of the input that started or last resumed it), [ending], [stop] (exactly
+ * while it is stopping) and [handOver] (the open hand-over's number) belong to this process and are not stored.
  */
 @Serializable
 data class GoalState(
@@ -60,9 +69,11 @@ data class GoalState(
     @Transient val command: Int = 0,
     @Transient val ending: GoalEnding? = null,
     @Transient val handOver: Int? = null,
+    @Transient val stop: GoalStop? = null,
 ) {
     init {
         require(hold?.phase == phase || (hold == null && phase !in HELD)) { "A goal is held exactly in a held phase, by its hold" }
+        require((ending == GoalEnding.STOPPING) == (stop != null)) { "A goal that is stopping keeps its stop, and only then" }
     }
 
     companion object {
