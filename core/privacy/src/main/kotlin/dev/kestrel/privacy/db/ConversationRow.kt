@@ -36,7 +36,7 @@ class ConversationIndexRow(@PrimaryKey val name: String, val payload: ByteArray)
 
 /**
  * A conversation's row as a query of rows gives it: its plain fields, its payload's size, and the payload itself when
- * it is at most [ConversationDao.PIECE_BYTES]; [ConversationDao.whole] reads a larger one in pieces.
+ * it is at most [ConversationDao.PIECE_BYTES]; the DAO reads a larger one in pieces.
  */
 class ConversationRowRead(
     val id: String,
@@ -76,61 +76,54 @@ sealed interface IndexRowUpdate {
  * transaction as it stores an open one, and nothing else opens a row.
  *
  * Android's cursor window holds at most 2 MB, and a query fails on a row that does not fit into it, while a write has
- * no such bound. So the queries of rows give a payload at most a piece ([PIECE_BYTES]) long, and [whole] reads a larger
- * one in pieces, each well within the window, in one transaction, so that a conversation or a shard of any size reads
- * back.
+ * no such bound. So a query of rows gives a payload only when it is at most a piece ([PIECE_BYTES]) long. A read whose
+ * rows all fit is that one query, with no transaction, so that it holds up no write. A read that meets a larger payload
+ * is made again in one transaction, which runs the query and reads each larger payload in pieces, each well within the
+ * window: so a conversation or a shard of any size reads back, with its plain fields and its payload from the version
+ * of the row that the transaction sees. That transaction takes the connection that writes, so a save waits for it, a
+ * few ms for each MB.
  */
 @Dao
 abstract class ConversationDao {
     /** The open conversation's row, or null: what a restore reads. */
-    @Query("SELECT id, opened_millis, last_millis, open, commands, length(payload) AS size, CASE WHEN length(payload) <= $PIECE_BYTES THEN payload END AS payload FROM conversations WHERE open = 1 LIMIT 1")
-    abstract fun open(): ConversationRowRead?
+    fun open(): ConversationRow? {
+        val read = openRead() ?: return null
+        return read.inline() ?: openWithPieces()
+    }
 
     /** Every shard's row of the index. */
-    @Query("SELECT name, length(payload) AS size, CASE WHEN length(payload) <= $PIECE_BYTES THEN payload END AS payload FROM conversation_index")
-    abstract fun shards(): List<IndexRowRead>
+    fun shards(): List<ConversationIndexRow> = shardReads().inline() ?: shardsWithPieces()
 
     /** What the table holds of closed rows: how many, their newest last change and the sum of their last changes. */
     @Query("SELECT COUNT(*) AS closed, COALESCE(MAX(last_millis), 0) AS newest, COALESCE(SUM(last_millis), 0) AS total FROM conversations WHERE open = 0")
     abstract fun stamp(): ConversationStamp
 
     /**
-     * The conversations [ids] that exist, in one query (design 9.2 of sub-project 7): a search's matches, a transcript,
-     * a rebuild's page.
+     * The conversations [ids] that exist (design 9.2 of sub-project 7): a search's matches, a transcript, a rebuild's
+     * page.
      */
+    fun rows(ids: List<String>): List<ConversationRow> = rowReads(ids).inline() ?: rowsWithPieces(ids)
+
+    /** [open] when its row is larger than a piece: the query again and the payload in pieces, in one transaction. */
+    @Transaction
+    protected open fun openWithPieces(): ConversationRow? = openRead()?.let(::assembled)
+
+    /** [rows] when one of them is larger than a piece, in one transaction. */
+    @Transaction
+    protected open fun rowsWithPieces(ids: List<String>): List<ConversationRow> = rowReads(ids).map(::assembled)
+
+    /** [shards] when one of them is larger than a piece, in one transaction. */
+    @Transaction
+    protected open fun shardsWithPieces(): List<ConversationIndexRow> = shardReads().map(::assembled)
+
+    @Query("SELECT id, opened_millis, last_millis, open, commands, length(payload) AS size, CASE WHEN length(payload) <= $PIECE_BYTES THEN payload END AS payload FROM conversations WHERE open = 1 LIMIT 1")
+    protected abstract fun openRead(): ConversationRowRead?
+
     @Query("SELECT id, opened_millis, last_millis, open, commands, length(payload) AS size, CASE WHEN length(payload) <= $PIECE_BYTES THEN payload END AS payload FROM conversations WHERE id IN (:ids)")
-    abstract fun rows(ids: List<String>): List<ConversationRowRead>
+    protected abstract fun rowReads(ids: List<String>): List<ConversationRowRead>
 
-    /**
-     * The whole row that [read] gives, its payload read in pieces when it is larger than a piece; null when the row
-     * went.
-     */
-    fun whole(read: ConversationRowRead): ConversationRow? =
-        read.payload?.let { ConversationRow(read.id, read.openedMillis, read.lastMillis, read.open, read.commands, it) } ?: wholeConversation(read.id)
-
-    /**
-     * The whole shard that [read] gives, its payload read in pieces when it is larger than a piece; null when the shard
-     * went.
-     */
-    fun whole(read: IndexRowRead): ConversationIndexRow? = read.payload?.let { ConversationIndexRow(read.name, it) } ?: wholeShard(read.name)
-
-    /**
-     * The row [id] with its payload read in pieces, in one transaction, so that the pieces belong to one version of the
-     * row.
-     */
-    @Transaction
-    open fun wholeConversation(id: String): ConversationRow? {
-        val head = conversationHead(id) ?: return null
-        val payload = pieces(head.size) { from, count -> conversationPiece(id, from, count) } ?: return null
-        return ConversationRow(head.id, head.openedMillis, head.lastMillis, head.open, head.commands, payload)
-    }
-
-    /** The shard [name] with its payload read in pieces, in one transaction. */
-    @Transaction
-    open fun wholeShard(name: String): ConversationIndexRow? {
-        val size = shardSize(name) ?: return null
-        return pieces(size) { from, count -> shardPiece(name, from, count) }?.let { ConversationIndexRow(name, it) }
-    }
+    @Query("SELECT name, length(payload) AS size, CASE WHEN length(payload) <= $PIECE_BYTES THEN payload END AS payload FROM conversation_index")
+    protected abstract fun shardReads(): List<IndexRowRead>
 
     /**
      * The ids of the closed rows, the oldest last change first, without their payloads: what a rebuild reads in pages.
@@ -180,13 +173,32 @@ abstract class ConversationDao {
         deleteIndexes()
     }
 
-    // The [size] bytes of a payload, read [PIECE_BYTES] at a time from the 1-based offset that [piece] takes; null when
-    // the row went.
-    private inline fun pieces(size: Int, piece: (from: Int, count: Int) -> ByteArray?): ByteArray? {
+    // The row that [this] gives, when its payload came with the query.
+    private fun ConversationRowRead.inline(): ConversationRow? = payload?.let { ConversationRow(id, openedMillis, lastMillis, open, commands, it) }
+
+    // The rows, when every payload came with the query; null when one must be read in pieces.
+    @JvmName("inlineRows")
+    private fun List<ConversationRowRead>.inline(): List<ConversationRow>? = map { it.inline() ?: return null }
+
+    @JvmName("inlineShards")
+    private fun List<IndexRowRead>.inline(): List<ConversationIndexRow>? =
+        map { read -> read.payload?.let { ConversationIndexRow(read.name, it) } ?: return null }
+
+    // The whole row, its payload read in pieces when the query did not give it; only inside the transaction of the
+    // query.
+    private fun assembled(read: ConversationRowRead): ConversationRow =
+        read.inline() ?: ConversationRow(read.id, read.openedMillis, read.lastMillis, read.open, read.commands, pieces(read.size) { from, count -> conversationPiece(read.id, from, count) })
+
+    private fun assembled(read: IndexRowRead): ConversationIndexRow =
+        ConversationIndexRow(read.name, read.payload ?: pieces(read.size) { from, count -> shardPiece(read.name, from, count) })
+
+    // The [size] bytes of a payload, read [PIECE_BYTES] at a time from the 1-based offset that [piece] takes. The
+    // transaction that ran the query keeps the row as the query saw it.
+    private inline fun pieces(size: Int, piece: (from: Int, count: Int) -> ByteArray?): ByteArray {
         val payload = ByteArray(size)
         var at = 0
         while (at < size) {
-            val next = piece(at + 1, minOf(PIECE_BYTES, size - at)) ?: return null
+            val next = checkNotNull(piece(at + 1, minOf(PIECE_BYTES, size - at))) { "A row changed within its transaction" }
             check(next.isNotEmpty()) { "A payload ended before its size" }
             next.copyInto(payload, at)
             at += next.size
@@ -208,14 +220,8 @@ abstract class ConversationDao {
         }
     }
 
-    @Query("SELECT id, opened_millis, last_millis, open, commands, length(payload) AS size, NULL AS payload FROM conversations WHERE id = :id")
-    protected abstract fun conversationHead(id: String): ConversationRowRead?
-
     @Query("SELECT substr(payload, :from, :count) FROM conversations WHERE id = :id")
     protected abstract fun conversationPiece(id: String, from: Int, count: Int): ByteArray?
-
-    @Query("SELECT length(payload) FROM conversation_index WHERE name = :name")
-    protected abstract fun shardSize(name: String): Int?
 
     @Query("SELECT substr(payload, :from, :count) FROM conversation_index WHERE name = :name")
     protected abstract fun shardPiece(name: String, from: Int, count: Int): ByteArray?

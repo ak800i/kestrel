@@ -86,13 +86,15 @@ class ConversationChange(val conversations: List<PlainConversation>, val deleted
  *
  * Every read runs its query and decrypts its rows on [dispatcher], on one thread, with no hop between the two, because
  * a Keystore operation after a hop costs about twice as much on the A71 (design R3): a restore is one Keystore
- * operation, the index one per shard, and a body one more. A payload or a shard larger than Android's cursor window
- * takes, on the same thread, a transaction that reads it in pieces ([ConversationDao.whole]). The stamp is a plain
- * query. A read stops between two rows when its caller is cancelled. Reads take no guard, because they store nothing,
- * so that a rebuild's long read never holds up a write; each decryption holds the key's read lock, which a write's
- * [ErasableKey.get] waits for. Writes and [deleteAll] run under the key's [ErasableKey.guard], which every user of the
- * key shares, so that [deleteAll] never erases the key between the encryption of a write and its row. The functions are
- * safe to call from the main thread.
+ * operation, the index one per shard, and a body one more. A read that meets a payload or a shard larger than a piece
+ * of 512 KB is made again, on the same thread, in a transaction that reads the larger ones in pieces, because Android's
+ * cursor window holds at most 2 MB of a row ([ConversationDao]); the rows come back from one version of the table, and
+ * the decryption follows the transaction. The stamp is a plain query. A read stops between two decryptions when its
+ * caller is cancelled. Reads take no guard, because they store nothing, so that a rebuild's long read never holds up a
+ * write's encryption; a read's transaction of pieces holds up a save for a few ms per MB, and each decryption holds the
+ * key's read lock, which a write's [ErasableKey.get] waits for. Writes and [deleteAll] run under the key's
+ * [ErasableKey.guard], which every user of the key shares, so that [deleteAll] never erases the key between the
+ * encryption of a write and its row. The functions are safe to call from the main thread.
  *
  * Only a write makes the key: a read decrypts each row with the key as it is ([ErasableKey.withExisting]), and the
  * key's erasure waits for a decryption that has started. So a read that overlaps [deleteAll] ("delete history") never
@@ -129,21 +131,21 @@ class ConversationArchiveStore(
 
     /** The open conversation, or null: what plan 7B's store reads first, so that a restore waits for one decryption. */
     suspend fun open(): StoredConversation? {
-        val read = withContext(dispatcher) { dao.open()?.let(dao::whole)?.let(::stored) }
+        val read = withContext(dispatcher) { dao.open()?.let(::stored) }
         report(listOfNotNull(read))
         return read
     }
 
     /** The index's shards, none when there is no index, each decrypted right after the query, on the same thread. */
     suspend fun shards(): List<StoredShard> =
-        withContext(dispatcher) { dao.shards().mapNotNull { read -> ensureActive(); dao.whole(read)?.let(::shard) } }
+        withContext(dispatcher) { dao.shards().map { row -> ensureActive(); shard(row) } }
 
     /** The stamp of the closed rows (how many, their newest last change and the sum of their last changes), in one query. */
     suspend fun stamp(): ConversationStamp = withContext(dispatcher) { dao.stamp() }
 
     /** The conversations [ids] that exist, in one query, each decrypted on the same thread: a search's matches, a transcript, a rebuild's page. */
     suspend fun read(ids: Collection<String>): List<StoredConversation> {
-        val stored = withContext(dispatcher) { dao.rows(ids.toList()).mapNotNull { read -> ensureActive(); dao.whole(read)?.let(::stored) } }
+        val stored = withContext(dispatcher) { dao.rows(ids.toList()).map { row -> ensureActive(); stored(row) } }
         report(stored)
         return stored
     }

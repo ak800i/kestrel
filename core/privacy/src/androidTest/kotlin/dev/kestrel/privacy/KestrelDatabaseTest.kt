@@ -116,7 +116,7 @@ class KestrelDatabaseTest {
         val rows = dao.rows(listOf("a", "b", "c"))
         assertEquals(setOf("a" to true, "b" to false), rows.map { it.id to it.open }.toSet())
         assertEquals(3L, rows.single { it.id == "b" }.lastMillis)
-        assertEquals(mapOf("1" to 7.toByte(), "2" to 8.toByte()), dao.shards().associate { it.name to it.payload!!.single() })
+        assertEquals(mapOf("1" to 7.toByte(), "2" to 8.toByte()), dao.shards().associate { it.name to it.payload.single() })
         dao.write(emptyList(), emptyList(), IndexRowUpdate.Replace(emptyList()))
         assertTrue(dao.shards().isEmpty())
     }
@@ -132,7 +132,7 @@ class KestrelDatabaseTest {
             IndexRowUpdate.Update(listOf(shard("0", 9)), emptyList()),
         )
 
-        assertArrayEquals(byteArrayOf(9), dao.shards().single().payload!!)
+        assertArrayEquals(byteArrayOf(9), dao.shards().single().payload)
         assertEquals(ConversationStamp(closed = 2, newest = 300, total = 400), dao.stamp())
         assertEquals(listOf<Any>("c", 499L, 500L, true, 2), dao.open()!!.let { listOf(it.id, it.openedMillis, it.lastMillis, it.open, it.commands) })
         assertEquals(listOf("a", "b"), dao.closedIds())
@@ -158,7 +158,7 @@ class KestrelDatabaseTest {
         assertEquals(2, dao.purge(oldest = 10, newest = 100, index = IndexRowUpdate.Update(listOf(shard("0", 2)), emptyList())))
 
         assertEquals(setOf("oldest", "newest", "open"), dao.rows(listOf("before", "oldest", "newest", "after", "open")).map { it.id }.toSet())
-        assertArrayEquals(byteArrayOf(2), dao.shards().single().payload!!)
+        assertArrayEquals(byteArrayOf(2), dao.shards().single().payload)
     }
 
     @Test
@@ -215,12 +215,9 @@ class KestrelDatabaseTest {
         val shard = ByteArray(3 * MB) { (it % 241).toByte() }
         dao.write(listOf(ConversationRow("big", 1, 2, open = true, commands = 1, payload = payload)), emptyList(), IndexRowUpdate.Update(listOf(ConversationIndexRow("0", shard)), emptyList()))
 
-        val open = dao.open()!!
-        assertNull(open.payload)
-        assertEquals(payload.size, open.size)
-        assertArrayEquals(payload, dao.whole(open)!!.payload)
-        assertArrayEquals(payload, dao.whole(dao.rows(listOf("big")).single())!!.payload)
-        assertArrayEquals(shard, dao.whole(dao.shards().single())!!.payload)
+        assertArrayEquals(payload, dao.open()!!.payload)
+        assertArrayEquals(payload, dao.rows(listOf("big")).single().payload)
+        assertArrayEquals(shard, dao.shards().single().payload)
     }
 
     // Design 9.1 and 9.7 of sub-project 7: when the database opens, Kestrel turns on SQLite's secure deletion on the

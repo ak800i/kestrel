@@ -4,6 +4,7 @@ import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -118,21 +119,20 @@ class LogStoreTest {
         assertEquals(0, dao.rows.size)
     }
 
-    // Design 9.7 of sub-project 7: "delete history" and the appends take their turns in the order of their calls, so
-    // that an entry posted before the deletion, whose write had started, never outlives it, and one posted after it
-    // stays.
+    // Design 9.7 of sub-project 7: a post takes its turn in the log's order before it returns, so that an entry posted
+    // while another write holds the order is written before a deletion of the history that asks later, and never
+    // outlives it; one posted after the deletion stays. A post that only queued its coroutine would take its turn after
+    // the deletion.
     @Test
     fun anEntryPostedBeforeTheHistoryIsDeletedDoesNotOutliveItAndOnePostedAfterItStays() = runTest {
         val gate = CompletableDeferred<Unit>()
-        dao.beforeInsert = { gate.await() }
+        launch(start = CoroutineStart.UNDISPATCHED) { store.inOrder { gate.await() } }
         store.post(ActivityEvent(ActivityKind.NOTE, "before"), backgroundScope)
-        val deletion = launch { store.inOrder { dao.deleteAll() } }
-        runCurrent()
-        store.post(ActivityEvent(ActivityKind.NOTE, "after"), backgroundScope)
+        val deletion = launch(start = CoroutineStart.UNDISPATCHED) { store.inOrder { dao.deleteAll() } }
 
-        dao.beforeInsert = {}
         gate.complete(Unit)
         deletion.join()
+        store.post(ActivityEvent(ActivityKind.NOTE, "after"), backgroundScope)
         runCurrent()
 
         assertEquals(listOf("after"), store.activity().map { it.event.text })
@@ -304,10 +304,7 @@ private class FakeLogDao : LogDao {
     private var nextId = 1L
     var purges = 0
     var failNextPurge = false
-    var beforeInsert: suspend () -> Unit = {}
-
     override suspend fun insert(row: LogEntryRow): Long {
-        beforeInsert()
         val id = nextId++
         rows += LogEntryRow(id, row.log, row.timestampMillis, row.payload)
         return id

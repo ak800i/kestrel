@@ -384,6 +384,23 @@ class ConversationArchiveStoreTest {
         assertEquals(1, decrypted)
     }
 
+    // A large row is read again with its pieces in one transaction, so that its header and its payload come from the
+    // version of the row that the transaction sees: an open row that closes between the first query and the pieces is
+    // not given as the open conversation.
+    @Test
+    fun aLargeOpenRowThatClosesWhileItIsReadIsNotTheOpenConversation() = runTest {
+        val payload = ByteArray(ConversationDao.PIECE_BYTES + 1) { it.toByte() }
+        write(PlainConversation(opened("a", last = 1), payload))
+        val row = dao.rows.getValue("a")
+        dao.afterQuery = {
+            dao.afterQuery = {}
+            dao.rows["a"] = ConversationRow("a", row.openedMillis, row.lastMillis, open = false, commands = row.commands, payload = row.payload)
+        }
+
+        assertEquals(null, store.open())
+        assertEquals(listOf("a" to false), store.read(listOf("a")).map { it.header.id to it.header.open })
+    }
+
     // Design R3 of sub-project 7: a Keystore operation right after a hop to another thread costs about twice as much,
     // so each read goes to the store's dispatcher once, for its query, its pieces and its decryptions, also for a
     // payload or a shard that is read in pieces. A second dispatch between them would count here, whichever thread it
@@ -521,6 +538,9 @@ private class FakeConversationDao : ConversationDao() {
     var transactions = 0
     var pieces = 0
 
+    // Runs after each query of rows, as a write between that query and a later one would.
+    var afterQuery: () -> Unit = {}
+
     override fun write(rows: List<ConversationRow>, deleted: List<String>, index: IndexRowUpdate) {
         transactions++
         super.write(rows, deleted, index)
@@ -536,13 +556,14 @@ private class FakeConversationDao : ConversationDao() {
         super.deleteAll(alsoDeleting)
     }
 
-    override fun open(): ConversationRowRead? = rows.values.firstOrNull { it.open }?.let(::read)
+    override fun openRead(): ConversationRowRead? = rows.values.firstOrNull { it.open }?.let(::read).also { afterQuery() }
 
-    override fun rows(ids: List<String>): List<ConversationRowRead> = ids.mapNotNull { rows[it] }.map(::read)
+    override fun rowReads(ids: List<String>): List<ConversationRowRead> = ids.mapNotNull { rows[it] }.map(::read).also { afterQuery() }
 
     override fun closedIds(): List<String> = rows.values.filter { !it.open }.sortedBy { it.lastMillis }.map { it.id }
 
-    override fun shards(): List<IndexRowRead> = shards.values.map { IndexRowRead(it.name, it.payload.size, it.payload.takeIf { p -> p.size <= PIECE_BYTES }) }
+    override fun shardReads(): List<IndexRowRead> =
+        shards.values.map { IndexRowRead(it.name, it.payload.size, it.payload.takeIf { p -> p.size <= PIECE_BYTES }) }.also { afterQuery() }
 
     override fun isEmpty(): Boolean = rows.isEmpty() && shards.isEmpty()
 
@@ -551,11 +572,7 @@ private class FakeConversationDao : ConversationDao() {
         return ConversationStamp(closed.size, closed.maxOrNull() ?: 0, closed.sum())
     }
 
-    override fun conversationHead(id: String): ConversationRowRead? = rows[id]?.let { read(it).let { r -> ConversationRowRead(r.id, r.openedMillis, r.lastMillis, r.open, r.commands, r.size, null) } }
-
     override fun conversationPiece(id: String, from: Int, count: Int): ByteArray? = rows[id]?.payload?.let { piece(it, from, count) }
-
-    override fun shardSize(name: String): Int? = shards[name]?.payload?.size
 
     override fun shardPiece(name: String, from: Int, count: Int): ByteArray? = shards[name]?.payload?.let { piece(it, from, count) }
 
