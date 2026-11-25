@@ -1283,7 +1283,7 @@ class Listening internal constructor(
     // Section 7.3: the command's job in [scope]. Its end goes to the Orchestrator, and its report to [commandReports].
     private fun startCommand(effect: Effect.RunCommand) {
         val kind = effect.parsed.javaClass.simpleName
-        // A command that was cancelled while it waited for the stopping job never runs.
+        // A command that was cancelled while it waited for a cancelled job that held the screen in [turns] never runs.
         if (effect.command <= cancelledCommand) {
             publish(CommandReport(effect.command, kind, Outcome.CANCELLED))
             return
@@ -1328,7 +1328,7 @@ class Listening internal constructor(
         commandJob = job
     }
 
-    // Section 7.3: the cancelled job is kept as the stopping job, so that nothing new acts on the screen before it has
+    // Section 7.3: the cancelled job holds the screen in [turns], so that nothing new acts on the screen before it has
     // completed, also when Android finishes a gesture or a binder call of it.
     private fun cancelCommand() {
         cancelledCommand = newestCommand
