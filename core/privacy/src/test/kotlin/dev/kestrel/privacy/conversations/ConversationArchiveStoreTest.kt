@@ -23,6 +23,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.security.KeyStoreException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -241,6 +242,25 @@ class ConversationArchiveStoreTest {
         assertTrue(next.read(listOf("b")).single() is StoredConversation.Readable)
     }
 
+    // A "delete history" whose erasure failed deleted the rows and left the key, which must not encrypt the next conversation:
+    // the next change of the same process checks the archive again and erases the key before it stores anything.
+    @Test
+    fun theNextChangeErasesAKeyThatDeleteAllFailedToErase() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()))
+        key.failingErasures = 1
+
+        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is KeyStoreException)
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(key.exists)
+        assertEquals(0, key.erased)
+
+        write(PlainConversation(closed("b", last = 2), "new".encodeToByteArray()))
+
+        assertEquals(1, key.erased)
+        assertEquals(2, key.made)
+        assertTrue(store.read(listOf("b")).single() is StoredConversation.Readable)
+    }
+
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
     // open. The pause can only let a wrong order pass, never fail a right one.
     @Test
@@ -364,10 +384,14 @@ class ConversationArchiveStoreTest {
 
 /**
  * An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes; [erased] counts
- * the erasures of a key that existed, so that a first change that finds no key to erase does not count.
+ * the erasures of a key that existed, so that a first change that finds no key to erase does not count. The next
+ * [failingErasures] erasures throw, as Keystore may, and keep the key.
  */
 private class MemoryKey : ErasableKey {
     override val guard = Mutex()
+
+    @Volatile
+    var failingErasures = 0
 
     @Volatile
     var erased = 0
@@ -392,6 +416,10 @@ private class MemoryKey : ErasableKey {
 
     @Synchronized
     override fun erase() {
+        if (failingErasures > 0) {
+            failingErasures--
+            throw KeyStoreException("the key could not be deleted")
+        }
         if (key != null) erased++
         key = null
     }
