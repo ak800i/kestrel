@@ -17,6 +17,7 @@ import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.FakeOwner
 import dev.kestrel.agent.testing.ScreenBuilder
@@ -112,7 +113,7 @@ class GoalRunnerTest {
 
     private fun TestScope.runner(
         environment: GoalEnvironment,
-        screen: ScreenTurn = ScreenTurn { },
+        screen: ScreenTurn = ScreenTurn { false },
         store: ConversationStore = ArchivedConversationStore(MemoryArchive(), backgroundScope) {},
     ): GoalRunner {
         val clock = ManualConversationClock({ testScheduler.currentTime })
@@ -208,7 +209,7 @@ class GoalRunnerTest {
         }
         val clock = ManualConversationClock({ testScheduler.currentTime })
         val failures = mutableListOf<String>()
-        val runner = GoalRunner(failing, ScreenTurn { }, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { what, _ -> failures += what }
+        val runner = GoalRunner(failing, ScreenTurn { false }, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { what, _ -> failures += what }
 
         runner.run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), FakeOwner())
         advanceUntilIdle()
@@ -490,6 +491,39 @@ class GoalRunnerTest {
         assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
         assertTrue(environment.starts.isEmpty())
         assertEquals(0, environment.released)
+    }
+
+    // Whole-plan re-review of plan 7D, N1: a round takes the screen's turn at every gate, not only at its start, so a round
+    // that goes on after a pause ("Continue the goal?"), a hand-over or a permission request waits for an instant command
+    // that holds the screen, as a new round does; a turn that waited makes the run look at the screen again.
+    @Test
+    fun everyGateOfARoundTakesTheScreensTurnAlsoAfterAResume() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val given = CompletableDeferred<Unit>()
+        var takes = 0
+        val screen = ScreenTurn {
+            when (takes++) {
+                0 -> false
+                1 -> {
+                    given.await()
+                    true
+                }
+                else -> false
+            }
+        }
+        val owner = FakeOwner().apply { gates += Gate.RESUMED }
+
+        runner(environment, screen).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+        assertEquals(2, takes)
+        assertTrue(environment.data.calls.isEmpty())
+        assertTrue(listener.ends.isEmpty())
+        given.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(takes > 2)
+        assertEquals(1, listener.ends.size)
     }
 
     @Test

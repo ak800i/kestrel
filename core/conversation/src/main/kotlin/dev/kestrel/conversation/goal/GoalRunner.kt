@@ -37,7 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Runs a goal's rounds (design 7.1 of sub-project 7). Each round waits for the screen's turn, prepares its ports through
+ * Runs a goal's rounds (design 7.1 of sub-project 7). Each round waits for the screen's turn, at its start and at every
+ * gate of its run (`TurnTakingOwner`), prepares its ports through
  * [environment], builds its request with [GoalRequests], runs `Agent.run` with the conversation's test mode in its
  * settings (design 12.4), and gives its end to the goal's listener exactly once on every path, with Kestrel's sentence: the
  * environment's refusal, the call backstop's when it stopped the goal, or the environment's sentence. A goal that ended
@@ -110,7 +111,7 @@ class GoalRunner(
             // A round that a touch or a stop cancelled before it first ran prepares nothing.
             currentCoroutineContext().ensureActive()
             screen.take()
-            when (val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, searched(plan), RoundPurpose.GOAL))) {
+            when (val setup = environment.prepare(RoundStart(goal.command, plan.options, TurnTakingOwner(owner, screen), goal, searched(plan), RoundPurpose.GOAL))) {
                 is RoundSetup.Refused -> {
                     result = TaskReport(setup.end)
                     refused = setup.sentence

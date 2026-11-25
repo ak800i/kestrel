@@ -100,7 +100,7 @@ class ConversationEngineTest {
         report: (String, Throwable) -> Unit = { _, error -> throw error },
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
-        val goals = GoalRunner(environment, ScreenTurn { }, search, clock) { _, error -> throw error }
+        val goals = GoalRunner(environment, ScreenTurn { false }, search, clock) { _, error -> throw error }
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },

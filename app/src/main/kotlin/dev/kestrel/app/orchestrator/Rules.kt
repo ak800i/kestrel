@@ -369,6 +369,13 @@ sealed interface Event {
      * conversation (design 11 of sub-project 7). The voice no longer waits for its answer.
      */
     data class ChannelWithdraws(val question: Int) : Event
+
+    /**
+     * A goal's round needs the screen while instant command number [command] holds it (`ScreenTurns`, the one rule for who
+     * acts on the screen; design 6.5 of sub-project 7): the conversation's work goes first, so the command is cancelled,
+     * as for "stop", and the round waits until its job has ended.
+     */
+    data class ScreenWanted(val command: Int) : Event
 }
 
 /** What Kestrel says. */
@@ -647,7 +654,7 @@ object Rules {
             }
         }
         // A command that has ended or was cancelled may still report; nothing changes then.
-        is Event.CommandEnded, is Event.CommandAsks, is Event.CommandSays, is Event.CommandCounts -> Step(state)
+        is Event.CommandEnded, is Event.CommandAsks, is Event.CommandSays, is Event.CommandCounts, is Event.ScreenWanted -> Step(state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
@@ -732,8 +739,7 @@ object Rules {
             return withdrawn.then { if (request == Request.TurnOff) turnOff(it) else changeMode(it, Mode.PAUSED) }
         }
         if (request == Request.Name && state.goal == null) return askForTask(state, shown)
-        if (!state.voiceAnswers) return Step(state, listOf(shown))
-        if (question.kind == QuestionKind.CONTINUE_GOAL && request is Request.Task) return converse(state, InputIntent.Command(request.text), event, shown)
+        if (state.voiceAnswers && request is Request.Task && steers(question, request)) return converse(state, InputIntent.Command(request.text), event, shown)
         val answer = spokenAnswer(state, question, request, event) ?: return Step(state, listOf(shown))
         return answer(state, question, answer, event, shown)
     }
@@ -742,23 +748,24 @@ object Rules {
     // for the question's kind, or null when the words are no answer: while only the card may answer, and for a command
     // after the name, which answers "Continue the goal?" as steering. Idle and while an instant command runs alike.
     private fun spokenAnswer(state: State, question: VoiceQuestion, request: Request, event: Event.Heard): ChannelAnswer? = when {
-        !state.voiceAnswers -> null
-        question.kind == QuestionKind.CONTINUE_GOAL && request is Request.Task -> null
+        !state.voiceAnswers || steers(question, request) -> null
         else -> VoiceAnswers.read(question.kind, event.text, event.named, request)
     }
 
-    // The controller's decision of 2026-11-25 (design 11 of sub-project 7): while an instant command runs without a
-    // question of its own, the owner's answer to the conversation's open question reaches it with its number, and the
-    // command goes on, because an answer needs no screen. A yes to "Continue the goal?" resumes the goal's round, which
-    // may not act beside a command (ScreenTurns), so it cancels the command first. "Stop", "stop listening", "turn off"
-    // and "Kestrel" keep their own meaning, and while the command asks, its own question takes the words; null then, and
-    // for words that are no answer.
+    // A command after the name answers "Continue the goal?" as steering (design 6.5 of sub-project 7).
+    private fun steers(question: VoiceQuestion, request: Request): Boolean = question.kind == QuestionKind.CONTINUE_GOAL && request is Request.Task
+
+    // The controller's decision of 2026-11-25 (design 6.5 and 11 of sub-project 7): while an instant command runs without
+    // a question of its own, the owner's answer to the conversation's open question reaches it with its number, and the
+    // command goes on, because an answer needs no screen. When the answer lets a round act, as a yes to "Continue the
+    // goal?" does, the round takes the screen's turn itself (ScreenTurns, Event.ScreenWanted). "Stop", "stop listening",
+    // "turn off" and "Kestrel" keep their own meaning, and while the command asks, its own question takes the words; null
+    // then, and for words that are no answer.
     private fun answerDuringCommand(state: State, request: Request, event: Event.Heard, shown: Effect): Step? {
         val question = state.openQuestion ?: return null
         if (state.asking || keepsItsMeaning(request)) return null
         val answer = spokenAnswer(state, question, request, event) ?: return null
-        if (question.kind != QuestionKind.CONTINUE_GOAL || answer != ChannelAnswer.Yes) return answer(state, question, answer, event, shown)
-        return leaveCommand(state).then { answer(it, question, answer, event, shown) }.stopSayingOnce()
+        return answer(state, question, answer, event, shown)
     }
 
     // Kestrel's requests that keep their meaning while a question is open (design D2 of sub-project 5).
@@ -888,6 +895,8 @@ object Rules {
         // would without a command, on the same latest wait, and the command goes on (whole-plan review of plan 7D, M2).
         is Event.AnswerWaitEnded -> keepOrLeave(state, event).then { commandWaitEnded(it, event.wait) }
         is Event.Heard -> heardDuringCommand(state, event)
+        // A goal's round needs the screen (ScreenTurns): the conversation's work goes first, as for "stop".
+        is Event.ScreenWanted -> if (event.command == state.command) cancelCommand(state) else Step(state)
         // The owner starts to speak: a countdown holds until the transcript decides, and an answer gets the longer wait,
         // also the conversation's.
         Event.Speaking -> when {

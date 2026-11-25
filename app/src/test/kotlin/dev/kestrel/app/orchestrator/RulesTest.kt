@@ -633,7 +633,7 @@ class RulesTest {
             Event.CallState(CallState.IDLE), Event.CallState(CallState.RINGING), Event.CallState(CallState.ACTIVE), Event.Assist,
             Event.Options(WakeUpMode.STAY_OFF, pauseAfterSilence = true, callCommands = true), Event.Silent(1),
             Event.CommandAsks(1, "Which one?"), Event.CommandSays(1, "Calling."), Event.CommandCounts(1, counting = true),
-            Event.AnswerWaitEnded(1), Event.CommandEnded(2, CommandResult(Outcome.DONE)),
+            Event.AnswerWaitEnded(1), Event.CommandEnded(2, CommandResult(Outcome.DONE)), Event.ScreenWanted(1),
         )
         val starts = listOf(
             runningCommand,
@@ -1621,8 +1621,7 @@ class RulesTest {
 
     // The controller's decision of 2026-11-25: an answer needs no screen, so while an instant command runs without a
     // question of its own, the owner's answer to the conversation's open question reaches it with its number, and the
-    // command goes on. Only a yes to "Continue the goal?" resumes a round, which may not act beside the command, so it
-    // cancels the command first. While the command asks, its own question takes the words.
+    // command goes on, also for "Continue the goal?". While the command asks, its own question takes the words.
     @Test
     fun anAnswerToTheConversationsQuestionWhileAnInstantCommandRunsLeavesTheCommandRunning() {
         fun asking(kind: QuestionKind, from: State = runningCommand, voice: Boolean = true): State {
@@ -1649,15 +1648,29 @@ class RulesTest {
         val both = Rules.next(question, Event.CommandAsks(1, "Which one?")).state.copy(speeches = 0)
         assertTrue(heard(both, "Yes.").effects.last() is Effect.AnswerCommand)
 
-        // A paused goal's "Continue the goal?": no keeps the command, and yes cancels it before the goal resumes.
+        // A paused goal's "Continue the goal?" is answered as any question, and the command goes on: the resumed round
+        // takes the screen's turn itself (ScreenWanted; whole-plan re-review of plan 7D, N1).
         val paused = asking(QuestionKind.CONTINUE_GOAL, runningCommand.copy(conversation = VoiceView(open = true, goal = GoalPhase.PAUSED)))
         assertEquals(Work.RUNNING_COMMAND, heard(paused, "No.").state.work)
         val resumed = heard(paused, "Yes.")
-        assertEquals(Work.IDLE, resumed.state.work)
+        assertEquals(Work.RUNNING_COMMAND, resumed.state.work)
         assertEquals(
-            listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Yes.")), Effect.Converse(InputIntent.Answer(ChannelAnswer.Yes, question = 4), Event.Heard("Yes.", named = false))),
+            listOf(Effect.Show(Feedback.Heard("Yes.")), Effect.Converse(InputIntent.Answer(ChannelAnswer.Yes, question = 4), Event.Heard("Yes.", named = false))),
             resumed.effects,
         )
+    }
+
+    // Whole-plan re-review of plan 7D, N1: a goal's round that needs the screen while an instant command holds it asks for
+    // it (ScreenTurns), and the conversation's work goes first: the command is cancelled, as for "stop", and the bar says
+    // so. A request for an older command, or while none runs, changes nothing.
+    @Test
+    fun aRoundThatWantsTheScreenCancelsTheRunningCommand() {
+        val wanted = Rules.next(runningCommand, Event.ScreenWanted(1))
+        assertEquals(listOf(Effect.CancelCommand, Effect.Show(Feedback.CommandCancelled)), wanted.effects)
+        assertEquals(Work.IDLE, wanted.state.work)
+
+        assertEquals(Step(runningCommand), Rules.next(runningCommand, Event.ScreenWanted(0)))
+        assertEquals(Step(listening), Rules.next(listening, Event.ScreenWanted(1)))
     }
 
     @Test

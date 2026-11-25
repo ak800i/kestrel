@@ -69,6 +69,9 @@ class ListeningTest {
 
     // While set, the settings' start waits for it, as Android's start may take up to 5 s.
     private var settingsHeld: CompletableDeferred<Unit>? = null
+
+    // The screen's turn, which a goal's round takes in the app (design 6.5 of sub-project 7).
+    private val turns = ScreenTurns({ what, error -> reports += what to error })
     private val conditions = FakeConditions()
     private val notices = FakeNotices()
     private val memory = FakeMemory()
@@ -525,6 +528,33 @@ class ListeningTest {
         runCurrent()
         assertEquals(listOf<Command>(Command.Scroll(Direction.DOWN, null), Command.Scroll(Direction.UP, null)), runner.started)
         assertEquals(listOf(Outcome.CANCELLED, Outcome.DONE), commandReports.map { it.outcome })
+    }
+
+    // Whole-plan re-review of plan 7D, N1: a goal's round that takes the screen's turn while an instant command runs has the
+    // Orchestrator cancel the command, and gets the screen only once the command's job has really ended.
+    @Test
+    fun aRoundThatTakesTheScreenHasTheRunningCommandCancelledAndWaitsForItsJob() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        val gate = CompletableDeferred<Unit>()
+        runner.action = {
+            withContext(NonCancellable) { gate.await() }
+            CommandResult(Outcome.DONE)
+        }
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        assertEquals(Work.RUNNING_COMMAND, listening.state.value.work)
+
+        val taken = async { turns.take() }
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(ListeningTexts.CANCELLED, shown.last())
+        assertFalse(taken.isCompleted)
+        gate.complete(Unit)
+        runCurrent()
+
+        assertTrue(taken.await())
+        assertEquals(listOf(Outcome.CANCELLED), commandReports.map { it.outcome })
     }
 
     @Test
@@ -2981,7 +3011,7 @@ class ListeningTest {
         calls = calls,
         callActions = callActions,
         commands = runner,
-        turns = ScreenTurns({ what, error -> reports += what to error }),
+        turns = turns,
         options = options,
         microphones = { microphone },
         timeline = timeline,

@@ -67,10 +67,13 @@ sealed interface RoundSetup {
 }
 
 /**
- * The screen's turn (design 7.1 of sub-project 7): [take] returns when no instant command or settings page holds the
- * screen, so that a command that still runs ends first (spec 7.3). A goal never holds the screen itself, so the instant
- * commands still work during its hand-overs and pauses. `:app`'s `ScreenTurns` (plan 7D) implements it.
+ * The screen's turn (spec 7.3; design 6.5 and 7.1 of sub-project 7), the one rule for who acts on the screen: [take]
+ * returns once no instant command holds the screen. A command that still runs is asked to let go (the Orchestrator cancels
+ * it), and its job, running or cancelled, is waited for until it has really ended. [take] is true when it waited, because
+ * the screen may have changed meanwhile. A goal never holds the screen itself, so the instant commands still work during
+ * its hand-overs and pauses; each of its rounds takes the turn at its start and at every gate (`GoalRunner`). `:app`'s
+ * `ScreenTurns` (plan 7D) implements it.
  */
 fun interface ScreenTurn {
-    suspend fun take()
+    suspend fun take(): Boolean
 }

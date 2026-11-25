@@ -1293,7 +1293,7 @@ class Listening internal constructor(
     }
 
     /**
-     * Runs [action] at once, or, while a cancelled command's job holds the screen, on [thread] once [turns] gives the
+     * Runs [action] at once, or, while an earlier command's job still holds the screen, on [thread] once [turns] gives the
      * screen back (section 7.3). A deferred action that throws is reported, and then [failed] runs.
      */
     private fun afterStopping(failed: () -> Unit = {}, action: () -> Unit) {
@@ -1365,17 +1365,19 @@ class Listening internal constructor(
             }
         }
         commandJob = job
+        // The command holds the screen until its job has ended; a goal's round that needs the screen meanwhile has the
+        // Orchestrator cancel it (design 6.5 of sub-project 7).
+        turns.started(job) { send(Event.ScreenWanted(effect.command)) }
     }
 
-    // Section 7.3: the cancelled job holds the screen in [turns], so that nothing new acts on the screen before it has
-    // completed, also when Android finishes a gesture or a binder call of it.
+    // Section 7.3: the cancelled job still holds the screen in [turns] until it has completed, so that nothing new acts on
+    // the screen before, also when Android finishes a gesture or a binder call of it.
     private fun cancelCommand() {
         cancelledCommand = newestCommand
         conversation = null
         val job = commandJob ?: return
         commandJob = null
         job.cancel()
-        turns.stopped(job)
     }
 
     private fun publish(done: CommandReport) {
