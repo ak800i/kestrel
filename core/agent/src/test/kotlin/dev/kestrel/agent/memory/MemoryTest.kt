@@ -177,6 +177,18 @@ class MemoryTest {
         assertEquals(TaskMemory.NOTES_HEADER + "\n- \"Viber\": tap \"Chats\"", memory.notesFor("com.viber.voip"))
     }
 
+    // Review of plan 7A, S2: a note's labels are screen text, escaped as every quoted label is, so that a label that ends
+    // with a backslash cannot open its quote.
+    @Test
+    fun aNotesLabelsAreEscapedAsScreenText() = runTest {
+        val note = RouteNote("com.viber.voip", "open \"Chats\\\" → tap \"Ana\"", "26.1", "en", proposals = 2)
+        val store = FakeMemory().apply { notes["com.viber.voip"] = listOf(note) }
+        val memory = TaskMemory(store, FakeApps(), FakeClock(), Redactor(Vault()))
+        memory.load()
+
+        assertEquals(TaskMemory.NOTES_HEADER + "\n- \"Viber\": open \"Chats\\\\\" → tap \"Ana\"", memory.notesFor("com.viber.voip"))
+    }
+
     @Test
     fun factsThatTheRequestNamesGoIntoTheContextAndAliasesResolveFirst() = runTest {
         val harness = Harness(Screens.chats(), listOf(

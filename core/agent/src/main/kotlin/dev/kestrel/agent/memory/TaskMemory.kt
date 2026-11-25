@@ -130,8 +130,8 @@ class TaskMemory(
         if (names.isNotEmpty()) store.addFoundContacts(names)
     }
 
-    // A stored note, and its path written again from its parsed steps.
-    private class ShownNote(val stored: RouteNote, val path: String) {
+    // A stored note with its parsed steps.
+    private class ShownNote(val stored: RouteNote, val steps: List<RouteStep>) {
         override fun toString(): String = "ShownNote($stored)"
     }
 
@@ -139,11 +139,13 @@ class TaskMemory(
     // with quoted labels, such as one stored before its labels were checked, is left out and never reaches a request.
     private suspend fun activeNotes(app: LauncherApp): List<ShownNote> = store.notes(app.packageName)
         .filter { it.active && it.strikes < MAX_STRIKES }
-        .mapNotNull { note -> RouteNote.parse(note.path)?.let { ShownNote(note, RouteNote.format(it)) } }
+        .mapNotNull { note -> RouteNote.parse(note.path)?.let { ShownNote(note, it) } }
 
     private fun line(app: LauncherApp, note: ShownNote): String {
         val version = note.stored.version?.takeIf { it != app.versionName }?.let { " (written for version ${ScreenText.quote(it, ScreenText.LABEL_LIMIT)})" }.orEmpty()
-        return "- ${ScreenText.quote(app.label, ScreenText.LABEL_LIMIT)}: ${note.path}$version"
+        // Each label is screen text, quoted and escaped as every label of a request is.
+        val path = note.steps.joinToString(" → ") { step -> step.label?.let { "${step.verb} ${ScreenText.quote(it, ScreenText.LABEL_LIMIT)}" } ?: step.verb }
+        return "- ${ScreenText.quote(app.label, ScreenText.LABEL_LIMIT)}: $path$version"
     }
 
     private fun appFor(name: String): LauncherApp? =
