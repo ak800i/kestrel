@@ -1109,7 +1109,7 @@ The deleted JVM tests and their successors (design 14.3 of sub-project 7: every 
 - Produces (`TaskWitness`): `said`, `watch` and `evidence` without `ended`; `TaskEvidence(said, markerInData)` without `spoken`.
 - Produces (debug): `CommandTags.Role.CONVERSE`, `CommandTags.input(heard, input)`, `CommandTags.onConversationStep(event, state, step)`, `CommandTags.lastGoalWords`; `VoiceHooks.install(graph)`; `AgentHookAnswers.Ended(report, spoken, touches, signals, evidence)`, `AgentHookAnswers.asking(kind)`, `AgentHookAnswers.question(kind: QuestionKind)`, `answerRefusal(asking: QuestionKind?, …)`; `StandInRound(seconds, reply)`. `:tools:eval`: `Refusals.ENDS = setOf("NO_PROFILE", "NO_SCREEN")`, and `Refusals.KINDS` without `cancelled` and `could-not-start`. Device tests: `AgentTests.run(request, model: ModelPort)`, `AgentTests.turnOff()`, `AgentTests.spoken()`; `HeldModel(model: ModelPort) : ModelPort` with `calls` and `release()`.
 
-Counts: `:app` JVM A₂ − 1 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 4 + 1 = 5, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 7, `OwnerSupportTest` 3, `ConversationSignalsTest` 6, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
+Counts: `:app` JVM A₂ − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 4 + 1 = 5, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 8, `OwnerSupportTest` 3, `ConversationSignalsTest` 6, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
 
 - [ ] **Step 1: Check the plans that this task consumes, and count the tests of the files that it deletes**
 
@@ -1260,6 +1260,7 @@ import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.VoicePath
+import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.QuestionKind
@@ -1297,6 +1298,29 @@ class VoiceChannelTest {
 
         assertEquals(listOf("Android gave Kestrel only the photos that you selected.", "Done."), voice.said)
         assertEquals(listOf("Got it."), voice.shown)
+    }
+
+    // The engine says "I got 'X' too late" at once, also while a goal's final words still play (plan 7B): each spoken
+    // output waits until the one before it has ended, in the order in which they came.
+    @Test
+    fun spokenOutputsPlayOneAfterAnotherInTheOrderInWhichTheyCame() = runTest {
+        val tooLate = ConversationTexts.cameTooLate("and to Ana")
+        voice.holds = true
+        val report = async { channel.show(ChannelOutput.Report(3, "Done.")) }
+        runCurrent()
+        val late = async { channel.show(ChannelOutput.Said(tooLate)) }
+        runCurrent()
+        assertEquals(listOf("Done."), voice.said)
+
+        voice.ends.removeFirst().complete(Unit)
+        runCurrent()
+        assertTrue(report.isCompleted)
+        assertEquals(listOf("Done.", tooLate), voice.said)
+        assertFalse(late.isCompleted)
+
+        voice.ends.removeFirst().complete(Unit)
+        runCurrent()
+        assertTrue(late.isCompleted)
     }
 
     @Test
@@ -1415,8 +1439,13 @@ class VoiceChannelTest {
         val handOvers = mutableListOf<String>()
         val withdrawn = mutableListOf<Int>()
 
+        // While [holds], each speech lasts until the test ends it, through [ends] in order.
+        var holds = false
+        val ends = ArrayDeque<CompletableDeferred<Unit>>()
+
         override suspend fun say(text: String) {
             said += text
+            if (holds) CompletableDeferred<Unit>().also(ends::addLast).await()
         }
 
         override fun show(text: String) {
@@ -7929,6 +7958,8 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -7953,10 +7984,14 @@ internal class VoiceChannel(
 ) : OwnerChannel {
     override val kind: InputChannel = InputChannel.VOICE
 
+    // Spoken outputs take turns in the order in which they came: each starts once the one before it has ended, so that a
+    // sentence that the engine says at once, as "I got 'X' too late", never plays over a goal's final words.
+    private val speaking = Mutex()
+
     override suspend fun show(output: ChannelOutput) {
         when (output) {
-            is ChannelOutput.Said -> voice.say(output.text)
-            is ChannelOutput.Report -> voice.say(output.text)
+            is ChannelOutput.Said -> speaking.withLock { voice.say(output.text) }
+            is ChannelOutput.Report -> speaking.withLock { voice.say(output.text) }
             is ChannelOutput.Shown -> voice.show(output.text)
         }
     }
@@ -10217,7 +10252,7 @@ Expected: PASS.
 - [ ] **Step 14: Run every module that this task touches, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :core:conversation:test :core:agent:test :tools:eval:test :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'tools\eval\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`, then `scripts\test-scripts.ps1`
-Expected: BUILD SUCCESSFUL; `app` A₂ − 3 − D; `tools\eval` E₀ + 1; `device` AD₀ + 2; `:core:conversation` C₀ and `:core:agent` G₀ tests pass, as their reports show; `scripts\test-scripts.ps1` passes with the count of Pester tests that it had before (the scripts' changes are comments).
+Expected: BUILD SUCCESSFUL; `app` A₂ − D; `tools\eval` E₀ + 1; `device` AD₀ + 2; `:core:conversation` C₀ and `:core:agent` G₀ tests pass, as their reports show; `scripts\test-scripts.ps1` passes with the count of Pester tests that it had before (the scripts' changes are comments).
 
 - [ ] **Step 15: Commit**
 
@@ -10985,14 +11020,14 @@ with:
 In `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, replace:
 
 ```kotlin
-            is ChannelOutput.Report -> voice.say(output.text)
+            is ChannelOutput.Report -> speaking.withLock { voice.say(output.text) }
 ```
 
 with:
 
 ```kotlin
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
-            is ChannelOutput.Report -> voice.say(output.text, final = true)
+            is ChannelOutput.Report -> speaking.withLock { voice.say(output.text, final = true) }
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
@@ -12454,7 +12489,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 ## Counts at the end of plan 7D
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 17 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 4, Task 2 + 3, Task 3 − 3 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 20 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 4, Task 2 + 3, Task 3 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
 - `:core:conversation`: C₀ + 2 (`ConversationEngineTest` + 2, Task 7), on top of plan 7B's count as built (`25cdca0a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
 
@@ -12474,7 +12509,7 @@ What plans 7E and 7F consume, as this plan leaves `:app`. Every type is `interna
 
 **The voice (plans 7E and 7F)**
 - `Listening.voicePath: VoicePath` (`ready: StateFlow<Boolean>`, `say(text, final = false)`, `show(text)`, `ask(question, text, kind, voice)`, `handOver(text)`, `withdraw(question)`), `Listening.converse: (OwnerInput) -> Unit` and `Listening.awaitingCommand: (Boolean) -> Unit`, which the app graph sets.
-- `VoiceChannel(voice: VoicePath, screen: OwnerScreen, audio: OtherAudio, handOvers: HandOverSignals, permissions: PermissionDialog) : OwnerChannel`: the voice channel's output, its questions with the Orchestrator's answer waits, the card for a confirmation or a screenshot question, the other app's audio, and the hand-overs. The voice channel draws that card itself (`OwnerScreen.card`), also while Kestrel is off, because the screen session does not depend on the listening mode. Plan 7B's `ConversationOwner` asks a spoken conversation's question on the text channel too from the moment Kestrel is off, so plan 7F's `TextChannel` must not draw a second card for a question that the voice channel already shows on its card (a confirmation, and a screenshot question while another app's audio plays): the two channels share the one `QuestionCard`, one card per question number, or `TextChannel` leaves those questions to the voice channel's card. Either way, the owner sees one card for one question. A held goal's sentence comes from plan 7B's machine with `ConversationTexts.held(hold)` at its end, so a goal held at Kestrel's own screen says "Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'." (design 10.2); the voice speaks it and the bar shows it. Plan 7E's notification shows the same sentence for the same hold.
+- `VoiceChannel(voice: VoicePath, screen: OwnerScreen, audio: OtherAudio, handOvers: HandOverSignals, permissions: PermissionDialog) : OwnerChannel`: the voice channel's output, whose spoken outputs take turns in the order in which they came (each starts once the one before it has ended, so that the engine's "too late" sentence never plays over a goal's final words), its questions with the Orchestrator's answer waits, the card for a confirmation or a screenshot question, the other app's audio, and the hand-overs. The voice channel draws that card itself (`OwnerScreen.card`), also while Kestrel is off, because the screen session does not depend on the listening mode. Plan 7B's `ConversationOwner` asks a spoken conversation's question on the text channel too from the moment Kestrel is off, so plan 7F's `TextChannel` must not draw a second card for a question that the voice channel already shows on its card (a confirmation, and a screenshot question while another app's audio plays): the two channels share the one `QuestionCard`, one card per question number, or `TextChannel` leaves those questions to the voice channel's card. Either way, the owner sees one card for one question. A held goal's sentence comes from plan 7B's machine with `ConversationTexts.held(hold)` at its end, so a goal held at Kestrel's own screen says "Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'." (design 10.2); the voice speaks it and the bar shows it. Plan 7E's notification shows the same sentence for the same hold.
 - The ports `OwnerScreen` (`card`, `releaseBar`, `kestrelInFront`), `OtherAudio` (`playing`, `pause`), `HandOverSignals` (`opened`, `endedByItself`), `PermissionDialog` (`ask`) and `TouchWatch` (`forgetOwnActions`, `watch`), which `AndroidOwnerSupport` implements but `PermissionDialog`, which the app graph makes from `PermissionActivity.ask`: plan 7F's `TextChannel` takes the ports that it uses from the same `AndroidOwnerSupport`, so that both channels share one implementation. `QuestionKind.DELETE_HISTORY` (plan 7B, `2113f5a0`) is a yes-or-no question on the card.
 - `Rules`' state: `conversation: VoiceView`, `openQuestion: VoiceQuestion?`, `goal: GoalPhase?`, `goalWorks`; `Work.FOLLOWING_UP`; `Event.FollowUpLength(millis)`, which the app graph sends at every change of the Conversations page; `Event.ConversationChanged(VoiceView)`, from `engine.view.forVoice()`.
 - `ScreenTurns.take()` waits only for an instant command that the Orchestrator cancelled, not for one that still runs: `Rules` cancels a running command before every `Effect.Converse`, so in this plan no round starts beside one. Plan 7F's typed and card inputs reach the engine without the Orchestrator, so plan 7F either cancels a running instant command first or registers running commands in `ScreenTurns`, to keep plan 7B's `ScreenTurn` contract ("returns when no instant command holds the screen").
