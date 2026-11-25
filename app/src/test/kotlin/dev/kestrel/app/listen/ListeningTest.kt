@@ -1530,6 +1530,24 @@ class ListeningTest {
     }
 
     @Test
+    fun kestrelStaysOffAfterAStopThatCannotBeToldFromAnUpdate() = runTest {
+        // On Android 13, a stop within a minute of Kestrel's update may be the owner's, so listening stays off after it, as
+        // after the owner's stop (plan 7E).
+        memory.stored = Mode.LISTENING
+        memory.writtenAt = 500_000
+        exits.record = ExitRecord(ExitReason.UNCLEAR_STOP, timestamp = 600_000)
+        val listening = listening()
+
+        listening.onAccessibilityServiceConnected()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertTrue(log.isEmpty())
+        assertEquals(listOf(Mode.OFF), memory.writes)
+        assertTrue(notices.shown.isEmpty())
+    }
+
+    @Test
     fun aCrashSoonAfterARestoreKeepsKestrelOffAndSaysSo() = runTest {
         memory.stored = Mode.LISTENING
         memory.restoredAt = 500_000

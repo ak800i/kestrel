@@ -20,7 +20,7 @@ class KestrelApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
-        graph.scope.launch { graph.conversations.restore() }
+        graph.scope.launch { graph.conversations.restore(graph.previousProcessEnd()) }
         graph.scope.launch { graph.logs.purgeExpired() }
         graph.scope.launch { graph.keepPurgingConversations() }
         // Kestrel creates the folder for its models itself: on Android 17 it can read a folder that adb creates only

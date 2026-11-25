@@ -669,7 +669,8 @@ class Listening internal constructor(
         // made while the clock was behind. Most such cases fall back to the behaviour before the records were read.
         if (exit == null || (stored.writtenAt != null && exit.timestamp < stored.writtenAt)) return Restore.START
         return when (exit.reason) {
-            ExitReason.OWNER_STOPPED -> Restore.STAY_OFF
+            // On Android 13 a stop next to an update may be the owner's, so listening stays off after it too (plan 7E).
+            ExitReason.OWNER_STOPPED, ExitReason.UNCLEAR_STOP -> Restore.STAY_OFF
             ExitReason.CRASH -> {
                 val restored = stored.restoredAt
                 if (restored != null && exit.timestamp - restored < CRASH_AFTER_RESTORE_MILLIS) Restore.CRASHED else Restore.START

@@ -3,16 +3,27 @@ package dev.kestrel.app.listen
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** How a process of Kestrel's ended, as far as the restore needs to know (design spec, section 8.5). */
 internal enum class ExitReason {
     /**
-     * The owner stopped Kestrel: a force stop, "Stop app", or Stop in "Active apps" (prototype P2). On Android 13, an
-     * update of Kestrel gives the same reason.
+     * The owner stopped Kestrel: a force stop, "Stop app", Stop in "Active apps" or removing it from Recents (prototype P2,
+     * and the documentation of Android's Task Manager). Listening stays off, and a restored goal ends as "stop" ends it
+     * (plan 7E).
      */
     OWNER_STOPPED,
+
+    /**
+     * On Android 13, a stop within [UPDATE_MARGIN_MILLIS] of Kestrel's last install or update, before or after it, which
+     * Android 13 records with the same reason as an update (plan 7E). Listening stays off, as after the owner's stop, and a
+     * restored goal is held and asks "Continue the goal?".
+     */
+    UNCLEAR_STOP,
 
     /**
      * Kestrel crashed, in its own code or in a native library, or Android ended it because it stopped answering (an ANR),
@@ -34,23 +45,41 @@ internal fun interface ExitRecords {
 }
 
 /**
- * Reads `ActivityManager.getHistoricalProcessExitReasons()` on [Dispatchers.IO]. It reads only the reason and the time,
- * never the record's description, which can hold the text of an exception (section 13.5).
+ * Reads `ActivityManager.getHistoricalProcessExitReasons()` on [Dispatchers.IO], with the time of Kestrel's last install or
+ * update, which tells the owner's stop from an update on Android 13. It reads only the reason and the times, never the
+ * record's description, which can hold the text of an exception (section 13.5). The app graph builds one, which listening's
+ * restore and the conversation's restore both read (plan 7E).
  */
 internal class AndroidExitRecords(private val context: Context) : ExitRecords {
     override suspend fun newest(): ExitRecord? = withContext(Dispatchers.IO) {
-        context.getSystemService(ActivityManager::class.java)
+        val record = context.getSystemService(ActivityManager::class.java)
             .getHistoricalProcessExitReasons(context.packageName, 0, 1)
             .firstOrNull()
-            ?.let { ExitRecord(exitReasonOf(it.reason), it.timestamp) }
+            ?: return@withContext null
+        val updated = context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0)).lastUpdateTime
+        ExitRecord(exitReasonOf(record.reason, record.timestamp, Build.VERSION.SDK_INT, updated), record.timestamp)
     }
 }
 
-/** What an [ApplicationExitInfo]'s reason [reason], one of its `REASON_*` values, means for the restore (section 8.5). */
-internal fun exitReasonOf(reason: Int): ExitReason = when (reason) {
-    // A force stop, "Stop app" and Stop in "Active apps" (prototype P2). REASON_USER_STOPPED is not the owner's:
-    // Android stopped the user profile that the process ran in.
-    ApplicationExitInfo.REASON_USER_REQUESTED -> ExitReason.OWNER_STOPPED
+/** How near Kestrel's last install or update, before or after it, a stop on Android 13 cannot be told from the update. */
+internal const val UPDATE_MARGIN_MILLIS = 60_000L
+
+/**
+ * What an [ApplicationExitInfo]'s reason [reason], one of its `REASON_*` values, at [timestamp] means for the restores
+ * (section 8.5; plan 7E), on Android [sdk], with the time of Kestrel's last install or update [updatedAt]. From Android 14
+ * an update has a reason of its own. Android 13 gives an update REASON_USER_REQUESTED, and takes the update's time a few
+ * seconds before or after its kill, so there a stop within [UPDATE_MARGIN_MILLIS] of the update, on either side, is
+ * [ExitReason.UNCLEAR_STOP].
+ */
+internal fun exitReasonOf(reason: Int, timestamp: Long, sdk: Int, updatedAt: Long): ExitReason = when (reason) {
+    // A force stop, "Stop app", Stop in "Active apps" and removing Kestrel from Recents (prototype P2). REASON_USER_STOPPED
+    // is not the owner's: Android stopped the user profile that the process ran in.
+    ApplicationExitInfo.REASON_USER_REQUESTED ->
+        if (sdk < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && abs(updatedAt - timestamp) <= UPDATE_MARGIN_MILLIS) {
+            ExitReason.UNCLEAR_STOP
+        } else {
+            ExitReason.OWNER_STOPPED
+        }
     ApplicationExitInfo.REASON_CRASH,
     ApplicationExitInfo.REASON_CRASH_NATIVE,
     ApplicationExitInfo.REASON_ANR,
