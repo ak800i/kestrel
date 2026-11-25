@@ -82,10 +82,18 @@ class ScreenTurnTest {
         val crashed = ScreenBuilder.screen("android", "Viber keeps stopping") { button("Close app", 300) }
         val harness = Harness(crashed, listOf(call("fail", null, null, null, "reason" to "Stop.")))
         repeat(3) { harness.owner.gates += Gate.RESUMED }
-        harness.screen.onSnapshot = { if (harness.screen.actions.any { it is ScreenAction.Global }) harness.screen.current = Screens.chats() }
+        var gatesLeftAtBack: Int? = null
+        harness.screen.onSnapshot = {
+            if (harness.screen.actions.any { it is ScreenAction.Global }) {
+                if (gatesLeftAtBack == null) gatesLeftAtBack = harness.owner.gates.size
+                harness.screen.current = Screens.chats()
+            }
+        }
 
         val report = harness.run("Open Ana's chat")
 
+        // The three pauses were all at the Back's gate, before the app was closed.
+        assertEquals(0, gatesLeftAtBack)
         assertEquals(1, harness.screen.actions.count { it is ScreenAction.Global })
         assertEquals(EndReason.FAILED_BY_MODEL, report.end)
     }

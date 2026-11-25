@@ -552,6 +552,41 @@ class GoalRunnerTest {
         assertEquals(1, listener.ends.size)
     }
 
+    // Task 1b's review, I1: the pause comes after a gate let the run through and before the run takes the turn again. The
+    // pause is the goal's state, so the step that the gate let through holds the turn only until the run's next model call,
+    // and from then until the resume the round holds it at no moment, so no instant command is refused.
+    @Test
+    fun aPauseJustAfterAGateLetTheRunThroughLetsGoOfTheTurnByTheNextModelCall() = runTest {
+        val screen = FakeScreenTurn()
+        val environment = environment(listSms, finish(1))
+        val runner = runner(environment, screen)
+        val resumed = CompletableDeferred<Unit>()
+        var gates = 0
+        val owner = object : OwnerPort by FakeOwner() {
+            override suspend fun gate(): Gate {
+                if (++gates == 1) {
+                    runner.paused()
+                    return Gate.GO
+                }
+                resumed.await()
+                return Gate.RESUMED
+            }
+        }
+        val holdsAtCalls = mutableListOf<Boolean>()
+        environment.beforeCall = { holdsAtCalls += screen.holds }
+
+        runner.run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), owner)
+        advanceUntilIdle()
+        assertEquals(listOf(false), holdsAtCalls)
+        assertFalse(screen.holds)
+        runner.resumed()
+        resumed.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(1, listener.ends.size)
+        assertFalse(screen.holds)
+    }
+
     // Plan 7E: a round whose turn waits behind the owner's instant command, at its start or as a wait for the owner ends,
     // tells its listener as the wait starts and once it has the turn, so that the goal notification can say why the goal
     // does not move while the bar belongs to the command.

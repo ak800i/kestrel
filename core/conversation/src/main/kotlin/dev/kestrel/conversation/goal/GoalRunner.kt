@@ -68,12 +68,16 @@ class GoalRunner(
      * Runs a round of [goal] in [scope]; it returns at once, with the goal's job set. The round starts atomically
      * (`CoroutineStart.ATOMIC`, a delicate API because its body runs even when its job was cancelled before it was
      * dispatched): a touch or a stop that comes before the round first runs still reaches its body, whose first act ends
-     * such a round, so that the round's one exit gives its listener exactly one end on that path too.
+     * such a round, so that the round's one exit gives its listener exactly one end on that path too. The round's view of
+     * the screen's turn exists from here on, so that a pause before the round first runs reaches it too.
      */
     @OptIn(DelicateCoroutinesApi::class)
     fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort) {
         goal.stopSentence = null
-        goal.job = scope.launch(start = CoroutineStart.ATOMIC) { round(goal, plan, owner) }
+        // Every turn of the round goes through its goal, the first and the last too, so that a pause has one rule.
+        val taking = ScreenTakingGoal(goal, screen)
+        turn = taking
+        goal.job = scope.launch(start = CoroutineStart.ATOMIC) { round(goal, taking, plan, owner) }
     }
 
     /**
@@ -96,7 +100,7 @@ class GoalRunner(
         turn?.paused()
     }
 
-    /** The paused goal goes on: a release that waited for the round's step is no longer wanted. */
+    /** The paused goal goes on: the end of the round's step keeps the turn again. */
     fun resumed() {
         turn?.resumed()
     }
@@ -118,15 +122,12 @@ class GoalRunner(
         }
     }
 
-    private suspend fun round(goal: RunningGoal, plan: RoundPlan, owner: OwnerPort) {
+    private suspend fun round(goal: RunningGoal, taking: ScreenTakingGoal, plan: RoundPlan, owner: OwnerPort) {
         // Design D23 of sub-project 5: the steps of the newest finished goal are dropped when a new goal starts.
         if (plan.resume == null) kept = null
         var ready: RoundSetup.Ready? = null
         var result: TaskReport? = null
         var refused: String? = null
-        // Every turn of the round goes through its goal, the first and the last too, so that a pause has one rule.
-        val taking = ScreenTakingGoal(goal, screen)
-        turn = taking
         // The round runs until its agent reports, it is refused, it fails or it is cancelled; then finish ends it, once.
         val cancellation = try {
             // A round that a touch or a stop cancelled before it first ran prepares nothing.
