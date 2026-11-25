@@ -4,7 +4,7 @@
 
 **Goal:** Keep Kestrel's conversations on the phone, encrypted under a key of their own that "delete history" erases, in version 3 of Kestrel's database, behind plan 7B's archive port, and purge the old ones while Kestrel runs.
 
-**Architecture:** `:core:privacy` gets the table `conversations` (`ConversationRow`, `ConversationHeader`, `ConversationDao`, whose writes keep at most one conversation open) and, from Task 4b, the table `conversation_index` with the index of past conversations (`ConversationIndexRow`) in version 3 of `KestrelDatabase`, with Room's automatic migration from version 2; the erasable key `kestrel.conversations` (`ErasableKey`, `KeystoreErasableKey`); and `ConversationArchiveStore`, which knows only plain fields and bytes: it encrypts each payload bound to its conversation's id and the index bound to its name, reads the index, the open conversation and the stamp of the closed rows in one transaction and bodies by id, decrypts each read on the thread that ran its query (design R3: a Keystore operation after a hop costs about twice as much on the A71), tells a payload that fails its check from one in a format that this version cannot read, keeps and reports the latter by its kind only, and erases its key with its rows and its index. `PrivacyStore.conversations` builds it. In `:app`, `RoomRecordArchive` implements plan 7B's `RecordArchive` on it, `AndroidConversationClock` is the conversation's clock, and `AppGraph` builds plan 7B's `ArchivedConversationStore` with the app's scope, for a rebuild of the index, and writes what it notes (a deleted conversation, a rebuilt index) into the activity log by its kind, and plan 7B's `Retention`, which `KestrelApplication` runs for the life of the process. The design's section 9.2 is brought in line with the result.
+**Architecture:** `:core:privacy` gets the table `conversations` (`ConversationRow`, `ConversationHeader`, `ConversationDao`, whose writes keep at most one conversation open) and, from Task 4b, the table `conversation_index` with the index of past conversations (`ConversationIndexRow`) in version 3 of `KestrelDatabase`, with Room's automatic migration from version 2; the erasable key `kestrel.conversations` (`ErasableKey`, `KeystoreErasableKey`); and `ConversationArchiveStore`, which knows only plain fields and bytes: it encrypts each payload bound to its conversation's id and the index bound to its name, reads the index, the open conversation and the stamp of the closed rows in one transaction and bodies by id, decrypts each read on the thread that ran its query (design R3: a Keystore operation after a hop costs about twice as much on the A71), tells a payload that fails its check from one in a format that this version cannot read, keeps and reports the latter by its kind only, and deletes its rows and its index before it erases its key, whose leftover from a process that ended in between the next process's first change erases. `PrivacyStore.conversations` builds it. In `:app`, `RoomRecordArchive` implements plan 7B's `RecordArchive` on it, `AndroidConversationClock` is the conversation's clock, and `AppGraph` builds plan 7B's `ArchivedConversationStore` with the app's scope, for a rebuild of the index, and writes what it notes (a deleted conversation, a rebuilt index) into the activity log by its kind, and plan 7B's `Retention`, which `KestrelApplication` runs for the life of the process. The design's section 9.2 is brought in line with the result.
 
 **Tech Stack:** Kotlin 2.4.21 on Android (minSdk 33, target 37), Room 2.8.5 with KSP 2.3.13, Android Keystore, kotlinx.coroutines 1.11.0 with `kotlinx-coroutines-test`, kotlinx.serialization 1.13.0, JUnit 4.13.2, AndroidX Test (runner 1.7.0, ext-junit 1.3.0), `androidx.room:room-testing`.
 
@@ -81,10 +81,10 @@ The controller accepted these on 2026-11-24; Task 7 writes them into the design'
 
 - **The table decides which conversation is open.** The design's `ConversationDao` is an interface with `@Upsert put`, `openOne`, `closedSince` and `closeAll()`. Here it is an abstract class whose `write` stores all the rows in one transaction and, for each open row, closes every other open row first. The table's `open` column is the one truth about whether a conversation is open: plan 7B's store takes `open` from a row's header, and the snapshot's JSON does not hold it (see "Plan 7B as committed"). So "at most one conversation is open" (design 6.1) holds for everything that reads the archive, whatever its callers write, also for a row that plan 7B's store cannot read and so does not know. Its plain `@Upsert` and `UPDATE` queries are protected. `closedSince` and `closeAll` are not added: plan 7B's store keeps the closed conversations in its index and closes a conversation by writing its snapshot as closed.
 - **The index of past conversations in a table of its own (Task 4b, design 9.2 and R3 as amended on 2026-11-25 and 2026-11-26).** On the A71, reading and decrypting every conversation at the store's first use took 13.8 s, and still 5.2 s in one query. So version 3 also holds the table `conversation_index`, whose rows are the index's shards, each encrypted under the same key and bound to its name; a table of its own keeps every query of `conversations` plain. The DAO's functions block, so that `ConversationArchiveStore` runs a query and the decryption of its rows on one thread: `open()` (a restore), `shards()`, `stamp()` (of the closed rows), `rows(ids)`, `closedIds()` (for a rebuild in pages), `write(rows, deleted, index)`, `purge(oldest, newest, index)` and `deleteAll()`. A restore is one Keystore operation, the index one per shard, and each body that a caller asks for one more.
-- **What `ConversationArchiveStore` offers.** The design lists "encrypt, decrypt, put, headers, get, delete, purge". Here it offers exactly what plan 7B's port needs: `open()`, `shards()`, `stamp()`, `read(ids)`, `closedIds()`, `write(ConversationChange)`, `purge(oldest, newest, IndexUpdate)` and `deleteAll()`. Encryption and decryption stay inside, so no caller handles a ciphertext. The plain fields travel as the table's own `ConversationHeader`, and the stamp as `ConversationStamp`. Its reads take no lock, because they store nothing, and stop between two rows when their caller is cancelled; its writes, its purge and `deleteAll` take the key's guard. `deleteAll` erases the key first and then deletes the rows, so that a deletion cut short leaves nothing that a key opens.
+- **What `ConversationArchiveStore` offers.** The design lists "encrypt, decrypt, put, headers, get, delete, purge". Here it offers exactly what plan 7B's port needs: `open()`, `shards()`, `stamp()`, `read(ids)`, `closedIds()`, `write(ConversationChange)`, `purge(oldest, newest, IndexUpdate)` and `deleteAll()`. Encryption and decryption stay inside, so no caller handles a ciphertext. The plain fields travel as the table's own `ConversationHeader`, and the stamp as `ConversationStamp`. Its reads take no lock, because they store nothing, and stop between two rows when their caller is cancelled; its writes, its purge and `deleteAll` take the key's guard. From Task 4c on, `deleteAll` deletes the rows and the index in one transaction and then erases the key, so that a deletion cut short leaves every conversation as it was and notes nothing; a process that ends between the two leaves an empty archive and its key, which the first change of the next process erases before it stores anything.
 - **Two kinds of unreadable conversation.** Every read tells a payload that fails its check (`FailedCheck`, which plan 7B's store deletes and reports) from one in a format that this version cannot read (`UnknownFormat`, which is kept for a later version and reported once per process by the archive, as `SettingsStore` and `CredentialStore` do). The activity log's texts are "A conversation could not be read, so Kestrel deleted it" (from plan 7B's `ArchiveNote.CONVERSATION_DELETED`) and "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it".
 - **The key is erasable and never in StrongBox.** `ErasableKey` (`guard`, `get()`, `withExisting`, `erase()`) is the key's own type: only a write's `get()` makes the key, a read decrypts with `withExisting`, which never makes it, and `erase()` waits for a read that decrypts with it. `KeystoreErasableKey.of(alias)` gives one key object per alias and process, by construction: it keeps the Keystore key after its first use, as `PrivacyStore`'s `by lazy` keys do, until `erase()` deletes it from Keystore, so that no part of the process, not even a second `PrivacyStore`, keeps a key that another erased. `KeystoreKeys` gains `delete(alias)`. StrongBox's slower operations would make the first read of hundreds of conversations slow (R3), and the data key is not in StrongBox either.
-- **One lock for the key.** Every write of `ConversationArchiveStore` and its `deleteAll` run under the key's own lock, `ErasableKey.guard`, which is process-wide with the key, so that "delete history" can never erase the key between the encryption of a write and its row, which would leave a row that no key opens, also not from a second `PrivacyStore` of the same process. From Task 4b on, its reads take no lock, because they store nothing: a rebuild's read of every row, about 5 s on the A71 for 30 days, never holds up a save. A read that overlaps "delete history" never fails because the key went and never makes a new one: it sees a row as it was, or, once the key is erased, as failing its check (a shard as unreadable), or, once the rows are deleted, not at all; plan 7B's store orders the two, and drops a rebuild that "delete history" overtook.
+- **One lock for the key.** Every write of `ConversationArchiveStore` and its `deleteAll` run under the key's own lock, `ErasableKey.guard`, which is process-wide with the key, so that "delete history" can never erase the key between the encryption of a write and its row, which would leave a row that no key opens, also not from a second `PrivacyStore` of the same process. From Task 4b on, its reads take no lock, because they store nothing: a rebuild's read of every row, about 5 s on the A71 for 30 days, never holds up a save. A read that overlaps "delete history" never fails because the key went and never makes a new one: it sees a row as it was, or, once the key is erased, as failing its check (a shard as unreadable), or, once the rows are deleted, not at all; plan 7B's store orders the two, and drops a rebuild that "delete history" overtook. From Task 4c on, "delete history" deletes the rows before it erases the key, so a read sees a row fail its check only when its query ran before the deletion; and the first change of each process checks, under the guard, whether the archive is empty, and erases the key that a "delete history" cut short between its two steps left.
 - **The purge job runs for the life of the process.** `KestrelApplication` starts plan 7B's `Retention` in `AppGraph.scope`. Unlike the logs' purge, which the accessibility service keeps, it runs with the service on or off, as design 9.3 says ("while the process runs").
 - **The archive's speed is measured in `:core:privacy`.** The device test `ConversationArchiveSpeedTest` writes 300 closed conversations of 12 KB, an open one and an index in two shards of 240 and 210 KB to a database file, and times, each through a new store as after a start of Kestrel, what plan 7B's store does: the restore (`open()`), the restore and the index (`shards()` and `stamp()`), those and the bodies of a search's 5 best matches (`read(ids)`), every closed conversation in pages of 50, as a rebuild reads them (`closedIds()` and `read(page)`), and a close (`write` of a conversation and one shard). It runs only with the instrumentation argument `kestrelArchiveSpeed=true`, so that the routine runs stay quick. It is a measurement: it fails only when something does not read back, and it logs the times under the tag `KestrelArchive`. Two rules decide, in Task 8: the restore, the index and 5 bodies above 500 ms on the A71, the archive's share of design 4.3's 1 s, go to the owner, and so does a close above 500 ms; the emulator's times and the rebuild's read are only noted. It needs no install of Kestrel, so it can run on the A71.
 
@@ -97,6 +97,7 @@ The controller accepted these on 2026-11-24; Task 7 writes them into the design'
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt` (new); test `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt` (new) | Task 3: the archive that knows only bytes |
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/PrivacyStore.kt`; tests `PrivacyStoreTest.kt`, `ConversationArchiveSpeedTest.kt` (new) | Task 4: `PrivacyStore.conversations`, its report of a kept conversation, and the first read's speed |
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt`, `db/KestrelDatabase.kt`, `conversations/ConversationArchiveStore.kt`, `core/privacy/schemas/dev.kestrel.privacy.db.KestrelDatabase/3.json` (generated again); tests `ConversationArchiveStoreTest.kt`, `KestrelDatabaseTest.kt`, `KestrelDatabaseMigrationTest.kt`, `PrivacyStoreTest.kt`, `ConversationArchiveSpeedTest.kt` | Task 4b: the index of past conversations in shards of a table of its own, and reads that decrypt on one thread |
+| `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt` (`isEmpty`), `conversations/ConversationArchiveStore.kt`; tests `ConversationArchiveStoreTest.kt`, `KestrelDatabaseTest.kt` | Task 4c: "delete history" deletes the rows before it erases the key, and an empty archive never keeps its key |
 | `app/build.gradle.kts`, `app/src/main/kotlin/dev/kestrel/app/conversation/RoomRecordArchive.kt` (new); test `app/src/androidTest/kotlin/dev/kestrel/app/conversation/RoomRecordArchiveTest.kt` (new) | Task 5: plan 7B's port on the archive |
 | `app/src/main/kotlin/dev/kestrel/app/conversation/AndroidConversationClock.kt` (new), `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`, `app/src/main/kotlin/dev/kestrel/app/KestrelApplication.kt`; test `app/src/androidTest/kotlin/dev/kestrel/app/AppGraphTest.kt` | Task 6: the store, its report, the clock and the purge job in the app graph |
 | `docs/superpowers/specs/2026-11-24-conversations-design.md` (a check; the amendment of 2026-11-25 wrote it) | Task 7: design 9.1 and 9.2 as built |
@@ -3036,6 +3037,453 @@ git commit -m "feat(privacy): the index of past conversations in shards of a tab
 
 ---
 
+### Task 4c: "Delete history" deletes the rows before it erases the key, and an empty archive never keeps its key
+
+Design 9.1 and 9.7 of sub-project 7, as amended on 2026-11-27. Task 4b's `deleteAll` erased the key first and deleted the rows afterwards, so that a deletion cut short left only rows that no key opens. The re-check of the index found what that costs: a process that ends between the two steps forgets which conversations it deleted, so at the next start plan 7B's store finds every row and every shard failing its check, deletes them, and writes "A conversation could not be read, so Kestrel deleted it" into the activity log once for each conversation, and then "The index of past conversations could not be used, so Kestrel rebuilt it", all after the owner asked to delete his history.
+
+So `deleteAll` now deletes every row and every shard in one transaction, and then erases the key, in one step on one thread under the key's guard:
+- A deletion that does not complete leaves every row as it was and readable; nothing is noted, and the owner can ask again.
+- A process that ends between the two steps leaves an empty archive and its key. The first change of each process (`write` or `purge`) first asks the DAO whether both tables are empty (`ConversationDao.isEmpty()`, one plain query) and erases the key when they are, before it encrypts anything. So an empty archive never keeps its key, and nothing is stored under a key that "delete history" should have erased.
+- A key that fails to erase is erased by the next change's check, because the check runs again after such a failure.
+- Once the key is gone, no key opens the copies of deleted pages that SQLite's journal may still hold, as before.
+
+The first change of a process also erases the key of an archive that retention emptied; that costs nothing, because no row needs it, and the next write makes a new key.
+
+**Files:**
+- Modify: `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt`, `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`
+- Test: `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KestrelDatabaseTest.kt`
+
+**Interfaces:**
+- Consumes: Task 4b's `ConversationDao`, `ConversationArchiveStore` and `ErasableKey` with its `guard` and `withExisting`, as built and reviewed (`d9382170`): only a write makes the key, and a read decrypts with the key as it is.
+- Produces: `abstract fun ConversationDao.isEmpty(): Boolean` (both tables empty); `ConversationArchiveStore.deleteAll()` that deletes the rows and the index in one transaction and then erases the key; `ConversationArchiveStore.write` and `purge`, whose first call in each process erases the key of an empty archive. The schema does not change: `3.json` stays as Task 4b generated it.
+
+Counts: `:core:privacy` JVM N + 1 (`ConversationArchiveStoreTest` 17 → 18; 84 + 1 = 85 at `d9382170`). `:core:privacy` device tests unchanged (`KestrelDatabaseTest` 10, with three more checks).
+
+- [ ] **Step 1: Write the failing tests**
+
+The test key now counts only the erasures of a key that existed, so that the check of an empty archive, which finds no key to erase in a new test, does not count.
+
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
+
+```kotlin
+    }
+
+    // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read. The key goes
+    // first, so that a deletion cut short leaves only rows that no key opens.
+    @Test
+    fun deleteAllErasesTheKeyFirstAndThenTheRowsAndTheIndexSoThatACopyCannotBeRead() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()))
+        val copy = dao.rows.getValue("a")
+        val shard = dao.shards.getValue("0")
+        var erasedBeforeTheRowsWent = false
+        dao.beforeDeleteAll = { erasedBeforeTheRowsWent = key.erased == 1 }
+
+        store.deleteAll()
+
+        assertTrue(erasedBeforeTheRowsWent)
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(dao.shards.isEmpty())
+```
+
+with:
+
+```kotlin
+    }
+
+    // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read. The rows go
+    // first, so that a deletion cut short leaves every row readable and no note of a row that failed.
+    @Test
+    fun deleteAllDeletesTheRowsAndTheIndexAndThenErasesTheKeySoThatACopyCannotBeRead() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()))
+        val copy = dao.rows.getValue("a")
+        val shard = dao.shards.getValue("0")
+        var erasedBeforeTheRowsWent = true
+        dao.beforeDeleteAll = { erasedBeforeTheRowsWent = key.erased > 0 }
+
+        store.deleteAll()
+
+        assertFalse(erasedBeforeTheRowsWent)
+        assertEquals(1, key.erased)
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(dao.shards.isEmpty())
+```
+
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
+
+```kotlin
+        dao.shards["0"] = shard
+        assertTrue(store.read(listOf("a")).single() is StoredConversation.FailedCheck)
+        assertTrue(store.shards().single() is StoredShard.Unreadable)
+    }
+
+    // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
+```
+
+with:
+
+```kotlin
+        dao.shards["0"] = shard
+        assertTrue(store.read(listOf("a")).single() is StoredConversation.FailedCheck)
+        assertTrue(store.shards().single() is StoredShard.Unreadable)
+    }
+
+    // A process that ended between the deletion of the rows and the erasure of the key left the key, which must not encrypt
+    // the next conversation: the first change of the next process erases it, and only that one.
+    @Test
+    fun theFirstChangeOfAProcessErasesTheKeyThatAnEmptyArchiveKept() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()))
+        dao.rows.clear()
+        val next = ConversationArchiveStore(dao, key, dispatcher = Dispatchers.Unconfined)
+
+        assertTrue(next.read(listOf("a")).isEmpty())
+        assertEquals(0, key.erased)
+        next.write(ConversationChange(listOf(PlainConversation(closed("b", last = 2), "new".encodeToByteArray())), emptyList(), IndexUpdate.Keep))
+        assertEquals(1, key.erased)
+        next.write(ConversationChange(listOf(PlainConversation(closed("c", last = 3), "more".encodeToByteArray())), emptyList(), IndexUpdate.Keep))
+        next.purge(oldest = 0, newest = 10, IndexUpdate.Keep)
+        assertEquals(1, key.erased)
+        assertEquals(2, next.read(listOf("b", "c")).filterIsInstance<StoredConversation.Readable>().size)
+
+        // An archive that holds rows keeps its key at a process's first change.
+        ConversationArchiveStore(dao, key, dispatcher = Dispatchers.Unconfined).write(ConversationChange(emptyList(), listOf("c"), IndexUpdate.Keep))
+        assertEquals(1, key.erased)
+        assertTrue(next.read(listOf("b")).single() is StoredConversation.Readable)
+    }
+
+    // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
+```
+
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
+
+```kotlin
+}
+
+/** An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes. */
+private class MemoryKey : ErasableKey {
+    override val guard = Mutex()
+```
+
+with:
+
+```kotlin
+}
+
+/**
+ * An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes; [erased] counts
+ * the erasures of a key that existed, so that a first change that finds no key to erase does not count.
+ */
+private class MemoryKey : ErasableKey {
+    override val guard = Mutex()
+```
+
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
+
+```kotlin
+    @Synchronized
+    override fun erase() {
+        erased++
+        key = null
+    }
+```
+
+with:
+
+```kotlin
+    @Synchronized
+    override fun erase() {
+        if (key != null) erased++
+        key = null
+    }
+```
+
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
+
+```kotlin
+    override fun shards(): List<ConversationIndexRow> = shards.values.toList().also { onQuery() }
+
+    override fun stamp(): ConversationStamp {
+        val closed = rows.values.filter { !it.open }.map { it.lastMillis }
+```
+
+with:
+
+```kotlin
+    override fun shards(): List<ConversationIndexRow> = shards.values.toList().also { onQuery() }
+
+    override fun isEmpty(): Boolean = rows.isEmpty() && shards.isEmpty()
+
+    override fun stamp(): ConversationStamp {
+        val closed = rows.values.filter { !it.open }.map { it.lastMillis }
+```
+
+In `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KestrelDatabaseTest.kt`, replace:
+
+```kotlin
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+```
+
+with:
+
+```kotlin
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+```
+
+In `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KestrelDatabaseTest.kt`, replace:
+
+```kotlin
+    fun rowsReadsOnlyTheAskedRowsAndDeleteAllEmptiesBothTables() {
+        val dao = db.conversationDao()
+        dao.write(
+            listOf(conversation("a", last = 1, open = false), conversation("b", last = 2, open = false), conversation("c", last = 3, open = true)),
+```
+
+with:
+
+```kotlin
+    fun rowsReadsOnlyTheAskedRowsAndDeleteAllEmptiesBothTables() {
+        val dao = db.conversationDao()
+        assertTrue(dao.isEmpty())
+        dao.write(emptyList(), emptyList(), IndexRowUpdate.Update(listOf(shard("0", 1)), emptyList()))
+        assertFalse(dao.isEmpty())
+        dao.write(
+            listOf(conversation("a", last = 1, open = false), conversation("b", last = 2, open = false), conversation("c", last = 3, open = true)),
+```
+
+In `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KestrelDatabaseTest.kt`, replace:
+
+```kotlin
+        dao.deleteAll()
+        assertTrue(dao.rows(listOf("a", "b", "c")).isEmpty())
+        assertTrue(dao.shards().isEmpty())
+    }
+
+    // Design 9.5 and 9.7 of sub-project 7: Android's SQLite overwrites what a delete frees, so that an older copy of a shard
+```
+
+with:
+
+```kotlin
+        dao.deleteAll()
+        assertTrue(dao.rows(listOf("a", "b", "c")).isEmpty())
+        assertTrue(dao.shards().isEmpty())
+        assertTrue(dao.isEmpty())
+    }
+
+    // Design 9.5 and 9.7 of sub-project 7: Android's SQLite overwrites what a delete frees, so that an older copy of a shard
+```
+
+- [ ] **Step 2: Compile the tests to see them fail**
+
+Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest`
+Expected: FAIL, the compiler reports `'isEmpty' overrides nothing`.
+
+- [ ] **Step 3: The query, the order and the check**
+
+In `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt`, replace:
+
+```kotlin
+    @Query("SELECT id FROM conversations WHERE open = 0 ORDER BY last_millis ASC")
+    abstract fun closedIds(): List<String>
+
+    /**
+```
+
+with:
+
+```kotlin
+    @Query("SELECT id FROM conversations WHERE open = 0 ORDER BY last_millis ASC")
+    abstract fun closedIds(): List<String>
+    /**
+     * Whether both tables are empty, as "delete history" leaves them (design 9.7 of sub-project 7): then nothing is stored
+     * under the archive's key.
+     */
+    @Query("SELECT NOT EXISTS (SELECT 1 FROM conversations) AND NOT EXISTS (SELECT 1 FROM conversation_index)")
+    abstract fun isEmpty(): Boolean
+
+    /**
+```
+
+In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
+
+```kotlin
+ * Only a write makes the key: a read decrypts each row with the key as it is ([ErasableKey.withExisting]), and the key's
+ * erasure waits for a decryption that has started. So a read that overlaps [deleteAll] ("delete history") never fails
+ * because the key went, and never makes a new key. It sees each row as one of three: as it was, before the erasure; once
+ * the key is gone and until the rows are deleted, a conversation as [StoredConversation.FailedCheck] (one in a format that
+ * this version cannot read stays [StoredConversation.UnknownFormat]) and a shard as [StoredShard.Unreadable]; and
+ * afterwards not at all. Its caller orders the two (plan 7B's store does). A read with no key at all sees the same as in
+ * the second case.
+ *
+ * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
+```
+
+with:
+
+```kotlin
+ * Only a write makes the key: a read decrypts each row with the key as it is ([ErasableKey.withExisting]), and the key's
+ * erasure waits for a decryption that has started. So a read that overlaps [deleteAll] ("delete history") never fails
+ * because the key went, and never makes a new key. [deleteAll] deletes the rows first and then erases the key, so such a
+ * read sees each row as one of three: as it was; when its query ran before the deletion and the key went while it
+ * decrypted, a conversation as [StoredConversation.FailedCheck] (one in a format that this version cannot read stays
+ * [StoredConversation.UnknownFormat]) and a shard as [StoredShard.Unreadable]; or, when its query ran after the deletion,
+ * not at all. Its caller orders the two (plan 7B's store does). A read with no key at all sees the same as in the second
+ * case. An empty archive never keeps its key: the first change of each process erases the key that a process which ended
+ * between the deletion and the erasure left.
+ *
+ * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
+```
+
+In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
+
+```kotlin
+    private val reports = Mutex()
+    private val reportedUnknown = mutableSetOf<String>()
+
+    /** The open conversation, or null: what plan 7B's store reads first, so that a restore waits for one decryption. */
+```
+
+with:
+
+```kotlin
+    private val reports = Mutex()
+    private val reportedUnknown = mutableSetOf<String>()
+
+    // Whether this process knows that the key is not one that an empty archive kept. Used only under the key's guard.
+    private var keyChecked = false
+
+    /** The open conversation, or null: what plan 7B's store reads first, so that a restore waits for one decryption. */
+```
+
+In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
+
+```kotlin
+     */
+    suspend fun write(change: ConversationChange) {
+        key.guard.withLock {
+            withContext(dispatcher) {
+                val rows = change.conversations.map {
+                    val header = it.header
+                    ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, sealing.encrypt(it.payload, associatedData(header.id)))
+                }
+                dao.write(rows, change.deleted.toList(), encrypted(change.index))
+            }
+        }
+        reports.withLock {
+```
+
+with:
+
+```kotlin
+     */
+    suspend fun write(change: ConversationChange) {
+        changing {
+            val rows = change.conversations.map {
+                val header = it.header
+                ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, sealing.encrypt(it.payload, associatedData(header.id)))
+            }
+            dao.write(rows, change.deleted.toList(), encrypted(change.index))
+        }
+        reports.withLock {
+```
+
+In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
+
+```kotlin
+     * before [oldest] or after [newest], by the table's own times, and changes the index as [index] says; returns how many
+     * conversations went.
+     */
+    suspend fun purge(oldest: Long, newest: Long, index: IndexUpdate): Int =
+        key.guard.withLock { withContext(dispatcher) { dao.purge(oldest, newest, encrypted(index)) } }
+
+    /**
+     * "Delete history" (design 9.7 of sub-project 7): erases the key first, so that nothing stored can be decrypted any more,
+     * also when the deletion that follows does not complete, and then deletes every conversation, the open one too, and the
+     * index. Plan 7B's store deletes a row that fails its check, so a deletion cut short leaves nothing that can be read.
+     * The next write makes a new key.
+     */
+    suspend fun deleteAll() {
+        key.guard.withLock {
+            withContext(dispatcher) {
+                key.erase()
+                dao.deleteAll()
+            }
+        }
+        reports.withLock { reportedUnknown.clear() }
+    }
+
+    private fun encrypted(update: IndexUpdate): IndexRowUpdate = when (update) {
+```
+
+with:
+
+```kotlin
+     * before [oldest] or after [newest], by the table's own times, and changes the index as [index] says; returns how many
+     * conversations went.
+     */
+    suspend fun purge(oldest: Long, newest: Long, index: IndexUpdate): Int = changing { dao.purge(oldest, newest, encrypted(index)) }
+
+    /**
+     * "Delete history" (design 9.7 of sub-project 7), in one step on one thread: deletes every conversation, the open one
+     * too, and the index, in one transaction, and then erases the key, so that not even a copy of the database file, or what
+     * SQLite's journal still holds, can be decrypted any more. A deletion that does not complete leaves every row as it was.
+     * A process that ends between the two leaves an empty archive and its key, which the next process's first change
+     * erases. The next write makes a new key.
+     */
+    suspend fun deleteAll() {
+        key.guard.withLock {
+            withContext(dispatcher) {
+                dao.deleteAll()
+                keyChecked = false
+                key.erase()
+                keyChecked = true
+            }
+        }
+        reports.withLock { reportedUnknown.clear() }
+    }
+
+    /**
+     * Runs [change] under the key's guard on [dispatcher]. The first change of each process first erases the key of an
+     * empty archive, before anything is stored under it again (design 9.7 of sub-project 7).
+     */
+    private suspend fun <T> changing(change: () -> T): T = key.guard.withLock {
+        withContext(dispatcher) {
+            if (!keyChecked) {
+                if (dao.isEmpty()) key.erase()
+                keyChecked = true
+            }
+            change()
+        }
+    }
+
+    private fun encrypted(update: IndexUpdate): IndexRowUpdate = when (update) {
+```
+
+- [ ] **Step 4: Build and run the JVM tests**
+
+Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :core:privacy:compileDebugAndroidTestKotlin`, then `$n = 0; Get-ChildItem core\privacy\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\privacy $n"; git status --short core/privacy/schemas`
+Expected: BUILD SUCCESSFUL; `core\privacy` N + 1 (85 at `d9382170`); no change under `core/privacy/schemas`, because a query changes no schema.
+
+- [ ] **Step 5: The database's device test on kestrel-api37**
+
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.privacy.KestrelDatabaseTest'; scripts\gradle.ps1 --stop`
+Expected: BUILD SUCCESSFUL, 10 tests, none failed; the script ends with exit code 0. `isEmpty()` is true for a new database, false with a shard alone, and true again after `deleteAll()`.
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KestrelDatabaseTest.kt
+git commit -m "fix(privacy): delete history deletes the rows and the index in one transaction before it erases the key, and the first change of each process erases the key of an empty archive, so that a deletion cut short leaves every conversation readable and notes nothing, and no key outlives the rows it opened (plan 7C, design 9.7)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+```
+
+---
+
 ### Task 5: `RoomRecordArchive`, plan 7B's port on the archive
 
 Starts only after plan 7B's Tasks 5a to 5d are carried out (see "Before you start"). `:app` implements `:core:conversation`'s `RecordArchive` with `:core:privacy`'s archive (design 5.1 and 9.2): the snapshot's JSON and the index's shards travel as the bytes that plan 7B's store gives, the plain fields and the stamp as they are, and each kind of stored conversation and of stored shard as its kind of entry.
@@ -3557,7 +4005,7 @@ git commit -m "feat(app): the app graph builds the store of conversations on the
 
 ### Task 7: Design 9.1 and 9.2 as built
 
-The design's amendments of 2026-11-25 and 2026-11-26 (commits of `docs(spec)`, the archive's index) already describe the archive as this plan builds it with Task 4b and plan 7B with its Tasks 5a to 5d: the abstract DAO whose writes keep one conversation open, the table of the index's shards, the restore that reads the open row alone, the shards and the stamp read apart, the reads by id, the change and the purge in one transaction, the two kinds of unreadable conversation, the key outside StrongBox and erased first, and plan 7B's `ConversationStore`. This task checks that the design and the code still say the same; it changes nothing when they do.
+The design's amendments of 2026-11-25 and 2026-11-26 (commits of `docs(spec)`, the archive's index) already describe the archive as this plan builds it with Tasks 4b and 4c and plan 7B with its Tasks 5a to 5d: the abstract DAO whose writes keep one conversation open, the table of the index's shards, the restore that reads the open row alone, the shards and the stamp read apart, the reads by id, the change and the purge in one transaction, the two kinds of unreadable conversation, the key outside StrongBox and erased after the rows, and plan 7B's `ConversationStore`. This task checks that the design and the code still say the same; it changes nothing when they do.
 
 **Files:**
 - None, unless a check fails (then stop and ask the controller).
@@ -3570,8 +4018,8 @@ Counts: no test changes.
 
 - [ ] **Step 1: Check the design's words**
 
-Run: `$spec = 'docs\superpowers\specs\2026-11-24-conversations-design.md'; foreach ($text in 'closeAll', 'openOne', 'encrypt, decrypt, put', '@Dao interface ConversationDao', 'fun headers()', 'deleteOutside', 'conversation_index/past', 'fun first()', 'never made in StrongBox', '@Dao abstract class ConversationDao', 'class ConversationIndexRow', 'conversation_index/<number>', 'abstract fun shards(): List<ConversationIndexRow>', '@Transaction open fun purge(', 'suspend fun searchable(): Searchable', 'the one truth about which conversation is open', 'Why a table of its own', 'SQLITE_SECURE_DELETE') { "$text : $((Select-String -Path $spec -SimpleMatch -CaseSensitive -Pattern $text).Count)" }`
-Expected: `closeAll : 0`, `openOne : 0`, `encrypt, decrypt, put : 0`, `@Dao interface ConversationDao : 0`, `fun headers() : 0`, `deleteOutside : 0`, `conversation_index/past : 0`, `fun first() : 0`, `never made in StrongBox : 1`, `@Dao abstract class ConversationDao : 1`, `class ConversationIndexRow : 1`, `conversation_index/<number> : 1`, `abstract fun shards(): List<ConversationIndexRow> : 1`, `@Transaction open fun purge( : 1`, `suspend fun searchable(): Searchable : 1`, `the one truth about which conversation is open : 1`, `Why a table of its own : 1`, `SQLITE_SECURE_DELETE : 1`. A different count means that the code or the design moved: stop and ask the controller, who brings them back in line in one commit.
+Run: `$spec = 'docs\superpowers\specs\2026-11-24-conversations-design.md'; foreach ($text in 'closeAll', 'openOne', 'encrypt, decrypt, put', '@Dao interface ConversationDao', 'fun headers()', 'deleteOutside', 'conversation_index/past', 'fun first()', 'never made in StrongBox', '@Dao abstract class ConversationDao', 'class ConversationIndexRow', 'conversation_index/<number>', 'abstract fun shards(): List<ConversationIndexRow>', '@Transaction open fun purge(', 'suspend fun searchable(): Searchable', 'the one truth about which conversation is open', 'Why a table of its own', 'SQLITE_SECURE_DELETE', 'abstract fun isEmpty(): Boolean') { "$text : $((Select-String -Path $spec -SimpleMatch -CaseSensitive -Pattern $text).Count)" }`
+Expected: `closeAll : 0`, `openOne : 0`, `encrypt, decrypt, put : 0`, `@Dao interface ConversationDao : 0`, `fun headers() : 0`, `deleteOutside : 0`, `conversation_index/past : 0`, `fun first() : 0`, `never made in StrongBox : 1`, `@Dao abstract class ConversationDao : 1`, `class ConversationIndexRow : 1`, `conversation_index/<number> : 1`, `abstract fun shards(): List<ConversationIndexRow> : 1`, `@Transaction open fun purge( : 1`, `suspend fun searchable(): Searchable : 1`, `the one truth about which conversation is open : 1`, `Why a table of its own : 1`, `SQLITE_SECURE_DELETE : 1`, `abstract fun isEmpty(): Boolean : 1`. A different count means that the code or the design moved: stop and ask the controller, who brings them back in line in one commit.
 
 ---
 
@@ -3636,7 +4084,7 @@ Write the times of both devices into `.superpowers\sdd\progress.md`. These are t
 
 - `AppGraph.conversationStore: ArchivedConversationStore` is the one store of conversations: plan 7D builds `HistorySearch`, `LocalRequests` and `ConversationEngine` on it, and never makes a second `ArchivedConversationStore` (plan 7B's wiring sketch `ArchivedConversationStore(RoomRecordArchive(…), scope) { note -> … }` is this property), so that the index of past conversations and the open conversation in memory follow every change. It reads the index, rebuilds a lost one and tries a failed one again in `AppGraph.scope`. Its decoding and encoding run on the caller's thread, so a caller from the main thread (plan 7F's screen) calls it from a background dispatcher.
 - `AndroidConversationClock` (package `dev.kestrel.app.conversation`) is the `ConversationClock` that plan 7D passes to `HistorySearch`, `GoalRunner`, `LocalRequests` and `ConversationEngine`.
-- "Delete history" (plan 7D): `LocalRequests` calls `conversationStore.deleteAll()`, which empties the store's memory and, through `RoomRecordArchive.deleteAll()` and `ConversationArchiveStore.deleteAll()`, erases the key `kestrel.conversations` and then deletes every row and every shard of the index of past conversations, and `LogStore.deleteHistory()` for both logs. The settings button (`SettingsData.deleteHistory()`) and "Kestrel, delete history" go through `LocalRequests` from plan 7D on, never to the archive directly, because the engine must close the open conversation and refuse while a goal is open.
+- "Delete history" (plan 7D): `LocalRequests` calls `conversationStore.deleteAll()`, which empties the store's memory and, through `RoomRecordArchive.deleteAll()` and `ConversationArchiveStore.deleteAll()`, deletes every row and every shard of the index of past conversations in one transaction and then erases the key `kestrel.conversations`, and `LogStore.deleteHistory()` for both logs. The settings button (`SettingsData.deleteHistory()`) and "Kestrel, delete history" go through `LocalRequests` from plan 7D on, never to the archive directly, because the engine must close the open conversation and refuse while a goal is open.
 - The purge job runs from Kestrel's start (`KestrelApplication` calls `AppGraph.keepPurgingConversations()`); plan 7F's Conversations page changes `SettingKeys.CONVERSATIONS`, and a change of `keptDays` purges at once.
 - `SettingKeys.CONVERSATIONS: SettingKey<ConversationSettings>` (stored as `conversations`) exists from this plan; plan 7D's engine reads it with `settings.observe(SettingKeys.CONVERSATIONS)` and adds no second key.
 - The activity log's texts for the archive are "A conversation could not be read, so Kestrel deleted it", "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations" and "Kestrel could not read the index of past conversations and tries again later" (the app graph, from plan 7B's `ArchiveNote`), and "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it" (`PrivacyStore`).
@@ -3644,7 +4092,7 @@ Write the times of both devices into `.superpowers\sdd\progress.md`. These are t
 
 ## Counts at the end of plan 7C
 
-- `:core:privacy` JVM: P₀ + 18 (Task 2: 1, Task 3: 10, Task 4b: 7).
+- `:core:privacy` JVM: P₀ + 19 (Task 2: 1, Task 3: 10, Task 4b: 7, Task 4c: 1).
 - `:app` JVM: A₀ (unchanged).
 - `:core:privacy` device tests: D₀ + 13 (32 when D₀ is 19), one of them skipped without its instrumentation argument.
 - `:app` device tests: AD₀ + 7 (450 when AD₀ is 443).
@@ -3658,7 +4106,7 @@ Write the times of both devices into `.superpowers\sdd\progress.md`. These are t
 
 ## Self-review
 
-- **Spec coverage.** Design 9.1: the table in `kestrel.db` (Task 1), one row per conversation with the snapshot's JSON as an encrypted payload under `kestrel.conversations` with the associated data `conversations/<id>` (Tasks 2 to 5), the separate key for "delete history" (Tasks 2, 3, 4), the plain fields (Task 1); the snapshot's `version` is plan 7B's. Design 9.2: version 3 with `AutoMigration(from = 2, to = 3)` (Task 1, checked against the real database in Task 8), `ConversationRow` and `ConversationDao` (Task 1), `ConversationArchiveStore` knowing only bytes (Task 3), `RoomRecordArchive` (Task 5), a payload that fails its tag deleted and reported by kind only (plan 7B's store, wired with its text in Task 6; told apart from an unknown format in Tasks 3 and 5), and the section's text (Task 7). Design 9.2's index of past conversations (amended on 2026-11-25 and 2026-11-26): its table of shards, the restore that reads the open row alone, the shards and the stamp read apart, the reads by id that stop when cancelled, the closed rows listed for a rebuild in pages, and the change in one transaction (Task 4b), on plan 7B's Tasks 5a to 5d, and the port's new form (Task 5). Design 9.1's secure deletion: a device test (Task 4b). Design 9.3: plan 7B's `Retention` and `ConversationStore.purge` delete the closed rows outside retention by the table's own times, with the index's change, in one transaction (Task 4b's `purge`), and the job runs from Kestrel's start (Task 6). Design 9.7's storage part: the key first, then the rows and the index (Tasks 2, 3, 4, 4b, 5). Design 5.6's archive lines (Task 6). Design 15.2's store line: the migration with the real Keystore and "delete history" removing rows and key (Tasks 1, 2, 4, 8). R3: Tasks 4, 4b and 8.
+- **Spec coverage.** Design 9.1: the table in `kestrel.db` (Task 1), one row per conversation with the snapshot's JSON as an encrypted payload under `kestrel.conversations` with the associated data `conversations/<id>` (Tasks 2 to 5), the separate key for "delete history" (Tasks 2, 3, 4), the plain fields (Task 1); the snapshot's `version` is plan 7B's. Design 9.2: version 3 with `AutoMigration(from = 2, to = 3)` (Task 1, checked against the real database in Task 8), `ConversationRow` and `ConversationDao` (Task 1), `ConversationArchiveStore` knowing only bytes (Task 3), `RoomRecordArchive` (Task 5), a payload that fails its tag deleted and reported by kind only (plan 7B's store, wired with its text in Task 6; told apart from an unknown format in Tasks 3 and 5), and the section's text (Task 7). Design 9.2's index of past conversations (amended on 2026-11-25 and 2026-11-26): its table of shards, the restore that reads the open row alone, the shards and the stamp read apart, the reads by id that stop when cancelled, the closed rows listed for a rebuild in pages, and the change in one transaction (Task 4b), on plan 7B's Tasks 5a to 5d, and the port's new form (Task 5). Design 9.1's secure deletion: a device test (Task 4b). Design 9.3: plan 7B's `Retention` and `ConversationStore.purge` delete the closed rows outside retention by the table's own times, with the index's change, in one transaction (Task 4b's `purge`), and the job runs from Kestrel's start (Task 6). Design 9.7's storage part: the rows and the index in one transaction, then the key, and the first change of each process erases the key of an empty archive (Tasks 2, 3, 4, 4b, 4c, 5). Design 5.6's archive lines (Task 6). Design 15.2's store line: the migration with the real Keystore and "delete history" removing rows and key (Tasks 1, 2, 4, 8). R3: Tasks 4, 4b and 8.
 - **Placeholders.** Every step shows its code or its command; the generated `3.json` is checked by its version, its columns and its index.
 - **Type consistency.** `ConversationHeader(id, openedMillis, lastMillis, open, commands)` and `ConversationRow(id, openedMillis, lastMillis, open, commands, payload)` are the same in Tasks 1, 3, 4, 5 and 7; `ConversationArchiveStore`'s eight functions (from Task 4b: `open`, `shards`, `stamp`, `read`, `closedIds`, `write`, `purge`, `deleteAll`), `PlainConversation`, `ConversationChange`, `IndexUpdate`, `StoredShard` and `StoredConversation`'s three kinds are those that Tasks 4b and 5 use; `ConversationDao.write` is the one that Tasks 3, 4, 4b and 5 call, and from Task 4b on `ConversationDao.rows(ids)` is the one query that reads rows by id, in the archive and in the tests of Tasks 4b and 5; `KeystoreErasableKey.of(alias)`, its `guard` and `erase()` are those of Tasks 2, 3, 4 and 5; `RecordArchive`'s eight functions (`readOpen`, `readShards`, `readStamp`, `read`, `closedIds`, `write`, `purge`, `deleteAll`), `ArchiveEntry`'s three kinds, `ShardRead`, `IndexWrite`, `IndexStamp`, `ArchivedConversationStore(archive, scope, noted)` with `ArchiveNote`, `ConversationSnapshot`, `Retention(store, clock, report).keepPurging(days)` and `ConversationSettings.keptDays` in Tasks 5 and 6 are those of plan 7B as committed at `9ddf3385` and changed at `a4558faf` and `26737eb7`, and by its Tasks 5a to 5d.
 
