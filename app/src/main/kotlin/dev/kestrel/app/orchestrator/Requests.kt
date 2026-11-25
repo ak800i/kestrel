@@ -65,6 +65,21 @@ sealed interface Request {
         override fun toString() = "SaveRoutine(${name.length} characters)"
     }
 
+    /**
+     * "Kestrel, new conversation" or "start a new conversation": the open conversation closes, and the next command opens
+     * a new one (design 6.8 of sub-project 7).
+     */
+    data object NewConversation : Request
+
+    /**
+     * "Kestrel, continue the conversation about [topic]", also "continue our conversation" or "go back to the
+     * conversation", with the owner's own words and letter case; without "about", [topic] is null and the newest closed
+     * conversation continues (design 9.6 and D23 of sub-project 7).
+     */
+    data class ContinuePast(val topic: String?) : Request {
+        override fun toString() = "ContinuePast(${topic?.length} characters)"
+    }
+
     /** A call command (section 8.7), which [Requests.readCall] reads while a call rings or lasts. */
     sealed interface Call : Request
 
@@ -103,7 +118,8 @@ sealed interface Request {
  * 3. The name starts the utterance, or, when the spotter heard it, comes after one short word such as "hey", "okay" or
  *    "stop". Further names right after it are dropped. Then the rest is nothing (the name on its own), a stop,
  *    "wake up", "stop listening", "turn off" or "switch off", "open settings", "open your settings" or "settings",
- *    "continue", "delete history", "remember that <key> is <value>", "forget <key>", "save that as <name>", or a task.
+ *    "continue", "delete history", "new conversation", "continue the conversation [about <topic>]", "remember that <key>
+ *    is <value>", "forget <key>", "save that as <name>", or a task.
  *    In an answer to "Yes?", "never mind", "forget it" and "nothing" are a named stop, which ends the wait. Any request
  *    after "stop" or "cancel" asks to cancel a task first ([stopsFirst]).
  * 4. Otherwise "stop listening" pauses, and "wake up", "stop listening", "turn off" or "switch off" followed by the
@@ -146,6 +162,15 @@ object Requests {
     private val OPEN_SETTINGS = setOf("open settings", "open your settings", "settings")
     private const val CONTINUE = "continue"
     private val DELETE_HISTORY = setOf("delete history", "delete the history", "delete my history", "clear history")
+    private val NEW_CONVERSATION = setOf("new conversation", "a new conversation", "start a new conversation", "start new conversation")
+
+    // How "continue the conversation about X" may start (design 9.6 of sub-project 7), word by word.
+    private val CONTINUE_PAST = listOf(
+        listOf("continue", "the", "conversation"),
+        listOf("continue", "our", "conversation"),
+        listOf("go", "back", "to", "the", "conversation"),
+        listOf("go", "back", "to", "our", "conversation"),
+    )
 
     // Forms of "forget" that are no fact's name: "Kestrel, forget it" stays a task, as before (Appendix A).
     private val NO_KEYS = setOf("it", "that", "this", "everything", "about it")
@@ -238,7 +263,19 @@ object Requests {
         is Request.Remember -> InputIntent.Remember(request.key, request.value)
         is Request.Forget -> InputIntent.Forget(request.key)
         is Request.SaveRoutine -> InputIntent.SaveRoutine(request.name)
+        Request.NewConversation -> InputIntent.NewConversation
+        is Request.ContinuePast -> InputIntent.ContinuePast(request.topic)
         Request.Name, Request.WakeUp, Request.PauseListening, Request.TurnOff, Request.OpenSettings, is Request.Call, is Request.Other -> null
+    }
+
+    /**
+     * What a typed [text] asks of the conversation (design 12.2 of sub-project 7): Kestrel's own requests are read as after
+     * the name, so "new conversation", "continue", "delete history" and "remember that …" need no "Kestrel", and anything
+     * else is a command with the owner's words; null for a text without words.
+     */
+    fun typed(text: String): InputIntent? {
+        val request = read(text, spotted = false, afterName = true) ?: return null
+        return intent(request) ?: InputIntent.Command(text.trim())
     }
 
     private fun words(transcript: String): List<Word> =
@@ -327,12 +364,27 @@ object Requests {
             said in OPEN_SETTINGS -> Request.OpenSettings
             said == CONTINUE -> Request.Continue
             said in DELETE_HISTORY -> Request.DeleteHistory
+            said in NEW_CONVERSATION -> Request.NewConversation
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
-            else -> memory(transcript, rest)
+            else -> memory(transcript, rest) ?: past(transcript, rest)
                 ?: Request.Task(transcript.substring(rest.first().range.first).trim(), nearWakeUp = fromWakeUp == 2)
         }
+    }
+
+    /**
+     * "continue the conversation", "continue our conversation" or "go back to the conversation", alone or with "about
+     * <topic>" in the owner's own words (design 9.6 of sub-project 7); any other form is no such request.
+     */
+    private fun past(transcript: String, rest: List<Word>): Request.ContinuePast? {
+        val words = rest.filter { it.text !in POLITE }
+        val start = CONTINUE_PAST.firstOrNull { form -> words.size >= form.size && words.take(form.size).map { it.text } == form } ?: return null
+        val after = words.drop(start.size)
+        if (after.isEmpty()) return Request.ContinuePast(null)
+        if (after.first().text != "about" || after.size < 2) return null
+        val topic = transcript.substring(after[1].range.first, after.last().range.last + 1).trim()
+        return Request.ContinuePast(topic)
     }
 
     /**

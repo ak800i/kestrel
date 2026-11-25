@@ -1,5 +1,6 @@
 package dev.kestrel.app.orchestrator
 
+import dev.kestrel.conversation.model.InputIntent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -328,5 +329,38 @@ class RequestsTest {
         assertEquals(Request.Task("turn off the lights"), Requests.read("turn off the lights", spotted = false, afterName = true, followUp = true))
         // After "Yes?" the owner may not have finished (plan 4E).
         assertEquals(Request.Task("Turn off."), Requests.read("Turn off.", spotted = false, afterName = true))
+    }
+
+    @Test
+    fun aNewConversationIsKestrelsOwnRequest() {
+        for (said in listOf("Kestrel, new conversation.", "Kestrel, start a new conversation, please")) {
+            assertEquals(said, Request.NewConversation, Requests.read(said, spotted = false))
+        }
+        assertEquals(Request.Task("open a new conversation with Ana"), Requests.read("Kestrel, open a new conversation with Ana", spotted = false))
+    }
+
+    @Test
+    fun continuingAPastConversationTakesItsTopicInTheOwnersWords() {
+        assertEquals(Request.ContinuePast("the Trip to Rome"), Requests.read("Kestrel, continue the conversation about the Trip to Rome.", spotted = false))
+        assertEquals(Request.ContinuePast("dinner"), Requests.read("Kestrel, go back to our conversation about dinner", spotted = false))
+        assertEquals(Request.ContinuePast(null), Requests.read("Kestrel, continue our conversation", spotted = false))
+        assertEquals(Request.Continue, Requests.read("Kestrel, continue", spotted = false))
+        assertEquals(Request.Task("continue the conversation with Ana"), Requests.read("Kestrel, continue the conversation with Ana", spotted = false))
+        assertEquals(InputIntent.ContinuePast("dinner"), Requests.intent(Request.ContinuePast("dinner")))
+        assertEquals(InputIntent.NewConversation, Requests.intent(Request.NewConversation))
+    }
+
+    @Test
+    fun aTypedTextIsACommandUnlessItIsOneOfKestrelsOwnRequests() {
+        assertEquals(InputIntent.Command("Open Viber"), Requests.typed("Open Viber"))
+        assertEquals(InputIntent.Command("open Viber"), Requests.typed("Kestrel, open Viber"))
+        assertEquals(InputIntent.NewConversation, Requests.typed("new conversation"))
+        assertEquals(InputIntent.Continue, Requests.typed("continue"))
+        assertEquals(InputIntent.DeleteHistory, Requests.typed("Delete history"))
+        assertEquals(InputIntent.Stop, Requests.typed("stop"))
+        assertEquals(InputIntent.Remember("the gate code", "blue"), Requests.typed("remember that the gate code is blue"))
+        // The voice's own requests are no request of a typed text.
+        assertEquals(InputIntent.Command("stop listening"), Requests.typed("stop listening"))
+        assertNull(Requests.typed("  ... "))
     }
 }

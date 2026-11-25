@@ -1717,4 +1717,17 @@ class RulesTest {
         assertEquals(Mode.OFF, step.state.mode)
         assertTrue(step.effects.none { it is Effect.Converse })
     }
+
+    @Test
+    fun aNewConversationAndContinuingAPastOneGoToTheConversation() {
+        val new = Event.Heard("Kestrel, new conversation", named = true)
+        assertEquals(Effect.Converse(InputIntent.NewConversation, new), Rules.next(listening, new).effects.last())
+        val past = Event.Heard("Kestrel, continue the conversation about dinner", named = true)
+        assertEquals(Effect.Converse(InputIntent.ContinuePast("dinner"), past), Rules.next(listening, past).effects.last())
+        // While a goal works too: the conversation says that the goal must stop first (design 6.8 of sub-project 7).
+        assertEquals(Effect.Converse(InputIntent.NewConversation, new), Rules.next(acting, new).effects.last())
+        // In the follow-up window, without the name.
+        val again = Event.Heard("New conversation.", named = false)
+        assertEquals(Effect.Converse(InputIntent.NewConversation, again), Rules.next(replied(), again).effects.last())
+    }
 }
