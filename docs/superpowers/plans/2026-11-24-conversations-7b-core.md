@@ -3374,7 +3374,7 @@ Design 9.2 and R3 of sub-project 7, as amended on 2026-11-25 and 2026-11-26: the
 - `SearchIndex`: the folded words of some records, each word once in a sorted list and each record's words as ascending positions in it, so that a search folds only its query and compares positions. Its `Builder` folds one conversation at a time and sorts the words once at the end, so that a rebuild keeps no body after it read it.
 - `IndexShard`: a part of the index, which the archive keeps in a row of its own: what the list shows of some closed conversations, their records' words, and the closed rows that this version cannot read.
 - `PastIndex`: the shards, with what the list shows and the search reads of every closed conversation, and the stamp that tells whether the index is in step with the table. A conversation that closes goes into the newest shard, and a new shard starts when the newest holds `SHARD_POSITIONS` (100,000) word positions, about 200 KB encoded. So a close re-encodes and re-encrypts one shard of at most about 250 KB, however long the retention and however heavy the use, and a rebuild writes the shards oldest first. `changesFrom` names the shards that a change made or emptied, which the store writes.
-- `PastIndexCodec`: a shard's compact format: a format byte and then, compressed with Deflate, the shard's words, each conversation with its records' positions written as distances, and the kept rows. Its decoder reads the bytes directly and takes each word from the words of the shards decoded before, so that the index keeps each word once in memory.
+- `PastIndexCodec`: a shard's compact format: a format byte and then, compressed with Deflate, the shard's words, each conversation with its records' positions written as distances, and the kept rows. Its decoder reads the bytes directly and takes each word from the words of the shards decoded before, so that the index keeps each word once in memory. Forged or damaged bytes end in the `IllegalArgumentException` that makes the store rebuild the index, never in an `OutOfMemoryError`: the decoder inflates at most `MAX_PLAIN_BYTES` (16 MB, 160 bytes per position of a full shard, which inflates to about 0.4 MB) and refuses more while it inflates; it allows a count only as many elements as the bytes that are left can hold, each element taking the fewest bytes that its kind takes in the format; and it refuses a number of more than 5 bytes or past 31 bits (review of Task 5b).
 
 `HistoryRanking` takes its entries' words from `SearchIndex.folded`, so that the words are folded in one place, ranks a list of indexes (one per shard), and judges a near miss with Task 5a's `LabelMatcher.mayAccept` before it scores it, once per distinct word and query word, whichever shards hold the word.
 
@@ -3394,12 +3394,12 @@ Tasks 5a to 5d change Tasks 4 and 5 as built. They run after Task 7, which they 
   - `class IndexShard` with `val number: Int`, `val conversations` (the newest last change first), `val search: SearchIndex`, `val kept`, `val stamp`, `val positions`, `val isEmpty`, `fun with(snapshots)`, `fun keeping(rows)`, `fun without(ids: Set<String>)`, `fun outside(oldest, newest)`, and in its companion `fun empty(number)` and `fun restored(number, conversations, search, kept)`.
   - `class PastIndex` with `val shards: List<IndexShard>` (the newest first), `val shardPositions: Int`, `val conversations: List<PastConversation>` (the newest last change first), `val searches: List<SearchIndex>`, `val kept`, `val stamp`, `operator fun contains(id: ConversationId)`, `fun with(snapshots)`, `fun keeping(rows)`, `fun without(ids: Set<String>)`, `fun outside(oldest, newest): Set<String>`, `fun changesFrom(before: PastIndex): ShardChanges`; `class PastIndex.Builder(shardPositions = SHARD_POSITIONS)` with `fun add(snapshot)`, `fun keep(row)` and `fun build()`; in its companion `FIRST_REQUEST = 80`, `SHARD_POSITIONS = 100_000`, `EMPTY`, `fun empty(shardPositions)`, `fun of(snapshots, kept, shardPositions = SHARD_POSITIONS)` and `fun restored(shards, shardPositions = SHARD_POSITIONS)`.
   - `class ShardChanges(val put: List<IndexShard>, val gone: Set<Int>)` with `val isEmpty`.
-  - `object PastIndexCodec` with `FORMAT: Byte = 1`, `fun encode(shard: IndexShard): ByteArray` and `fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard`, which throws `IllegalArgumentException` for bytes in another format or that do not decode.
+  - `object PastIndexCodec` with `FORMAT: Byte = 1`, `MAX_PLAIN_BYTES = 160 * PastIndex.SHARD_POSITIONS`, `fun encode(shard: IndexShard): ByteArray` and `fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard`, which throws `IllegalArgumentException` for bytes in another format, that do not decode, that inflate past `MAX_PLAIN_BYTES` or whose counts their bytes cannot hold.
   - `HistoryRanking.rank(indexes: List<SearchIndex>, …)` as before, which now checks `LabelMatcher.mayAccept` before `similarity`.
 
   Task 5d builds the store and the search on them.
 
-Counts: `:core:conversation` 135 + 12 (`SearchIndexTest` 4, `PastIndexTest` 8) = 147. The 135 are the module's tests with Tasks 1 to 7 built, at `d6c76d70`; if the task runs at another point, it is N + 12.
+Counts: `:core:conversation` 135 + 14 (`SearchIndexTest` 4, `PastIndexTest` 10) = 149. The 135 are the module's tests with Tasks 1 to 7 built, at `d6c76d70`; if the task runs at another point, it is N + 14.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3501,6 +3501,10 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.DeflaterOutputStream
+import java.util.zip.InflaterInputStream
 import kotlin.random.Random
 
 class PastIndexTest {
@@ -3572,6 +3576,53 @@ class PastIndexTest {
         for (wrong in listOf(byteArrayOf(), byteArrayOf(2) + bytes.copyOfRange(1, bytes.size), bytes.copyOf(bytes.size - 3), bytes + byteArrayOf(0))) {
             assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(shard.number, wrong) }
         }
+    }
+
+    // Damage that Deflate and its checksum let through, as a foreign or faulty encoder would write it, reaches the reader's
+    // own checks, and each of them refuses it with the exception that makes the store rebuild the index.
+    @Test
+    fun theReaderRefusesDamageThatPassesDeflate() {
+        val ana = id(1).value
+        fun valid() = Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept("later", 7)
+
+        val read = PastIndexCodec.decode(0, valid().sealed())
+        assertEquals(listOf("ana", "call"), read.search.wordsOf(read.search.records.single()))
+        assertEquals(listOf(KeptRow("later", 7)), read.kept)
+
+        val damaged = mapOf(
+            "a number of 6 bytes" to Plain().raw(0x82, 0x80, 0x80, 0x80, 0x80, 0x00),
+            "a number past 31 bits" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).raw(0x80, 0x80, 0x80, 0x80, 0x10),
+            "more words than bytes" to Plain().number(1_000_000).text("ana"),
+            "more kept rows than bytes" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(2).kept("later", 7),
+            "a text past the end" to Plain().number(1).number(50).raw(*"ana".encodeToByteArray().map { it.toInt() }.toIntArray()),
+            "a position past the words" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 1)).number(0),
+            "words out of order" to Plain().words("call", "ana").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(0),
+            "a word twice" to Plain().words("ana", "ana").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(0),
+            "an id that is no conversation's" to Plain().words("ana", "call").number(1).conversation("not an id", 10, "Call Ana", listOf(0, 0)).number(0),
+            "conversations out of order" to Plain().words("ana", "call").number(2)
+                .conversation(ana, 10, "Call Ana", listOf(0, 0)).conversation(id(2).value, 20, null, listOf(1)).number(0),
+            "an id twice" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept(ana, 7),
+            "a byte after the kept rows" to valid().raw(0),
+        )
+        for ((damage, plain) in damaged) {
+            assertThrows(damage, IllegalArgumentException::class.java) { PastIndexCodec.decode(0, plain.sealed()) }
+        }
+    }
+
+    // A few hundred compressed bytes can inflate to more than the memory holds: the decoder stops at its bound while it
+    // inflates, so that forged bytes end in the exception that makes the store rebuild, never in an OutOfMemoryError.
+    @Test
+    fun aShardThatInflatesPastItsBoundIsRefusedWhileItInflates() {
+        fun inflatingTo(size: Int): ByteArray {
+            fun plain(request: Int) = Plain().words().number(1).conversation(id(1).value, 10, "a".repeat(request)).number(0)
+            val trial = size - 100
+            return plain(trial + size - plain(trial).size).also { assertEquals(size, it.size) }.sealed()
+        }
+
+        val largest = inflatingTo(PastIndexCodec.MAX_PLAIN_BYTES)
+        assertTrue("${largest.size} bytes", largest.size < 100_000)
+        assertEquals(1, PastIndexCodec.decode(0, largest).conversations.size)
+        assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(0, inflatingTo(PastIndexCodec.MAX_PLAIN_BYTES + 1)) }
     }
 
     // Design 9.2: a close re-encodes only the newest shard, which is never much larger than its limit, and a conversation
@@ -3646,7 +3697,56 @@ class PastIndexTest {
         assertEquals(2, shards.size)
         assertTrue("${bytes.map { it.size }} bytes", bytes.sumOf { it.size } < 550_000 && bytes.all { it.size < 300_000 })
         assertEquals(300, shards.zip(bytes).sumOf { (shard, encoded) -> PastIndexCodec.decode(shard.number, encoded).conversations.size })
+        assertTrue("${bytes.map { plainSize(it) }} plain bytes", bytes.all { plainSize(it) * 20 < PastIndexCodec.MAX_PLAIN_BYTES })
         assertFalse(PastIndex.EMPTY.toString().contains("w0"))
+    }
+
+    private fun plainSize(encoded: ByteArray): Int =
+        InflaterInputStream(ByteArrayInputStream(encoded, 1, encoded.size - 1)).use { it.readBytes().size }
+
+    // A shard's plain bytes written by hand in PastIndexCodec's format 1, so that a test can damage what Deflate and its
+    // checksum protect.
+    private class Plain {
+        private val out = ByteArrayOutputStream()
+
+        val size: Int get() = out.size()
+
+        fun raw(vararg values: Int) = apply { values.forEach(out::write) }
+
+        fun number(value: Int) = apply {
+            var rest = value
+            while (rest >= 0x80) {
+                out.write(rest and 0x7F or 0x80)
+                rest = rest ushr 7
+            }
+            out.write(rest)
+        }
+
+        fun long(value: Long) = apply { for (shift in 56 downTo 0 step 8) out.write((value ushr shift).toInt() and 0xFF) }
+
+        fun text(value: String) = apply { value.encodeToByteArray().let { number(it.size).out.write(it) } }
+
+        fun words(vararg words: String) = apply { number(words.size).also { words.forEach { text(it) } } }
+
+        // A conversation that closed at [lastWall], with one record per list of distances between its words' positions.
+        fun conversation(id: String, lastWall: Long, firstRequest: String?, vararg records: List<Int>) = apply {
+            text(id).long(lastWall - 9).long(lastWall)
+            if (firstRequest == null) number(0) else firstRequest.encodeToByteArray().let { number(it.size + 1).out.write(it) }
+            number(records.size)
+            records.forEachIndexed { index, distances ->
+                number(index + 1).long(lastWall - 5).number(distances.size)
+                distances.forEach { number(it) }
+            }
+        }
+
+        fun kept(id: String, lastWall: Long) = apply { text(id).long(lastWall) }
+
+        fun sealed(): ByteArray {
+            val sealed = ByteArrayOutputStream()
+            sealed.write(PastIndexCodec.FORMAT.toInt())
+            DeflaterOutputStream(sealed).use { it.write(out.toByteArray()) }
+            return sealed.toByteArray()
+        }
     }
 }
 ```
@@ -4119,10 +4219,19 @@ import java.util.zip.Inflater
  * list, each written as its distance from the one before; and the kept rows. Every count and distance is a number of
  * variable length, so that a full shard is about 200 KB, and 30 days of heavy use make about 340 KB in all (design R3).
  * Bytes in another format, or that do not decode, throw [IllegalArgumentException], and the store rebuilds the index from
- * the conversations.
+ * the conversations. So do forged or damaged bytes that would fill the memory: the decoder inflates at most
+ * [MAX_PLAIN_BYTES], and allocates for a count only as many elements as the bytes that are left can hold.
  */
 object PastIndexCodec {
     const val FORMAT: Byte = 1
+
+    /**
+     * The most bytes that a shard may inflate to. A shard is full at [PastIndex.SHARD_POSITIONS] word positions and holds
+     * more only by its last conversation; a position takes about 4 plain bytes (its distance, and its share of the words,
+     * which are written once per shard), so a full shard inflates to about 0.4 MB (379 KB for the random words of 30 heavy
+     * days). 160 bytes per position, 16 MB, leave a margin of about 40, so that only damaged or forged bytes reach it.
+     */
+    const val MAX_PLAIN_BYTES = 160 * PastIndex.SHARD_POSITIONS
 
     fun encode(shard: IndexShard): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -4166,20 +4275,20 @@ object PastIndexCodec {
     fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard {
         require(bytes.isNotEmpty() && bytes[0] == FORMAT) { "The index is in a format that this version cannot read" }
         val input = Reader(inflated(bytes))
-        val list = List(input.count()) { input.text().let { word -> words.getOrPut(word) { word } } }
+        val list = List(input.count(WORD_BYTES)) { input.text().let { word -> words.getOrPut(word) { word } } }
         val conversations = ArrayList<PastConversation>()
         val records = ArrayList<IndexedRecord>()
-        repeat(input.count()) {
+        repeat(input.count(CONVERSATION_BYTES)) {
             val id = ConversationId(input.text())
             val openedAtWall = input.long()
             val lastWall = input.long()
             val firstRequest = input.optionalText()
-            val commands = input.count()
+            val commands = input.count(RECORD_BYTES)
             repeat(commands) {
                 val record = input.number()
                 val atWall = input.long()
                 var previous = -1
-                val positions = IntArray(input.count()) {
+                val positions = IntArray(input.count(POSITION_BYTES)) {
                     previous += input.number() + 1
                     previous
                 }
@@ -4187,25 +4296,38 @@ object PastIndexCodec {
             }
             conversations += PastConversation(id, openedAtWall, lastWall, commands, firstRequest)
         }
-        val kept = List(input.count()) { KeptRow(input.text(), input.long()) }
+        val kept = List(input.count(KEPT_BYTES)) { KeptRow(input.text(), input.long()) }
         require(input.atEnd) { "The index has bytes after its end" }
         return IndexShard.restored(number, conversations, SearchIndex.restored(list, records), kept)
     }
 
-    private const val MAX_COUNT = 1 shl 24
+    // The fewest bytes that one element of each kind takes in format 1: a word its length; a conversation its id's length,
+    // its two times, its first request's length and its count of records; a record its number, its time and its count of
+    // words; a position its distance; a kept row its id's length and its time.
+    private const val WORD_BYTES = 1
+    private const val CONVERSATION_BYTES = 1 + 8 + 8 + 1 + 1
+    private const val RECORD_BYTES = 1 + 8 + 1
+    private const val POSITION_BYTES = 1
+    private const val KEPT_BYTES = 1 + 8
+
+    // A non-negative Int in 7 bits per byte: 5 bytes at most, the fifth with only the 3 bits that are left (28 to 30).
+    private const val MAX_NUMBER_BYTES = 5
+    private const val MAX_LAST_BYTE = 0x07
 
     private const val BUFFER_BYTES = 64 * 1024
 
-    // The bytes after the format byte, inflated whole: the compressed stream must end exactly where the bytes end.
+    // The bytes after the format byte, inflated whole: the compressed stream must end exactly where the bytes end, and
+    // inflate to at most MAX_PLAIN_BYTES, which is checked before each part is kept.
     private fun inflated(bytes: ByteArray): ByteArray {
         val inflater = Inflater()
         try {
             inflater.setInput(bytes, 1, bytes.size - 1)
-            val plain = ByteArrayOutputStream(bytes.size * 3)
-            val buffer = ByteArray(64 * 1024)
+            val plain = ByteArrayOutputStream(minOf(bytes.size.toLong() * 3, MAX_PLAIN_BYTES.toLong()).toInt())
+            val buffer = ByteArray(BUFFER_BYTES)
             while (!inflater.finished()) {
                 val inflatedBytes = inflater.inflate(buffer)
                 require(inflatedBytes > 0 || !inflater.needsInput() && !inflater.needsDictionary()) { "The index is cut short" }
+                require(inflatedBytes <= MAX_PLAIN_BYTES - plain.size()) { "The index inflates past its bound" }
                 plain.write(buffer, 0, inflatedBytes)
             }
             require(inflater.remaining == 0) { "The index has bytes after its end" }
@@ -4253,20 +4375,20 @@ object PastIndexCodec {
 
         fun number(): Int {
             var result = 0
-            var shift = 0
-            while (true) {
+            for (index in 0 until MAX_NUMBER_BYTES) {
                 val byte = next()
-                result = result or ((byte and 0x7F) shl shift)
-                if (byte and 0x80 == 0) break
-                shift += 7
-                require(shift < 32) { "A number of the index is too long" }
+                result = result or ((byte and 0x7F) shl (7 * index))
+                if (byte and 0x80 == 0) {
+                    require(index < MAX_NUMBER_BYTES - 1 || byte <= MAX_LAST_BYTE) { "A number of the index is too large" }
+                    return result
+                }
             }
-            require(result >= 0) { "A number of the index is too large" }
-            return result
+            throw IllegalArgumentException("A number of the index is too long")
         }
 
-        // A count of words, records or rows, which a damaged length could make large enough to exhaust the memory.
-        fun count(): Int = number().also { require(it <= MAX_COUNT) { "A count of the index is too large" } }
+        // A count of elements that each take at least [each] bytes, so that it can be no more than the bytes that are left
+        // can hold: a damaged count is refused before anything is allocated for it.
+        fun count(each: Int): Int = number().also { require(it <= (bytes.size - at) / each) { "A count of the index is larger than its bytes" } }
 
         fun long(): Long {
             var result = 0L
@@ -4274,9 +4396,9 @@ object PastIndexCodec {
             return result
         }
 
-        fun text(): String = string(count())
+        fun text(): String = string(number())
 
-        fun optionalText(): String? = count().let { if (it == 0) null else string(it - 1) }
+        fun optionalText(): String? = number().let { if (it == 0) null else string(it - 1) }
 
         private fun string(size: Int): String {
             require(size <= bytes.size - at) { "The index is cut short" }
@@ -4330,12 +4452,12 @@ with:
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.SearchIndexTest --tests=dev.kestrel.conversation.store.PastIndexTest`
-Expected: PASS, 12 tests. `theIndexOf30HeavyDaysStaysSmall` encodes 300 conversations of 2 commands, each command with 300 words drawn from 25,000 random words, in two shards of about 265 and 234 KB; random words compress worse than real text, and each shard holds most of the 25,000 words again.
+Expected: PASS, 14 tests. `theIndexOf30HeavyDaysStaysSmall` encodes 300 conversations of 2 commands, each command with 300 words drawn from 25,000 random words, in two shards of about 265 and 234 KB, which inflate to about 379 and 341 KB; random words compress worse than real text, and each shard holds most of the 25,000 words again. `theReaderRefusesDamageThatPassesDeflate` writes a shard's plain bytes by hand and compresses them, so that each damage reaches the reader's own check, and `aShardThatInflatesPastItsBoundIsRefusedWhileItInflates` inflates about 16 KB to `MAX_PLAIN_BYTES` and one byte more.
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 147`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 149`.
 
 - [ ] **Step 6: Commit**
 
@@ -4601,7 +4723,7 @@ The tests also take the load of the index through each of its failures, with the
 
   Plan 7C's Task 5 implements the port, and its Task 6 builds the store with the app's scope; Tasks 8 to 10 use the store and the search.
 
-Counts: `:core:conversation` 147 + 25 (`ArchivedConversationStoreTest` 16 → 39, `HistorySearchTest` 11 → 13, `HistoryRankingTest` and `RetentionTest` unchanged) = 172; N + 25 if Task 5b's count differed.
+Counts: `:core:conversation` 149 + 25 (`ArchivedConversationStoreTest` 16 → 39, `HistorySearchTest` 11 → 13, `HistoryRankingTest` and `RetentionTest` unchanged) = 174; N + 25 if Task 5b's count differed.
 
 - [ ] **Step 1: Write the failing tests and the archive in memory**
 
@@ -6946,12 +7068,12 @@ class HistorySearch(
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: PASS, 68 tests (`ArchivedConversationStoreTest` 39, `HistorySearchTest` 13, `PastIndexTest` 8, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
+Expected: PASS, 70 tests (`ArchivedConversationStoreTest` 39, `HistorySearchTest` 13, `PastIndexTest` 10, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 172`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 174`.
 
 - [ ] **Step 6: Commit**
 
@@ -7912,7 +8034,7 @@ The other 52 cases of `RulesTest` are the voice's own (the listening modes, the 
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
 - Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, heldWords: ChannelOutput.Said?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput, cancelled: Boolean = false)`; `data class PhoneState(locked, ringing, inCall, known = false)` with `away` and `present` (`known` once `LOCKED` or `UNLOCKED` came); `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
-Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 29.
+Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 31.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -10216,7 +10338,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 172 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 187, after Tasks 5a to 5d.
+Counts: `:core:conversation` 174 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 189, after Tasks 5a to 5d.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -11293,7 +11415,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 187`.
+Expected: BUILD SUCCESSFUL; `core\conversation 189`.
 
 - [ ] **Step 7: Commit**
 
@@ -11317,7 +11439,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
 
-Counts: `:core:conversation` 187 + 9 = 196.
+Counts: `:core:conversation` 189 + 9 = 198.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -11363,7 +11485,7 @@ class LocalRequestsTest {
 
         override suspend fun say(text: String) = Unit
 
-        override suspend fun question(text: String, kind: QuestionKind, spoken: String): ChannelAnswer {
+        override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer {
             asked += Triple(text, kind, spoken)
             return answers.removeFirstOrNull() ?: ChannelAnswer.Silence
         }
@@ -11554,9 +11676,9 @@ class RecordedOwner(private val owner: OwnerPort, private val traced: suspend (T
         owner.say(text)
     }
 
-    override suspend fun ask(question: String, kind: AnswerKind): Answer {
+    override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer {
         traced(TraceEntry.Asked(RecordText.of(question)))
-        val answer = owner.ask(question, kind)
+        val answer = owner.ask(question, kind, choices, highest)
         words(answer)?.let { traced(TraceEntry.Answered(RecordText.of(it))) }
         return answer
     }
@@ -11692,7 +11814,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 196`.
+Expected: BUILD SUCCESSFUL; `core\conversation 198`.
 
 - [ ] **Step 6: Commit**
 
@@ -11715,7 +11837,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 196 + 15 = 211. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 198 + 15 = 213. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -12849,7 +12971,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 211` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 213` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -12862,7 +12984,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 211, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 12, Task 5d: 25, Task 8: 15, Task 9: 9, Task 10: 15).
+- `:core:conversation`: C₀ + 213, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 25, Task 8: 15, Task 9: 9, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:core:commands`: N + 2 (Task 5a adds 1 to `NormalizerTest` and 1 to `LabelMatcherTest`; 159 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
