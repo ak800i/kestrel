@@ -14,7 +14,7 @@
 - The owner's hard rule (AGENTS.md): no workarounds and no smallest-change fixes; clean code, good architecture and modularity, even when that means a larger change. A step that would patch a symptom at the nearest line is a fault of the plan: stop and ask the controller.
 - The approved design is `docs\superpowers\specs\2026-11-24-conversations-design.md` (commit `75dd098b`), called "the design" below; its decisions D1 to D24 bind this plan. This plan is the design's plan 7B (section 16): sections 5.1 to 5.3, 6, 7.1, 7.3, 7.6, 7.7, 8, 9.1 to 9.4, 9.6, 9.7, 11, 12.1, 12.4 and 13 as far as `:core:conversation` holds them, and section 15.1's JVM tests. The main spec is `docs\superpowers\specs\2026-11-12-kestrel-design.md`.
 - This plan consumes plan 7A (`.superpowers/sdd/plan-7a.md`, committed as `docs/superpowers/plans/2026-11-24-conversations-7a-agent.md`) exactly as its section "Interfaces for 7B" leaves `:core:agent`: `GoalPort` (with `takeSteering`, `stepStarted`, `checklistChanged` and `traced`), `Steer`, `SteerChannel`, `TraceEntry`, `HistoryPort` with its types, `Checklist`, `ChecklistItem`, `ItemState`, `ChecklistRules`, `ChecklistText`, `GoalLimits`, `ResumeCause`, `ResumeNote` (with the field `steered`, which plan 7A's Task 10 adds at this plan's request: see "What plan 7A adds for this plan" below), `TaskRequest` with its new fields and `CONVERSATION_HEADER`, `AgentPorts(…, goal, history)`, `OwnerPort.leaveKestrel()`, `AnswerKind.LIMIT`, `EndReason.STOPPED_AT_LIMIT`, `PAUSED_AT_LIMIT` and `INTERRUPTED`, `Interruption`, `TaskCancellation(reason, interruption)`, `TaskReport.checklist` and `TaskReport.interruption`, and the fixtures `FakeOwner`, `FakeScreen`, `FakeData` and `ScriptedModel`.
-- `:core:conversation` is plain Kotlin and never depends on `:app`, `:core:voice`, `:core:screen` or `:core:privacy` (design 5.1). It depends on `:core:agent`, `:core:safety` and `:core:commands`. `:core:agent` learns nothing about conversations. Fix 7B-2 changed it where Task 2's records needed it: `TraceEntry.Data` carries its result's `items`; `RunTrace` traces an app each time that the run comes to it from another app, its label redacted and cut as a label on the screen is; a deleted contact's name enters the ledger redacted; and `HistoryText` shows each data note and app label cut and then quoted and escaped. It added 6 tests to `:core:agent`. Task 5c changes it too: `HistoryResult` gains `rebuilding`, so that the search can say that the index of past conversations is being rebuilt (design 9.4), and it adds 1 test.
+- `:core:conversation` is plain Kotlin and never depends on `:app`, `:core:voice`, `:core:screen` or `:core:privacy` (design 5.1). It depends on `:core:agent`, `:core:safety` and `:core:commands`. `:core:agent` learns nothing about conversations. Fix 7B-2 changed it where Task 2's records needed it: `TraceEntry.Data` carries its result's `items`; `RunTrace` traces an app each time that the run comes to it from another app, its label redacted and cut as a label on the screen is; a deleted contact's name enters the ledger redacted; and `HistoryText` shows each data note and app label cut and then quoted and escaped. It added 6 tests to `:core:agent`. Task 5c changes it too: `HistoryResult` gains `unavailable` (`HistoryUnavailable.REBUILDING` or `FAILED`), so that the search can say that the index of past conversations is being rebuilt or cannot be read now (design 9.4), and it adds 1 test. Task 5a changes `:core:commands` in the same way: `LabelMatcher.mayAccept`, the matcher's exact and cheap check of one word against another, with 1 test.
 - The conversation never parses speech (design 5.3): the channels give it classified inputs, answers included.
 - Nothing in this plan calls a provider, runs `--live`, or uses a device. Every test is a JVM test with the scripted model.
 - Never print, log or put into a toString the owner's words, a record's text, a reply, a question, a checklist's text, a data note or a search's words. Every new type's toString prints only kinds, numbers, counts and lengths (design D25 of sub-project 5); the tests check it.
@@ -68,8 +68,8 @@ These are this plan's readings of the design where the design leaves a choice op
 - **Kestrel's own requests while a goal is open.** "New conversation", "continue the conversation about X", a past conversation's "Continue", "remember", "forget" and "save that as" answer "Stop the goal first." and change nothing; "delete history" is ignored, as today (design 9.7). After "stop" ("Stop. Kestrel, remember …"), each of them waits for the stopped goal's end and then runs, as a command does (design 6.4). A memory request opens a conversation if none is open and gets a record (design 3); "new conversation", "delete history" and continuing open none. "New conversation" says "Okay, a new conversation.", which is a local request's final reply.
 - **The records' bounds count.** A record keeps `droppedLines` and `droppedData`, which the block and the transcript show as one line, instead of a note line (design 8.1's "with a note").
 - **Condensing.** At the start of each new command, every earlier record but the newest is marked `condensed`, once, and keeps the mark (design 8.3). A condensed record keeps all its parts, so the search and the transcript still read them; only its form in the block is the condensed one, which depends on its own fields only and so never changes.
-- **The search.** `HistorySearch` searches the closed conversations within retention and the open conversation's records except the command that asks; a fixed list of words that hold no topic ("the", "about", "i", "u" …) is not counted; a name's near miss is a word of at least 4 letters with the same first letter whose `LabelMatcher.score` reaches `MatchRules.ACCEPT`. The matching and its order are one pure function, `HistoryRanking.rank`, over small entries (a record's place, time and folded words), apart from the entries' source and from a match's details, so that an index of the entries can later be their source; a search that "delete history" overtook keeps nothing (`ConversationStore.generation`). From Task 5d on, the index of past conversations is that source (design 9.2): the search keeps nothing itself, ranks the index's records by their words' positions, reads only its best matches' bodies, and says so while the index is being rebuilt.
-- **The store's port.** `RecordArchive` knows only plain header fields and payload bytes (7C encrypts them): `readAll` (every row in one call, so that the store's first use is one query, not one per row), `write(rows)` in one transaction, `delete`, `deleteAll` (every row and the archive's key) and `deleteOutside`. `ConversationStore` gains `closedSince` for the search and the list, and `reopen(id, closing, nowWall, testMode)`, which writes the closing snapshot and the chosen one in one transaction. Tasks 5b to 5d replace this first form by the design's amendment of 2026-11-25 (9.2 and R3: reading every row took 13.8 s on the A71): the port's `load()` reads the index of past conversations, the open conversation's row and the closed rows' stamp in one call; `read(ids)` reads bodies on demand; `readAll()` stays for a rebuild; `write(ArchiveChange)` stores rows, deletions and the index in one transaction; `deleteAll()` also deletes the index. `ConversationStore` loses `closedSince` and gains `getAll(ids)` and `searchable()`, and the store takes a scope for its rebuild.
+- **The search.** `HistorySearch` searches the closed conversations within retention and the open conversation's records except the command that asks; a fixed list of words that hold no topic ("the", "about", "i", "u" …) is not counted; a name's near miss is a word of at least 4 letters with the same first letter whose `LabelMatcher.score` reaches `MatchRules.ACCEPT`. The matching and its order are one pure function, `HistoryRanking.rank`, over small entries (a record's place, time and folded words), apart from the entries' source and from a match's details, so that an index of the entries can later be their source; a search that "delete history" overtook keeps nothing (`ConversationStore.generation`). From Task 5d on, the index of past conversations is that source (design 9.2): the search keeps nothing itself, ranks the records of the index's shards by their words' positions, scores a near miss only after Task 5a's `LabelMatcher.mayAccept` lets it through, reads only its best matches' bodies, and says so while the index is being rebuilt or cannot be read.
+- **The store's port.** `RecordArchive` knows only plain header fields and payload bytes (7C encrypts them): `readAll` (every row in one call, so that the store's first use is one query, not one per row), `write(rows)` in one transaction, `delete`, `deleteAll` (every row and the archive's key) and `deleteOutside`. `ConversationStore` gains `closedSince` for the search and the list, and `reopen(id, closing, nowWall, testMode)`, which writes the closing snapshot and the chosen one in one transaction. Tasks 5a to 5d replace this first form by the design's amendments of 2026-11-25 and 2026-11-26 (9.2 and R3: reading every row took 13.8 s on the A71): the port's `readOpen()` reads the open conversation's row alone, for a restore; `readIndex()` reads the index's shards and the closed rows' stamp in one call; `read(ids)` reads bodies on demand; `closedIds()` lists the closed rows for a rebuild that reads them in pages; `write(ArchiveChange)` stores rows, deletions and the changed shards in one transaction; `purge(oldest, newest, index)` deletes the closed rows outside retention by the table's own times; `deleteAll()` erases the key first and then deletes the rows and the shards. `ConversationStore` loses `closedSince` and gains `getAll(ids)` and `searchable()`, and the store takes a scope, in which it reads the index, rebuilds it and tries a failed one again.
 - **Steering survives the end of the process.** The snapshot keeps the inbox's messages that no round has taken yet (`steering`, redacted as a record is), so that a restored goal's next round takes them.
 - **The call backstop.** `PhoneSignal.AGENT_CALL` is the backstop's verdict (D13 of sub-project 5), which `:app`'s `PhoneSignals` sends instead of `CALL_ACTIVE`; it ends an acting goal with "I stopped the task because a call started right after my last action." and what it did.
 - **The goal's environment and the screen's turn.** `GoalEnvironment` (`prepare(RoundStart)` once per round, and `sentence(report)`) and `ScreenTurn` (`take()`, which returns when no instant command or settings page holds the screen; a goal never holds it, so the instant commands still work during its hand-overs and pauses) are this plan's ports, which plan 7D implements.
@@ -88,13 +88,14 @@ These are this plan's readings of the design where the design leaves a choice op
 | `context/ContextBlock.kt`; test `context/ContextBlockTest.kt` | Task 3: the records block |
 | `engine/ConversationClock.kt`; `store/` `RecordArchive.kt`, `ConversationStore.kt`, `ArchivedConversationStore.kt`, `Retention.kt`; fixtures `MemoryArchive.kt`, `ManualConversationClock.kt`; tests `store/ArchivedConversationStoreTest.kt`, `store/RetentionTest.kt` | Task 4: the store and retention |
 | `store/HistoryRanking.kt`, `store/HistorySearch.kt`; tests `store/HistoryRankingTest.kt`, `store/HistorySearchTest.kt` | Task 5: the search |
-| `store/` `SearchIndex.kt`, `PastIndex.kt`, `PastIndexCodec.kt`, `HistoryRanking.kt`; tests `store/SearchIndexTest.kt`, `store/PastIndexTest.kt` | Task 5b: the index of past conversations and its format |
-| `:core:agent`'s `goal/HistoryPort.kt`, `loop/HistorySteps.kt`; test `AgentGoalTest.kt` | Task 5c: the search's answer while its index is rebuilt |
+| `:core:commands`' `text/LabelMatcher.kt`; test `text/LabelMatcherTest.kt` | Task 5a: the matcher's cheap check for one word against another |
+| `store/` `SearchIndex.kt`, `IndexShard.kt`, `PastIndex.kt`, `PastIndexCodec.kt`, `HistoryRanking.kt`; tests `store/SearchIndexTest.kt`, `store/PastIndexTest.kt` | Task 5b: the index of past conversations, its shards and its format |
+| `:core:agent`'s `goal/HistoryPort.kt`, `loop/HistorySteps.kt`; test `AgentGoalTest.kt` | Task 5c: the search's answer while its index is rebuilt or cannot be read |
 | `store/` `RecordArchive.kt`, `ConversationStore.kt`, `ArchivedConversationStore.kt`, `HistoryRanking.kt`, `HistorySearch.kt`; fixture `MemoryArchive.kt`; tests `store/ArchivedConversationStoreTest.kt`, `store/HistorySearchTest.kt`, `store/HistoryRankingTest.kt`, `store/RetentionTest.kt` | Task 5d: the store keeps the index and reads a conversation only when it needs it |
 | `channel/` `OwnerChannel.kt`, `Dialogue.kt`, `ConversationOwner.kt`; fixture `FakeChannel.kt`; test `channel/ConversationOwnerTest.kt` | Task 6: the channels and the owner |
 | `ConversationTexts.kt`; `local/LocalRequest.kt`; `machine/` `ConversationState.kt`, `QuietClock.kt`, `ConversationEvent.kt`, `ConversationEffect.kt`, `GoalRules.kt`, `ConversationMachine.kt`; tests `machine/MachineTesting.kt`, `machine/QuietClockTest.kt`, `machine/ConversationMachineTest.kt`, `machine/GoalRulesTest.kt` | Task 7: the conversation's rules |
 | `goal/` `GoalEnvironment.kt`, `SteeringInbox.kt`, `RunningGoal.kt`, `GoalRequests.kt`, `GoalRunner.kt`; fixture `FakeGoalEnvironment.kt`; tests `goal/GoalRequestsTest.kt`, `goal/GoalRunnerTest.kt` | Task 8: the goal runner |
-| `local/` `RecordedOwner.kt`, `LocalRequests.kt`; test `local/LocalRequestsTest.kt` | Task 9: Kestrel's own requests |
+| `local/` `RecordedOwner.kt`, `LocalRequests.kt`; `ConversationTexts.kt` (`PAST_UNAVAILABLE`); test `local/LocalRequestsTest.kt` | Task 9: Kestrel's own requests |
 | `engine/` `ConversationView.kt`, `ConversationEngine.kt`; test `engine/ConversationEngineTest.kt` | Task 10: the engine |
 
 Every main path is below `core/conversation/src/main/kotlin/dev/kestrel/conversation/`, every test path below `core/conversation/src/test/kotlin/dev/kestrel/conversation/`, and every fixture below `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/`; the steps give each path in full.
@@ -3171,22 +3172,152 @@ git commit -m "feat(conversation): the on-device search over past conversations 
 
 ---
 
-### Task 5b: The index of past conversations and its format
+### Task 5a: The matcher's cheap check for one word against another (`:core:commands`)
 
-Design 9.2 and R3 of sub-project 7, as amended on 2026-11-25: the A71 took 13.8 s to read and decrypt every conversation at the store's first use, and still 5.2 s in one query, because each row costs a Keystore operation. So the store will keep an index of past conversations, encrypted in a row of its own, and read a conversation's body only when it needs it (Task 5d). This task builds the index alone, as pure code that nothing uses yet: `SearchIndex`, the folded words of some records, each word once in a sorted list and each record's words as ascending positions in it, so that a search folds only its query and compares positions; `PastIndex`, what the list shows and the search reads of every closed conversation, with the closed rows that this version cannot read and the stamp that tells whether the index is in step with the table; and `PastIndexCodec`, its compact format: a format byte and then, compressed with Deflate, the words, each conversation with its records' positions written as distances, and the kept rows. `HistoryRanking`'s entries take their words from `SearchIndex.folded`, so that the words are folded in one place.
-
-Tasks 5b to 5d change Tasks 4 and 5 as built. They run after Task 6, which they do not touch, and before Task 7; Task 8 is the first later task that uses the store or the search.
+Design 9.4 and R3 of sub-project 7, as amended on 2026-11-26. The search finds a query word's near misses among the index's words with the same first letter: about 1,100 words for each query word with 30 days of heavy use, and more with a longer retention. `LabelMatcher.score` folds both words again and runs the joined similarity, the word overlap and the phonetic key for each of them, so the review of the index measured a first search's ranking at 2,870 calls, about 0.5 to 0.8 s on the A71 (an estimate). For one word against one word, though, the score can reach `MatchRules.ACCEPT` (0.80) only when the overlap counts the two as the same word, because the joined similarity and the phonetic key alone give at most `JOINED_WEIGHT + PHONETIC_WEIGHT` (0.65). `LabelMatcher.mayAccept` checks only that, with the matcher's own rule for the same word (the same stem, a Jaro–Winkler similarity of at least 0.92, or the same sound for words of 5 letters or more), on words that are already folded. When it is false, the score is below `ACCEPT`, so the search (Task 5b) scores only the few words that pass it, and its results do not change. A test checks the rule over a corpus of names and their misspellings: every pair that the check refuses scores below `ACCEPT`, and the check refuses more than 90% of the pairs. This is a change to `:core:commands` that plan 7B makes, as fix 7B-2 did for `:core:agent` (Global Constraints).
 
 **Files:**
-- Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/SearchIndex.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndexCodec.kt`
+- Modify: `core/commands/src/main/kotlin/dev/kestrel/commands/text/LabelMatcher.kt`
+- Test: `core/commands/src/test/kotlin/dev/kestrel/commands/text/LabelMatcherTest.kt`
+
+**Interfaces:**
+- Consumes: plan 3A's `LabelMatcher` (`score`, its private `sameWord`), `MatchRules` and `Normalizer`.
+- Produces: `fun LabelMatcher.mayAccept(spoken: String, name: String): Boolean`, for two single words that `Normalizer` folded: false means that `score(spoken, name)`, with either strictness, is below `MatchRules.ACCEPT`. Task 5b's `HistoryRanking` calls it before `score`.
+
+Counts: `:core:commands` N + 1 (`LabelMatcherTest` 15 → 16; 157 + 1 = 158 at `d6c76d70`).
+
+- [ ] **Step 1: Write the failing test**
+
+In `core/commands/src/test/kotlin/dev/kestrel/commands/text/LabelMatcherTest.kt`, replace:
+
+```kotlin
+    }
+
+    @Test
+    fun printsNoNames() {
+```
+
+with:
+
+```kotlin
+    }
+
+    // The search over past conversations scores only the words that pass mayAccept (plan 7B), so the check must never refuse
+    // a word that score lets act, and must refuse most words, or it saves nothing.
+    @Test
+    fun mayAcceptRefusesOnlyWordsThatScoreBelowTheAcceptLimit() {
+        assertTrue(MatchRules.JOINED_WEIGHT + MatchRules.PHONETIC_WEIGHT + MatchRules.TOLERANCE < MatchRules.ACCEPT)
+        val names = listOf(
+            "milica", "milan", "marko", "restoran", "ambar", "viber", "settings", "delete", "georgie", "đorđe", "tonči",
+            "colour", "later", "letter", "save", "safe", "sound", "sand", "wifi", "novi", "beograd", "hotel", "parking",
+            "poruka", "poslala", "anja", "dina", "screenshot", "kamera", "telefon", "sunday", "monday", "jovana", "nikolina",
+        )
+        val corpus = (names + names.flatMap { listOf(it + "s", it.dropLast(1), it.replaceFirst(it[1].toString(), it[1].toString().repeat(2)), it.drop(1)) })
+            .map { Normalizer.words(it).single() }.distinct()
+        var refused = 0
+        for (spoken in corpus) {
+            for (name in corpus) {
+                if (LabelMatcher.mayAccept(spoken, name)) continue
+                refused++
+                assertTrue("$spoken to $name", LabelMatcher.score(spoken, name) + MatchRules.TOLERANCE < MatchRules.ACCEPT)
+            }
+        }
+        assertTrue("$refused of ${corpus.size * corpus.size}", refused * 10 > corpus.size * corpus.size * 9)
+        assertTrue(LabelMatcher.mayAccept("veiber", "viber"))
+        assertFalse(LabelMatcher.mayAccept("later", "letter"))
+    }
+
+    @Test
+    fun printsNoNames() {
+```
+
+- [ ] **Step 2: Run the test to see it fail**
+
+Run: `scripts\gradle.ps1 :core:commands:test --tests=dev.kestrel.commands.text.LabelMatcherTest`
+Expected: FAIL, the compiler reports `Unresolved reference 'mayAccept'`.
+
+- [ ] **Step 3: The check**
+
+In `core/commands/src/main/kotlin/dev/kestrel/commands/text/LabelMatcher.kt`, replace:
+
+```kotlin
+    /** Whether [spoken] names [name] exactly, as [decide] counts an exact match: the same words after folding, also joined. */
+    fun exact(spoken: String, name: String): Boolean = score(spoken, name) == EXACT
+
+    /**
+```
+
+with:
+
+```kotlin
+    /** Whether [spoken] names [name] exactly, as [decide] counts an exact match: the same words after folding, also joined. */
+    fun exact(spoken: String, name: String): Boolean = score(spoken, name) == EXACT
+
+    /**
+     * Whether [spoken] can name [name] well enough to act, for two single words that [Normalizer] folded: false means that
+     * [score] of the two, with either strictness, stays below `MatchRules.ACCEPT`. For one word against one, only the
+     * overlap that counts the two as the same word lifts the score that far, because the joined similarity and the phonetic
+     * key alone give at most `JOINED_WEIGHT + PHONETIC_WEIGHT`, which is less. So this checks only that the two are the same
+     * word, have the same stem, are at least `WORD_SIMILARITY` alike or sound the same. It folds nothing and scores nothing,
+     * so that a caller that compares one word with many, as the search over past conversations does, scores only the few
+     * words that pass it.
+     */
+    fun mayAccept(spoken: String, name: String): Boolean = sameWord(spoken, name, phoneticWords = true)
+
+    /**
+```
+
+- [ ] **Step 4: Run the test to see it pass**
+
+Run: `scripts\gradle.ps1 :core:commands:test --tests=dev.kestrel.commands.text.LabelMatcherTest`
+Expected: PASS, 16 tests. `mayAcceptRefusesOnlyWordsThatScoreBelowTheAcceptLimit` compares about 27,000 pairs in about half a second.
+
+- [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
+
+Run: `scripts\gradle.ps1 :core:commands:check`, then `$n = 0; Get-ChildItem core\commands\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\commands $n"`, then `scripts\gradle.ps1 --stop`
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\commands` N + 1 (158 at `d6c76d70`).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add core/commands
+git commit -m "feat(commands): LabelMatcher.mayAccept, an exact and cheap check that one folded word can name another, so that a caller that compares a word with thousands scores only the few that pass it (design 9.4 and R3 of sub-project 7)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+```
+
+---
+
+### Task 5b: The index of past conversations, its shards and its format
+
+Design 9.2 and R3 of sub-project 7, as amended on 2026-11-25 and 2026-11-26: the A71 took 13.8 s to read and decrypt every conversation at the store's first use, and still 5.2 s in one query, because each row costs a Keystore operation. So the store will keep an index of past conversations, encrypted in rows of its own, and read a conversation's body only when it needs it (Task 5d). This task builds the index alone, as pure code that nothing uses yet:
+- `SearchIndex`: the folded words of some records, each word once in a sorted list and each record's words as ascending positions in it, so that a search folds only its query and compares positions. Its `Builder` folds one conversation at a time and sorts the words once at the end, so that a rebuild keeps no body after it read it.
+- `IndexShard`: a part of the index, which the archive keeps in a row of its own: what the list shows of some closed conversations, their records' words, and the closed rows that this version cannot read.
+- `PastIndex`: the shards, with what the list shows and the search reads of every closed conversation, and the stamp that tells whether the index is in step with the table. A conversation that closes goes into the newest shard, and a new shard starts when the newest holds `SHARD_POSITIONS` (100,000) word positions, about 200 KB encoded. So a close re-encodes and re-encrypts one shard of at most about 250 KB, however long the retention and however heavy the use, and a rebuild writes the shards oldest first. `changesFrom` names the shards that a change made or emptied, which the store writes.
+- `PastIndexCodec`: a shard's compact format: a format byte and then, compressed with Deflate, the shard's words, each conversation with its records' positions written as distances, and the kept rows. Its decoder reads the bytes directly and takes each word from the words of the shards decoded before, so that the index keeps each word once in memory.
+
+`HistoryRanking` takes its entries' words from `SearchIndex.folded`, so that the words are folded in one place, ranks a list of indexes (one per shard), and judges a near miss with Task 5a's `LabelMatcher.mayAccept` before it scores it, once per distinct word and query word, whichever shards hold the word.
+
+Tasks 5a to 5d change Tasks 4 and 5 as built. They run after Task 7, which they do not touch; Task 8 is the first later task that uses the store or the search. The plan checker, started at this task (`START_TASK=5b`), reports Tasks 6 and 7 as creating files that exist; those lines are expected, because Tasks 6 and 7 are built.
+
+**Files:**
+- Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/SearchIndex.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/IndexShard.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndexCodec.kt`
 - Modify: `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`
 - Test: `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/SearchIndexTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/PastIndexTest.kt`
 
 **Interfaces:**
-- Consumes: Task 1's `ConversationSnapshot`, `ConversationId`, `CommandRecord`; Task 5's `RecordRef`; `dev.kestrel.commands.text.Normalizer`; `dev.kestrel.agent.observe.ScreenText.cut`.
-- Produces (package `dev.kestrel.conversation.store`): `class IndexedRecord(val ref: RecordRef, val atWall: Long, val words: IntArray)`; `class SearchIndex` with `val words: List<String>` (in order, each once), `val records: List<IndexedRecord>`, `fun position(word): Int`, `fun startingWith(letter: Char): IntRange`, `fun wordsOf(record): List<String>`, `operator fun plus(other)`, `fun without(conversations: Set<ConversationId>)`, and in its companion `EMPTY`, `fun of(conversations: List<ConversationSnapshot>)`, `fun restored(words, records)` and `fun folded(record: CommandRecord): Set<String>`; `data class PastConversation(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?)`; `data class KeptRow(val id: String, val lastWall: Long)`; `data class IndexStamp(val closed: Int, val newest: Long, val total: Long)`; `class PastIndex` with `val conversations: List<PastConversation>` (the newest last change first), `val search: SearchIndex`, `val kept: List<KeptRow>`, `val stamp: IndexStamp`, `operator fun contains(id: ConversationId)`, `fun with(snapshots)`, `fun keeping(rows)`, `fun without(ids: Set<String>)`, `fun outside(oldest, newest): Set<String>`, and in its companion `FIRST_REQUEST = 80`, `EMPTY`, `fun of(snapshots, kept)` and `fun restored(conversations, search, kept)`; `object PastIndexCodec` with `FORMAT: Byte = 1`, `fun encode(index: PastIndex): ByteArray` and `fun decode(bytes: ByteArray): PastIndex`, which throws `IllegalArgumentException` for bytes in another format or that do not decode. Task 5d builds the store and the search on them.
+- Consumes: Task 1's `ConversationSnapshot`, `ConversationId`, `CommandRecord`; Task 5's `RecordRef`; Task 5a's `LabelMatcher.mayAccept`; `dev.kestrel.commands.text.Normalizer`; `dev.kestrel.agent.observe.ScreenText.cut`.
+- Produces (package `dev.kestrel.conversation.store`):
+  - `class IndexedRecord(val ref: RecordRef, val atWall: Long, val words: IntArray)`.
+  - `class SearchIndex` with `val words: List<String>` (in order, each once), `val records: List<IndexedRecord>`, `fun position(word): Int`, `fun startingWith(letter: Char): IntRange`, `fun wordsOf(record): List<String>`, `operator fun plus(other)`, `fun without(conversations: Set<ConversationId>)`; `class SearchIndex.Builder(shared: MutableMap<String, String> = HashMap())` with `fun add(conversation): Int` (the word positions that it added) and `fun build()`; in its companion `EMPTY`, `fun of(conversations: List<ConversationSnapshot>)`, `fun restored(words, records)` and `fun folded(record: CommandRecord): Set<String>`.
+  - `data class PastConversation(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?)`; `data class KeptRow(val id: String, val lastWall: Long)`; `data class IndexStamp(val closed: Int, val newest: Long, val total: Long)`.
+  - `class IndexShard` with `val number: Int`, `val conversations` (the newest last change first), `val search: SearchIndex`, `val kept`, `val stamp`, `val positions`, `val isEmpty`, `fun with(snapshots)`, `fun keeping(rows)`, `fun without(ids: Set<String>)`, `fun outside(oldest, newest)`, and in its companion `fun empty(number)` and `fun restored(number, conversations, search, kept)`.
+  - `class PastIndex` with `val shards: List<IndexShard>` (the newest first), `val shardPositions: Int`, `val conversations: List<PastConversation>` (the newest last change first), `val searches: List<SearchIndex>`, `val kept`, `val stamp`, `operator fun contains(id: ConversationId)`, `fun with(snapshots)`, `fun keeping(rows)`, `fun without(ids: Set<String>)`, `fun outside(oldest, newest): Set<String>`, `fun changesFrom(before: PastIndex): ShardChanges`; `class PastIndex.Builder(shardPositions = SHARD_POSITIONS)` with `fun add(snapshot)`, `fun keep(row)` and `fun build()`; in its companion `FIRST_REQUEST = 80`, `SHARD_POSITIONS = 100_000`, `EMPTY`, `fun empty(shardPositions)`, `fun of(snapshots, kept, shardPositions = SHARD_POSITIONS)` and `fun restored(shards, shardPositions = SHARD_POSITIONS)`.
+  - `class ShardChanges(val put: List<IndexShard>, val gone: Set<Int>)` with `val isEmpty`.
+  - `object PastIndexCodec` with `FORMAT: Byte = 1`, `fun encode(shard: IndexShard): ByteArray` and `fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard`, which throws `IllegalArgumentException` for bytes in another format or that do not decode.
+  - `HistoryRanking.rank(indexes: List<SearchIndex>, …)` as before, which now checks `LabelMatcher.mayAccept` before `similarity`.
 
-Counts: `:core:conversation` 81 + 9 (`SearchIndexTest` 4, `PastIndexTest` 5) = 90. The 81 are the module's tests with Tasks 1 to 6 built, at `e12844d5`; if the task runs at another point, it is N + 9.
+  Task 5d builds the store and the search on them.
+
+Counts: `:core:conversation` 135 + 12 (`SearchIndexTest` 4, `PastIndexTest` 8) = 147. The 135 are the module's tests with Tasks 1 to 7 built, at `d6c76d70`; if the task runs at another point, it is N + 12.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3291,6 +3422,8 @@ import org.junit.Test
 import kotlin.random.Random
 
 class PastIndexTest {
+    private val day = ArchivedConversationStore.DAY_MILLIS
+
     private fun id(n: Int) = ConversationId(n.toString().padStart(32, '0'))
 
     private fun closed(n: Int, last: Long, vararg requests: String) = ConversationSnapshot(
@@ -3305,12 +3438,12 @@ class PastIndexTest {
 
         assertEquals(listOf(id(2), id(1)), index.conversations.map { it.id })
         assertEquals(PastConversation(id(1), -900, 100, 2, long.take(PastIndex.FIRST_REQUEST).trimEnd() + "…"), index.conversations[1])
-        assertEquals(3, index.search.records.size)
+        assertEquals(3, index.searches.single().records.size)
         assertTrue(id(1) in index)
 
         val left = index.without(setOf(id(1).value))
         assertEquals(listOf(id(2)), left.conversations.map { it.id })
-        assertEquals(listOf("ana", "call"), left.search.words)
+        assertEquals(listOf("ana", "call"), left.searches.single().words)
         assertSame(left, left.without(setOf(id(1).value)))
         assertSame(left, left.with(emptyList()))
     }
@@ -3336,26 +3469,86 @@ class PastIndexTest {
             listOf(KeptRow("later", 7)),
         )
 
-        val read = PastIndexCodec.decode(PastIndexCodec.encode(index))
+        val shard = index.shards.single()
 
-        assertEquals(index.conversations, read.conversations)
-        assertEquals(index.kept, read.kept)
-        assertEquals(index.search.words, read.search.words)
-        assertEquals(index.search.records.associate { it.ref to index.search.wordsOf(it) }, read.search.records.associate { it.ref to read.search.wordsOf(it) })
-        assertEquals(index.stamp, read.stamp)
-        assertEquals(PastIndexCodec.FORMAT, PastIndexCodec.encode(index)[0])
+        val read = PastIndexCodec.decode(shard.number, PastIndexCodec.encode(shard))
+
+        assertEquals(shard.number, read.number)
+        assertEquals(shard.conversations, read.conversations)
+        assertEquals(shard.kept, read.kept)
+        assertEquals(shard.search.words, read.search.words)
+        assertEquals(shard.search.records.associate { it.ref to shard.search.wordsOf(it) }, read.search.records.associate { it.ref to read.search.wordsOf(it) })
+        assertEquals(shard.stamp, read.stamp)
+        assertEquals(PastIndexCodec.FORMAT, PastIndexCodec.encode(shard)[0])
     }
 
     @Test
     fun bytesInAnotherFormatOrThatDoNotDecodeAreRefused() {
-        val bytes = PastIndexCodec.encode(PastIndex.of(listOf(closed(1, 10, "Call Ana")), emptyList()))
+        val shard = PastIndex.of(listOf(closed(1, 10, "Call Ana")), emptyList()).shards.single()
+        val bytes = PastIndexCodec.encode(shard)
 
         for (wrong in listOf(byteArrayOf(), byteArrayOf(2) + bytes.copyOfRange(1, bytes.size), bytes.copyOf(bytes.size - 3), bytes + byteArrayOf(0))) {
-            assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(wrong) }
+            assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(shard.number, wrong) }
         }
     }
 
-    // Design 9.2 and R3 of sub-project 7: 30 days of heavy use stay well under the A71's 200 ms to decrypt and decode.
+    // Design 9.2: a close re-encodes only the newest shard, which is never much larger than its limit, and a conversation
+    // that changes again moves to the newest shard.
+    @Test
+    fun aCloseGoesToTheNewestShardUntilItIsFullAndAConversationThatChangesAgainMoves() {
+        val index = PastIndex.empty(shardPositions = 4).with(listOf(closed(1, 100, "Call Ana"))).with(listOf(closed(2, 200, "Book the hotel")))
+        val full = index.with(listOf(closed(3, 300, "Plan the trip")))
+
+        assertEquals(listOf(listOf(id(3)), listOf(id(2), id(1))), full.shards.map { shard -> shard.conversations.map { it.id } })
+        assertEquals(listOf(1), full.changesFrom(index).put.map { it.number })
+        assertSame(index.shards.single(), full.shards.last())
+
+        val moved = full.with(listOf(closed(1, 400, "Call Ana again")))
+
+        assertEquals(listOf(id(1), id(3), id(2)), moved.conversations.map { it.id })
+        assertEquals(listOf(listOf(id(1), id(3)), listOf(id(2))), moved.shards.map { shard -> shard.conversations.map { it.id } })
+        assertEquals(setOf(0, 1), moved.changesFrom(full).put.mapTo(HashSet()) { it.number })
+        assertEquals(setOf(0), moved.without(setOf(id(2).value)).changesFrom(moved).gone)
+        assertEquals(IndexStamp(3, 400, 400 + 300 + 200), moved.stamp)
+    }
+
+    // A rebuild folds the conversations, the oldest first, into a builder; the changes fold them into the index one at a
+    // time. Both must make the same shards.
+    @Test
+    fun aRebuildAndTheChangesOneAtATimeMakeTheSameIndex() {
+        val random = Random(9)
+        val words = listOf("ambar", "mila", "restoran", "hotel", "novi", "sad", "viber", "poruka", "Đorđe", "Ђорђе")
+        val snapshots = (1..40).map { n -> closed(n, random.nextLong(0, 200 * day), *Array(random.nextInt(1, 4)) { List(3) { words.random(random) }.joinToString(" ") }) }
+            .sortedBy { it.lastWall }
+        val kept = listOf(KeptRow("later", 5 * day), KeptRow("newer", 150 * day))
+
+        val built = PastIndex.of(snapshots, kept, shardPositions = 20)
+        val folded = snapshots.fold(PastIndex.empty(shardPositions = 20)) { index, snapshot -> index.with(listOf(snapshot)) }.keeping(kept)
+
+        assertTrue(built.shards.size > 3)
+        assertEquals(folded.conversations, built.conversations)
+        assertEquals(folded.kept.toSet(), built.kept.toSet())
+        assertEquals(folded.shards.map { it.number }, built.shards.map { it.number })
+        for ((one, other) in folded.shards.zip(built.shards)) {
+            assertEquals(one.conversations, other.conversations)
+            assertEquals(one.search.words, other.search.words)
+            assertEquals(one.search.records.associate { it.ref to one.search.wordsOf(it) }, other.search.records.associate { it.ref to other.search.wordsOf(it) })
+        }
+        assertEquals(folded.stamp, built.stamp)
+    }
+
+    @Test
+    fun anIndexWhoseShardsDisagreeIsRefused() {
+        val first = PastIndex.of(listOf(closed(1, 10, "Call Ana")), emptyList()).shards.single()
+        val again = PastIndex.of(listOf(closed(2, 20, "Book it"), closed(1, 30, "Call Ana")), emptyList(), shardPositions = 1).shards.first()
+
+        assertEquals(1, again.number)
+        assertThrows(IllegalArgumentException::class.java) { PastIndex.restored(listOf(first, first)) }
+        assertThrows(IllegalArgumentException::class.java) { PastIndex.restored(listOf(first, again)) }
+        assertEquals(listOf(id(1)), PastIndex.restored(listOf(first)).conversations.map { it.id })
+    }
+
+    // Design 9.2 and R3 of sub-project 7: 30 days of heavy use make two shards, and a close re-encodes at most one of them.
     @Test
     fun theIndexOf30HeavyDaysStaysSmall() {
         val random = Random(30)
@@ -3365,10 +3558,12 @@ class PastIndexTest {
             ConversationSnapshot(id(n + 1), n * 10L, n * 10L + 1, testMode = true, records = records)
         }
 
-        val bytes = PastIndexCodec.encode(PastIndex.of(conversations, emptyList()))
+        val shards = PastIndex.of(conversations, emptyList()).shards
+        val bytes = shards.map { PastIndexCodec.encode(it) }
 
-        assertTrue("${bytes.size} bytes", bytes.size < 400_000)
-        assertEquals(300, PastIndexCodec.decode(bytes).conversations.size)
+        assertEquals(2, shards.size)
+        assertTrue("${bytes.map { it.size }} bytes", bytes.sumOf { it.size } < 550_000 && bytes.all { it.size < 300_000 })
+        assertEquals(300, shards.zip(bytes).sumOf { (shard, encoded) -> PastIndexCodec.decode(shard.number, encoded).conversations.size })
         assertFalse(PastIndex.EMPTY.toString().contains("w0"))
     }
 }
@@ -3377,9 +3572,9 @@ class PastIndexTest {
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.SearchIndexTest --tests=dev.kestrel.conversation.store.PastIndexTest`
-Expected: FAIL, the compiler reports `Unresolved reference 'SearchIndex'` and `'PastIndex'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'SearchIndex'`, `'PastIndex'` and `'IndexShard'`.
 
-- [ ] **Step 3: Create the index and its format**
+- [ ] **Step 3: Create the index, its shards and its format**
 
 Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/SearchIndex.kt`:
 
@@ -3441,6 +3636,38 @@ class SearchIndex private constructor(val words: List<String>, val records: List
 
     override fun toString(): String = "SearchIndex(words=${words.size}, records=${records.size})"
 
+    /**
+     * Builds an index one conversation at a time, as a rebuild reads them (design 9.2): each word gets a number when it
+     * first comes, and [build] sorts the words once and turns the numbers into positions, so that no conversation is kept
+     * after it was added. A word that [shared] already holds, from another builder, is taken from it, so that the words of
+     * several indexes are kept once in memory. toString prints only counts.
+     */
+    class Builder(private val shared: MutableMap<String, String> = HashMap()) {
+        private val numbers = HashMap<String, Int>()
+        private val records = ArrayList<IndexedRecord>()
+
+        /** Adds [conversation]'s records; returns how many word positions they hold. */
+        fun add(conversation: ConversationSnapshot): Int {
+            var positions = 0
+            for (record in conversation.records) {
+                val found = folded(record).map { word -> numbers.getOrPut(shared.getOrPut(word) { word }) { numbers.size } }
+                records += IndexedRecord(RecordRef(conversation.id, record.number), record.atWall, found.toIntArray())
+                positions += found.size
+            }
+            return positions
+        }
+
+        fun build(): SearchIndex {
+            if (records.isEmpty()) return EMPTY
+            val words = numbers.keys.sorted()
+            val positions = IntArray(words.size)
+            words.forEachIndexed { position, word -> positions[numbers.getValue(word)] = position }
+            return SearchIndex(words, records.map { record -> IndexedRecord(record.ref, record.atWall, IntArray(record.words.size) { positions[record.words[it]] }.apply { sort() }) })
+        }
+
+        override fun toString(): String = "SearchIndex.Builder(words=${numbers.size}, records=${records.size})"
+    }
+
     // This index's records with their positions in [to], a list in order that holds every word of this index; the
     // positions keep their order, because both lists are in the same order.
     private fun moved(to: List<String>): List<IndexedRecord> {
@@ -3455,11 +3682,9 @@ class SearchIndex private constructor(val words: List<String>, val records: List
 
         /** The index of the records of [conversations]: the folded words of every text that each record holds. */
         fun of(conversations: List<ConversationSnapshot>): SearchIndex {
-            val folded = conversations.flatMap { conversation -> conversation.records.map { conversation.id to it } }
-                .map { (id, record) -> Triple(RecordRef(id, record.number), record.atWall, folded(record)) }
-            val words = folded.flatMapTo(sortedSetOf()) { it.third }.toList()
-            val records = folded.map { (ref, at, found) -> IndexedRecord(ref, at, found.map { words.binarySearch(it) }.sorted().toIntArray()) }
-            return SearchIndex(words, records)
+            val builder = Builder()
+            for (conversation in conversations) builder.add(conversation)
+            return builder.build()
         }
 
         /**
@@ -3510,20 +3735,113 @@ class SearchIndex private constructor(val words: List<String>, val records: List
 }
 ```
 
-Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt`:
+Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/IndexShard.kt`:
 
 ```kotlin
 package dev.kestrel.conversation.store
 
 import dev.kestrel.agent.observe.ScreenText
+import dev.kestrel.conversation.model.ConversationSnapshot
+
+/**
+ * A part of the index of past conversations (design 9.2 of sub-project 7): some closed conversations and kept rows, with
+ * what the list shows of each conversation ([conversations], the newest last change first), its records' words ([search])
+ * and the kept rows ([kept]). The archive keeps each shard encrypted in a row of its own, named by its [number], so that a
+ * close re-encodes and re-encrypts only the newest shard, which holds at most about [PastIndex.SHARD_POSITIONS] word
+ * positions, however long the retention and however heavy the use. A shard never changes: [with], [keeping] and [without]
+ * give a new one, or this one when nothing changes. toString prints only counts.
+ */
+class IndexShard private constructor(val number: Int, val conversations: List<PastConversation>, val search: SearchIndex, val kept: List<KeptRow>) {
+    /** What this shard counts of the closed rows: its part of the index's stamp. */
+    val stamp: IndexStamp by lazy {
+        val last = conversations.map { it.lastWall } + kept.map { it.lastWall }
+        IndexStamp(last.size, last.maxOrNull() ?: 0, last.sum())
+    }
+
+    /** How many word positions the shard's records hold, which its size follows. */
+    val positions: Int by lazy { search.records.sumOf { it.words.size } }
+
+    /** Whether the shard holds nothing, so that the archive keeps no row for it. */
+    val isEmpty: Boolean get() = conversations.isEmpty() && kept.isEmpty()
+
+    /** This shard with [snapshots], closed conversations, each replacing its earlier entry. */
+    fun with(snapshots: List<ConversationSnapshot>): IndexShard {
+        if (snapshots.isEmpty()) return this
+        val ids = snapshots.mapTo(HashSet()) { it.id }
+        val values = ids.mapTo(HashSet()) { it.value }
+        val listed = (conversations.filter { it.id !in ids } + snapshots.map(::listed)).sortedByDescending { it.lastWall }
+        return IndexShard(number, listed, search.without(ids) + SearchIndex.of(snapshots), kept.filter { it.id !in values })
+    }
+
+    /** This shard with [rows] kept, each replacing its earlier entry. */
+    fun keeping(rows: List<KeptRow>): IndexShard {
+        if (rows.isEmpty()) return this
+        val ids = rows.mapTo(HashSet()) { it.id }
+        val gone = conversations.filter { it.id.value in ids }.mapTo(HashSet()) { it.id }
+        return IndexShard(number, conversations.filter { it.id !in gone }, search.without(gone), kept.filter { it.id !in ids } + rows)
+    }
+
+    /** This shard without the conversations and kept rows [ids]. */
+    fun without(ids: Set<String>): IndexShard {
+        val gone = conversations.filter { it.id.value in ids }.mapTo(HashSet()) { it.id }
+        if (gone.isEmpty() && kept.none { it.id in ids }) return this
+        return IndexShard(number, conversations.filter { it.id !in gone }, search.without(gone), kept.filter { it.id !in ids })
+    }
+
+    /** The ids of the conversations and kept rows whose last change is before [oldest] or after [newest] (design 9.3). */
+    fun outside(oldest: Long, newest: Long): Set<String> {
+        fun out(last: Long) = last < oldest || last > newest
+        return conversations.filter { out(it.lastWall) }.mapTo(HashSet()) { it.id.value } + kept.filter { out(it.lastWall) }.map { it.id }
+    }
+
+    override fun toString(): String = "IndexShard(number=$number, conversations=${conversations.size}, kept=${kept.size}, $search)"
+
+    companion object {
+        fun empty(number: Int): IndexShard = IndexShard(number, emptyList(), SearchIndex.EMPTY, emptyList())
+
+        /**
+         * A shard read back from the archive (`PastIndexCodec`): its conversations must come the newest last change first,
+         * each id once, with as many records in [search] as each counts commands, and no record of another conversation;
+         * otherwise it throws [IllegalArgumentException].
+         */
+        fun restored(number: Int, conversations: List<PastConversation>, search: SearchIndex, kept: List<KeptRow>): IndexShard {
+            require(number >= 0) { "A shard's number is negative" }
+            require((1 until conversations.size).all { conversations[it - 1].lastWall >= conversations[it].lastWall }) { "The conversations are not in order" }
+            val ids = conversations.map { it.id.value } + kept.map { it.id }
+            require(ids.toSet().size == ids.size) { "A conversation is in the shard twice" }
+            val records = search.records.groupingBy { it.ref.conversation }.eachCount()
+            val known = conversations.mapTo(HashSet()) { it.id }
+            require(records.keys.all { it in known }) { "A record belongs to no conversation of the shard" }
+            require(conversations.all { (records[it.id] ?: 0) == it.commands }) { "A conversation's records are not all in the shard" }
+            return IndexShard(number, conversations, search, kept)
+        }
+
+        /** A shard that a [PastIndex.Builder] made: its conversations, in any order, and its records in [search]. */
+        internal fun built(number: Int, conversations: List<PastConversation>, search: SearchIndex, kept: List<KeptRow>): IndexShard =
+            IndexShard(number, conversations.sortedByDescending { it.lastWall }, search, kept)
+
+        /** What the list shows of [snapshot], its first request cut at [PastIndex.FIRST_REQUEST] characters. */
+        internal fun listed(snapshot: ConversationSnapshot): PastConversation = PastConversation(
+            snapshot.id, snapshot.openedAtWall, snapshot.lastWall, snapshot.records.size,
+            snapshot.records.firstOrNull()?.request?.let { ScreenText.cut(it, PastIndex.FIRST_REQUEST) },
+        )
+    }
+}
+```
+
+Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt`:
+
+```kotlin
+package dev.kestrel.conversation.store
+
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 
 /**
  * A closed conversation as the index of past conversations holds it (design 9.2 of sub-project 7): what the list shows
  * (design 9.5), with its first request cut at [PastIndex.FIRST_REQUEST] characters, and when it changed, so that the list,
- * retention and the search's reach need no body. Its records' words are in the index's [PastIndex.search]. toString prints
- * only counts.
+ * retention and the search's reach need no body. Its records' words are in its shard's [IndexShard.search]. toString
+ * prints only counts.
  */
 data class PastConversation(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?) {
     override fun toString(): String = "PastConversation(commands=$commands, firstRequest=${firstRequest?.length} chars)"
@@ -3544,81 +3862,158 @@ data class IndexStamp(val closed: Int, val newest: Long, val total: Long)
 
 /**
  * The index of past conversations (design 9.2 of sub-project 7): for each closed conversation that this version can read,
- * what the list shows ([conversations], the newest last change first) and its records' words for the search ([search]); and
- * the closed rows that it cannot read ([kept]). The open conversation is never in it. The store keeps it in memory, and the
- * archive keeps it encrypted in a row of its own, which every change of the closed conversations replaces in the same
- * transaction. An index never changes: [with], [keeping] and [without] give a new one, or this one when nothing changes.
- * toString prints only counts.
+ * what the list shows ([conversations], the newest last change first) and its records' words for the search ([searches]);
+ * and the closed rows that it cannot read ([kept]). The open conversation is never in it. It is made of [shards], which
+ * the archive keeps encrypted, each in a row of its own. A conversation that closes goes into the newest shard, and a new
+ * shard starts when the newest holds [shardPositions] word positions or more, so that every change of the closed
+ * conversations writes only the few shards that it changed ([changesFrom]), in the same transaction. The store keeps the
+ * index in memory. An index never changes: [with], [keeping] and [without] give a new one, which shares the shards that did
+ * not change, or this one when nothing changes. toString prints only counts.
  */
-class PastIndex private constructor(val conversations: List<PastConversation>, val search: SearchIndex, val kept: List<KeptRow>) {
+class PastIndex private constructor(shards: Collection<IndexShard>, val shardPositions: Int) {
+    /** The shards, the newest first; none is empty. */
+    val shards: List<IndexShard> = shards.filter { !it.isEmpty }.sortedByDescending { it.number }
+
+    val conversations: List<PastConversation> by lazy { this.shards.flatMap { it.conversations }.sortedByDescending { it.lastWall } }
+
+    /** The shards' words, one index per shard, as the search ranks them. */
+    val searches: List<SearchIndex> get() = shards.map { it.search }
+
+    val kept: List<KeptRow> by lazy { this.shards.flatMap { it.kept } }
+
     /** What this index counts of the closed rows, which must be the table's stamp. */
     val stamp: IndexStamp by lazy {
-        val last = conversations.map { it.lastWall } + kept.map { it.lastWall }
-        IndexStamp(last.size, last.maxOrNull() ?: 0, last.sum())
+        val parts = this.shards.map { it.stamp }
+        IndexStamp(parts.sumOf { it.closed }, parts.maxOfOrNull { it.newest } ?: 0, parts.sumOf { it.total })
+    }
+
+    // The number of the shard that holds each conversation and kept row, by its id.
+    private val homes: Map<String, Int> by lazy {
+        val homes = HashMap<String, Int>()
+        for (shard in this.shards) {
+            for (conversation in shard.conversations) homes[conversation.id.value] = shard.number
+            for (row in shard.kept) homes[row.id] = shard.number
+        }
+        homes
     }
 
     private val known: Set<ConversationId> by lazy { conversations.mapTo(HashSet()) { it.id } }
 
     operator fun contains(id: ConversationId): Boolean = id in known
 
-    /** This index with [snapshots], each a closed conversation that replaces its earlier entry. */
+    /** This index with [snapshots], each a closed conversation that replaces its earlier entry, in the newest shard. */
     fun with(snapshots: List<ConversationSnapshot>): PastIndex {
         if (snapshots.isEmpty()) return this
-        val ids = snapshots.mapTo(HashSet()) { it.id }
-        val added = snapshots.map { snapshot ->
-            PastConversation(snapshot.id, snapshot.openedAtWall, snapshot.lastWall, snapshot.records.size, snapshot.records.firstOrNull()?.request?.let { ScreenText.cut(it, FIRST_REQUEST) })
-        }
-        val listed = (conversations.filter { it.id !in ids } + added).sortedByDescending { it.lastWall }
-        return PastIndex(listed, search.without(ids) + SearchIndex.of(snapshots), kept.filter { row -> ids.none { it.value == row.id } })
+        return into(snapshots.map { it.id.value }) { it.with(snapshots) }
     }
 
-    /** This index with [rows] kept, each replacing its earlier entry. */
+    /** This index with [rows] kept, each replacing its earlier entry, in the newest shard. */
     fun keeping(rows: List<KeptRow>): PastIndex {
         if (rows.isEmpty()) return this
-        val ids = rows.mapTo(HashSet()) { it.id }
-        val gone = conversations.filter { it.id.value in ids }.mapTo(HashSet()) { it.id }
-        return PastIndex(conversations.filter { it.id !in gone }, search.without(gone), kept.filter { it.id !in ids } + rows)
+        return into(rows.map { it.id }) { it.keeping(rows) }
     }
 
     /** This index without the conversations and kept rows [ids]. */
     fun without(ids: Set<String>): PastIndex {
-        val gone = conversations.filter { it.id.value in ids }.mapTo(HashSet()) { it.id }
-        if (gone.isEmpty() && kept.none { it.id in ids }) return this
-        return PastIndex(conversations.filter { it.id !in gone }, search.without(gone), kept.filter { it.id !in ids })
+        val numbers = ids.mapNotNullTo(HashSet()) { homes[it] }
+        if (numbers.isEmpty()) return this
+        return PastIndex(shards.map { if (it.number in numbers) it.without(ids) else it }, shardPositions)
     }
 
     /** The ids of the conversations and kept rows whose last change is before [oldest] or after [newest] (design 9.3). */
-    fun outside(oldest: Long, newest: Long): Set<String> {
-        fun out(last: Long) = last < oldest || last > newest
-        return conversations.filter { out(it.lastWall) }.mapTo(HashSet()) { it.id.value } + kept.filter { out(it.lastWall) }.map { it.id }
+    fun outside(oldest: Long, newest: Long): Set<String> = shards.flatMapTo(HashSet()) { it.outside(oldest, newest) }
+
+    /** What the archive must write to go from [before] to this index: the shards that are new or changed, and those that went. */
+    fun changesFrom(before: PastIndex): ShardChanges {
+        val earlier = before.shards.associateBy { it.number }
+        val numbers = shards.mapTo(HashSet()) { it.number }
+        return ShardChanges(shards.filter { earlier[it.number] !== it }, earlier.keys.filterTo(HashSet()) { it !in numbers })
     }
 
-    override fun toString(): String = "PastIndex(conversations=${conversations.size}, kept=${kept.size}, $search)"
+    override fun toString(): String = "PastIndex(shards=${shards.size}, conversations=${conversations.size}, kept=${kept.size})"
+
+    // This index with the entries [ids] taken out of the shards that hold them and [added] to the newest shard, or to a new
+    // one when the newest is full.
+    private fun into(ids: List<String>, added: (IndexShard) -> IndexShard): PastIndex {
+        val left = without(ids.toSet()).shards
+        val newest = left.firstOrNull()?.takeIf { it.positions < shardPositions } ?: IndexShard.empty((left.firstOrNull()?.number ?: -1) + 1)
+        return PastIndex(left.filter { it.number != newest.number } + added(newest), shardPositions)
+    }
+
+    /**
+     * Builds an index one closed row at a time, as a rebuild reads them, the oldest last change first (design 9.2): each
+     * conversation is folded into the newest shard's words as it is added, and a new shard starts when the newest is full,
+     * so that a rebuild keeps no body after it read it, and the newest conversations are in the newest shard. toString
+     * prints only counts.
+     */
+    class Builder(private val shardPositions: Int = SHARD_POSITIONS) {
+        private inner class Shard(val number: Int) {
+            val conversations = ArrayList<PastConversation>()
+            val search = SearchIndex.Builder(words)
+            val kept = ArrayList<KeptRow>()
+            var positions = 0
+        }
+
+        private val words = HashMap<String, String>()
+        private val shards = mutableListOf(Shard(0))
+
+        fun add(snapshot: ConversationSnapshot) {
+            val shard = newest()
+            shard.conversations += IndexShard.listed(snapshot)
+            shard.positions += shard.search.add(snapshot)
+        }
+
+        fun keep(row: KeptRow) {
+            newest().kept += row
+        }
+
+        fun build(): PastIndex = PastIndex(shards.map { IndexShard.built(it.number, it.conversations, it.search.build(), it.kept) }, shardPositions)
+
+        private fun newest(): Shard = shards.last().takeIf { it.positions < shardPositions } ?: Shard(shards.size).also { shards += it }
+
+        override fun toString(): String = "PastIndex.Builder(shards=${shards.size})"
+    }
 
     companion object {
         /** The length at which the index keeps a conversation's first request: the list's (design 9.5). */
         const val FIRST_REQUEST = 80
 
-        val EMPTY = PastIndex(emptyList(), SearchIndex.EMPTY, emptyList())
+        /** The word positions at which the newest shard is full: about 200 KB encoded, a close's whole work (design R3). */
+        const val SHARD_POSITIONS = 100_000
 
-        /** The index of the closed conversations [snapshots] and the rows [kept], as a rebuild makes it. */
-        fun of(snapshots: List<ConversationSnapshot>, kept: List<KeptRow>): PastIndex = EMPTY.with(snapshots).keeping(kept)
+        val EMPTY = PastIndex(emptyList(), SHARD_POSITIONS)
+
+        /** An index without conversations whose shards are full at [shardPositions]. */
+        fun empty(shardPositions: Int): PastIndex = PastIndex(emptyList(), shardPositions)
+
+        /** The index of the closed conversations [snapshots], the oldest first, and the rows [kept]. */
+        fun of(snapshots: List<ConversationSnapshot>, kept: List<KeptRow>, shardPositions: Int = SHARD_POSITIONS): PastIndex {
+            val builder = Builder(shardPositions)
+            snapshots.forEach(builder::add)
+            kept.forEach(builder::keep)
+            return builder.build()
+        }
 
         /**
-         * An index read back from the archive (`PastIndexCodec`): its conversations must come the newest last change first,
-         * each once, with as many records in [search] as it counts commands, and no record of another conversation;
-         * otherwise it throws [IllegalArgumentException].
+         * An index read back from the archive, shard by shard: each number once, and each conversation and kept row in one
+         * shard only; otherwise it throws [IllegalArgumentException].
          */
-        fun restored(conversations: List<PastConversation>, search: SearchIndex, kept: List<KeptRow>): PastIndex {
-            require((1 until conversations.size).all { conversations[it - 1].lastWall >= conversations[it].lastWall }) { "The conversations are not in order" }
-            val ids = conversations.map { it.id.value } + kept.map { it.id }
-            require(ids.toSet().size == ids.size) { "A conversation is in the index twice" }
-            val records = search.records.groupingBy { it.ref.conversation }.eachCount()
-            require(records.keys.all { id -> conversations.any { it.id == id } }) { "A record belongs to no conversation of the index" }
-            require(conversations.all { (records[it.id] ?: 0) == it.commands }) { "A conversation's records are not all in the index" }
-            return PastIndex(conversations, search, kept)
+        fun restored(shards: List<IndexShard>, shardPositions: Int = SHARD_POSITIONS): PastIndex {
+            require(shards.map { it.number }.toSet().size == shards.size) { "A shard is in the index twice" }
+            val ids = HashSet<String>()
+            for (shard in shards) {
+                for (id in shard.conversations.map { it.id.value } + shard.kept.map { it.id }) require(ids.add(id)) { "A conversation is in two shards" }
+            }
+            return PastIndex(shards, shardPositions)
         }
     }
+}
+
+/** What a change writes of the index: the shards to store, each replacing its row, and the numbers of those whose rows go. */
+class ShardChanges(val put: List<IndexShard>, val gone: Set<Int>) {
+    val isEmpty: Boolean get() = put.isEmpty() && gone.isEmpty()
+
+    override fun toString(): String = "ShardChanges(put=${put.size}, gone=${gone.size})"
 }
 ```
 
@@ -3629,35 +4024,33 @@ package dev.kestrel.conversation.store
 
 import dev.kestrel.conversation.model.ConversationId
 import java.io.BufferedOutputStream
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
 import java.io.DataOutputStream
-import java.io.IOException
 import java.util.zip.DataFormatException
 import java.util.zip.DeflaterOutputStream
 import java.util.zip.Inflater
 
 /**
- * The index of past conversations as bytes (design 9.2 of sub-project 7), which the archive encrypts in a row of its own.
- * One byte names the format, [FORMAT]; the rest is compressed with Deflate: every folded word once, in order; each
- * conversation with its records, each record's words as positions in that list, each written as its distance from the one
- * before; and the kept rows. Every count and distance is a number of variable length, so that 30 days of heavy use make an
- * index of about 250 KB, which the A71 decrypts and decodes in about 100 ms (design R3). Bytes in another format, or that do
- * not decode, throw [IllegalArgumentException], and the store rebuilds the index from the conversations.
+ * A shard of the index of past conversations as bytes (design 9.2 of sub-project 7), which the archive encrypts in a row of
+ * its own, named by the shard's number. One byte names the format, [FORMAT]; the rest is compressed with Deflate: every
+ * folded word of the shard once, in order; each conversation with its records, each record's words as positions in that
+ * list, each written as its distance from the one before; and the kept rows. Every count and distance is a number of
+ * variable length, so that a full shard is about 200 KB, and 30 days of heavy use make about 340 KB in all (design R3).
+ * Bytes in another format, or that do not decode, throw [IllegalArgumentException], and the store rebuilds the index from
+ * the conversations.
  */
 object PastIndexCodec {
     const val FORMAT: Byte = 1
 
-    fun encode(index: PastIndex): ByteArray {
+    fun encode(shard: IndexShard): ByteArray {
         val bytes = ByteArrayOutputStream()
         bytes.write(FORMAT.toInt())
         DataOutputStream(BufferedOutputStream(DeflaterOutputStream(bytes), BUFFER_BYTES)).use { out ->
-            out.number(index.search.words.size)
-            for (word in index.search.words) out.text(word)
-            val records = index.search.records.groupBy { it.ref.conversation }
-            out.number(index.conversations.size)
-            for (conversation in index.conversations) {
+            out.number(shard.search.words.size)
+            for (word in shard.search.words) out.text(word)
+            val records = shard.search.records.groupBy { it.ref.conversation }
+            out.number(shard.conversations.size)
+            for (conversation in shard.conversations) {
                 out.text(conversation.id.value)
                 out.writeLong(conversation.openedAtWall)
                 out.writeLong(conversation.lastWall)
@@ -3675,8 +4068,8 @@ object PastIndexCodec {
                     }
                 }
             }
-            out.number(index.kept.size)
-            for (row in index.kept) {
+            out.number(shard.kept.size)
+            for (row in shard.kept) {
                 out.text(row.id)
                 out.writeLong(row.lastWall)
             }
@@ -3684,38 +4077,37 @@ object PastIndexCodec {
         return bytes.toByteArray()
     }
 
-    fun decode(bytes: ByteArray): PastIndex {
+    /**
+     * The shard [number] from [bytes], which the archive read from the row of that number. A word that [words] already holds,
+     * from an earlier shard, is taken from it, so that the index keeps each word once in memory however many shards hold it.
+     */
+    fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard {
         require(bytes.isNotEmpty() && bytes[0] == FORMAT) { "The index is in a format that this version cannot read" }
-        return try {
-            DataInputStream(ByteArrayInputStream(inflated(bytes))).use { input ->
-                val words = List(input.count()) { input.text() }
-                val conversations = ArrayList<PastConversation>()
-                val records = ArrayList<IndexedRecord>()
-                repeat(input.count()) {
-                    val id = ConversationId(input.text())
-                    val openedAtWall = input.readLong()
-                    val lastWall = input.readLong()
-                    val firstRequest = input.optionalText()
-                    val commands = input.count()
-                    repeat(commands) {
-                        val number = input.number()
-                        val atWall = input.readLong()
-                        var previous = -1
-                        val positions = IntArray(input.count()) {
-                            previous += input.number() + 1
-                            previous
-                        }
-                        records += IndexedRecord(RecordRef(id, number), atWall, positions)
-                    }
-                    conversations += PastConversation(id, openedAtWall, lastWall, commands, firstRequest)
+        val input = Reader(inflated(bytes))
+        val list = List(input.count()) { input.text().let { word -> words.getOrPut(word) { word } } }
+        val conversations = ArrayList<PastConversation>()
+        val records = ArrayList<IndexedRecord>()
+        repeat(input.count()) {
+            val id = ConversationId(input.text())
+            val openedAtWall = input.long()
+            val lastWall = input.long()
+            val firstRequest = input.optionalText()
+            val commands = input.count()
+            repeat(commands) {
+                val record = input.number()
+                val atWall = input.long()
+                var previous = -1
+                val positions = IntArray(input.count()) {
+                    previous += input.number() + 1
+                    previous
                 }
-                val kept = List(input.count()) { KeptRow(input.text(), input.readLong()) }
-                require(input.read() == -1) { "The index has bytes after its end" }
-                PastIndex.restored(conversations, SearchIndex.restored(words, records), kept)
+                records += IndexedRecord(RecordRef(id, record), atWall, positions)
             }
-        } catch (e: IOException) {
-            throw IllegalArgumentException("The index does not decode", e)
+            conversations += PastConversation(id, openedAtWall, lastWall, commands, firstRequest)
         }
+        val kept = List(input.count()) { KeptRow(input.text(), input.long()) }
+        require(input.atEnd) { "The index has bytes after its end" }
+        return IndexShard.restored(number, conversations, SearchIndex.restored(list, records), kept)
     }
 
     private const val MAX_COUNT = 1 shl 24
@@ -3770,28 +4162,50 @@ object PastIndexCodec {
         }
     }
 
-    private fun DataInputStream.number(): Int {
-        var result = 0
-        var shift = 0
-        while (true) {
-            val byte = readUnsignedByte()
-            result = result or ((byte and 0x7F) shl shift)
-            if (byte and 0x80 == 0) break
-            shift += 7
-            require(shift < 32) { "A number of the index is too long" }
+    // Reads the inflated bytes directly, a number, a long or a text at a time; running past the end throws
+    // IllegalArgumentException, as every damage does.
+    private class Reader(private val bytes: ByteArray) {
+        private var at = 0
+
+        val atEnd: Boolean get() = at == bytes.size
+
+        fun number(): Int {
+            var result = 0
+            var shift = 0
+            while (true) {
+                val byte = next()
+                result = result or ((byte and 0x7F) shl shift)
+                if (byte and 0x80 == 0) break
+                shift += 7
+                require(shift < 32) { "A number of the index is too long" }
+            }
+            require(result >= 0) { "A number of the index is too large" }
+            return result
         }
-        require(result >= 0) { "A number of the index is too large" }
-        return result
+
+        // A count of words, records or rows, which a damaged length could make large enough to exhaust the memory.
+        fun count(): Int = number().also { require(it <= MAX_COUNT) { "A count of the index is too large" } }
+
+        fun long(): Long {
+            var result = 0L
+            repeat(8) { result = result shl 8 or next().toLong() }
+            return result
+        }
+
+        fun text(): String = string(count())
+
+        fun optionalText(): String? = count().let { if (it == 0) null else string(it - 1) }
+
+        private fun string(size: Int): String {
+            require(size <= bytes.size - at) { "The index is cut short" }
+            return bytes.decodeToString(at, at + size).also { at += size }
+        }
+
+        private fun next(): Int {
+            require(at < bytes.size) { "The index is cut short" }
+            return bytes[at++].toInt() and 0xFF
+        }
     }
-
-    // A count of words, records or rows, which a damaged length could make large enough to exhaust the memory.
-    private fun DataInputStream.count(): Int = number().also { require(it <= MAX_COUNT) { "A count of the index is too large" } }
-
-    private fun DataInputStream.text(): String = bytes(count())
-
-    private fun DataInputStream.optionalText(): String? = count().let { if (it == 0) null else bytes(it - 1) }
-
-    private fun DataInputStream.bytes(size: Int): String = ByteArray(size).also { readFully(it) }.decodeToString()
 }
 ```
 
@@ -3834,25 +4248,25 @@ with:
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.SearchIndexTest --tests=dev.kestrel.conversation.store.PastIndexTest`
-Expected: PASS, 9 tests. `theIndexOf30HeavyDaysStaysSmall` encodes 300 conversations of 2 commands, each command with 300 words drawn from 25,000 random words, in 366 KB; random words compress worse than real text.
+Expected: PASS, 12 tests. `theIndexOf30HeavyDaysStaysSmall` encodes 300 conversations of 2 commands, each command with 300 words drawn from 25,000 random words, in two shards of about 265 and 234 KB; random words compress worse than real text, and each shard holds most of the 25,000 words again.
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 90`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 147`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add core/conversation
-git commit -m "feat(conversation): the index of past conversations, each folded word once with each record's words as positions, and its compact format, so that the store can keep the index and read a conversation only when it needs it (design 9.2 and R3)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "feat(conversation): the index of past conversations in shards of bounded size, each folded word once with each record's words as positions, its compact format and a builder that folds one conversation at a time, so that the store can keep the index, write one shard at a close and read a conversation only when it needs it (design 9.2 and R3)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
-### Task 5c: The search's answer while its index is rebuilt (`:core:agent`)
+### Task 5c: The search's answer while its index is rebuilt or cannot be read (`:core:agent`)
 
-Design 9.2 and 9.4 of sub-project 7: when the index of past conversations is missing, unreadable, in another format or out of step with the table, the store rebuilds it from the conversations in the background (Task 5d), which takes about 5 s on the A71 for 30 days. The search never waits for it, and it never answers "No match." then, because that would tell the model something false. `HistoryResult` gains `rebuilding`, which plan 7A's `HistorySteps` turns into the step's reason: "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute". It is no failure of the archive, so nothing goes into the log. This is a change to `:core:agent` that plan 7B makes, as fix 7B-2 did (Global Constraints).
+Design 9.2 and 9.4 of sub-project 7: when the index of past conversations is missing, unreadable, in another format or out of step with the table, the store rebuilds it from the conversations in the background (Task 5d), which takes about 10 s on the A71 for 30 days of heavy use and about 2 minutes for 365 days. When it can be neither read nor rebuilt, the store notes it once and tries again later. The search never waits for a rebuild, and it never answers "No match." then, because that would tell the model something false. `HistoryResult` gains `unavailable`, `HistoryUnavailable.REBUILDING` or `HistoryUnavailable.FAILED`, which plan 7A's `HistorySteps` turns into the step's reason: "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute", or "Kestrel cannot read its past conversations right now and tries again by itself later". Neither is a new failure of the archive: the store has noted a failure once in the activity log, so nothing goes into the run's log. This is a change to `:core:agent` that plan 7B makes, as fix 7B-2 did (Global Constraints).
 
 **Files:**
 - Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/goal/HistoryPort.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`
@@ -3860,7 +4274,7 @@ Design 9.2 and 9.4 of sub-project 7: when the index of past conversations is mis
 
 **Interfaces:**
 - Consumes: plan 7A's `HistoryResult`, `HistorySteps`, `Outcome.Failed`, and the test harness's `FakeHistory`.
-- Produces: `data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false, val rebuilding: Boolean = false)` with `HistoryResult.REBUILDING`, which Task 5d's `HistorySearch` gives while the store rebuilds its index.
+- Produces: `data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false, val unavailable: HistoryUnavailable? = null)` with `HistoryResult.REBUILDING` and `HistoryResult.FAILED`; `enum class HistoryUnavailable { REBUILDING, FAILED }`. Task 5d's `HistorySearch` gives them.
 
 Counts: `:core:agent` N + 1 (`AgentGoalTest` + 1), where N is its count before the task.
 
@@ -3869,110 +4283,183 @@ Counts: `:core:agent` N + 1 (`AgentGoalTest` + 1), where N is its count before t
 In `core/agent/src/test/kotlin/dev/kestrel/agent/AgentGoalTest.kt`, replace:
 
 ```kotlin
-        assertTrue(harness.log.texts(TaskLog.Kind.ERROR).contains("history: java.lang.IllegalStateException"))
     }
+
+    // Design 7.6 of sub-project 7: Kestrel's own lines start a resumed goal's run, and its request is in its record already.
+    @Test
 ```
 
 with:
 
 ```kotlin
-        assertTrue(harness.log.texts(TaskLog.Kind.ERROR).contains("history: java.lang.IllegalStateException"))
     }
 
-    // Design 9.2 and 9.4 of sub-project 7: while the index of past conversations is rebuilt, the step says so, and nothing is logged as an error.
+    // Design 9.2 and 9.4 of sub-project 7: while the index of past conversations is rebuilt, or after it failed, the step says
+    // so, and nothing is logged as an error, because the store noted a failure once.
     @Test
-    fun aSearchWhileThePastConversationsAreReindexedSaysSo() = runTest {
-        val harness = Harness(Screens.chats(), listOf(call("search_conversations", null, null, null, "query" to "Mila"), fail()))
-        harness.history.result = HistoryResult.REBUILDING
+    fun aSearchThatCannotRunSaysWhy() = runTest {
+        val sentences = mapOf(
+            HistoryResult.REBUILDING to "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute.",
+            HistoryResult.FAILED to "Kestrel cannot read its past conversations right now and tries again by itself later.",
+        )
+        for ((result, sentence) in sentences) {
+            val harness = Harness(Screens.chats(), listOf(call("search_conversations", null, null, null, "query" to "Mila"), fail()))
+            harness.history.result = result
 
-        assertEquals(EndReason.FAILED_BY_MODEL, harness.run("What did Mila send?").end)
+            assertEquals(EndReason.FAILED_BY_MODEL, harness.run("What did Mila send?").end)
 
-        val sentence = "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute."
-        assertTrue(harness.requestText(1).contains("Result: searched past conversations for Mila → failed: $sentence"))
-        assertTrue(harness.log.texts(TaskLog.Kind.ERROR).none { it.startsWith("history:") })
+            assertTrue(harness.requestText(1).contains("Result: searched past conversations for Mila → failed: $sentence"))
+            assertTrue(harness.log.texts(TaskLog.Kind.ERROR).none { it.startsWith("history:") })
+        }
     }
+
+    // Design 7.6 of sub-project 7: Kestrel's own lines start a resumed goal's run, and its request is in its record already.
+    @Test
 ```
 
 - [ ] **Step 2: Run the test to see it fail**
 
 Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.AgentGoalTest`
-Expected: FAIL, the compiler reports `Unresolved reference 'REBUILDING'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'REBUILDING'` and `'FAILED'`.
 
-- [ ] **Step 3: The result that says so, and the step that reads it**
+- [ ] **Step 3: The result that says why, and the step that reads it**
 
 In `core/agent/src/main/kotlin/dev/kestrel/agent/goal/HistoryPort.kt`, replace:
 
 ```kotlin
+/**
+ * The earlier commands that match, at most [HistoryPort.MAX_MATCHES], best match first (design 9.4 of sub-project 7): a
+ * record scores by how many of the query's words it holds, and of two that score alike the newer comes first. [more] says
  * that more commands matched than [matches] holds.
  */
 data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false) {
     override fun toString(): String = "HistoryResult(matches=${matches.size}, more=$more)"
 }
+
+/**
 ```
 
 with:
 
 ```kotlin
- * that more commands matched than [matches] holds. [rebuilding] says that the search could not run yet, because Kestrel is
- * rebuilding the index of its past conversations from them (design 9.2); such a result has no match ([REBUILDING]).
+/**
+ * The earlier commands that match, at most [HistoryPort.MAX_MATCHES], best match first (design 9.4 of sub-project 7): a
+ * record scores by how many of the query's words it holds, and of two that score alike the newer comes first. [more] says
+ * that more commands matched than [matches] holds. [unavailable] says why the search could not run (design 9.2): Kestrel is
+ * rebuilding the index of its past conversations, or cannot read it now; such a result has no match ([REBUILDING],
+ * [FAILED]).
  */
-data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false, val rebuilding: Boolean = false) {
+data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false, val unavailable: HistoryUnavailable? = null) {
     init {
-        require(!rebuilding || (matches.isEmpty() && !more)) { "A search that could not run has no match" }
+        require(unavailable == null || (matches.isEmpty() && !more)) { "A search that could not run has no match" }
     }
 
-    override fun toString(): String = "HistoryResult(matches=${matches.size}, more=$more, rebuilding=$rebuilding)"
+    override fun toString(): String = "HistoryResult(matches=${matches.size}, more=$more, unavailable=$unavailable)"
 
     companion object {
-        /** The search could not run, because the index of past conversations is being rebuilt. */
-        val REBUILDING = HistoryResult(emptyList(), rebuilding = true)
+        val REBUILDING = HistoryResult(emptyList(), unavailable = HistoryUnavailable.REBUILDING)
+        val FAILED = HistoryResult(emptyList(), unavailable = HistoryUnavailable.FAILED)
+    }
+}
+
+/** Why a search over past conversations could not run (design 9.2 of sub-project 7). */
+enum class HistoryUnavailable {
+    /** The index of past conversations is being rebuilt from them, which takes about a minute at most. */
+    REBUILDING,
+
+    /** The index could not be read or rebuilt; Kestrel has noted it once and tries again by itself later. */
+    FAILED,
+}
+
+/**
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
+
+```kotlin
+package dev.kestrel.agent.loop
+
+import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.port.TaskLog
+import dev.kestrel.agent.tools.AgentCall
+import kotlinx.coroutines.CancellationException
+```
+
+with:
+
+```kotlin
+package dev.kestrel.agent.loop
+
+import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.goal.HistoryUnavailable
+import dev.kestrel.agent.port.TaskLog
+import dev.kestrel.agent.tools.AgentCall
+import kotlinx.coroutines.CancellationException
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
+
+```kotlin
+ * too, in their records block and their own searches. As a data tool's, a result that differs from the tool's earlier
+ * results in the run is progress, and a result with matches is a data step that `finish` may cite. A failure of the
+ * archive is the step's result, never the end of the task; it is logged by its class.
+ */
+internal class HistorySteps(private val run: TaskRun) {
+```
+
+with:
+
+```kotlin
+ * too, in their records block and their own searches. As a data tool's, a result that differs from the tool's earlier
+ * results in the run is progress, and a result with matches is a data step that `finish` may cite. A failure of the
+ * archive is the step's result, never the end of the task; it is logged by its class. A search that could not run, because
+ * the index of past conversations is being rebuilt or cannot be read now, fails with a reason that says so, and nothing is
+ * logged: the store has noted a failure of the index once, in the activity log.
+ */
+internal class HistorySteps(private val run: TaskRun) {
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
+
+```kotlin
+            return Done(call.tool, Outcome.Failed(UNAVAILABLE), detail = detail)
+        }
+        val shown = HistoryText.of(result, run.ports.clock.now().zone)
+        val outcome = if (shown.count == 0) Outcome.DataEmpty else Outcome.DataOk(shown.count)
+```
+
+with:
+
+```kotlin
+            return Done(call.tool, Outcome.Failed(UNAVAILABLE), detail = detail)
+        }
+        when (result.unavailable) {
+            null -> Unit
+            HistoryUnavailable.REBUILDING -> return Done(call.tool, Outcome.Failed(REBUILDING), detail = detail)
+            HistoryUnavailable.FAILED -> return Done(call.tool, Outcome.Failed(FAILED), detail = detail)
+        }
+        val shown = HistoryText.of(result, run.ports.clock.now().zone)
+        val outcome = if (shown.count == 0) Outcome.DataEmpty else Outcome.DataOk(shown.count)
+```
+
+In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
+
+```kotlin
+    private companion object {
+        const val UNAVAILABLE = "Kestrel could not read its past conversations"
     }
 }
 ```
 
-In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
-
-```kotlin
- * archive is the step's result, never the end of the task; it is logged by its class.
- */
-```
-
 with:
 
 ```kotlin
- * archive is the step's result, never the end of the task; it is logged by its class. A search that could not run yet,
- * because the index of past conversations is being rebuilt, fails with a reason that says so, and nothing is logged.
- */
-```
-
-In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
-
-```kotlin
-            return Done(call.tool, Outcome.Failed(UNAVAILABLE), detail = detail)
-        }
-        val shown = HistoryText.of(result, run.ports.clock.now().zone)
-```
-
-with:
-
-```kotlin
-            return Done(call.tool, Outcome.Failed(UNAVAILABLE), detail = detail)
-        }
-        if (result.rebuilding) return Done(call.tool, Outcome.Failed(REBUILDING), detail = detail)
-        val shown = HistoryText.of(result, run.ports.clock.now().zone)
-```
-
-In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`, replace:
-
-```kotlin
-        const val UNAVAILABLE = "Kestrel could not read its past conversations"
-```
-
-with:
-
-```kotlin
+    private companion object {
         const val UNAVAILABLE = "Kestrel could not read its past conversations"
         const val REBUILDING = "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute"
+        const val FAILED = "Kestrel cannot read its past conversations right now and tries again by itself later"
+    }
+}
 ```
 
 - [ ] **Step 4: Run the agent's tests, count them and stop Gradle**
@@ -3984,24 +4471,53 @@ Expected: BUILD SUCCESSFUL; `core\agent` N + 1.
 
 ```bash
 git add core/agent
-git commit -m "feat(agent): a search whose index of past conversations is being rebuilt says so, and logs no error (design 9.4 of sub-project 7)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "feat(agent): a search whose index of past conversations is being rebuilt, or cannot be read now, says so, and logs no error (design 9.2 and 9.4 of sub-project 7)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
 
 ### Task 5d: The store keeps the index and reads a conversation only when it needs it
 
-Design 9.1 to 9.4 and R3 of sub-project 7, as amended on 2026-11-25. `RecordArchive` becomes the port that plan 7C's archive implements with one Keystore operation per row, each row decrypted on the thread that read it: `load()` reads, in one call and one transaction, the index, the open conversation's row and the stamp of the closed rows; `read(ids)` reads some bodies in one call; `readAll()` stays, for a rebuild; `write(ArchiveChange)` stores rows, deletes rows, and keeps, replaces or deletes the index, in one transaction; `deleteAll()` deletes the rows, the index and the key. `ArchivedConversationStore` keeps the decoded index and the open conversation in memory. It writes a save of the open conversation without the index, and every change of the closed conversations with the new index in the same transaction, and it reads a past conversation's body only for `get`, `getAll` and `reopen`. When the index is missing while closed rows exist, unreadable, in another format or out of step with the table's stamp, it rebuilds it from the bodies in the scope that it is given. Meanwhile the open conversation is saved as usual, every other change deletes the old index and is replayed onto the new one, `searchable()` says `Rebuilding`, and `list()` and `purge()` wait. Task 4's lifecycle rules hold: the memory changes only after the archive's call completed and is dropped after a call that did not, a conversation that this process deleted is never written again, and `deleteAll` raises the `generation` before it deletes. `HistorySearch` keeps nothing: it ranks the index's records within retention and the open conversation's, reads the bodies of its best matches in one call, and gives nothing out when "delete history" overtook it. `closedSince`, `forgetAll`, `indexed`, `SearchEntry`, `ArchivedConversationStore.KIND` and the port's `delete` and `deleteOutside` go, because nothing needs them any more; what the store notes becomes `ArchiveNote`.
+Design 9.1 to 9.4, 9.7 and R3 of sub-project 7, as amended on 2026-11-25 and 2026-11-26.
+
+`RecordArchive` becomes the port that plan 7C's archive implements with one Keystore operation per row, each row decrypted on the thread that read it:
+- `readOpen()` reads the open conversation's row: a restore waits for one decryption only.
+- `readIndex()` reads the index's shards and the stamp of the closed rows in one transaction.
+- `read(ids)` reads some bodies in one call; `closedIds()` lists the closed rows, the oldest first, for a rebuild that reads them in pages of 50.
+- `write(ArchiveChange)` stores rows, deletes rows and changes the shards (`IndexWrite.Keep`, `Update` or `Replace`), in one transaction.
+- `purge(oldest, newest, index)` deletes the closed rows outside retention by the table's own times, with the shards, in one transaction.
+- `deleteAll()` erases the key first, and then deletes the rows and the shards.
+
+`ArchivedConversationStore` keeps the open conversation and the decoded index in memory. Its first call reads the open row and starts reading the index in the scope that it is given, so that a restore never waits for the index. A save of the open conversation writes its row only and never waits; every change of the closed conversations writes their rows and the shards that it changed in the same transaction, and waits while the index is read. A save that opens a new conversation without closing one does not wait either; the index drops that conversation once it is read. The store reads a past conversation's body only for `get`, `getAll` and `reopen`.
+
+When the index is missing while closed rows exist, unreadable, in another format or out of step with the table's stamp, the store rebuilds it in its scope. It reads the closed rows in pages and folds each body into the new index as soon as it is read, so that it never holds more than a page of bodies, and it encodes the new shards outside its lock. Meanwhile the open conversation is saved as usual; every other change deletes the old shards and is replayed onto the new index; `searchable()` says `Rebuilding`; `list()` waits; and `purge()` deletes by the table. When the index can be neither read nor rebuilt, the store notes `ArchiveNote.INDEX_FAILED` once, `list()` throws `PastUnavailableException`, `searchable()` says `Failed`, every change of the closed conversations deletes the old shards, and the store reads the index again after 1 minute, then after twice as long each time, up to 1 hour, never at each call.
+
+Task 4's lifecycle rules hold. The memory changes only after the archive's call completed and is dropped after a call that did not. A conversation that this process deleted is never written again; when the store reads the archive again and finds one, after a deletion that did not complete, it deletes it again before it shows anything. `deleteAll` raises the `generation` before it deletes. The row's plain fields are the truth for whether a conversation is open and for its times, so that a rebuilt index is always in step with the rows that it read.
+
+`HistorySearch` keeps nothing. It ranks the index's shards within retention and the open conversation's records, reads the bodies of its best matches in one call, and gives nothing out when "delete history" overtook it. While the index is rebuilt or has failed, it says so and gives no match at all, not even from the open conversation, because a part of the matches would read as "nothing older matched". `closedSince`, `forgetAll`, `indexed`, `SearchEntry`, `ArchivedConversationStore.KIND` and the port's `delete` and `deleteOutside` go, because nothing needs them any more; what the store notes becomes `ArchiveNote`.
+
+`MemoryArchive` checks, after every write that stores shards, what the store's design rests on: the shards decode, their stamp is the table's, and no open row is in them. So every test of the store also checks that property.
 
 **Files:**
 - Modify (whole files): `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistorySearch.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`
 - Test (whole files): `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/ArchivedConversationStoreTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistorySearchTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistoryRankingTest.kt`; and `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt`
 
 **Interfaces:**
-- Consumes: Task 5b's `SearchIndex`, `IndexedRecord`, `PastIndex`, `PastConversation`, `KeptRow`, `IndexStamp` and `PastIndexCodec`; Task 5c's `HistoryResult.REBUILDING`; Task 4's `ConversationClock` and `ManualConversationClock`.
-- Produces (package `dev.kestrel.conversation.store`): `interface RecordArchive { suspend fun load(): ArchiveLoad; suspend fun read(ids: Collection<String>): List<ArchiveEntry>; suspend fun readAll(): List<ArchiveEntry>; suspend fun write(change: ArchiveChange); suspend fun deleteAll() }`; `class ArchiveLoad(val index: IndexRead, val open: ArchiveEntry?, val stamp: IndexStamp)`; `sealed interface IndexRead { class Readable(val bytes: ByteArray); data object Missing; data object Unreadable }`; `class ArchiveChange(val rows: List<ArchiveRow> = emptyList(), val deleted: Set<String> = emptySet(), val index: IndexWrite = IndexWrite.Keep)`; `sealed interface IndexWrite { data object Keep; class Replace(val bytes: ByteArray); data object Delete }`; `ArchiveHeader`, `ArchiveRow` and `ArchiveEntry` as before; `interface ConversationStore` with `val generation: Long`, `open()`, `save(snapshot)`, `list()`, `get(id)`, `getAll(ids): Map<ConversationId, ConversationSnapshot>`, `reopen(id, closing, nowWall, testMode)`, `delete(id)`, `deleteAll()`, `purge(retentionDays, nowWall)` and `searchable(): Searchable`; `sealed interface Searchable { class Ready(val past: PastIndex, val open: ConversationSnapshot?); data object Rebuilding }`; `ConversationSummary` as before; `enum class ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT }`; `class ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore` with `DAY_MILLIS`; `data class RecordRef(val conversation: ConversationId, val record: Int)`; `data class RankedEntry(val entry: IndexedRecord, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `wanted(text)` and `rank(indexes: List<SearchIndex>, query, zone, reached = { true }, similarity = LabelMatcher's score)`; `data class ConversationMatch(id, openedAtWall, firstRequest)`; `sealed interface ConversationLookup { data class Found(val match: ConversationMatch); data object NotFound; data object Rebuilding }`; `class HistorySearch(store, retentionDays, clock)` with `search(query, excluding)`, `port(excluding)` and `conversation(topic): ConversationLookup`. Fixture: `MemoryArchive` with `rows`, `unreadable`, `unknown`, `index`, `indexUnreadable`, `transactions`, `calls`, `interruptions` (`write`, `deleteAll`), `readAllGate`, `readAllFailure`, `keyDeleted`, `payload(id)` and `past()`. Plan 7C's Task 5 implements the port, and its Task 6 builds the store with the app's scope; Tasks 8 to 10 use the store and the search.
+- Consumes: Task 5a's `LabelMatcher.mayAccept`; Task 5b's `SearchIndex`, `IndexedRecord`, `IndexShard`, `PastIndex`, `ShardChanges`, `PastConversation`, `KeptRow`, `IndexStamp` and `PastIndexCodec`; Task 5c's `HistoryResult.REBUILDING` and `HistoryResult.FAILED`; Task 4's `ConversationClock` and `ManualConversationClock`.
+- Produces (package `dev.kestrel.conversation.store`):
+  - `interface RecordArchive { suspend fun readOpen(): ArchiveEntry?; suspend fun readIndex(): IndexLoad; suspend fun read(ids: Collection<String>): List<ArchiveEntry>; suspend fun closedIds(): List<String>; suspend fun write(change: ArchiveChange); suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int; suspend fun deleteAll() }`.
+  - `class IndexLoad(val shards: List<ShardRead>, val stamp: IndexStamp)`; `sealed interface ShardRead { val name: String; class Readable(name, val bytes: ByteArray); class Unreadable(name) }`.
+  - `class ArchiveChange(val rows: List<ArchiveRow> = emptyList(), val deleted: Set<String> = emptySet(), val index: IndexWrite = IndexWrite.Keep)`; `sealed interface IndexWrite { data object Keep; class Update(val put: Map<String, ByteArray>, val deleted: Set<String>); class Replace(val shards: Map<String, ByteArray>) }`, each shard by its name, its number as text.
+  - `ArchiveHeader`, `ArchiveRow` and `ArchiveEntry` as before.
+  - `interface ConversationStore` with `val generation: Long`, `open()`, `save(snapshot)`, `list()`, `get(id)`, `getAll(ids): Map<ConversationId, ConversationSnapshot>`, `reopen(id, closing, nowWall, testMode)`, `delete(id)`, `deleteAll()`, `purge(retentionDays, nowWall)` and `searchable(): Searchable`; `sealed interface Searchable { class Ready(val past: PastIndex, val open: ConversationSnapshot?); data object Rebuilding; data object Failed }`; `class PastUnavailableException(cause: Throwable) : Exception`; `ConversationSummary` as before.
+  - `enum class ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED }`; `class ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore` with `DAY_MILLIS`, `REBUILD_PAGE = 50`, `FIRST_RETRY_MILLIS = 60_000` and `MAX_RETRY_MILLIS = 3_600_000`.
+  - `data class RecordRef(val conversation: ConversationId, val record: Int)`; `data class RankedEntry(val entry: IndexedRecord, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `wanted(text)` and `rank(indexes: List<SearchIndex>, query, zone, reached = { true }, similarity = LabelMatcher's score)`.
+  - `data class ConversationMatch(id, openedAtWall, firstRequest)`; `sealed interface ConversationLookup { data class Found(val match: ConversationMatch); data object NotFound; data object Rebuilding; data object Unavailable }`; `class HistorySearch(store, retentionDays, clock)` with `search(query, excluding)`, `port(excluding)` and `conversation(topic): ConversationLookup`.
+  - Fixture: `MemoryArchive` with `rows`, `unreadable`, `unknown`, `shards`, `unreadableShards`, `transactions`, `calls`, `interruptions` (`write`, `purge`, `deleteAll`), `failures` (also `readIndex`, `closedIds`, `read`), `readIndexGate`, `closedIdsGate`, `readGate`, `keyErased`, `payload(id)`, `past()` and `stamp()`.
 
-Counts: `:core:conversation` 90 + 8 (`ArchivedConversationStoreTest` 16 → 22, `HistorySearchTest` 11 → 13, `HistoryRankingTest` and `RetentionTest` unchanged) = 98; N + 8 if Task 5b's count differed.
+  Plan 7C's Task 5 implements the port, and its Task 6 builds the store with the app's scope; Tasks 8 to 10 use the store and the search.
+
+Counts: `:core:conversation` 147 + 17 (`ArchivedConversationStoreTest` 16 → 31, `HistorySearchTest` 11 → 13, `HistoryRankingTest` and `RetentionTest` unchanged) = 164; N + 17 if Task 5b's count differed.
 
 - [ ] **Step 1: Write the failing tests and the archive in memory**
 
@@ -4012,91 +4528,108 @@ package dev.kestrel.conversation.testing
 
 import dev.kestrel.conversation.store.ArchiveChange
 import dev.kestrel.conversation.store.ArchiveEntry
-import dev.kestrel.conversation.store.ArchiveLoad
 import dev.kestrel.conversation.store.ArchiveRow
-import dev.kestrel.conversation.store.IndexRead
+import dev.kestrel.conversation.store.IndexLoad
 import dev.kestrel.conversation.store.IndexStamp
 import dev.kestrel.conversation.store.IndexWrite
 import dev.kestrel.conversation.store.PastIndex
 import dev.kestrel.conversation.store.PastIndexCodec
 import dev.kestrel.conversation.store.RecordArchive
+import dev.kestrel.conversation.store.ShardRead
 import kotlinx.coroutines.CompletableDeferred
 
 /**
  * The archive in memory, for the JVM tests: the rows by id, the ids whose payload fails its tag ([unreadable]) or is in a
- * format that this version cannot read ([unknown]), the index's bytes ([index]) and whether it fails its check
- * ([indexUnreadable]), each write's rows in order ([transactions]), the port's calls by name in order ([calls]), and whether
- * the key was deleted. Its writes keep at most one row open, as plan 7C's table does. A change named in [interruptions]
- * (`write`, `deleteAll`) is made and then throws its exception, once, as a Room call does when its coroutine is cancelled
- * while the call runs. `readAll` throws [readAllFailure] when it is set; while [readAllGate] is set, it reads the rows and
- * then waits for it, as a rebuild's read that later changes overtake.
+ * format that this version cannot read ([unknown]), the index's shards by name ([shards]) and those that fail their check
+ * ([unreadableShards]), each write's rows in order ([transactions]), the port's calls by name in order ([calls]), and
+ * whether the key was erased. Its writes keep at most one row open, as plan 7C's table does. A change named in
+ * [interruptions] (`write`, `purge`, `deleteAll`) is made and then throws its exception, once, as a Room call does when its
+ * coroutine is cancelled while the call runs. A call named in [failures] throws its exception before it reads or changes
+ * anything, for as long as it is set. While [readIndexGate] is set, `readIndex` waits for it before it reads; while
+ * [closedIdsGate] is set, `closedIds` lists the ids and then waits for it; while [readGate] is set, `read` reads the rows
+ * and then waits for it, as a rebuild's read that later changes overtake. A row that a write stores is readable again.
+ *
+ * After every write that stores shards, it checks what the store's design rests on (design 9.2): the shards decode, their
+ * stamp is the table's, and no open row is in them; a write that breaks it fails the test.
  */
 class MemoryArchive : RecordArchive {
     val rows = LinkedHashMap<String, ArchiveRow>()
     val unreadable = mutableSetOf<String>()
     val unknown = mutableSetOf<String>()
-    var index: ByteArray? = null
-    var indexUnreadable = false
+    val shards = LinkedHashMap<String, ByteArray>()
+    val unreadableShards = mutableSetOf<String>()
     val transactions = mutableListOf<List<String>>()
     val calls = mutableListOf<String>()
     val interruptions = mutableMapOf<String, Throwable>()
-    var readAllGate: CompletableDeferred<Unit>? = null
-    var readAllFailure: Throwable? = null
-    var keyDeleted = false
+    val failures = mutableMapOf<String, Throwable>()
+    var readIndexGate: CompletableDeferred<Unit>? = null
+    var closedIdsGate: CompletableDeferred<Unit>? = null
+    var readGate: CompletableDeferred<Unit>? = null
+    var keyErased = false
 
-    override suspend fun load(): ArchiveLoad {
-        calls += "load"
-        val closed = rows.values.filter { !it.header.open }.map { it.header.lastMillis }
-        val read = when {
-            index == null -> IndexRead.Missing
-            indexUnreadable -> IndexRead.Unreadable
-            else -> IndexRead.Readable(index!!.copyOf())
-        }
-        return ArchiveLoad(read, rows.values.firstOrNull { it.header.open }?.let(::entry), IndexStamp(closed.size, closed.maxOrNull() ?: 0, closed.sum()))
+    override suspend fun readOpen(): ArchiveEntry? {
+        calls += "readOpen"
+        return rows.values.firstOrNull { it.header.open }?.let(::entry)
+    }
+
+    override suspend fun readIndex(): IndexLoad {
+        calls += "readIndex"
+        failures["readIndex"]?.let { throw it }
+        readIndexGate?.await()
+        val read = shards.map { (name, bytes) -> if (name in unreadableShards) ShardRead.Unreadable(name) else ShardRead.Readable(name, bytes.copyOf()) }
+        return IndexLoad(read, stamp())
     }
 
     override suspend fun read(ids: Collection<String>): List<ArchiveEntry> {
         calls += "read"
-        return ids.mapNotNull { rows[it] }.map(::entry)
-    }
-
-    override suspend fun readAll(): List<ArchiveEntry> {
-        calls += "readAll"
-        readAllFailure?.let { throw it }
-        val read = rows.values.sortedByDescending { it.header.lastMillis }.map(::entry)
-        readAllGate?.await()
+        failures["read"]?.let { throw it }
+        val read = ids.mapNotNull { rows[it] }.map(::entry)
+        readGate?.await()
         return read
     }
 
-    override suspend fun write(change: ArchiveChange) = changing("write") {
+    override suspend fun closedIds(): List<String> {
+        calls += "closedIds"
+        failures["closedIds"]?.let { throw it }
+        val ids = rows.values.filter { !it.header.open }.sortedBy { it.header.lastMillis }.map { it.header.id }
+        closedIdsGate?.await()
+        return ids
+    }
+
+    override suspend fun write(change: ArchiveChange) = changing("write", change.index) {
         transactions += change.rows.map { it.header.id }
         for (id in change.deleted) remove(id)
         for (row in change.rows) {
             if (row.header.open) closeOthers(row.header.id)
+            remove(row.header.id)
             rows[row.header.id] = row
         }
-        when (val write = change.index) {
-            IndexWrite.Keep -> Unit
-            is IndexWrite.Replace -> index = write.bytes.copyOf()
-            IndexWrite.Delete -> index = null
-        }
-        if (change.index != IndexWrite.Keep) indexUnreadable = false
     }
 
-    override suspend fun deleteAll() = changing("deleteAll") {
+    override suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int = changing("purge", index) {
+        val gone = rows.values.filter { !it.header.open && (it.header.lastMillis < oldest || it.header.lastMillis > newest) }.map { it.header.id }
+        gone.forEach(::remove)
+        gone.size
+    }
+
+    override suspend fun deleteAll() = changing("deleteAll", IndexWrite.Replace(emptyMap())) {
+        keyErased = true
         rows.clear()
         unreadable.clear()
         unknown.clear()
-        index = null
-        indexUnreadable = false
-        keyDeleted = true
     }
 
     /** The payload of row [id] as text. */
     fun payload(id: String): String = rows.getValue(id).payload.decodeToString()
 
     /** The index as the store last wrote it, decoded; null when there is none. */
-    fun past(): PastIndex? = index?.let(PastIndexCodec::decode)
+    fun past(): PastIndex? = if (shards.isEmpty()) null else PastIndex.restored(shards.map { (name, bytes) -> PastIndexCodec.decode(name.toInt(), bytes) })
+
+    /** What the table holds of closed rows, as plan 7C's query counts it. */
+    fun stamp(): IndexStamp {
+        val closed = rows.values.filter { !it.header.open }.map { it.header.lastMillis }
+        return IndexStamp(closed.size, closed.maxOrNull() ?: 0, closed.sum())
+    }
 
     private fun entry(row: ArchiveRow): ArchiveEntry = when (row.header.id) {
         in unreadable -> ArchiveEntry.Unreadable(row.header)
@@ -4104,11 +4637,33 @@ class MemoryArchive : RecordArchive {
         else -> ArchiveEntry.Readable(row.header, row.payload.copyOf())
     }
 
-    private fun <T> changing(name: String, block: () -> T): T {
+    private fun <T> changing(name: String, index: IndexWrite, block: () -> T): T {
         calls += name
+        failures[name]?.let { throw it }
         val result = block()
+        when (index) {
+            IndexWrite.Keep -> Unit
+            is IndexWrite.Update -> {
+                index.deleted.forEach { shards.remove(it); unreadableShards.remove(it) }
+                index.put.forEach { (name, bytes) -> shards[name] = bytes.copyOf(); unreadableShards.remove(name) }
+            }
+            is IndexWrite.Replace -> {
+                shards.clear()
+                unreadableShards.clear()
+                index.shards.forEach { (name, bytes) -> shards[name] = bytes.copyOf() }
+            }
+        }
+        if (index is IndexWrite.Update || (index is IndexWrite.Replace && index.shards.isNotEmpty())) checkInStep()
         interruptions.remove(name)?.let { throw it }
         return result
+    }
+
+    // Design 9.2: an index that the store writes is in step with the table and never holds the open conversation.
+    private fun checkInStep() {
+        val index = past() ?: PastIndex.EMPTY
+        check(index.stamp == stamp()) { "The store wrote an index whose stamp ${index.stamp} is not the table's ${stamp()}" }
+        val open = rows.values.filter { it.header.open }.mapTo(HashSet()) { it.header.id }
+        check(index.conversations.none { it.id.value in open } && index.kept.none { it.id in open }) { "The store wrote the open conversation into the index" }
     }
 
     private fun closeOthers(id: String) {
@@ -4121,7 +4676,7 @@ class MemoryArchive : RecordArchive {
         unknown.remove(id)
     }
 
-    override fun toString(): String = "MemoryArchive(rows=${rows.size})"
+    override fun toString(): String = "MemoryArchive(rows=${rows.size}, shards=${shards.size})"
 }
 ```
 
@@ -4140,6 +4695,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -4175,7 +4731,7 @@ class ArchivedConversationStoreTest {
         records = listOf(CommandRecord(1, last - 1_000, InputChannel.TEXT, request)),
     )
 
-    private fun pastIds() = archive.past()!!.conversations.map { it.id }
+    private fun pastIds() = archive.past()?.conversations.orEmpty().map { it.id }
 
     @Test
     fun aSnapshotRoundTripsAndOnlyItsHeaderIsPlain() = test {
@@ -4204,6 +4760,7 @@ class ArchivedConversationStoreTest {
     @Test
     fun aConversationIsOpenOnlyWhenItsRowSaysSo() = test {
         store.save(conversation(1, now, open = true))
+        store.list()
         val row = archive.rows.getValue(id(1).value)
         // The table closed the row (plan 7C), while its payload is an older one that still says open.
         val payload = archive.payload(id(1).value).replaceFirst("{", "{\"open\":true,")
@@ -4222,7 +4779,7 @@ class ArchivedConversationStoreTest {
         store.save(conversation(2, now - 1_000))
         // A later version wrote both rows, and its index, which this version does not know.
         archive.unknown += listOf(id(1).value, id(2).value)
-        archive.index = null
+        archive.shards.clear()
         val fresh = fresh()
 
         assertNull(fresh.open())
@@ -4262,6 +4819,7 @@ class ArchivedConversationStoreTest {
         assertEquals(id(2), store.open()!!.id)
     }
 
+    // Design 9.3: retention deletes by the table's own times, so a closed row that the index does not list goes too.
     @Test
     fun purgeKeepsTheOpenConversationAndDeletesOldAndFutureRows() = test {
         val day = ArchivedConversationStore.DAY_MILLIS
@@ -4269,8 +4827,11 @@ class ArchivedConversationStoreTest {
         store.save(conversation(2, now - 29 * day))
         store.save(conversation(3, now + 2 * day))
         store.save(conversation(4, now - 40 * day, open = true))
+        store.list()
+        val unlisted = conversation(5, now - 50 * day)
+        archive.rows[id(5).value] = ArchiveRow(ArchiveHeader(id(5).value, unlisted.openedAtWall, unlisted.lastWall, open = false, commands = 1), "{}".encodeToByteArray())
 
-        assertEquals(2, store.purge(30, now))
+        assertEquals(3, store.purge(30, now))
 
         assertEquals(listOf(id(2)), store.list().map { it.id })
         assertEquals(listOf(id(2)), pastIds())
@@ -4291,13 +4852,14 @@ class ArchivedConversationStoreTest {
         store.deleteAll()
         assertNull(store.open())
         assertTrue(archive.rows.isEmpty())
-        assertNull(archive.index)
-        assertTrue(archive.keyDeleted)
+        assertTrue(archive.shards.isEmpty())
+        assertTrue(archive.keyErased)
     }
 
-    // On the A71, decrypting every row took 5.2 s even in one query; the index and the open row take two decryptions.
+    // On the A71, decrypting every row took 5.2 s even in one query; the open row and the index take one decryption each,
+    // and one more per shard.
     @Test
-    fun theFirstUseReadsTheIndexAndTheOpenRowInOneCallAndABodyOnlyWhenAsked() = test {
+    fun theFirstUseReadsTheOpenRowAndTheIndexOnceAndABodyOnlyWhenAsked() = test {
         store.save(conversation(1, now - 2_000))
         store.save(conversation(2, now - 1_000))
         store.save(conversation(3, now, open = true))
@@ -4307,11 +4869,38 @@ class ArchivedConversationStoreTest {
         fresh.list()
         fresh.open()
         fresh.searchable()
-        assertEquals(listOf("load"), archive.calls)
+        assertEquals(listOf("readOpen", "readIndex"), archive.calls)
 
         assertEquals(id(1), fresh.get(id(1))!!.id)
         assertEquals(setOf(id(1), id(2), id(3)), fresh.getAll(listOf(id(1), id(2), id(3))).keys)
-        assertEquals(listOf("load", "read", "read"), archive.calls)
+        assertEquals(listOf("readOpen", "readIndex", "read", "read"), archive.calls)
+    }
+
+    // Design 4.3: a restore reads one row; the index is read in the background, and only a change of it waits for it.
+    @Test
+    fun aRestoreNeverWaitsForTheIndexAndAChangeOfTheIndexWaitsWhileItIsRead() = test {
+        store.save(conversation(1, now - 2_000))
+        store.save(conversation(2, now - 1_000, open = true))
+        val gate = CompletableDeferred<Unit>()
+        archive.readIndexGate = gate
+        val fresh = fresh()
+
+        assertEquals(id(2), fresh.open()!!.id)
+        fresh.save(conversation(2, now - 500, open = true))
+        val closing = async { fresh.save(conversation(2, now, open = false)) }
+        val listed = async { fresh.list() }
+        runCurrent()
+        assertFalse(closing.isCompleted)
+        assertFalse(listed.isCompleted)
+        assertEquals(now - 500, archive.rows.getValue(id(2).value).header.lastMillis)
+
+        gate.complete(Unit)
+        closing.await()
+
+        // The close waited first, so it is made first.
+        assertEquals(listOf(id(2), id(1)), listed.await().map { it.id })
+        assertEquals(listOf(id(2), id(1)), pastIds())
+        assertTrue(notes.isEmpty())
     }
 
     @Test
@@ -4334,11 +4923,11 @@ class ArchivedConversationStoreTest {
     fun aSaveOfTheOpenConversationWritesItsRowOnlyAndItsCloseWritesTheIndexWithIt() = test {
         store.save(conversation(1, now - 1_000, open = true))
         store.save(conversation(1, now - 500, open = true))
-        assertNull(archive.index)
+        assertTrue(archive.shards.isEmpty())
 
         store.save(conversation(1, now, open = false))
 
-        assertEquals(listOf("load", "write", "write", "write"), archive.calls)
+        assertEquals(listOf("readOpen", "write", "write", "readIndex", "write"), archive.calls)
         assertEquals(listOf(id(1)), pastIds())
         assertNull(store.open())
     }
@@ -4409,7 +4998,7 @@ class ArchivedConversationStoreTest {
     fun aPurgeThatFailsAfterTheArchivePurgedLeavesThePurgedConversationsOut() = test {
         store.save(conversation(1, now - 31 * ArchivedConversationStore.DAY_MILLIS))
         store.save(conversation(2, now - ArchivedConversationStore.DAY_MILLIS))
-        archive.interruptions["write"] = IOException("the disk is full")
+        archive.interruptions["purge"] = IOException("the disk is full")
 
         assertTrue(runCatching { store.purge(30, now) }.exceptionOrNull() is IOException)
 
@@ -4446,15 +5035,17 @@ class ArchivedConversationStoreTest {
     fun anIndexThatIsMissingUnreadableInAnotherFormatOrOutOfStepIsRebuiltAndNoted() = test {
         store.save(conversation(1, now - 2_000))
         store.save(conversation(2, now - 1_000))
-        val good = archive.index!!.copyOf()
+        val name = archive.shards.keys.single()
+        val good = archive.shards.getValue(name).copyOf()
+        fun moved(n: Int, last: Long) = archive.rows.getValue(id(n).value).let { ArchiveRow(it.header.copy(lastMillis = last), it.payload) }
         val damages = listOf<Pair<() -> Unit, List<ConversationId>>>(
-            { archive.index = null } to listOf(id(2), id(1)),
-            { archive.indexUnreadable = true } to listOf(id(2), id(1)),
-            { archive.index = byteArrayOf(2) + good.copyOfRange(1, good.size) } to listOf(id(2), id(1)),
+            { archive.shards.clear() } to listOf(id(2), id(1)),
+            { archive.unreadableShards += name } to listOf(id(2), id(1)),
+            { archive.shards[name] = byteArrayOf(2) + good.copyOfRange(1, good.size) } to listOf(id(2), id(1)),
+            { archive.shards.clear(); archive.shards["first"] = good } to listOf(id(2), id(1)),
             // A row went without its index entry: the index counts one closed row more than the table.
-            { archive.index = good; archive.rows -= id(2).value } to listOf(id(1)),
+            { archive.shards[name] = good; archive.rows -= id(2).value } to listOf(id(1)),
         )
-
         for ((damage, listed) in damages) {
             damage()
             notes.clear()
@@ -4466,14 +5057,46 @@ class ArchivedConversationStoreTest {
         }
     }
 
+    // The stamp holds the count, the newest last change and their sum: a table that differs in only one of them is out of step.
+    @Test
+    fun aStampThatDiffersOnlyInTheNewestOrTheSumIsOutOfStep() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000))
+        val good = archive.shards.toMap()
+        val newer = archive.rows.getValue(id(2).value)
+        val older = archive.rows.getValue(id(1).value)
+        val damages = listOf(
+            {
+                // The same count and sum, a newer newest.
+                archive.rows[id(2).value] = ArchiveRow(newer.header.copy(lastMillis = now - 1_000), newer.payload)
+                archive.rows[id(1).value] = ArchiveRow(older.header.copy(lastMillis = now - 4_000), older.payload)
+            },
+            // The same count and newest, another sum.
+            { archive.rows[id(1).value] = ArchiveRow(older.header.copy(lastMillis = now - 2_500), older.payload) },
+        )
+        for (damage in damages) {
+            archive.shards.clear()
+            archive.shards += good
+            archive.rows[id(1).value] = older
+            archive.rows[id(2).value] = newer
+            damage()
+            notes.clear()
+            val fresh = fresh()
+
+            assertEquals(listOf(id(2), id(1)), fresh.list().map { it.id })
+            assertEquals(archive.stamp(), archive.past()!!.stamp)
+            assertEquals(listOf(ArchiveNote.INDEX_REBUILT), notes)
+        }
+    }
+
     @Test
     fun whileTheIndexIsRebuiltTheOpenConversationIsSavedTheSearchSaysSoAndChangesAreReplayed() = test {
         store.save(conversation(1, now - 3_000))
         store.save(conversation(2, now - 2_000))
         store.save(conversation(3, now - 1_000, open = true))
-        archive.index = null
+        archive.shards.clear()
         val gate = CompletableDeferred<Unit>()
-        archive.readAllGate = gate
+        archive.readGate = gate
         val fresh = fresh()
 
         assertEquals(id(3), fresh.open()!!.id)
@@ -4494,12 +5117,125 @@ class ArchivedConversationStoreTest {
         assertEquals(listOf(ArchiveNote.INDEX_REBUILT), notes)
     }
 
+    // Design 9.2: a start between a change and the end of the rebuild must not trust the old index.
+    @Test
+    fun aChangeDuringARebuildLeavesNoIndexThatAStartCouldTrust() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000))
+        archive.unreadableShards += archive.shards.keys
+        archive.readGate = CompletableDeferred()
+        val rebuilding = fresh()
+        rebuilding.open()
+        runCurrent()
+
+        rebuilding.save(conversation(3, now - 1_000))
+
+        assertTrue(archive.shards.isEmpty())
+        archive.readGate = null
+        notes.clear()
+        val started = fresh()
+        assertEquals(listOf(id(3), id(2), id(1)), started.list().map { it.id })
+        assertEquals(listOf(ArchiveNote.INDEX_REBUILT), notes)
+    }
+
+    // Design 9.2: the rebuild deletes a row that fails its check, unless a change rewrote it meanwhile.
+    @Test
+    fun aRebuildDeletesTheRowsThatFailButNotOneThatAChangeRewroteMeanwhile() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000))
+        store.save(conversation(3, now - 1_000))
+        archive.shards.clear()
+        archive.unreadable += listOf(id(1).value, id(2).value)
+        val gate = CompletableDeferred<Unit>()
+        archive.readGate = gate
+        val fresh = fresh()
+        fresh.open()
+        runCurrent()
+
+        fresh.save(conversation(2, now - 500, request = "Written again"))
+        fresh.delete(id(3))
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(setOf(id(2).value), archive.rows.keys)
+        assertEquals(listOf(id(2)), fresh.list().map { it.id })
+        assertEquals("Written again", fresh.list().single().firstRequest)
+        assertEquals(listOf(ArchiveNote.CONVERSATION_DELETED, ArchiveNote.INDEX_REBUILT), notes)
+    }
+
+    // Design 9.2: a rebuild never holds more than a page of bodies.
+    @Test
+    fun aRebuildReadsTheClosedRowsInPages() = test {
+        for (n in 1..120) store.save(conversation(n, now - n * 1_000L))
+        archive.shards.clear()
+        archive.calls.clear()
+
+        assertEquals(120, fresh().list().size)
+
+        assertEquals(listOf("readOpen", "readIndex", "closedIds", "read", "read", "read", "write"), archive.calls)
+    }
+
+    // A failed change drops the memory and stops the rebuild, whose result would miss the change; the next call rebuilds.
+    @Test
+    fun aChangeThatFailsDuringARebuildStopsItAndTheNextCallRebuildsRight() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000, open = true))
+        archive.shards.clear()
+        val gate = CompletableDeferred<Unit>()
+        archive.readGate = gate
+        val fresh = fresh()
+        fresh.open()
+        runCurrent()
+        archive.failures["write"] = IOException("the disk is full")
+
+        assertTrue(runCatching { fresh.save(conversation(2, now - 1_000, open = false)) }.exceptionOrNull() is IOException)
+
+        archive.failures.clear()
+        archive.readGate = null
+        gate.complete(Unit)
+        runCurrent()
+        fresh.save(conversation(2, now - 1_000, open = false))
+        assertEquals(listOf(id(2), id(1)), fresh.list().map { it.id })
+        assertEquals(listOf(id(2), id(1)), pastIds())
+        assertEquals(listOf(ArchiveNote.INDEX_REBUILT), notes)
+    }
+
+    // A purge never waits for a rebuild; it and a switch made meanwhile are replayed onto the rebuilt index.
+    @Test
+    fun aPurgeAndASwitchDuringARebuildAreReplayed() = test {
+        val day = ArchivedConversationStore.DAY_MILLIS
+        store.save(conversation(1, now - 40 * day))
+        store.save(conversation(2, now - 2 * day))
+        store.save(conversation(3, now - day, open = true))
+        archive.shards.clear()
+        val gate = CompletableDeferred<Unit>()
+        archive.closedIdsGate = gate
+        val fresh = fresh()
+        fresh.open()
+        runCurrent()
+
+        assertEquals(1, fresh.purge(30, now))
+        archive.closedIdsGate = null
+        gate.complete(Unit)
+        archive.readGate = CompletableDeferred()
+        runCurrent()
+        val reopened = async { fresh.reopen(id(2), conversation(3, now - 500, open = true), now, testMode = true) }
+        runCurrent()
+        archive.readGate!!.complete(Unit)
+        archive.readGate = null
+
+        assertEquals(id(2), reopened.await()!!.id)
+        assertEquals(listOf(id(3)), fresh.list().map { it.id })
+        assertEquals(listOf(id(3)), pastIds())
+        assertEquals(setOf(id(2).value, id(3).value), archive.rows.keys)
+    }
+
     @Test
     fun deleteHistoryDuringARebuildStopsItAndLeavesNothing() = test {
         store.save(conversation(1, now - 1_000))
-        archive.index = null
+        archive.shards.clear()
         val gate = CompletableDeferred<Unit>()
-        archive.readAllGate = gate
+        archive.readGate = gate
         val fresh = fresh()
         fresh.open()
         runCurrent()
@@ -4510,7 +5246,7 @@ class ArchivedConversationStoreTest {
 
         assertTrue(fresh.list().isEmpty())
         assertTrue(archive.rows.isEmpty())
-        assertNull(archive.index)
+        assertTrue(archive.shards.isEmpty())
         assertTrue(notes.isEmpty())
     }
 
@@ -4528,17 +5264,77 @@ class ArchivedConversationStoreTest {
         assertEquals(listOf(ArchiveNote.CONVERSATION_DELETED), notes)
     }
 
+    // Design 9.2: an index that can be neither read nor rebuilt is noted once and tried again after a minute, then after
+    // twice as long; meanwhile the list says so, the open conversation is saved, a close clears the stored index, and
+    // retention deletes by the table.
     @Test
-    fun aRebuildThatFailsFailsTheListAndTheNextCallTriesAgain() = test {
-        store.save(conversation(1, now - 1_000))
-        archive.index = null
-        archive.readAllFailure = IOException("the disk failed")
+    fun aRebuildThatFailsIsNotedOnceAndTriedAgainLaterNotAtEachCall() = test {
+        val day = ArchivedConversationStore.DAY_MILLIS
+        store.save(conversation(1, now - 40 * day))
+        store.save(conversation(2, now - day))
+        archive.shards.clear()
+        archive.failures["closedIds"] = IOException("the disk failed")
         val fresh = fresh()
 
-        assertTrue(runCatching { fresh.list() }.exceptionOrNull() is IOException)
+        assertTrue(runCatching { fresh.list() }.exceptionOrNull() is PastUnavailableException)
+        assertEquals(Searchable.Failed, fresh.searchable())
+        fresh.save(conversation(3, now - 1_000, open = true))
+        fresh.save(conversation(3, now - 500, open = false))
+        assertEquals(1, fresh.purge(30, now))
+        assertTrue(runCatching { fresh.list() }.exceptionOrNull() is PastUnavailableException)
+        assertEquals(1, archive.calls.count { it == "closedIds" })
+        assertEquals(listOf(ArchiveNote.INDEX_FAILED), notes)
 
-        archive.readAllFailure = null
+        advanceTimeBy(ArchivedConversationStore.FIRST_RETRY_MILLIS + 1)
+        assertEquals(2, archive.calls.count { it == "closedIds" })
+        assertEquals(Searchable.Failed, fresh.searchable())
+        assertEquals(listOf(ArchiveNote.INDEX_FAILED), notes)
+
+        archive.failures.clear()
+        advanceTimeBy(ArchivedConversationStore.FIRST_RETRY_MILLIS + 1)
+        assertEquals(2, archive.calls.count { it == "closedIds" })
+        advanceTimeBy(ArchivedConversationStore.FIRST_RETRY_MILLIS)
+
+        assertEquals(listOf(id(3), id(2)), fresh.list().map { it.id })
+        assertEquals(listOf(ArchiveNote.INDEX_FAILED, ArchiveNote.INDEX_REBUILT), notes)
+    }
+
+    // The rebuild's own write can be made and still throw, as a cancelled Room call does: the index is then failed, and
+    // the next try reads what the write stored.
+    @Test
+    fun aRebuildWhoseOwnWriteFailsIsTriedAgainLater() = test {
+        store.save(conversation(1, now - 1_000))
+        archive.shards.clear()
+        archive.interruptions["write"] = IOException("the disk is full")
+        val fresh = fresh()
+
+        assertTrue(runCatching { fresh.list() }.exceptionOrNull() is PastUnavailableException)
+        advanceTimeBy(ArchivedConversationStore.FIRST_RETRY_MILLIS + 1)
+
         assertEquals(listOf(id(1)), fresh.list().map { it.id })
+        assertEquals(1, archive.calls.count { it == "closedIds" })
+        assertEquals(listOf(ArchiveNote.INDEX_FAILED), notes)
+    }
+
+    // Design 9.7: a deletion that did not complete is made again when the store next reads the archive, before it shows
+    // anything, so that neither the list nor "continue the conversation about" finds it.
+    @Test
+    fun aDeletionThatDidNotCompleteIsMadeAgainBeforeAnythingIsShown() = test {
+        store.save(conversation(1, now - 2_000))
+        store.save(conversation(2, now - 1_000))
+        store.save(conversation(3, now, open = true))
+        archive.failures["write"] = IOException("the disk is full")
+
+        assertTrue(runCatching { store.delete(id(1)) }.exceptionOrNull() is IOException)
+        assertTrue(runCatching { store.delete(id(3)) }.exceptionOrNull() is IOException)
+
+        archive.failures.clear()
+        assertEquals(setOf(id(1).value, id(2).value, id(3).value), archive.rows.keys)
+        assertNull(store.open())
+        assertEquals(listOf(id(2)), store.list().map { it.id })
+        assertEquals(setOf(id(2).value), archive.rows.keys)
+        assertEquals(listOf(id(2)), pastIds())
+        assertTrue(notes.isEmpty())
     }
 }
 ```
@@ -4569,6 +5365,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.time.LocalDate
 
 class HistorySearchTest {
@@ -4702,13 +5499,15 @@ class HistorySearchTest {
         assertFalse(found("trip")!!.firstRequest.isEmpty())
     }
 
-    // Design 9.2 and 9.4 of sub-project 7: a rebuild of the index takes seconds on the A71, and the search never waits for it.
+    // Design 9.2 and 9.4 of sub-project 7: a rebuild of the index takes seconds on the A71, and the search never waits for
+    // it; nor does it give the open conversation's matches alone, which would read as "nothing older matched".
     @Test
-    fun whileTheIndexIsRebuiltTheSearchSaysSo() = test {
+    fun whileTheIndexIsRebuiltOrCannotBeReadTheSearchSaysSo() = test {
         save(1, record(1, "Ambar dinner", day))
-        archive.index = null
+        save(2, record(1, "Ambar lunch", 0), open = true)
+        archive.shards.clear()
         val gate = CompletableDeferred<Unit>()
-        archive.readAllGate = gate
+        archive.closedIdsGate = gate
         store = ArchivedConversationStore(archive, backgroundScope) {}
         search = HistorySearch(store, { retention }, clock)
 
@@ -4717,7 +5516,14 @@ class HistorySearchTest {
 
         gate.complete(Unit)
         runCurrent()
-        assertEquals(listOf("Ambar dinner"), requests("Ambar"))
+        assertEquals(listOf("Ambar lunch", "Ambar dinner"), requests("Ambar"))
+
+        archive.failures["readIndex"] = IOException("the disk failed")
+        store = ArchivedConversationStore(archive, backgroundScope) {}
+        search = HistorySearch(store, { retention }, clock)
+
+        assertEquals(HistoryResult.FAILED, search.search(HistoryQuery("Ambar")))
+        assertEquals(ConversationLookup.Unavailable, search.conversation("Ambar"))
     }
 
     @Test
@@ -4731,12 +5537,14 @@ class HistorySearchTest {
 
         assertEquals(listOf("Ambar again", "Ambar dinner"), requests("Ambar"))
 
-        assertEquals(listOf("load", "read"), archive.calls)
+        assertEquals(listOf("readOpen", "readIndex", "read"), archive.calls)
         assertTrue(requests("Wi-Fi").isEmpty())
-        assertEquals(listOf("load", "read"), archive.calls)
+        assertEquals(listOf("readOpen", "readIndex", "read"), archive.calls)
     }
 
-    // Design 9.7 of sub-project 7: "delete history" that runs while a search reads gives the search nothing to show.
+    // Design 9.7 of sub-project 7: "delete history" that runs while a search reads gives the search nothing to show. The
+    // matches are in the open conversation, which the search reads from memory, and the lookup reads no body, so only the
+    // store's generation stops them.
     @Test
     fun aSearchThatDeleteHistoryOvertookGivesNothingOut() = test {
         val racing = object : ConversationStore by store {
@@ -4749,7 +5557,8 @@ class HistorySearchTest {
             }
         }
         val search = HistorySearch(racing, { retention }, clock)
-        save(1, record(1, "Ambar dinner", day))
+        save(1, record(1, "Ambar dinner", day), open = true)
+        assertEquals(1, search.search(HistoryQuery("Ambar")).matches.size)
 
         racing.onRead = { store.deleteAll() }
         assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
@@ -4824,16 +5633,19 @@ class HistoryRankingTest {
         }
     }
 
+    // Design R3: the A71 would take most of a second to score every word with the query's first letter, so the matcher's
+    // cheap check comes first, and a word that two indexes (two months) share is judged once.
     @Test
-    fun eachWordOfAnIndexIsScoredOnceHoweverManyRecordsHoldIt() {
-        val index = SearchIndex.of((1..200).map { conversation(it, it.toLong(), listOf("milicu", "mileva", "restoran", "x$it")) })
-        var calls = 0
-        val counting = { wanted: String, word: String -> calls++; LabelMatcher.score(wanted, word) }
+    fun eachWordIsScoredOnceAndOnlyWhenTheCheapCheckLetsItThrough() {
+        val first = SearchIndex.of((1..200).map { conversation(it, it.toLong(), listOf("milicu", "mileva", "restoran", "x$it")) })
+        val second = SearchIndex.of((201..300).map { conversation(it, it.toLong(), listOf("milicu", "mileva", "y$it")) })
+        val scored = mutableListOf<String>()
+        val counting = { wanted: String, word: String -> scored += word; LabelMatcher.score(wanted, word) }
 
-        val ranked = HistoryRanking.rank(listOf(index), HistoryQuery("Milica"), zone, similarity = counting)
+        val ranked = HistoryRanking.rank(listOf(first, second), HistoryQuery("Milica"), zone, similarity = counting)
 
-        assertEquals(200, ranked.size)
-        assertEquals(2, calls)
+        assertEquals(300, ranked.size)
+        assertEquals(listOf("milicu"), scored)
     }
 }
 ```
@@ -4869,7 +5681,7 @@ with:
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: FAIL, the compiler reports `Unresolved reference 'ArchiveLoad'`, `'IndexRead'`, `'ArchiveNote'`, `'Searchable'` and `'ConversationLookup'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'IndexLoad'`, `'ShardRead'`, `'ArchiveNote'`, `'Searchable'`, `'PastUnavailableException'` and `'ConversationLookup'`.
 
 - [ ] **Step 3: The port, the store and the search on the index**
 
@@ -4880,33 +5692,43 @@ package dev.kestrel.conversation.store
 
 /**
  * The conversations' rows and the index of past conversations, as the store keeps them (design 9.1 and 9.2 of sub-project
- * 7): plain header fields for sorting and retention, a payload per conversation, and the index's bytes, which only
- * [ArchivedConversationStore] reads. `:app`'s `RoomRecordArchive` (plan 7C) implements it with `:core:privacy`'s
+ * 7): plain header fields for sorting and retention, a payload per conversation, and the index's shards, each in a row of
+ * its own named by its number, which only [ArchivedConversationStore] reads. `:app`'s `RoomRecordArchive` (plan 7C) implements it with `:core:privacy`'s
  * `ConversationArchiveStore`, which encrypts each payload under the Keystore key `kestrel.conversations` with the associated
- * data `conversations/<id>`, and the index under the same key, in a table of its own; the JVM tests use the fixtures'
- * `MemoryArchive`. Each read decrypts its rows on the thread that read them, one Keystore operation per row (design R3).
+ * data `conversations/<id>`, and each shard under the same key with `conversation_index/<number>`, in a table of its own;
+ * the JVM tests use the fixtures' `MemoryArchive`. Each read decrypts its rows on the thread that read them, one Keystore
+ * operation per row (design R3).
  */
 interface RecordArchive {
-    /**
-     * The store's first read, in one call and one transaction: the index, the open conversation's row, and the stamp of the
-     * closed rows, which tells whether the index is in step with them.
-     */
-    suspend fun load(): ArchiveLoad
+    /** The open conversation's row, or null: what a restore waits for, one decryption. */
+    suspend fun readOpen(): ArchiveEntry?
+
+    /** The index's shards and the stamp of the closed rows, in one transaction, so that the two can be compared. */
+    suspend fun readIndex(): IndexLoad
 
     /** The rows [ids] in one call, each as its kind of entry; an id without a row is left out. */
     suspend fun read(ids: Collection<String>): List<ArchiveEntry>
 
-    /** Every row in one call, the newest change first, each as its kind of entry: what a rebuild of the index reads. */
-    suspend fun readAll(): List<ArchiveEntry>
+    /** The ids of the closed rows, the oldest last change first, without their payloads: what a rebuild reads in pages. */
+    suspend fun closedIds(): List<String>
 
     /**
-     * One transaction: deletes [ArchiveChange.deleted], inserts or replaces [ArchiveChange.rows], and keeps, replaces or
-     * deletes the index as [ArchiveChange.index] says. Before an open row is stored, every other open row closes, so that at
-     * most one is open, as plan 7C's table does.
+     * One transaction: deletes [ArchiveChange.deleted], inserts or replaces [ArchiveChange.rows], and changes the index's
+     * shards as [ArchiveChange.index] says. Before an open row is stored, every other open row closes, so that at most one
+     * is open, as plan 7C's table does.
      */
     suspend fun write(change: ArchiveChange)
 
-    /** Deletes every row, the open one too, and the index, and then the archive's key; a new key is made at the next write. */
+    /**
+     * One transaction: deletes every closed row whose last change is before [oldest] or after [newest] (design 9.3), whatever
+     * the index lists, and changes the index's shards as [index] says; returns how many rows went.
+     */
+    suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int
+
+    /**
+     * "Delete history": erases the archive's key, so that nothing stored can be decrypted any more, and then deletes every
+     * row, the open one too, and the index; a new key is made at the next write.
+     */
     suspend fun deleteAll()
 }
 
@@ -4939,20 +5761,22 @@ sealed interface ArchiveEntry {
     }
 }
 
-/** The store's first read: the index as read, the open conversation's row (null when none is open) and the closed rows' stamp. */
-class ArchiveLoad(val index: IndexRead, val open: ArchiveEntry?, val stamp: IndexStamp) {
-    override fun toString(): String = "ArchiveLoad(index=$index, open=$open, stamp=$stamp)"
+/** The index as read, with the stamp of the closed rows from the same transaction; no shard when there is no index. */
+class IndexLoad(val shards: List<ShardRead>, val stamp: IndexStamp) {
+    override fun toString(): String = "IndexLoad(shards=${shards.size}, stamp=$stamp)"
 }
 
-/** The index as read: its bytes, or the mark that there is none, or that it cannot be read (its check failed, or its cipher's format is newer). */
-sealed interface IndexRead {
-    class Readable(val bytes: ByteArray) : IndexRead {
+/** A shard's row as read, by its name (its number, as text): its bytes, or the mark that it cannot be read (its check failed, or its cipher's format is newer). */
+sealed interface ShardRead {
+    val name: String
+
+    class Readable(override val name: String, val bytes: ByteArray) : ShardRead {
         override fun toString(): String = "Readable(${bytes.size} bytes)"
     }
 
-    data object Missing : IndexRead
-
-    data object Unreadable : IndexRead
+    class Unreadable(override val name: String) : ShardRead {
+        override fun toString(): String = "Unreadable"
+    }
 }
 
 /** One change of the archive, in one transaction: rows to store, rows to delete, and what happens to the index. */
@@ -4960,15 +5784,21 @@ class ArchiveChange(val rows: List<ArchiveRow> = emptyList(), val deleted: Set<S
     override fun toString(): String = "ArchiveChange(rows=${rows.size}, deleted=${deleted.size}, index=$index)"
 }
 
-/** What a change does to the index: keeps it, replaces it with [Replace.bytes], or deletes it. */
+/**
+ * What a change does to the index's shards, each named by its number: keeps them all; puts [Update.put], each replacing the
+ * row of its name, and deletes [Update.deleted]; or deletes every shard and stores [Replace.shards] alone, so that a
+ * `Replace` without shards leaves no index.
+ */
 sealed interface IndexWrite {
     data object Keep : IndexWrite
 
-    class Replace(val bytes: ByteArray) : IndexWrite {
-        override fun toString(): String = "Replace(${bytes.size} bytes)"
+    class Update(val put: Map<String, ByteArray>, val deleted: Set<String>) : IndexWrite {
+        override fun toString(): String = "Update(put=${put.size}, deleted=${deleted.size})"
     }
 
-    data object Delete : IndexWrite
+    class Replace(val shards: Map<String, ByteArray>) : IndexWrite {
+        override fun toString(): String = "Replace(${shards.size} shards)"
+    }
 }
 ```
 
@@ -5001,7 +5831,8 @@ interface ConversationStore {
 
     /**
      * The closed conversations, the newest change first (design 9.5), from the index of past conversations, so that no body
-     * is read. It waits while the index is read, and also while it is rebuilt.
+     * is read. It waits while the index is read, and also while it is rebuilt; while the index cannot be read, it throws
+     * [PastUnavailableException].
      */
     suspend fun list(): List<ConversationSummary>
 
@@ -5024,14 +5855,16 @@ interface ConversationStore {
     suspend fun deleteAll()
 
     /**
-     * Deletes the closed conversations older than [retentionDays], or dated more than a day ahead; returns how many. It
-     * waits while the index is rebuilt.
+     * Deletes the closed conversations older than [retentionDays], or dated more than a day ahead, by the table's own last
+     * changes, so that retention holds also while the index is rebuilt or cannot be read (design 9.3); returns how many.
+     * It waits only while the index is read.
      */
     suspend fun purge(retentionDays: Int, nowWall: Long): Int
 
     /**
-     * What the search reads (design 9.4): the index of past conversations and the open conversation, or
-     * [Searchable.Rebuilding] while the index is rebuilt. It waits while the index is read, never for a rebuild.
+     * What the search reads (design 9.4): the index of past conversations and the open conversation, or the mark that the
+     * index is being rebuilt ([Searchable.Rebuilding]) or cannot be read now ([Searchable.Failed]). It waits while the index
+     * is read, never for a rebuild.
      */
     suspend fun searchable(): Searchable
 }
@@ -5047,14 +5880,26 @@ data class ConversationSummary(
     override fun toString(): String = "ConversationSummary(commands=$commands, firstRequest=${firstRequest?.length} chars)"
 }
 
-/** What the search reads: the index of past conversations with the open conversation, or the mark that the index is being rebuilt. */
+/**
+ * What the search reads: the index of past conversations with the open conversation, or the mark that the index is being
+ * rebuilt, or that it could not be read or rebuilt, which the store has noted and tries again later (design 9.2).
+ */
 sealed interface Searchable {
     class Ready(val past: PastIndex, val open: ConversationSnapshot?) : Searchable {
         override fun toString(): String = "Ready(past=$past, open=$open)"
     }
 
     data object Rebuilding : Searchable
+
+    data object Failed : Searchable
 }
+
+/**
+ * The index of past conversations could not be read or rebuilt (design 9.2 of sub-project 7): the list cannot be shown
+ * now. The store has noted it once, by its kind, and tries again later by itself. Its message holds no word of a
+ * conversation.
+ */
+class PastUnavailableException(cause: Throwable) : Exception("The index of past conversations cannot be read now", cause)
 ```
 
 Replace the whole `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt` with:
@@ -5069,13 +5914,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.util.IdentityHashMap
 
 /** What the store writes into the activity log, by its kind only (design 9.2 of sub-project 7): never an id, a word or a byte. */
 enum class ArchiveNote {
@@ -5084,31 +5928,43 @@ enum class ArchiveNote {
 
     /** The index of past conversations was missing, unreadable, in another format or out of step, so the store rebuilt it. */
     INDEX_REBUILT,
+
+    /**
+     * The index of past conversations could not be read or rebuilt, so the list and the search cannot show past
+     * conversations now; the store tries again later. Noted once until the index is ready again.
+     */
+    INDEX_FAILED,
 }
 
 /**
  * The conversations as JSON behind [archive] (design 9.1 and 9.2 of sub-project 7): one row per conversation, whose payload
- * is its snapshot, and the index of past conversations ([PastIndex]) in a row of its own. Its first call reads, in one call
- * to the archive, the index, the open conversation and the stamp of the closed rows, and keeps the index and the open
- * conversation in memory. A closed conversation's body is read only when a caller asks for it. Whether a conversation is
- * open is its row's [ArchiveHeader.open], never its payload's; writing an open conversation closes the others, in the table
- * and in memory alike.
+ * is its snapshot, and the index of past conversations ([PastIndex]) in rows of its own, one per shard. Its first call reads
+ * the open conversation, one row, and starts reading the index in [scope], so that a restore never waits for the index.
+ * The store keeps the open conversation and the index in memory; a closed conversation's body is read only when a caller
+ * asks for it. Whether a conversation is open is its row's [ArchiveHeader.open], never its payload's; writing an open
+ * conversation closes the others, in the table and in memory alike.
  *
- * A save of the open conversation writes its row only. Every change of the closed conversations writes their rows and the
- * new index in one transaction. A row whose payload fails its check, or does not decode, is deleted with its index entry
- * and noted by its kind only; a row in a format that this version cannot read is kept for a later version, and the index
- * counts it.
+ * A save of the open conversation writes its row only, and never waits for the index. Every change of the closed
+ * conversations writes their rows and the index's changed shards in one transaction, and waits while the index is read;
+ * a save that opens a conversation without closing one does not wait, and the index drops that conversation, which a
+ * holder's older snapshot may have closed, once it is read.
+ * A row whose payload fails its check, or does not decode, is deleted with its index entry and noted by its kind only; a
+ * row in a format that this version cannot read is kept for a later version, and the index counts it.
  *
  * When the index is missing while closed rows exist, cannot be read, is in another format or its stamp differs from the
- * table's, the store rebuilds it from the bodies in [scope], about 5 s on the A71 for 30 days (design R3). Meanwhile the
- * open conversation is read and saved as usual; every other change deletes the old index in its transaction and is replayed
- * onto the rebuilt one; [searchable] says that the index is being rebuilt; and [list] and [purge] wait for it.
+ * table's, the store rebuilds it from the bodies in [scope], page by page, folding each body into the new index as it is
+ * read: about 5 s on the A71 for 30 days (design R3). Meanwhile the open conversation is read and saved as usual; every
+ * other change deletes the old index in its transaction and is replayed onto the rebuilt one; [searchable] says that the
+ * index is being rebuilt; [list] waits for it; and [purge] deletes by the table's own times. When the index can be neither
+ * read nor rebuilt, the store notes it once ([ArchiveNote.INDEX_FAILED]), [list] throws [PastUnavailableException],
+ * [searchable] says so, and the store tries again after a minute, then after twice as long each time, up to an hour.
  *
  * The memory changes only after the archive's call completed. A call that did not complete, cancelled too, may still have
  * changed the archive, so the memory is dropped and the next call reads the archive again. A conversation that this process
  * deleted is never written again, also when its deletion did not complete, because the owner asked for it (design 9.7): an
  * older snapshot that a holder saves, or closes in [reopen], after "delete history" or a deletion of the conversation is
- * left out.
+ * left out, and when the store reads the archive again and finds such a conversation, it deletes it again before it shows
+ * anything.
  */
 class ArchivedConversationStore(
     private val archive: RecordArchive,
@@ -5121,16 +5977,33 @@ class ArchivedConversationStore(
     private sealed interface Past {
         class Ready(val index: PastIndex) : Past
 
-        /**
-         * A rebuild reads the bodies. The changes made meanwhile wait in [pending], to be replayed onto its result, and
-         * [touched] names their rows, which the rebuild never deletes. [done] completes when the rebuild has ended or was
-         * replaced, exceptionally when it failed.
-         */
-        class Rebuilding : Past {
-            val pending = mutableListOf<(PastIndex) -> PastIndex>()
-            val touched = mutableSetOf<String>()
+        /** Work on the index in [scope]; [done] completes when the work has ended or was stopped. */
+        sealed class Working : Past {
             val done = CompletableDeferred<Unit>()
             lateinit var job: Job
+        }
+
+        /**
+         * The stored shards are read, decoded and checked against the table's stamp. Changes that close a conversation
+         * wait for it; a save that only opens one writes its row alone, and its update waits in [pending], to be applied
+         * to the index once it is read.
+         */
+        class Loading : Working() {
+            val pending = mutableListOf<(PastIndex) -> PastIndex>()
+        }
+
+        /**
+         * A rebuild reads the bodies. The changes made meanwhile wait in [pending], to be replayed onto its result, and
+         * [touched] names their rows, which the rebuild never deletes.
+         */
+        class Rebuilding : Working() {
+            val pending = mutableListOf<(PastIndex) -> PastIndex>()
+            val touched = mutableSetOf<String>()
+        }
+
+        /** The index could not be read or rebuilt; [retry] reads it again after a wait. */
+        class Failed(val cause: Throwable) : Past {
+            var retry: Job? = null
         }
     }
 
@@ -5143,9 +6016,13 @@ class ArchivedConversationStore(
     private var past: Past? = null
 
     // Every conversation that this process read from the archive or wrote to it, so that a snapshot of it may be held
-    // outside the store; and those of them that it deleted, which it never writes again.
+    // outside the store; and those of them that it deleted, which it never writes or shows again.
     private val held = mutableSetOf<ConversationId>()
     private val deleted = mutableSetOf<ConversationId>()
+
+    // The wait before the next try after the index failed, and whether the failure was noted since the index was last ready.
+    private var retryMillis = FIRST_RETRY_MILLIS
+    private var failureNoted = false
 
     @Volatile
     override var generation = 0L
@@ -5153,7 +6030,21 @@ class ArchivedConversationStore(
 
     override suspend fun open(): ConversationSnapshot? = mutex.withLock { loaded().snapshot }
 
-    override suspend fun save(snapshot: ConversationSnapshot) = mutex.withLock { write(listOf(snapshot)) }
+    override suspend fun save(snapshot: ConversationSnapshot) {
+        while (true) {
+            val loading = mutex.withLock {
+                val before = loaded()
+                val state = settle()
+                val kept = listOf(snapshot).filter { it.id !in deleted }
+                if (state !is Past.Loading || !closes(kept, before)) {
+                    write(kept)
+                    return
+                }
+                state
+            }
+            loading.done.await()
+        }
+    }
 
     override suspend fun list(): List<ConversationSummary> = withIndex { index ->
         index.conversations.map { ConversationSummary(it.id, it.openedAtWall, it.lastWall, it.commands, it.firstRequest) }
@@ -5161,31 +6052,32 @@ class ArchivedConversationStore(
 
     override suspend fun get(id: ConversationId): ConversationSnapshot? = getAll(listOf(id))[id]
 
-    override suspend fun getAll(ids: Collection<ConversationId>): Map<ConversationId, ConversationSnapshot> = mutex.withLock { bodies(ids) }
+    override suspend fun getAll(ids: Collection<ConversationId>): Map<ConversationId, ConversationSnapshot> = settled { bodies(ids) }
 
     override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? =
-        mutex.withLock {
-            if (loaded().snapshot?.id == id) return@withLock null
-            val chosen = bodies(listOf(id))[id] ?: return@withLock null
+        settled { before ->
+            if (before.snapshot?.id == id) return@settled null
+            val chosen = bodies(listOf(id))[id] ?: return@settled null
             val opened = chosen.copy(open = true, testMode = testMode, continuedAtWall = nowWall, lastWall = nowWall)
             // Writing the opened one closes the conversation that was open, as the table does (D23).
-            write(listOfNotNull(closing?.copy(open = false)) + opened)
+            write(listOfNotNull(closing?.copy(open = false)).filter { it.id !in deleted } + opened)
             opened
         }
 
-    override suspend fun delete(id: ConversationId) = mutex.withLock {
-        deleted += id
-        val before = loaded()
-        val wasOpen = before.snapshot?.id == id
-        change(gone = setOf(id.value), update = if (wasOpen) null else ({ index -> index.without(setOf(id.value)) })) {
-            if (wasOpen) opened = Opened(null, before.unknown)
+    override suspend fun delete(id: ConversationId) {
+        mutex.withLock { deleted += id }
+        settled { before ->
+            val wasOpen = before.snapshot?.id == id
+            change(gone = setOf(id.value), update = if (wasOpen) null else ({ index -> index.without(setOf(id.value)) })) {
+                if (wasOpen) opened = Opened(null, before.unknown)
+            }
         }
     }
 
     override suspend fun deleteAll() = mutex.withLock {
         generation++
         deleted += held
-        (past as? Past.Rebuilding)?.let(::stop)
+        stopWork()
         try {
             archive.deleteAll()
         } catch (e: Throwable) {
@@ -5193,191 +6085,308 @@ class ArchivedConversationStore(
             throw e
         }
         opened = Opened(null, null)
-        past = Past.Ready(PastIndex.EMPTY)
+        past = ready(PastIndex.EMPTY)
     }
 
-    override suspend fun purge(retentionDays: Int, nowWall: Long): Int = withIndex { index ->
-        val gone = index.outside(nowWall - retentionDays * DAY_MILLIS, nowWall + DAY_MILLIS)
-        if (gone.isNotEmpty()) change(gone = gone, update = { it.without(gone) }) {}
-        gone.size
+    override suspend fun purge(retentionDays: Int, nowWall: Long): Int = settled {
+        val oldest = nowWall - retentionDays * DAY_MILLIS
+        val newest = nowWall + DAY_MILLIS
+        changed(update = { index -> index.without(index.outside(oldest, newest)) }, touched = emptySet(), replayable = false, inMemory = {}) { index ->
+            archive.purge(oldest, newest, index)
+        }
     }
 
-    override suspend fun searchable(): Searchable = mutex.withLock {
-        val open = loaded().snapshot
-        when (val state = past) {
-            is Past.Ready -> Searchable.Ready(state.index, open)
-            else -> Searchable.Rebuilding
+    override suspend fun searchable(): Searchable {
+        while (true) {
+            val loading = mutex.withLock {
+                val open = loaded().snapshot
+                when (val state = settle()) {
+                    is Past.Ready -> return Searchable.Ready(state.index, open)
+                    is Past.Rebuilding -> return Searchable.Rebuilding
+                    is Past.Failed -> return Searchable.Failed
+                    is Past.Loading -> state
+                }
+            }
+            loading.done.await()
         }
     }
 
     /**
-     * Stores [snapshots] in one transaction, leaving out those of conversations that this process deleted. Every
-     * conversation that closes enters the index, one that opens leaves it, and an open row that a written open one replaces
-     * closes as the table closes it: its body enters the index, or a row that this version cannot read is kept.
+     * What [kept], snapshots to store, do to the index: every conversation that closes enters it, one that opens leaves it,
+     * and an open row that a written open one replaces closes as the table closes it: its body enters the index, or a row
+     * that this version cannot read is kept. Null when the index does not change: a save of the open conversation alone.
      */
-    private suspend fun write(snapshots: List<ConversationSnapshot>) {
-        val kept = snapshots.filter { it.id !in deleted }
-        if (kept.isEmpty()) return
-        val before = loaded()
+    private fun indexUpdate(kept: List<ConversationSnapshot>, before: Opened): ((PastIndex) -> PastIndex)? {
+        if (kept.isEmpty()) return null
         val written = kept.mapTo(HashSet()) { it.id }
         val opening = kept.lastOrNull { it.open }
         val replaced = before.snapshot?.takeIf { opening != null && it.id !in written }?.copy(open = false)
         val replacedUnknown = before.unknown?.takeIf { opening != null && it.id != opening.id.value }
         val closing = kept.filter { !it.open } + listOfNotNull(replaced)
-        val update: ((PastIndex) -> PastIndex)? =
-            if (closing.isEmpty() && replacedUnknown == null && (opening == null || opening.id == before.snapshot?.id)) {
-                null
-            } else {
-                { index ->
-                    index.without(setOfNotNull(opening?.id?.value)).with(closing)
-                        .keeping(listOfNotNull(replacedUnknown?.let { KeptRow(it.id, it.lastMillis) }))
-                }
-            }
+        if (closing.isEmpty() && replacedUnknown == null && (opening == null || opening.id == before.snapshot?.id)) return null
+        return { index ->
+            index.without(setOfNotNull(opening?.id?.value)).with(closing)
+                .keeping(listOfNotNull(replacedUnknown?.let { KeptRow(it.id, it.lastMillis) }))
+        }
+    }
+
+    /** Whether storing [kept] closes a conversation, or an open row that this version cannot read: a change that needs the index. */
+    private fun closes(kept: List<ConversationSnapshot>, before: Opened): Boolean {
+        val opening = kept.lastOrNull { it.open } ?: return kept.isNotEmpty()
+        return kept.any { !it.open } || (before.snapshot != null && before.snapshot.id !in kept.map { it.id }) ||
+            (before.unknown != null && before.unknown.id != opening.id.value)
+    }
+
+    /** Stores [kept], snapshots of conversations that this process did not delete, in one transaction. */
+    private suspend fun write(kept: List<ConversationSnapshot>) {
+        if (kept.isEmpty()) return
+        val before = loaded()
+        val written = kept.mapTo(HashSet()) { it.id }
+        val opening = kept.lastOrNull { it.open }
         held += written
-        change(rows = kept.map(::row), update = update) {
+        change(rows = kept.map(::row), update = indexUpdate(kept, before), replayable = !closes(kept, before)) {
             val stillOpen = before.snapshot?.takeIf { opening == null && it.id !in written }
             opened = Opened(opening ?: stillOpen, before.unknown.takeIf { opening == null })
         }
     }
 
-    /**
-     * The one way to change the archive: [rows] stored and [gone] deleted in one transaction, with the index changed by
-     * [update] when it is set. While the index is ready, the new index goes into the same transaction. While it is rebuilt,
-     * the transaction deletes the old index, which can then never match the table again, and [update] waits to be replayed
-     * onto the rebuilt one. Only once the archive's call completed does [inMemory] change the memory; when it did not
-     * complete, for any reason, cancellation too, the memory is dropped.
-     */
+    /** [rows] stored and [gone] deleted in one transaction, with the index changed by [update] when it is set. */
     private suspend fun change(
         rows: List<ArchiveRow> = emptyList(),
         gone: Set<String> = emptySet(),
         update: ((PastIndex) -> PastIndex)?,
+        replayable: Boolean = false,
         inMemory: () -> Unit,
-    ) {
+    ) = changed(update, rows.map { it.header.id } + gone, replayable, inMemory) { index -> archive.write(ArchiveChange(rows, gone, index)) }
+
+    /**
+     * The one way to change the archive: [apply] makes the change, in one transaction with the index's write that it is
+     * given. While the index is ready, that write stores the shards that [update] changed. While the index is rebuilt or
+     * has failed, it deletes every shard, so that the old index can never match the table again; during a rebuild, [update]
+     * waits to be replayed onto the rebuilt index, and [touched] names the rows that the rebuild must not delete. While the
+     * index is read, only an update that [replayable] marks, one that only drops an opened conversation, is allowed: the
+     * shards stay as they are, and the update waits to be applied to the index once it is read. Only once the archive's
+     * call completed does [inMemory] change the memory; when it did not complete, for any reason, cancellation too, the
+     * memory is dropped.
+     */
+    private suspend fun <T> changed(
+        update: ((PastIndex) -> PastIndex)?,
+        touched: Collection<String>,
+        replayable: Boolean,
+        inMemory: () -> Unit,
+        apply: suspend (IndexWrite) -> T,
+    ): T {
         val state = past
+        check(update == null || replayable || state !is Past.Loading) { "A change that closes a conversation waits while the index is read" }
         var next: PastIndex? = null
         val index = when {
-            update == null -> IndexWrite.Keep
+            update == null || state is Past.Loading -> IndexWrite.Keep
             state is Past.Ready -> update(state.index).let { changed ->
-                if (changed === state.index) IndexWrite.Keep else IndexWrite.Replace(PastIndexCodec.encode(changed)).also { next = changed }
+                next = changed
+                written(changed.changesFrom(state.index))
             }
-            else -> IndexWrite.Delete
+            else -> IndexWrite.Replace(emptyMap())
         }
-        try {
-            archive.write(ArchiveChange(rows, gone, index))
+        val result = try {
+            apply(index)
         } catch (e: Throwable) {
             forget()
             throw e
         }
         next?.let { past = ready(it) }
-        if (state is Past.Rebuilding && update != null) {
+        if (update != null && state is Past.Rebuilding) {
             state.pending += update
-            state.touched += rows.map { it.header.id } + gone
+            state.touched += touched
         }
+        if (update != null && state is Past.Loading) state.pending += update
         inMemory()
+        return result
     }
 
-    /** Runs [block] under the lock with the ready index; while the index is rebuilt, it waits without the lock. */
+    /** Runs [block] under the lock once the archive has been read and the index is not being read, which it waits for without the lock. */
+    private suspend fun <T> settled(block: suspend (Opened) -> T): T {
+        while (true) {
+            val loading = mutex.withLock {
+                val before = loaded()
+                val state = settle()
+                if (state !is Past.Loading) return block(before)
+                state
+            }
+            loading.done.await()
+        }
+    }
+
+    /** Runs [block] under the lock with the ready index; while the index is read or rebuilt, it waits without the lock. */
     private suspend fun <T> withIndex(block: suspend (PastIndex) -> T): T {
         while (true) {
-            val rebuild = mutex.withLock {
+            val working = mutex.withLock {
                 loaded()
-                when (val state = past) {
+                when (val state = settle()) {
                     is Past.Ready -> return block(state.index)
-                    is Past.Rebuilding -> state
-                    null -> error("The index is read with the open conversation")
+                    is Past.Working -> state
+                    is Past.Failed -> throw PastUnavailableException(state.cause)
                 }
             }
-            // A failed rebuild fails this call; one that was replaced left the state that the next turn reads.
-            rebuild.done.await()
+            working.done.await()
         }
     }
 
     /**
-     * The open conversation, once the archive has been read: the first call reads, in one call, the index, the open row and
-     * the stamp of the closed rows, decodes the index and checks it against the stamp, and starts a rebuild when it does
-     * not hold.
+     * The open conversation, once the archive has been read: the first call reads the open row, one decryption, and starts
+     * reading the index in [scope]. An open row that fails its check or does not decode is deleted and noted; one that this
+     * process deleted is deleted again.
      */
     private suspend fun loaded(): Opened {
         opened?.let { return it }
-        val load = archive.load()
+        val entry = archive.readOpen()
         var snapshot: ConversationSnapshot? = null
         var unknown: ArchiveHeader? = null
-        var failed: String? = null
-        when (val entry = load.open) {
+        when (entry) {
             null -> Unit
             is ArchiveEntry.Unknown -> unknown = entry.header
-            is ArchiveEntry.Unreadable -> failed = entry.header.id
-            is ArchiveEntry.Readable -> snapshot = decoded(entry).also { if (it == null) failed = entry.header.id }
+            is ArchiveEntry.Unreadable -> Unit
+            is ArchiveEntry.Readable -> snapshot = decoded(entry)?.takeIf { it.id !in deleted }
         }
-        val index = (load.index as? IndexRead.Readable)?.let { decodedIndex(it.bytes) }?.takeIf { it.stamp == load.stamp }
+        val state = loading()
         opened = Opened(snapshot, unknown)
+        past = state
         snapshot?.let { held += it.id }
-        past = when {
-            index != null -> ready(index)
-            load.index == IndexRead.Missing && load.stamp.closed == 0 -> ready(PastIndex.EMPTY)
-            else -> rebuilding()
-        }
-        failed?.let { id ->
-            change(gone = setOf(id), update = null) {}
-            noted(ArchiveNote.CONVERSATION_DELETED)
+        if (entry != null && unknown == null && snapshot == null) {
+            change(gone = setOf(entry.header.id), update = null) {}
+            if (ConversationId(entry.header.id) !in deleted) noted(ArchiveNote.CONVERSATION_DELETED)
         }
         return checkNotNull(opened)
     }
 
+    // The index's state, once a job of [scope] that ended without its result, because the scope ended first, has failed.
+    private fun settle(): Past {
+        val state = checkNotNull(past)
+        if (state is Past.Working && state.job.isCompleted) return failed(IllegalStateException("The store's scope has ended")).also { past = it }
+        return state
+    }
+
     private fun ready(index: PastIndex): Past.Ready {
         index.conversations.mapTo(held) { it.id }
+        retryMillis = FIRST_RETRY_MILLIS
+        failureNoted = false
         return Past.Ready(index)
     }
 
-    private fun rebuilding(): Past.Rebuilding {
-        check(scope.isActive) { "The store's scope has ended" }
-        val state = Past.Rebuilding()
-        state.job = scope.launch(start = CoroutineStart.LAZY) { rebuild(state) }
+    private fun loading(): Past.Loading = Past.Loading().also { state -> start(state) { load(state) } }
+
+    private fun rebuilding(): Past.Rebuilding = Past.Rebuilding().also { state -> start(state) { rebuild(state) } }
+
+    private fun start(state: Past.Working, work: suspend () -> Unit) {
+        state.job = scope.launch(start = CoroutineStart.LAZY) { work() }
         state.job.invokeOnCompletion { state.done.complete(Unit) }
         state.job.start()
+    }
+
+    /** Notes the failure once, and reads the index again after a wait that doubles at each failure, up to an hour. */
+    private fun failed(cause: Throwable): Past.Failed {
+        val state = Past.Failed(cause)
+        if (!failureNoted) {
+            failureNoted = true
+            noted(ArchiveNote.INDEX_FAILED)
+        }
+        val wait = retryMillis
+        retryMillis = minOf(retryMillis * 2, MAX_RETRY_MILLIS)
+        state.retry = scope.launch {
+            delay(wait)
+            mutex.withLock { if (past === state) past = loading() }
+        }
         return state
     }
 
     /**
-     * Rebuilds the index from the bodies (design 9.2): every closed row is read, decoded and folded, outside the lock, so
-     * that the open conversation is saved meanwhile. The changes made meanwhile are replayed onto the result, which goes into
-     * the archive with the deletion of the rows that failed, unless a change rewrote them.
+     * Reads the index's shards and the table's stamp in one call, decodes the shards and checks them against the stamp. A
+     * usable index becomes ready, with the updates that waited for it and with the conversations that this process deleted
+     * deleted again, in one write; an index that is missing while closed rows exist, unreadable, in another format or out
+     * of step is rebuilt; a read that fails fails.
+     */
+    private suspend fun load(state: Past.Loading) {
+        val read = try {
+            archive.readIndex()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            mutex.withLock { if (past === state) past = failed(e) }
+            return
+        }
+        val stored = decodedIndex(read.shards)?.takeIf { it.stamp == read.stamp }
+            ?: PastIndex.EMPTY.takeIf { read.shards.isEmpty() && read.stamp.closed == 0 }
+        mutex.withLock {
+            if (past !== state) return
+            if (stored == null) {
+                past = rebuilding()
+                return
+            }
+            val replayed = state.pending.fold(stored) { index, update -> update(index) }
+            val again = deleted.filter { it in replayed }.mapTo(HashSet()) { it.value }
+            past = ready(stored)
+            if (replayed === stored && again.isEmpty()) return
+            try {
+                change(gone = again, update = { replayed.without(again) }) {}
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The memory is dropped, and the next call reads the archive again.
+            }
+        }
+    }
+
+    /**
+     * Rebuilds the index from the bodies (design 9.2): the closed rows are read in pages of [REBUILD_PAGE], outside the
+     * lock, so that the open conversation is saved meanwhile, and each body is folded into the new index as soon as it is
+     * read, so that the rebuild never holds more than a page of bodies. The new shards are encoded outside the lock too.
+     * The changes made meanwhile are replayed onto the result, which goes into the archive with the deletion of the rows that
+     * failed, unless a change rewrote them, and of the conversations that this process deleted.
      */
     private suspend fun rebuild(state: Past.Rebuilding) {
+        val builder = PastIndex.Builder()
+        val failed = HashSet<String>()
         try {
-            val snapshots = ArrayList<ConversationSnapshot>()
-            val kept = ArrayList<KeptRow>()
-            val failed = HashSet<String>()
-            for (entry in archive.readAll()) {
-                if (entry.header.open) continue
-                when (entry) {
-                    is ArchiveEntry.Unknown -> kept += KeptRow(entry.header.id, entry.header.lastMillis)
-                    is ArchiveEntry.Unreadable -> failed += entry.header.id
-                    is ArchiveEntry.Readable -> {
-                        val snapshot = decoded(entry)
-                        if (snapshot == null) failed += entry.header.id else snapshots += snapshot
+            for (page in archive.closedIds().chunked(REBUILD_PAGE)) {
+                for (entry in archive.read(page)) {
+                    if (entry.header.open) continue
+                    when (entry) {
+                        is ArchiveEntry.Unknown -> builder.keep(KeptRow(entry.header.id, entry.header.lastMillis))
+                        is ArchiveEntry.Unreadable -> failed += entry.header.id
+                        is ArchiveEntry.Readable -> decoded(entry)?.let(builder::add) ?: failed.add(entry.header.id)
                     }
                 }
             }
-            val built = PastIndex.of(snapshots, kept)
-            val rebuilt = mutex.withLock {
-                if (past !== state) return
-                val dropped = failed - state.touched
-                val index = state.pending.fold(built) { index, update -> update(index) }
-                archive.write(ArchiveChange(deleted = dropped, index = IndexWrite.Replace(PastIndexCodec.encode(index))))
-                past = ready(index)
-                dropped.size
-            }
-            repeat(rebuilt) { noted(ArchiveNote.CONVERSATION_DELETED) }
-            noted(ArchiveNote.INDEX_REBUILT)
-            state.done.complete(Unit)
         } catch (e: CancellationException) {
-            withContext(NonCancellable) { mutex.withLock { if (past === state) drop() } }
             throw e
         } catch (e: Exception) {
-            mutex.withLock { if (past === state) drop() }
-            state.done.completeExceptionally(e)
+            mutex.withLock { if (past === state) past = failed(e) }
+            return
         }
+        val built = builder.build()
+        // Encoded outside the lock; under it, only the shards that the replayed changes touched are encoded again.
+        val bytes = IdentityHashMap<IndexShard, ByteArray>().apply { built.shards.forEach { put(it, PastIndexCodec.encode(it)) } }
+        val dropped = mutex.withLock {
+            if (past !== state) return
+            val replayed = state.pending.fold(built) { index, update -> update(index) }
+            val again = deleted.filter { it in replayed }.mapTo(HashSet()) { it.value }
+            val index = replayed.without(again)
+            val gone = failed - state.touched
+            try {
+                val shards = index.shards.associate { it.number.toString() to (bytes[it] ?: PastIndexCodec.encode(it)) }
+                archive.write(ArchiveChange(deleted = gone + again, index = IndexWrite.Replace(shards)))
+            } catch (e: CancellationException) {
+                past = failed(e)
+                throw e
+            } catch (e: Exception) {
+                // The write may have been made: the next try reads the archive again.
+                past = failed(e)
+                return
+            }
+            past = ready(index)
+            gone.count { ConversationId(it) !in deleted }
+        }
+        repeat(dropped) { noted(ArchiveNote.CONVERSATION_DELETED) }
+        noted(ArchiveNote.INDEX_REBUILT)
     }
 
     /**
@@ -5410,30 +6419,48 @@ class ArchivedConversationStore(
         return found
     }
 
-    // The archive may hold a change that the memory does not: stop a rebuild that the memory started, and drop the memory.
+    // The archive may hold a change that the memory does not: stop the work on the index, and drop the memory.
     private fun forget() {
-        (past as? Past.Rebuilding)?.let(::stop)
-        drop()
-    }
-
-    private fun drop() {
+        stopWork()
         past = null
         opened = null
     }
 
-    private fun stop(rebuild: Past.Rebuilding) {
-        rebuild.job.cancel()
-        rebuild.done.complete(Unit)
+    private fun stopWork() {
+        when (val state = past) {
+            is Past.Working -> {
+                state.job.cancel()
+                state.done.complete(Unit)
+            }
+            is Past.Failed -> state.retry?.cancel()
+            is Past.Ready, null -> Unit
+        }
     }
 
+    private fun written(changes: ShardChanges): IndexWrite =
+        if (changes.isEmpty) IndexWrite.Keep else IndexWrite.Update(encoded(changes.put), changes.gone.mapTo(HashSet()) { it.toString() })
+
+    private fun encoded(shards: List<IndexShard>): Map<String, ByteArray> = shards.associate { it.number.toString() to PastIndexCodec.encode(it) }
+
+    // The row's plain fields are the truth for whether the conversation is open and for its times, which the stamp and
+    // retention count, so that a rebuilt index is always in step with the rows that it read.
     private fun decoded(entry: ArchiveEntry.Readable): ConversationSnapshot? = try {
-        json.decodeFromString(ConversationSnapshot.serializer(), entry.payload.decodeToString()).copy(open = entry.header.open)
+        val header = entry.header
+        json.decodeFromString(ConversationSnapshot.serializer(), entry.payload.decodeToString())
+            .copy(open = header.open, openedAtWall = header.openedMillis, lastWall = header.lastMillis)
     } catch (e: IllegalArgumentException) {
         null
     }
 
-    private fun decodedIndex(bytes: ByteArray): PastIndex? = try {
-        PastIndexCodec.decode(bytes)
+    // The index from its shards' rows; null when a shard cannot be read, is named by no number, or does not decode.
+    private fun decodedIndex(shards: List<ShardRead>): PastIndex? = try {
+        val words = HashMap<String, String>()
+        PastIndex.restored(
+            shards.map { shard ->
+                if (shard !is ShardRead.Readable) return null
+                PastIndexCodec.decode(shard.name.toIntOrNull() ?: return null, shard.bytes, words)
+            },
+        )
     } catch (e: IllegalArgumentException) {
         null
     }
@@ -5443,10 +6470,17 @@ class ArchivedConversationStore(
         return ArchiveRow(header, json.encodeToString(ConversationSnapshot.serializer(), snapshot).encodeToByteArray())
     }
 
-    override fun toString(): String = "ArchivedConversationStore(open=${opened?.snapshot != null}, past=$past)"
+    override fun toString(): String = "ArchivedConversationStore(open=${opened?.snapshot != null}, past=${past?.javaClass?.simpleName})"
 
     companion object {
         const val DAY_MILLIS = 24L * 60 * 60 * 1000
+
+        /** How many closed rows a rebuild reads in one call: one thread hop per page, and never more than a page of bodies in memory. */
+        const val REBUILD_PAGE = 50
+
+        /** The first wait before the index is read again after it failed, and the longest. */
+        const val FIRST_RETRY_MILLIS = 60_000L
+        const val MAX_RETRY_MILLIS = 60 * 60_000L
     }
 }
 ```
@@ -5495,9 +6529,10 @@ object HistoryRanking {
      * The records of [indexes] that [reached] lets through and that match [query], best match first and the newer first on a
      * tie: only those given on a day from [HistoryQuery.from] to [HistoryQuery.to] in [zone], both included. Empty when the
      * query holds no word that counts. In each index, each query word's matching words (itself and its near misses, among
-     * the index's words with its first letter) are found once, so [similarity], the matcher's score (`LabelMatcher.score`; a
-     * test may count its calls), scores each of the index's words at most once per query word, however many records hold
-     * it; a record then only compares positions.
+     * the index's words with its first letter) are found once, and a record then only compares positions. A near miss is
+     * judged by `LabelMatcher.mayAccept` first, which is exact and cheap, and by [similarity], the matcher's score
+     * (`LabelMatcher.score`; a test may count its calls), only for the few words that pass it. Each distinct word is judged
+     * at most once per query word, however many records and indexes hold it.
      */
     fun rank(
         indexes: List<SearchIndex>,
@@ -5508,19 +6543,23 @@ object HistoryRanking {
     ): List<RankedEntry> {
         val wanted = wanted(query.text)
         if (wanted.isEmpty()) return emptyList()
+        val judged = wanted.map { HashMap<String, Boolean>() }
         return indexes.flatMap { index ->
-            val counted = wanted.map { word -> matching(index, word, similarity) }
+            val counted = wanted.mapIndexed { n, word -> matching(index, word, judged[n], similarity) }
             index.records.filter { reached(it) && within(it, query, zone) }.mapNotNull { record -> score(record, counted)?.let { RankedEntry(record, it) } }
         }.sortedWith(compareByDescending<RankedEntry> { it.score }.thenByDescending { it.entry.atWall })
     }
 
-    // The positions in [index] of [wanted] and of its near misses, in order.
-    private fun matching(index: SearchIndex, wanted: String, similarity: (String, String) -> Double): IntArray {
+    // The positions in [index] of [wanted] and of its near misses, in order; [judged] keeps each word's verdict for the
+    // other indexes.
+    private fun matching(index: SearchIndex, wanted: String, judged: MutableMap<String, Boolean>, similarity: (String, String) -> Double): IntArray {
         val exact = index.position(wanted)
         val letter = if (wanted.length >= NEAR_LETTERS) index.startingWith(wanted[0]) else IntRange.EMPTY
         val near = letter.filter { position ->
             val word = index.words[position]
-            position != exact && word.length >= NEAR_LETTERS && similarity(wanted, word) + MatchRules.TOLERANCE >= MatchRules.ACCEPT
+            position != exact && word.length >= NEAR_LETTERS && judged.getOrPut(word) {
+                LabelMatcher.mayAccept(wanted, word) && similarity(wanted, word) + MatchRules.TOLERANCE >= MatchRules.ACCEPT
+            }
         }
         return (near + listOfNotNull(exact.takeIf { it >= 0 })).sorted().toIntArray()
     }
@@ -5559,13 +6598,18 @@ data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val
     override fun toString(): String = "ConversationMatch(firstRequest=${firstRequest.length} chars)"
 }
 
-/** What the search for a conversation to continue gave (design 9.6): a match, none, or the mark that the index is being rebuilt. */
+/**
+ * What the search for a conversation to continue gave (design 9.6): a match, none, or the mark that the index of past
+ * conversations is being rebuilt, or cannot be read now.
+ */
 sealed interface ConversationLookup {
     data class Found(val match: ConversationMatch) : ConversationLookup
 
     data object NotFound : ConversationLookup
 
     data object Rebuilding : ConversationLookup
+
+    data object Unavailable : ConversationLookup
 }
 
 /**
@@ -5574,9 +6618,12 @@ sealed interface ConversationLookup {
  * the index of past conversations, whose records within retention it searches, and the open conversation, whose records
  * other than the asking command's it folds at each search (never an observation or a screenshot, which no record holds).
  * [HistoryRanking] matches and orders them, and only the best matches' bodies are read, in one call, for their details.
- * While the index is being rebuilt, the search says so ([HistoryResult.REBUILDING], [ConversationLookup.Rebuilding]). It
- * keeps nothing itself, and a search that "delete history" overtook, which the store's [ConversationStore.generation]
- * tells, gives out nothing that it read (design 9.7).
+ * While the index is being rebuilt, or cannot be read, the search says so ([HistoryResult.REBUILDING],
+ * [HistoryResult.FAILED], [ConversationLookup.Rebuilding], [ConversationLookup.Unavailable]) and gives no match, not even
+ * from the open conversation, because a part of the matches would read as "nothing older matched" (design 9.4). It keeps
+ * nothing itself, and a search that "delete history" overtook, which the store's [ConversationStore.generation] tells,
+ * gives out nothing that it read (design 9.7). Each search ranks the whole index, so a caller that searches as the owner
+ * types (plan 7F) waits until the typing pauses.
  */
 class HistorySearch(
     private val store: ConversationStore,
@@ -5586,10 +6633,14 @@ class HistorySearch(
     /** The commands that match [query], other than [excluding], which asks. */
     suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult {
         val generation = store.generation
-        val searchable = store.searchable() as? Searchable.Ready ?: return HistoryResult.REBUILDING
+        val searchable = when (val read = store.searchable()) {
+            is Searchable.Ready -> read
+            Searchable.Rebuilding -> return HistoryResult.REBUILDING
+            Searchable.Failed -> return HistoryResult.FAILED
+        }
         val open = searchable.open
         val reach = reach(searchable.past).mapTo(HashSet()) { it.id }
-        val indexes = listOf(searchable.past.search, open?.let { SearchIndex.of(listOf(it)) } ?: SearchIndex.EMPTY)
+        val indexes = searchable.past.searches + listOfNotNull(open?.let { SearchIndex.of(listOf(it)) })
         val ranked = HistoryRanking.rank(indexes, query, clock.zone(), reached = { record ->
             record.ref != excluding && (record.ref.conversation in reach || record.ref.conversation == open?.id)
         })
@@ -5611,13 +6662,17 @@ class HistorySearch(
      */
     suspend fun conversation(topic: String?): ConversationLookup {
         val generation = store.generation
-        val searchable = store.searchable() as? Searchable.Ready ?: return ConversationLookup.Rebuilding
+        val searchable = when (val read = store.searchable()) {
+            is Searchable.Ready -> read
+            Searchable.Rebuilding -> return ConversationLookup.Rebuilding
+            Searchable.Failed -> return ConversationLookup.Unavailable
+        }
         val closed = reach(searchable.past).filter { it.firstRequest != null }
         val best = if (topic == null || HistoryRanking.wanted(topic).isEmpty()) {
             closed.firstOrNull()
         } else {
             val byId = closed.associateBy { it.id }
-            HistoryRanking.rank(listOf(searchable.past.search), HistoryQuery(topic), clock.zone(), reached = { it.ref.conversation in byId })
+            HistoryRanking.rank(searchable.past.searches, HistoryQuery(topic), clock.zone(), reached = { it.ref.conversation in byId })
                 .firstOrNull()?.let { byId[it.entry.ref.conversation] }
         }
         val request = best?.firstRequest?.takeIf { store.generation == generation } ?: return ConversationLookup.NotFound
@@ -5655,18 +6710,18 @@ class HistorySearch(
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: PASS, 48 tests (`ArchivedConversationStoreTest` 22, `HistorySearchTest` 13, `PastIndexTest` 5, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
+Expected: PASS, 60 tests (`ArchivedConversationStoreTest` 31, `HistorySearchTest` 13, `PastIndexTest` 8, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 98`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 164`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add core/conversation
-git commit -m "feat(conversation): the store keeps the encrypted index of past conversations and the open conversation, writes the index with every change of the closed ones, reads a body only when it is needed, and rebuilds a lost index in the background" -m "The first use reads two rows instead of every row (design 9.2 and R3 of sub-project 7: 13.8 s on the A71 before). The search keeps nothing, ranks the index, reads its best matches' bodies in one call, and says so while the index is rebuilt." -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "feat(conversation): the store keeps the encrypted index of past conversations and the open conversation, reads the index in the background, writes the changed shards with every change of the closed conversations, reads a body only when it is needed, rebuilds a lost index page by page and retries a failed one later" -m "A restore reads one row and the index is read in the background, instead of every row at the first use (design 9.2 and R3 of sub-project 7: 13.8 s on the A71 before). Retention deletes by the table's own times. The search keeps nothing, ranks the shards, reads its best matches' bodies in one call, and says so while the index is rebuilt or cannot be read." -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
 ---
@@ -6621,7 +7676,7 @@ The other 52 cases of `RulesTest` are the voice's own (the listening modes, the 
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
 - Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, heldWords: ChannelOutput.Said?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput, cancelled: Boolean = false)`; `data class PhoneState(locked, ringing, inCall, known = false)` with `away` and `present` (`known` once `LOCKED` or `UNLOCKED` came); `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
-Counts: `:core:conversation` 98 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 152, after Tasks 5b to 5d.
+Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 29.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -8902,7 +9957,7 @@ Expected: PASS, 54 tests.
 - [ ] **Step 7: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 152`.
+Expected: BUILD SUCCESSFUL; `core\conversation 135`.
 
 - [ ] **Step 8: Commit**
 
@@ -8925,7 +9980,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 152 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 167.
+Counts: `:core:conversation` 164 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 179, after Tasks 5a to 5d.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -10002,7 +11057,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 167`.
+Expected: BUILD SUCCESSFUL; `core\conversation 179`.
 
 - [ ] **Step 7: Commit**
 
@@ -10019,13 +11074,14 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/RecordedOwner.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/LocalRequests.kt`
+- Modify: `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt` (`PAST_UNAVAILABLE`)
 - Test: `core/conversation/src/test/kotlin/dev/kestrel/conversation/local/LocalRequestsTest.kt`
 
 **Interfaces:**
-- Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup`; Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
-- Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`.
+- Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
+- Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later.").
 
-Counts: `:core:conversation` 167 + 9 = 176.
+Counts: `:core:conversation` 179 + 9 = 188.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -10062,6 +11118,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class LocalRequestsTest {
     private class FakeDialogue : Dialogue {
@@ -10173,22 +11230,27 @@ class LocalRequestsTest {
         assertEquals(LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
         assertEquals(1, logsDeleted)
         assertTrue(store.list().isEmpty())
-        assertTrue(archive.keyDeleted)
+        assertTrue(archive.keyErased)
         assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
         assertEquals(Triple(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
     }
 
-    // Design 9.2 and 9.6 of sub-project 7: while the index of past conversations is rebuilt, Kestrel says so and asks nothing.
+    // Design 9.2 and 9.6 of sub-project 7: while the index of past conversations is rebuilt, or cannot be read, Kestrel says
+    // so and asks nothing.
     @Test
-    fun whileTheIndexIsRebuiltContinuingAPastConversationSaysSoAndAsksNothing() = scope.runTest {
+    fun whileTheIndexIsRebuiltOrCannotBeReadContinuingAPastConversationSaysSoAndAsksNothing() = scope.runTest {
         closed(1, "Plan the trip to Novi Sad", day)
-        archive.index = null
-        archive.readAllGate = CompletableDeferred()
-        val restarted = ArchivedConversationStore(archive, backgroundScope) {}
-        val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> throw error }
+        archive.shards.clear()
+        archive.closedIdsGate = CompletableDeferred()
+        val sentences = mapOf(null to ConversationTexts.PREPARING_PAST, IOException("the disk failed") to ConversationTexts.PAST_UNAVAILABLE)
+        for ((failure, sentence) in sentences) {
+            failure?.let { archive.failures["readIndex"] = it }
+            val restarted = ArchivedConversationStore(archive, backgroundScope) {}
+            val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> throw error }
 
-        assertEquals(LocalOutcome.Reply(ConversationTexts.PREPARING_PAST), local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
+            assertEquals(LocalOutcome.Reply(sentence), local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
+        }
         assertTrue(dialogue.asked.isEmpty())
     }
 
@@ -10209,9 +11271,22 @@ class LocalRequestsTest {
 - [ ] **Step 2: Run the test to see it fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.local.LocalRequestsTest`
-Expected: FAIL, the compiler reports `Unresolved reference 'LocalRequests'` and `'RecordedOwner'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'LocalRequests'`, `'RecordedOwner'` and `'PAST_UNAVAILABLE'`.
 
 - [ ] **Step 3: Create the recorded owner and the requests**
+
+Design 9.2 of sub-project 7: when the index of past conversations cannot be read, "continue the conversation about X" says so. In `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt`, replace:
+
+```kotlin
+    const val PREPARING_PAST = "I'm still preparing your past conversations. Try again in a minute."
+```
+
+with:
+
+```kotlin
+    const val PREPARING_PAST = "I'm still preparing your past conversations. Try again in a minute."
+    const val PAST_UNAVAILABLE = "I can't read your past conversations right now. I'll try again later."
+```
 
 Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/RecordedOwner.kt`:
 
@@ -10355,6 +11430,7 @@ class LocalRequests(
             is ConversationLookup.Found -> found.match
             ConversationLookup.NotFound -> return LocalOutcome.Reply(ConversationTexts.NOT_FOUND)
             ConversationLookup.Rebuilding -> return LocalOutcome.Reply(ConversationTexts.PREPARING_PAST)
+            ConversationLookup.Unavailable -> return LocalOutcome.Reply(ConversationTexts.PAST_UNAVAILABLE)
         }
         val day = ConversationTexts.day(match.openedAtWall, clock.zone())
         val question = ConversationTexts.switchQuestion(day, ScreenText.cut(match.firstRequest, FIRST_REQUEST))
@@ -10378,7 +11454,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 176`.
+Expected: BUILD SUCCESSFUL; `core\conversation 188`.
 
 - [ ] **Step 6: Commit**
 
@@ -10401,7 +11477,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 176 + 15 = 191. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 188 + 15 = 203. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -10875,7 +11951,7 @@ class ConversationEngineTest {
 
         assertNull(engine.view.value.id)
         assertTrue(archive.rows.isEmpty())
-        assertTrue(archive.keyDeleted)
+        assertTrue(archive.keyErased)
         assertEquals(ChannelOutput.Report(2, ConversationTexts.HISTORY_DELETED), text.shown.last())
     }
 
@@ -11535,7 +12611,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 181` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 203` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -11548,8 +12624,9 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 191, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 5b: 9, Task 5d: 8, Task 7: 54, Task 8: 15, Task 9: 9, Task 10: 15).
+- `:core:conversation`: C₀ + 203, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 12, Task 5d: 17, Task 8: 15, Task 9: 9, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
+- `:core:commands`: N + 1 (Task 5a adds 1 to `LabelMatcherTest`; 158 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
 
 ## Decisions for the controller
@@ -11566,21 +12643,21 @@ These change what the owner sees or hears, or move a line between plans; the con
 8. **Words that hold no topic** ("the", "about", "my", "i", "u", "o", …) do not count in the search, so that "continue the conversation about the trip" needs "trip".
 9. **The retention's purge job** runs from plan 7C, as design 16's row for plan 7C says; the Conversations page that sets the retention is plan 7F's, so until then the job reads the default of `ConversationSettings`.
 10. **"Turn off", "stop listening" and the spotter's "stop" while a goal runs (settled by the owner on 2026-11-24, for plan 7D).** Today each of them cancels a task. With D19 a goal runs whether Kestrel listens or not, so the rule is: "turn off" (by voice, the toggle or the listening notification) and "stop listening" (by voice or the listening notification's Stop listening) change only the listening mode and give the conversation no input; a running goal goes on and shows on the conversation screen and in the goal's notification (plan 7E). The keyword spotter's "stop" while Kestrel speaks keeps today's meaning: it ends the speech and gives a `Stop` input, which ends the running goal, so that a spoken "stop" can always stop the work quickly. "Stop" and "cancel" as an utterance (`InputIntent.Stop`), the screen's Stop and the goal notification's Stop end the goal too. In the paused mode Kestrel still hears its name, so a goal there keeps its speech and takes its answers by voice without the name, as today (`aTaskWhilePausedRunsAndKestrelStaysPaused` keeps its behaviour). Only while Kestrel is off (its listening mode is `OFF`) can the voice neither speak nor hear, and a spoken conversation's goal still reaches the owner: the engine reads whether Kestrel is on from its `voiceOn` flow (at `restore()` and at every change, which only "turn off" and turning on again make), every question, hand-over and permission request also shows as the text channel's card from the moment Kestrel turns off, a question gets D21's waits (2 minutes, 30 s for a confirmation, 5 minutes after "Reply…"), and the voice channel gets Kestrel's words and final replies as `Shown`, so they are shown on the bar without speech and open no follow-up window; a typed conversation's replies are still spoken with "Speak replies to typed commands" on (design 10.6 and 11). When Kestrel is on again, a card that is shown stays until its question or hand-over ends, so that the owner keeps the way to answer that he may be using, and the voice's own waits replace D21's. So `turningOffStopsTheSpeechAndTheTask`, `turningOffEndsATaskInEveryPhase` and `stopListeningWhileATaskRunsEndsTheTaskAndPauses` change on purpose, and `stopWhileKestrelSpeaksEndsTheSpeechAndCancelsTheTask` and `theSpottersStopCancelsATaskDuringItsHandOverSentence` keep their behaviour (Task 7's table).
-11. **While the index of past conversations is rebuilt (Tasks 5b to 5d, design 9.2).** A rebuild happens only when the index is missing, unreadable, in another format or out of step with the table: about 6 s on the A71 for 30 days, once, in the background. Meanwhile the search's step fails with "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute" and logs no error (Task 5c changes `:core:agent` for it, as fix 7B-2 did); "continue the conversation about X" answers "I'm still preparing your past conversations. Try again in a minute."; the list of past conversations (plan 7F) waits and shows "Loading past conversations…"; and the activity log gets the note "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations". Recommendation: as written; the search never waits, because a goal's step that waits a minute (365 days of retention) would look stuck.
+11. **While the index of past conversations is rebuilt or cannot be read (Tasks 5a to 5d, design 9.2).** A rebuild happens only when the index is missing, unreadable, in another format or out of step with the table: about 10 s on the A71 for 30 days of heavy use and about 2.5 minutes for 365 days, once, in the background. Meanwhile the search's step fails with "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute" and logs no error (Task 5c changes `:core:agent` for it, as fix 7B-2 did); "continue the conversation about X" answers "I'm still preparing your past conversations. Try again in a minute."; the list of past conversations (plan 7F) waits and shows "Loading past conversations…"; and the activity log gets the note "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations". When the index can be neither read nor rebuilt, the activity log gets "Kestrel could not read the index of past conversations and tries again later" once; the search's step fails with "Kestrel cannot read its past conversations right now and tries again by itself later"; "continue the conversation about X" answers "I can't read your past conversations right now. I'll try again later."; the list says "Kestrel can't read past conversations right now. It will try again later." (plan 7F); and the store tries again after 1 minute, then after twice as long each time, up to 1 hour. In both cases the search gives no match, not even from the open conversation, because a part of the matches would read as "nothing older matched". Recommendation: as written; the search never waits for a rebuild, because a goal's step that waits minutes would look stuck. With 90 or 365 days of retention, a search in the first seconds after a start waits for the index to be read (up to about 1.4 s or 4.6 s by design R3's estimate) and says nothing about it; that is design R3's stated limit.
 
 ## Interfaces for 7C and 7D
 
 What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves `:core:conversation`. Packages are below `dev.kestrel.conversation`.
 
 **The archive (plan 7C)**
-- `store.RecordArchive` (as Tasks 5b to 5d leave it; design 9.2): `suspend fun load(): ArchiveLoad` (the store's first read, in one call and one transaction: `ArchiveLoad(index: IndexRead, open: ArchiveEntry?, stamp: IndexStamp)`, where `IndexRead` is `Readable(bytes)` with the decrypted index, `Missing`, or `Unreadable` when it fails its check or its cipher's format is newer; `open` is the open row, or null; `stamp` is `IndexStamp(closed, newest, total)` of the closed rows: how many, the newest `last_millis` and their sum, each 0 without rows); `suspend fun read(ids: Collection<String>): List<ArchiveEntry>` (the rows that exist, in one query); `suspend fun readAll(): List<ArchiveEntry>` (every row in one query, the newest `lastMillis` first, for a rebuild of the index); `suspend fun write(change: ArchiveChange)` (`ArchiveChange(rows, deleted: Set<String>, index: IndexWrite)`, all in one Room transaction: the deletions, the rows, an open row closing every other open row first, and the index kept, replaced by `IndexWrite.Replace(bytes)` or deleted by `IndexWrite.Delete`); `suspend fun deleteAll()` (every row, the open one too, the index, and then the Keystore key `kestrel.conversations`; a new key is made at the next write). Each entry is `ArchiveEntry.Readable(header, payload)` with the decrypted payload, `ArchiveEntry.Unreadable(header)` when the payload fails its tag, which the store deletes with its index entry and notes, or `ArchiveEntry.Unknown(header)` when its format is one that this version cannot read, which the store leaves out, keeps and counts in the index, and which the archive reports. Each read decrypts its rows on the thread that ran its query, one Keystore operation per row (R3).
-- `store.ArchiveHeader(id: String, openedMillis: Long, lastMillis: Long, open: Boolean, commands: Int)` (its `open` is the only record of whether a conversation is open; `ArchivedConversationStore` reads it from the header, never from the payload): the columns `id`, `opened_millis`, `last_millis`, `open`, `commands` of design 9.2's `ConversationRow`; `store.ArchiveRow(header: ArchiveHeader, payload: ByteArray)`: the payload is the snapshot's JSON in UTF-8, which `ConversationArchiveStore` encrypts with `AesGcmFieldCipher` under `kestrel.conversations` and the associated data `conversations/<id>`.
-- `store.ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore`, with `DAY_MILLIS`; `store.ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT }`, which the app graph writes into the activity log by its kind only. It reads the index of past conversations, the open conversation and the stamp in one `load` at its first use, keeps the decoded index and the open conversation in memory, and reads a past conversation's body only for `get`, `getAll` and `reopen`. A save of the open conversation writes its row only; every change of the closed conversations writes the new index in the same transaction. When the index is missing while closed rows exist, unreadable, in another format or out of step with the stamp, the store rebuilds it from `readAll` in its `scope` (about 5 s on the A71 for 30 days), notes `INDEX_REBUILT`, and meanwhile saves the open conversation as usual, replays the other changes onto the rebuilt index, gives `Searchable.Rebuilding`, and makes `list` and `purge` wait. Its memory never outlives an archive's change that did not complete: the next call reads the archive again. It never writes again a conversation that it deleted in this process (by `delete`, `deleteAll` or an unreadable row), so a held snapshot that `save` or `reopen`'s `closing` brings after "delete history" is left out; the caller passes nothing for this. `deleteAll` raises `ConversationStore.generation` before it deletes anything, also when the deletion does not complete, so that a reader that takes it before reading and compares it before giving out what it read (`HistorySearch`) never gives out a deleted conversation's words. What the store cannot know is a conversation that the engine made and never saved before `deleteAll`; that one is the engine's to drop. Tasks 9 and 10 must make `LocalRequests` run the deletion to its end once the owner has said yes, and make the engine close its conversation without keeping it whenever `deleteAll` may have run, not only when it returned (the review of Task 4, its notes for later tasks).
-- `store.ConversationStore`: `generation`, `open()`, `save(snapshot)`, `list(): List<ConversationSummary>` (closed, newest first, from the index; it waits while the index is read or rebuilt), `get(id)`, `getAll(ids): Map<ConversationId, ConversationSnapshot>` (in one call), `reopen(id, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?`, `delete(id)`, `deleteAll()`, `purge(retentionDays: Int, nowWall: Long): Int` (from the index; it waits while the index is rebuilt), `searchable(): Searchable` (`Searchable.Ready(past: PastIndex, open: ConversationSnapshot?)` or `Searchable.Rebuilding`); `store.ConversationSummary(id, openedAtWall, lastWall, commands, firstRequest: String?)`, whose first request the index keeps cut at `PastIndex.FIRST_REQUEST` (80) characters; `store.PastIndex` (`conversations: List<PastConversation>`, `search: SearchIndex`, `kept: List<KeptRow>`, `stamp`), `store.PastIndexCodec` (`FORMAT = 1`), `store.SearchIndex` and `store.IndexedRecord`.
+- `store.RecordArchive` (as Tasks 5a to 5d leave it; design 9.2): `suspend fun readOpen(): ArchiveEntry?` (the open row, or null: a restore's one decryption); `suspend fun readIndex(): IndexLoad` (in one transaction: `IndexLoad(shards: List<ShardRead>, stamp: IndexStamp)`, each shard `ShardRead.Readable(name, bytes)` with its decrypted bytes or `ShardRead.Unreadable(name)` when it fails its check or its cipher's format is newer, no shard when there is no index; `stamp` is `IndexStamp(closed, newest, total)` of the closed rows: how many, the newest `last_millis` and their sum, each 0 without rows); `suspend fun read(ids: Collection<String>): List<ArchiveEntry>` (the rows that exist, in one query); `suspend fun closedIds(): List<String>` (the closed rows' ids, the oldest `lastMillis` first, without payloads, for a rebuild that reads them in pages of 50); `suspend fun write(change: ArchiveChange)` (`ArchiveChange(rows, deleted: Set<String>, index: IndexWrite)`, all in one Room transaction: the deletions, the rows, an open row closing every other open row first, and the shards kept (`IndexWrite.Keep`), changed (`Update(put: Map<String, ByteArray>, deleted: Set<String>)`) or all replaced (`Replace(shards)`; an empty one leaves no index), each shard by its name, its number as text); `suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int` (in one transaction, the closed rows whose `last_millis` is before `oldest` or after `newest`, by the table's own times, and the shards' change; how many rows went); `suspend fun deleteAll()` (the Keystore key `kestrel.conversations` first, and then every row, the open one too, and every shard; a new key is made at the next write). Each entry is `ArchiveEntry.Readable(header, payload)` with the decrypted payload, `ArchiveEntry.Unreadable(header)` when the payload fails its tag, which the store deletes with its index entry and notes, or `ArchiveEntry.Unknown(header)` when its format is one that this version cannot read, which the store leaves out, keeps and counts in the index, and which the archive reports. Each read decrypts its rows on the thread that ran its query, one Keystore operation per row (R3), and stops between two rows when its caller is cancelled.
+- `store.ArchiveHeader(id: String, openedMillis: Long, lastMillis: Long, open: Boolean, commands: Int)` (its `open` and its times are the record of whether a conversation is open and of when it opened and last changed; `ArchivedConversationStore` reads them from the header, never from the payload): the columns `id`, `opened_millis`, `last_millis`, `open`, `commands` of design 9.2's `ConversationRow`; `store.ArchiveRow(header: ArchiveHeader, payload: ByteArray)`: the payload is the snapshot's JSON in UTF-8, which `ConversationArchiveStore` encrypts with `AesGcmFieldCipher` under `kestrel.conversations` and the associated data `conversations/<id>`; each shard is encrypted under the same key with `conversation_index/<name>`.
+- `store.ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore`, with `DAY_MILLIS`, `REBUILD_PAGE`, `FIRST_RETRY_MILLIS` and `MAX_RETRY_MILLIS`; `store.ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED }`, which the app graph writes into the activity log by its kind only. At its first use it reads the open row alone and starts reading the index in its `scope`; it keeps the decoded index and the open conversation in memory, and reads a past conversation's body only for `get`, `getAll` and `reopen`. A save of the open conversation writes its row only and never waits; every change of the closed conversations writes the shards that it changed in the same transaction, and waits while the index is read. When the index is missing while closed rows exist, unreadable, in another format or out of step with the stamp, the store rebuilds it page by page in its `scope` (about 10 s on the A71 for 30 days), notes `INDEX_REBUILT`, and meanwhile saves the open conversation as usual, replays the other changes onto the rebuilt index, gives `Searchable.Rebuilding` and makes `list` wait; `purge` never waits, because it deletes by the table. When the index can be neither read nor rebuilt, it notes `INDEX_FAILED` once, gives `Searchable.Failed`, makes `list` throw `PastUnavailableException`, and reads the index again after 1 minute, then twice as long each time, up to 1 hour. Its memory never outlives an archive's change that did not complete: the next call reads the archive again. It never writes again a conversation that it deleted in this process (by `delete`, `deleteAll` or an unreadable row), so a held snapshot that `save` or `reopen`'s `closing` brings after "delete history" is left out, and when it reads the archive again after a deletion that did not complete, it deletes such a conversation again before it shows anything; the caller passes nothing for this. `deleteAll` raises `ConversationStore.generation` before it deletes anything, also when the deletion does not complete, so that a reader that takes it before reading and compares it before giving out what it read (`HistorySearch`) never gives out a deleted conversation's words. What the store cannot know is a conversation that the engine made and never saved before `deleteAll`; that one is the engine's to drop. Tasks 9 and 10 must make `LocalRequests` run the deletion to its end once the owner has said yes, and make the engine close its conversation without keeping it whenever `deleteAll` may have run, not only when it returned (the review of Task 4, its notes for later tasks).
+- `store.ConversationStore`: `generation`, `open()`, `save(snapshot)`, `list(): List<ConversationSummary>` (closed, newest first, from the index; it waits while the index is read or rebuilt, and throws `PastUnavailableException` while it cannot be read), `get(id)`, `getAll(ids): Map<ConversationId, ConversationSnapshot>` (in one call), `reopen(id, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?`, `delete(id)`, `deleteAll()`, `purge(retentionDays: Int, nowWall: Long): Int` (by the table's own times, in one transaction with the index's change; it never waits for a rebuild), `searchable(): Searchable` (`Searchable.Ready(past: PastIndex, open: ConversationSnapshot?)`, `Searchable.Rebuilding` or `Searchable.Failed`); `store.ConversationSummary(id, openedAtWall, lastWall, commands, firstRequest: String?)`, whose first request the index keeps cut at `PastIndex.FIRST_REQUEST` (80) characters, with "…" when it was cut, so that a caller shows it as it is; `store.PastIndex` (`shards: List<IndexShard>`, `conversations: List<PastConversation>`, `searches: List<SearchIndex>`, `kept: List<KeptRow>`, `stamp`, `SHARD_POSITIONS`), `store.IndexShard`, `store.PastIndexCodec` (`FORMAT = 1`), `store.SearchIndex` and `store.IndexedRecord`.
 - `store.Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which purges at once, at every change of the retention and once a day by the wall clock, checked every hour, and which plan 7C's purge job runs for the life of the process with the Conversations page's `keptDays`.
 - `model.ConversationSnapshot(id, openedAtWall, lastWall, open, testMode, records, continuedAtWall, goal, steering, quietSinceWall, replyChannel, version = 1)`, `@Serializable`, whose `open` is `@Transient`: the payload never holds it, and the store takes it from the row's `ArchiveHeader.open`, which is the one source of whether a conversation is open (the archive's purge and `closeOthers` act on that column). The store writes its JSON with `encodeDefaults = true` and reads it with `ignoreUnknownKeys = true`, so an older payload's `open` key is ignored.
 - `engine.ConversationClock { fun wallMillis(): Long; fun zone(): ZoneId }`, which plan 7C's `AndroidConversationClock` implements.
-- Test fixtures (`testing`): `MemoryArchive` (`unreadable`, `unknown`, `index`, `indexUnreadable`, `readAllGate`, `readAllFailure`, `past()`), `ManualConversationClock(elapsed, base = BASE, zone = BELGRADE)`.
+- Test fixtures (`testing`): `MemoryArchive` (`rows`, `unreadable`, `unknown`, `shards`, `unreadableShards`, `calls`, `interruptions`, `failures`, `readIndexGate`, `closedIdsGate`, `readGate`, `keyErased`, `past()`, `stamp()`; it checks after every write of shards that their stamp is the table's), `ManualConversationClock(elapsed, base = BASE, zone = BELGRADE)`.
 
 **The engine and its ports (plan 7D)**
 - `engine.ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })`; `val owner: ConversationOwner`; `val view: StateFlow<ConversationView>`; `val restored: Restored?`; `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored` (once, at process start, before the accessibility service, the assistant service or the conversation screen can send input; inputs wait for it); `fun submit(input: OwnerInput)`; `fun signal(signal: PhoneSignal)`; `fun touched()`; `fun composing(active: Boolean)`; `fun awaitingCommand(active: Boolean)`; `fun replyOpened(question: Int)`; `fun endQuietTime()`; `fun outcome(command: Int): CommandOutcome?`; `MAX_OUTCOMES = 16`.
@@ -11596,7 +12673,7 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - `goal.GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`, which `AppGoalEnvironment` implements: `RoundStart(command, options, owner, goal, history, purpose: RoundPurpose)` (`RoundPurpose.GOAL` needs the screen, the touch watcher and the call backstop's `acted`; `ROUTINE` needs only the model and the memory); `RoundSetup.Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit)` (`offersRoutines` is false in a debuggable build; the conversation overrides `settings.safety.testMode`); `RoundSetup.Refused(sentence, end: EndReason)`, whose `end` is the goal's (`NO_PROFILE`, `MODEL_UNUSABLE`, …).
 - `goal.ScreenTurn { suspend fun take() }`, which `ScreenTurns` implements.
 - `goal.GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` (for `LocalRequests`) and `RECORDING_MILLIS`.
-- `store.HistorySearch(store: ConversationStore, retentionDays: () -> Int, clock: ConversationClock)` with `search(query, excluding)` (`HistoryResult.REBUILDING` while the index is rebuilt), `port(excluding)` and `conversation(topic): ConversationLookup` (`Found(match: ConversationMatch)`, `NotFound` or `Rebuilding`); it keeps nothing itself, so there is no `forgetAll`. `store.RecordRef(conversation, record)`; `store.HistoryRanking.rank(indexes: List<SearchIndex>, query, zone, reached, similarity)` over `store.IndexedRecord(ref, atWall, words: IntArray)`.
+- `store.HistorySearch(store: ConversationStore, retentionDays: () -> Int, clock: ConversationClock)` with `search(query, excluding)` (`HistoryResult.REBUILDING` while the index is rebuilt, `HistoryResult.FAILED` while it cannot be read; it waits while the index is read), `port(excluding)` and `conversation(topic): ConversationLookup` (`Found(match: ConversationMatch)`, `NotFound`, `Rebuilding` or `Unavailable`); it keeps nothing itself, so there is no `forgetAll`, and each search ranks the whole index, so a caller that searches as the owner types waits until the typing pauses and calls it off the main thread. `store.RecordRef(conversation, record)`; `store.HistoryRanking.rank(indexes: List<SearchIndex>, query, zone, reached, similarity)` over `store.IndexedRecord(ref, atWall, words: IntArray)`, with the index's `searches` as `indexes`.
 - `local.LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)`; the app graph passes `goalRunner::saveRoutine` and `{ logs.deleteHistory() }`.
 - `ConversationTexts`: the sentences that move from `:app` in plan 7D: `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `noFact(key)` and `CALL_STARTED` (from `AgentTexts`), `DELETE_HISTORY_QUESTION` with `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `FINISH_HAND_OVER_SPOKEN` and `ANSWER_CONTINUE_FIRST` (from `ListeningTexts`, whose "Continue the task?" becomes `CONTINUE_GOAL`).
 - The wiring of design 5.6 becomes: `val conversationStore = ArchivedConversationStore(RoomRecordArchive(…), scope) { note -> /* the activity log, by the note's kind */ }`; `val search = HistorySearch(conversationStore, { currentSettings.keptDays }, clock)`; `val goalRunner = GoalRunner(goalEnvironment, screenTurns, search, clock, reportFailure)`; `val conversations = ConversationEngine(scope, conversationStore, goalRunner, LocalRequests(memory, conversationStore, search, { logs.deleteHistory() }, goalRunner::saveRoutine, clock, reportFailure), mapOf(VOICE to voiceChannel, TEXT to textChannel), permissionRequests::granted, settings.observe(SettingKeys.CONVERSATIONS), settings.observe(SettingKeys.SAFETY).map { it.testMode }, orchestratorMode.map { it != Mode.OFF }.distinctUntilChanged(), clock, reportFailure, onStep = commandTags::onStep)`, where `orchestratorMode` is the Orchestrator's listening mode as a flow. Until plan 7F, the map holds the voice channel and the debug hook's text channel only.
@@ -11607,7 +12684,7 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 
 ## Self-review
 
-- **The design's plan 7B row.** The module and its build file (Task 1); `model` (Task 1); `ConversationMachine` with `QuietClock` and `GoalRules` (Task 7); `ConversationEngine` (Task 10); `GoalRunner`, `RunningGoal` and `SteeringInbox` (Task 8); `RecordBuilder` and `RecordCondenser` (Task 2) and `ContextBlock` (Task 3); `ConversationOwner` (Task 6); `LocalRequests` with "new conversation" (the machine, Task 7) and continuing a past conversation (Tasks 7, 9 and 10); `ConversationStore`, `ArchivedConversationStore`, `Retention` and the `RecordArchive` port (Task 4); `HistorySearch` (Task 5). JVM only, with `ScriptedModel`, fake channels and a fake archive.
+- **The design's plan 7B row.** The module and its build file (Task 1); `model` (Task 1); `ConversationMachine` with `QuietClock` and `GoalRules` (Task 7); `ConversationEngine` (Task 10); `GoalRunner`, `RunningGoal` and `SteeringInbox` (Task 8); `RecordBuilder` and `RecordCondenser` (Task 2) and `ContextBlock` (Task 3); `ConversationOwner` (Task 6); `LocalRequests` with "new conversation" (the machine, Task 7) and continuing a past conversation (Tasks 7, 9 and 10); `ConversationStore`, `ArchivedConversationStore`, `Retention` and the `RecordArchive` port (Task 4); `HistorySearch` (Task 5); the index of past conversations in shards, the matcher's cheap check and the store and the search on the index (Tasks 5a to 5d). JVM only, with `ScriptedModel`, fake channels and a fake archive.
 - **Every rule of the lifecycle has a JVM test.** The quiet clock's start, holds, end, older timers, signals and changes (`QuietClockTest`); every row of design 6.4 (`ConversationMachineTest`); touches, locks, calls, holds of 30 minutes, "Continue the goal?", the hand-over's 3 minutes, the backstop and the typed waits (`GoalRulesTest`); the follow-up window's interaction with the engine, which holds the quiet clock until the spoken reply ends (`ConversationEngineTest.theQuietClockWaitsUntilTheSpokenReplyHasEnded`); continuing a past conversation from none, from an open one, refused with a goal open, and gone (`ConversationMachineTest`, `LocalRequestsTest`, `ConversationEngineTest`); process-death restore without a goal inside and after the quiet time, with a goal inside and after 30 minutes (`ConversationMachineTest`), and end to end with its checklist and its steering (`ConversationEngineTest`); the moved `RulesTest` cases, by name, each with its test here or its rewrite in plan 7D (Task 7's table, which lists all 124 cases); the bar's step across rounds and a restart (`GoalRunnerTest`, `ConversationEngineTest`); a hand-over that a lock met as it opened (`GoalRulesTest`); a switch from an open conversation and "delete history" end to end (`ConversationEngineTest`).
 - **Plan 7A's interfaces, as consumed.** A record's final ledger is its rounds' reports' ledgers, which hold every line, also those of a step that a round's end cut and the shares that Kestrel could not see go; the `Did` traces are the live view while a round runs (`RecordBuilderTest`). A question that an interruption cut and the run asked again is a line each time (`RecordBuilderTest`). A data note names the goal's step, counted across its rounds as the bar counts it, or a replayed routine's own step as "routine step n", because plan 7A numbers a routine's steps and each run's from 1 (`RecordBuilderTest`, `ConversationEngineTest`). Late steering: kept for a held goal's next round, named in the final reply of a goal that ended for good (`GoalRunnerTest`). A resumed run's `ResumeNote.steered` carries every steer that the goal's earlier rounds took, also one that an interruption cut before the model acted on it (`GoalRequestsTest`, `ConversationEngineTest`). A resumed run's `ownerHistory` and `carried`: the earlier commands' words and allowance, then the goal's own inputs and steering's allowance, its first command as `text`, the block without the goal's own record (`GoalRequestsTest`). `TracingOwner`: `ConversationOwner` traces nothing of a run's dialogue; only the conversation's own lines ("Continue the goal?", a hold's sentence) and memory requests (`RecordedOwner`) enter records. `Interruption` chooses the hold (`TOUCH`, `KESTREL_SCREEN`), never a sentence. `GoalPort`, `HistoryPort`, `Checklist`, `GoalLimits`, `ResumeNote` and `TaskRequest`'s fields are used as plan 7A defines them.
 - **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what each part leaves out on one line, in room that it keeps before it fills; `ContextBlockTest` checks the order, the caps, that what is shown and what is counted add up, for a heavy newest record and for the largest records in Latin and Cyrillic at every 9th budget from 20 to 2,000, older records partly shown and the rest counted, the block that only counts every record and the budget too small for any block, the Ollama budget and the condensed records' stability.
