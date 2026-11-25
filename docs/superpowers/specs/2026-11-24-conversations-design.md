@@ -161,9 +161,9 @@ data class OwnerInput(
 
 sealed interface InputIntent {
     data class Command(val text: String) : InputIntent              // a new command, a follow-up or steering
-    data class Answer(val text: String) : InputIntent               // the answer to the open question
-    data object NoAnswer : InputIntent                              // the voice wait for an answer ended
-    data object Stop : InputIntent                                  // "stop", "cancel", the screen's Stop
+    data class Answer(val answer: ChannelAnswer, val question: Int? = null) : InputIntent
+        // the answer as the channel read it; Silence when the voice's wait ended; a screen button names its question
+    data object Stop : InputIntent                                  // "stop", "cancel", the screen's Stop and Cancel
     data object Continue : InputIntent                              // "Kestrel, continue", the Continue buttons
     data object NewConversation : InputIntent
     data class ContinuePast(val topic: String?) : InputIntent       // "continue the conversation about X" (D23)
@@ -184,38 +184,52 @@ class ConversationEngine(
     scope: CoroutineScope,
     private val store: ConversationStore,
     private val goals: GoalRunner,
-    private val owner: ConversationOwner,
     private val local: LocalRequests,
+    channels: Map<InputChannel, OwnerChannel>,     // the engine makes the ConversationOwner over them
+    permissions: (List<String>) -> PermissionEnd,  // what Android granted, after "Kestrel, continue" on a permission request
     private val settings: Flow<ConversationSettings>,
-    private val testMode: () -> Boolean,           // the Safety page's current value
-    private val clock: ConversationClock,          // the wall clock for storage, a monotonic clock for timers
+    private val testMode: Flow<Boolean>,           // the Safety page's value
+    private val voiceOn: Flow<Boolean>,            // Kestrel is on: its listening mode is not OFF
+    private val clock: ConversationClock,          // the wall clock for storage, the clock since boot for timers
+    private val report: (String, Throwable) -> Unit,
+    private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
 ) {
+    val owner: ConversationOwner                    // the owner as goals and the conversation talk to him; the hooks read it
     val view: StateFlow<ConversationView>
+    var restored: RestoreResult?                    // what restore() found, for the hooks; null before it ran
+    suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): RestoreResult // at process start, before any input
     fun submit(input: OwnerInput)                   // any thread; never blocks
-    fun signal(signal: PhoneSignal)                 // LOCKED, UNLOCKED, RINGING, CALL_ACTIVE, CALL_IDLE
+    fun signal(signal: PhoneSignal)                 // LOCKED, UNLOCKED, RINGING, CALL_ACTIVE, CALL_IDLE, AGENT_CALL, SCREEN_ON
     fun touched()                                   // the touch watcher saw the owner's touch during a goal
-    fun replyShown(command: Int)                    // a channel finished speaking or showing a final reply
     fun composing(active: Boolean)                  // the screen's field holds text while the screen is in front
-    suspend fun restore()                           // at process start, before any input
+    fun awaitingCommand(active: Boolean)            // Kestrel waits for a command after "Kestrel" alone or the side key
+    fun replyOpened(question: Int)                  // the owner tapped "Reply…" on the question's card
+    fun endQuietTime()                              // the hook conversation-control do=expire
     fun outcome(command: Int): CommandOutcome?      // the newest 16, for the debug hooks
 }
 
 /** What the voice rules, the conversation screen, the goal notification and the hooks read. */
 data class ConversationView(
-    val id: ConversationId?,
-    val command: Int,                 // the newest command's number in this process
-    val goal: GoalPhase?,             // null when no goal is open
-    val asking: QuestionKind?,
-    val voiceAnswers: Boolean,        // false while only the card may answer (design D32 item 17 of sub-project 5)
-    val replyChannel: InputChannel,
-    val checklist: ChecklistSummary?, // done, total and the current item's text
-    val records: List<CommandRecord>, // the open conversation's records, which the screen draws
-    val continued: Boolean,           // the conversation was continued from the list or by name (D23)
+    val id: ConversationId? = null,
+    val command: Int = 0,                     // the newest command's number in this process
+    val goal: GoalPhase? = null,              // null when no goal is open
+    val step: Int? = null,                    // the goal's step, counted across its rounds, while a round works (10.5)
+    val asking: QuestionKind? = null,
+    val question: Int? = null,                // the open question's number
+    val replyChannel: InputChannel = InputChannel.VOICE,
+    val checklist: ChecklistSummary? = null,  // done, total and the current item's text
+    val records: List<CommandRecord> = emptyList(), // the open conversation's records, which the screen draws
+    val continuedAtWall: Long? = null,        // when the conversation was continued (D23); `continued` reads it
+    val testMode: Boolean = true,             // the open conversation's, or the Safety page's while none is open
+    val quiet: QuietClock = QuietClock.Off,
+    val keptForOwner: Boolean = false,        // Kestrel keeps a final reply or a held goal's report until the owner is back
 )
 
 enum class GoalPhase { ACTING, ASKING, HANDED_OVER, PAUSED, PAUSED_AT_LIMIT, INTERRUPTED }
 ```
+
+The engine's loop handles one message at a time and never waits for the store. Anything that takes time (a goal's round, a local request, "Continue the goal?", a channel's output) runs in a coroutine of its own and comes back as an event. A writer beside the loop stores the snapshots, the closes and a switch in the loop's order. A round's trace waits until the record that holds it is saved, so that the record survives the end of Kestrel's process. A goal's search, the search for a past conversation and "delete history" first wait at the writer's barrier, until every write queued before them is stored. So no input waits for the store, and nothing reads the store before the writes that came before it.
 
 The channel port, which `:app`'s `VoiceChannel` and `TextChannel` implement:
 
@@ -260,6 +274,7 @@ data class ChannelQuestion(
     val spoken: String = text,               // the voice's form
     val choices: List<String> = emptyList(), // PICK: at most 4
     val confirmation: Confirmation? = null,  // CONFIRM: the card shows it as today
+    val highest: Int = 0,                    // PICK: the numbers run from 1 to highest, which the card's keypad keeps to; 0: no range
 )
 
 sealed interface ChannelAnswer {
@@ -324,7 +339,9 @@ interface HistoryPort {
 }
 
 data class HistoryQuery(val text: String, val from: LocalDate? = null, val to: LocalDate? = null) // both days included
-data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false) // best match first; more: more commands matched
+data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false, val unavailable: HistoryUnavailable? = null)
+    // best match first; more: more commands matched; unavailable: why the search could not run, with no match
+enum class HistoryUnavailable { REBUILDING, FAILED }                                 // HistoryResult.REBUILDING and FAILED
 data class HistoryMatch(val atMillis: Long, val command: Int, val request: String, val answer: String?, val apps: List<String>, val data: List<HistoryData>)
 data class HistoryData(val tool: String, val text: String)                           // a data note, quoted as the model saw it then
 
@@ -441,14 +458,28 @@ data class ConversationState(
     val id: ConversationId? = null,        // null: none open; the next command opens one
     val openedAtWall: Long = 0,
     val testMode: Boolean = true,          // fixed when the conversation opens or is continued (section 12.4)
-    val continued: Boolean = false,
-    val commands: Int = 0,
+    val continuedAtWall: Long? = null,     // when it was continued (D23)
+    val commands: Int = 0,                 // how many records it holds
+    val command: Int = 0,                  // the number, in this process, of each input that started or resumed a goal or ran a local request
     val goal: GoalState? = null,
-    val question: OpenQuestion? = null,
+    val question: OpenQuestion? = null,    // the question that waits for the owner, with its number and kind
+    val asksContinue: Boolean = false,     // "Continue the goal?" is asked or about to be
+    val continueAnswer: OwnerInput? = null, // the input that answered "Continue the goal?", for the round that it resumes
     val replyChannel: InputChannel = InputChannel.VOICE,
+    val voiceOn: Boolean = true,           // Kestrel is on; while it is off, a spoken conversation's questions wait as typed ones do
     val quiet: QuietClock = QuietClock.Off,
     val composing: Boolean = false,
+    val awaiting: Boolean = false,         // Kestrel waits for a command after "Kestrel" alone, the side key or the microphone button
     val replying: Int? = null,             // the command whose final reply is being spoken or shown
+    val heldReports: List<ChannelOutput.Report> = emptyList(), // goals' final replies that wait until the owner is back, oldest first
+    val heldWords: ChannelOutput.Said? = null,    // a held goal's report and how to go on, waiting for him too
+    val local: LocalRun? = null,           // a local request or a switch that runs
+    val waiting: List<OwnerInput> = emptyList(), // commands that wait for the goal that "stop" ends, or for the local request; each runs in its turn
+    val closeAfterWork: Boolean = false,   // test mode changed: close once the goal or the local request has ended
+    val phone: PhoneState = PhoneState(),  // locked, ringing, in a call; the owner is "present" once known to be none of these
+    val timers: Timers = Timers(),         // each timer's newest number
+    val settings: ConversationSettings = ConversationSettings(),
+    val safetyTestMode: Boolean = true,    // the Safety page's value now, which the next conversation takes
 )
 
 sealed interface QuietClock {
@@ -457,7 +488,7 @@ sealed interface QuietClock {
     data class Running(val number: Int, val sinceWall: Long) : QuietClock
 }
 
-enum class HoldReason { GOAL, QUESTION, REPLYING, COMPOSING, WAITING_FOR_COMMAND }
+enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }
 ```
 
 ```mermaid
@@ -474,7 +505,7 @@ stateDiagram-v2
 
 ### 6.2 The quiet-time clock
 
-**It runs** only while all of these hold: a conversation is open; no goal is open, in any phase; no question waits for the owner; Kestrel is not speaking or showing a final reply; the conversation screen's text field is empty, or the screen is not in front; and Kestrel is not waiting for a command after "Kestrel" alone, the side key or the microphone button.
+**It runs** only while all of these hold: a conversation is open; no goal is open, in any phase; no question waits for the owner; none of Kestrel's own requests runs (such as a memory request or a switch to a past conversation); Kestrel is not speaking or showing a final reply; the conversation screen's text field is empty, or the screen is not in front; and Kestrel is not waiting for a command after "Kestrel" alone, the side key or the microphone button.
 
 **It starts from zero** at:
 - the end of a command's final reply: the end of its speech (when `Listening.say` completes, as `Event.SpeechEnded` reports today), or, for a written reply, the moment the reply is on the screen or the bar;
@@ -484,62 +515,68 @@ stateDiagram-v2
 - the end of a wait for a command after "Kestrel" alone without a command;
 - the end of the reply that confirms the continuation of a past conversation (section 9.6).
 
-**It is held** (stopped, and started from zero when the hold ends) while a goal is open in any phase, a question waits, a final reply is being spoken or shown, the owner types, or Kestrel waits for a command.
+**It is held** (stopped, and started from zero when the hold ends) while a goal is open in any phase, a question waits, one of Kestrel's own requests runs, a final reply is being spoken or shown, the owner types, or Kestrel waits for a command.
 
 **It is not affected by** the lock or the screen turning off, a phone call, listening on, paused or off, instant commands (D15), and the end of Kestrel's process (section 6.7).
 
 **When it runs out,** the engine closes the conversation: it stores it as closed, so that its records join the history, and the conversation screen shows a line "Conversation ended at 18:04". Kestrel says nothing. The next command opens a new conversation.
 
-The timer is the engine's coroutine. Each timer has a number, as the Orchestrator's timers do, so that an older timer changes nothing. The stored start (`sinceWall`) is a wall-clock time, so that a restart can tell whether the conversation is still open.
+The machine's timers (the quiet time, a held goal's 30 minutes, a hand-over's 3 minutes and a typed question's wait) are deadlines on the clock since the phone started, `ConversationClock.sinceBootMillis()`, which also counts the time that the phone sleeps. A coroutine's `delay` stops while the phone sleeps, so it only wakes the engine. Before the engine handles any message, an input and a phone signal too, it ends every timer whose deadline has passed. `PhoneSignals` sends `SCREEN_ON` whenever the screen comes on, so that the bar and the goal's notification never show a quiet time or a hold that has already ended. So the quiet time and the 30 minutes of a held goal count the time that the phone sleeps. Each timer has a number, as the Orchestrator's timers do, so that an older timer changes nothing. The stored start (`sinceWall`) is a wall-clock time, so that a restart can tell whether the conversation is still open.
 
 ### 6.3 Events and effects
 
 ```kotlin
 sealed interface ConversationEvent {
     data class Input(val input: OwnerInput) : ConversationEvent
-    data class Goal(val event: GoalEvent) : ConversationEvent
-    data object Touched : ConversationEvent                          // D13
-    data class ReplyShown(val command: Int) : ConversationEvent
-    data class QuietEnded(val number: Int) : ConversationEvent
-    data class HoldEnded(val number: Int) : ConversationEvent        // 30 minutes (D17)
-    data class HandOverEnded(val number: Int) : ConversationEvent    // 3 minutes (spec 12.4)
-    data class QuestionWaitEnded(val number: Int) : ConversationEvent // a card's wait (D21)
+    data class Dialogue(val event: DialogueEvent) : ConversationEvent   // a question or a hand-over opened or closed
+    data class GoalEnded(val end: RoundEnd) : ConversationEvent
+        // a round ended: RoundEnd(command, report, answer, reply); answer: the final words that the record keeps; reply: what is still to say of them
+    data object Touched : ConversationEvent                             // D13
+    data class ReplyShown(val command: Int) : ConversationEvent         // the final reply has been spoken or shown
+    data class TimerEnded(val timer: Timer, val number: Int) : ConversationEvent // QUIET, HOLD (D17), HAND_OVER, QUESTION (D21)
     data class Composing(val active: Boolean) : ConversationEvent
+    data class Awaiting(val active: Boolean) : ConversationEvent        // a wait for a command after "Kestrel" alone
+    data class Voice(val on: Boolean) : ConversationEvent               // Kestrel turned on or off
+    data class ReplyOpened(val question: Int) : ConversationEvent       // the owner tapped "Reply…" (10.3)
     data class Signal(val signal: PhoneSignal) : ConversationEvent
     data class SettingsChanged(val settings: ConversationSettings, val testMode: Boolean) : ConversationEvent
-    data class Restored(val snapshot: ConversationSnapshot?, val nowWall: Long) : ConversationEvent
-    data class PastFound(val match: PastMatch?) : ConversationEvent  // the search for "continue the conversation about X"
-    data object HistoryDeleted : ConversationEvent
+    data class Restored(val snapshot: ConversationSnapshot?, val previous: ProcessEnd = ProcessEnd.Other) : ConversationEvent
+    data class ContinueAnswered(val answer: ChannelAnswer) : ConversationEvent
+    data class LocalEnded(val command: Int, val outcome: LocalOutcome) : ConversationEvent // Reply, Quiet, Switch or Deleted
+    data class Switched(val snapshot: ConversationSnapshot?, val sentence: String, val failed: Boolean = false) : ConversationEvent
+    data object EndQuietTime : ConversationEvent                        // the hook conversation-control do=expire
 }
 
-sealed interface GoalEvent {
-    data class Started(val command: Int) : GoalEvent
-    data class Asked(val question: ChannelQuestion) : GoalEvent
-    data object Answered : GoalEvent
-    data class HandedOver(val text: String) : GoalEvent
-    data object HandOverDone : GoalEvent
-    data class Paused(val cause: PauseCause) : GoalEvent       // LOCK, INCOMING_CALL, OUTGOING_CALL
-    data object Resumed : GoalEvent
-    data class Checklist(val checklist: Checklist) : GoalEvent
-    data class Ended(val command: Int, val report: TaskReport, val sentence: String) : GoalEvent
+sealed interface DialogueEvent {                                        // from ConversationOwner
+    data class Asked(val number: Int, val kind: QuestionKind) : DialogueEvent
+    data class Answered(val number: Int) : DialogueEvent                // the question closed: answered, withdrawn or cancelled
+    data class HandedOver(val number: Int) : DialogueEvent
+    data class HandOverDone(val number: Int) : DialogueEvent
 }
 ```
 
-The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`, `CancelGoal`, `PauseGoal`, `ResumeGoal`, `AnswerQuestion`, `Output`, `Ask`, `Persist`, `Close`, `SwitchTo`, `SearchPast`, `RunLocal`, `DeleteHistory` and the timers' starts. The machine never calls a channel or the store; the engine performs the effects in order, as the Orchestrator does.
+The machine is one function, `ConversationMachine.next(state, event, now)`, which gives the new state and its effects (`ConversationEffect`), in order:
+- for goals: `StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause)`, `CancelGoal(reason, sentence)` and `EndHeldGoal(reason)`;
+- for the owner's dialogue: `AnswerQuestion(number, answer, leftScreen)`, `EndHandOver(number, end)`, `AskContinueGoal`, `CancelContinueQuestion` and `Output(output)`;
+- for the records: `AddLine(conversation, record, kind, text, channel)` and `EndRecord(conversation, record, end, answer)`; each names the record with its conversation, because the same step may close it;
+- for Kestrel's own requests: `RunLocal(command, record, request, input)`, `CancelLocal`, `EndLocal(command, end, answer, input)`, `SwitchTo(command, id, input)`, `OpenSwitched(snapshot)` and `UndoSwitch` (a "stop" that came while the store switched: the store puts both conversations back as they were);
+- and `StartTimer(timer, number, millis)`, `Close(id, keep)` and `Persist`.
+
+Every effect that starts work under a new command number (`StartGoal`, `ResumeGoal`, `RunLocal`, `SwitchTo`) carries the owner's input that asked for it, and so does `EndLocal`, which is the only effect of "new conversation", so that the hooks' tags can find every command. The machine never calls a channel or the store; the engine performs the effects in order, as the Orchestrator does.
 
 ### 6.4 What an input does in each situation
 
-| Situation | `Command(text)` | `Stop` | `Continue` | `NewConversation`, `ContinuePast`, `ContinueConversation` |
+| Situation | `Command(text)` | `Stop` | `Continue` | `NewConversation`, `ContinuePast`, `ContinueConversation`, `Remember`, `Forget`, `SaveRoutine` |
 |---|---|---|---|---|
-| No open conversation | Opens one, then as the next row | Nothing | "There's nothing to continue." | New: nothing to close. Continuing: as section 9.6 |
-| Open, no goal | Starts a goal (section 7.1) | Nothing | "There's nothing to continue." | New: closes it. Continuing: closes it into the list and switches (9.6) |
+| No open conversation | Opens one, then as the next row | Nothing | "There's nothing to continue." | New: nothing to close. Continuing: as section 9.6. A memory request opens a conversation and runs, with a record of its own |
+| Open, no goal | Starts a goal (section 7.1) | Nothing | "There's nothing to continue." | New: closes it. Continuing: closes it into the list and switches (9.6). A memory request runs, with a record of its own |
 | Goal acting | Steering (7.3); by voice only with "Kestrel" | Ends the goal at once with its report | Ignored | "Stop the goal first." |
 | Goal asking | The answer (typed, or spoken within the answer wait) | Ends the goal | Ignored | "Stop the goal first." |
 | Goal handed over | Typed: "Finish the step first, then tap Continue, or Cancel." By voice: as today (`FinishHandOverFirst`) | Ends the goal | Ends the hand-over | "Stop the goal first." |
 | Goal paused by a lock or a call | "Answer 'Continue the goal?' first, or say cancel." | Ends the goal with its report | Resumes it with a fresh observation | "Stop the goal first." |
 | Goal paused at a limit, or interrupted | Resumes the goal in a new round with the command as steering (7.6) | Ends the goal with its partial report | Resumes it in a new round | "Stop the goal first." |
 
-`Stop` covers "stop", "cancel", the screen's Stop and Cancel buttons and the notification's Stop. A held goal (paused, paused at a limit or interrupted) is held for 30 minutes (D17), with the quiet clock held too. After 30 minutes the goal ends with its partial report. A report that would come while the screen is off or a call lasts is kept until the owner is back, as `heldReport` does today.
+`Stop` covers "stop", "cancel", the screen's Stop and Cancel buttons and the notification's Stop. "Delete history" is ignored while a goal is open (9.7). While "stop" is ending a goal, a command or one of Kestrel's own requests waits for the goal's end and then runs ("Stop. Kestrel, …"); so does a command that comes while Kestrel's own request runs, and "stop" cancels that request. Waiting commands run in the order in which they came. A "stop" after the yes to "Continue the conversation …?" cancels the switch, also while the store makes it: the open conversation stays open, and the past one stays in the list. A held goal (paused, paused at a limit or interrupted) is held for 30 minutes (D17), with the quiet clock held too. After 30 minutes the goal ends with its partial report. A goal's final reply that would come while the screen is off or a call lasts is kept until the owner is back (`heldReports`, given in order), and so is a held goal's report with how to go on (`heldWords`). The owner counts as back only once a lock signal has said that the phone is unlocked and no call rings or lasts (`PhoneState.present`), so after a restart Kestrel waits for the first lock signal.
 
 ### 6.5 Touches, questions, locks and calls
 
@@ -566,6 +603,7 @@ The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`
 - At the next start, `restore()` reads the open conversation:
   - Without a goal: if the quiet time has not passed since `sinceWall`, the conversation is still open with its records, and its clock runs on for the rest. Otherwise it is closed.
   - With a goal in any phase: the goal becomes `INTERRUPTED` and is held for 30 minutes from when it stopped working: the last time that Kestrel saved it while it worked, or the start of its hold if it was held already. Kestrel asks "Continue the goal?", never by itself (D11): by voice once a voice session is open and the owner is back, and always as a card and in the goal notification. Yes resumes the goal (section 7.6); no, Cancel or the end of the hold end it with its partial report.
+  - When the owner stopped Kestrel himself after the snapshot was saved (Stop in Android's "Active apps", a force stop, or removing Kestrel from Recents, which `:app` reads from Android's exit records as `ProcessEnd.OwnerStopped`), the goal ends as "stop" ends a held goal, and nothing asks. When the conversation's test mode differs from the Safety page's, its goal ends the same way and the conversation closes (12.4).
 - The stored times are wall-clock times, so a change of the clock can keep a conversation open or close it wrongly after a restart. The spec accepts the same limit for the listening mode (spec 8.5).
 
 ### 6.8 One conversation, and a new one
@@ -626,7 +664,7 @@ A valid call returns "Result: checklist saved, 3 of 7 done (c3, c4, c7)." and ca
 
 ### 7.3 Steering
 
-- A command that comes while the goal acts goes into the goal's `SteeringInbox`: by voice only with "Kestrel" (D9), typed always. The bar shows "Got it." and the record shows the message.
+- A command that comes while the goal acts goes into the goal's `SteeringInbox`: by voice only with "Kestrel" (D9), typed always. Once the inbox has taken it, the bar shows "Got it." and the record shows the message (`OWNER_STEERED`), and its verbs join the record's allowance. A goal that has already given its final words takes no more steering: Kestrel says at once that the message came too late ("I got '…' too late to act on it; say it again as a new command."), and the record keeps it as `OWNER_TOO_LATE`. Each message gets its record's form once, as it arrives (`SteeringMessage.recorded`, redacted, with each vault value as its kind's words). The run takes the owner's words and redacts them itself; everything else (the record's line, the snapshot and the words that name a message as too late) uses only the record's form, so no vault value reaches a record, the archive or a later model.
 - `TaskRun.turn()` drains `GoalPort.takeSteering()` at the start of each turn, after the pause gate and the limit check and before the model call; then it calls `GoalPort.stepStarted` with the number of the step that starts. A step that has started runs to its end; the correction counts from the next step. Each message becomes a new kind of entry in `Conversation`, an owner message, which is a user message after the last step:
 
   `The owner added (typed) at step 14: "Also send it to Mila, not only Ana."`
@@ -634,7 +672,7 @@ A valid call returns "Result: checklist saved, 3 of 7 done (c3, c4, c7)." and ca
   Before the first step it says "before the first step" instead of "at step 14". The words are redacted once, quoted and escaped, and never cut, because a cut instruction can mean something else. When the message widened the allowance, the allowance's sentence follows on a line of its own.
 - An owner message never changes and is never left out, also not by a local Ollama model's budget, so it only appends to what the caches hold. It sits in the tail until two more observations have come after it, and then in the stable region.
 - The words count as the owner's, and their verbs join the allowance (`OwnerWords.steered`: `TaskSafety.withOwnerWords` with the message, and `TaskAllowance.from` on it joined with the current categories), because steering is a command of the owner's.
-- The run drains steering only at the start of a turn, so a message that comes during the run's last step stays in the goal's `SteeringInbox` when the run ends. `GoalRunner` never drops it without a word: when the goal is held, the next run drains it before its first step; when the goal ended for good, nothing of it runs, and the goal's final reply names it as received too late, so that the owner can say it again.
+- The run drains steering only at the start of a turn, so a message that comes during the run's last step stays in the goal's `SteeringInbox` when the run ends. `GoalRunner` never drops it without a word: when the goal is held, the next run drains it before its first step; when the goal ended for good, nothing of it runs, and the goal's final reply names it as received too late, in its record's form, so that the owner can say it again. This holds also when "stop" or a change of test mode overtakes a touch or a limit: the goal then ends as cancelled, as "stop" ends a held goal, and its final reply names what waited. The machine alone decides whether a round's end holds the goal (`GoalHold.of`). The inbox closes with the final words, so a message after them gets the at-once answer of the first bullet.
 - The system prompt says that an owner message may change the plan and that the model should then update the checklist.
 - While the goal asks a question, typed text and speech within the answer wait answer the question; they are not steering.
 
@@ -938,7 +976,7 @@ No other match.
 ### 9.6 Continuing a past conversation
 
 - **From the list.** "Continue this conversation" sends `ContinueConversation(id)`.
-- **By voice or typed.** "Continue the conversation about X" (also "continue our conversation about X", "go back to the conversation about X"), with or without "Kestrel" when typed or inside the follow-up window, is a local request that `Requests` reads as `ContinuePast(topic)`. `LocalRequests` searches the closed conversations within retention with `HistorySearch`, by the topic's words, and takes the best match. It then asks, with the question kind `SWITCH`: "Continue the conversation from Thursday, 20 November, about 'Find the restaurant Mila sent me'?" (the day, and the conversation's first request cut at 60 characters). Yes switches; no or no answer changes nothing. Without a match it says "I didn't find a conversation about that." While the index of past conversations is being rebuilt (9.2), it says "I'm still rebuilding the index of your past conversations and can't search them yet."; when the index can be neither read nor rebuilt, it says "I can't read your past conversations right now. I'll try again later."; both change nothing. "Continue the conversation" without a topic means the newest closed conversation, with the same question. "Kestrel, continue" alone keeps its meaning for goals (section 6.4).
+- **By voice or typed.** "Continue the conversation about X" (also "continue our conversation about X", "go back to the conversation about X"), with or without "Kestrel" when typed or inside the follow-up window, is a local request that `Requests` reads as `ContinuePast(topic)`. `LocalRequests` searches the closed conversations within retention with `HistorySearch`, by the topic's words, and takes the best match. It then asks, with the question kind `SWITCH`: "Continue the conversation from Thursday, 20 November, about 'Find the restaurant Mila sent me'?" (the day, and the conversation's first request cut at 60 characters). Yes switches; no or no answer changes nothing, and so does a "stop" after the yes, also while the store switches (6.4). Without a match it says "I didn't find a conversation about that." While the index of past conversations is being rebuilt (9.2), it says "I'm still rebuilding the index of your past conversations and can't search them yet."; when the index can be neither read nor rebuilt, it says "I can't read your past conversations right now. I'll try again later."; both change nothing. "Continue the conversation" without a topic means the newest closed conversation, with the same question. "Kestrel, continue" alone keeps its meaning for goals (section 6.4).
 - **While a goal is open** in the current conversation, both ways answer "Stop the goal first." and change nothing.
 - **The switch.** `ConversationStore.reopen` closes the open conversation, which joins the list, and opens the chosen one in one transaction (D23: one at a time). The chosen conversation keeps its id and its records; its records block is built from them (section 8.3), and condensed records stay condensed. It takes the **current** test-mode value; the stored one is not reused. Its records block then holds, right after its header, the note "This conversation was continued on <date>; test mode is <on | off> now." (8.4). The conversation screen shows its transcript with a line "Continued on <date>".
 - **After the switch** Kestrel says, by the channel's rules (section 11), "We're back in the conversation from Thursday, 20 November." This is the request's final reply: a spoken one opens the follow-up window (6.6), and its end starts the quiet clock from zero (6.2). The request to continue gets no record in either conversation.
@@ -1087,7 +1125,7 @@ The rules of section 10.2 hold: a goal waits until Kestrel's screen has left, ne
 
 - The conversation reads `SafetySettings.testMode` when it opens and keeps it in `ConversationState.testMode`. Every run of the conversation gets that value in `AgentSettings.safety`, whatever the setting says later.
 - A continued conversation takes the current value when it is continued (D23), and the note in its records block says so (section 9.6).
-- A change of test mode on the Safety page closes the open conversation, after ending an open goal with its report, so that the next command runs under the new value. The agent cannot change the setting, because Kestrel's own app is agent-free.
+- A change of test mode on the Safety page closes the open conversation, so that the next command runs under the new value. An open goal is first ended as "stop" ends it, with its report; one of Kestrel's own requests that runs is let finish, because it does not act under test mode (`closeAfterWork`). The close waits for that end once; when the test mode comes back to the conversation's value before then, nothing closes (a goal that the change stopped still ends). The agent cannot change the setting, because Kestrel's own app is agent-free.
 - The test-mode note stays in the context, first (section 8.4).
 
 ### 12.5 Other points
