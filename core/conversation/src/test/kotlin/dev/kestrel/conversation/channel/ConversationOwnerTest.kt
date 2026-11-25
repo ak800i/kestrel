@@ -1,0 +1,277 @@
+package dev.kestrel.conversation.channel
+
+import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.AnswerKind
+import dev.kestrel.agent.port.ConfirmEnd
+import dev.kestrel.agent.port.Gate
+import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.PermissionEnd
+import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.testing.FakeChannel
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.Confirmation
+import dev.kestrel.safety.HandOver
+import dev.kestrel.safety.HandOverKind
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ConversationOwnerTest {
+    private val voice = FakeChannel(InputChannel.VOICE)
+    private val text = FakeChannel(InputChannel.TEXT)
+    private var route = ConversationOwner.Routing(InputChannel.VOICE, speakTyped = false)
+    private var granted = PermissionEnd.GRANTED
+    private val voiceOn = MutableStateFlow(true)
+    private val events = mutableListOf<DialogueEvent>()
+    private val owner = ConversationOwner(mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { granted }, voiceOn, { route }) { events += it }
+
+    private val confirmation = Confirmation(
+        question = "Send \"I'm late\" to Ana on Viber?",
+        spoken = "Send it to Ana on Viber? Say confirm or cancel.",
+        category = Category.SENDING,
+        recipients = listOf("Ana"),
+        appLabel = "Viber",
+        content = "I'm late",
+        targetKey = null,
+        targetBounds = null,
+    )
+
+    private fun typed(speak: Boolean = false) {
+        route = ConversationOwner.Routing(InputChannel.TEXT, speak)
+    }
+
+    @Test
+    fun theOwnersLatestChannelGetsKestrelsWords() = runTest {
+        owner.say("Looking.")
+        typed()
+        owner.show(ChannelOutput.Report(3, "Done."))
+
+        assertEquals(listOf(ChannelOutput.Said("Looking.")), voice.shown)
+        assertEquals(listOf(ChannelOutput.Report(3, "Done.")), text.shown)
+    }
+
+    @Test
+    fun typedRepliesAreSpokenTooWithTheSettingAndASpokenAnswerCounts() = runTest {
+        typed(speak = true)
+        owner.say("Looking.")
+
+        val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
+        runCurrent()
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first", leftScreen = false))
+
+        assertEquals(Answer.Text("The first"), answer.await())
+        assertEquals(listOf(ChannelOutput.Said("Looking.")), text.shown)
+        assertEquals(listOf(ChannelOutput.Said("Looking."), ChannelOutput.Said("Which one?")), voice.shown)
+        assertTrue(voice.asked.isEmpty())
+    }
+
+    @Test
+    fun whileKestrelIsOffTheVoiceOnlyShowsAndEveryQuestionGetsTheCard() = runTest {
+        voiceOn.value = false
+        owner.say("Looking.")
+        owner.show(ChannelOutput.Report(2, "Done."))
+        assertEquals(listOf(ChannelOutput.Shown("Looking."), ChannelOutput.Shown("Done.")), voice.shown)
+
+        val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
+        runCurrent()
+        assertEquals(QuestionKind.FREE, text.asked.single().kind)
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first", leftScreen = false))
+        assertEquals(Answer.Text("The first"), answer.await())
+
+        // A typed conversation's replies are still spoken with the setting on (design 11).
+        typed(speak = true)
+        owner.show(ChannelOutput.Report(3, "Sent."))
+        assertEquals(ChannelOutput.Said("Sent."), voice.shown.last())
+    }
+
+    @Test
+    fun turningKestrelOffAddsTheCardToAnOpenQuestionOrHandOver() = runTest {
+        val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
+        runCurrent()
+        assertTrue(text.asked.isEmpty())
+        voiceOn.value = false
+        runCurrent()
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first", leftScreen = false))
+        assertEquals(Answer.Text("The first"), answer.await())
+
+        voiceOn.value = true
+        text.handOverEnds += HandOverEnd.CONTINUED
+        val handing = async { owner.handOver(HandOver.of(HandOverKind.PAYMENT)) }
+        runCurrent()
+        assertEquals(1, voice.handOvers.size)
+        assertTrue(text.handOvers.isEmpty())
+        voiceOn.value = false
+        assertEquals(HandOverEnd.CONTINUED, handing.await())
+        assertEquals(1, text.handOvers.size)
+
+        // A permission request's card is a hand-over's: Android's dialog is not shown again, and Continue checks the grant.
+        voiceOn.value = true
+        granted = PermissionEnd.PARTLY
+        text.handOverEnds += HandOverEnd.CONTINUED
+        val asking = async { owner.askPermission(listOf("android.permission.READ_CALENDAR"), "Kestrel needs to read your calendar.") }
+        runCurrent()
+        voiceOn.value = false
+        assertEquals(PermissionEnd.PARTLY, asking.await())
+        assertEquals(HandOverKind.PERMISSION, text.handOvers.last().kind)
+    }
+
+    @Test
+    fun aTypedReplyThatIsSpokenTooReachesTheVoiceAsWordsOnly() = runTest {
+        typed(speak = true)
+
+        owner.show(ChannelOutput.Report(4, "Done."))
+
+        assertEquals(listOf(ChannelOutput.Report(4, "Done.")), text.shown)
+        assertEquals(listOf(ChannelOutput.Said("Done.")), voice.shown)
+    }
+
+    @Test
+    fun aQuestionGoesToTheChannelAndTheFirstAnswerWins() = runTest {
+        voice.answers += ChannelAnswer.Yes
+
+        assertEquals(Answer.Yes, owner.ask("Send it?", AnswerKind.YES_NO))
+        assertEquals(listOf(DialogueEvent.Asked(1, QuestionKind.YES_NO), DialogueEvent.Answered(1)), events)
+        assertNull(owner.asking)
+        assertTrue(text.asked.isEmpty())
+    }
+
+    @Test
+    fun anInputsAnswerCompletesTheOpenQuestionAndAnOlderOneChangesNothing() = runTest {
+        typed()
+        val answer = async { owner.ask("Which number should I use?", AnswerKind.PICK_NUMBER) }
+        runCurrent()
+        val number = text.asked.single().number
+
+        assertEquals(QuestionKind.PICK, owner.asking)
+        owner.answer(number - 1, ChannelAnswer.Pick(9))
+        runCurrent()
+        assertFalse(answer.isCompleted)
+        owner.answer(number, ChannelAnswer.Pick(3))
+        assertEquals(Answer.Number(3), answer.await())
+    }
+
+    @Test
+    fun aPauseWithdrawsTheGoalsQuestionAndClosesTheGateUntilTheResume() = runTest {
+        val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
+        runCurrent()
+
+        owner.pause()
+
+        assertEquals(Answer.Interrupted, answer.await())
+        assertEquals(Answer.Interrupted, owner.ask("And now?", AnswerKind.YES_NO))
+        val gate = async { owner.gate() }
+        runCurrent()
+        assertFalse(gate.isCompleted)
+        owner.resume()
+        assertEquals(Gate.RESUMED, gate.await())
+        assertEquals(Gate.GO, owner.gate())
+
+        // A pause that came after its round had ended is not left for the next work.
+        owner.pause()
+        owner.startWork()
+        assertEquals(Gate.GO, owner.gate())
+        voice.answers += ChannelAnswer.Yes
+        assertEquals(Answer.Yes, owner.ask("Send it?", AnswerKind.YES_NO))
+    }
+
+    @Test
+    fun aTypedAnswerOnKestrelsScreenGivesTheGoalOneFreshLook() = runTest {
+        typed()
+        text.answers += ChannelAnswer.Text("Mila", leftScreen = true)
+
+        assertEquals(Answer.Text("Mila"), owner.ask("Who?", AnswerKind.FREE))
+        assertEquals(Gate.RESUMED, owner.gate())
+        assertEquals(Gate.GO, owner.gate())
+
+        text.answers += ChannelAnswer.Text("Ana", leftScreen = true)
+        owner.ask("Who else?", AnswerKind.FREE)
+        owner.startWork()
+        assertEquals(Gate.GO, owner.gate())
+    }
+
+    @Test
+    fun aConfirmationMapsItsAnswers() = runTest {
+        voice.answers += listOf(ChannelAnswer.Yes, ChannelAnswer.Text("maybe", leftScreen = false), ChannelAnswer.Silence, ChannelAnswer.Interrupted)
+
+        assertEquals(
+            listOf(ConfirmEnd.YES, ConfirmEnd.NO, ConfirmEnd.TIMEOUT, ConfirmEnd.INTERRUPTED),
+            List(4) { owner.confirm(confirmation) },
+        )
+        assertEquals(QuestionKind.CONFIRM, voice.asked.first().kind)
+        assertEquals(confirmation.spoken, voice.asked.first().spoken)
+        assertEquals(confirmation, voice.asked.first().confirmation)
+
+        val pending = async { owner.confirm(confirmation) }
+        runCurrent()
+        assertEquals(Category.SENDING, owner.confirming)
+        owner.answer(voice.asked.last().number, ChannelAnswer.No)
+        assertEquals(ConfirmEnd.NO, pending.await())
+        assertNull(owner.confirming)
+    }
+
+    @Test
+    fun aHandOverEndsByItsChannelOrByTheEngine() = runTest {
+        typed()
+        text.handOverEnds += HandOverEnd.DONE_BY_ITSELF
+        assertEquals(HandOverEnd.DONE_BY_ITSELF, owner.handOver(HandOver.of(HandOverKind.PAYMENT)))
+
+        val pending = async { owner.handOver(HandOver.of(HandOverKind.CREDENTIALS)) }
+        runCurrent()
+        val number = (events.last() as DialogueEvent.HandedOver).number
+
+        assertEquals(HandOverKind.CREDENTIALS, owner.handOverKind)
+        owner.endHandOver(number, HandOverEnd.CONTINUED)
+        assertEquals(HandOverEnd.CONTINUED, pending.await())
+        assertNull(owner.handOverKind)
+        assertEquals(DialogueEvent.HandOverDone(number), events.last())
+    }
+
+    @Test
+    fun aPermissionHandOverChecksThePermissionsAfterContinue() = runTest {
+        val permissions = listOf("android.permission.READ_CALENDAR")
+        val continued = async { owner.askPermission(permissions, "Kestrel needs to read your calendar.") }
+        runCurrent()
+        granted = PermissionEnd.PARTLY
+        owner.endHandOver((events.last() as DialogueEvent.HandedOver).number, HandOverEnd.CONTINUED)
+        assertEquals(PermissionEnd.PARTLY, continued.await())
+
+        val expired = async { owner.askPermission(permissions, "Again.") }
+        runCurrent()
+        owner.endHandOver((events.last() as DialogueEvent.HandedOver).number, HandOverEnd.EXPIRED)
+        assertEquals(PermissionEnd.REFUSED, expired.await())
+
+        voice.permissionEnds += PermissionEnd.GRANTED
+        assertEquals(PermissionEnd.GRANTED, owner.askPermission(permissions, "Once more."))
+    }
+
+    @Test
+    fun continueTheGoalIsAlsoACardInASpokenConversationAndNoPauseWithdrawsIt() = runTest {
+        val answer = async { owner.question("Continue the goal?", QuestionKind.CONTINUE_GOAL) }
+        runCurrent()
+
+        owner.pause()
+        runCurrent()
+
+        assertFalse(answer.isCompleted)
+        assertEquals(QuestionKind.CONTINUE_GOAL, voice.asked.single().kind)
+        assertEquals(QuestionKind.CONTINUE_GOAL, text.asked.single().kind)
+        owner.answer(voice.asked.single().number, ChannelAnswer.Yes)
+        assertEquals(ChannelAnswer.Yes, answer.await())
+    }
+
+    @Test
+    fun leaveKestrelAsksTheLatestChannel() = runTest {
+        text.leaves = false
+
+        assertTrue(owner.leaveKestrel())
+        typed()
+        assertFalse(owner.leaveKestrel())
+    }
+}
