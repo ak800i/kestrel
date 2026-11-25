@@ -6686,11 +6686,13 @@ interface RecordArchive {
     suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int
 
     /**
-     * "Delete history" (design 9.7): deletes every row, the open one too, and the index, in one transaction, and then erases
-     * the archive's key, so that not even a copy of what was stored can be decrypted any more; a new key is made at the
-     * next write. It throws only when the transaction did not commit, which leaves every row as it was. Once the transaction
-     * has committed, the deletion is complete, and it returns whether the key went: [ArchiveErasure.KEY_KEPT] when it could
-     * not be erased, which the archive's next change erases before it stores anything.
+     * "Delete history" (design 9.7), the whole of it: deletes every row, the open one too, and the index, in one
+     * transaction with whatever else the history holds (plan 7C's archive deletes both logs in it, because they share
+     * its database), and then erases the archive's key, so that not even a copy of what was stored can be decrypted any
+     * more; a new key is made at the next write. It throws only when the transaction did not commit, which leaves every
+     * row as it was. Once the transaction has committed, the deletion is complete, and it returns whether the key went:
+     * [ArchiveErasure.KEY_KEPT] when it could not be erased, which the archive's next change erases before it stores
+     * anything.
      */
     suspend fun deleteAll(): ArchiveErasure
 }
@@ -6818,8 +6820,9 @@ interface ConversationStore {
     suspend fun delete(id: ConversationId)
 
     /**
-     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). Once
-     * the archive's deletion has started, a cancellation takes effect only after it, and the outcome is a completed
+     * Deletes every conversation, the open one too, the index and the archive's key, in the archive's one call, which
+     * is the whole of "delete history": the archive deletes the logs in the same transaction (design 9.7). Once the
+     * archive's deletion has started, a cancellation takes effect only after it, and the outcome is a completed
      * deletion. It throws when the archive's transaction did not commit, and has then marked nothing, so that every
      * conversation stays as the archive has it. A key that could not be erased after the transaction leaves the deletion
      * complete; the store notes it as its own failure.
@@ -7046,11 +7049,11 @@ class ArchivedConversationStore(
     }
 
     /**
-     * Deletes every conversation in the archive alone (design 9.7). Once it has the lock, the archive's deletion and the
-     * marking of the deleted conversations run as one unit that cancellation cannot split, the generation's raise first; a
-     * caller's cancellation takes effect after it. When the archive's transaction did not commit, it marks nothing. Once it
-     * has committed, the deletion is complete; a key that could not be erased after it is noted as its own failure
-     * ([ArchiveNote.KEY_NOT_ERASED]).
+     * Deletes every conversation in the archive's one call, which is the whole of "delete history" (design 9.7). Once
+     * it has the lock, the archive's deletion and the marking of the deleted conversations run as one unit that
+     * cancellation cannot split, the generation's raise first; a caller's cancellation takes effect after it. When the
+     * archive's transaction did not commit, it marks nothing. Once it has committed, the deletion is complete; a key
+     * that could not be erased after it is noted as its own failure ([ArchiveNote.KEY_NOT_ERASED]).
      */
     override suspend fun deleteAll() = mutex.withLock {
         withContext(NonCancellable) {
@@ -9446,7 +9449,7 @@ The task cases of today's `RulesTest` (`app/src/test/kotlin/dev/kestrel/app/orch
 | `theWaitForAnAnswerDoesNotEndWhileKestrelStillSpeaksTheQuestion` | — | the voice channel's wait for an answer to a goal's question, to "Continue the goal?" and to the delete question starts once the question has been spoken |
 | `aYesOrNoQuestionTakesOnlyItsAnswers`, `aConfirmationGoesAheadOnConfirmYesOrSendIt`, `aFreeQuestionTakesTheNextTranscriptAndANumberQuestionANumber`, `whileOnlyTheCardMayAnswerSpokenAnswersDoNotCount` | `ConversationOwnerTest.aConfirmationMapsItsAnswers` and `anInputsAnswerCompletesTheOpenQuestionAndAnOlderOneChangesNothing` | `VoiceChannel` reads the transcript as the `ChannelAnswer` of `view.asking`'s kind (design 5.3), and gives none while only the card may answer |
 | `aPausedTaskLetsTheInstantCommandsRunAndRefusesANewTask` | `ConversationMachineTest.whilePausedACommandIsToldToAnswerFirstAndContinueResumesWithAFreshLook` | the instant commands run while `view.goal` is `PAUSED` |
-| `deleteHistoryAsksAndOnlyYesDeletes`, and "delete history" ignored during a task | `ConversationMachineTest.deleteHistoryRunsWithoutAGoalAndClosesTheConversationAfterYes` and `newConversationAndContinuingAreRefusedWhileAGoalIsOpen`, with Task 9's `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` | "Kestrel, delete history" gives a `DeleteHistory` input |
+| `deleteHistoryAsksAndOnlyYesDeletes`, and "delete history" ignored during a task | `ConversationMachineTest.deleteHistoryRunsWithoutAGoalAndClosesTheConversationAfterYes` and `newConversationAndContinuingAreRefusedWhileAGoalIsOpen`, with Task 9's `LocalRequestsTest.deleteHistoryAsksAndDeletesTheConversationsAndTheWordsAfterYes` | "Kestrel, delete history" gives a `DeleteHistory` input |
 | `duringTheDeleteQuestionTurningOffPausingAndStoppingKeepTheirMeaning`, `kestrelOrTheAssistantGestureDuringTheDeleteQuestionWaitsForTheTask` | `ConversationMachineTest.deleteHistoryRunsWithoutAGoalAndClosesTheConversationAfterYes` ("stop" cancels the request and its question) and `LocalRequestsTest.noAndSilenceChangeNothing` | "Stop Kestrel" and "stop listening" during the delete question change the mode and answer it with `ChannelAnswer.Interrupted`, so nothing is deleted; "Kestrel" alone or the assistant gesture does the same and then waits for a command, which runs once the request has ended |
 | `rememberForgetAndSaveThatAsRunAsKestrelsOwnTask` | `ConversationMachineTest.aMemoryRequestOpensAConversationAndGetsARecord`, with Task 9's `LocalRequestsTest.rememberAsksAndSavesOnlyAfterYes` | the three requests give their inputs |
 | `whileATaskRunsKestrelsOwnRequests` | `ConversationMachineTest.newConversationAndContinuingAreRefusedWhileAGoalIsOpen` | while a goal works, Kestrel's own requests give their inputs |
@@ -13181,7 +13184,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 
 ### Task 9: Kestrel's own requests
 
-`LocalRequests` answers Kestrel's own requests without a goal (design 5.2, 9.6 and 9.7): "remember", "forget" and "save that as" ask through the owner port, as today's `AgentRunner.runLocal` did; "delete history" asks "Delete the activity log, the network log and past conversations?" and deletes the logs, every conversation, the index of past conversations and the archive's key after a yes; "continue the conversation about X" finds the best past conversation in the index of past conversations (or says that the index is still being rebuilt), asks "Continue the conversation from <day>, about '<its first request>'?" and gives the switch after a yes. `RecordedOwner` puts a memory request's question and answer into its record, redacted once.
+`LocalRequests` answers Kestrel's own requests without a goal (design 5.2, 9.6 and 9.7): "remember", "forget" and "save that as" ask through the owner port, as today's `AgentRunner.runLocal` did; "delete history" asks "Delete the activity log, the network log and past conversations?" and after a yes deletes, through the store's `deleteAll`, the logs, every conversation and the index of past conversations in the archive's one transaction (plan 7C's archive deletes both logs in it), and then the archive's key; "continue the conversation about X" finds the best past conversation in the index of past conversations (or says that the index is still being rebuilt), asks "Continue the conversation from <day>, about '<its first request>'?" and gives the switch after a yes. `RecordedOwner` puts a memory request's question and answer into its record, redacted once.
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/RecordedOwner.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/LocalRequests.kt`
@@ -13190,7 +13193,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 
 **Interfaces:**
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
-- Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue, stored: suspend () -> Unit = {}): LocalOutcome` (`stored` from the re-check of Task 10) and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
+- Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` (no `deleteLogs` since plan 7C's whole-plan fix: the archive's `deleteAll` deletes the logs in its transaction) with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue, stored: suspend () -> Unit = {}): LocalOutcome` (`stored` from the re-check of Task 10) and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
 
 Counts: `:core:conversation` 205 + 10 = 215.
 
@@ -13253,8 +13256,7 @@ class LocalRequestsTest {
     private val memory = FakeMemory()
     private val owner = FakeOwner()
     private val dialogue = FakeDialogue()
-    private var logsDeleted = 0
-    private val local = LocalRequests(memory, store, search, { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> throw error }
+    private val local = LocalRequests(memory, store, search, { _, _ -> null }, clock) { _, error -> throw error }
 
     private fun id(n: Int) = ConversationId(n.toString().padStart(32, '0'))
 
@@ -13328,18 +13330,20 @@ class LocalRequestsTest {
         assertTrue(dialogue.asked.single().first.endsWith("about 'Read my latest SMS'?"))
     }
 
+    // Design 9.7 of sub-project 7: the archive's deleteAll is the whole of "delete history", the logs with the
+    // conversations in one transaction (plan 7C's archive), so a no deletes nothing and a yes deletes it all through
+    // the store.
     @Test
-    fun deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes() = scope.runTest {
+    fun deleteHistoryAsksAndDeletesTheConversationsAndTheWordsAfterYes() = scope.runTest {
         closed(1, "Ambar dinner", day)
         assertEquals(1, search.search(HistoryQuery("Ambar")).matches.size)
         dialogue.answers += listOf(ChannelAnswer.No, ChannelAnswer.Yes)
 
         assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.DeleteHistory, owner, dialogue))
-        assertEquals(0, logsDeleted)
         assertEquals(1, store.list().size)
+        assertFalse(archive.keyErased)
 
         assertEquals(LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
-        assertEquals(1, logsDeleted)
         assertTrue(store.list().isEmpty())
         assertTrue(archive.keyErased)
         assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
@@ -13347,22 +13351,22 @@ class LocalRequestsTest {
         assertEquals(Triple(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
     }
 
-    // Design 9.7 of sub-project 7: when the archive's transaction does not commit, the logs are already gone, every
-    // conversation stays, Kestrel says that it couldn't delete the history, and the failure is reported once.
+    // Design 9.7 of sub-project 7: when the archive's transaction does not commit, nothing is deleted (the logs go in
+    // the same transaction), every conversation stays, Kestrel says that it couldn't delete the history, and the
+    // failure is reported once.
     @Test
     fun deleteHistoryThatTheArchiveCannotCommitKeepsEveryConversationSaysSoAndReportsOnce() = scope.runTest {
         closed(1, "Ambar dinner", day)
         val failure = IOException("the disk failed")
         archive.failures["deleteAll"] = failure
         val reported = mutableListOf<Throwable>()
-        val local = LocalRequests(memory, store, search, { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> reported += error }
+        val local = LocalRequests(memory, store, search, { _, _ -> null }, clock) { _, error -> reported += error }
         dialogue.answers += ChannelAnswer.Yes
 
         assertEquals(LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
         assertEquals(1, reported.size)
         assertTrue(reported.single() is IOException)
         assertEquals(failure.message, reported.single().message)
-        assertEquals(1, logsDeleted)
         assertEquals(1, store.list().size)
         assertFalse(archive.keyErased)
     }
@@ -13380,7 +13384,7 @@ class LocalRequestsTest {
         for ((failure, sentence) in sentences) {
             failure?.let { archive.failures["readShards"] = it }
             val restarted = ArchivedConversationStore(archive, backgroundScope) {}
-            val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> throw error }
+            val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { _, _ -> null }, clock) { _, error -> throw error }
 
             assertEquals(LocalOutcome.Reply(sentence), local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
         }
@@ -13504,18 +13508,18 @@ import dev.kestrel.conversation.store.HistorySearch
 import kotlinx.coroutines.CancellationException
 
 /**
- * Kestrel's own requests, answered without a goal (design 5.2 of sub-project 7). "Remember", "forget" and "save that as"
- * ask through [OwnerPort] and change nothing without the owner's yes (design D22 and D23 of sub-project 5); "save that
- * as" is [routines], the goal runner's. "Delete history" (design 9.7) asks first and deletes the logs ([deleteLogs]),
- * every conversation with the index of past conversations and the archive's key. "Continue the conversation about X"
- * (design 9.6) finds the best closed conversation within retention, asks whether to switch to it, and gives the switch
- * after a yes; no or no answer changes nothing, and while the index is being rebuilt it says so and asks nothing.
+ * Kestrel's own requests, answered without a goal (design 5.2 of sub-project 7). "Remember", "forget" and "save that
+ * as" ask through [OwnerPort] and change nothing without the owner's yes (design D22 and D23 of sub-project 5); "save
+ * that as" is [routines], the goal runner's. "Delete history" (design 9.7) asks first and then deletes, through the
+ * store, the logs, every conversation and the index of past conversations in the archive's one transaction, and the
+ * archive's key. "Continue the conversation about X" (design 9.6) finds the best closed conversation within retention,
+ * asks whether to switch to it, and gives the switch after a yes; no or no answer changes nothing, and while the index
+ * is being rebuilt it says so and asks nothing.
  */
 class LocalRequests(
     private val memory: MemoryStore,
     private val store: ConversationStore,
     private val search: HistorySearch,
-    private val deleteLogs: suspend () -> Unit,
     private val routines: suspend (name: String, owner: OwnerPort) -> String?,
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
@@ -13552,7 +13556,6 @@ class LocalRequests(
         if (dialogue.question(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
         return try {
             stored()
-            deleteLogs()
             store.deleteAll()
             LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED)
         } catch (e: CancellationException) {
@@ -13800,7 +13803,7 @@ class ConversationEngineTest {
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
         val goals = GoalRunner(environment, ScreenTurn { }, search, clock) { _, error -> throw error }
-        val local = LocalRequests(environment.memory, store, search, { }, goals::saveRoutine, clock) { _, error -> throw error }
+        val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
             settings, testMode, voiceOn, clock, report, onStep = onStep,
@@ -15653,9 +15656,9 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - `goal.ScreenTurn { suspend fun take() }`, which `ScreenTurns` implements.
 - `goal.GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` (for `LocalRequests`) and `RECORDING_MILLIS`.
 - `store.HistorySearch(store: ConversationStore, retentionDays: () -> Int, clock: ConversationClock)` with `search(query, excluding)` (`HistoryResult.REBUILDING` while the index is rebuilt, `HistoryResult.FAILED` while it cannot be read; it waits while the index is read), `port(excluding)` and `conversation(topic): ConversationLookup` (`Found(match: ConversationMatch)`, `NotFound`, `Rebuilding` or `Unavailable`); it keeps nothing itself, so there is no `forgetAll`, and each search ranks the whole index, so a caller that searches as the owner types waits until the typing pauses and calls it off the main thread. `store.RecordRef(conversation, record)`; `store.HistoryRanking.rank(indexes: List<SearchIndex>, query, zone, reached, similarity)` over `store.IndexedRecord(ref, atWall, words: IntArray)`, with the index's `searches` as `indexes`.
-- `local.LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)`; the app graph passes `goalRunner::saveRoutine` and `{ logs.deleteHistory() }`.
+- `local.LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `run(request, owner, dialogue, stored)`; the app graph passes `goalRunner::saveRoutine`. "Delete history" is the store's `deleteAll`, whose archive (plan 7C) deletes both logs, the conversations and the index in one transaction and then erases the key.
 - `ConversationTexts`: the sentences that move from `:app` in plan 7D: `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `noFact(key)` and `CALL_STARTED` (from `AgentTexts`), `DELETE_HISTORY_QUESTION` with `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `FINISH_HAND_OVER_SPOKEN` and `ANSWER_CONTINUE_FIRST` (from `ListeningTexts`, whose "Continue the task?" becomes `CONTINUE_GOAL`).
-- The wiring of design 5.6 becomes: `val conversationStore = ArchivedConversationStore(RoomRecordArchive(…), scope) { note -> /* the activity log, by the note's kind */ }`; `val search = HistorySearch(conversationStore, { currentSettings.keptDays }, clock)`; `val goalRunner = GoalRunner(goalEnvironment, screenTurns, search, clock, reportFailure)`; `val conversations = ConversationEngine(scope, conversationStore, goalRunner, LocalRequests(memory, conversationStore, search, { logs.deleteHistory() }, goalRunner::saveRoutine, clock, reportFailure), mapOf(VOICE to voiceChannel, TEXT to textChannel), permissionRequests::granted, settings.observe(SettingKeys.CONVERSATIONS), settings.observe(SettingKeys.SAFETY).map { it.testMode }, orchestratorMode.map { it != Mode.OFF }.distinctUntilChanged(), clock, reportFailure, onStep = commandTags::onStep)`, where `orchestratorMode` is the Orchestrator's listening mode as a flow. Until plan 7F, the map holds the voice channel and the debug hook's text channel only.
+- The wiring of design 5.6 becomes: `val conversationStore = ArchivedConversationStore(RoomRecordArchive(…), scope) { note -> /* the activity log, by the note's kind */ }`; `val search = HistorySearch(conversationStore, { currentSettings.keptDays }, clock)`; `val goalRunner = GoalRunner(goalEnvironment, screenTurns, search, clock, reportFailure)`; `val conversations = ConversationEngine(scope, conversationStore, goalRunner, LocalRequests(memory, conversationStore, search, goalRunner::saveRoutine, clock, reportFailure), mapOf(VOICE to voiceChannel, TEXT to textChannel), permissionRequests::granted, settings.observe(SettingKeys.CONVERSATIONS), settings.observe(SettingKeys.SAFETY).map { it.testMode }, orchestratorMode.map { it != Mode.OFF }.distinctUntilChanged(), clock, reportFailure, onStep = commandTags::onStep)`, where `orchestratorMode` is the Orchestrator's listening mode as a flow. Until plan 7F, the map holds the voice channel and the debug hook's text channel only.
 - The conversation screen's "Stop and start new" (plan 7F) sends `Stop`, then `NewConversation` once `view.goal` is null.
 - Plan 7F's `TextChannel`: `askPermission` is called only in a typed conversation, where it shows Android's dialog itself; the card of a spoken conversation's permission request comes through `handOver` with `HandOverKind.PERMISSION`, a card with Continue and Cancel that never opens the dialog again.
 - "Turn off", "stop listening" and the spotter's "stop" while a goal runs follow "Decisions for the controller", item 10, which the owner settled: "turn off" and "stop listening" (by voice, the toggle or the listening notification) change only the listening mode and give no input, so a running goal goes on; in the paused mode the goal keeps its speech and voice answers, and only "turn off" makes the `voiceOn` flow false (turning Kestrel on makes it true), after which the goal's questions, hand-overs and permission requests reach the owner as cards too and its questions get D21's waits; the spotter's "stop" while Kestrel speaks ends the speech and gives a `Stop` input, which ends the goal. `RulesTest`'s five cases are rewritten as Task 7's table says.
@@ -15670,5 +15673,5 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - **Safety.** No record holds a value or a placeholder (`RecordText`, tested in Tasks 2 and 3); the owner's words are only the records' requests, answers, steering and "continue" lines; test mode is fixed per conversation and overrides the round's settings (`GoalRunnerTest`), and a change of test mode closes the conversation after its goal (`ConversationMachineTest`); confirmations never carry, because every round is a new run of plan 7A; every new type prints no words (`ToStringTest`, `GoalRulesTest`).
 - **The owner's hard rule.** Each concern is its own unit: the pure machine and the engine that performs its effects; the quiet clock's rules in one place; the goal's phases apart from the conversation's lifecycle; the owner over the channels apart from the channels; the records' building, condensing and block apart; the bytes-level archive apart from the JSON store and the search. The design's sketch changed where a cleaner form exists ("Changes to the design"), and the ones that the owner hears are in "Decisions for the controller".
 - **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 161.
-- **Type consistency.** `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `RunLocal(command, record, request, input)`, `SwitchTo(command, id, input)` and `Close(id, keep)` are built by the machine (Task 7) and read by the engine (Task 10) with the same fields; `ConversationEvent.GoalEnded(command, report, answer, reply)` and `RoundEnd(command, report, answer, reply)` in Tasks 7, 8 and 10; `GoalListener.stepStarted(step)` in Tasks 8 and 10; `RoundPlan(record, earlier, text, resume, testMode, continuedAtWall, limits, options, self, zone)` in Tasks 8 and 10; `GoalRunner(environment, screen, history, clock, report)` in Tasks 8 and 10; `LocalRequests(memory, store, search, deleteLogs, routines, clock, report)` and `run(request, owner, dialogue)` in Tasks 9 and 10; `ConversationOwner(channels, permissions, routing, events)` in Tasks 6 and 10; `HistorySearch(store, retentionDays, clock)` in Tasks 5, 8, 9 and 10; `RecordBuilder.traced(record, entry, channel)` in Tasks 2 and 10; `ContextBlock.build(earlier, budget, zone, note)` in Tasks 3 and 8.
+- **Type consistency.** `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `RunLocal(command, record, request, input)`, `SwitchTo(command, id, input)` and `Close(id, keep)` are built by the machine (Task 7) and read by the engine (Task 10) with the same fields; `ConversationEvent.GoalEnded(command, report, answer, reply)` and `RoundEnd(command, report, answer, reply)` in Tasks 7, 8 and 10; `GoalListener.stepStarted(step)` in Tasks 8 and 10; `RoundPlan(record, earlier, text, resume, testMode, continuedAtWall, limits, options, self, zone)` in Tasks 8 and 10; `GoalRunner(environment, screen, history, clock, report)` in Tasks 8 and 10; `LocalRequests(memory, store, search, routines, clock, report)` and `run(request, owner, dialogue, stored)` in Tasks 9 and 10; `ConversationOwner(channels, permissions, routing, events)` in Tasks 6 and 10; `HistorySearch(store, retentionDays, clock)` in Tasks 5, 8, 9 and 10; `RecordBuilder.traced(record, entry, channel)` in Tasks 2 and 10; `ContextBlock.build(earlier, budget, zone, note)` in Tasks 3 and 8.
 - **The checker.** `files\plan3x-check.py` ran on this plan against `sp3` at `41d54522` with the command of "Before you start"; its result is in the controller's report.
