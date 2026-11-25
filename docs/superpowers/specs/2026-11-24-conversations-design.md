@@ -261,7 +261,7 @@ sealed interface ChannelAnswer {
 }
 ```
 
-`ConversationOwner` implements `:core:agent`'s `OwnerPort` for one goal. It takes over the parts of today's `AppOwnerPort` that are not Android: one question at a time, the waits and wakes, and the pause gate (`gate()`). It picks the channel by the conversation's latest input (section 11). Every output also goes into the open command's record, which the conversation screen draws.
+`ConversationOwner` implements `:core:agent`'s `OwnerPort` for one goal. It takes over the parts of today's `AppOwnerPort` that are not Android: one question at a time, the waits and wakes, the pause gate (`gate()`) and the wait for Kestrel's own screen (`leaveKestrel()`, with the channel's `leaveKestrel()`, section 10.2). It picks the channel by the conversation's latest input (section 11). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
 
 ### 5.4 New ports and fields in `:core:agent`
 
@@ -273,6 +273,9 @@ interface GoalPort {
     /** The owner's steering since the last call, oldest first; the loop drains it before each model call. */
     fun takeSteering(): List<Steer>
 
+    /** Step [step] of the run starts, right after the steering and before its model call; the bar shows it (10.5). Must not block. */
+    fun stepStarted(step: Int)
+
     /** The model's checked checklist; the goal stores and shows it. */
     suspend fun checklistChanged(checklist: Checklist)
 
@@ -280,15 +283,75 @@ interface GoalPort {
     suspend fun traced(entry: TraceEntry)
 }
 
-data class Steer(val text: String, val channel: SteerChannel, val atStep: Int)
+enum class SteerChannel(val wire: String) { SPOKEN("spoken"), TYPED("typed") }
 
-/** The on-device search over past conversations, behind the tool `search_conversations`. */
+/** A steering message (7.3). The loop, not the message, names the step after which it came. */
+data class Steer(val text: String, val channel: SteerChannel)
+
+/** What a run traces for the command's record (8.1). Every text is redacted once, each vault value as its kind's words. */
+sealed interface TraceEntry {
+    data class Requested(val text: String) : TraceEntry                          // the request of a run that is no resume
+    data class Said(val text: String) : TraceEntry                               // a say, a hand-over's sentence, a permission's reason
+    data class Asked(val text: String) : TraceEntry                              // a question or a confirmation
+    data class Answered(val text: String) : TraceEntry                           // the owner's words, a number, yes or no
+    data class Data(val tool: String, val step: Int, val text: String) : TraceEntry // a data tool's result, as the model saw it
+    data class AppUsed(val label: String, val packageName: String) : TraceEntry  // an app that a step acted in or opened, once per run
+    data class Did(val line: String) : TraceEntry                                // a new line of the ledger
+}
+
+/** The on-device search over past conversations, behind the tool `search_conversations` (9.4). */
 interface HistoryPort {
     suspend fun search(query: HistoryQuery): HistoryResult
+
+    companion object {
+        const val MAX_MATCHES = 5
+    }
 }
+
+data class HistoryQuery(val text: String, val from: LocalDate? = null, val to: LocalDate? = null) // both days included
+data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false) // best match first; more: more commands matched
+data class HistoryMatch(val atMillis: Long, val command: Int, val request: String, val answer: String?, val apps: List<String>, val data: List<HistoryData>)
+data class HistoryData(val tool: String, val text: String)                           // a data note, quoted as the model saw it then
+
+/** Set when a goal resumes in a new run (7.6). */
+data class ResumeNote(val after: ResumeCause, val done: List<String>, val steered: List<Steer> = emptyList())
+enum class ResumeCause(val words: String) { LIMIT, INTERRUPTION, RESTART }
 ```
 
-`AgentPorts` gets `goal: GoalPort` and `history: HistoryPort`. `TaskRequest` becomes:
+Today's `AgentRunner` passes `NoGoal` and `NoHistory`, which keep nothing and find nothing. `AgentPorts` gets `goal: GoalPort` and `history: HistoryPort`, and `:app`'s `TaskStart` carries the two ports to the environment, so that the caller chooses them and the environment builds only the device's ports.
+
+The owner port gets its own wait for Kestrel's screen (section 10.2), and a run's end says what interrupted it:
+
+```kotlin
+package dev.kestrel.agent.port
+
+interface OwnerPort {
+    // say, ask, confirm, handOver, askPermission and gate, as today
+
+    /** Waits until no window of Kestrel's but its overlays is in front, at most KESTREL_LEAVE_MILLIS; false when it stayed. */
+    suspend fun leaveKestrel(): Boolean
+
+    companion object {
+        const val KESTREL_LEAVE_MILLIS = 3_000L
+    }
+}
+
+enum class AnswerKind { YES_NO, FREE, PICK_NUMBER, SCREENSHOT, LIMIT } // LIMIT: a round's "Continue?" (7.4)
+```
+
+```kotlin
+package dev.kestrel.agent
+
+enum class Interruption { TOUCH, KESTREL_SCREEN }
+
+class TaskCancellation(val reason: EndReason, val interruption: Interruption? = null) : CancellationException(/* … */)
+
+// TaskReport gains `checklist: Checklist?` (the run's checklist at its end) and `interruption: Interruption?`.
+```
+
+`EndReason.INTERRUPTED` always has its cause, and no other end has one: `TaskCancellation` and `TaskReport` each require this. A goal's touch cancels the round's job with `TaskCancellation(EndReason.INTERRUPTED, Interruption.TOUCH)` (D13), and Kestrel's own screen that stays in front ends the run with `Interruption.KESTREL_SCREEN` (section 10.2). The callers choose their sentences by the cause, never by comparing a sentence.
+
+`TaskRequest` becomes:
 
 ```kotlin
 data class TaskRequest(
@@ -297,12 +360,18 @@ data class TaskRequest(
     val knownNames: Set<String> = emptySet(),
     val conversation: Redacted? = null,            // the records block (section 8)
     val ownerHistory: List<String> = emptyList(),  // the owner's words of the conversation's earlier inputs (D8)
-    val carried: Set<Category> = emptySet(),       // the allowance of the conversation's earlier commands (D16)
+    val carried: Set<Category> = emptySet(),       // the allowance of the conversation's earlier commands and their steering (D16)
     val checklist: Checklist? = null,              // the goal's checklist when a goal resumes
     val resume: ResumeNote? = null,                // set when a goal resumes (section 7.6)
     val limits: GoalLimits = GoalLimits(),         // one round's limits (D7)
-)
+) {
+    companion object {
+        const val CONVERSATION_HEADER = "This conversation so far:" // the first line of `conversation` (8.4)
+    }
+}
 ```
+
+A resumed goal's request brings everything that the goal's earlier rounds learned from the owner: its `ownerHistory` also holds the goal's own answers, steering and "continue" inputs after its first command, and its `carried` also holds the allowance of the goal's own steering. Its `conversation` holds only the records of the conversation's earlier commands, never the open goal's own record.
 
 ### 5.5 What moves out of today's code
 
@@ -459,7 +528,7 @@ The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`
 
 ### 6.5 Touches, questions, locks and calls
 
-- **A touch while a goal acts or asks** (D13). The touch watcher's touches reach `ConversationEngine.touched()` through `GoalRunner`. The engine cancels the round's job with `TaskCancellation(EndReason.INTERRUPTED)`, so Kestrel stops at once and removes its overlays, as spec 14.1 requires. The goal becomes `INTERRUPTED` and is held. An open question is withdrawn, and an open confirmation counts as not given. Kestrel reports, by the channel's rules (section 11): "Stopped. I opened Viber and typed the message. Say 'Kestrel, continue' or tap Continue to go on, or cancel." The conversation screen and the goal notification offer Continue and Cancel, and the bar names them (10.5). Continue resumes the goal in a new round with a fresh observation; the safety check then asks every confirmation again.
+- **A touch while a goal acts or asks** (D13). The touch watcher's touches reach `ConversationEngine.touched()` through `GoalRunner`. The engine cancels the round's job with `TaskCancellation(EndReason.INTERRUPTED, Interruption.TOUCH)`, so Kestrel stops at once and removes its overlays, as spec 14.1 requires. The goal becomes `INTERRUPTED` and is held. An open question is withdrawn, and an open confirmation counts as not given. Kestrel reports, by the channel's rules (section 11): "Stopped. I opened Viber and typed the message. Say 'Kestrel, continue' or tap Continue to go on, or cancel." The conversation screen and the goal notification offer Continue and Cancel, and the bar names them (10.5). Continue resumes the goal in a new round with a fresh observation; the safety check then asks every confirmation again.
 - **Touches that do not interrupt**: a touch on Kestrel's own card acts on the card; touches during a hand-over are expected (spec 12.4); touches during "Reply…" on the conversation screen are expected (section 10.3).
 - **A touch while a goal is held** never ends it and never answers "Continue the goal?". A card that asks it closes at the touch; the conversation screen and the notification keep the question.
 - **Instant commands** keep spec 14.1's rule: a touch cancels a command's question or countdown.
@@ -498,7 +567,7 @@ The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`
 ### 7.1 How a goal maps to today's task run
 
 - A goal starts with a command when no goal is open. `GoalRunner` builds a `TaskRequest` with the command's words, the records block (section 8), the owner's earlier words and the carried allowance (section 12.1), and the owner's limits. It runs `Agent.run` as `AgentRunner.runTask` does today: the same `TaskRun`, the same `Conversation` of model messages, the same tools, safety check and completion check.
-- One task run is one **round**. Within it, the model's messages keep their stable region and their two full observations, as today.
+- A task run holds one or more **rounds**: it starts with one, and each yes to "Continue?" gives it another (7.4). Within the run, the model's messages keep their stable region and their two full observations, as today.
 - A yes to "Continue?" does **not** start a new task run. The same `TaskRun` gets the same allowance again (`Limits.nextRound()`, D22), so the model keeps its messages and the prompt cache.
 - A goal that resumes after a pause at a limit without an answer, after an interruption or after the end of the process starts a **new** task run, whose request carries a `ResumeNote` and the checklist, and whose first observation is fresh. The old model messages are neither stored nor reused.
 - The vault (spec 12.6) lives for one task run, as today. A record holds a redacted value only as its kind's words ("a one-time code"), never as a placeholder, so no later run can type it back.
@@ -513,58 +582,60 @@ update_checklist — "Write the goal's checklist before you work on it: the step
 of each. Send every step that is still todo or doing each time; a step that is done, skipped or failed may be left out
 and stays as it is. Mark a step done only with the number of the step that did it, which cannot come before the call
 that added the step."
-  items (array, required), each an object:
+  items (array, required) "The steps: 1 to 20 in a call. New steps go at the end, in the order given."; each an object:
     id     string   "The item's id from the last checklist result, such as c3; leave it out for a new item."
-    text   string   "One step, in a few words; at most 120 characters."   (required)
-    state  string   todo, doing, done, skipped or failed                   (required)
-    step   integer  "For done: the step that did it."
+    text   string   "One step, in a few words; at most 120 characters."                       (required)
+    state  string   "The step's state: todo, doing, done, skipped or failed." (an enum of the five) (required)
+    step   integer  "For done: the number of the step that did it."
     why    string   "For skipped or failed: why; at most 120 characters."
 ```
 
 ```kotlin
-@Serializable data class Checklist(val items: List<ChecklistItem>)
+@Serializable data class Checklist(val items: List<ChecklistItem>) { val done: Int; val open: List<ChecklistItem> } // open: todo or doing
 @Serializable data class ChecklistItem(val id: String, val text: String, val state: ItemState, val step: Int? = null, val why: String? = null)
-@Serializable enum class ItemState { TODO, DOING, DONE, SKIPPED, FAILED }
+@Serializable enum class ItemState(val wire: String) { TODO("todo"), DOING("doing"), DONE("done"), SKIPPED("skipped"), FAILED("failed") }
 ```
 
 `ChecklistRules` (in `dev.kestrel.agent.goal`) checks each call by code:
-- 1 to 20 items in a call, every item that is still todo or doing among them, at most one `doing`, and the texts and reasons within their limits; a placeholder becomes its kind's words, as in `say`;
-- a `done` item needs `step`: a step of this round whose action ran and did not fail, a data step with a result (`okDataSteps`), or a step that the owner finished after a hand-over (`ownerSteps`). That step may not come before the step at which the item came into the checklist (for a new item, the step of the call itself), so no work from before an item was added can mark it done. The run keeps the step at which it added each item in its own state, not in the stored checklist, because step numbers start again in each round; an item of the checklist that the round started with came in before the round's first step. An item that is done already, also one that was done in the checklist that the round started with, may stay done without a step;
-- an item named by `id` keeps its id, and its text may not change once it is done; a new item gets the next id and goes at the end;
+- 1 to 20 items in a call, every item that is still todo or doing among them, at most one `doing`, and the texts and reasons within their limits; a placeholder becomes its kind's words, as in `say`. A call with more than 20 items is refused with "A call holds 1 to 20 items; leave out items that are done, skipped or failed.";
+- a `done` item needs `step`: a step of this task run that acted on the screen and did not fail (one of `Tools.ACTING`: the tools with a category, `back`, `home`, `open_app`, `open_url`, `open_deep_link` and `open_settings`), a data step with a result (`okDataSteps`), or a step that the owner finished after a hand-over (`ownerSteps`). A `say`, an `ask_user`, a `wait` or a `look_closer` never marks an item done. That step may not come before the step at which the item came into the checklist (for a new item, the step of the call itself), so no work from before an item was added can mark it done. The run keeps the step at which it added each item in its own state (`ChecklistState.added`), not in the stored checklist, because step numbers start again in each task run; an item of the checklist that the run started with came in before the run's first step. An item that is done already, also one that was done in the checklist that the run started with, may stay done without a step and keeps its step;
+- an item named by `id` keeps its id and its place, and its text may not change once it is done; a new item gets the next id (`c` and a number, with no upper limit) and goes at the end;
 - an item that the call leaves out keeps its stored state, which must be `done`, `skipped` or `failed`, so the 20-item bound applies only to the items that a call sends, and a long goal's checklist has no limit on its length;
 - a `skipped` or `failed` item needs `why`.
 
-A valid call returns "Result: checklist saved, 3 of 7 done (c1 … c7)." and calls `GoalPort.checklistChanged`. An invalid call returns its reason and counts as an invalid tool call (spec 11.7). The system prompt tells the model to keep a checklist for a goal of more than two steps; a short task may finish without one.
+A valid call returns "Result: checklist saved, 3 of 7 done (c3, c4, c7)." and calls `GoalPort.checklistChanged`; the ids in brackets are those of the items that the call sent, in the call's order, so that the model learns the ids of the items that it just added and the line stays short in a long goal. An invalid call returns its reason, a fixed sentence of Kestrel's with ids and step numbers, never the model's text, and counts as an invalid tool call (spec 11.7). The system prompt tells the model to keep a checklist for a goal of more than two steps; a short task may finish without one.
 
-`update_checklist` neither makes progress nor counts as a step without progress, so it can neither hide being stuck nor cause it. It counts as a model reply for the limits. Two checklist updates in a row, with no other tool between them, count as an invalid tool call.
+`update_checklist` neither makes progress nor counts as a step without progress, so it can neither hide being stuck nor cause it. It counts as a model reply for the limits. An update that comes right after a saved one, with no other tool between them, counts as an invalid tool call ("it came right after the last update; act on the screen or with another tool before you update the checklist again"). A refused update does not count as saved, so the model may correct it at once.
 
-The completion check (spec 11.8) gains one rule: `finish` fails while an item is `todo` or `doing` ("finish failed: the checklist has open items c4 and c5; mark them done, skipped or failed").
+`finish` gains one rule, which it checks before anything else, also before its pause gate and its fresh snapshot, so that a pause cannot end a goal with open items as unverified: it fails while an item is `todo` or `doing` ("finish failed: the checklist has open items c4 and c5; mark them done, skipped or failed", or "an open item c4; mark it …" for one). The completion check (spec 11.8) itself does not change.
 
 ### 7.3 Steering
 
 - A command that comes while the goal acts goes into the goal's `SteeringInbox`: by voice only with "Kestrel" (D9), typed always. The bar shows "Got it." and the record shows the message.
-- `TaskRun.turn()` drains `GoalPort.takeSteering()` at the start of each turn, after the pause gate and the limit check and before the model call. A step that has started runs to its end; the correction counts from the next step. Each message becomes a new kind of entry in `Conversation`, an owner message, which is a user message after the last step:
+- `TaskRun.turn()` drains `GoalPort.takeSteering()` at the start of each turn, after the pause gate and the limit check and before the model call; then it calls `GoalPort.stepStarted` with the number of the step that starts. A step that has started runs to its end; the correction counts from the next step. Each message becomes a new kind of entry in `Conversation`, an owner message, which is a user message after the last step:
 
   `The owner added (typed) at step 14: "Also send it to Mila, not only Ana."`
 
-  It joins the stable region at once and never shrinks, so it only appends to what the caches hold.
-- The words count as the owner's (`TaskSafety.withOwnerWords`), and their verbs join the allowance (`TaskAllowance.from` on the message, joined with the current categories), because steering is a command of the owner's.
+  Before the first step it says "before the first step" instead of "at step 14". The words are redacted once, quoted and escaped, and never cut, because a cut instruction can mean something else. When the message widened the allowance, the allowance's sentence follows on a line of its own.
+- An owner message never changes and is never left out, also not by a local Ollama model's budget, so it only appends to what the caches hold. It sits in the tail until two more observations have come after it, and then in the stable region.
+- The words count as the owner's, and their verbs join the allowance (`OwnerWords.steered`: `TaskSafety.withOwnerWords` with the message, and `TaskAllowance.from` on it joined with the current categories), because steering is a command of the owner's.
+- The run drains steering only at the start of a turn, so a message that comes during the run's last step stays in the goal's `SteeringInbox` when the run ends. `GoalRunner` never drops it without a word: when the goal is held, the next run drains it before its first step; when the goal ended for good, nothing of it runs, and the goal's final reply names it as received too late, so that the owner can say it again.
 - The system prompt says that an owner message may change the plan and that the model should then update the checklist.
 - While the goal asks a question, typed text and speech within the answer wait answer the question; they are not steering.
 
 ### 7.4 Limits and "Continue?"
 
-`Limits` (today `MAX_REPLIES = 30`, `MAX_WORK_MILLIS` of 5 minutes and a question each `CREDIT_STEP = 10` credits) takes its values from `GoalLimits`, which the owner sets (section 13):
+`Limits(clock, countsCredits, round)` takes one round's values from `GoalLimits`, which the owner sets (section 13). Before sub-project 7 they were constants: `MAX_REPLIES = 30`, `MAX_WORK_MILLIS` of 5 minutes and a question each `CREDIT_STEP = 10` credits.
 
 ```kotlin
 @Serializable data class GoalLimits(val replies: Int = 500, val workMinutes: Int = 60, val credits: Int = 1000)
 ```
 
 - The working time counts as today: waits for the owner and pauses do not count. Each LLM call can still take at most 30 s.
-- At the first limit that a round reaches, `TaskRun.checkLimits()` asks one question of the kind `LIMIT`, built by code from the checklist and the ledger, never by the model: "I've worked for 60 minutes on this. Done: 4 of 7 steps. Left: reply to Mila, archive the thread. Continue?" (or "I've used 500 model replies …", or "This has used 1,000 AI Credits …", with the real total).
+- At the first limit that a round reaches, `TaskRun.checkLimits()` asks one question of the kind `LIMIT`, built by code from the checklist and the ledger, never by the model: "I've worked for 60 minutes on this. Done: 4 of 7 steps. Left: reply to Mila, archive the thread. Continue?" (or "I've used 500 model replies …", or "This has used 1,000 AI Credits …", with the real total). Because the owner hears it, it names at most 3 open items ("Left: a, b, c and 2 more."). Without a checklist it names the newest 3 of Kestrel's ledger lines ("Most recently, I …"), and without a ledger line too it says "I haven't changed anything yet.".
 - **Yes** gives the same again (D22): from the current totals, another 500 replies, 60 minutes and 1000 AI Credits, or the owner's own values.
-- **No** ends the goal as `EndReason.STOPPED_AT_LIMIT`; the report says what is done and what is left, from the checklist.
-- **No answer** (by voice the answer wait, typed the card's 2 minutes) ends the round as `EndReason.PAUSED_AT_LIMIT`. The goal stays open as `PAUSED_AT_LIMIT` and is held (D17). "Continue", the Continue buttons or any command resume it.
+- **No** ends the goal as `EndReason.STOPPED_AT_LIMIT`; the report says what is done and what is left, from the checklist. Every answer that is neither yes nor silence counts as no.
+- **No answer** (by voice the answer wait, typed the card's 2 minutes) ends the round as `EndReason.PAUSED_AT_LIMIT`. The goal stays open as `PAUSED_AT_LIMIT` and is held (D17). "Continue", the Continue buttons or any command resume it. A question that is interrupted three times in a row counts as no answer too.
 - The question after each 10 credits goes. A profile whose spending counts no credits has no credit limit, as today.
 - `EndReason` gains `STOPPED_AT_LIMIT`, `PAUSED_AT_LIMIT` and `INTERRUPTED`, and loses `STEPS`, `TIME` and `COST`, because a limit now always asks. `AgentTexts` gets their sentences.
 
@@ -582,12 +653,15 @@ The owner's goal: "<the goal's first command>"
 You are continuing this goal after <a pause at a limit | an interruption | a restart of Kestrel>.
 Its checklist: c1 [done] "Open Viber" · c4 [doing] "Reply to Mila" · c5 [todo] "…"
 What Kestrel did so far, in its own notes: "opened Viber" · "sent the message to Ana"
+The owner added (typed) in an earlier round: "Also send it to Mila, not only Ana."
 Look at the screen afresh; it may have changed.
 ```
 
-The checklist's texts and Kestrel's notes are data: each is quoted and escaped the way screen text is, and a note is never cut. A note holds labels from the screen and contacts' names, so a line break in a chat's name cannot start a line that reads as Kestrel's or the owner's; a note's own quotes, such as those around a screen's title, are escaped too. Without notes the line is "What Kestrel did so far: nothing yet.".
+The goal's first command and the owner's earlier steering are his own words, in their record's form: they were redacted once, when they first entered a run of the goal, so they are never redacted again. They are quoted and escaped the way screen text is, and never cut, so that a line break in a typed command cannot start a line of its own. The system prompt counts them as his because their lines start with `The owner's goal:` and `The owner added` (section 8.5).
 
-A steering command that resumed the goal follows as an owner message. The first observation is fresh. Kestrel's code repeats no earlier step; the checklist and the ledger tell the model what is done. A share that was confirmed but not seen sent is listed as "tried, not seen sent", as `pendingLines()` says today. Every confirmation is asked again (D8).
+The checklist's texts and Kestrel's notes are data: each is quoted and escaped the way screen text is, and a note is never cut. A note holds labels from the screen and contacts' names, so a line break in a chat's name cannot start a line that reads as Kestrel's or the owner's; a note's own quotes, such as those around a screen's title, are escaped too. Without notes the line is "What Kestrel did so far: nothing yet.". A checklist of more than 20 items names only its open items, after the line of counts that the records block uses (8.3): "Its checklist: 21 done, 0 skipped, 0 failed; open: c22 [doing] "…"".
+
+Each steering message that the goal's earlier rounds took (`ResumeNote.steered`, oldest first) gets a line of its own, `The owner added (<spoken | typed>) in an earlier round: "<words>"`: quoted and escaped, never cut, and with no allowance sentence, because their allowance reaches the run through `TaskRequest.carried`. A steering command that resumed the goal, and any other steering that still waits in the goal's inbox, follows as an owner message before the first step (7.3). The first observation is fresh. A resumed run traces no new request and replays no routine. Kestrel's code repeats no earlier step; the checklist and the ledger tell the model what is done. A share that was confirmed but not seen sent is listed as "tried, not seen sent", as `pendingLines()` says today. Every confirmation is asked again (D8).
 
 ### 7.7 Goals and records
 
@@ -610,7 +684,7 @@ data class CommandRecord(
     val answer: String?,              // the final sentence (AgentTexts), in spoken form
     val end: EndReason?,              // null while the goal works
     val data: List<DataNote>,         // the data tools' results, as the model saw them
-    val apps: List<AppUse>,           // each app that an executed step acted in
+    val apps: List<AppUse>,           // each app that an executed step acted in or opened
     val ledger: List<String>,         // Kestrel's own lines of what was done
     val checklist: Checklist?,
     val allowance: Set<String>,       // what the request and its steering asked for (D16), as the categories' wire names
@@ -623,7 +697,7 @@ data class CommandRecord(
 @Serializable data class AppUse(val label: String, val packageName: String)
 ```
 
-- `TaskRun` fills it through `GoalPort.traced`: the request at the start; each `say`, question and answer when it happens; each data tool's result text (`DataResultText.of`, already redacted and quoted); each app that an executed step acted in (`TaskMemory.acted` sees the package); the ledger lines; the checklist; and the report at the end. A memory request fills a record with its question, the answer and the final sentence.
+- `TaskRun` fills it through `GoalPort` (section 5.4). `traced` gets a `TraceEntry` for: the request at the start of a run that is no resume (`Requested`); each `say`, question and answer when it happens (`Said`, `Asked`, `Answered`), which the run's own owner port, `TracingOwner`, traces, also for the questions of `look_closer`, the data tools and the limits; each data tool's and `search_conversations`' result text as the model saw it (`Data`: `DataResultText.of`, already redacted and quoted); each app that an executed step acted in or opened, once per run (`AppUsed`); and each new ledger line (`Did`). `checklistChanged` gets each checklist that `ChecklistRules` accepted. The report reaches the goal through `Agent.run`'s callback at the end, and the steering lines are the conversation's own, because it receives them, so neither is traced. A failure of `traced` or `checklistChanged` is logged by its class and never ends the run. A memory request fills a record with its question, the answer and the final sentence.
 - No observation, screenshot, OCR line or tool argument goes into a record (D3).
 - No record holds a vault value: `Vault.spoken` turns every placeholder into its kind's words before a line is stored.
 - A record keeps at most 200 lines and 20 data notes, each of at most 2,000 characters; past that, the oldest go with a note. These limits only protect the store; section 8.3 decides what reaches a model.
@@ -631,7 +705,7 @@ data class CommandRecord(
 ### 8.2 Redaction
 
 - Every text of a record was redacted exactly once, when it entered the earlier command's run (spec 11.2 and 12.6). `ContextBlock` therefore builds the records block as Kestrel's own text (`Redacted.kestrel`) from these parts, and redacts nothing twice.
-- Data notes keep their quotes and escapes as the earlier model saw them, so they stay marked as data. The owner's words are shown as "The owner said: …", which the system prompt treats as the owner's (spec 11.3).
+- Data notes keep their quotes and escapes as the earlier model saw them, so they stay marked as data. The owner's words are shown as `The owner said: "…"` (and his steering as `The owner added (…): "…"`), quoted and escaped, which the system prompt treats as the owner's (section 8.5).
 - Kestrel's lines (the ledger, the final sentence, the checklist's texts) are labelled as Kestrel's. The checklist's texts came from the model, so they never count as the owner's words (section 12.1).
 
 ### 8.3 The size bound and condensing
@@ -651,21 +725,24 @@ data class CommandRecord(
 Spec 10.3 and `Conversation.request` keep one fixed prefix: the tools and the system prompt never change, the per-task text goes into `ChatRequest.context`, and `cacheAfter` names the last message of the stable region. The records go into `context`, so nothing before it changes:
 
 ```text
-system  : SystemPrompt.TEXT (fixed; gains the sentences about checklists, steering, records and search)
-context : [test-mode note]              fixed for the conversation; for a continued one it also says so (12.4)
-          [This conversation so far:]   the records block, oldest first
+system  : SystemPrompt.TEXT (fixed; gains the sentences about typed commands, checklists, steering, records and search)
+context : [test-mode note]              when test mode is on; fixed for the conversation (12.4)
+          [This conversation so far:]   the records block, oldest first; for a continued conversation, the note of 9.6 follows this header
           [memory for this command]     the facts and route notes that the command names (TaskMemory.context)
 messages: the task message, the first observation and the steps, as today, with owner messages appended (7.3)
 ```
 
+- The records block is `TaskRequest.conversation`, which `ContextBlock` writes. Its first line is the agent's constant `TaskRequest.CONVERSATION_HEADER`, which the system prompt names. A continued conversation's note goes into this block too, so `:core:agent` never learns that a conversation was continued. The parts of the context are separated by an empty line.
 - The context's order changes from today's "memory, test-mode note" to "test-mode note, records, memory", so that the part that every command of a conversation shares comes first, and OpenAI's and Copilot's automatic prefix caches can reuse it from one command to the next. The explicit marks of spec 10.3 (the last tool, the system prompt, the context and `cacheAfter`) stay where they are.
 - Within a command, the context never changes, so every step after the first reads it from the cache, as today.
-- The first command of a new conversation has no records block. Its request is today's request except for the order of the test-mode note and the memory, and the two new tools.
+- The first command of a new conversation has no records block. Its request is today's request except for the order of the test-mode note and the memory, the two new tools, the system prompt's new sentences and the owner's words in quotes (8.5).
 - The records do not go into the messages, because `Conversation` treats the task message as the start of its stable region, and because the model could take an earlier request in the messages for the current one.
 
 ### 8.5 The task message
 
-The task message keeps its form (the owner's words, the date, the allowance's sentence, a failed routine's note). In a later command of a conversation it starts "The owner's new command: …". Steering and resume add the lines of sections 7.3 and 7.6.
+The task message keeps its parts (the owner's words, the date, the allowance's sentence, a failed routine's note). Since plan 7A the owner's words are on a line of their own, quoted and escaped the way screen text is, and never cut: `The owner's task: "<words>"`, or in a later command of a conversation `The owner's new command: "<words>"`. So a line break in a typed command cannot start a line that reads as Kestrel's or as another of the owner's lines. Steering and resume add the lines of sections 7.3 and 7.6.
+
+Every line that carries the owner's own words starts with one of five markers, which `OwnerLines` in `:core:agent` builds and the system prompt names: `The owner's task:`, `The owner's new command:`, `The owner's goal:`, `The owner said:` (his answers, and his earlier commands in the records block) and `The owner added` (his steering). The system prompt counts as his words only the quoted words of a line that starts, after its indent, with one of them; everything else in quotes is data, also when it holds one of these openings itself.
 
 ## 9. Storage, retention, search and past conversations
 
@@ -736,15 +813,17 @@ The tool goes at the end of `Tools.ALL`, after `update_checklist`.
 
 ```text
 search_conversations — "Search the owner's earlier conversations with Kestrel on this phone. Returns at most 5 earlier
-commands that match, newest first. Use it when the owner refers to something from before that this conversation does
-not hold."
-  query  string  "Words to look for: a name, an app, a topic."   (required)
+commands that match, the best match first; of two that match alike, the newer comes first. Use it when the owner refers
+to something from before that this conversation does not hold."
+  query  string  "Words to look for: a name, an app, a topic; at most 200 characters."   (required)
   from   string  "The first day to search: YYYY-MM-DD."
   to     string  "The last day to search: YYYY-MM-DD."
 ```
 
+- Kestrel's code checks the arguments: the days must be `YYYY-MM-DD`, and `to` may not be before `from`. A call that breaks this gets its reason and counts as an invalid tool call (spec 11.7).
 - `HistorySearch` implements the agent's `HistoryPort`. It searches the records of closed conversations within retention, and the records of the open conversation that its records block left out. It never searches observations or screenshots, which records do not hold.
 - Matching happens on the phone. The query and each record's text are folded with `Normalizer.words`, so case, diacritics and the two Serbian scripts fold as the matcher folds them. A record scores by how many of the query's words it holds, with `LabelMatcher`'s near misses for names, and must hold at least half of them. Ties go to the newer record.
+- `HistoryPort` returns at most `HistoryPort.MAX_MATCHES` (5) matches, best match first, in the order of the rule above, and `HistoryResult.more` says that more commands matched. The result numbers the matches in that order, so "Match 1" is the best match, not always the newest.
 - The search decrypts each row once per process and keeps an in-memory index of folded words per record, which `save`, `reopen`, `delete`, `deleteAll` and `purge` update. The index holds the owner's words in memory only, like the vault, and "delete history" drops it.
 - The result is data (section 12.1), quoted and redacted as stored, at most 1,500 tokens in all:
 
@@ -757,8 +836,10 @@ Match 1 · Thursday, 20 November 2026, 18:04 · command 2 of that conversation
 No other match.
 ```
 
+- The last line is "No other match.", or "More earlier commands match; search with other words or a date range." when `more` is set. A search without a match gives "No match.". When a data note would pass the budget, its line says that it is left out; a note whose short line would pass it too, and a match that would pass it, are left out whole, and the last line counts them ("2 more matches and 1 data note are left out, because the result would be too long; search with other words or a date range."), so that nothing leaves the result without a word.
+- When the archive cannot be read, the step fails, and its result says "Kestrel could not read its past conversations". The failure is logged by its class and never ends the task.
 - Only the matching records go to the model, only in the task run that called the tool, and only as the tool's result (D6). The result also becomes a data note of the command that asked.
-- The search counts as a data tool for progress (spec 11.7): a result that differs from the tool's earlier results in the run is progress.
+- The search counts as a data tool for progress (spec 11.7): a result that differs from the tool's earlier results in the run is progress, and a result with matches is a data step that `finish` may cite and that may mark a checklist item done.
 
 ### 9.5 Browsing past conversations
 
@@ -771,7 +852,7 @@ No other match.
 - **From the list.** "Continue this conversation" sends `ContinueConversation(id)`.
 - **By voice or typed.** "Continue the conversation about X" (also "continue our conversation about X", "go back to the conversation about X"), with or without "Kestrel" when typed or inside the follow-up window, is a local request that `Requests` reads as `ContinuePast(topic)`. `LocalRequests` searches the closed conversations within retention with `HistorySearch`, by the topic's words, and takes the best match. It then asks, with the question kind `SWITCH`: "Continue the conversation from Thursday, 20 November, about 'Find the restaurant Mila sent me'?" (the day, and the conversation's first request cut at 60 characters). Yes switches; no or no answer changes nothing. Without a match it says "I didn't find a conversation about that." "Continue the conversation" without a topic means the newest closed conversation, with the same question. "Kestrel, continue" alone keeps its meaning for goals (section 6.4).
 - **While a goal is open** in the current conversation, both ways answer "Stop the goal first." and change nothing.
-- **The switch.** `ConversationStore.reopen` closes the open conversation, which joins the list, and opens the chosen one in one transaction (D23: one at a time). The chosen conversation keeps its id and its records; its records block is built from them (section 8.3), and condensed records stay condensed. It takes the **current** test-mode value; the stored one is not reused. Its context note then says: "This conversation was continued on <date>; test mode is <on | off> now." The conversation screen shows its transcript with a line "Continued on <date>".
+- **The switch.** `ConversationStore.reopen` closes the open conversation, which joins the list, and opens the chosen one in one transaction (D23: one at a time). The chosen conversation keeps its id and its records; its records block is built from them (section 8.3), and condensed records stay condensed. It takes the **current** test-mode value; the stored one is not reused. Its records block then holds, right after its header, the note "This conversation was continued on <date>; test mode is <on | off> now." (8.4). The conversation screen shows its transcript with a line "Continued on <date>".
 - **After the switch** Kestrel says, by the channel's rules (section 11), "We're back in the conversation from Thursday, 20 November." This is the request's final reply: a spoken one opens the follow-up window (6.6), and its end starts the quiet clock from zero (6.2). The request to continue gets no record in either conversation.
 - A conversation whose retention has run out is gone and cannot be continued.
 
@@ -799,7 +880,8 @@ No other match.
 
 - Kestrel's own app is never an action target: it is always agent-free (`AgentFreeApps.KESTREL`), `open_app` and the link check refuse it, and the observation builder leaves its windows out.
 - When the owner sends a typed command, or answers a question on the conversation screen, the activity calls `moveTaskToBack(true)`, so the app that he was in comes back, or the home screen when he came from the launcher. `TextChannel.leaveKestrel()` then waits, up to 3 s, until Android's window list holds no window of Kestrel's except its overlays. Only then does a goal take its first observation, or its fresh one after an answer.
-- `TaskRun.checkFront` changes for Kestrel's own app only. Instead of ending the task, it waits at the owner port's gate, where `ConversationOwner.gate()` calls `leaveKestrel()`. When Kestrel's screen has not left after 3 s, the goal becomes `INTERRUPTED` ("Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'."). The other agent-free apps still end the task, as today.
+- `TaskRun` waits for Kestrel's own screen through one function, `pastKestrel`, before every look at the screen: in `checkFront`, before each observation, and before `finish`'s fresh snapshot. When Kestrel's own app is in front, it calls `OwnerPort.leaveKestrel()`, which `ConversationOwner` implements with the channel's `leaveKestrel()` and which waits at most `OwnerPort.KESTREL_LEAVE_MILLIS` (3 s); this wait does not count as work. Then it reads the screen again, because the screen may come back, and it waits at most three times. When Kestrel's screen stays through a wait, or is still in front after the third, the run ends as `INTERRUPTED` with `Interruption.KESTREL_SCREEN`, which gives the route notes no strike, and the goal becomes held ("Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'."). The other agent-free apps still end the task as `AGENT_FREE`, as today.
+- Until plan 7D, today's `AppOwnerPort` waits the same 3 s for Kestrel's settings to leave the front. Nothing moves them, so a task that starts on Kestrel's own screen ends as `INTERRUPTED` after 3 s instead of as `AGENT_FREE`, and `AgentTexts` says "I stopped because Kestrel's own screen stayed in front.".
 
 ### 10.3 Question cards and "Reply…"
 
@@ -912,7 +994,7 @@ The rules of section 10.2 hold: a goal waits until Kestrel's screen has left, ne
 ### 12.4 Test mode for the whole conversation
 
 - The conversation reads `SafetySettings.testMode` when it opens and keeps it in `ConversationState.testMode`. Every run of the conversation gets that value in `AgentSettings.safety`, whatever the setting says later.
-- A continued conversation takes the current value when it is continued (D23), and its context note says so (section 9.6).
+- A continued conversation takes the current value when it is continued (D23), and the note in its records block says so (section 9.6).
 - A change of test mode on the Safety page closes the open conversation, after ending an open goal with its report, so that the next command runs under the new value. The agent cannot change the setting, because Kestrel's own app is agent-free.
 - The test-mode note stays in the context, first (section 8.4).
 
@@ -959,7 +1041,7 @@ The list of past conversations lives on the conversation screen (section 9.5), n
 ### 14.1 Today's task becomes a one-command conversation
 
 - Every "Kestrel, …" task becomes the first command of a conversation. When no second command comes within the quiet time, the conversation ends, and the task was the same as today: the same request, observation, safety decisions, report sentence and voice flow.
-- The first request differs from today's only in the context's order (test-mode note before memory, section 8.4) and in the two new tools at the end of the tool list. Both change every prompt cache once, as any new tool does (spec 11.4).
+- The first request differs from today's only in the context's order (test-mode note before memory, section 8.4), in the two new tools at the end of the tool list, in the system prompt's new sentences and in the owner's words, which the task message now quotes (section 8.5). These change every prompt cache once, as any new tool does (spec 11.4).
 - What changes on purpose: the limits (30 replies and 5 minutes become 500 replies, 60 minutes and 1,000 credits with "Continue?"), the end of the question after each 10 credits, the follow-up window, a touch that interrupts instead of cancelling (D13), the carried allowance (D16), the new local requests, the conversation screen as the launcher, and "Continue the goal?" after a restart (spec 14.4 said that a task never resumes).
 
 ### 14.2 The order of the move
@@ -993,7 +1075,7 @@ The list of past conversations lives on the conversation screen (section 9.5), n
 | `:tools:eval` `Task.request` | One request after "Kestrel, " | A list of turns, each spoken or typed, with an optional hook call, wait or check between turns. A one-turn task is today's task, so the 29 tasks keep their form |
 | `:tools:eval` `Answers` | Answers by `agent-state`'s `asking` | Gains `limit` (yes, or silence as the task says), `continue-goal` and `switch`; other answers as today |
 
-`scripts\hook.ps1` gains the new hooks, and `scripts\test-scripts.ps1` covers them. The `end=` value of `agent-task` loses `steps`, `time` and `cost` and gains `stopped-at-limit`, `paused-at-limit` and `interrupted`; `:tools:eval`'s reader of the run line learns the new values in plan 7A, where they first appear.
+`scripts\hook.ps1` gains the new hooks, and `scripts\test-scripts.ps1` covers them. The `end=` value of `agent-task` names every end by its `EndReason` name, as it always has (`end=FINISHED`, `end=TEST_MODE`), so the hook needs no change: from plan 7A on it no longer gives `STEPS`, `TIME` and `COST`, and gives `STOPPED_AT_LIMIT`, `PAUSED_AT_LIMIT` and `INTERRUPTED`. `:tools:eval`'s reader of the run line learns the new values in plan 7A, where they first appear: it reads the two limit ends as the run's reason `limit`, and fails an `INTERRUPTED` run with the reason `end`, as it does a `CANCELLED` one.
 
 ## 15. Testing
 
@@ -1005,12 +1087,12 @@ The list of past conversations lives on the conversation screen (section 9.5), n
 - `RulesTest` (voice): the window opens only after a spoken final reply; everything in it goes to the conversation, an instant command's words too; its end on each event; no window after a mid-goal `say`; steering needs the name; "continue the conversation about X" read as `ContinuePast`.
 - `RequestsTest`: the typed reading of Kestrel's own requests without the name; `ContinuePast` with and without a topic; "Kestrel, continue" alone stays `Continue`.
 - `ChecklistRulesTest`: every rule of 7.2.
-- `TaskRun` with `ScriptedModel`: steering drained at the next turn, never inside a step; steering words as the owner's words and in the allowance; the limit question's text and its three answers; `nextRound()` giving the same again; `finish` refused with open items; `update_checklist` neutral for progress; two updates in a row invalid; an interruption's report; Kestrel's own screen waited for at the gate.
+- `TaskRun` with `ScriptedModel`: steering drained at the next turn, never inside a step; steering words as the owner's words and in the allowance; the limit question's text and its three answers; `nextRound()` giving the same again; `finish` refused with open items; `update_checklist` neutral for progress; an update right after a saved one invalid; an interruption's report with its cause; Kestrel's own screen waited for through `OwnerPort.leaveKestrel`, also before `finish`'s check.
 - `ContextBlockTest`: the caps, the open items and the line of counts of the newest record's checklist, the fill order, which never passes the budget, also with the largest records and in Cyrillic, condensing once and staying condensed after a continue, the left-out lines, the Ollama budget, no placeholder in any record, the context's order, the continued conversation's note, and a first command's request equal to today's except for the documented changes.
 - `ArchivedConversationStoreTest` with a fake archive: the round trip, a tag failure, retention with a future date, `reopen` as one transaction, delete and delete all.
 - `HistorySearchTest`: folding of both scripts, near-miss names, the half-of-words rule, ranking, the date range, the caps, and the index after deletes and a `reopen`.
 - `LocalRequestsTest`: "continue the conversation about X" with a match, without a match and without a topic; the question's text; yes, no and silence.
-- `ConversationOwnerTest`: the channel by the latest input, speech of typed replies with the setting, every output in the record, the `RESUMED` gate after a "Reply…" answer, the typed waits of D21.
+- `ConversationOwnerTest`: the channel by the latest input, speech of typed replies with the setting, the conversation's own outputs in the record and none of the run's dialogue a second time, the `RESUMED` gate after a "Reply…" answer, the typed waits of D21.
 - Safety: `TaskSafety` seeded by `ownerHistory`; the allowance joined with `carried`, with Standard mode still confirming a carried send and still handing over a carried call; a search match typed asks in Standard mode; a new run starts without confirmations; test mode fixed for the conversation and taken anew by a continued one.
 
 ### 15.2 Device tests (kestrel-api37, through the scripts)
@@ -1047,7 +1129,7 @@ Each plan ends green on its own: its tests pass, the existing suites pass, and n
 | Plan | Contents | How it is tested | Rough size |
 |---|---|---|---|
 | **7.0 Spec** | The main spec's sections of Appendix A rewritten from this design | The owner's review | Documentation |
-| **7A Agent groundwork** (`:core:agent`) | `GoalPort`, `Steer` and owner-message entries in `Conversation`; `Checklist`, `ChecklistRules`, `update_checklist` and the finish rule; `GoalLimits`, `Limits.nextRound()`, the limit question and the new `EndReason`s; `HistoryPort` and `search_conversations` with its result format; `TaskRequest`'s new fields, `carried` joined into the allowance; the context's order; `checkFront`'s wait for Kestrel's screen at the gate; the interruption's end; the system prompt's new sentences; the new `end=` values in the hook's answer and in `:tools:eval`'s reader. `AgentRunner` passes no-op ports and today's limits | JVM tests; the JVM suite and the eval dry suite unchanged | About 2,000 lines with tests |
+| **7A Agent groundwork** (`:core:agent`) | `GoalPort`, `Steer` and owner-message entries in `Conversation`; `Checklist`, `ChecklistRules`, `update_checklist` and the finish rule; `GoalLimits`, `Limits.nextRound()`, the limit question and the new `EndReason`s; `HistoryPort` and `search_conversations` with its result format; `TaskRequest`'s new fields, `carried` joined into the allowance; the context's order; the wait for Kestrel's own screen through `OwnerPort.leaveKestrel`, before every look at the screen; the interruption's end with its cause; the system prompt's new sentences; the new `end=` values in the hook's answer (by their `EndReason` names, so the hook needs no change) and in `:tools:eval`'s reader. `AgentRunner` passes no-op ports and today's limits | JVM tests; the JVM suite and the eval dry suite unchanged | About 2,000 lines with tests |
 | **7B Conversation core** (`:core:conversation`) | The module; `model`, `ConversationMachine`, `QuietClock`, `ConversationEngine`, `GoalRunner`, `RunningGoal`, `SteeringInbox`, `RecordBuilder`, `ContextBlock`, `RecordCondenser`, `ConversationOwner`, `LocalRequests` (with continuing a past conversation), `ConversationStore`, `ArchivedConversationStore`, `HistorySearch`, `Retention` | JVM only, with `ScriptedModel`, fake channels and a fake archive | About 4,200 lines with tests |
 | **7C Encrypted archive** (`:core:privacy`, `:app` adapter) | Room version 3, `ConversationRow`, `ConversationDao`, the key `kestrel.conversations`, `ConversationArchiveStore`, `RoomRecordArchive`, the purge job | The migration test and a Keystore device test on kestrel-api37 | About 900 lines |
 | **7D Voice path onto the conversation** (`:app`) | `Rules` without its task parts (5.5), `ConversationView` in its state, the follow-up window, `Requests`' new requests and typed reading, `VoiceChannel`, `ScreenTurns`, `PhoneSignals`, `AppGoalEnvironment`, `AndroidOwnerSupport`; `AgentRunner` and `AppOwnerPort` deleted; the app graph; the debug hooks and `CommandTags` moved; the hooks `conversation-state` and `conversation-control`; "delete history" extended; the owner's limits switched on | The regression gate of 14.3 on kestrel-api37; the new `RulesTest` and `RequestsTest` cases | About 3,000 lines changed and 1,500 deleted |
