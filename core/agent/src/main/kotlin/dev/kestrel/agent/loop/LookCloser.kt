@@ -6,6 +6,7 @@ import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.Badge
 import dev.kestrel.agent.port.Capture
 import dev.kestrel.agent.port.OcrLine
+import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.providers.chat.Part
@@ -127,11 +128,11 @@ internal class LookCloser(private val run: TaskRun) {
         return Shot.Sent(run.ports.eyes.encode(capture, masks, badges(), area))
     }
 
-    // Step 3 (D20): the owner picks a number on the screen.
+    // Step 3 (D20): the owner picks a number on the screen; at most four numbers are also the card's buttons (plan 7F).
     private suspend fun numbers(call: AgentCall.LookCloser): Done {
         run.ports.screen.showBadges(badges())
         try {
-            val answer = run.talk.ask(WHICH, AnswerKind.PICK_NUMBER)
+            val answer = run.talk.ask(WHICH, AnswerKind.PICK_NUMBER, choices(), highest())
             val picked = (answer as? Answer.Number)?.n?.takeIf { run.observation.table.entry(it) != null }
                 ?: return Done(call.tool, Outcome.NoAnswer)
             return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner picked [$picked]."))
@@ -211,6 +212,18 @@ internal class LookCloser(private val run: TaskRun) {
     }
 
     private fun badges(): List<Badge> = run.observation.table.entries.map { Badge(it.number, it.bounds) }
+
+    // The numbers as the card's choices when there are at most OwnerPort.MAX_CHOICES of them and they run from 1, so that
+    // choice number i answers the number i (plan 7F); otherwise none, and the owner gives the number.
+    private fun choices(): List<String> {
+        val numbers = numbered() ?: return emptyList()
+        return if (numbers.size > OwnerPort.MAX_CHOICES) emptyList() else numbers.map(Int::toString)
+    }
+
+    // The highest number, which the card's keypad keeps to (plan 7F), when the numbers run from 1; otherwise 0, no range.
+    private fun highest(): Int = numbered()?.size ?: 0
+
+    private fun numbered(): List<Int>? = run.observation.table.entries.map { it.number }.takeIf { it == (1..it.size).toList() }
 
     override fun toString(): String = "LookCloser(screens=${calls.size})"
 

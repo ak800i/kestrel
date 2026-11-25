@@ -19,11 +19,14 @@ internal class OwnerTalk(private val run: TaskRun) {
         run.limits.waiting { run.ports.owner.say(text) }
     }
 
-    /** Asks [question] until it gets an answer: never [Answer.Interrupted], whose third time in a row is [Answer.Silence]. */
-    suspend fun ask(question: String, kind: AnswerKind): Answer {
+    /**
+     * Asks [question], with a pick's [choices] and [highest] number, until it gets an answer: never [Answer.Interrupted],
+     * whose third time in a row is [Answer.Silence].
+     */
+    suspend fun ask(question: String, kind: AnswerKind, choices: List<String> = emptyList(), highest: Int = 0): Answer {
         while (true) {
             run.gate()
-            val answer = run.limits.waiting { run.ports.owner.ask(question, kind) }
+            val answer = run.limits.waiting { run.ports.owner.ask(question, kind, choices, highest) }
             if (answer == Answer.Interrupted && !interrupted()) continue
             countAgain()
             return if (answer == Answer.Interrupted) Answer.Silence else answer

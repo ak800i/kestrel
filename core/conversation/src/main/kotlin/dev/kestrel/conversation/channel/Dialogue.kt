@@ -9,7 +9,11 @@ import dev.kestrel.conversation.model.ChannelAnswer
 interface Dialogue {
     suspend fun say(text: String)
 
-    suspend fun question(text: String, kind: QuestionKind, spoken: String = text): ChannelAnswer
+    /**
+     * Asks [text] of [kind], spoken as [spoken], with a pick's [choices], which its card shows as buttons, and its [highest]
+     * number, which its card's keypad keeps to (design 10.3; 0 for no range).
+     */
+    suspend fun question(text: String, kind: QuestionKind, spoken: String = text, choices: List<String> = emptyList(), highest: Int = 0): ChannelAnswer
 }
 
 /** What [ConversationOwner] tells the engine about its dialogue, so that the machine knows what waits for the owner. */

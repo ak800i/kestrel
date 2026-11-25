@@ -12,6 +12,7 @@ import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.LauncherApp
 import dev.kestrel.agent.port.OcrLine
+import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.testing.FakeApps
@@ -119,6 +120,31 @@ class AgentToolsTest {
         assertTrue(harness.lastRequestText().contains("The owner picked [1]."))
         assertTrue(harness.screen.badges.isNotEmpty())
         assertEquals(2, harness.eyes.closed)
+        // Plan 7F: at most 4 numbers are the card's choices, each answering its own number, and the highest is the last.
+        val numbers = harness.screen.badges.last().map { it.number.toString() }
+        assertTrue(numbers.size <= OwnerPort.MAX_CHOICES)
+        assertEquals(listOf(emptyList(), numbers), harness.owner.choices)
+        assertEquals(listOf(0, numbers.size), harness.owner.highest)
+    }
+
+    // Plan 7F: with more than 4 numbers on the screen, the card offers none; the owner gives the number on its keypad,
+    // which keeps to the highest number.
+    @Test
+    fun aPickOfMoreThanFourNumbersOffersNoChoices() = runTest {
+        val screen = ScreenBuilder.screen("com.example.map") {
+            for (row in 0 until 5) button(null, 300 + 200 * row, viewId = "pay$row", suggestedName = "pay")
+        }
+        val harness = Harness(screen, listOf(look, look, look, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        harness.eyes.lines = listOf(OcrLine("Pay now", IntRect(40, 300, 1040, 420), 0.95))
+        harness.owner.answers += listOf(Answer.Text("Yes."), Answer.Number(1))
+
+        harness.run("Pay the bill")
+
+        assertEquals(AnswerKind.PICK_NUMBER, harness.owner.asked.last().second)
+        assertEquals(emptyList<String>(), harness.owner.choices.last())
+        val badges = harness.screen.badges.last()
+        assertTrue(badges.size > OwnerPort.MAX_CHOICES)
+        assertEquals(badges.size, harness.owner.highest.last())
     }
 
     // Plan 7A: look_closer's questions follow the run's one rule for interruptions: an interrupted question is asked again.

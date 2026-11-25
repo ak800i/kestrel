@@ -22,9 +22,9 @@ internal class TracingOwner(private val owner: OwnerPort, private val trace: Run
         owner.say(text)
     }
 
-    override suspend fun ask(question: String, kind: AnswerKind): Answer {
+    override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer {
         trace.asked(question)
-        val answer = owner.ask(question, kind)
+        val answer = owner.ask(question, kind, choices, highest)
         words(answer)?.let { trace.answered(it) }
         return answer
     }

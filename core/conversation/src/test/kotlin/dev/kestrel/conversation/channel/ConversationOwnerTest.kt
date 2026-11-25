@@ -159,6 +159,20 @@ class ConversationOwnerTest {
         assertEquals(Answer.Number(3), answer.await())
     }
 
+    // Plan 7F: a pick's choices and its highest number reach the channel's question, and a tapped choice answers its number.
+    @Test
+    fun aPicksChoicesReachTheChannelAndAChoiceAnswersItsNumber() = runTest {
+        typed()
+        val answer = async { owner.ask("Which number should I use?", AnswerKind.PICK_NUMBER, listOf("1", "2", "3"), highest = 3) }
+        runCurrent()
+        val asked = text.asked.single()
+
+        assertEquals(listOf("1", "2", "3"), asked.choices)
+        assertEquals(3, asked.highest)
+        owner.answer(asked.number, ChannelAnswer.Pick(2))
+        assertEquals(Answer.Number(2), answer.await())
+    }
+
     @Test
     fun aPauseWithdrawsTheGoalsQuestionAndClosesTheGateUntilTheResume() = runTest {
         val answer = async { owner.ask("Which one?", AnswerKind.FREE) }

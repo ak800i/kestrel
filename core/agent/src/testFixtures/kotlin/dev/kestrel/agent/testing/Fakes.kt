@@ -152,6 +152,12 @@ class FakeOwner : OwnerPort {
     val gates = ArrayDeque<Gate>()
     val said = mutableListOf<String>()
     val asked = mutableListOf<Pair<String, AnswerKind>>()
+
+    /** Each question's choices, in the order of [asked]. */
+    val choices = mutableListOf<List<String>>()
+
+    /** Each question's highest number, in the order of [asked]. */
+    val highest = mutableListOf<Int>()
     val confirmations = mutableListOf<Confirmation>()
     val handOvers = mutableListOf<HandOver>()
     val permissions = mutableListOf<List<String>>()
@@ -176,8 +182,10 @@ class FakeOwner : OwnerPort {
         onSay(text)
     }
 
-    override suspend fun ask(question: String, kind: AnswerKind): Answer {
+    override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer {
         asked += question to kind
+        this.choices += choices
+        this.highest += highest
         onAsk(question)
         return answers.removeFirstOrNull() ?: Answer.Silence
     }

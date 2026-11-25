@@ -62,7 +62,8 @@ enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL
 /**
  * A question to the owner: [number] names it, as "Reply…" does (design 12.2); [text] is the card's and the transcript's
  * form and [spoken] the voice's; [choices] are a pick's at most 4 choices; [confirmation] is a confirmation's, which the
- * card shows as today. toString prints no words.
+ * card shows as today; a pick's numbers run from 1 to [highest], which the card's keypad keeps to (0: no range; plan 7F).
+ * toString prints no words.
  */
 data class ChannelQuestion(
     val number: Int,
@@ -71,7 +72,9 @@ data class ChannelQuestion(
     val spoken: String = text,
     val choices: List<String> = emptyList(),
     val confirmation: Confirmation? = null,
+    val highest: Int = 0,
 ) {
     override fun toString(): String =
-        "ChannelQuestion(number=$number, kind=$kind, text=${text.length} chars, spoken=${spoken.length} chars, choices=${choices.size}, confirmation=$confirmation)"
+        "ChannelQuestion(number=$number, kind=$kind, text=${text.length} chars, spoken=${spoken.length} chars, choices=${choices.size}, " +
+            "confirmation=$confirmation, highest=$highest)"
 }

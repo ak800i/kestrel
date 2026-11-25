@@ -10,7 +10,13 @@ import dev.kestrel.safety.HandOver
 interface OwnerPort {
     suspend fun say(text: String)
 
-    suspend fun ask(question: String, kind: AnswerKind): Answer
+    /**
+     * Asks [question], whose answer is of [kind]. [choices] are a pick's choices, at most [MAX_CHOICES], which the owner's
+     * card shows as buttons (design 10.3 of sub-project 7): a tap on choice number i, from 1, answers [Answer.Number] i,
+     * as the owner's spoken or typed number i does, so a caller offers choices only when choice i is the answer i. A pick's
+     * numbers run from 1 to [highest], which the card's keypad keeps to; 0 when the caller knows no range.
+     */
+    suspend fun ask(question: String, kind: AnswerKind, choices: List<String> = emptyList(), highest: Int = 0): Answer
 
     suspend fun confirm(confirmation: Confirmation): ConfirmEnd
 
@@ -35,6 +41,9 @@ interface OwnerPort {
     companion object {
         /** How long [leaveKestrel] waits for Kestrel's own screen to leave (design 10.2 of sub-project 7). */
         const val KESTREL_LEAVE_MILLIS = 3_000L
+
+        /** A pick shows at most this many choices on its card (design 10.3 of sub-project 7). */
+        const val MAX_CHOICES = 4
     }
 }
 

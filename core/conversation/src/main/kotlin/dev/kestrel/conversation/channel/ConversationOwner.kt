@@ -71,6 +71,8 @@ class ConversationOwner(
         val kind: QuestionKind,
         val spoken: String = text,
         val confirmation: Confirmation? = null,
+        val choices: List<String> = emptyList(),
+        val highest: Int = 0,
     )
 
     private val turns = Mutex()
@@ -114,10 +116,11 @@ class ConversationOwner(
         }
     }
 
-    override suspend fun question(text: String, kind: QuestionKind, spoken: String): ChannelAnswer =
-        dialogue(Draft(text, kind, spoken), goal = false)
+    override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer =
+        dialogue(Draft(text, kind, spoken, choices = choices, highest = highest), goal = false)
 
-    override suspend fun ask(question: String, kind: AnswerKind): Answer = answerOf(dialogue(Draft(question, kindOf(kind)), goal = true))
+    override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer =
+        answerOf(dialogue(Draft(question, kindOf(kind), choices = choices, highest = highest), goal = true))
 
     override suspend fun confirm(confirmation: Confirmation): ConfirmEnd =
         when (dialogue(Draft(confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation), goal = true)) {
@@ -190,7 +193,15 @@ class ConversationOwner(
             if (goal && pause != null) return@withLock ChannelAnswer.Interrupted
             openQuestion = waiting
         }
-        val asked = ChannelQuestion(waiting.number, draft.text, draft.kind, draft.spoken, confirmation = draft.confirmation)
+        val asked = ChannelQuestion(
+            waiting.number,
+            draft.text,
+            draft.kind,
+            draft.spoken,
+            choices = draft.choices.take(OwnerPort.MAX_CHOICES),
+            confirmation = draft.confirmation,
+            highest = draft.highest,
+        )
         asking = draft.kind
         confirming = draft.confirmation?.category
         events(DialogueEvent.Asked(waiting.number, draft.kind))

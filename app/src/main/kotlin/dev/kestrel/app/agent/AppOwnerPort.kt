@@ -130,7 +130,8 @@ internal class AppOwnerPort(
         send(Event.TaskSays(task, text))
     }
 
-    override suspend fun ask(question: String, kind: AnswerKind): Answer = questions.withLock {
+    // Plan 7D replaces this port with the conversation's; until then a pick's choices are spoken as today, not shown.
+    override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer = questions.withLock {
         screen.forgetOwnActions()
         asking = kind
         try {
