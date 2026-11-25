@@ -67,9 +67,9 @@ object GoalRequests {
         )
     }
 
-    /** The owner's words of [records]: each request, and its answers and steering (D8). */
+    /** The owner's words of [records]: each request, and its answers and steering, also steering that came too late (D8). */
     fun ownerWords(records: List<CommandRecord>): List<String> = records.flatMap { record ->
-        listOf(record.request) + record.lines.filter { it.kind == LineKind.OWNER_ANSWERED || it.kind == LineKind.OWNER_STEERED }.map { it.text }
+        listOf(record.request) + record.lines.filter { it.kind in WORDS }.map { it.text }
     }
 
     /** The goal's steering that its earlier rounds took, oldest first: its record's steering but the last [waiting]. */
@@ -83,4 +83,7 @@ object GoalRequests {
 
     /** The categories that a record's allowance names by their wire names (D16). */
     fun categories(wires: Collection<String>): Set<Category> = wires.mapNotNullTo(mutableSetOf()) { wire -> Category.entries.firstOrNull { it.wire == wire } }
+
+    // The kinds of an earlier record's lines that hold the owner's words for later commands; "continue" is no words of his.
+    private val WORDS = setOf(LineKind.OWNER_ANSWERED, LineKind.OWNER_STEERED, LineKind.OWNER_TOO_LATE)
 }

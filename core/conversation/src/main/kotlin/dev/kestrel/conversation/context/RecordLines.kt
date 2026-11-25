@@ -28,6 +28,9 @@ import java.util.Locale
 internal object RecordLines {
     const val MAX_APPS = 5
 
+    /** Where a line of the owner's steering that came after the goal's final words stands. */
+    const val TOO_LATE = "too late for this goal"
+
     private val TIME = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH)
 
     fun head(record: CommandRecord, zone: ZoneId): String {
@@ -69,6 +72,7 @@ internal object RecordLines {
         LineKind.KESTREL_ASKED -> "  Kestrel asked: " + quoted(line.text, cap)
         LineKind.OWNER_ANSWERED, LineKind.OWNER_CONTINUED -> "  " + OwnerLines.said(line.text, cap)
         LineKind.OWNER_STEERED -> "  " + OwnerLines.added(steerChannel(line.channel), null, line.text, cap)
+        LineKind.OWNER_TOO_LATE -> "  " + OwnerLines.added(steerChannel(line.channel), TOO_LATE, line.text, cap)
         LineKind.NOTE -> "  Note: " + quoted(line.text, cap)
     }
 

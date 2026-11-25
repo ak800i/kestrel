@@ -51,6 +51,9 @@ data class ConversationState(
     val safetyTestMode: Boolean = true,
 )
 
+/** The open conversation's id: a goal and its records belong to the open conversation only. */
+internal val ConversationState.openId: ConversationId get() = checkNotNull(id) { "No conversation is open" }
+
 /** The question that waits for the owner; [replyOpen] once he tapped the card's "Reply…" (design 10.3). */
 data class OpenQuestion(val number: Int, val kind: QuestionKind, val replyOpen: Boolean = false)
 

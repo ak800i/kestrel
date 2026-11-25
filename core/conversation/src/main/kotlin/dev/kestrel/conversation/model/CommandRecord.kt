@@ -36,7 +36,10 @@ data class CommandRecord(
             "checklist=$checklist, allowance=${allowance.sorted()}, dropped=$droppedLines/$droppedData, condensed=$condensed)"
 }
 
-/** One line of a command's dialogue: what Kestrel said or asked, or what the owner answered, added or continued. */
+/**
+ * One line of a command's dialogue: what Kestrel said or asked, or what the owner answered, added or continued, or added
+ * after the goal had given its final words, which no round took (review of plan 7B's Task 10: I3).
+ */
 @Serializable
 data class RecordLine(val kind: LineKind, val text: String, val channel: InputChannel? = null) {
     override fun toString(): String = "RecordLine(kind=$kind, text=${text.length} chars, channel=$channel)"
@@ -49,6 +52,7 @@ enum class LineKind(val owners: Boolean) {
     OWNER_ANSWERED(true),
     OWNER_STEERED(true),
     OWNER_CONTINUED(true),
+    OWNER_TOO_LATE(true),
     NOTE(false),
 }
 

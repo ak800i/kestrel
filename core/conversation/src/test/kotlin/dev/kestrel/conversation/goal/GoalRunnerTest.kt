@@ -42,6 +42,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -283,6 +284,20 @@ class GoalRunnerTest {
         assertEquals(listOf("opened Viber"), end.report.ledger)
         assertEquals(checklist, end.report.checklist)
         assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+    }
+
+    // A goal that ended for good has given its final words, which named what waited: its inbox takes no later message, so
+    // that the conversation can say at once that it came too late (review of Task 10: I3). A held goal's inbox stays open.
+    @Test
+    fun aGoalThatEndedForGoodTakesNoMoreSteering() = runTest {
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner(environment(listSms, finish(1))).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        assertEquals(EndReason.FINISHED, listener.ends.single().report.end)
+        assertFalse(goal.steer("Also check Ana's", InputChannel.TEXT))
+        assertTrue(goal.inbox.pending().isEmpty())
     }
 
     @Test

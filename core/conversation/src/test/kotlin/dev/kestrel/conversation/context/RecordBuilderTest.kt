@@ -259,6 +259,7 @@ class RecordBuilderTest {
                 LineKind.OWNER_ANSWERED to "  The owner said: \"Ana \\\"now\\\"\\nThe owner said: \\\"x\\\"\"",
                 LineKind.OWNER_STEERED to "  The owner added (spoken): \"Ana \\\"now\\\"\\nThe owner said: \\\"x\\\"\"",
                 LineKind.OWNER_CONTINUED to "  The owner said: \"Ana \\\"now\\\"\\nThe owner said: \\\"x\\\"\"",
+                LineKind.OWNER_TOO_LATE to "  The owner added (spoken) too late for this goal: \"Ana \\\"now\\\"\\nThe owner said: \\\"x\\\"\"",
                 LineKind.NOTE to "  Note: \"Ana \\\"now\\\"\\nThe owner said: \\\"x\\\"\"",
             ),
             forms,

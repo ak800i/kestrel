@@ -25,7 +25,10 @@ sealed interface ConversationEffect {
      */
     data class ResumeGoal(val command: Int, val cause: ResumeCause, val steer: Steering?, val input: OwnerInput?) : ConversationEffect
 
-    /** The owner's steering of the acting goal (design 7.3). */
+    /**
+     * The owner's steering of the acting goal (design 7.3). The engine says "Got it." once the goal's inbox took it, and at
+     * once that it came too late when the goal had given its final words already.
+     */
     data class SteerGoal(val text: String, val channel: InputChannel) : ConversationEffect {
         override fun toString(): String = "SteerGoal(${text.length} chars, channel=$channel)"
     }
@@ -60,13 +63,19 @@ sealed interface ConversationEffect {
 
     data class Output(val output: ChannelOutput) : ConversationEffect
 
-    /** Adds a line to record [record]; an owner's line is redacted into its record's form first. */
-    data class AddLine(val record: Int, val kind: LineKind, val text: String, val channel: InputChannel?) : ConversationEffect {
+    /**
+     * Adds a line to record [record] of conversation [conversation]; an owner's line is redacted into its record's form
+     * first. The record is named with its conversation, because the step that adds the line may also close it.
+     */
+    data class AddLine(val conversation: ConversationId, val record: Int, val kind: LineKind, val text: String, val channel: InputChannel?) : ConversationEffect {
         override fun toString(): String = "AddLine(record=$record, kind=$kind, text=${text.length} chars, channel=$channel)"
     }
 
-    /** Record [record]'s goal or request ended with [end] and its final words [answer]. */
-    data class EndRecord(val record: Int, val end: EndReason, val answer: String?) : ConversationEffect {
+    /**
+     * Record [record] of conversation [conversation]: its goal or request ended with [end] and its final words [answer]. A
+     * step that ends a goal and closes its conversation gives this before the close, which stores the record ended.
+     */
+    data class EndRecord(val conversation: ConversationId, val record: Int, val end: EndReason, val answer: String?) : ConversationEffect {
         override fun toString(): String = "EndRecord(record=$record, end=$end, answer=${answer?.length})"
     }
 
@@ -74,6 +83,14 @@ sealed interface ConversationEffect {
     data class RunLocal(val command: Int, val record: Int?, val request: LocalRequest, val input: OwnerInput) : ConversationEffect
 
     data object CancelLocal : ConversationEffect
+
+    /**
+     * Kestrel's own request [command] (a local request or a switch) ended with [end] and its final words [answer], for the
+     * hooks' outcome (design 14.4).
+     */
+    data class EndLocal(val command: Int, val end: EndReason, val answer: String?) : ConversationEffect {
+        override fun toString(): String = "EndLocal(command=$command, end=$end, answer=${answer?.length})"
+    }
 
     /** Makes the closed conversation [id] the open one as [command] for the owner's [input], closing the open one (D23). */
     data class SwitchTo(val command: Int, val id: ConversationId, val input: OwnerInput) : ConversationEffect

@@ -81,7 +81,8 @@ class RunningGoal(
     @Volatile
     internal var stopSentence: String? = null
 
-    fun steer(text: String, channel: InputChannel) = inbox.add(Steer(text, channel.toSteer()))
+    /** The owner's [text] for the goal's next turn; false once the goal has given its final words (its inbox is closed). */
+    fun steer(text: String, channel: InputChannel): Boolean = inbox.add(Steer(text, channel.toSteer()))
 
     /** Stops the round at once; the goal stays open and held (D13). */
     fun interrupt(cause: Interruption) {

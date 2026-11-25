@@ -110,10 +110,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val goal = state.goal ?: return startGoal(open(state, now), input, text, now)
         if (goal.ending != null) return MachineStep(state.copy(next = input))
         return when (goal.phase) {
-            GoalPhase.ACTING, GoalPhase.ASKING -> MachineStep(
-                state,
-                listOf(ConversationEffect.SteerGoal(text, input.channel), ConversationEffect.Output(ChannelOutput.Shown(ConversationTexts.GOT_IT))),
-            )
+            GoalPhase.ACTING, GoalPhase.ASKING -> MachineStep(state, listOf(ConversationEffect.SteerGoal(text, input.channel)))
             GoalPhase.HANDED_OVER -> refuse(state, ConversationTexts.finishHandOverFirst(input.channel))
             GoalPhase.PAUSED -> refuse(state, ConversationTexts.ANSWER_CONTINUE_FIRST)
             GoalPhase.PAUSED_AT_LIMIT, GoalPhase.INTERRUPTED -> GoalRules.resume(state, goal, input, text, now)
@@ -140,7 +137,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
                 state,
                 listOfNotNull(
                     goal.handOver?.let { ConversationEffect.EndHandOver(it, HandOverEnd.CONTINUED) },
-                    ConversationEffect.AddLine(goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel),
+                    ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel),
                 ),
             )
             GoalPhase.PAUSED -> GoalRules.resumePaused(state, goal, channel, now)
@@ -182,8 +179,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             val counted = goal.copy(stepsBefore = goal.stepsBefore + event.report.steps)
             return GoalRules.held(state, counted, hold, event.reply, now).then { runNext(it, now) }
         }
-        val ended = state.copy(goal = null, question = null, asksContinue = false, heldWords = null)
-        val recorded = MachineStep(ended, listOf(ConversationEffect.EndRecord(goal.record, event.report.end, event.answer)))
+        val recorded = endGoal(state, goal, event.report.end, event.answer)
         val sentence = event.reply
         return when {
             // A command that waited for the stop runs in a new conversation, under the new test mode.
@@ -206,7 +202,13 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         if (outcome is LocalOutcome.Switch) return MachineStep(state, listOf(ConversationEffect.SwitchTo(run.command, outcome.id, run.input)))
         val done = state.copy(local = null)
         val end = if (run.cancelled && outcome == LocalOutcome.Quiet) EndReason.CANCELLED else EndReason.FINISHED
-        val recorded = MachineStep(done, listOfNotNull(run.record?.let { ConversationEffect.EndRecord(it, end, outcome.sentence) }))
+        val recorded = MachineStep(
+            done,
+            listOfNotNull(
+                run.record?.let { ConversationEffect.EndRecord(state.openId, it, end, outcome.sentence) },
+                ConversationEffect.EndLocal(run.command, end, outcome.sentence),
+            ),
+        )
         val replied = when (outcome) {
             is LocalOutcome.Reply -> recorded.then { reply(it, run.command, outcome.sentence) }
             is LocalOutcome.Deleted -> recorded.then { close(it, keep = false) }.then { reply(it, run.command, outcome.sentence) }
@@ -218,20 +220,22 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     // D23: the continued conversation is the open one now, with the current test mode; its reply is the request's final one.
     private fun switched(state: ConversationState, event: ConversationEvent.Switched, now: Long): MachineStep {
         val run = state.local ?: return MachineStep(state)
-        val done = state.copy(local = null)
-        val snapshot = event.snapshot ?: return reply(done, run.command, event.sentence).then { runNext(it, now) }
-        val opened = done.copy(
-            id = snapshot.id,
-            openedAtWall = snapshot.openedAtWall,
-            testMode = state.safetyTestMode,
-            continuedAtWall = snapshot.continuedAtWall ?: now,
-            commands = snapshot.records.size,
-            goal = null,
-            asksContinue = false,
-            quiet = QuietClock.Off,
-            closeAfterGoal = false,
-        )
-        return reply(opened, run.command, event.sentence).then { runNext(it, now) }
+        val done = MachineStep(state.copy(local = null), listOf(ConversationEffect.EndLocal(run.command, EndReason.FINISHED, event.sentence)))
+        val snapshot = event.snapshot ?: return done.then { reply(it, run.command, event.sentence) }.then { runNext(it, now) }
+        return done.then { current ->
+            // A switch runs only without a goal (design 6.4), so the conversation that it leaves has none to end.
+            val opened = current.copy(
+                id = snapshot.id,
+                openedAtWall = snapshot.openedAtWall,
+                testMode = current.safetyTestMode,
+                continuedAtWall = snapshot.continuedAtWall ?: now,
+                commands = snapshot.records.size,
+                asksContinue = false,
+                quiet = QuietClock.Off,
+                closeAfterGoal = false,
+            )
+            reply(opened, run.command, event.sentence)
+        }.then { runNext(it, now) }
     }
 
     // Design 12.4: a change of test mode closes the open conversation, after its goal ended with its report. A changed
@@ -294,15 +298,24 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     private fun open(state: ConversationState, now: Long): ConversationState =
         if (state.id != null) state else state.copy(id = ids(), openedAtWall = now, testMode = state.safetyTestMode, continuedAtWall = null, commands = 0)
 
+    // The one way in which a goal leaves the state: its record gets its end and final words first, in the same step, so that
+    // a step that also closes the conversation stores the record ended (review of Task 10: I1).
+    private fun endGoal(state: ConversationState, goal: GoalState, end: EndReason, answer: String?): MachineStep = MachineStep(
+        state.copy(goal = null, question = null, asksContinue = false, heldWords = null),
+        listOf(ConversationEffect.EndRecord(state.openId, goal.record, end, answer)),
+    )
+
+    // A conversation closes only without a goal: the goal's end was recorded first (endGoal), and the closed conversation
+    // is stored with it.
     private fun close(state: ConversationState, keep: Boolean = true): MachineStep {
         val id = state.id ?: return MachineStep(state)
+        check(state.goal == null) { "A conversation closes only after its goal's end was recorded" }
         val closed = state.copy(
             id = null,
             openedAtWall = 0,
             testMode = state.safetyTestMode,
             continuedAtWall = null,
             commands = 0,
-            goal = null,
             asksContinue = false,
             heldWords = null,
             quiet = QuietClock.Off,

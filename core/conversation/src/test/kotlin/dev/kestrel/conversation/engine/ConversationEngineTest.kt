@@ -10,6 +10,7 @@ import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.PermissionEnd
+import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
@@ -31,10 +32,12 @@ import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
+import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PendingSteer
 import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.ProcessEnd
+import dev.kestrel.conversation.model.RecordLine
 import dev.kestrel.conversation.store.ArchivedConversationStore
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
@@ -46,6 +49,7 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -56,10 +60,12 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 /** Whole conversations on the JVM (design 15.1 of sub-project 7), with the scripted model, fake channels and the in-memory archive. */
 class ConversationEngineTest {
@@ -71,6 +77,8 @@ class ConversationEngineTest {
     private val settings = MutableStateFlow(ConversationSettings())
     private val testMode = MutableStateFlow(false)
     private val voiceOn = MutableStateFlow(true)
+    private val clock = ManualConversationClock({ scope.testScheduler.currentTime })
+    private val failures = mutableListOf<Throwable>()
     private var inputs = 0L
 
     private val sms = DataResult.Ok(listOf(DataLine("sms 1", listOf(DataField("from", "Mila"), DataField("body", "Ambar at 8")))))
@@ -87,14 +95,14 @@ class ConversationEngineTest {
         environment: FakeGoalEnvironment,
         store: ConversationStore = this@ConversationEngineTest.store,
         onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
+        report: (String, Throwable) -> Unit = { _, error -> throw error },
     ): ConversationEngine {
-        val clock = ManualConversationClock({ testScheduler.currentTime })
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
         val goals = GoalRunner(environment, ScreenTurn { }, search, clock) { _, error -> throw error }
         val local = LocalRequests(environment.memory, store, search, { }, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
-            settings, testMode, voiceOn, clock, { _, error -> throw error }, onStep = onStep,
+            settings, testMode, voiceOn, clock, report, onStep = onStep,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
         // right after restore(), so the owner is there: a restored goal asks "Continue the goal?" and final replies are given.
@@ -352,6 +360,8 @@ class ConversationEngineTest {
         assertTrue(view.continued)
         assertEquals(1, view.records.size)
         assertEquals(ChannelOutput.Report(view.command, "We're back in the conversation from Friday, 20 November."), voice.shown.last())
+        // The hooks read the switch's final reply as its outcome (design 14.4).
+        assertEquals("We're back in the conversation from Friday, 20 November.", engine.outcome(view.command)!!.answer)
         assertTrue(store.list().isEmpty())
     }
 
@@ -432,5 +442,289 @@ class ConversationEngineTest {
         assertNull(record.end)
         assertEquals(GoalPhase.ACTING, saved!!.goal!!.phase)
         assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
+    // The conversation screen's "Stop and start new" (design 6.8): the step that ends the goal also closes the conversation,
+    // which is stored with the goal's end and Kestrel's final words.
+    @Test
+    fun stopAndStartNewStoresTheStoppedGoalWithItsEndAndAnswer() = scope.runTest {
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) awaitCancellation() }
+        val engine = engine(environment(say("On it."), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val stopped = engine.view.value.id!!
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        engine.submit(input(InputChannel.TEXT, InputIntent.NewConversation))
+        runCurrent()
+
+        assertNull(engine.view.value.id)
+        val record = store.get(stopped)!!.records.single()
+        assertEquals(EndReason.CANCELLED, record.end)
+        assertEquals(engine.outcome(1)!!.answer, record.answer)
+        assertNotNull(record.answer)
+    }
+
+    // Design 12.4: a change of test mode during a goal stops it and then closes the conversation with the goal's end.
+    @Test
+    fun aTestModeChangeDuringAGoalStopsItAndStoresItsEndBeforeTheClose() = scope.runTest {
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) awaitCancellation() }
+        val engine = engine(environment(say("On it."), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val id = engine.view.value.id!!
+
+        testMode.value = true
+        runCurrent()
+
+        assertNull(engine.view.value.id)
+        assertTrue(engine.view.value.testMode)
+        val record = store.get(id)!!.records.single()
+        assertEquals(EndReason.CANCELLED, record.end)
+        assertEquals(ChannelOutput.Report(1, record.answer!!), text.shown.last())
+        assertNull(store.open())
+    }
+
+    // The engine's loop takes the "stop" before the request's job first runs (the test's dispatcher runs nothing until
+    // runCurrent): the request still ends, as cancelled, and the conversation goes on.
+    @Test
+    fun aStopBeforeALocalRequestFirstRunsStillEndsIt() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.DeleteHistory))
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        runCurrent()
+
+        assertTrue(engine.view.value.quiet is QuietClock.Running)
+        assertTrue(text.asked.none { it.kind == QuestionKind.DELETE_HISTORY })
+        assertEquals(EndReason.CANCELLED, engine.outcome(2)!!.report.end)
+        assertTrue(archive.rows.isNotEmpty())
+
+        engine.submit(typed("Read it again"))
+        runCurrent()
+        assertEquals(listOf(EndReason.FINISHED, EndReason.FINISHED), engine.view.value.records.map { it.end })
+    }
+
+    // A message that comes after the round gave its final words, here while its routine offer's report is shown, is named
+    // as too late at once; the record keeps it so, and no "Got it." says that a round will take it.
+    @Test
+    fun aSteerAfterTheGoalsFinalWordsIsNamedTooLateAtOnce() = scope.runTest {
+        val start = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { button("Open", 300) }
+        val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
+        val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
+        val done = ScriptedModel.call(
+            "finish", null, null, null,
+            "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))), "signature" to "fixtures.open.button",
+        )
+        val environment = FakeGoalEnvironment(listOf(tap, done), first = start).apply {
+            offersRoutines = true
+            screen.onTap("Open", opened)
+            memory.signatures["fixtures.open.button"] = 1
+        }
+        // The owner says no to the routine offer.
+        text.answers += ChannelAnswer.No
+        val engine = engine(environment)
+        var steered = false
+        text.onShow = {
+            if (it is ChannelOutput.Said && it.text.startsWith("Ended finished") && !steered) {
+                steered = true
+                engine.submit(typed("Now send it to Ana"))
+            }
+        }
+        engine.restore()
+
+        engine.submit(typed("Open it"))
+        runCurrent()
+
+        assertTrue(steered)
+        assertTrue(text.shown.contains(ChannelOutput.Said(ConversationTexts.cameTooLate("Now send it to Ana"))))
+        assertFalse(text.shown.contains(ChannelOutput.Shown(ConversationTexts.GOT_IT)))
+        val record = engine.view.value.records.single()
+        assertEquals(RecordLine(LineKind.OWNER_TOO_LATE, "Now send it to Ana", InputChannel.TEXT), record.lines.single { it.kind.owners })
+        assertEquals(EndReason.FINISHED, record.end)
+        assertNull(engine.view.value.goal)
+        assertEquals(1, environment.starts.size)
+        assertTrue(store.open()!!.steering.isEmpty())
+    }
+
+    // The quiet time is a deadline on the clock that counts the phone's sleep, which no coroutine's delay counts: a command
+    // after the night finds the old conversation closed.
+    @Test
+    fun theQuietTimeEndsByTheClockThatCountsSleep() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val first = engine.view.value.id!!
+
+        clock.sleep(8 * 60 * 60_000L)
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        assertNotEquals(first, engine.view.value.id)
+        assertEquals(1, engine.view.value.records.size)
+        assertEquals(listOf(first), store.list().map { it.id })
+    }
+
+    // A held goal's 30 minutes are a deadline on the same clock: a signal after them ends the goal with its partial report.
+    @Test
+    fun aHeldGoalEndsAfterItsThirtyMinutesByTheClockThatCountsSleep() = scope.runTest {
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) awaitCancellation() }
+        val engine = engine(environment(say("On it."), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        engine.touched()
+        runCurrent()
+        assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
+
+        clock.sleep(31 * 60_000L)
+        engine.signal(PhoneSignal.UNLOCKED)
+        runCurrent()
+
+        assertNull(engine.view.value.goal)
+        val record = engine.view.value.records.single()
+        assertEquals(EndReason.PAUSED_TOO_LONG, record.end)
+        assertEquals(ChannelOutput.Report(1, record.answer!!), text.shown.last())
+    }
+
+    @Test
+    fun stopEndsAnActingGoalWithItsReport() = scope.runTest {
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) awaitCancellation() }
+        val environment = environment(say("On it."), listSms, finish(1))
+        val engine = engine(environment)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        runCurrent()
+
+        assertNull(engine.view.value.goal)
+        val record = engine.view.value.records.single()
+        assertEquals(EndReason.CANCELLED, record.end)
+        assertEquals(ChannelOutput.Report(1, record.answer!!), text.shown.last())
+        assertEquals(1, environment.model.requests.size)
+        assertEquals(EndReason.CANCELLED, store.open()!!.records.single().end)
+    }
+
+    // A lock pauses the round at its gate; the unlock asks "Continue the goal?", and a yes lets the same round go on. The
+    // step that met the gate did nothing, so the model asks for the SMS again.
+    @Test
+    fun aLockPausesTheGoalAndAfterTheUnlockAYesLetsItGoOn() = scope.runTest {
+        val speaking = CompletableDeferred<Unit>()
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
+        val environment = environment(say("On it."), listSms, listSms, finish(3))
+        val engine = engine(environment)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.signal(PhoneSignal.LOCKED)
+        speaking.complete(Unit)
+        runCurrent()
+        assertEquals(GoalPhase.PAUSED, engine.view.value.goal)
+        assertTrue(engine.view.value.records.single().data.isEmpty())
+
+        engine.signal(PhoneSignal.UNLOCKED)
+        runCurrent()
+        assertEquals(QuestionKind.CONTINUE_GOAL, text.asked.last().kind)
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes)))
+        runCurrent()
+        assertNull(engine.view.value.goal)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+        assertEquals(1, environment.starts.size)
+    }
+
+    // A save that fails is reported; the view still shows the step, and the next step saves the conversation again.
+    @Test
+    fun aFailedSaveStillShowsTheStepAndTheNextStepSavesAgain() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1)), report = { _, error -> failures += error })
+        engine.restore()
+        archive.failures["write"] = IOException("The disk is full")
+
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+        assertTrue(failures.isNotEmpty() && failures.all { it is IOException })
+
+        archive.failures.clear()
+        engine.signal(PhoneSignal.UNLOCKED)
+        runCurrent()
+        assertEquals(EndReason.FINISHED, ArchivedConversationStore(archive, backgroundScope) {}.open()!!.records.single().end)
+    }
+
+    // An effect that fails still gives the machine the end that it waits for: here a held goal whose record is missing.
+    @Test
+    fun aGoalWhoseResumeFailsEndsAsAnError() = scope.runTest {
+        val now = ManualConversationClock.BASE
+        val record = CommandRecord(1, now - 60_000, InputChannel.VOICE, "Archive my newsletters")
+        store.save(ConversationSnapshot(
+            ConversationId("0123456789abcdef0123456789abcdef"), now - 60_000, now - 30_000, open = true, testMode = false,
+            records = listOf(record), goal = GoalState(2, GoalPhase.ACTING, now - 30_000),
+        ))
+        val environment = environment()
+        val engine = engine(environment, ArchivedConversationStore(archive, backgroundScope) {}, report = { _, error -> failures += error })
+        assertEquals(Restored.GOAL_HELD, engine.restore())
+        runCurrent()
+
+        engine.submit(input(InputChannel.VOICE, InputIntent.Answer(ChannelAnswer.Yes)))
+        runCurrent()
+
+        assertNull(engine.view.value.goal)
+        assertTrue(failures.single() is IllegalStateException)
+        assertEquals(ChannelOutput.Report(1, ConversationTexts.COULD_NOT), voice.shown.last())
+        assertEquals(EndReason.KESTREL_ERROR, engine.outcome(1)!!.report.end)
+        assertTrue(environment.starts.isEmpty())
+    }
+
+    @Test
+    fun theViewShowsTheSafetyPagesTestModeWhileNoConversationIsOpen() = scope.runTest {
+        val engine = engine(environment())
+        engine.restore()
+        runCurrent()
+
+        assertNull(engine.view.value.id)
+        assertFalse(engine.view.value.testMode)
+    }
+
+    // The store's writes run beside the engine's loop: while a save waits for the store, the loop shows the step and takes
+    // the owner's "stop".
+    @Test
+    fun aSaveThatWaitsForTheStoreHoldsUpNoInput() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1)), gated)
+        engine.restore()
+        val gate = CompletableDeferred<Unit>()
+        gated.gate = gate
+
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.ACTING, engine.view.value.goal)
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        runCurrent()
+        assertNull(engine.view.value.goal)
+        assertEquals(EndReason.CANCELLED, engine.view.value.records.single().end)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(EndReason.CANCELLED, store.open()!!.records.single().end)
+    }
+
+    // A store whose saves wait for [gate] while it is set.
+    private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
+        var gate: CompletableDeferred<Unit>? = null
+
+        override suspend fun save(snapshot: ConversationSnapshot) {
+            gate?.await()
+            inner.save(snapshot)
+        }
     }
 }

@@ -15,7 +15,8 @@ import dev.kestrel.conversation.model.InputChannel
  * open conversation, the newest command's number in this process, the goal's phase and, while it works, its step (counted
  * across its rounds, for the bar's "Step 12 · 3 of 7", design 10.5), the open question's kind and number,
  * the channel of the owner's latest input, the goal's checklist in brief, the records that the screen draws, when the
- * conversation was continued, its test mode, the quiet clock, and whether Kestrel keeps words until the owner is there
+ * conversation was continued, its test mode (the Safety page's while no conversation is open, which the next one takes),
+ * the quiet clock, and whether Kestrel keeps words until the owner is there
  * ([keptForOwner]: a goal's final reply, or a held goal's report, also after its conversation closed), for which plan
  * 7D's `ConversationSignals` keeps watching the phone. toString prints no words.
  */

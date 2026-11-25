@@ -61,6 +61,9 @@ object ConversationTexts {
         return " I got ${texts.joinToString(" and ") { "'$it'" }} too late to act on $them; say $them again as a new command."
     }
 
+    /** What Kestrel says at once to a steering message that came after the goal had given its final words. */
+    fun cameTooLate(text: String): String = tooLate(listOf(text)).trimStart()
+
     fun remember(key: String, value: String): String = "Remember that $key is $value?"
 
     fun forget(key: String): String = "Forget $key?"

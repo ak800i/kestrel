@@ -94,7 +94,7 @@ class QuietClockTest : MachineTesting() {
 
         val replied = step(remembering.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
         assertEquals(QuietClock.Held(HoldReason.REPLYING), replied.state.quiet)
-        assertEquals(ConversationEffect.EndRecord(2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
 
         now += 1_000
         assertEquals(QuietClock.Running(2, now), step(replied.state, ConversationEvent.ReplyShown(run.command)).state.quiet)

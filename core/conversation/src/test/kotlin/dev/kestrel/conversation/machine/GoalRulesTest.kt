@@ -42,7 +42,7 @@ class GoalRulesTest : MachineTesting() {
         val said = "I stopped. I opened Viber. ${ConversationTexts.GO_ON}"
         assertEquals(GoalPhase.INTERRUPTED, held.state.goal!!.phase)
         assertEquals(listOf(ChannelOutput.Said(said)), held.outputs())
-        assertEquals(ConversationEffect.AddLine(1, LineKind.KESTREL_SAID, said, null), held.effect<ConversationEffect.AddLine>())
+        assertEquals(ConversationEffect.AddLine(id, 1, LineKind.KESTREL_SAID, said, null), held.effect<ConversationEffect.AddLine>())
         assertEquals(ConversationEffect.StartTimer(Timer.HOLD, 1, GoalRules.HOLD_MILLIS), held.effect<ConversationEffect.StartTimer>())
         assertTrue(step(asked(acting(), 3, QuestionKind.FREE), ConversationEvent.Touched).has<ConversationEffect.InterruptGoal>())
 
@@ -89,7 +89,7 @@ class GoalRulesTest : MachineTesting() {
 
         val back = signal(paused.state, PhoneSignal.UNLOCKED)
         assertTrue(back.has<ConversationEffect.AskContinueGoal>())
-        assertEquals(ConversationEffect.AddLine(1, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null), back.effect<ConversationEffect.AddLine>())
+        assertEquals(ConversationEffect.AddLine(id, 1, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null), back.effect<ConversationEffect.AddLine>())
 
         val asking = asked(back.state, 9, QuestionKind.CONTINUE_GOAL)
         assertEquals(GoalPhase.PAUSED, asking.goal!!.phase)
@@ -162,7 +162,7 @@ class GoalRulesTest : MachineTesting() {
         val held = ended(ringing, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), "I stopped.")
         val said = "I stopped. ${ConversationTexts.GO_ON}"
         assertTrue(held.outputs().isEmpty())
-        assertEquals(ConversationEffect.AddLine(1, LineKind.KESTREL_SAID, said, null), held.effect<ConversationEffect.AddLine>())
+        assertEquals(ConversationEffect.AddLine(id, 1, LineKind.KESTREL_SAID, said, null), held.effect<ConversationEffect.AddLine>())
         assertEquals(ChannelOutput.Said(said), held.state.heldWords)
 
         val back = signal(held.state, PhoneSignal.CALL_IDLE)
@@ -297,12 +297,12 @@ class GoalRulesTest : MachineTesting() {
     @Test
     fun aGoalThatEndsForGoodEndsItsRecordAndAReplyThatWasSaidLetsTheClockRun() {
         val final = ended(acting(), TaskReport(EndReason.FINISHED), "Wi-Fi is on.")
-        assertEquals(ConversationEffect.EndRecord(1, EndReason.FINISHED, "Wi-Fi is on."), final.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 1, EndReason.FINISHED, "Wi-Fi is on."), final.effect<ConversationEffect.EndRecord>())
         assertEquals(listOf(ChannelOutput.Report(1, "Wi-Fi is on.")), final.outputs())
 
         // After the routine offer, the report was said before it, and its record keeps it.
         val offered = step(acting(), ConversationEvent.GoalEnded(1, TaskReport(EndReason.FINISHED), answer = "Wi-Fi is on.", reply = null))
-        assertEquals(ConversationEffect.EndRecord(1, EndReason.FINISHED, "Wi-Fi is on."), offered.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 1, EndReason.FINISHED, "Wi-Fi is on."), offered.effect<ConversationEffect.EndRecord>())
         assertTrue(offered.outputs().isEmpty())
         assertTrue(offered.state.quiet is QuietClock.Running)
     }
@@ -324,8 +324,8 @@ class GoalRulesTest : MachineTesting() {
             ConversationEffect.Output(ChannelOutput.Said(marker)),
             ConversationEffect.Output(ChannelOutput.Shown(marker)),
             ConversationEffect.Output(ChannelOutput.Report(1, marker)),
-            ConversationEffect.AddLine(1, LineKind.NOTE, marker, null),
-            ConversationEffect.EndRecord(1, EndReason.FINISHED, marker),
+            ConversationEffect.AddLine(id, 1, LineKind.NOTE, marker, null),
+            ConversationEffect.EndRecord(id, 1, EndReason.FINISHED, marker),
             ConversationEffect.RunLocal(1, 1, LocalRequest.Remember(marker, marker), input),
             ConversationEffect.RunLocal(1, null, LocalRequest.ContinuePast(marker), input),
             ConversationEffect.SwitchTo(1, other, input),

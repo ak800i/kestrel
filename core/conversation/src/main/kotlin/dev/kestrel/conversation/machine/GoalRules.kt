@@ -58,7 +58,7 @@ internal object GoalRules {
             heldWords = null,
             timers = state.timers.copy(hold = state.timers.hold + 1),
         ),
-        listOf(ConversationEffect.ResumePausedGoal, ConversationEffect.AddLine(goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel)),
+        listOf(ConversationEffect.ResumePausedGoal, ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel)),
     ).then(::withdrawContinue)
 
     /**
@@ -71,7 +71,7 @@ internal object GoalRules {
         val command = state.command + 1
         val resumed = goal.copy(phase = GoalPhase.ACTING, hold = null, changedAtWall = now, rounds = goal.rounds + 1, command = command)
         val effects = listOfNotNull(
-            ConversationEffect.AddLine(goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel).takeIf { steer == null },
+            ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel).takeIf { steer == null },
             ConversationEffect.ResumeGoal(command, cause, steer?.let { ConversationEffect.Steering(it, channel) }, input),
         )
         return MachineStep(state.copy(command = command, goal = resumed, heldWords = null, timers = state.timers.copy(hold = state.timers.hold + 1)), effects)
@@ -95,7 +95,7 @@ internal object GoalRules {
             ),
             listOfNotNull(
                 ConversationEffect.Output(words).takeUnless { waits },
-                ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, words.text, null),
+                ConversationEffect.AddLine(state.openId, goal.record, LineKind.KESTREL_SAID, words.text, null),
                 ConversationEffect.StartTimer(Timer.HOLD, number, HOLD_MILLIS),
             ),
         )
@@ -254,7 +254,7 @@ internal object GoalRules {
         val goal = state.goal ?: return MachineStep(state)
         return MachineStep(
             state.copy(asksContinue = true, continueAnswer = null),
-            listOf(ConversationEffect.AskContinueGoal, ConversationEffect.AddLine(goal.record, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null)),
+            listOf(ConversationEffect.AskContinueGoal, ConversationEffect.AddLine(state.openId, goal.record, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null)),
         )
     }
 

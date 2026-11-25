@@ -67,8 +67,21 @@ class ConversationMachineTest : MachineTesting() {
         val steered = step(acting(), spoken("Make it 7:30 instead"))
 
         assertEquals(ConversationEffect.SteerGoal("Make it 7:30 instead", InputChannel.VOICE), steered.effect<ConversationEffect.SteerGoal>())
-        assertEquals(listOf(ChannelOutput.Shown(ConversationTexts.GOT_IT)), steered.outputs())
+        // "Got it." is the engine's, once the goal's inbox took the message (review of Task 10: I3).
+        assertTrue(steered.outputs().isEmpty())
         assertFalse(steered.has<ConversationEffect.StartGoal>())
+    }
+
+    // "Stop and start new" (design 6.8): the step that ends the goal records its end before it closes the conversation.
+    @Test
+    fun aStopAndANewConversationRecordTheGoalsEndBeforeTheClose() {
+        val stopping = step(step(acting(), typed(InputIntent.Stop)).state, typed(InputIntent.NewConversation)).state
+
+        val ended = ended(stopping, TaskReport(EndReason.CANCELLED), "Cancelled.")
+
+        val end = ended.effects.indexOf(ConversationEffect.EndRecord(id, 1, EndReason.CANCELLED, "Cancelled."))
+        assertTrue(end >= 0 && end < ended.effects.indexOf(ConversationEffect.Close(id)))
+        assertNull(ended.state.id)
     }
 
     @Test
@@ -111,7 +124,7 @@ class ConversationMachineTest : MachineTesting() {
         val continued = step(handed, spoken(InputIntent.Continue))
         assertEquals(ConversationEffect.EndHandOver(7, HandOverEnd.CONTINUED), continued.effect<ConversationEffect.EndHandOver>())
         assertEquals(
-            ConversationEffect.AddLine(1, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, InputChannel.VOICE),
+            ConversationEffect.AddLine(id, 1, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, InputChannel.VOICE),
             continued.effect<ConversationEffect.AddLine>(),
         )
         assertEquals(GoalPhase.ACTING, step(continued.state, ConversationEvent.Dialogue(DialogueEvent.HandOverDone(7))).state.goal!!.phase)
@@ -169,7 +182,7 @@ class ConversationMachineTest : MachineTesting() {
 
         val report = ended(stopped.state, TaskReport(EndReason.CANCELLED), "Cancelled. I opened Viber.")
         assertEquals(listOf(ChannelOutput.Report(1, "Cancelled. I opened Viber.")), report.outputs())
-        assertEquals(ConversationEffect.EndRecord(1, EndReason.CANCELLED, "Cancelled. I opened Viber."), report.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 1, EndReason.CANCELLED, "Cancelled. I opened Viber."), report.effect<ConversationEffect.EndRecord>())
         assertNull(report.state.goal)
     }
 
@@ -283,7 +296,7 @@ class ConversationMachineTest : MachineTesting() {
         assertFalse(waiting.has<ConversationEffect.StartGoal>())
 
         val done = step(waiting.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
-        assertEquals(ConversationEffect.EndRecord(1, EndReason.FINISHED, ConversationTexts.REMEMBERED), done.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 1, EndReason.FINISHED, ConversationTexts.REMEMBERED), done.effect<ConversationEffect.EndRecord>())
         assertEquals(listOf(ChannelOutput.Report(run.command, ConversationTexts.REMEMBERED)), done.outputs())
         assertEquals(2, done.effect<ConversationEffect.StartGoal>().record)
     }
@@ -296,12 +309,12 @@ class ConversationMachineTest : MachineTesting() {
         assertTrue(stopped.has<ConversationEffect.CancelLocal>())
 
         val cancelled = step(stopped.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Quiet))
-        assertEquals(ConversationEffect.EndRecord(2, EndReason.CANCELLED, null), cancelled.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.CANCELLED, null), cancelled.effect<ConversationEffect.EndRecord>())
         assertTrue(cancelled.outputs().isEmpty())
 
         // A reply that the request gave before the stop reached it is its own end: it had finished.
         val replied = step(stopped.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
-        assertEquals(ConversationEffect.EndRecord(2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
     }
 
     @Test

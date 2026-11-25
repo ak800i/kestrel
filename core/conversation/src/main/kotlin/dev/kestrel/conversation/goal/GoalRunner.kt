@@ -65,7 +65,10 @@ class GoalRunner(
         goal.job = scope.launch(start = CoroutineStart.ATOMIC) { round(goal, plan, owner) }
     }
 
-    /** The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4). */
+    /**
+     * The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4). The
+     * caller closes the goal's inbox and gives what waited in it as [pending], which the answer names as too late.
+     */
     fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd {
         val result = TaskReport(end = reason, ledger = record.ledger, checklist = record.checklist)
         val answer = environment.sentence(result) + ConversationTexts.tooLate(pending.map { it.text })
@@ -173,7 +176,8 @@ class GoalRunner(
 
     // Kestrel's words for a round's end: the environment's refusal when the round could not start, the call backstop's
     // when it stopped the goal, else the environment's sentence. A goal that ended for good names the steering that came
-    // too late; a held goal keeps it for its next round.
+    // too late and closes its inbox, so that a later message is named too late at once; a held goal keeps it for its next
+    // round.
     private fun answer(goal: RunningGoal, result: TaskReport, refused: String?): String {
         val stop = goal.stopSentence
         val sentence = when {
@@ -181,7 +185,7 @@ class GoalRunner(
             stop != null -> "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}"
             else -> environment.sentence(result)
         }
-        return if (result.end in HELD) sentence else sentence + ConversationTexts.tooLate(goal.inbox.drain().map { it.text })
+        return if (result.end in HELD) sentence else sentence + ConversationTexts.tooLate(goal.inbox.close().map { it.text })
     }
 
     // The routine offer of design D23 of sub-project 5, after the report was said: the sentence that it ends with, if any.
