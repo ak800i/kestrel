@@ -1,6 +1,7 @@
 package dev.kestrel.app.debug
 
 import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -32,6 +33,8 @@ import kotlinx.coroutines.withContext
  * meanwhile. The answers never contain words.
  */
 internal class GoalServiceHooks(private val graph: AppGraph, private val context: Context) {
+    private val buttons = NoticeButtons()
+
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "GOAL_SERVICE_STATE" -> GoalServiceAnswers.state(
             graph.goalForeground.status(),
@@ -98,9 +101,10 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
      */
     private suspend fun closeShade(session: ScreenSession): Boolean {
         session.actions.global(GlobalAction.DISMISS_SHADE)
+        val keyguard = context.getSystemService(KeyguardManager::class.java)
         repeat(CLOSE_TRIES) {
-            if (!NoticeButtons.shadeOpen(session.snapshots.current().snapshot)) return true
             delay(SHADE_MILLIS)
+            if (!buttons.shadeOpen(session.snapshots.current().snapshot, keyguard.isKeyguardLocked)) return true
         }
         return false
     }
@@ -113,9 +117,9 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         // Continue is never sent twice.
         val pressed = session.actions.tap(
             key,
-            expected = { element -> NoticeButtons.isButton(element, action.label) },
+            expected = { element -> buttons.isButton(element, action.label) },
             policy = PressPolicy.ONCE,
-            guard = { snapshot -> NoticeButtons.button(snapshot, notice.title, action.label) == key },
+            guard = { snapshot -> buttons.button(snapshot, notice.title, action.label) == key },
         )
         return (pressed as? ActionResult.Failed)?.reason
     }
@@ -151,8 +155,8 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         repeat(SHADE_TRIES) {
             delay(SHADE_MILLIS)
             val snapshot = session.snapshots.current().snapshot
-            NoticeButtons.button(snapshot, notice.title, action.label)?.let { return it }
-            NoticeButtons.collapsedRow(snapshot, notice.title)?.let { session.actions.expand(it) }
+            buttons.button(snapshot, notice.title, action.label)?.let { return it }
+            buttons.collapsedRow(snapshot, notice.title)?.let { session.actions.expand(it) }
         }
         return null
     }

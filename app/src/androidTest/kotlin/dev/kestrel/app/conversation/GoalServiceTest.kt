@@ -43,8 +43,9 @@ import org.junit.runner.RunWith
  * The goal service's wiring on kestrel-api37 (design 10.6 and 15.2 of sub-project 7; plan 7E): it runs for every open goal
  * with listening on or off, its notification follows the goal, its buttons reach the conversation, a held goal offers
  * Cancel before Continue and Continue asks for the owner's unlock, a held goal's Continue starts it again, the lock and call
- * pauses with listening off ask "Continue the goal?" in it and let go of the screen's turn at once, the shade shows the held goal's buttons without an expansion while listening's notification is there too, a pull of the shade
- * while the goal acts holds the goal, and it adds mediaPlayback while Kestrel speaks. The model's replies wait until the
+ * pauses with listening off ask "Continue the goal?" in it and let go of the screen's turn at once, the shade shows a held
+ * goal's buttons at once, a pull of the shade while the goal acts holds the goal, and it adds mediaPlayback while Kestrel
+ * speaks. The model's replies wait until the
  * test lets each one go (HeldModel), so that no step depends on the emulator's speed. The tests run in Kestrel's own
  * process, where Android lets the instrumentation start foreground services from the background, so they check the wiring,
  * and the controller checks Android's own rules for the starts and for background audio outside the tests (plan 7E, Task
@@ -177,7 +178,7 @@ class GoalServiceTest {
         // Design 10.6: the owner sees the held goal's buttons in the shade as it opens, with no row or group to expand first.
         check(VoiceTests.waitUntil(5_000) {
             val shade = runBlocking { screen.session.snapshots.current() }.snapshot
-            listOf(GoalTexts.CANCEL, GoalTexts.CONTINUE).all { NoticeButtons.button(shade, ConversationTexts.CONTINUE_GOAL, it) != null }
+            listOf(GoalTexts.CANCEL, GoalTexts.CONTINUE).all { NoticeButtons().button(shade, ConversationTexts.CONTINUE_GOAL, it) != null }
         }) { "The shade does not show the held goal's Cancel and Continue without an expansion" }
     }
 
