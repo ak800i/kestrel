@@ -11496,7 +11496,7 @@ git commit -m "feat(app): the follow-up window after a spoken final reply (plan 
 
 ### Task 5: "New conversation", "continue the conversation about X" and the typed reading
 
-Design 6.8, 9.6 and 12.2 of sub-project 7: after the name, "new conversation" (also "start a new conversation") closes the open conversation, and "continue the conversation about X" (also "continue our conversation" and "go back to the conversation", with or without "about X") continues a closed one. The voice reads them as Kestrel's own requests and gives them to the conversation as `InputIntent.NewConversation` and `InputIntent.ContinuePast(topic)`; plan 7B's engine decides what they do, also while a goal works (it says that the goal must stop first). "Continue" alone keeps its meaning (`InputIntent.Continue`), and any other sentence that starts with "continue the conversation", such as "continue the conversation with Ana", stays a command. `Requests.typed(text)` is the reading that plan 7F's text channel uses: Kestrel's own requests count without the name, and anything else is a command with the owner's words.
+Design 6.8, 9.6 and 12.2 of sub-project 7: after the name, "new conversation" (also "start a new conversation") closes the open conversation, and "continue the conversation about X" (also "continue our conversation" and "go back to the conversation", with or without "about X") continues a closed one. The voice reads them as Kestrel's own requests and gives them to the conversation as `InputIntent.NewConversation` and `InputIntent.ContinuePast(topic)`; plan 7B's engine decides what they do, also while a goal works (it says that the goal must stop first). "Continue" alone keeps its meaning (`InputIntent.Continue`), and any other sentence that starts with "continue the conversation", such as "continue the conversation with Ana", stays a command. `Requests.typed(text)` is the reading that plan 7F's text channel uses (design 12.2 of sub-project 7). A typed text has no recogniser, so only the exact name counts as the name, in any letter case and with any punctuation, and only at the start or among a stop's words; "Kestrels", "Kestler" or "Kes trel" stay the owner's words. Kestrel's own requests of the conversation count without the name: "stop" and "cancel", "continue", "new conversation", "continue the conversation about X", "delete history", "remember that …", "forget …" and "save that as …". Anything else is a command with the owner's words, also the requests that only the voice reads: "wake up", "stop listening", "turn off", "open settings", and "never mind", "forget it" and "nothing", which end only the voice's wait after "Yes?" and, typed, may answer a goal's question. The voice and the typed reading share one table of the conversation's own requests (`conversational`), and the reading of a stop takes the way to match the name (heard or exact).
 
 **Files:**
 - Modify: `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`
@@ -11506,7 +11506,7 @@ Design 6.8, 9.6 and 12.2 of sub-project 7: after the name, "new conversation" (a
 - Consumes: Task 3's `Requests.intent` and `Rules`; plan 7B's `InputIntent.NewConversation` and `InputIntent.ContinuePast(topic: String?)`.
 - Produces: `Request.NewConversation`, `Request.ContinuePast(topic: String?)`; `Requests.typed(text: String): InputIntent?` for plan 7F.
 
-Counts: `:app` JVM A₄ + 4 (`RequestsTest` 33 + 3 = 36, `RulesTest` 103 + 1 = 104). Device tests: AD₀ + 2, unchanged.
+Counts: `:app` JVM A₄ + 6 (`RequestsTest` 33 + 5 = 38, `RulesTest` 103 + 1 = 104). Device tests: AD₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -11525,6 +11525,22 @@ package dev.kestrel.app.orchestrator
 
 import dev.kestrel.conversation.model.InputIntent
 import org.junit.Assert.assertEquals
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RequestsTest.kt`, replace:
+
+```kotlin
+        assertEquals("Other(11 characters)", Request.Other("Scroll down").toString())
+    }
+```
+
+with:
+
+```kotlin
+        assertEquals("Other(11 characters)", Request.Other("Scroll down").toString())
+        assertEquals("ContinuePast(6 characters)", Request.ContinuePast("dinner").toString())
+        assertEquals("ContinuePast(no topic)", Request.ContinuePast(null).toString())
+    }
 ```
 
 In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RequestsTest.kt`, replace:
@@ -11570,6 +11586,28 @@ with:
         // The voice's own requests are no request of a typed text.
         assertEquals(InputIntent.Command("stop listening"), Requests.typed("stop listening"))
         assertNull(Requests.typed("  ... "))
+    }
+
+    @Test
+    fun aTypedTextKeepsTheWordsThatOnlyTheVoiceReads() {
+        // "Never mind", "forget it" and "nothing" end only the voice's wait after "Yes?"; typed, they are the owner's
+        // words, such as the answer to a goal's question (design 12.2 of sub-project 7).
+        assertEquals(InputIntent.Command("Nothing"), Requests.typed("Nothing"))
+        assertEquals(InputIntent.Command("No, never mind"), Requests.typed("No, never mind"))
+        assertEquals(InputIntent.Command("forget it"), Requests.typed("Kestrel, forget it"))
+        assertEquals(InputIntent.Command("wake up"), Requests.typed("wake up"))
+        assertEquals(InputIntent.Command("Turn off"), Requests.typed("Turn off"))
+        assertEquals(InputIntent.Command("open settings"), Requests.typed("Kestrel, open settings"))
+    }
+
+    @Test
+    fun aTypedTextTakesOnlyTheExactNameAsTheName() {
+        assertEquals(InputIntent.Command("Kestrels are birds, show me pictures"), Requests.typed("Kestrels are birds, show me pictures"))
+        assertEquals(InputIntent.Command("Kester, new conversation"), Requests.typed("Kester, new conversation"))
+        assertEquals(InputIntent.Command("Kestler, stop"), Requests.typed("Kestler, stop"))
+        assertEquals(InputIntent.Command("Kes trel, stop"), Requests.typed("Kes trel, stop"))
+        assertEquals(InputIntent.NewConversation, Requests.typed("KESTREL: new conversation"))
+        assertEquals(InputIntent.Stop, Requests.typed("Stop it, Kestrel!"))
     }
 }
 ```
@@ -11633,7 +11671,7 @@ with:
      * conversation continues (design 9.6 and D23 of sub-project 7).
      */
     data class ContinuePast(val topic: String?) : Request {
-        override fun toString() = "ContinuePast(${topic?.length} characters)"
+        override fun toString() = "ContinuePast(${topic?.let { "${it.length} characters" } ?: "no topic"})"
     }
 
     /** A call command (section 8.7), which [Requests.readCall] reads while a call rings or lasts. */
@@ -11688,18 +11726,82 @@ with:
     }
 
     /**
-     * What a typed [text] asks of the conversation (design 12.2 of sub-project 7): Kestrel's own requests are read as after
-     * the name, so "new conversation", "continue", "delete history" and "remember that …" need no "Kestrel", and anything
-     * else is a command with the owner's words; null for a text without words.
+     * What a typed [text] asks of the conversation (design 12.2 of sub-project 7). A typed text has no recogniser, so only
+     * the exact name, in any letter case and with any punctuation, counts as the name, and only at the start or among the
+     * words of a stop. Kestrel's own requests of the conversation need no name: "stop" and "cancel" (with the words of a
+     * spoken stop, such as "Stop it, Kestrel"), "continue", "new conversation", "continue the conversation about …",
+     * "delete history", "remember that …", "forget …" and "save that as …". Anything else is a command with the owner's
+     * words after the name, also the requests that only the voice reads, such as "wake up", "turn off" and "never mind",
+     * which may answer a question; null for a text without words.
      */
     fun typed(text: String): InputIntent? {
-        val request = read(text, spotted = false, afterName = true) ?: return null
-        return intent(request) ?: InputIntent.Command(text.trim())
+        val words = words(text)
+        if (words.isEmpty()) return null
+        val rest = words.drop(exactNameAt(words, 0))
+        if (rest.isEmpty()) return InputIntent.Command(text.trim())
+        val request = if (readStop(rest, ::exactNameAt) != null) Request.Stop(named = true) else conversational(text, rest)
+        return request?.let(::intent) ?: InputIntent.Command(text.substring(rest.first().range.first).trim())
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, replace:
 
 ```kotlin
+        readStop(words, limit)?.let { return if (afterName) Request.Stop(named = true) else it }
+```
+
+with:
+
+```kotlin
+        readStop(words) { at, start -> nameAt(at, start, limit) }?.let { return if (afterName) Request.Stop(named = true) else it }
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, replace:
+
+```kotlin
+    /** A stop when [words] are "stop" or "cancel" with only fillers and names; it is named when a name is among them. */
+    private fun readStop(words: List<Word>, limit: Int): Request.Stop? {
+        if (words.none { it.text in STOP_WORDS }) return null
+        var named = false
+        var i = 0
+        while (i < words.size) {
+            if (words[i].text in STOP_WORDS || words[i].text in FILLERS) {
+                i++
+                continue
+            }
+            val name = nameAt(words, i, limit)
+```
+
+with:
+
+```kotlin
+    /**
+     * A stop when [words] are "stop" or "cancel" with only fillers and names; it is named when a name is among them.
+     * [names] gives how many words make the name at an index, or 0: heard for the voice, exact for a typed text.
+     */
+    private fun readStop(words: List<Word>, names: (List<Word>, Int) -> Int): Request.Stop? {
+        if (words.none { it.text in STOP_WORDS }) return null
+        var named = false
+        var i = 0
+        while (i < words.size) {
+            if (words[i].text in STOP_WORDS || words[i].text in FILLERS) {
+                i++
+                continue
+            }
+            val name = names(words, i)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, replace:
+
+```kotlin
+        if (readStop(rest, limit) != null) return Request.Stop(named = true)
+        val said = phrase(rest)
+        val fromWakeUp = wakeUpDistance(said)
+        return when {
+            said == "stop listening" -> Request.PauseListening
+            turnOffAlone && said in TURN_OFF -> Request.TurnOff
+            said in OPEN_SETTINGS -> Request.OpenSettings
+            said == CONTINUE -> Request.Continue
+            said in DELETE_HISTORY -> Request.DeleteHistory
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
@@ -11711,12 +11813,33 @@ In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, replace:
 with:
 
 ```kotlin
-            said in NEW_CONVERSATION -> Request.NewConversation
+        if (readStop(rest) { at, start -> nameAt(at, start, limit) } != null) return Request.Stop(named = true)
+        val said = phrase(rest)
+        val fromWakeUp = wakeUpDistance(said)
+        return when {
+            said == "stop listening" -> Request.PauseListening
+            turnOffAlone && said in TURN_OFF -> Request.TurnOff
+            said in OPEN_SETTINGS -> Request.OpenSettings
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
-            else -> memory(transcript, rest) ?: past(transcript, rest)
+            else -> conversational(transcript, rest)
                 ?: Request.Task(transcript.substring(rest.first().range.first).trim(), nearWakeUp = fromWakeUp == 2)
+        }
+    }
+
+    /**
+     * Kestrel's own requests of the conversation in [rest] (design 5.5 and 12.2 of sub-project 7), which the voice reads
+     * after the name and a typed text reads without it: "continue", "delete history", "new conversation", a memory request
+     * or continuing a past conversation; null for anything else.
+     */
+    private fun conversational(transcript: String, rest: List<Word>): Request? {
+        val said = phrase(rest)
+        return when {
+            said == CONTINUE -> Request.Continue
+            said in DELETE_HISTORY -> Request.DeleteHistory
+            said in NEW_CONVERSATION -> Request.NewConversation
+            else -> memory(transcript, rest) ?: past(transcript, rest)
         }
     }
 
@@ -11734,6 +11857,27 @@ with:
         return Request.ContinuePast(topic)
 ```
 
+Moving "continue", "delete history" and "new conversation" after "wake up" and "never mind" changes nothing that the voice reads: none of them is within one word of "wake up" or a "never mind".
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, replace:
+
+```kotlin
+        start + 1 < words.size && isName(words[start].text + words[start + 1].text, limit) -> 2
+        else -> 0
+    }
+```
+
+with:
+
+```kotlin
+        start + 1 < words.size && isName(words[start].text + words[start + 1].text, limit) -> 2
+        else -> 0
+    }
+
+    /** 1 when the word at [start] is the name exactly, as a typed text must write it, or 0. */
+    private fun exactNameAt(words: List<Word>, start: Int): Int = if (start < words.size && words[start].text == NAME) 1 else 0
+```
+
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.orchestrator.RequestsTest --tests=dev.kestrel.app.orchestrator.RulesTest`
@@ -11742,7 +11886,7 @@ Expected: PASS.
 - [ ] **Step 5: Run `:app`'s JVM tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₄ + 4.
+Expected: BUILD SUCCESSFUL; `app` A₄ + 6.
 
 - [ ] **Step 6: Commit**
 
@@ -12970,7 +13114,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 ## Counts at the end of plan 7D
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 25 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 27 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 7, Task 5 + 6, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
 - `:core:conversation`: C₀ + 4 (`ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
 
@@ -12997,7 +13141,7 @@ What plans 7E and 7F consume, as this plan leaves `:app`. Every type is `interna
 
 **The owner's inputs (plan 7F)**
 - `InputIds.next(): Long` (package `dev.kestrel.app.conversation`): the number of every `OwnerInput` of every channel in the process.
-- `Requests.typed(text: String): InputIntent?`: the typed reading of design 12.2. `Requests.intent(request: Request): InputIntent?`, with `Request.NewConversation` and `Request.ContinuePast(topic)`.
+- `Requests.typed(text: String): InputIntent?`: the typed reading of design 12.2, with only the exact name and without the requests that only the voice reads ("never mind", "nothing" and "forget it" stay the owner's words, so that they may answer a question). `Requests.intent(request: Request): InputIntent?`, with `Request.NewConversation` and `Request.ContinuePast(topic)`.
 - The settings page's "Delete history" goes through the conversation from this plan on: `SettingsData.deleteHistory(): HistoryDeletion` calls `ConversationEngine.deleteHistory()` after the page's own question (Task 7). Plan 7F adds only the typed "delete history" (`Requests.typed` gives `InputIntent.DeleteHistory`, which asks on the text channel).
 
 **The hooks (plans 7E, 7F and 7G)**

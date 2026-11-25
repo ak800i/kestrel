@@ -77,7 +77,7 @@ sealed interface Request {
      * conversation continues (design 9.6 and D23 of sub-project 7).
      */
     data class ContinuePast(val topic: String?) : Request {
-        override fun toString() = "ContinuePast(${topic?.length} characters)"
+        override fun toString() = "ContinuePast(${topic?.let { "${it.length} characters" } ?: "no topic"})"
     }
 
     /** A call command (section 8.7), which [Requests.readCall] reads while a call rings or lasts. */
@@ -214,7 +214,7 @@ object Requests {
         if (words.isEmpty()) return null
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
         if (isStopKestrel(words, limit, stopSpotted)) return Request.TurnOff
-        readStop(words, limit)?.let { return if (afterName) Request.Stop(named = true) else it }
+        readStop(words) { at, start -> nameAt(at, start, limit) }?.let { return if (afterName) Request.Stop(named = true) else it }
         val start = nameStart(words, spotted, limit)
         if (start >= 0) {
             var rest = words.drop(start + nameAt(words, start, limit))
@@ -269,13 +269,21 @@ object Requests {
     }
 
     /**
-     * What a typed [text] asks of the conversation (design 12.2 of sub-project 7): Kestrel's own requests are read as after
-     * the name, so "new conversation", "continue", "delete history" and "remember that …" need no "Kestrel", and anything
-     * else is a command with the owner's words; null for a text without words.
+     * What a typed [text] asks of the conversation (design 12.2 of sub-project 7). A typed text has no recogniser, so only
+     * the exact name, in any letter case and with any punctuation, counts as the name, and only at the start or among the
+     * words of a stop. Kestrel's own requests of the conversation need no name: "stop" and "cancel" (with the words of a
+     * spoken stop, such as "Stop it, Kestrel"), "continue", "new conversation", "continue the conversation about …",
+     * "delete history", "remember that …", "forget …" and "save that as …". Anything else is a command with the owner's
+     * words after the name, also the requests that only the voice reads, such as "wake up", "turn off" and "never mind",
+     * which may answer a question; null for a text without words.
      */
     fun typed(text: String): InputIntent? {
-        val request = read(text, spotted = false, afterName = true) ?: return null
-        return intent(request) ?: InputIntent.Command(text.trim())
+        val words = words(text)
+        if (words.isEmpty()) return null
+        val rest = words.drop(exactNameAt(words, 0))
+        if (rest.isEmpty()) return InputIntent.Command(text.trim())
+        val request = if (readStop(rest, ::exactNameAt) != null) Request.Stop(named = true) else conversational(text, rest)
+        return request?.let(::intent) ?: InputIntent.Command(text.substring(rest.first().range.first).trim())
     }
 
     private fun words(transcript: String): List<Word> =
@@ -324,8 +332,11 @@ object Requests {
         return end > 0 && words.drop(1 + end).all { it.text == "please" || it.text == "now" }
     }
 
-    /** A stop when [words] are "stop" or "cancel" with only fillers and names; it is named when a name is among them. */
-    private fun readStop(words: List<Word>, limit: Int): Request.Stop? {
+    /**
+     * A stop when [words] are "stop" or "cancel" with only fillers and names; it is named when a name is among them.
+     * [names] gives how many words make the name at an index, or 0: heard for the voice, exact for a typed text.
+     */
+    private fun readStop(words: List<Word>, names: (List<Word>, Int) -> Int): Request.Stop? {
         if (words.none { it.text in STOP_WORDS }) return null
         var named = false
         var i = 0
@@ -334,7 +345,7 @@ object Requests {
                 i++
                 continue
             }
-            val name = nameAt(words, i, limit)
+            val name = names(words, i)
             if (name == 0) return null
             named = true
             i += name
@@ -355,21 +366,33 @@ object Requests {
         turnOffAlone: Boolean,
     ): Request {
         if (rest.isEmpty()) return Request.Name
-        if (readStop(rest, limit) != null) return Request.Stop(named = true)
+        if (readStop(rest) { at, start -> nameAt(at, start, limit) } != null) return Request.Stop(named = true)
         val said = phrase(rest)
         val fromWakeUp = wakeUpDistance(said)
         return when {
             said == "stop listening" -> Request.PauseListening
             turnOffAlone && said in TURN_OFF -> Request.TurnOff
             said in OPEN_SETTINGS -> Request.OpenSettings
-            said == CONTINUE -> Request.Continue
-            said in DELETE_HISTORY -> Request.DeleteHistory
-            said in NEW_CONVERSATION -> Request.NewConversation
             fromWakeUp <= 1 -> Request.WakeUp
             // "Forget [something]" stays a task, because "Kestrel, forget [fact]" is a command (Appendix A).
             afterName && isNeverMind(rest) -> Request.Stop(named = true)
-            else -> memory(transcript, rest) ?: past(transcript, rest)
+            else -> conversational(transcript, rest)
                 ?: Request.Task(transcript.substring(rest.first().range.first).trim(), nearWakeUp = fromWakeUp == 2)
+        }
+    }
+
+    /**
+     * Kestrel's own requests of the conversation in [rest] (design 5.5 and 12.2 of sub-project 7), which the voice reads
+     * after the name and a typed text reads without it: "continue", "delete history", "new conversation", a memory request
+     * or continuing a past conversation; null for anything else.
+     */
+    private fun conversational(transcript: String, rest: List<Word>): Request? {
+        val said = phrase(rest)
+        return when {
+            said == CONTINUE -> Request.Continue
+            said in DELETE_HISTORY -> Request.DeleteHistory
+            said in NEW_CONVERSATION -> Request.NewConversation
+            else -> memory(transcript, rest) ?: past(transcript, rest)
         }
     }
 
@@ -459,6 +482,9 @@ object Requests {
         start + 1 < words.size && isName(words[start].text + words[start + 1].text, limit) -> 2
         else -> 0
     }
+
+    /** 1 when the word at [start] is the name exactly, as a typed text must write it, or 0. */
+    private fun exactNameAt(words: List<Word>, start: Int): Int = if (start < words.size && words[start].text == NAME) 1 else 0
 
     /** How many words, one or two, make the name that ends just before [end], or 0. */
     private fun nameBefore(words: List<Word>, end: Int, limit: Int): Int = when {

@@ -293,6 +293,8 @@ class RequestsTest {
     fun theOwnersWordsAreNotPrinted() {
         assertEquals("Task(17 characters)", Request.Task("open the settings").toString())
         assertEquals("Other(11 characters)", Request.Other("Scroll down").toString())
+        assertEquals("ContinuePast(6 characters)", Request.ContinuePast("dinner").toString())
+        assertEquals("ContinuePast(no topic)", Request.ContinuePast(null).toString())
     }
 
     @Test
@@ -362,5 +364,27 @@ class RequestsTest {
         // The voice's own requests are no request of a typed text.
         assertEquals(InputIntent.Command("stop listening"), Requests.typed("stop listening"))
         assertNull(Requests.typed("  ... "))
+    }
+
+    @Test
+    fun aTypedTextKeepsTheWordsThatOnlyTheVoiceReads() {
+        // "Never mind", "forget it" and "nothing" end only the voice's wait after "Yes?"; typed, they are the owner's
+        // words, such as the answer to a goal's question (design 12.2 of sub-project 7).
+        assertEquals(InputIntent.Command("Nothing"), Requests.typed("Nothing"))
+        assertEquals(InputIntent.Command("No, never mind"), Requests.typed("No, never mind"))
+        assertEquals(InputIntent.Command("forget it"), Requests.typed("Kestrel, forget it"))
+        assertEquals(InputIntent.Command("wake up"), Requests.typed("wake up"))
+        assertEquals(InputIntent.Command("Turn off"), Requests.typed("Turn off"))
+        assertEquals(InputIntent.Command("open settings"), Requests.typed("Kestrel, open settings"))
+    }
+
+    @Test
+    fun aTypedTextTakesOnlyTheExactNameAsTheName() {
+        assertEquals(InputIntent.Command("Kestrels are birds, show me pictures"), Requests.typed("Kestrels are birds, show me pictures"))
+        assertEquals(InputIntent.Command("Kester, new conversation"), Requests.typed("Kester, new conversation"))
+        assertEquals(InputIntent.Command("Kestler, stop"), Requests.typed("Kestler, stop"))
+        assertEquals(InputIntent.Command("Kes trel, stop"), Requests.typed("Kes trel, stop"))
+        assertEquals(InputIntent.NewConversation, Requests.typed("KESTREL: new conversation"))
+        assertEquals(InputIntent.Stop, Requests.typed("Stop it, Kestrel!"))
     }
 }
