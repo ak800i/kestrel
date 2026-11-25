@@ -31,7 +31,7 @@ Code comments name this plan "plan 7F" and the design's sections as "design 10.3
 
 ## Before you start
 
-- This plan's Tasks A1 and A2 ran first, right after plan 7B's Tasks 5a to 5d and before its Task 8, and are built: Task A1 in `b4f5fcc3`, Task A2 in `ade80de8`. Its Tasks 1 to 15 start only after plans 7A to 7E, with Tasks A1 and A2, are merged into `sp3`. It was written against `sp3` at `a141ea4f`, where plan 7A and plan 7B's Tasks 1 to 7 had landed, with plan 7B's fixes (`693f3dde`, `31ef1c54`, `c6bafb8d`, `0aa11403`, `e12844d5`, and Task 7's `a3459e50` and `d6c76d70`), plan 7B's index of past conversations planned in shards after its fix rounds (Tasks 5a to 5d, design 4.3 and 9.x, `90b6c2b7` to `7265779c`), plan 7C's Task 4b built (`1422af92`, `d9382170`) and its Task 4c planned (`a141ea4f`), plan 7E's amendment moved into plan 7B's Tasks 7 and 10 (`ba1cc001`, `82a42656`), and plan 7E rebased onto plan 7B's built rules (`04c540d9`, `b799de95`). It was re-synced to plan 7B's engine after the fixes of its Task 10 (`25cdca0a`, `4804136d`): every store write goes through the engine's writer, and its timers are deadlines on `ConversationClock.sinceBootMillis`; and to `LineKind.OWNER_TOO_LATE`. The plan checker first simulated, in order: plan 7B's Tasks 5a to 5d, this plan's Tasks A1 and A2, plan 7B's Tasks 8 to 10, plan 7C from Task 4c, and plans 7D and 7E; this plan's Tasks 1 to 13a ran clean on top. Its old texts in `core/`, `app/` and their tests are the texts that those plans leave. The files that Tasks 1 to 13a change and that the simulated plans leave as they are at `a141ea4f` are `app/src/main/kotlin/dev/kestrel/app/MainActivity.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SetupChecklist.kt`, `app/src/test/kotlin/dev/kestrel/app/settings/SetupChecklistTest.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/CardPresence.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/ConfirmationCard.kt`, `core/screen/src/main/res/values/strings.xml`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/ConfirmationCardTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/GridBarAndCardTest.kt` and `testapp/src/main/AndroidManifest.xml`.
+- This plan's Tasks A1 and A2 ran first, right after plan 7B's Tasks 5a to 5d and before its Task 8, and are built: Task A1 in `b4f5fcc3`, Task A2 in `ade80de8`. Its Tasks 1 to 15 start only after plans 7A to 7E, with Tasks A1 and A2, are merged into `sp3`. It was written against `sp3` at `a141ea4f`, where plan 7A and plan 7B's Tasks 1 to 7 had landed, with plan 7B's fixes (`693f3dde`, `31ef1c54`, `c6bafb8d`, `0aa11403`, `e12844d5`, and Task 7's `a3459e50` and `d6c76d70`), plan 7B's index of past conversations planned in shards after its fix rounds (Tasks 5a to 5d, design 4.3 and 9.x, `90b6c2b7` to `7265779c`), plan 7C's Task 4b built (`1422af92`, `d9382170`) and its Task 4c planned (`a141ea4f`), plan 7E's amendment moved into plan 7B's Tasks 7 and 10 (`ba1cc001`, `82a42656`), and plan 7E rebased onto plan 7B's built rules (`04c540d9`, `b799de95`). It was re-synced to plan 7B's engine after the fixes of its Task 10 (`25cdca0a`, `4804136d`, and the final re-check's `50b99c61` and `edcc4b30`, which moved `RecordRef` to the model package): every store write goes through the engine's writer, and its timers are deadlines on `ConversationClock.sinceBootMillis`; and to `LineKind.OWNER_TOO_LATE`. The plan checker first simulated, in order: plan 7B's Tasks 5a to 5d, this plan's Tasks A1 and A2, plan 7B's Tasks 8 to 10, plan 7C from Task 4c, and plans 7D and 7E; this plan's Tasks 1 to 13a ran clean on top. Its old texts in `core/`, `app/` and their tests are the texts that those plans leave. The files that Tasks 1 to 13a change and that the simulated plans leave as they are at `a141ea4f` are `app/src/main/kotlin/dev/kestrel/app/MainActivity.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SetupChecklist.kt`, `app/src/test/kotlin/dev/kestrel/app/settings/SetupChecklistTest.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/CardPresence.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/ConfirmationCard.kt`, `core/screen/src/main/res/values/strings.xml`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/ConfirmationCardTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/GridBarAndCardTest.kt` and `testapp/src/main/AndroidManifest.xml`.
 - At the starts of Tasks 1, 4, 8 and 11, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7f-screen.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:SIMDIR = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7f-sim'; $env:END_TASK = ''; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`; for Task 1 also set `$env:START_TASK = '1'`, for Task 4 `$env:START_TASK = '4'`, for Task 8 `$env:START_TASK = '8'`, and for Task 11 `$env:START_TASK = '11'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plans 7A to 7E moved or changed, or a file that one of them created, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the earlier plans left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
 - At the start of Task 1, check that plans 7B to 7E and Tasks A1 and A2 as merged have what this plan consumes: `Select-String -Path core\agent\src\main\kotlin\dev\kestrel\agent\port\OwnerPort.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\model\OwnerInput.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationEngine.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationView.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\ConversationTexts.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\store\ConversationStore.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\store\HistorySearch.kt, app\src\main\kotlin\dev\kestrel\app\AppGraph.kt, app\src\main\kotlin\dev\kestrel\app\conversation\OwnerSupport.kt, app\src\main\kotlin\dev\kestrel\app\conversation\InputIds.kt, app\src\main\kotlin\dev\kestrel\app\orchestrator\Requests.kt, app\src\main\kotlin\dev\kestrel\app\listen\ScreenTurns.kt, app\src\main\kotlin\dev\kestrel\app\goal\GoalForeground.kt -Pattern 'fun replyOpened\(question: Int\)|fun composing\(active: Boolean\)|suspend fun deleteHistory\(\): HistoryDeletion|val hold: GoalHold\? = null|fun held\(hold: GoalHold\)|const val CONTINUE_IN_NOTIFICATION|suspend fun searchable\(\): Searchable|class PastUnavailableException|suspend fun getAll\(|suspend fun conversation\(topic: String\?\): ConversationLookup|val goalForeground: GoalForeground|internal interface OwnerScreen|object InputIds|fun typed\(text: String\): InputIntent\?|class ScreenTurns|suspend fun <T> whileSpeaking|const val MAX_CHOICES = 4|val question: Int\? = null\) : InputIntent'`. Expected: 18 matches or more. Otherwise stop and ask the controller. Then check that only the two files that Task 3 changes name plan 7E's constant, so that its rename reaches every use: `git grep -l CONTINUE_IN_NOTIFICATION -- core app`. Expected: exactly `app/src/test/kotlin/dev/kestrel/app/goal/GoalNoticesTest.kt` and `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt` (plan 7E's `GoalRules.backgroundRefused` and its tests take the sentence from `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`). Otherwise stop and ask the controller.
 - Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :app:testDebugUnitTest :core:conversation:test :core:screen:testDebugUnitTest :core:privacy:testDebugUnitTest`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'core\conversation\build\test-results\test', 'core\screen\build\test-results\testDebugUnitTest', 'core\privacy\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `"app device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"; "privacy device $(@(Get-ChildItem core\privacy\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`. These are A₀ (`:app` JVM, with `app/src/testDebug`), C₀ (`:core:conversation`, after Tasks A1 and A2 and plans 7B to 7E), S₀ (`:core:screen` JVM), P₀ (`:core:privacy` JVM), AD₀ (`:app`'s device tests) and PD₀ (`:core:privacy`'s device tests, which Task 14 runs, with Task 3's one more). `:core:agent` (G₀; Task A1 counts its own change), `:tools:eval` (E₀) and the Pester tests do not change in Tasks 1 to 15. Each task gives its counts as "N + k", where N is the count before the task. If a count differs, stop and ask the controller.
@@ -62,7 +62,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 - **A typed round waits for a running instant command.** A spoken input cancels a running instant command before it reaches the conversation (plan 7D). A typed input, a card's button and the notification's buttons reach the conversation without the Orchestrator, so `ScreenTurns` also keeps the running command's job, and a goal's round waits for it to end, for at most 60 s, as it waits for a cancelled one (plan 7B's `ScreenTurn` contract; plan 7D's "Interfaces for 7E and 7F").
 - **The bar's goal progress is this plan's, and the bar has one writer.** Design 10.5's "Step 12 · 3 of 7 · Replying to Mila" and "On hold: say 'Kestrel, continue' or open Kestrel." are in no earlier plan; `GoalBar` gives them for both channels from the conversation's view, and `SharedFeedbackBar` shows them only while no kept text (a question, a hand-over's sentence) holds the bar and no other text showed in the last 4 s.
 - **The speech of typed replies with listening off.** With "Speak replies to typed commands" on and Kestrel off, the voice channel speaks a typed conversation's words with `AppOffVoice`, which loads the owner's voice for the reply inside plan 7E's `GoalForeground.whileSpeaking` and closes it 30 s after the last reply.
-- **Deleting past conversations.** One past conversation is deleted from the list or its transcript after a question; "Delete all past conversations" deletes every closed conversation, also one in a format that this version cannot read, in one transaction of the archive's own (`RecordArchive.deleteClosed`, which plan 7C's table carries out) with the index without them, keeps the logs and the archive's key, unlike "delete history", and reads no body (`ConversationStore.deleteClosed(keep)` to `ConversationEngine.deleteAllPast`); it raises the store's generation first, as "delete history" does, and while the index cannot be read it deletes nothing and says so. One conversation's deletion is checked by the engine's loop, which refuses to delete the open conversation or the one that a running switch opens, and done by its writer after the writes before it; "Delete all" keeps the conversation that was open when the owner asked, waits at the engine's writer's barrier for the writes queued before it, and then runs beside the engine's inbox and writer, never in them, because the store may wait minutes for its index (review N2); the store keeps the open conversation, which its index never holds. So a conversation that the owner continued meanwhile is kept either way, and the page shows "Deleting past conversations…" until the outcome comes back, which it reads out.
+- **Deleting past conversations.** One past conversation is deleted from the list or its transcript after a question; "Delete all past conversations" deletes every closed conversation, also one in a format that this version cannot read, in one transaction of the archive's own (`RecordArchive.deleteClosed`, which plan 7C's table carries out) with the index without them, keeps the logs and the archive's key, unlike "delete history", and reads no body (`ConversationStore.deleteClosed(keep)` to `ConversationEngine.deleteAllPast`); it raises the store's generation first, as "delete history" does, and while the index cannot be read it deletes nothing and says so. One conversation's deletion is checked by the engine's loop, which refuses to delete the open conversation or the one that a running switch opens, and done by its writer after the writes before it; "Delete all" keeps every conversation that is open at some moment between the owner's ask and its transaction (review M1), waits at the engine's writer's barrier for the writes queued before it, and then runs beside the engine's inbox and writer, never in them, because the store may wait minutes for its index (review N2); the store keeps the open conversation, which its index never holds. So a conversation that the owner continued meanwhile is kept either way, and the page shows "Deleting past conversations…" until the outcome comes back, which it reads out.
 - **The list's search** uses the search's own rule over plan 7B's index of past conversations, through `HistorySearch.matching`, which `:core:conversation` gains, once the typing pauses and off the main thread; while the index is read or rebuilt, the list says "Loading past conversations…", and while it cannot be read, "Kestrel can't read past conversations right now. It will try again later." (design 9.5).
 - **The round limits on the Conversations page** are choices within the design's ranges (50 to 2,000 replies, 5 to 240 minutes, 10 to 5,000 AI Credits), so that a voice user can set them by name: 50, 100, 200, 500, 1,000 or 2,000 replies; 5, 15, 30, 60, 120 or 240 minutes; 10, 100, 250, 500, 1,000, 2,500 or 5,000 AI Credits.
 - **The settings app.** `MainActivity` leaves the launcher but stays exported, because the scripts and the device tests start it with `am start`, and it follows only the extras that it follows today. Its window is not guarded, as today; the Conversations page's dialog is.
@@ -2606,7 +2606,7 @@ git commit -m "feat(listen): a goal's round waits for a running instant command,
 
 ### Task 3: The conversation's parts for the screen, the list and the device tests
 
-Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them, and the engine never deletes the open one; the list's search field filters by the search's own rule; and the device tests delete the conversations that they made, and only those (Task 8's `TypedTests`). Design 15.2: the device tests shorten D21's waits. Plan 7E's interfaces: once the conversation screen has Continue, a goal that Android's refusal holds says design 10.6's "Open Kestrel and tap Continue." This task gives the engine `deletePast(id)`, which the engine's loop checks against the open conversation and the one that a switch is opening, and whose deletion its writer does in the loop's order (plan 7B's rule that every write to the store goes through the writer), and `deleteAllPast()`, which notes the conversation that is open when the owner asks, waits at the engine's writer's barrier (plan 7B's `stored()`) until every write that the loop queued before it is stored, and then runs beside the engine's inbox, in its scope, over the store's new `deleteClosed(keep)`, because that may wait minutes for the index to be read or rebuilt and must never hold up the conversation or the writer (review N2); a seam for its timers' lengths, which shortens each timer's deadline itself (plan 7B's timers are deadlines on `ConversationClock.sinceBootMillis`, and a `delay` only wakes the loop) and which `AppGraph.conversationTimers` sets for device tests only; and the held goal's new sentence. Both store parts work on plan 7B's index of past conversations (design 9.2), so that neither reads a body: "Delete all past conversations" needs a path of its own, because the port's `deleteAll` is the whole of "delete history", which also deletes the logs and erases the key (plan 7C's `ae33cfda`). This task adds it to plan 7B's store and plan 7C's archive, which are built: the port's `RecordArchive.deleteClosed(keep, index)` deletes, in one transaction, every closed row but `keep`, also one that the index does not name or that this version cannot read, and changes the index's shards as it is told; it keeps the open row, the logs and the archive's key. `ConversationDao.deleteClosed`, `ConversationArchiveStore.deleteClosed` and `RoomRecordArchive.deleteClosed` carry it to the encrypted table, and the fixtures' `MemoryArchive` does it in memory. The store's `deleteClosed(keep)`, under its `withIndex`, raises the store's `generation` first, as "delete history" does, so that a search that it overtook gives out nothing, and gives the port the index without the deleted conversations and kept rows, which writes only the shards that changed. The engine passes the conversation that was open when the owner asked, so that it stays also when it closes before the deletion runs; one that the owner continues meanwhile is open, so it stays too. While the index is read or rebuilt it waits, and while the index cannot be read it throws `PastUnavailableException`, which the engine's `deleteAllPast()` gives as `PastDeletion.UNAVAILABLE`. `HistorySearch.matching(text)` ranks the index's shards with `HistoryRanking`, as the agent's search does, and says when the index is being rebuilt or cannot be read. Plan 7E's `GoalRules.backgroundRefused` and its tests take the held goal's sentence from `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so the new sentence changes only `ConversationTexts.kt` and the one test that names the constant, plan 7E's `GoalNoticesTest` (see "Before you start").
+Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them, and the engine never deletes the open one; the list's search field filters by the search's own rule; and the device tests delete the conversations that they made, and only those (Task 8's `TypedTests`). Design 15.2: the device tests shorten D21's waits. Plan 7E's interfaces: once the conversation screen has Continue, a goal that Android's refusal holds says design 10.6's "Open Kestrel and tap Continue." This task gives the engine `deletePast(id)`, which the engine's loop checks against the open conversation and the one that a switch is opening, and whose deletion its writer does in the loop's order (plan 7B's rule that every write to the store goes through the writer), and `deleteAllPast()`, which keeps every conversation that is open at some moment between the owner's ask and the deletion's transaction (a keep-set that it starts with the conversation open then, and that the loop adds each newly opened conversation to while the request is pending), waits at the engine's writer's barrier (plan 7B's `stored()`) until every write that the loop queued before it is stored, and then runs beside the engine's inbox, in its scope, over the store's new `deleteClosed(keep)`, because that may wait minutes for the index to be read or rebuilt and must never hold up the conversation or the writer (review N2); a seam for its timers' lengths, which shortens each timer's deadline itself (plan 7B's timers are deadlines on `ConversationClock.sinceBootMillis`, and a `delay` only wakes the loop) and which `AppGraph.conversationTimers` sets for device tests only; and the held goal's new sentence. Both store parts work on plan 7B's index of past conversations (design 9.2), so that neither reads a body: "Delete all past conversations" needs a path of its own, because the port's `deleteAll` is the whole of "delete history", which also deletes the logs and erases the key (plan 7C's `ae33cfda`). This task adds it to plan 7B's store and plan 7C's archive, which are built: the port's `RecordArchive.deleteClosed(keep, index)` deletes, in one transaction, every closed row whose id is not in `keep` (`open = 0 AND id NOT IN (:keep)`), also one that the index does not name or that this version cannot read, and changes the index's shards as it is told; it keeps the open row, the logs and the archive's key. `ConversationDao.deleteClosed`, `ConversationArchiveStore.deleteClosed` and `RoomRecordArchive.deleteClosed` carry it to the encrypted table, and the fixtures' `MemoryArchive` does it in memory. The store's `deleteClosed(keep)`, under its `withIndex`, reads the engine's keep-set under its lock, so that no write of the writer comes between that read and the transaction, raises the store's `generation` first, as "delete history" does, so that a search that it overtook gives out nothing, and gives the port the index without the deleted conversations and kept rows, which writes only the shards that changed. The loop adds a step's open conversation to every pending keep-set right after the step, before it queues any write of the step, so a conversation whose closed row the transaction can see is in the set: the one that was open when the owner asked, one that he started or continued meanwhile, also when it closed before the deletion ran (review M1). While the index is read or rebuilt it waits, and while the index cannot be read it throws `PastUnavailableException`, which the engine's `deleteAllPast()` gives as `PastDeletion.UNAVAILABLE`. `HistorySearch.matching(text)` ranks the index's shards with `HistoryRanking`, as the agent's search does, and says when the index is being rebuilt or cannot be read. Plan 7E's `GoalRules.backgroundRefused` and its tests take the held goal's sentence from `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so the new sentence changes only `ConversationTexts.kt` and the one test that names the constant, plan 7E's `GoalNoticesTest` (see "Before you start").
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/PastDeletion.kt`
@@ -2615,9 +2615,9 @@ Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them,
 
 **Interfaces:**
 - Consumes: plan 7B's index store (Tasks 5a to 5d): `ConversationStore` (`delete(id)`, `generation`, `searchable()`, `list()`), `Searchable` (`Ready(past, open)`, `Rebuilding`, `Failed`), `PastUnavailableException`, `PastIndex` (`conversations`, `kept`, `searches`, `without(ids)`), `ArchivedConversationStore` (its `withIndex` with a suspend block, `change` and `deleted`), `HistorySearch`, `HistoryRanking.rank` and `wanted`, the fixtures' `MemoryArchive` (`calls`, `failures`, `keyErased`, `readShardsGate`, `changing`), `RecordArchive` (`purge`, `deleteAll`); plan 7C's archive as fixed in `ae33cfda`: `ConversationDao` (`purge`, `change`, `deleteClosedOutside`), `ConversationArchiveStore` (`purge`, `key.storing`, `encrypted`) and `RoomRecordArchive` (`purge`, `plain()`); plan 7B's `ConversationEngine` as fixed in `25cdca0a` and `e76ad7a6` (its `Message` inbox, its writer's `Write`s and the barrier `stored()`, `switchTo` and `reopened`, and `startTimer` with its deadline on `clock.sinceBootMillis()`) and `Timer`; plan 7E's `ConversationTexts.CONTINUE_IN_NOTIFICATION` and `held(hold)`, and `GoalNotices`; plan 7D's `AppGraph.conversations` and `conversationSteps`.
-- Produces: `RecordArchive.deleteClosed(keep: String?, index: IndexWrite): Int`, `ConversationDao.deleteClosed(keep: String?, index: IndexRowUpdate): Int`, `ConversationArchiveStore.deleteClosed(keep: String?, index: IndexUpdate): Int`, `RoomRecordArchive.deleteClosed` and `MemoryArchive.deleteClosed`; `ConversationStore.deleteClosed(keep: ConversationId?): Int`; `sealed interface PastMatches { All; Only(ids: Set<ConversationId>); Rebuilding; Failed }` and `HistorySearch.matching(text: String): PastMatches` (package `dev.kestrel.conversation.store`); `ConversationEngine.deletePast(id: ConversationId): PastDeletion` and `deleteAllPast(): PastDeletion`; `enum class PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }` (package `dev.kestrel.conversation.engine`); the engine constructor's last parameter `timerMillis: (Timer, Long) -> Long = { _, millis -> millis }`; `AppGraph.conversationTimers: ((Timer, Long) -> Long)?`; `ConversationTexts.OPEN_AND_CONTINUE = "Open Kestrel and tap Continue."` in place of `CONTINUE_IN_NOTIFICATION`.
+- Produces: `RecordArchive.deleteClosed(keep: Collection<String>, index: IndexWrite): Int`, `ConversationDao.deleteClosed(keep: List<String>, index: IndexRowUpdate): Int`, `ConversationArchiveStore.deleteClosed(keep: Collection<String>, index: IndexUpdate): Int`, `RoomRecordArchive.deleteClosed` and `MemoryArchive.deleteClosed`; `ConversationStore.deleteClosed(keep: () -> Set<ConversationId>): Int`; `sealed interface PastMatches { All; Only(ids: Set<ConversationId>); Rebuilding; Failed }` and `HistorySearch.matching(text: String): PastMatches` (package `dev.kestrel.conversation.store`); `ConversationEngine.deletePast(id: ConversationId): PastDeletion` and `deleteAllPast(): PastDeletion`; `enum class PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }` (package `dev.kestrel.conversation.engine`); the engine constructor's last parameter `timerMillis: (Timer, Long) -> Long = { _, millis -> millis }`; `AppGraph.conversationTimers: ((Timer, Long) -> Long)?`; `ConversationTexts.OPEN_AND_CONTINUE = "Open Kestrel and tap Continue."` in place of `CONTINUE_IN_NOTIFICATION`.
 
-Counts: `:core:conversation` C₀ + 6 (`ArchivedConversationStoreTest` + 1, `HistorySearchTest` + 1, `ConversationEngineTest` + 4), where C₀ is the count before Task 1 ("Before you start"; Tasks 1 and 2 add none there). `:core:privacy` JVM P₀ + 1 (`ConversationArchiveStoreTest` + 1) and device tests PD₀ + 1 (`KestrelDatabaseTest` + 1). `:app` JVM unchanged; `:app` device tests AD₂ + 1 (`RoomRecordArchiveTest` + 1), where AD₂ is the count after Task 2.
+Counts: `:core:conversation` C₀ + 7 (`ArchivedConversationStoreTest` + 1, `HistorySearchTest` + 1, `ConversationEngineTest` + 5), where C₀ is the count before Task 1 ("Before you start"; Tasks 1 and 2 add none there). `:core:privacy` JVM P₀ + 1 (`ConversationArchiveStoreTest` + 1) and device tests PD₀ + 1 (`KestrelDatabaseTest` + 1). `:app` JVM unchanged; `:app` device tests AD₂ + 1 (`RoomRecordArchiveTest` + 1), where AD₂ is the count after Task 2.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2645,7 +2645,7 @@ with:
         val generation = fresh.generation
         archive.calls.clear()
 
-        assertEquals(2, fresh.deleteClosed(keep = id(2)))
+        assertEquals(2, fresh.deleteClosed { setOf(id(2)) })
 
         assertEquals(listOf("deleteClosed"), archive.calls)
         assertEquals(setOf(id(2).value, id(4).value), archive.rows.keys)
@@ -2656,7 +2656,7 @@ with:
 
         archive.failures["readShards"] = IOException("the disk failed")
         val failing = fresh()
-        assertTrue(runCatching { failing.deleteClosed(keep = null) }.exceptionOrNull() is PastUnavailableException)
+        assertTrue(runCatching { failing.deleteClosed { emptySet() } }.exceptionOrNull() is PastUnavailableException)
     }
 
     // On the A71, decrypting every row took 5.2 s even in one query; the open row and the index take one decryption each,
@@ -2811,33 +2811,70 @@ In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/Conversati
         assertEquals(open, engine.view.value.id)
     }
 
-    // Design 9.5 of sub-project 7: "Delete all" keeps the conversation that was open when the owner asked, also when it
-    // closes before the index is read and the deletion runs, and deletes the others.
+    // Design 9.5 of sub-project 7 and plan 7F's review M1: "Delete all" keeps every conversation that is open at some
+    // moment between the owner's ask and its transaction: the one that was open when he asked, and one that he started
+    // after it, also when both close while the deletion waits for the index; it deletes the others.
     @Test
-    fun deleteAllKeepsTheConversationThatWasOpenWhenItWasAskedAlsoWhenItClosedMeanwhile() = scope.runTest {
+    fun deleteAllKeepsEveryConversationThatWasOpenBeforeItsTransactionAlsoWhenItClosedMeanwhile() = scope.runTest {
         val gate = CompletableDeferred<Unit>()
         archive.readShardsGate = gate
-        val engine = engine(environment(listSms, finish(1), listSms, finish(1)))
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1), listSms, finish(1)))
         engine.restore()
         engine.submit(typed("Read my latest SMS"))
         runCurrent()
         val past = engine.view.value.id!!
-        advanceTimeBy(61_000)
+        engine.endQuietTime()
         runCurrent()
         engine.submit(typed("Read my latest SMS again"))
         runCurrent()
         val open = engine.view.value.id!!
         val deleting = async { engine.deleteAllPast() }
         runCurrent()
-        advanceTimeBy(61_000)
+        engine.endQuietTime()
+        runCurrent()
+        engine.submit(typed("And once more"))
+        runCurrent()
+        val started = engine.view.value.id!!
+        engine.endQuietTime()
         runCurrent()
         assertNull(engine.view.value.id)
 
         gate.complete(Unit)
         runCurrent()
         assertEquals(PastDeletion.DELETED, deleting.await())
-        assertEquals(listOf(open), store.list().map { it.id })
+        assertEquals(setOf(open, started), store.list().map { it.id }.toSet())
         assertNull(store.get(past))
+    }
+
+    // Plan 7F's review L1: the deletion of the conversation that a running switch opens finds it open and leaves it; without
+    // the check, the writer would open it and then delete its open row.
+    @Test
+    fun deletingTheConversationThatARunningSwitchOpensLeavesIt() = scope.runTest {
+        val reopening = CompletableDeferred<Unit>()
+        val gated = object : ConversationStore by store {
+            override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? {
+                reopening.await()
+                return store.reopen(id, closing, nowWall, testMode)
+            }
+        }
+        val engine = engine(environment(listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.ContinueConversation(past)))
+        runCurrent()
+        val deleting = async { engine.deletePast(past) }
+        runCurrent()
+        reopening.complete(Unit)
+        runCurrent()
+
+        assertEquals(PastDeletion.OPEN, deleting.await())
+        assertEquals(past, engine.view.value.id)
+        assertEquals(past, store.open()!!.id)
     }
 ```
 
@@ -2863,7 +2900,7 @@ with:
         )
         val before = dao.transactions
 
-        assertEquals(2, store.deleteClosed(keep = "kept", index = IndexUpdate.Update(mapOf("0" to byteArrayOf(2)), emptySet())))
+        assertEquals(2, store.deleteClosed(keep = listOf("kept"), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(2)), emptySet())))
 
         assertEquals(setOf("kept", "open"), dao.rows.keys)
         assertArrayEquals(byteArrayOf(2), (store.shards().single() as StoredShard.Readable).payload)
@@ -2891,7 +2928,7 @@ with:
         return super.purge(oldest, newest, index)
     }
 
-    override fun deleteClosed(keep: String?, index: IndexRowUpdate): Int {
+    override fun deleteClosed(keep: List<String>, index: IndexRowUpdate): Int {
         transactions++
         return super.deleteClosed(keep, index)
     }
@@ -2906,8 +2943,8 @@ In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationA
 with:
 
 ```kotlin
-    override fun deleteClosedBut(keep: String?): Int {
-        val gone = rows.values.filter { !it.open && it.id != keep }.map { it.id }
+    override fun deleteClosedExcept(keep: List<String>): Int {
+        val gone = rows.values.filter { !it.open && it.id !in keep }.map { it.id }
         gone.forEach { rows.remove(it) }
         return gone.size
     }
@@ -2925,7 +2962,7 @@ with:
 
 ```kotlin
     // Plan 7F: "Delete all past conversations" deletes every closed row but the one that it keeps, and changes the shards,
-    // in one transaction; the open row and the logs stay. Without a row to keep, it deletes every closed row.
+    // in one transaction; the open row and the logs stay. With nothing to keep (`NOT IN ()`), it deletes every closed row.
     @Test
     fun deleteClosedDeletesEveryClosedRowButTheKeptOneAndLeavesTheOpenRowAndTheLogs() = runBlocking {
         db.logDao().insert(LogEntryRow(log = "activity", timestampMillis = 1, payload = byteArrayOf(1)))
@@ -2941,11 +2978,11 @@ with:
             IndexRowUpdate.Update(listOf(shard("0", 1)), emptyList()),
         )
 
-        assertEquals(2, dao.deleteClosed(keep = "kept", index = IndexRowUpdate.Update(listOf(shard("0", 2)), emptyList())))
+        assertEquals(2, dao.deleteClosed(keep = listOf("kept", "gone"), index = IndexRowUpdate.Update(listOf(shard("0", 2)), emptyList())))
         assertEquals(setOf("kept", "open"), dao.rows(listOf("old", "kept", "new", "open")).map { it.id }.toSet())
         assertArrayEquals(byteArrayOf(2), dao.shards().single().payload!!)
 
-        assertEquals(1, dao.deleteClosed(keep = null, index = IndexRowUpdate.Keep))
+        assertEquals(1, dao.deleteClosed(keep = emptyList(), index = IndexRowUpdate.Keep))
         assertEquals(listOf("open"), dao.rows(listOf("kept", "open")).map { it.id })
         assertEquals(1, db.logDao().newest("activity", 10).size)
     }
@@ -2970,7 +3007,7 @@ with:
         val kept = ArchiveHeader("00112233445566778899aabbccddeeff", openedMillis = 11, lastMillis = 21, open = false, commands = 1)
         archive.write(ArchiveChange(rows = listOf(row(past, "{}"), row(kept, "{}"), row(current, "{}")), index = IndexWrite.Replace(mapOf("0" to byteArrayOf(1)))))
 
-        assertEquals(1, archive.deleteClosed(keep = kept.id, index = IndexWrite.Replace(mapOf("0" to byteArrayOf(2)))))
+        assertEquals(1, archive.deleteClosed(keep = listOf(kept.id), index = IndexWrite.Replace(mapOf("0" to byteArrayOf(2)))))
 
         assertEquals(setOf(kept.id, current.id), archive.read(listOf(past.id, kept.id, current.id)).map { it.header.id }.toSet())
         assertEquals(listOf(kept.id), archive.closedIds())
@@ -3049,13 +3086,14 @@ with:
     suspend fun deleteAll()
 
     /**
-     * "Delete all past conversations" (design 9.5; plan 7F): deletes every closed conversation but [keep], also one in a
-     * format that this version cannot read, and returns how many went. The open conversation, [keep], the logs and the
-     * archive's key stay, and no body is read. [keep] is the conversation that was open when the owner asked, which stays
-     * also when it has closed since. It waits while the index is read or rebuilt; while the index cannot be read, it throws
+     * "Delete all past conversations" (design 9.5; plan 7F): deletes every closed conversation that [keep] does not name,
+     * also one in a format that this version cannot read, and returns how many went. The open conversation, those that
+     * [keep] names, the logs and the archive's key stay, and no body is read. [keep] gives the conversations that were open
+     * at some moment since the owner asked; the store reads it under its lock, right before the archive's transaction, so
+     * that no write comes between. It waits while the index is read or rebuilt; while the index cannot be read, it throws
      * [PastUnavailableException] and deletes nothing.
      */
-    suspend fun deleteClosed(keep: ConversationId?): Int
+    suspend fun deleteClosed(keep: () -> Set<ConversationId>): Int
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, replace:
@@ -3071,10 +3109,11 @@ with:
 
     /**
      * "Delete all past conversations" (design 9.5 of sub-project 7; plan 7F), in one transaction: deletes every closed row
-     * but [keep], whatever the index lists, those that this version cannot read too, and changes the index's shards as
-     * [index] says; returns how many rows went. Unlike [deleteAll], it keeps the open row, the logs and the archive's key.
+     * whose id is not in [keep], whatever the index lists, those that this version cannot read too, and changes the index's
+     * shards as [index] says; returns how many rows went. Unlike [deleteAll], it keeps the open row, the logs and the
+     * archive's key.
      */
-    suspend fun deleteClosed(keep: String?, index: IndexWrite): Int
+    suspend fun deleteClosed(keep: Collection<String>, index: IndexWrite): Int
 ```
 
 In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`, replace:
@@ -3086,8 +3125,8 @@ In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/M
 with:
 
 ```kotlin
-    override suspend fun deleteClosed(keep: String?, index: IndexWrite): Int = changing("deleteClosed", index) {
-        val gone = rows.values.filter { !it.header.open && it.header.id != keep }.map { it.header.id }
+    override suspend fun deleteClosed(keep: Collection<String>, index: IndexWrite): Int = changing("deleteClosed", index) {
+        val gone = rows.values.filter { !it.header.open && it.header.id !in keep }.map { it.header.id }
         gone.forEach(::remove)
         gone.size
     }
@@ -3110,10 +3149,11 @@ with:
 
     /**
      * "Delete all past conversations" (design 9.5 of sub-project 7; plan 7F), in one transaction: deletes every closed row
-     * but [keep] and changes the shards' rows as [index] says; returns how many rows went. The open row and the logs stay.
+     * whose id is not in [keep] and changes the shards' rows as [index] says; returns how many rows went. The open row and
+     * the logs stay.
      */
     @Transaction
-    open fun deleteClosed(keep: String?, index: IndexRowUpdate): Int = deleteClosedBut(keep).also { change(index) }
+    open fun deleteClosed(keep: List<String>, index: IndexRowUpdate): Int = deleteClosedExcept(keep).also { change(index) }
 ```
 
 In `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt`, replace:
@@ -3129,8 +3169,9 @@ with:
     @Query("DELETE FROM conversations WHERE open = 0 AND (last_millis < :oldest OR last_millis > :newest)")
     protected abstract fun deleteClosedOutside(oldest: Long, newest: Long): Int
 
-    @Query("DELETE FROM conversations WHERE open = 0 AND (:keep IS NULL OR id != :keep)")
-    protected abstract fun deleteClosedBut(keep: String?): Int
+    // Room writes one parameter per id of [keep]; SQLite takes an empty list too, which keeps nothing.
+    @Query("DELETE FROM conversations WHERE open = 0 AND id NOT IN (:keep)")
+    protected abstract fun deleteClosedExcept(keep: List<String>): Int
 ```
 
 In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
@@ -3148,11 +3189,11 @@ with:
 
     /**
      * "Delete all past conversations" (design 9.5 of sub-project 7; plan 7F), in one transaction: deletes every closed
-     * conversation but [keep], and changes the index as [index] says; returns how many conversations went. Unlike
-     * [deleteAll], it keeps the open conversation, the logs and the key, under which what stays is still read.
+     * conversation whose id is not in [keep], and changes the index as [index] says; returns how many conversations went.
+     * Unlike [deleteAll], it keeps the open conversation, the logs and the key, under which what stays is still read.
      */
-    suspend fun deleteClosed(keep: String?, index: IndexUpdate): Int =
-        key.storing(dispatcher, dao::isEmpty) { dao.deleteClosed(keep, encrypted(index)) }
+    suspend fun deleteClosed(keep: Collection<String>, index: IndexUpdate): Int =
+        key.storing(dispatcher, dao::isEmpty) { dao.deleteClosed(keep.toList(), encrypted(index)) }
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/conversation/RoomRecordArchive.kt`, replace:
@@ -3167,7 +3208,7 @@ with:
     override suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int = table.purge(oldest, newest, index.plain())
 
     // "Delete all past conversations" (plan 7F): the conversations alone, not the logs, and the key stays.
-    override suspend fun deleteClosed(keep: String?, index: IndexWrite): Int = table.deleteClosed(keep, index.plain())
+    override suspend fun deleteClosed(keep: Collection<String>, index: IndexWrite): Int = table.deleteClosed(keep, index.plain())
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, replace:
@@ -3179,16 +3220,18 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedCon
 with:
 
 ```kotlin
-    // The archive deletes every closed row but [keep], those that the index does not name too, in one transaction with the
-    // index without the conversations and kept rows that went, which writes only the shards that changed. The generation
-    // rises first, as for "delete history", so that a search that this overtook gives out nothing; the conversations that
-    // went are marked deleted once the archive's call completed, so that no holder writes one back.
-    override suspend fun deleteClosed(keep: ConversationId?): Int = withIndex { index ->
+    // Under the lock, so that no write comes between: the archive deletes every closed row that [keep] does not name, those
+    // that the index does not name too, in one transaction with the index without the conversations and kept rows that
+    // went, which writes only the shards that changed. The generation rises first, as for "delete history", so that a
+    // search that this overtook gives out nothing; the conversations that went are marked deleted once the archive's call
+    // completed, so that no holder writes one back.
+    override suspend fun deleteClosed(keep: () -> Set<ConversationId>): Int = withIndex { index ->
         generation++
-        val gone = index.conversations.map { it.id }.filter { it != keep }
-        val goneRows = gone.mapTo(HashSet()) { it.value } + index.kept.map { it.id }.filter { it != keep?.value }
+        val kept = keep().mapTo(HashSet()) { it.value }
+        val gone = index.conversations.map { it.id }.filter { it.value !in kept }
+        val goneRows = gone.mapTo(HashSet()) { it.value } + index.kept.map { it.id }.filter { it !in kept }
         changed(update = { it.without(goneRows) }, touched = emptySet(), inMemory = { deleted += gone }) { write ->
-            archive.deleteClosed(keep?.value, write)
+            archive.deleteClosed(kept, write)
         }
     }
 
@@ -3334,6 +3377,26 @@ with:
 
     // The past conversation that the running switch opens, which no deletion may take (plan 7F).
     private var switchingTo: ConversationId? = null
+
+    // The keep-sets of the pending "Delete all" requests (plan 7F, review M1): the loop adds each step's open conversation to
+    // every one of them, and the request's coroutine and the store read them, under this list's lock.
+    private val keeping = mutableListOf<MutableSet<ConversationId>>()
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+        onStep(event, before, step)
+        state = step.state
+```
+
+with:
+
+```kotlin
+        onStep(event, before, step)
+        state = step.state
+        // Before any write of this step is queued: a pending "Delete all" keeps every conversation that is open meanwhile.
+        step.state.id?.let { id -> synchronized(keeping) { keeping.forEach { it += id } } }
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3389,18 +3452,27 @@ with:
     }
 
     /**
-     * Deletes every past conversation (design 9.5; plan 7F). The conversation that is open now stays, also when it closes
-     * before the deletion runs. The deletion waits at the writer's barrier until every write that the loop queued before it
-     * is stored, so that a conversation that closed before the owner asked is deleted too, and then runs beside the inbox
-     * and the writer, never in them: the store may wait minutes for its index to be read or rebuilt, and the conversation
-     * goes on meanwhile (review N2). The store keeps the open conversation, which is never in its index, and its lock orders
-     * the deletion against a switch, so a conversation that the owner continued meanwhile stays. It runs in the engine's
-     * scope, so that a caller that goes away stops nothing, and the outcome comes back to the caller once it is done.
+     * Deletes every past conversation (design 9.5; plan 7F), but none that is open at some moment between this call and
+     * the deletion's transaction: the one that is open now, and each that the owner starts or continues meanwhile, also
+     * when it closes before the deletion runs (review M1). The loop adds each to this call's keep-set ([keeping]) before it
+     * queues any write of it, and the store reads the set under its lock. The deletion waits at the writer's barrier until
+     * every write that the loop queued before it is stored, so that a conversation that closed before the owner asked is
+     * deleted too, and then runs beside the inbox and the writer, never in them: the store may wait minutes for its index
+     * to be read or rebuilt, and the conversation goes on meanwhile (review N2). It runs in the engine's scope, so that a
+     * caller that goes away stops nothing, and the outcome comes back to the caller once it is done.
      */
     suspend fun deleteAllPast(): PastDeletion = scope.async {
-        val keep = state.id
-        stored()
-        deleteAllPastNow(keep)
+        val keep = HashSet<ConversationId>()
+        synchronized(keeping) {
+            state.id?.let(keep::add)
+            keeping.add(keep)
+        }
+        try {
+            stored()
+            deleteAllPastNow { synchronized(keeping) { keep.toSet() } }
+        } finally {
+            synchronized(keeping) { keeping.removeAll { it === keep } }
+        }
     }.await()
 
     /** How command [command] ended, among the newest [MAX_OUTCOMES]. */
@@ -3454,7 +3526,7 @@ with:
 
     // While the index of past conversations cannot be read, the store deletes nothing and says so; it is no failure. A failure
     // of the archive is reported by its class.
-    private suspend fun deleteAllPastNow(keep: ConversationId?): PastDeletion = try {
+    private suspend fun deleteAllPastNow(keep: () -> Set<ConversationId>): PastDeletion = try {
         store.deleteClosed(keep)
         PastDeletion.DELETED
     } catch (e: PastUnavailableException) {
@@ -3513,7 +3585,7 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/Conversati
 
 ```kotlin
 import dev.kestrel.conversation.store.ConversationStore
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.safety.Category
 ```
 
 with:
@@ -3521,7 +3593,7 @@ with:
 ```kotlin
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.PastUnavailableException
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.safety.Category
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3628,7 +3700,7 @@ Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest --tests=dev.kestrel.pri
 Expected: BUILD SUCCESSFUL; the new test passes.
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:privacy:testDebugUnitTest :app:testDebugUnitTest :core:privacy:assembleDebugAndroidTest :app:assembleDebugAndroidTest; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `:core:conversation` C₀ + 6, `:core:privacy` JVM P₀ + 1, `:app` JVM unchanged. The device tests compile; `KestrelDatabaseTest` and `RoomRecordArchiveTest` run in Task 14.
+Expected: BUILD SUCCESSFUL; `:core:conversation` C₀ + 7, `:core:privacy` JVM P₀ + 1, `:app` JVM unchanged. The device tests compile; `KestrelDatabaseTest` and `RoomRecordArchiveTest` run in Task 14.
 
 Run: `git grep -n "CONTINUE_IN_NOTIFICATION" -- core app`
 Expected: no output.
@@ -11064,7 +11136,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7F": the build's commit on
 | `:core:conversation`, Tasks A1 and A2 | Cₐ | Cₐ + 2 | Task A1 (`ConversationOwnerTest` + 1), Task A2 (`ConversationMachineTest` + 1) |
 | `:app` JVM (with `app/src/testDebug`) | A₀ | A₀ + 62 | Task 1 + 10, Task 2 + 3, Task 4 + 12, Task 5 + 8, Task 6 + 12, Task 8 + 1, Task 10 + 2, Task 11 + 4, Task 13 + 3, Task 13a + 7 |
 | `:app` device tests | AD₀ | AD₀ + 31 | Task 1 + 2 (`QuestionCardTest` 6 for `ConfirmationCardTest`'s 4), Task 3 + 1, Task 7 + 6, Task 8 + 4, Task 9 + 9, Task 10 + 2, Task 11 + 3, Task 12 + 3, Task 13 + 1 |
-| `:core:conversation`, Tasks 1 to 15 | C₀ | C₀ + 6 | Task 3 |
+| `:core:conversation`, Tasks 1 to 15 | C₀ | C₀ + 7 | Task 3 |
 | `:core:agent`, Tasks 1 to 15 | G₀ | G₀ | none |
 | `:core:screen` JVM | S₀ | S₀ | none |
 | `:core:privacy` JVM and device tests | P₀, PD₀ | P₀ + 1, PD₀ + 1 | Task 3 (`ConversationArchiveStoreTest` + 1, `KestrelDatabaseTest` + 1); Task 14 runs the device tests |
@@ -11084,7 +11156,7 @@ Plan 7G (the hooks' script entries, `:tools:eval`'s turns, typed answers and the
 - **The text channel** (`AppGraph.textChannel`): `sent: SharedFlow<InputIntent>`, `read(text)`, `input(intent)`, `submit(input)`, `choose(key, choice)` and `composing(active)`.
 - **The owner port** (Task A1): `OwnerPort.ask(question, kind, choices = emptyList(), highest = 0)` with `OwnerPort.MAX_CHOICES = 4`; a choice answers as `Answer.Number(position)`; `ChannelQuestion.highest`. **The answer's question** (Task A2): `InputIntent.Answer(answer, question = null)`; an answer that names another question than the open one answers nothing.
 - **The device tests' seams:** `AppGraph.conversationTimers: ((Timer, Long) -> Long)?` and the instrumentation argument `kestrelWaitDivisor` (60 when it is not given); `AppGraph.offVoice.replies`; the androidTest helper `TypedTests` (`graph`, `marker`, `marked(words)`, `own(id)`, `prepare(model)`, `finish()`, which deletes only the conversations that the tests made, `bringScreen(screen)`, `screenInFront(screen)`, `send(nodes, words)`, `text(id, args)`); the Compose tags `FIELD_TAG` (`conversation-field`), `PAST_SEARCH_TAG` (`past-search`) and `pastRowTag(id)`; the fixture `ObscuringActivity` of `:testapp`, whose window "Obscuring overlay" needs the app-op `SYSTEM_ALERT_WINDOW`.
-- **Past conversations:** `ConversationEngine.deletePast(id)` (checked by the engine's loop, done by its writer) and `deleteAllPast()` (after the writer's barrier, beside the engine's inbox, in its scope; it keeps the conversation that was open when it was asked) with `PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }`; `ConversationStore.deleteClosed(keep)`, which raises the store's generation and throws `PastUnavailableException` while the index cannot be read, over the port's `RecordArchive.deleteClosed(keep, index)`, which keeps the open row, the logs and the key; `HistorySearch.matching(text): PastMatches` (`All`, `Only(ids)`, `Rebuilding`, `Failed`), over plan 7B's index's shards; `AppGraph.pastConversations`.
+- **Past conversations:** `ConversationEngine.deletePast(id)` (checked by the engine's loop, done by its writer) and `deleteAllPast()` (after the writer's barrier, beside the engine's inbox, in its scope; it keeps every conversation that is open at some moment before its transaction) with `PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }`; `ConversationStore.deleteClosed(keep)`, which reads the keep-set under its lock, raises the store's generation and throws `PastUnavailableException` while the index cannot be read, over the port's `RecordArchive.deleteClosed(keep, index)`, which keeps the open row, the logs and the key; `HistorySearch.matching(text): PastMatches` (`All`, `Only(ids)`, `Rebuilding`, `Failed`), over plan 7B's index's shards; `AppGraph.pastConversations`.
 - **The Conversations page:** `SettingsPage.CONVERSATIONS` (so `MainActivity`'s `EXTRA_PAGE` `CONVERSATIONS` opens it); `SettingsData.conversations`, `setConversations`, `countsCredits` and `deleteAllPast`.
 - **The bar:** `GoalBar.text(view)` gives design 10.5's "Step 12 · 3 of 7 · …" and `GoalBar.ON_HOLD`; `AppGraph.feedbackBar` (`SharedFeedbackBar`) is the bar's one writer, with `progress(text: String?)`, which shows the newest progress once no other text holds the bar, and drops a waiting line when it gets null at the goal's end.
 - **The goal service for the screen:** `GoalForeground.foreground: StateFlow<ForegroundState>` (`goal`, `running`, `settled`).
@@ -11104,7 +11176,7 @@ Each item is a reading of the design that the design leaves open, or a choice of
 7. **A typed round waits up to 60 s for a running instant command** instead of cancelling it. Recommendation: accept. A spoken input still cancels one first (plan 7D); the voice's path does not change.
 8. **The bar's goal progress of design 10.5 is built here, through the bar's one writer** (decided): `SharedFeedbackBar` passes listening's texts, the text channel's words and the progress; a kept text wins, and the newest progress waits until the kept text is released or 4 s after another text, and then shows by itself, so "On hold" shows after the held goal's own sentence (review low item b); it replaces only an earlier progress.
 9. **Typed replies with listening off** are spoken by `AppOffVoice`, which loads the owner's voice inside plan 7E's `whileSpeaking` and closes it 30 s after the last reply. Recommendation: accept. If the owner turns Kestrel on within those 30 s, both voices are loaded until `AppOffVoice` closes its own.
-10. **Deleting past conversations** (decided): one after a question, from the list or the transcript; all from the Conversations page after a question, through a deletion of its own in the archive's port (`RecordArchive.deleteClosed`, in plan 7B's store and plan 7C's table, which are built), because the port's `deleteAll` is the whole of "delete history" and also deletes the logs and erases the key (plan 7C's `ae33cfda`): one transaction deletes every closed row but the conversation that was open when the owner asked, with the index's entries, and keeps the open row, the logs and the key; the store reads no body, writes only the shards that changed and raises its generation. One deletion is checked by the engine's loop, which never deletes the open conversation or the one that a running switch opens, and done by the engine's writer in the loop's order (plan 7B's rule for writes); "Delete all" waits at the engine's writer's barrier for the writes queued before it and then runs beside the engine's inbox and writer (review N2), and the store keeps the open conversation, which its index never holds; the page shows "Deleting past conversations…" until the outcome comes back, which it reads out. While the index cannot be read, "Delete all" deletes nothing and the page says so (`PastDeletion.UNAVAILABLE`).
+10. **Deleting past conversations** (decided): one after a question, from the list or the transcript; all from the Conversations page after a question, through a deletion of its own in the archive's port (`RecordArchive.deleteClosed`, in plan 7B's store and plan 7C's table, which are built), because the port's `deleteAll` is the whole of "delete history" and also deletes the logs and erases the key (plan 7C's `ae33cfda`): one transaction deletes every closed row but those that were open at some moment since the owner asked (the engine's keep-set, which the loop fills and the store reads under its lock; review M1), with the index's entries, and keeps the open row, the logs and the key; the store reads no body, writes only the shards that changed and raises its generation. One deletion is checked by the engine's loop, which never deletes the open conversation or the one that a running switch opens, and done by the engine's writer in the loop's order (plan 7B's rule for writes); "Delete all" waits at the engine's writer's barrier for the writes queued before it and then runs beside the engine's inbox and writer (review N2), and the store keeps the open conversation, which its index never holds; the page shows "Deleting past conversations…" until the outcome comes back, which it reads out. While the index cannot be read, "Delete all" deletes nothing and the page says so (`PastDeletion.UNAVAILABLE`).
 11. **The list's search is `HistorySearch.matching`** (decided), the search's own rule (`HistoryRanking`) over the index's shards, run once the typing pauses and off the main thread; while the index is read or rebuilt, the list says "Loading past conversations…", and while it cannot be read, design 9.5's "Kestrel can't read past conversations right now. It will try again later." The list shows each first request as the index keeps it, cut once at 80 characters.
 12. **The list's date** is the day on which the conversation began, with its year (the list holds up to 365 days), as "Continue the conversation from <day>" names a conversation by its first day. Recommendation: accept.
 13. **The round limits are lists of choices**: 50, 100, 200, 500, 1,000 or 2,000 replies; 5, 15, 30, 60, 120 or 240 minutes; 10, 100, 250, 500, 1,000, 2,500 or 5,000 AI Credits, the credits only while the default profile is Copilot's. Recommendation: accept, or the owner names other values within the design's ranges.
@@ -11137,4 +11209,4 @@ Each item is a reading of the design that the design leaves open, or a choice of
 - **Design coverage.** D20 and 10.1: Tasks 7 and 8 (the screen, the launcher, the banner, Settings, New conversation, the microphone). 10.2 (leaving Kestrel's screen): Tasks 4, 5, 6 and 8. 10.3 and D21 (cards, "Reply…", waits, picks): Tasks A1, 1, 4 and 9. 10.4 (Stop, Continue, Cancel; a touch that interrupts): Tasks 6, 7 and 9. 10.5 (the bar): Task 5. 10.6 (the typed start of the service): Task 8 and Task 14's Step 8, and Task 15. 11 (speech rules, typed replies with listening off): Tasks 5 and 9. 12.2 and 12.3 (the typed-input boundary; confirmations only over the app): Tasks 1, 4, 7, 8 and 10, and Task 13's hook for DUMP callers only. 9.5 and 9.6 (past conversations on the index, their search, Continue and Delete): Tasks 3 and 11. 13 (the Conversations page): Task 12. 14.4 (`conversation-type`, typed answers): Task 13. 15.2's device tests: Tasks 7 to 13, run in Task 14. Plan 7E's moved checks (its decision 2): Task 14's Step 8 and Task 15.
 - **Placeholder scan.** No step says "to be decided", "as needed" or "similar to"; every step that changes code gives the whole code, and every replacement names its old text. Tasks 14 and 15 name two values that the controller fills in from an earlier step: Step 1's or Step 2's listening mode and "stay awake" setting.
 - **Names across tasks.** `OwnerPort.MAX_CHOICES`, `ChannelQuestion.highest`, `InputIntent.Answer(answer, question)`, `CardQuestion`, `NumberPad`, `CardEnd`, `CARD_TITLE`, `CARD_ARMING_MILLIS`, `OwnerCard`, `CardChoice`, `CardDesk`, `TextChannel`, `TypedInputs`, `ScreenTurns.running`, `GoalBar`, `SharedFeedbackBar`, `ForegroundState`, `AppOffVoice`, `Transcript`, `ConversationScreenRules`, `ConversationScreenModel`, `ConversationActions`, `ScreenGuard`, `GuardWindow`, `ConversationScreen`, `ConversationApp`, `ConversationScreenViewModel`, `ConversationActivity`, `SetupState`, `TypedTests`, `PastMatches`, `PastList`, `PastPagesRules`, `PastConversations`, `PastPages`, `ConversationsPage`, `HookConversations`, `CommandTags.typed`, `CommandTags.ownConversation`, `ownerConversation` and `untagged`, `VoiceHooks.untagged`, `OverlayCards`, `ShownCard`, `CardPresser`, `CardPress`, `AgentHookAnswers.cardChoice` and `overlayChoice` keep one signature from the task that makes them to every task that uses them.
-- **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `cfd1ece3` (plans 7A and 7B, this plan's Tasks A1 and A2, and plan 7C's Tasks 1 to 6 and 9 built; plan 7B's engine after the fixes of its Task 10 and its re-check, `e76ad7a6`; plan 7C's archive after `ae33cfda`), it runs clean over plan 7C's Task 7, plans 7D and 7E as committed, and this plan's Tasks 1 to 13a (240 operations, 97 files for this plan), with no `PROBLEM:` line. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
+- **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `82eb1398` (plans 7A and 7B, this plan's Tasks A1 and A2, and plan 7C's Tasks 1 to 6, 9 and 9b built; plan 7B's engine after the fixes of its Task 10 and its re-checks, `e76ad7a6` and `50b99c61`; plan 7C's archive after `ae33cfda` and `6999fa5c`), it runs clean over plan 7C's Task 7, plans 7D and 7E as committed, and this plan's Tasks 1 to 13a (241 operations, 97 files for this plan), with no `PROBLEM:` line. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
