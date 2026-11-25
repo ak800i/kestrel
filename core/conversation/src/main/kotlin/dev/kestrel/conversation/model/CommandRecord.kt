@@ -55,11 +55,12 @@ enum class LineKind(val owners: Boolean) {
 /**
  * A data tool's result as the model saw it: quoted and escaped, so it stays marked as data (design 8.2). [step] is the
  * goal's step, counted across its rounds as the bar counts it (design 10.5), or, when [routine], the step of the replayed
- * routine, which runs before the model's first step and numbers its own steps (plan 7A).
+ * routine, which runs before the model's first step and numbers its own steps (plan 7A). [items] is how many items the
+ * result held, which a condensed record names (design 8.3); the result's note below them is none.
  */
 @Serializable
-data class DataNote(val tool: String, val step: Int, val text: String, val routine: Boolean = false) {
-    override fun toString(): String = "DataNote(tool=${tool.length} chars, step=$step, routine=$routine, text=${text.length} chars)"
+data class DataNote(val tool: String, val step: Int, val text: String, val items: Int, val routine: Boolean = false) {
+    override fun toString(): String = "DataNote(tool=${tool.length} chars, step=$step, items=$items, routine=$routine, text=${text.length} chars)"
 }
 
 /** An app that an executed step acted in, by its launcher label. */

@@ -125,7 +125,7 @@ class ToStringTest {
             TraceEntry.Said(marker),
             TraceEntry.Asked(marker),
             TraceEntry.Answered(marker),
-            TraceEntry.Data(Tools.LIST_SMS, 2, marker),
+            TraceEntry.Data(Tools.LIST_SMS, 2, marker, items = 1),
             TraceEntry.AppUsed(marker, marker),
             TraceEntry.Did(marker),
             checklist,

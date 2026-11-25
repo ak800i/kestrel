@@ -41,8 +41,8 @@ internal class RunTrace(
     /** The owner's answer: his words, a number, yes or no. */
     suspend fun answered(text: String) = traced(TraceEntry.Answered(recordText(text)))
 
-    /** A data tool's [result] of step [step] as the model saw it, already redacted and quoted. */
-    suspend fun data(tool: String, step: Int, result: Redacted) = traced(TraceEntry.Data(tool, step, vault.spoken(result.text)))
+    /** A data tool's [result] of step [step] with its [items], as the model saw it, already redacted and quoted. */
+    suspend fun data(tool: String, step: Int, result: Redacted, items: Int) = traced(TraceEntry.Data(tool, step, vault.spoken(result.text), items))
 
     /** An app that an executed step acted in or opened, once per run, by its launcher label. */
     suspend fun acted(packageName: String) {

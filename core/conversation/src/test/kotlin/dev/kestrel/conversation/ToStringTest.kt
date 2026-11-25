@@ -30,7 +30,7 @@ class ToStringTest {
             request = marker,
             lines = listOf(RecordLine(LineKind.KESTREL_SAID, marker)),
             answer = marker,
-            data = listOf(DataNote(marker, 1, marker)),
+            data = listOf(DataNote(marker, 1, marker, items = 1)),
             apps = listOf(AppUse(marker, marker)),
             ledger = listOf(marker),
             checklist = Checklist(listOf(ChecklistItem("c1", marker, ItemState.TODO))),

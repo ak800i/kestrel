@@ -1,8 +1,5 @@
 package dev.kestrel.conversation.context
 
-import dev.kestrel.agent.DataResultText
-import dev.kestrel.agent.goal.ChecklistText
-import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.conversation.model.CommandRecord
 import java.time.ZoneId
 
@@ -11,7 +8,7 @@ import java.time.ZoneId
  * every earlier record but the newest is marked [CommandRecord.condensed], once, and stays so, also after the conversation
  * is continued. A condensed record keeps all its parts for the search and the transcript; in the records block it shows
  * only its request, its answer, its end, its apps, its checklist's progress and one line per data note, which depend on
- * its own fields only, so its text in the block never changes.
+ * its own fields and the zone of its time only, so its text in the block never changes within a zone.
  */
 object RecordCondenser {
     /** The request's and the answer's length in a condensed record. */
@@ -26,9 +23,6 @@ object RecordCondenser {
         RecordLines.answer(record, CAP),
         RecordLines.end(record),
         RecordLines.apps(record),
-        record.checklist?.let { "  Checklist: " + ScreenText.quote(ChecklistText.progress(it), CAP) },
-    ) + record.data.map { note ->
-        val count = note.text.lines().count { it.isNotBlank() && it != DataResultText.NO_ITEMS }
-        "  Data: ${note.tool} gave $count ${if (count == 1) "line" else "lines"}."
-    }
+        record.checklist?.let { RecordLines.progress(it, CAP) },
+    ) + record.data.map(RecordLines::gave)
 }

@@ -61,9 +61,12 @@ sealed interface TraceEntry {
         override fun toString(): String = "Answered(${text.length} chars)"
     }
 
-    /** A data tool's result of step [step], as the model saw it: quoted and escaped. */
-    data class Data(val tool: String, val step: Int, val text: String) : TraceEntry {
-        override fun toString(): String = "Data(tool=$tool, step=$step, text=${text.length} chars)"
+    /**
+     * A data tool's result of step [step], as the model saw it: quoted and escaped. [items] is how many items it held, as
+     * the step's outcome counted them; the result's note below them, such as "3 contacts match", is none.
+     */
+    data class Data(val tool: String, val step: Int, val text: String, val items: Int) : TraceEntry {
+        override fun toString(): String = "Data(tool=$tool, step=$step, items=$items, text=${text.length} chars)"
     }
 
     /** An app that an executed step acted in or opened, by its launcher [label]. */

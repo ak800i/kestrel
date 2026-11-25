@@ -14,7 +14,8 @@ import dev.kestrel.safety.Category
 
 /**
  * Builds a command's record as its goal works (design 8.1 of sub-project 7): from the run's traces (plan 7A's
- * `TraceEntry`), which arrive in their record's form, and from the conversation's own lines. A question is a line each
+ * `TraceEntry`), which arrive in their record's form except an app's launcher label, which the app chose and which
+ * [RecordText.label] redacts and cuts here, and from the conversation's own lines. A question is a line each
  * time that the run put it to the owner, so one that an interruption cut and the run asked again is there twice, and an
  * interruption, a timeout or silence adds no answer line (plan 7A's `TracingOwner`). The ledger's traces are the live
  * view while a round runs; at its end, its report's ledger replaces them ([roundEnded]). A record keeps at most
@@ -41,9 +42,8 @@ object RecordBuilder {
         is TraceEntry.Asked -> line(record, LineKind.KESTREL_ASKED, entry.text, null)
         is TraceEntry.Answered -> line(record, LineKind.OWNER_ANSWERED, entry.text, channel)
         is TraceEntry.Data ->
-            data(record, DataNote(entry.tool, if (routine) entry.step else stepsBefore + entry.step, cut(entry.text), routine))
-        is TraceEntry.AppUsed ->
-            if (record.apps.any { it.packageName == entry.packageName }) record else record.copy(apps = record.apps + AppUse(entry.label, entry.packageName))
+            data(record, DataNote(entry.tool, if (routine) entry.step else stepsBefore + entry.step, cut(entry.text), entry.items, routine))
+        is TraceEntry.AppUsed -> used(record, AppUse(RecordText.label(entry.label), entry.packageName))
         is TraceEntry.Did -> record.copy(ledger = record.ledger + cut(entry.line))
     }
 
@@ -74,6 +74,10 @@ object RecordBuilder {
 
     /** [record] whose goal or request ended with [end] and the final sentence [answer], in its spoken form. */
     fun ended(record: CommandRecord, end: EndReason, answer: String?): CommandRecord = record.copy(end = end, answer = answer?.let(::cut))
+
+    // An app used again moves to the end, so that the apps are in the order of their last use (design 8.3).
+    private fun used(record: CommandRecord, app: AppUse): CommandRecord =
+        record.copy(apps = record.apps.filterNot { it.packageName == app.packageName } + app)
 
     private fun data(record: CommandRecord, note: DataNote): CommandRecord {
         val data = record.data + note

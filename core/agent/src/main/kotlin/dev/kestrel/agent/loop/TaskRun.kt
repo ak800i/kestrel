@@ -101,6 +101,9 @@ internal class Done(
 ) {
     /** Whether the step failed: its action failed, was refused or failed its check, or its call was not valid. */
     val failed: Boolean get() = outcome is Outcome.Failed || outcome is Outcome.Refused || outcome is Outcome.CheckFailed || invalid
+
+    /** How many items the [data] held, as its outcome counted them; the data's note is none. */
+    val items: Int get() = (outcome as? Outcome.DataOk)?.count ?: 0
 }
 
 /** What the safety check lets a step do (design D13 and D14). */
@@ -325,7 +328,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         ))
         pendingPrompt = listOfNotNull(line, next?.text, data?.text).joinToString("\n")
         log(TaskLog.Kind.ACTION, "${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
-        done.data?.let { trace.data(done.tool, replies, it) }
+        done.data?.let { trace.data(done.tool, replies, it, done.items) }
         if (done.outcome is Outcome.DataOk) okDataSteps += replies
         if (done.text == OWNER_DID_IT_RESULT) ownerSteps += replies
         if (done.executed && !failed && done.tool in Tools.ACTING) actedSteps += replies
@@ -380,7 +383,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         val outcome = if (done.outcome is Outcome.AnotherScreen) Outcome.AnotherScreen(next?.title) else done.outcome
         val line = done.text ?: first.copy(outcome = outcome ?: Outcome.Answered).resultLine()
         log(TaskLog.Kind.ACTION, "routine ${done.tool}: $line (${ports.clock.elapsedMillis() - started} ms)")
-        done.data?.let { trace.data(done.tool, step, it) }
+        done.data?.let { trace.data(done.tool, step, it, done.items) }
         if (done.executed && !done.failed) done.target?.packageName?.let { trace.acted(it) }
         if (done.executed) ledger(done, outcome)
         trace.ledger(ledger.lines)

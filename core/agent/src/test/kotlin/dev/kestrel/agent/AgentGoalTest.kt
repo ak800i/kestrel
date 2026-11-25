@@ -74,7 +74,7 @@ class AgentGoalTest {
             listOf(
                 TraceEntry.Requested("Read Ana's messages"),
                 TraceEntry.Said("Looking."),
-                TraceEntry.Data(Tools.LIST_SMS, 2, "from: \"Ana\" · body: \"Hi\""),
+                TraceEntry.Data(Tools.LIST_SMS, 2, "from: \"Ana\" · body: \"Hi\"", items = 1),
                 TraceEntry.AppUsed("Kestrel fixtures", Screens.MESSENGER),
                 TraceEntry.Did("opened \"Ana Petrović\""),
                 TraceEntry.Asked("Which one?"),
@@ -95,6 +95,23 @@ class AgentGoalTest {
         assertFalse(data, data.contains("483920") || data.contains("[OTP_1]"))
         assertTrue(data, data.contains("a one-time code"))
         assertEquals(TraceEntry.Said("Your code is a one-time code."), harness.goal.traces.filterIsInstance<TraceEntry.Said>().single())
+    }
+
+    // Design 8.3 of sub-project 7: a condensed record says how many items a result gave, and a note below them is none.
+    @Test
+    fun aDataTraceCountsTheResultsItemsAndNotItsNote() = runTest {
+        val results = listOf(
+            DataResult.Ok(sms("Hi", "Bye").lines, note = "Only the newest 2 messages.") to 2,
+            DataResult.Ok(emptyList(), note = "No SMS from Ana; ask for another name.") to 0,
+        )
+        for ((result, items) in results) {
+            val harness = Harness(Screens.chats(), listOf(call("list_sms"), fail()))
+            harness.data.answer(Tools.LIST_SMS, result)
+
+            harness.run("Read Ana's messages")
+
+            assertEquals(items, harness.goal.traces.filterIsInstance<TraceEntry.Data>().single().items)
+        }
     }
 
     // Design 8.1 of sub-project 7: the record names every app that the run used, also one that a step only opened.

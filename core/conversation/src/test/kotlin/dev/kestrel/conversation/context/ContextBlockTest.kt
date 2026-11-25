@@ -55,15 +55,15 @@ class ContextBlockTest {
 
     @Test
     fun theNewestRecordShowsItsCapsAndTheOlderOnesAreCondensed() {
-        val block = text(listOf(record(1, data = listOf(DataNote("list_sms", 1, "a\nb"))), record(2, request = "x".repeat(500))))
+        val block = text(listOf(record(1, data = listOf(DataNote("list_sms", 1, "a\nb", items = 2))), record(2, request = "x".repeat(500))))
 
         assertEquals(TaskRequest.CONVERSATION_HEADER, block.lines().first())
         assertTrue(block.contains("  The owner said: \"${"x".repeat(400)}…\""))
-        assertTrue(block.contains("  Data: list_sms gave 2 lines."))
+        assertTrue(block.contains("  Data: list_sms gave 2 items."))
         assertTrue(block.indexOf("Command 1, at 01:01") < block.indexOf("Command 2, at 01:02"))
         assertTrue(block.contains("  Kestrel answered: \"Answer 2\""))
         assertTrue(block.contains("  It ended: finished."))
-        assertTrue(block.contains("  Apps: Viber"))
+        assertTrue(block.contains("  Apps: \"Viber\""))
     }
 
     @Test
@@ -83,7 +83,7 @@ class ContextBlockTest {
             val items = (1..12).map { ChecklistItem("c$it", letter.repeat(120), ItemState.TODO) }
             val newest = record(
                 4,
-                data = (1..5).map { DataNote("list_sms", it, letter.repeat(600)) },
+                data = (1..5).map { DataNote("list_sms", it, letter.repeat(600), items = 1) },
                 lines = (1..10).map { RecordLine(LineKind.KESTREL_SAID, letter.repeat(300)) },
                 ledger = (1..5).map { letter.repeat(200) },
                 checklist = Checklist(items),
@@ -113,7 +113,7 @@ class ContextBlockTest {
                 lines = (1..200).map { RecordLine(LineKind.OWNER_STEERED, long, InputChannel.TEXT) },
                 answer = long,
                 end = EndReason.STOPPED_AT_LIMIT,
-                data = (1..20).map { DataNote("list_notifications", it, long) },
+                data = (1..20).map { DataNote("list_notifications", it, long, items = 1) },
                 apps = (1..8).map { AppUse(long.take(40), "app.$it") },
                 ledger = (1..50).map { long },
                 checklist = Checklist(items),
@@ -189,7 +189,7 @@ class ContextBlockTest {
     @Test
     fun noRecordHoldsAPlaceholderOrAValue() {
         val redacted = RecordText.of("The code is 482913")
-        val block = text(listOf(record(1, request = redacted, data = listOf(DataNote("list_sms", 1, "body: \"$redacted\"")))))
+        val block = text(listOf(record(1, request = redacted, data = listOf(DataNote("list_sms", 1, "body: \"$redacted\"", items = 1)))))
 
         assertFalse(block.contains("482913"))
         assertFalse(Placeholders.PATTERN.containsMatchIn(block))

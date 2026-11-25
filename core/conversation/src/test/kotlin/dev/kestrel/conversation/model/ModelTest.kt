@@ -27,7 +27,7 @@ class ModelTest {
             lines = listOf(RecordLine(LineKind.OWNER_STEERED, "and Ana too", InputChannel.VOICE)),
             answer = "It's Ambar.",
             end = EndReason.FINISHED,
-            data = listOf(DataNote("list_sms", 2, "from: \"Mila\"")),
+            data = listOf(DataNote("list_sms", 2, "from: \"Mila\"", items = 1)),
             apps = listOf(AppUse("Viber", "com.viber.voip")),
             ledger = listOf("opened Viber"),
             checklist = Checklist(listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 1))),
