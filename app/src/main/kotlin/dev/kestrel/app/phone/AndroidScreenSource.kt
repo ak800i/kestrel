@@ -5,15 +5,19 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 
 /**
  * Android's screen and lock (design spec, section 8.5), as ListeningService read them until plan 7D: Kestrel counts the
  * phone as unlocked after USER_PRESENT until the screen goes off, because KeyguardManager can learn of the unlock a moment
- * later, and a SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock. Android calls the receiver
- * on the main thread.
+ * later, and a SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock. The source's thread is the
+ * main thread: the receiver runs there, and so does every reading, so that a reading and the broadcasts keep their order.
  */
 internal class AndroidScreenSource(private val context: Context) : ScreenSource {
+    private val main = Handler(Looper.getMainLooper())
+
     // The owner unlocked the phone since the screen last went off (USER_PRESENT).
     @Volatile
     private var unlocked = false
@@ -41,7 +45,7 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
             // SCREEN_ON and SCREEN_OFF come from the system, but USER_PRESENT comes from SystemUI, and Android gives another
             // app's broadcasts only to an exported receiver. All three are protected broadcasts, which other apps cannot
             // send.
-            context.registerReceiver(screen, filter, Context.RECEIVER_EXPORTED)
+            context.registerReceiver(screen, filter, null, main, Context.RECEIVER_EXPORTED)
             receiver = screen
         }
     }
@@ -53,7 +57,11 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
     }
 
-    override fun current(): Boolean {
+    override fun read(reading: (Boolean) -> Unit) {
+        if (main.looper.isCurrentThread) reading(current()) else main.post { reading(current()) }
+    }
+
+    private fun current(): Boolean {
         val interactive = context.getSystemService(PowerManager::class.java).isInteractive
         val locked = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
         return interactive && (unlocked || !locked)

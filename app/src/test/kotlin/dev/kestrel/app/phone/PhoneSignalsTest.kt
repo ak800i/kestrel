@@ -80,10 +80,51 @@ class PhoneSignalsTest {
 
         calls.failure = null
         val seen = mutableListOf<CallState>()
-        phone.watchCalls { seen += it }
+        val watch = phone.watchCalls { seen += it }
         calls.change(CallState.RINGING)
+        // With the failed watch left behind, Android's listener would stay registered after this last watch stops.
+        watch.stop()
 
         assertEquals(listOf(CallState.RINGING), seen)
+        assertEquals(1, calls.stops)
+    }
+
+    @Test
+    fun aScreenWatchWhoseSourceCannotStartLeavesNoWatcherBehind() {
+        screens.failure = IllegalStateException("Receiver failed")
+        assertThrows(IllegalStateException::class.java) { phone.watchScreen { } }
+
+        screens.failure = null
+        val seen = mutableListOf<Boolean>()
+        val watch = phone.watchScreen { seen += it }
+        screens.change(true)
+        watch.stop()
+
+        assertEquals(1, screens.starts)
+        assertEquals(listOf(false, true), seen)
+        assertEquals(1, screens.stops)
+    }
+
+    @Test
+    fun aWatchFromAnotherThreadGetsItsFirstReadingOnTheSourcesThreadInOrderWithTheReports() {
+        val listening = mutableListOf<Boolean>()
+        val conversation = mutableListOf<Boolean>()
+        val stopped = mutableListOf<Boolean>()
+        screens.now = true
+        phone.watchScreen { listening += it }
+
+        screens.queued = true
+        phone.watchScreen { conversation += it }
+        phone.watchScreen { stopped += it }.stop()
+        // The screen goes off while the source's thread has yet to come to the new watches' readings.
+        screens.change(false)
+        assertEquals(emptyList<Boolean>(), conversation)
+        screens.runQueued()
+
+        // The reading is the state when the source's thread reads it, so the old "on" never comes after the change.
+        assertEquals(listOf(false, false), conversation)
+        assertEquals(listOf(true, false), listening)
+        assertEquals(emptyList<Boolean>(), stopped)
     }
 
     @Test
@@ -103,10 +144,16 @@ class PhoneSignalsTest {
         var now = false
         var starts = 0
         var stops = 0
+        var failure: Exception? = null
+
+        // The source's one thread runs every reading and report at once, or, while queued, in order at runQueued.
+        var queued = false
+        private val thread = ArrayDeque<() -> Unit>()
         private var report: ((Boolean) -> Unit)? = null
         private var cameOn: (() -> Unit)? = null
 
         override fun start(report: (Boolean) -> Unit, cameOn: () -> Unit) {
+            failure?.let { throw it }
             starts++
             this.report = report
             this.cameOn = cameOn
@@ -118,15 +165,25 @@ class PhoneSignalsTest {
             cameOn = null
         }
 
-        override fun current(): Boolean = now
+        override fun read(reading: (Boolean) -> Unit) = onThread { reading(now) }
 
         fun change(on: Boolean) {
             now = on
-            checkNotNull(report) { "Nothing watches the screen" }.invoke(on)
+            val report = checkNotNull(report) { "Nothing watches the screen" }
+            onThread { report(on) }
         }
 
         fun comeOn() {
-            checkNotNull(cameOn) { "Nothing watches the screen" }.invoke()
+            val cameOn = checkNotNull(cameOn) { "Nothing watches the screen" }
+            onThread { cameOn() }
+        }
+
+        fun runQueued() {
+            while (thread.isNotEmpty()) thread.removeFirst().invoke()
+        }
+
+        private fun onThread(action: () -> Unit) {
+            if (queued) thread.addLast(action) else action()
         }
     }
 
