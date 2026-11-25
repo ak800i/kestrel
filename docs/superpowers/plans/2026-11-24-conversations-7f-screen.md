@@ -2381,7 +2381,7 @@ import dev.kestrel.app.conversation.CardDesk
 - [ ] **Step 5: Run the tests and the builds**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.OwnerCardTest --tests=dev.kestrel.app.conversation.CardDeskTest --tests=dev.kestrel.app.conversation.VoiceChannelTest`
-Expected: BUILD SUCCESSFUL; `OwnerCardTest` 3, `CardDeskTest` 6 and `VoiceChannelTest` 8 tests pass.
+Expected: BUILD SUCCESSFUL; `OwnerCardTest` 3, `CardDeskTest` 6 and `VoiceChannelTest` 10 tests pass (plan 7D leaves 9).
 
 Run: `scripts\gradle.ps1 :core:screen:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebugAndroidTest; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL. Count the results as "Before you start" says: `:app` JVM A₀ + 10, `:core:screen` S₀. The device tests compile; they run in Task 14.
@@ -4340,7 +4340,7 @@ internal class TextChannel(
 - [ ] **Step 5: Run the tests**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.*`
-Expected: BUILD SUCCESSFUL; `TypedInputsTest` 3, `TextChannelTest` 9, `CardDeskTest` 6 and `VoiceChannelTest` 8 tests pass.
+Expected: BUILD SUCCESSFUL; `TypedInputsTest` 3, `TextChannelTest` 9, `CardDeskTest` 6 and `VoiceChannelTest` 10 tests pass.
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL; `:app` JVM A₂ + 12.
@@ -5060,7 +5060,7 @@ import dev.kestrel.app.listen.SharedFeedbackBar
 - [ ] **Step 6: Run the tests**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.*`
-Expected: BUILD SUCCESSFUL; `GoalBarTest` 3, `VoiceChannelTest` 9, `TextChannelTest` 9 and `CardDeskTest` 6 tests pass.
+Expected: BUILD SUCCESSFUL; `GoalBarTest` 3, `VoiceChannelTest` 11, `TextChannelTest` 9 and `CardDeskTest` 6 tests pass.
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:assembleDebug; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL; `:app` JVM A₄ + 8.
