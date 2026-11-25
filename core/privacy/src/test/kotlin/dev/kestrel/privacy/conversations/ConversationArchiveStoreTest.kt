@@ -276,6 +276,30 @@ class ConversationArchiveStoreTest {
         assertTrue(store.read(listOf("a")).single() is StoredConversation.Readable)
     }
 
+    // Design 9.7 of sub-project 7: deleteAll throws only when its transaction did not commit, also for a caller that is
+    // cancelled while the transaction runs: the transaction and its result are one unit that cancellation cannot split.
+    @Test
+    fun aCallerCancelledWhileTheTransactionRunsStillGetsItsResult() = runTest {
+        write(PlainConversation(closed("a", last = 1), byteArrayOf(1)))
+        val inside = CountDownLatch(1)
+        val gate = CountDownLatch(1)
+        dao.beforeDeleteAll = { inside.countDown(); gate.await(5, TimeUnit.SECONDS) }
+        var outcome: Result<KeyErasure>? = null
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
+            val store = ConversationArchiveStore(dao, key, dispatcher = dispatcher)
+            val delete = launch(Dispatchers.Default) { outcome = runCatching { store.deleteAll() } }
+            assertTrue(inside.await(5, TimeUnit.SECONDS))
+
+            delete.cancel()
+            gate.countDown()
+            delete.join()
+        }
+
+        assertEquals(KeyErasure.ERASED, outcome?.getOrThrow())
+        assertTrue(dao.rows.isEmpty())
+        assertEquals(1, key.erased)
+    }
+
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
     // open. The pause can only let a wrong order pass, never fail a right one.
     @Test

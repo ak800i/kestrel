@@ -33,7 +33,7 @@ sealed interface ConversationLookup {
  * The on-device search over past conversations (design 9.4 of sub-project 7), behind plan 7A's `search_conversations`, and
  * the search for a conversation to continue (design 9.6). It reads what the store's [ConversationStore.searchable] gives:
  * the index of past conversations, whose records within retention it searches, and the open conversation, whose records
- * other than the asking command's it folds at each search (never an observation or a screenshot, which no record holds).
+ * other than the asking command's it folds whole at each search (never an observation or a screenshot, which no record holds).
  * [HistoryRanking] matches and orders them, and only the best matches' bodies are read, in one call, for their details.
  * While the index is being rebuilt, or cannot be read, the search says so ([HistoryResult.REBUILDING],
  * [HistoryResult.FAILED], [ConversationLookup.Rebuilding], [ConversationLookup.Unavailable]) and gives no match, not even
@@ -57,7 +57,7 @@ class HistorySearch(
         }
         val open = searchable.open
         val reach = reach(searchable.past).mapTo(HashSet()) { it.id }
-        val indexes = searchable.past.searches + listOfNotNull(open?.let { SearchIndex.of(listOf(it)) })
+        val indexes = searchable.past.searches + listOfNotNull(open?.let(SearchIndex::whole))
         val ranked = HistoryRanking.rank(indexes, query, clock.zone(), reached = { record ->
             record.ref != excluding && (record.ref.conversation in reach || record.ref.conversation == open?.id)
         })

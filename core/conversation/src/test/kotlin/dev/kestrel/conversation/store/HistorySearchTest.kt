@@ -131,6 +131,27 @@ class HistorySearchTest {
         assertEquals(listOf("Ambar dinner"), search.port(RecordRef(id(1), 2)).search(HistoryQuery("Ambar")).matches.map { it.request })
     }
 
+    // Design 9.2 and 9.4: within the bounds of one conversation, a past conversation keeps its first command, which names
+    // it, and its newest commands searchable; the commands in between go first. The open conversation is searched whole.
+    @Test
+    fun aLongPastConversationKeepsItsFirstAndNewestCommandsSearchableAndTheOpenOneAllOfThem() = test {
+        fun filler(n: Int) = "f" + (0 until 5).map { 'a' + n / (0 until it).fold(1) { power, _ -> power * 26 } % 26 }.joinToString("")
+        val requests = (1..250).map { n -> if (n == 1) "Ambar" else if (n == 100) "Zoran" else if (n == 250) "Kafana" else "Request $n" }
+        fun records() = requests.mapIndexed { index, request ->
+            record(index + 1, request, day - index, answer = List(100) { filler(index * 100 + it) }.joinToString(" "))
+        }.toTypedArray()
+
+        save(1, *records())
+
+        assertEquals(listOf("Ambar"), requests("Ambar"))
+        assertEquals(listOf("Kafana"), requests("Kafana"))
+        assertTrue(requests("Zoran").isEmpty())
+
+        save(2, *records(), open = true)
+
+        assertEquals(listOf("Zoran"), requests("Zoran"))
+    }
+
     @Test
     fun theSearchFollowsDeletesAndAReopen() = test {
         save(1, record(1, "Ambar dinner", day))

@@ -401,8 +401,8 @@ class ArchivedConversationStoreTest {
     }
 
     // Design 9.2 and 9.4: whatever a conversation holds, the index keeps at most SearchIndex's bounds of it: no word longer
-    // than MAX_WORD_LENGTH, CONVERSATION_WORDS different words and CONVERSATION_POSITIONS positions, its first records
-    // first. So its shard decodes again, and the next start trusts it and rebuilds nothing.
+    // than MAX_WORD_LENGTH, CONVERSATION_WORDS different words and CONVERSATION_POSITIONS positions, its first record and
+    // then its newest ones first. So its shard decodes again, and the next start trusts it and rebuilds nothing.
     @Test
     fun aHugeConversationOfLongWordsIsIndexedWithinItsBoundsAndTheNextStartTrustsItsShard() = test {
         fun letters(n: Int) = (0 until 3).map { 'a' + n / pow26(it) % 26 }.joinToString("")
@@ -420,8 +420,8 @@ class ArchivedConversationStoreTest {
         assertEquals(SearchIndex.CONVERSATION_WORDS, words.size)
         assertEquals(SearchIndex.CONVERSATION_POSITIONS, shard.positions)
         assertTrue(words.all { it.length <= SearchIndex.MAX_WORD_LENGTH })
-        assertTrue("com" + letters(0) in words && "own" + letters(0) + letters(0) in words)
-        assertFalse("own" + letters(119) + letters(0) in words)
+        assertTrue("own" + letters(0) + letters(0) in words && "own" + letters(119) + letters(0) in words)
+        assertFalse("own" + letters(40) + letters(0) in words)
         archive.calls.clear()
 
         val started = fresh()

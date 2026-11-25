@@ -10,6 +10,7 @@ import dev.kestrel.privacy.db.ConversationStamp
 import dev.kestrel.privacy.db.IndexRowUpdate
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -185,11 +186,13 @@ class ConversationArchiveStore(
      * SQLite's journal still holds, can be decrypted any more. It throws only when the transaction did not commit, which
      * leaves every row as it was. Once it has committed, the deletion is complete: it returns [KeyErasure.KEPT] when the key
      * could not be erased, which the next change erases before it stores anything, as it erases the key that a process
-     * which ended between the two left. The next write makes a new key.
+     * which ended between the two left. The next write makes a new key. Once it holds the key's guard, the transaction and
+     * its result are one unit that cancellation cannot split, so that this holds for any caller: a caller cancelled
+     * meanwhile still gets the result, and its cancellation takes effect at its next suspension.
      */
-    suspend fun deleteAll(): KeyErasure {
-        val erasure = key.guard.withLock {
-            withContext(dispatcher) {
+    suspend fun deleteAll(): KeyErasure = key.guard.withLock {
+        withContext(NonCancellable) {
+            val erasure = withContext(dispatcher) {
                 dao.deleteAll()
                 keyChecked = false
                 try {
@@ -200,9 +203,9 @@ class ConversationArchiveStore(
                     KeyErasure.KEPT
                 }
             }
+            reports.withLock { reportedUnknown.clear() }
+            erasure
         }
-        reports.withLock { reportedUnknown.clear() }
-        return erasure
     }
 
     /**
