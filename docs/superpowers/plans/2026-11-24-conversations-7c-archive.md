@@ -3044,7 +3044,7 @@ Design 9.1 and 9.7 of sub-project 7, as amended on 2026-11-27. Task 4b's `delete
 So `deleteAll` now deletes every row and every shard in one transaction, and then erases the key, in one step on one thread under the key's guard:
 - A deletion that does not complete leaves every row as it was and readable; nothing is noted, and the owner can ask again.
 - A process that ends between the two steps leaves an empty archive and its key. The first change of each process (`write` or `purge`) first asks the DAO whether both tables are empty (`ConversationDao.isEmpty()`, one plain query) and erases the key when they are, before it encrypts anything. So an empty archive never keeps its key, and nothing is stored under a key that "delete history" should have erased.
-- A key that fails to erase is erased by the next change's check, because the check runs again after such a failure.
+- A key that fails to erase is erased by the next change's check, because `deleteAll` marks the key as unchecked before it erases it, so the check runs again after such a failure; `theNextChangeErasesAKeyThatDeleteAllFailedToErase` tests it with a test key whose erasure throws.
 - Once the key is gone, no key opens the copies of deleted pages that SQLite's journal may still hold, as before.
 
 The first change of a process also erases the key of an archive that retention emptied; that costs nothing, because no row needs it, and the next write makes a new key.
@@ -3057,11 +3057,24 @@ The first change of a process also erases the key of an archive that retention e
 - Consumes: Task 4b's `ConversationDao`, `ConversationArchiveStore` and `ErasableKey` with its `guard` and `withExisting`, as built and reviewed (`d9382170`): only a write makes the key, and a read decrypts with the key as it is.
 - Produces: `abstract fun ConversationDao.isEmpty(): Boolean` (both tables empty); `ConversationArchiveStore.deleteAll()` that deletes the rows and the index in one transaction and then erases the key; `ConversationArchiveStore.write` and `purge`, whose first call in each process erases the key of an empty archive. The schema does not change: `3.json` stays as Task 4b generated it.
 
-Counts: `:core:privacy` JVM N + 1 (`ConversationArchiveStoreTest` 17 → 18; 84 + 1 = 85 at `d9382170`). `:core:privacy` device tests unchanged (`KestrelDatabaseTest` 10, with three more checks).
+Counts: `:core:privacy` JVM N + 2 (`ConversationArchiveStoreTest` 17 → 19; 84 + 2 = 86 at `d9382170`). `:core:privacy` device tests unchanged (`KestrelDatabaseTest` 10, with three more checks).
 
 - [ ] **Step 1: Write the failing tests**
 
-The test key now counts only the erasures of a key that existed, so that the check of an empty archive, which finds no key to erase in a new test, does not count.
+The test key now counts only the erasures of a key that existed, so that the check of an empty archive, which finds no key to erase in a new test, does not count. Its next `failingErasures` erasures throw `KeyStoreException` and keep the key, as Keystore may.
+
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
+
+```kotlin
+import java.io.IOException
+```
+
+with:
+
+```kotlin
+import java.io.IOException
+import java.security.KeyStoreException
+```
 
 In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
 
@@ -3150,6 +3163,25 @@ with:
         assertTrue(next.read(listOf("b")).single() is StoredConversation.Readable)
     }
 
+    // A "delete history" whose erasure failed deleted the rows and left the key, which must not encrypt the next conversation:
+    // the next change of the same process checks the archive again and erases the key before it stores anything.
+    @Test
+    fun theNextChangeErasesAKeyThatDeleteAllFailedToErase() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()))
+        key.failingErasures = 1
+
+        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is KeyStoreException)
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(key.exists)
+        assertEquals(0, key.erased)
+
+        write(PlainConversation(closed("b", last = 2), "new".encodeToByteArray()))
+
+        assertEquals(1, key.erased)
+        assertEquals(2, key.made)
+        assertTrue(store.read(listOf("b")).single() is StoredConversation.Readable)
+    }
+
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
 ```
 
@@ -3170,10 +3202,14 @@ with:
 
 /**
  * An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes; [erased] counts
- * the erasures of a key that existed, so that a first change that finds no key to erase does not count.
+ * the erasures of a key that existed, so that a first change that finds no key to erase does not count. The next
+ * [failingErasures] erasures throw, as Keystore may, and keep the key.
  */
 private class MemoryKey : ErasableKey {
     override val guard = Mutex()
+
+    @Volatile
+    var failingErasures = 0
 ```
 
 In `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt`, replace:
@@ -3191,6 +3227,10 @@ with:
 ```kotlin
     @Synchronized
     override fun erase() {
+        if (failingErasures > 0) {
+            failingErasures--
+            throw KeyStoreException("the key could not be deleted")
+        }
         if (key != null) erased++
         key = null
     }
@@ -3468,7 +3508,7 @@ with:
 - [ ] **Step 4: Build and run the JVM tests**
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :core:privacy:compileDebugAndroidTestKotlin`, then `$n = 0; Get-ChildItem core\privacy\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\privacy $n"; git status --short core/privacy/schemas`
-Expected: BUILD SUCCESSFUL; `core\privacy` N + 1 (85 at `d9382170`); no change under `core/privacy/schemas`, because a query changes no schema.
+Expected: BUILD SUCCESSFUL; `core\privacy` N + 2 (86 at `d9382170`); no change under `core/privacy/schemas`, because a query changes no schema.
 
 - [ ] **Step 5: The database's device test on kestrel-api37**
 
@@ -4092,7 +4132,7 @@ Write the times of both devices into `.superpowers\sdd\progress.md`. These are t
 
 ## Counts at the end of plan 7C
 
-- `:core:privacy` JVM: P₀ + 19 (Task 2: 1, Task 3: 10, Task 4b: 7, Task 4c: 1).
+- `:core:privacy` JVM: P₀ + 20 (Task 2: 1, Task 3: 10, Task 4b: 7, Task 4c: 2).
 - `:app` JVM: A₀ (unchanged).
 - `:core:privacy` device tests: D₀ + 13 (32 when D₀ is 19), one of them skipped without its instrumentation argument.
 - `:app` device tests: AD₀ + 7 (450 when AD₀ is 443).
