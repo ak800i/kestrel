@@ -3,6 +3,7 @@ package dev.kestrel.agent.memory
 import dev.kestrel.agent.loop.Outcome
 import dev.kestrel.agent.loop.TaskRun
 import dev.kestrel.agent.observe.ObservationTable
+import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.tools.ParsedCall
 import dev.kestrel.agent.tools.ToolArguments
 import dev.kestrel.agent.tools.Tools
@@ -36,13 +37,13 @@ import kotlinx.serialization.json.contentOrNull
  * note for the agent, which goes on from the screen as it is. A touch cancels a replay as it cancels a task.
  */
 internal class RoutineReplayer(private val run: TaskRun) {
-    /** Null when every step ran; else "Routine '<name>' failed at step <n> of <m>: <what differed>." */
+    /** Null when every step ran; else `Routine "<name>" failed at step <n> of <m>: <what differed>.`, the name quoted as data. */
     suspend fun replay(match: RoutineMatch): String? {
         val routine = match.routine
         val total = routine.steps.size
         val values = values(match)
         for ((index, step) in routine.steps.withIndex()) {
-            fun failed(what: String) = "Routine '${run.redactor.redact(routine.name)}' failed at step ${index + 1} of $total: $what."
+            fun failed(what: String) = "Routine ${ScreenText.quote(run.redactor.redact(routine.name), ScreenText.LABEL_LIMIT)} failed at step ${index + 1} of $total: $what."
             val observation = run.observe(run.fresh(), last = null, targetKey = null)
             if (step.tool in ON_SCREEN && step.before != null && !step.before.sameScreen(observation.signature)) {
                 return failed("the screen before it was not the recorded one")

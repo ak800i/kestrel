@@ -58,7 +58,7 @@ class TaskMemory(
         val named = launcher.filter { names(words, it.label) }
         val notes = named.flatMap { app -> activeNotes(app).map { app to it } }.take(MAX_CONTEXT_NOTES)
         if (notes.isNotEmpty()) {
-            notes.forEach { (_, note) -> shown += note.packageName + "\n" + note.path }
+            notes.forEach { (_, note) -> shown += note.stored.packageName + "\n" + note.stored.path }
             parts += NOTES_HEADER + "\n" + notes.joinToString("\n") { (app, note) -> line(app, note) }
         }
         return parts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
@@ -67,9 +67,9 @@ class TaskMemory(
     /** The active notes of [packageName] for a tool's result, when the context did not hold them (D22), or null. */
     suspend fun notesFor(packageName: String): String? {
         val app = launcher.firstOrNull { it.packageName == packageName } ?: return null
-        val notes = activeNotes(app).filter { (it.packageName + "\n" + it.path) !in shown }.take(MAX_CONTEXT_NOTES)
+        val notes = activeNotes(app).filter { (it.stored.packageName + "\n" + it.stored.path) !in shown }.take(MAX_CONTEXT_NOTES)
         if (notes.isEmpty()) return null
-        notes.forEach { shown += it.packageName + "\n" + it.path }
+        notes.forEach { shown += it.stored.packageName + "\n" + it.stored.path }
         return redactor.redact(NOTES_HEADER + "\n" + notes.joinToString("\n") { line(app, it) })
     }
 
@@ -130,10 +130,19 @@ class TaskMemory(
         if (names.isNotEmpty()) store.addFoundContacts(names)
     }
 
-    private suspend fun activeNotes(app: LauncherApp): List<RouteNote> = store.notes(app.packageName).filter { it.active && it.strikes < MAX_STRIKES }
+    // A stored note, and its path written again from its parsed steps.
+    private class ShownNote(val stored: RouteNote, val path: String) {
+        override fun toString(): String = "ShownNote($stored)"
+    }
 
-    private fun line(app: LauncherApp, note: RouteNote): String {
-        val version = note.version?.takeIf { it != app.versionName }?.let { " (written for version ${ScreenText.quote(it, ScreenText.LABEL_LIMIT)})" }.orEmpty()
+    // The active notes of [app], each read through RouteNote's own rule: a stored note that is no path of the fixed verbs
+    // with quoted labels, such as one stored before its labels were checked, is left out and never reaches a request.
+    private suspend fun activeNotes(app: LauncherApp): List<ShownNote> = store.notes(app.packageName)
+        .filter { it.active && it.strikes < MAX_STRIKES }
+        .mapNotNull { note -> RouteNote.parse(note.path)?.let { ShownNote(note, RouteNote.format(it)) } }
+
+    private fun line(app: LauncherApp, note: ShownNote): String {
+        val version = note.stored.version?.takeIf { it != app.versionName }?.let { " (written for version ${ScreenText.quote(it, ScreenText.LABEL_LIMIT)})" }.orEmpty()
         return "- ${ScreenText.quote(app.label, ScreenText.LABEL_LIMIT)}: ${note.path}$version"
     }
 
