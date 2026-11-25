@@ -27,6 +27,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,6 +44,9 @@ import kotlin.random.Random
  * - kestrelSearchSpeed=search lets a new store read the index in the background and times the first search after it.
  * - kestrelSearchSpeed=start times a search right after a new store's start, which waits for the index while the store
  *   reads it; the restore reads only the open conversation. Afterwards the run deletes the database and erases the key.
+ * - kestrelSearchSpeed=clean deletes the database and erases the key, for a series that a killed process cut short.
+ * A run keeps the database and the key only when it succeeds and a later run needs them: a `write` or `search` run that
+ * fails removes them, and a `search` or `start` run that finds no database fails at once and creates nothing.
  * It is a measurement: it fails only when the store could not use the index or the search does not find the
  * conversations that hold the words, and it logs under the tag KestrelSearch. It never uses Kestrel's own database or key.
  */
@@ -55,80 +59,97 @@ class ConversationSearchSpeedTest {
     @Test
     fun measuresTheFirstSearchOver30DaysOfConversations() = runBlocking<Unit> {
         val mode = InstrumentationRegistry.getArguments().getString("kestrelSearchSpeed")
-        assumeTrue("Runs with -Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write, then =search, then =start", mode != null && mode in MODES)
+        assumeTrue("Runs with -Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write, then =search, then =start, or =clean", mode != null && mode in MODES)
         when (mode) {
-            "write" -> write()
-            "search" -> search()
-            else -> start()
+            "write" -> {
+                remove()
+                onTestDatabase(keep = true) { write(it, this) }
+            }
+            "search" -> {
+                assertWritten()
+                onTestDatabase(keep = true) { search(it, this) }
+            }
+            "start" -> {
+                assertWritten()
+                onTestDatabase(keep = false) { start(it, this) }
+            }
+            else -> remove()
         }
     }
 
-    private suspend fun CoroutineScope.write() {
+    // Runs [run] on the test database and closes it; then deletes the database and erases the key, unless [run] succeeded
+    // and [keep] says that a later run needs them.
+    private inline fun onTestDatabase(keep: Boolean, run: (KestrelDatabase) -> Unit) {
+        val database = database()
+        var kept = false
+        try {
+            run(database)
+            kept = keep
+        } finally {
+            database.close()
+            if (!kept) remove()
+        }
+    }
+
+    // Checks before Room opens the database, which would create an empty one, and before the key is used.
+    private fun assertWritten() {
+        if (context.getDatabasePath(FILE).exists()) return
+        remove()
+        fail("There is no test database $FILE: run kestrelSearchSpeed=write first, then =search, then =start")
+    }
+
+    private fun remove() {
         context.deleteDatabase(FILE)
         KeystoreErasableKey.of(ALIAS).erase()
+    }
+
+    private suspend fun write(written: KestrelDatabase, scope: CoroutineScope) {
         val now = System.currentTimeMillis()
-        val written = database()
-        try {
-            val store = store(written, this)
-            // The store has read the empty archive, so that each close writes the index's newest shard at once.
-            assertTrue(store.list().isEmpty())
-            val started = SystemClock.elapsedRealtime()
-            for (n in CONVERSATIONS - 1 downTo 1) store.save(conversation(n, now - DAYS * DAY_MILLIS * n / CONVERSATIONS))
-            val newest = conversation(0, now - 60_000L)
-            store.save(newest.copy(open = true))
-            val closing = SystemClock.elapsedRealtime()
-            store.save(newest)
-            val closed = SystemClock.elapsedRealtime()
-            val today = CommandRecord(1, now - 30_000L, InputChannel.VOICE, "Turn on dark mode", answer = "Dark mode is on.", end = EndReason.FINISHED)
-            store.save(ConversationSnapshot(ConversationId.random(), now - 30_000L, now, open = true, testMode = true, records = listOf(today)))
-            assertEquals(CONVERSATIONS, store.list().size)
+        val store = store(written, scope)
+        // The store has read the empty archive, so that each close writes the index's newest shard at once.
+        assertTrue(store.list().isEmpty())
+        val started = SystemClock.elapsedRealtime()
+        for (n in CONVERSATIONS - 1 downTo 1) store.save(conversation(n, now - DAYS * DAY_MILLIS * n / CONVERSATIONS))
+        val newest = conversation(0, now - 60_000L)
+        store.save(newest.copy(open = true))
+        val closing = SystemClock.elapsedRealtime()
+        store.save(newest)
+        val closed = SystemClock.elapsedRealtime()
+        val today = CommandRecord(1, now - 30_000L, InputChannel.VOICE, "Turn on dark mode", answer = "Dark mode is on.", end = EndReason.FINISHED)
+        store.save(ConversationSnapshot(ConversationId.random(), now - 30_000L, now, open = true, testMode = true, records = listOf(today)))
+        assertEquals(CONVERSATIONS, store.list().size)
 
-            Log.i(TAG, "wrote $CONVERSATIONS conversations in ${(closed - started) / 1_000} s")
-            Log.i(TAG, "closed a conversation in ${closed - closing} ms")
-        } finally {
-            written.close()
-        }
+        Log.i(TAG, "wrote $CONVERSATIONS conversations in ${(closed - started) / 1_000} s")
+        Log.i(TAG, "closed a conversation in ${closed - closing} ms")
     }
 
-    private suspend fun CoroutineScope.search() {
-        val read = database()
-        try {
-            val opened = SystemClock.elapsedRealtime()
-            val store = store(read, this)
-            // list() waits while the store reads the index in the background.
-            assertEquals(CONVERSATIONS, store.list().size)
-            val loaded = SystemClock.elapsedRealtime()
-            val found = HistorySearch(store, { DAYS.toInt() }, AndroidConversationClock).search(HistoryQuery(QUERY))
-            val searched = SystemClock.elapsedRealtime()
+    private suspend fun search(read: KestrelDatabase, scope: CoroutineScope) {
+        val opened = SystemClock.elapsedRealtime()
+        val store = store(read, scope)
+        // list() waits while the store reads the index in the background.
+        assertEquals(CONVERSATIONS, store.list().size)
+        val loaded = SystemClock.elapsedRealtime()
+        val found = HistorySearch(store, { DAYS.toInt() }, AndroidConversationClock).search(HistoryQuery(QUERY))
+        val searched = SystemClock.elapsedRealtime()
 
-            Log.i(TAG, "read the index in ${loaded - opened} ms")
-            Log.i(TAG, "searched $CONVERSATIONS conversations in ${searched - loaded} ms")
-            assertFound(found)
-        } finally {
-            read.close()
-        }
+        Log.i(TAG, "read the index in ${loaded - opened} ms")
+        Log.i(TAG, "searched $CONVERSATIONS conversations in ${searched - loaded} ms")
+        assertFound(found)
     }
 
-    private suspend fun CoroutineScope.start() {
-        val read = database()
-        try {
-            val started = SystemClock.elapsedRealtime()
-            val store = store(read, this)
-            val open = store.open()
-            val restored = SystemClock.elapsedRealtime()
-            // The search waits while the store reads the index in the background.
-            val found = HistorySearch(store, { DAYS.toInt() }, AndroidConversationClock).search(HistoryQuery(QUERY))
-            val searched = SystemClock.elapsedRealtime()
+    private suspend fun start(read: KestrelDatabase, scope: CoroutineScope) {
+        val started = SystemClock.elapsedRealtime()
+        val store = store(read, scope)
+        val open = store.open()
+        val restored = SystemClock.elapsedRealtime()
+        // The search waits while the store reads the index in the background.
+        val found = HistorySearch(store, { DAYS.toInt() }, AndroidConversationClock).search(HistoryQuery(QUERY))
+        val searched = SystemClock.elapsedRealtime()
 
-            Log.i(TAG, "restored the open conversation in ${restored - started} ms")
-            Log.i(TAG, "searched right after a start in ${searched - started} ms")
-            assertEquals("Turn on dark mode", open?.records?.single()?.request)
-            assertFound(found)
-        } finally {
-            read.close()
-            context.deleteDatabase(FILE)
-            KeystoreErasableKey.of(ALIAS).erase()
-        }
+        Log.i(TAG, "restored the open conversation in ${restored - started} ms")
+        Log.i(TAG, "searched right after a start in ${searched - started} ms")
+        assertEquals("Turn on dark mode", open?.records?.single()?.request)
+        assertFound(found)
     }
 
     private fun assertFound(found: HistoryResult) {
@@ -189,6 +210,6 @@ class ConversationSearchSpeedTest {
         const val FIRST = "ssscccppbbtttmmaddrrffhhgglwweiouvnkjy"
         const val VOWELS = "aeiouaeioy"
         const val CONSONANTS = "rstlnmdkpbgvzcfhj"
-        val MODES = setOf("write", "search", "start")
+        val MODES = setOf("write", "search", "start", "clean")
     }
 }
