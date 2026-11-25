@@ -21,6 +21,7 @@ class KestrelApplication : Application() {
         super.onCreate()
         graph = AppGraph(this)
         graph.scope.launch { graph.logs.purgeExpired() }
+        graph.scope.launch { graph.keepPurgingConversations() }
         // Kestrel creates the folder for its models itself: on Android 17 it can read a folder that adb creates only
         // after a chmod (design spec, section 8.10).
         graph.scope.launch { graph.models.root.mkdirs() }

@@ -27,6 +27,8 @@ import dev.kestrel.app.commands.CommandOptions
 import dev.kestrel.app.commands.CommandRunner
 import dev.kestrel.app.commands.InstantCommands
 import dev.kestrel.app.commands.ScreenTargets
+import dev.kestrel.app.conversation.AndroidConversationClock
+import dev.kestrel.app.conversation.RoomRecordArchive
 import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidCallScreen
@@ -64,7 +66,13 @@ import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.providers.ProviderAllowlist
 import dev.kestrel.app.providers.StoredCredentials
+import dev.kestrel.conversation.model.ConversationSettings
+import dev.kestrel.conversation.store.ArchiveNote
+import dev.kestrel.conversation.store.ArchivedConversationStore
+import dev.kestrel.conversation.store.Retention
 import dev.kestrel.privacy.PrivacyStore
+import dev.kestrel.privacy.logs.ActivityEvent
+import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.describeWithoutMessagesByCause
 import dev.kestrel.privacy.network.BlockedRequestException
 import dev.kestrel.privacy.network.LogPathTag
@@ -191,6 +199,15 @@ object SettingKeys {
 
     /** The voice and the network that the owner chose for the download of the models (release plan). */
     val MODEL_DOWNLOAD = SettingKey("model-download", ModelDownloadSetting.serializer(), ModelDownloadSetting())
+
+    // sub-project 7: keys
+
+    /**
+     * The owner's choices for conversations (design 13 of sub-project 7): the quiet time, the follow-up window, spoken
+     * replies to typed commands, how long past conversations are kept, and a goal's limits per round. Plan 7C's purge job
+     * reads the retention; plan 7F's Conversations page writes them.
+     */
+    val CONVERSATIONS = SettingKey("conversations", ConversationSettings.serializer(), ConversationSettings())
 }
 
 /**
@@ -266,6 +283,39 @@ class AppGraph(context: Context) {
 
     /** The providers' credentials, encrypted under their own key (design spec, section 10.7). */
     val credentialVault: CredentialVault by lazy { StoredCredentials(store.credentials) }
+
+    // sub-project 7C: archive
+
+    /**
+     * The conversations as :core:conversation keeps and searches them (design 9.1 to 9.4 of sub-project 7), on
+     * :core:privacy's encrypted tables under their own key. There is one, so that the index of past conversations and the
+     * open conversation that it keeps in memory follow every change: plan 7D's engine, search and local requests use it. It
+     * rebuilds a lost index in [scope]. What it notes goes into the activity log by its kind only (design 9.2).
+     */
+    internal val conversationStore: ArchivedConversationStore by lazy {
+        ArchivedConversationStore(RoomRecordArchive(store.conversations), scope) { note -> scope.launch { logs.append(archiveEntry(note)) } }
+    }
+
+    private val conversationRetention: Retention by lazy { Retention(conversationStore, AndroidConversationClock, reportFailure) }
+
+    /**
+     * Purges the closed conversations past the owner's retention (design 9.3 of sub-project 7): at once, once a day, and at
+     * each change of the retention; a failed purge is logged by its classes only, and the job goes on. It reads keptDays,
+     * the retention within its choices, so that a damaged stored value can never purge every conversation. KestrelApplication
+     * runs it for the life of the process, with the accessibility service on or off.
+     */
+    internal suspend fun keepPurgingConversations() {
+        conversationRetention.keepPurging(settings.observe(SettingKeys.CONVERSATIONS).map { it.keptDays })
+    }
+
+    /** The activity log's entry for what the store of conversations noted, which names no conversation (design 9.2 of sub-project 7). */
+    private fun archiveEntry(note: ArchiveNote): ActivityEvent =
+        when (note) {
+            ArchiveNote.CONVERSATION_DELETED -> ActivityEvent(ActivityKind.ERROR, "A conversation could not be read, so Kestrel deleted it")
+            ArchiveNote.INDEX_REBUILT -> ActivityEvent(ActivityKind.NOTE, "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations")
+            ArchiveNote.INDEX_FAILED -> ActivityEvent(ActivityKind.ERROR, "Kestrel could not read the index of past conversations and tries again later")
+            ArchiveNote.KEY_NOT_ERASED -> ActivityEvent(ActivityKind.ERROR, "Kestrel deleted the past conversations but could not erase their key, which it erases before it stores anything new")
+        }
 
     private val appliedSetting = MutableStateFlow<ProvidersSetting?>(null)
 

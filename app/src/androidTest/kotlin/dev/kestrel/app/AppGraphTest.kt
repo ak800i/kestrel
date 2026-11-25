@@ -2,6 +2,7 @@ package dev.kestrel.app
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.logs.NetworkOutcome
 import dev.kestrel.privacy.network.BlockedRequestException
 import dev.kestrel.privacy.network.PolicyDecision
@@ -205,5 +206,14 @@ class AppGraphTest {
         graph.settings.set(key, SafetySettings(testMode = false))
 
         assertEquals(SafetySettings(testMode = false), graph.settings.get(key))
+    }
+
+    // Plan 7C: the install of this build migrated Kestrel's own database to version 3, and the graph's store reads its
+    // table through the archive; a read that failed would throw here. Nothing of a conversation is printed.
+    @Test
+    fun theGraphsConversationStoreReadsKestrelsDatabaseAtVersion3() = runBlocking {
+        graph.conversationStore.list()
+
+        assertEquals(3, KestrelDatabase.get(InstrumentationRegistry.getInstrumentation().targetContext).openHelper.readableDatabase.version)
     }
 }
