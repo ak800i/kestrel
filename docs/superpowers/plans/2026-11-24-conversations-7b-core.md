@@ -2680,6 +2680,7 @@ git commit -m "feat(conversation): the conversations' store behind the archive's
 `HistorySearch` (design 9.4) implements plan 7A's `HistoryPort` over the closed conversations within retention and the open conversation's records other than the asking command's, and finds the best past conversation for "continue the conversation about X" (design 9.6). Matching happens on the phone: words folded with `Normalizer`, near misses of names with `LabelMatcher`, at least half of the query's words, best match first and ties to the newer. The search has three parts, so that an index of the entries (design R3's fallback) can later be their source and nothing else changes: the source, which folds each record into a small `SearchEntry` (its place, its time and its folded words) and keeps it in memory only, per record, until the record changes or goes or `forgetAll` drops them; `HistoryRanking.rank`, a pure function of the entries, the query and the zone, which works out each query word's near misses once over the entries' distinct words; and the details of the best matches, which their records give. A search that "delete history" overtook, which `ConversationStore.generation` (Task 4) tells, keeps nothing that it read and finds nothing (design 9.7).
 
 **Files:**
+- Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/model/RecordRef.kt`
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistorySearch.kt`
 - Test: `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistoryRankingTest.kt`
@@ -2687,7 +2688,7 @@ git commit -m "feat(conversation): the conversations' store behind the archive's
 
 **Interfaces:**
 - Consumes: Task 4's `ConversationStore` (with `generation`), `ConversationClock` and the fixtures; `dev.kestrel.agent.goal.HistoryPort`, `HistoryQuery`, `HistoryResult`, `HistoryMatch`, `HistoryData` (plan 7A); `dev.kestrel.commands.text.Normalizer`, `LabelMatcher`, `MatchRules`.
-- Produces: `data class RecordRef(val conversation: ConversationId, val record: Int)`; `data class SearchEntry(val ref: RecordRef, val atWall: Long, val words: Set<String>)` with `SearchEntry.of(conversation, record)`; `data class RankedEntry(val entry: SearchEntry, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `fun words(texts: List<String>): Set<String>`, `fun wanted(text: String): List<String>` and `fun rank(entries: List<SearchEntry>, query: HistoryQuery, zone: ZoneId, similarity: (String, String) -> Double = LabelMatcher's score): List<RankedEntry>`; `data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val firstRequest: String)`; `class HistorySearch(store: ConversationStore, retentionDays: () -> Int, clock: ConversationClock)` with `suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult`, `fun port(excluding: RecordRef?): HistoryPort`, `suspend fun conversation(topic: String?): ConversationMatch?`, `fun forgetAll()` and `val indexed: Int`.
+- Produces: `data class RecordRef(val conversation: ConversationId, val record: Int)` (package `dev.kestrel.conversation.model`, so that the conversation's machine names a record without the store's package; the final re-check of Task 10); `data class SearchEntry(val ref: RecordRef, val atWall: Long, val words: Set<String>)` with `SearchEntry.of(conversation, record)`; `data class RankedEntry(val entry: SearchEntry, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `fun words(texts: List<String>): Set<String>`, `fun wanted(text: String): List<String>` and `fun rank(entries: List<SearchEntry>, query: HistoryQuery, zone: ZoneId, similarity: (String, String) -> Double = LabelMatcher's score): List<RankedEntry>`; `data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val firstRequest: String)`; `class HistorySearch(store: ConversationStore, retentionDays: () -> Int, clock: ConversationClock)` with `suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult`, `fun port(excluding: RecordRef?): HistoryPort`, `suspend fun conversation(topic: String?): ConversationMatch?`, `fun forgetAll()` and `val indexed: Int`.
 
 Counts: `:core:conversation` 52 + 13 (`HistorySearchTest` 11, `HistoryRankingTest` 2) = 65.
 
@@ -2708,6 +2709,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.DataNote
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.test.runTest
@@ -2893,6 +2895,7 @@ import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.MatchRules
 import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -2945,6 +2948,15 @@ Expected: FAIL, the compiler reports `Unresolved reference 'HistorySearch'`.
 
 - [ ] **Step 3: Create the ranking and the search**
 
+Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/model/RecordRef.kt`:
+
+```kotlin
+package dev.kestrel.conversation.model
+
+/** A record of a conversation: its id and the record's number in it. */
+data class RecordRef(val conversation: ConversationId, val record: Int)
+```
+
 Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`:
 
 ```kotlin
@@ -2956,11 +2968,9 @@ import dev.kestrel.commands.text.MatchRules
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.RecordRef
 import java.time.Instant
 import java.time.ZoneId
-
-/** A record of a conversation: its id and the record's number in it. */
-data class RecordRef(val conversation: ConversationId, val record: Int)
 
 /**
  * One command as the search sees it (design 9.4 of sub-project 7): where it is, when it was given (wall clock) and the
@@ -3066,6 +3076,7 @@ import dev.kestrel.conversation.engine.ConversationClock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.RecordRef
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -3442,6 +3453,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.DataNote
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -4748,7 +4760,7 @@ Every shard that the store writes decodes again, by construction (design 9.2), n
   - `ArchiveHeader`, `ArchiveRow` and `ArchiveEntry` as before.
   - `interface ConversationStore` with `val generation: Long`, `open()`, `save(snapshot)`, `list()`, `get(id)`, `getAll(ids): Map<ConversationId, ConversationSnapshot>`, `reopen(id, closing, nowWall, testMode)`, `delete(id)`, `deleteAll()`, `purge(retentionDays, nowWall)` and `searchable(): Searchable`; `sealed interface Searchable { class Ready(val past: PastIndex, val open: ConversationSnapshot?); data object Rebuilding; data object Failed }`; `class PastUnavailableException(cause: Throwable) : Exception`; `ConversationSummary` as before.
   - `enum class ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED, KEY_NOT_ERASED }`; `class ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore` with `DAY_MILLIS`, `REBUILD_PAGE = 50`, `FIRST_RETRY_MILLIS = 60_000` and `MAX_RETRY_MILLIS = 3_600_000`.
-  - `data class RecordRef(val conversation: ConversationId, val record: Int)`; `data class RankedEntry(val entry: IndexedRecord, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `wanted(text)` and `rank(indexes: List<SearchIndex>, query, zone, reached = { true }, similarity = LabelMatcher's score)`.
+  - `data class RecordRef(val conversation: ConversationId, val record: Int)` (package `dev.kestrel.conversation.model` since the final re-check of Task 10); `data class RankedEntry(val entry: IndexedRecord, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `wanted(text)` and `rank(indexes: List<SearchIndex>, query, zone, reached = { true }, similarity = LabelMatcher's score)`.
   - `data class ConversationMatch(id, openedAtWall, firstRequest)`; `sealed interface ConversationLookup { data class Found(val match: ConversationMatch); data object NotFound; data object Rebuilding; data object Unavailable }`; `class HistorySearch(store, retentionDays, clock)` with `search(query, excluding)`, `port(excluding)` and `conversation(topic): ConversationLookup`.
   - In Task 5b's files: `SearchIndex.MAX_WORD_LENGTH = 40`, `CONVERSATION_WORDS = 10_000` and `CONVERSATION_POSITIONS = 20_000`, `SearchIndex.plainBytes` and `SearchIndex.Builder.plainBytes`; `IndexShard.plainBytes`; `PastIndex.SHARD_BYTES = 2_000_000`; `KeptRow.MAX_ID_LENGTH = 32`; `PastIndexCodec.SHARD_HEADER_BYTES`, `MOST_CONVERSATION_BYTES`, `MAX_PLAIN_BYTES = 4 * (PastIndex.SHARD_BYTES + MOST_CONVERSATION_BYTES)`, `wordBytes(word)`, `recordBytes(positions)`, `conversationBytes(conversation)` and `keptBytes(row)`.
   - Fixture: `MemoryArchive` with `rows`, `unreadable`, `unknown`, `shards`, `unreadableShards`, `transactions`, `calls`, `interruptions` (`write`, `purge`, `deleteAll`), `failures` (also `readShards`, `readStamp`, `closedIds`, `read`), `readShardsGate`, `closedIdsGate`, `readGate`, `keyErased`, `keyKept`, `payload(id)`, `past()` and `stamp()`.
@@ -5900,6 +5912,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.DataNote
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.CompletableDeferred
@@ -6166,6 +6179,7 @@ import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -7474,9 +7488,6 @@ import dev.kestrel.conversation.model.ConversationId
 import java.time.Instant
 import java.time.ZoneId
 
-/** A record of a conversation: its id and the record's number in it. */
-data class RecordRef(val conversation: ConversationId, val record: Int)
-
 /** A record that matched, with how many of the query's words it holds. */
 data class RankedEntry(val entry: IndexedRecord, val score: Int)
 
@@ -7568,6 +7579,7 @@ import dev.kestrel.conversation.engine.ConversationClock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.RecordRef
 
 /** The past conversation that "continue the conversation about X" found (design 9.6 of sub-project 7). */
 data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val firstRequest: String) {
@@ -7692,6 +7704,7 @@ import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.RecordRef
 
 /**
  * One command as the search sees it (design 9.4 of sub-project 7): where it is, when it was given (wall clock), and its
@@ -8243,6 +8256,7 @@ Replace the whole `core/conversation/src/main/kotlin/dev/kestrel/conversation/st
 package dev.kestrel.conversation.store
 
 import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.RecordRef
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -9469,7 +9483,7 @@ The other 52 cases of `RulesTest` are the voice's own (the listening modes, the 
 
 **Interfaces:**
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
-- Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `cameTooLate(text)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, heldWords: ChannelOutput.Said?, local: LocalRun?, next: OwnerInput?, closeAfterWork, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: RecordRef?, input: OwnerInput, cancelled: Boolean = false)`; `data class PhoneState(locked, ringing, inCall, known = false)` with `away` and `present` (`known` once `LOCKED` or `UNLOCKED` came); `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(conversation: ConversationId, record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(conversation: ConversationId, record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `EndLocal(command, end: EndReason, answer: String?)`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
+- Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `cameTooLate(text)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, heldWords: ChannelOutput.Said?, local: LocalRun?, next: OwnerInput?, closeAfterWork, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: RecordRef?, input: OwnerInput, cancelled: Boolean = false)`; `data class PhoneState(locked, ringing, inCall, known = false)` with `away` and `present` (`known` once `LOCKED` or `UNLOCKED` came); `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String, failed: Boolean = false)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(conversation: ConversationId, record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(conversation: ConversationId, record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `EndLocal(command, end: EndReason, answer: String?)`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
 Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 46 to `:core:conversation` (Task 5b 14, Task 5d 32).
 
@@ -10716,7 +10730,7 @@ import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.OwnerInput
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 
 /**
  * The conversation's state (design 6.1 of sub-project 7). At most one conversation is open: [id] is null when none is, and
@@ -10938,9 +10952,12 @@ sealed interface ConversationEvent {
 
     data class LocalEnded(val command: Int, val outcome: LocalOutcome) : ConversationEvent
 
-    /** The store made [snapshot] the open conversation, or it was gone (null); [sentence] is the request's final reply. */
-    data class Switched(val snapshot: ConversationSnapshot?, val sentence: String) : ConversationEvent {
-        override fun toString(): String = "Switched(snapshot=$snapshot, sentence=${sentence.length})"
+    /**
+     * The store made [snapshot] the open conversation, or it was gone (null), or the switch [failed] in Kestrel, which ends
+     * the request as Kestrel's error; [sentence] is the request's final reply.
+     */
+    data class Switched(val snapshot: ConversationSnapshot?, val sentence: String, val failed: Boolean = false) : ConversationEvent {
+        override fun toString(): String = "Switched(snapshot=$snapshot, sentence=${sentence.length}, failed=$failed)"
     }
 
     /** The hook `conversation-control do=expire` ends the running quiet time at once (design 14.4). */
@@ -11452,7 +11469,7 @@ import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.ProcessEnd
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 
 /**
  * The conversation's rules (design 6 of sub-project 7): one function from a state, an event and the wall clock's time
@@ -11650,7 +11667,8 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     // D23: the continued conversation is the open one now, with the current test mode; its reply is the request's final one.
     private fun switched(state: ConversationState, event: ConversationEvent.Switched, now: Long): MachineStep {
         val run = state.local ?: return MachineStep(state)
-        val done = MachineStep(state.copy(local = null), listOf(ConversationEffect.EndLocal(run.command, EndReason.FINISHED, event.sentence)))
+        val end = if (event.failed) EndReason.KESTREL_ERROR else EndReason.FINISHED
+        val done = MachineStep(state.copy(local = null), listOf(ConversationEffect.EndLocal(run.command, end, event.sentence)))
         val snapshot = event.snapshot ?: return done.then { reply(it, run.command, event.sentence) }.then(::closeIfAsked).then { runNext(it, now) }
         return done.then { current ->
             // A switch runs only without a goal (design 6.4), so the conversation that it leaves has none to end.
@@ -11669,17 +11687,21 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     }
 
     // Design 12.4: a change of test mode closes the open conversation, after its goal ended with its report, or after its
-    // local request ended by itself (a request does not act under the test mode, so it is not stopped). A changed quiet time
+    // local request ended by itself (a request does not act under the test mode, so it is not stopped). The close waits
+    // once: another change of a setting meanwhile changes nothing of it, and a test mode that comes back to the
+    // conversation's before the work ended closes nothing (a goal that the change stopped still ends). A changed quiet time
     // counts at once, also for the running clock.
     private fun settingsChanged(state: ConversationState, event: ConversationEvent.SettingsChanged, now: Long): MachineStep {
-        val updated = state.copy(settings = event.settings, safetyTestMode = event.testMode)
-        if (updated.id != null && event.testMode != updated.testMode) {
+        val changed = state.copy(settings = event.settings, safetyTestMode = event.testMode)
+        if (changed.id != null && event.testMode != changed.testMode) {
             return when {
-                updated.goal != null -> GoalRules.stop(updated.copy(closeAfterWork = true))
-                updated.local != null -> MachineStep(updated.copy(closeAfterWork = true))
-                else -> close(updated)
+                changed.closeAfterWork -> MachineStep(changed)
+                changed.goal != null -> GoalRules.stop(changed.copy(closeAfterWork = true))
+                changed.local != null -> MachineStep(changed.copy(closeAfterWork = true))
+                else -> close(changed)
             }
         }
+        val updated = changed.copy(closeAfterWork = false)
         val running = updated.quiet as? QuietClock.Running
         if (running == null || event.settings.quietMillis == state.settings.quietMillis) return MachineStep(updated)
         val left = event.settings.quietMillis - (now - running.sinceWall)
@@ -12190,7 +12212,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.RecordLine
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.safety.Category
 import org.junit.Assert.assertEquals
@@ -12316,9 +12338,9 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.store.ArchivedConversationStore
 import dev.kestrel.conversation.store.HistorySearch
-import dev.kestrel.conversation.store.RecordRef
 import dev.kestrel.conversation.testing.FakeGoalEnvironment
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
@@ -12829,7 +12851,7 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.context.ContextBlock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.LineKind
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.safety.Category
 import java.time.ZoneId
 
@@ -13613,6 +13635,8 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 
 The re-check of Task 10 (R1 and r1 to r3) changed the code of earlier tasks too, which their blocks above hold: a change of test mode waits for a running local request as it waits for a goal (`ConversationState.closeAfterWork`, which replaces `closeAfterGoal`), and closes the conversation once the request's end is recorded; a `LocalRun`'s record names its conversation (`RecordRef`), so that `localEnded` never needs an open one; `close` checks that no goal and no local request is left; `PhoneSignal.SCREEN_ON`, which changes nothing in the machine but makes the engine end the timers whose deadlines passed while the phone slept, so that the bar and the goal's notification never show an ended quiet time or hold (plan 7D's `PhoneSignals` sends it); `RoundPlan.stored` and `LocalRequests.run(…, stored)`, the engine's barrier on its writer, which a round's search, the search of a past conversation and "delete history" call before they read or delete. Plan 7D's `VoiceChannel` plays two spoken outputs in turn (r3).
 
+The final re-check of Task 10 left three nits, which changed the code of earlier tasks too: `RecordRef` lives in the `model` package (Task 5 creates it there), so that the pure machine depends on no package of the store; a close that a change of test mode left for the end of the work waits once, and a test mode that comes back to the conversation's before the work ended closes nothing (`settingsChanged`; a goal that the change stopped still ends with its report); and a switch that Kestrel could not make ends as `KESTREL_ERROR` with its words (`ConversationEvent.Switched(snapshot, sentence, failed)`; the engine's `failed` gives it for a `SwitchTo` that failed too). The end-to-end test `aSwitchThatTheStoreCannotMakeEndsAsAnError` and `ConversationMachineTest.aTestModeChangedBackWhileWorkRunsKeepsTheConversation` hold them.
+
 The review of Task 10 (findings I1 to I4 and M1 to M6) changed code of earlier tasks too, which their blocks above hold: Task 1's `LineKind.OWNER_TOO_LATE`; Task 2's form of its line (`RecordLines.TOO_LATE`, "The owner added (spoken) too late for this goal: …") and `RecordBuilderTest`'s case for it; Task 4's `ConversationClock.sinceBootMillis()` and `ManualConversationClock.sleep(millis)` with `slept`; Task 7's `ConversationEffect.AddLine` and `EndRecord`, which name their conversation first (`conversation: ConversationId`), `ConversationEffect.EndLocal(command, end, answer)` (a local request's or a switch's end, for the hooks' outcome), a `SteerGoal` without the machine's "Got it.", `endGoal` as the one way in which a goal leaves the state and a `close` that checks that no goal is left, `ConversationState.openId`, `ConversationTexts.cameTooLate(text)`, and the tests that name these effects; Task 8's `SteeringInbox.add` (which returns false once the inbox is closed) and `close()`, `RunningGoal.steer` (which returns whether the inbox took the message), `GoalRunner`'s answer of a goal that ended for good, which closes its inbox, and `GoalRequests.ownerWords`, which counts a line of steering that came too late as the owner's words. Plan 7C's Task 6 gives `AndroidConversationClock.sinceBootMillis()` as `SystemClock.elapsedRealtime()`.
 
 **Files:**
@@ -13623,7 +13647,7 @@ The review of Task 10 (findings I1 to I4 and M1 to M6) changed code of earlier t
 - Consumes: everything of Tasks 1 to 9, as the review of Task 10 and its re-check left them (see above), among them `ConversationClock.sinceBootMillis()`, `ConversationEffect.EndLocal`, the record effects' `conversation`, `SteeringInbox.close()`, `RunningGoal.steer`'s result, `ConversationState.closeAfterWork`, `LocalRun.record` as a `RecordRef`, `PhoneSignal.SCREEN_ON`, `RoundPlan.stored` and `LocalRequests.run`'s `stored`.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 215 + 36 (`ConversationEngineTest` 31, `ConversationMachineTest` + 3, `GoalRunnerTest` + 2) = 251. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 215 + 38 (`ConversationEngineTest` 32, `ConversationMachineTest` + 4, `GoalRunnerTest` + 2) = 253. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -14422,6 +14446,33 @@ class ConversationEngineTest {
         assertEquals(EndReason.CANCELLED, store.open()!!.records.single().end)
     }
 
+    // A switch that the store could not make ends as Kestrel's error with its words, also for the hooks' outcome, and the
+    // conversation stays closed.
+    @Test
+    fun aSwitchThatTheStoreCannotMakeEndsAsAnError() = scope.runTest {
+        val failing = object : ConversationStore by store {
+            override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? =
+                throw IOException("The disk is full")
+        }
+        val engine = engine(environment(listSms, finish(1)), failing, report = { _, error -> failures += error })
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.ContinueConversation(past)))
+        runCurrent()
+
+        val outcome = engine.outcome(engine.view.value.command)!!
+        assertEquals(EndReason.KESTREL_ERROR, outcome.report.end)
+        assertEquals(ConversationTexts.COULD_NOT, outcome.answer)
+        assertEquals(ChannelOutput.Report(engine.view.value.command, ConversationTexts.COULD_NOT), text.shown.last())
+        assertTrue(failures.single() is IOException)
+        assertNull(engine.view.value.id)
+    }
+
     // A store whose saves wait for [gate] while it is set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null
@@ -14712,13 +14763,13 @@ import dev.kestrel.conversation.store.ConversationStore
 In `core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/GoalRunnerTest.kt`, replace:
 
 ```kotlin
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.store.HistorySearch
 ```
 
 with:
 
 ```kotlin
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.conversation.store.Searchable
 ```
 
@@ -14791,6 +14842,43 @@ with:
     fun aRoutineOfferSaysTheReportFirstAndTheGoalKeepsItAsItsAnswer() = runTest {
 ```
 
+In `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/ConversationMachineTest.kt`, replace:
+
+```kotlin
+    // A memory request's record names its own conversation, so that its end never needs an open one.
+```
+
+with:
+
+```kotlin
+    // A test mode that changes back to the conversation's while its work runs closes nothing: the work ends as it would
+    // have, also a goal that the change stopped. A further change of a setting while the close waits keeps what waits.
+    @Test
+    fun aTestModeChangedBackWhileWorkRunsKeepsTheConversation() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        val changed = step(remembering.state, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true)).state
+        val back = step(changed, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = false)).state
+        assertFalse(back.closeAfterWork)
+        val done = step(back, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+        assertFalse(done.has<ConversationEffect.Close>())
+        assertEquals(id, done.state.id)
+
+        val stopping = step(acting(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true)).state
+        val ended = ended(step(stopping, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = false)).state, TaskReport(EndReason.CANCELLED), "Cancelled.")
+        assertFalse(ended.has<ConversationEffect.Close>())
+        assertEquals(id, ended.state.id)
+        assertEquals(listOf(ChannelOutput.Report(1, "Cancelled.")), ended.outputs())
+
+        val waiting = step(stopping, spoken("Turn on Bluetooth")).state
+        val quieter = step(waiting, ConversationEvent.SettingsChanged(ConversationSettings(quietSeconds = 120), testMode = true))
+        assertTrue(quieter.effects.isEmpty())
+        assertEquals(waiting.next, quieter.state.next)
+    }
+
+    // A memory request's record names its own conversation, so that its end never needs an open one.
+```
+
 - [ ] **Step 3: Run the test to see it fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
@@ -14849,8 +14937,8 @@ import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PendingSteer
 import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.ProcessEnd
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.store.ConversationStore
-import dev.kestrel.conversation.store.RecordRef
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.TaskAllowance
 import kotlinx.coroutines.CancellationException
@@ -15174,6 +15262,7 @@ class ConversationEngine(
             is ConversationEffect.ResumeGoal -> couldNot(effect.command, EndReason.KESTREL_ERROR)
             is ConversationEffect.EndHeldGoal -> state.goal?.let { couldNot(it.command, effect.reason) }
             is ConversationEffect.RunLocal -> post(ConversationEvent.LocalEnded(effect.command, LocalOutcome.Reply(ConversationTexts.COULD_NOT)))
+            is ConversationEffect.SwitchTo -> post(ConversationEvent.Switched(null, ConversationTexts.COULD_NOT, failed = true))
             else -> Unit
         }
     }
@@ -15307,7 +15396,7 @@ class ConversationEngine(
             opened == null -> ConversationTexts.GONE
             else -> ConversationTexts.backIn(ConversationTexts.day(opened.openedAtWall, clock.zone()))
         }
-        process(ConversationEvent.Switched(opened, sentence))
+        process(ConversationEvent.Switched(opened, sentence, failed = message.failed))
     }
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {
@@ -15588,12 +15677,12 @@ class ConversationEngine(
 - [ ] **Step 5: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
-Expected: PASS, 31 tests.
+Expected: PASS, 32 tests.
 
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 251` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 253` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -15606,7 +15695,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 251, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 32, Task 8: 24, Task 9: 10, Task 10: 36).
+- `:core:conversation`: C₀ + 253, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 32, Task 8: 24, Task 9: 10, Task 10: 38).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:core:commands`: N + 2 (Task 5a adds 1 to `NormalizerTest` and 1 to `LabelMatcherTest`; 159 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
