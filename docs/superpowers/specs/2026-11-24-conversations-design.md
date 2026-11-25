@@ -225,28 +225,36 @@ interface OwnerChannel {
     /** Says or shows [output]; returns when it has been spoken or shown, or refused. */
     suspend fun show(output: ChannelOutput)
 
-    /** Asks [question] and returns the owner's answer. Cancelling the call withdraws the question. */
+    /**
+     * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
+     * so leaves no screen of Kestrel's; an answer that the owner says or types, also after "Reply…", reaches the
+     * conversation as an input instead. Cancelling the call withdraws the question.
+     */
     suspend fun ask(question: ChannelQuestion): ChannelAnswer
 
-    /** A hand-over: returns when the owner continued or cancelled, or when it ended by itself. */
+    /** A hand-over: returns when the owner continued or cancelled on the channel, or when it ended by itself. */
     suspend fun handOver(handOver: HandOver): HandOverEnd
 
     /** Shows Android's permission dialog for [permissions] after saying [why]. */
     suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd
 
-    /** Returns true once no window of Kestrel's own app is on the screen, or false after 3 s. */
+    /** Returns true once no window of Kestrel's own app but its overlays is on the screen, or false after 3 s. */
     suspend fun leaveKestrel(): Boolean
 }
 
 sealed interface ChannelOutput {
-    data class Said(val text: String) : ChannelOutput
-    data class Progress(val step: Int, val checklist: ChecklistSummary?) : ChannelOutput
-    data class Report(val command: Int, val text: String) : ChannelOutput
+    data class Said(val text: String) : ChannelOutput                 // spoken by the voice, shown on the bar and in the transcript
+    data class Shown(val text: String) : ChannelOutput                // shown only, never spoken: "Got it." for steering
+    data class Report(val command: Int, val text: String) : ChannelOutput // the final reply; a spoken one opens the follow-up window
 }
 
+enum class QuestionKind { YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH, DELETE_HISTORY }
+
 data class ChannelQuestion(
-    val text: String,
-    val kind: QuestionKind,                  // YES_NO, CONFIRM, FREE, PICK, SCREENSHOT, CONTINUE_GOAL, LIMIT, SWITCH
+    val number: Int,                         // names the question, as "Reply…" does (12.2)
+    val text: String,                        // the card's and the transcript's form
+    val kind: QuestionKind,
+    val spoken: String = text,               // the voice's form
     val choices: List<String> = emptyList(), // PICK: at most 4
     val confirmation: Confirmation? = null,  // CONFIRM: the card shows it as today
 )
@@ -254,12 +262,16 @@ data class ChannelQuestion(
 sealed interface ChannelAnswer {
     data object Yes : ChannelAnswer
     data object No : ChannelAnswer
-    data class Text(val text: String, val leftScreen: Boolean) : ChannelAnswer // leftScreen: typed on Kestrel's screen
-    data class Pick(val index: Int) : ChannelAnswer
+    data class Text(val text: String) : ChannelAnswer
+    data class Pick(val number: Int) : ChannelAnswer   // the number that he said or the choice that he tapped, from 1
     data object Silence : ChannelAnswer
     data object Interrupted : ChannelAnswer  // a pause or a touch withdrew the question
 }
 ```
+
+Whether the owner gave an answer on Kestrel's own screen belongs to the answer's arrival, not to its kind. A spoken or typed answer reaches the conversation as an input, and the engine passes it on with `ConversationOwner.answer(number, answer, leftScreen)`, where `leftScreen` is true for a typed input of any kind: a typed "yes", a typed pick and typed words alike. After such an answer, the owner port's gate returns `RESUMED` once, so the run looks at the screen afresh (10.3). An answer that a card's button gives acts over the app and leaves no screen of Kestrel's.
+
+The bar's progress ("Step 12 · 3 of 7 · …") is not a channel output: the bar draws it from `ConversationView` (10.5).
 
 `ConversationOwner` implements `:core:agent`'s `OwnerPort` for one goal. It takes over the parts of today's `AppOwnerPort` that are not Android: one question at a time, the waits and wakes, the pause gate (`gate()`) and the wait for Kestrel's own screen (`leaveKestrel()`, with the channel's `leaveKestrel()`, section 10.2). It picks the channel by the conversation's latest input (section 11). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
 

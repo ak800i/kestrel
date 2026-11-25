@@ -1165,8 +1165,8 @@ class VoiceAnswersTest {
 
     @Test
     fun aFreeQuestionTakesTheWordsAndAPickANumber() {
-        assertEquals(ChannelAnswer.Text("The blue one.", leftScreen = false), read(QuestionKind.FREE, "The blue one."))
-        assertEquals(ChannelAnswer.Text("Yes.", leftScreen = false), read(QuestionKind.SCREENSHOT, "Yes."))
+        assertEquals(ChannelAnswer.Text("The blue one."), read(QuestionKind.FREE, "The blue one."))
+        assertEquals(ChannelAnswer.Text("Yes."), read(QuestionKind.SCREENSHOT, "Yes."))
         assertEquals(ChannelAnswer.Pick(12), read(QuestionKind.PICK, "12"))
         assertEquals(null, read(QuestionKind.PICK, "the red one"))
     }
@@ -7172,7 +7172,7 @@ internal object VoiceAnswers {
             is Request.Task -> request.text
             is Request.Other -> request.text
             else -> text.trim()
-        }.takeIf { it.isNotEmpty() }?.let { ChannelAnswer.Text(it, leftScreen = false) }
+        }.takeIf { it.isNotEmpty() }?.let { ChannelAnswer.Text(it) }
     }
 
     private fun phrase(text: String, named: Boolean): String =
@@ -12321,7 +12321,7 @@ What plans 7E and 7F consume, as this plan leaves `:app`. Every type is `interna
 
 **The voice (plans 7E and 7F)**
 - `Listening.voicePath: VoicePath` (`ready: StateFlow<Boolean>`, `say(text, final = false)`, `show(text)`, `ask(question, text, kind, voice)`, `handOver(text)`, `withdraw(question)`), `Listening.converse: (OwnerInput) -> Unit` and `Listening.awaitingCommand: (Boolean) -> Unit`, which the app graph sets.
-- `VoiceChannel(voice: VoicePath, screen: OwnerScreen, audio: OtherAudio, handOvers: HandOverSignals, permissions: PermissionDialog) : OwnerChannel`: the voice channel's output, its questions with the Orchestrator's answer waits, the card for a confirmation or a screenshot question, the other app's audio, and the hand-overs. A held goal's sentence comes from plan 7B's machine with `ConversationTexts.held(hold)` at its end, so a goal held at Kestrel's own screen says "Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'." (design 10.2); the voice speaks it and the bar shows it. Plan 7E's notification shows the same sentence for the same hold.
+- `VoiceChannel(voice: VoicePath, screen: OwnerScreen, audio: OtherAudio, handOvers: HandOverSignals, permissions: PermissionDialog) : OwnerChannel`: the voice channel's output, its questions with the Orchestrator's answer waits, the card for a confirmation or a screenshot question, the other app's audio, and the hand-overs. The voice channel draws that card itself (`OwnerScreen.card`), also while Kestrel is off, because the screen session does not depend on the listening mode. Plan 7B's `ConversationOwner` asks a spoken conversation's question on the text channel too from the moment Kestrel is off, so plan 7F's `TextChannel` must not draw a second card for a question that the voice channel already shows on its card (a confirmation, and a screenshot question while another app's audio plays): the two channels share the one `QuestionCard`, one card per question number, or `TextChannel` leaves those questions to the voice channel's card. Either way, the owner sees one card for one question. A held goal's sentence comes from plan 7B's machine with `ConversationTexts.held(hold)` at its end, so a goal held at Kestrel's own screen says "Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'." (design 10.2); the voice speaks it and the bar shows it. Plan 7E's notification shows the same sentence for the same hold.
 - The ports `OwnerScreen` (`card`, `releaseBar`, `kestrelInFront`), `OtherAudio` (`playing`, `pause`), `HandOverSignals` (`opened`, `endedByItself`), `PermissionDialog` (`ask`) and `TouchWatch` (`forgetOwnActions`, `watch`), which `AndroidOwnerSupport` implements but `PermissionDialog`, which the app graph makes from `PermissionActivity.ask`: plan 7F's `TextChannel` takes the ports that it uses from the same `AndroidOwnerSupport`, so that both channels share one implementation. `QuestionKind.DELETE_HISTORY` (plan 7B, `2113f5a0`) is a yes-or-no question on the card.
 - `Rules`' state: `conversation: VoiceView`, `openQuestion: VoiceQuestion?`, `goal: GoalPhase?`, `goalWorks`; `Work.FOLLOWING_UP`; `Event.FollowUpLength(millis)`, which the app graph sends at every change of the Conversations page; `Event.ConversationChanged(VoiceView)`, from `engine.view.forVoice()`.
 - `ScreenTurns.take()` waits only for an instant command that the Orchestrator cancelled, not for one that still runs: `Rules` cancels a running command before every `Effect.Converse`, so in this plan no round starts beside one. Plan 7F's typed and card inputs reach the engine without the Orchestrator, so plan 7F either cancels a running instant command first or registers running commands in `ScreenTurns`, to keep plan 7B's `ScreenTurn` contract ("returns when no instant command holds the screen").
