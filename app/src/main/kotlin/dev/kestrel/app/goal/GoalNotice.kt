@@ -107,20 +107,23 @@ internal object GoalNotices {
  * The tap counts only for the [goal] that its notice showed, and only while the goal's notice [shown] offers what the
  * button does: a button that stops while the notice offers any way to stop (his tap on Stop can arrive after a touch, his
  * pull of the shade, held the goal and the notice offers Cancel instead), and Continue only while it offers Continue. A tap
- * that counts is the owner's act of its moment, as a spoken or typed input is, so it takes the next number of his inputs
- * from [next] (`InputIds.next`), and only then: a Continue that resumes the goal lets the round have an instant command
- * that he started before the tap let go of the screen, and waits for one that he started after it (plan 7D's
- * `ScreenTurns`). A tap carries no words (D8), so the input keeps [channel], the channel of the owner's latest input, and
+ * is the owner's act of its moment, as a spoken or typed input is: its number of his inputs (`InputIds.next`) and its time
+ * are the tap's own, taken when its broadcast arrives (`GoalActionReceiver`), before any wait for the restore. So an input
+ * that he gives during that wait comes after the tap, and a Continue that resumes the goal lets the round have an instant
+ * command that he started before the tap, and waits for one that he started after it: plan 7D's `ScreenTurns` lets a round
+ * cancel a command only when the round's input is newer than the command (`after > since`), and a resumed goal must never
+ * cancel a command that the owner started after his tap. A tap that does not count leaves its number unused, which no other
+ * input needs. A tap carries no words (D8), so the input keeps [channel], the channel of the owner's latest input, and
  * Kestrel's replies stay as they were (design 11).
  */
 internal object GoalButtons {
-    fun input(broadcast: String?, goal: NoticeGoal?, shown: GoalNotice?, channel: InputChannel, next: () -> Long, atMillis: Long): OwnerInput? {
+    fun input(broadcast: String?, goal: NoticeGoal?, shown: GoalNotice?, channel: InputChannel, number: Long, atMillis: Long): OwnerInput? {
         val action = GoalAction.ofBroadcast(broadcast) ?: return null
         val intent = action.intent ?: return null
         if (shown == null || goal == null || shown.goal != goal) return null
         val offered = if (action.stops) shown.actions.any { it.stops } else action in shown.actions
         if (!offered) return null
-        return OwnerInput(next(), channel, intent, atMillis)
+        return OwnerInput(number, channel, intent, atMillis)
     }
 
     /** How long a tap waits for the conversation's restore: well inside the 10 s that Android gives a broadcast. */
@@ -130,14 +133,15 @@ internal object GoalButtons {
      * Decides a tap once the conversation is [restored] (`ConversationEngine.awaitRestored`, then its view), against the
      * notice of the goal in that view: a tap on the held goal's notification that Kestrel posted without the service can
      * start Kestrel's process, and is then judged against the restored goal, never lost against the empty view before it.
-     * A restore that does not end within [RESTORE_WAIT_MILLIS] drops the tap, and [report] gets only its kind.
+     * A restore that does not end within [RESTORE_WAIT_MILLIS] drops the tap, and [report] gets only its kind. [number]
+     * and [atMillis] are the tap's own, taken on its arrival, never after the wait (see [GoalButtons]).
      */
     suspend fun press(
         broadcast: String?,
         goal: NoticeGoal?,
         restored: suspend () -> ConversationView,
-        next: () -> Long,
-        now: () -> Long,
+        number: Long,
+        atMillis: Long,
         report: (String, Throwable) -> Unit,
     ): OwnerInput? {
         val view = withTimeoutOrNull(RESTORE_WAIT_MILLIS) { restored() }
@@ -145,7 +149,7 @@ internal object GoalButtons {
             report("A goal notification's button", RestoreTooSlowException())
             return null
         }
-        return input(broadcast, goal, GoalNotices.of(view), view.replyChannel, next, now())
+        return input(broadcast, goal, GoalNotices.of(view), view.replyChannel, number, atMillis)
     }
 }
 

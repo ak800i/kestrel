@@ -80,27 +80,25 @@ class GoalNoticesTest {
     }
 
     // Plan 7E with plan 7D's ScreenTurns: a tap on a button that the notification shows is the owner's input of that
-    // moment, with the next number of his inputs, so that a Continue that resumes the goal has an instant command that he
-    // started before the tap let go of the screen; a button that counts for nothing takes no number.
+    // moment, with the number and time that the tap took on its arrival, so that a Continue that resumes the goal has an
+    // instant command that he started before the tap, and waits for one that he started after it.
     @Test
     fun aShownButtonIsTheOwnersNewestInputAndAStaleContinueIsNothing() {
-        var newest = 41L
         val held = GoalNotices.of(view(GoalPhase.INTERRUPTED, GoalHold.TOUCH))
 
         assertEquals(
             OwnerInput(42, InputChannel.TEXT, InputIntent.Continue, 7),
-            GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, held, InputChannel.TEXT, { ++newest }, 7),
+            GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, held, InputChannel.TEXT, 42, 7),
         )
         assertEquals(
             OwnerInput(43, InputChannel.VOICE, InputIntent.Stop, 8),
-            GoalButtons.input(GoalAction.CANCEL.broadcast, goal, held, InputChannel.VOICE, { ++newest }, 8),
+            GoalButtons.input(GoalAction.CANCEL.broadcast, goal, held, InputChannel.VOICE, 43, 8),
         )
         // A Continue from a notification that the working goal replaced, and Open, which sends no broadcast.
         val working = GoalNotices.of(view(GoalPhase.ACTING))
-        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, working, InputChannel.TEXT, { ++newest }, 9))
-        assertNull(GoalButtons.input(GoalAction.OPEN.broadcast, goal, working, InputChannel.TEXT, { ++newest }, 9))
-        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, goal, null, InputChannel.TEXT, { ++newest }, 9))
-        assertEquals(43L, newest)
+        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, working, InputChannel.TEXT, 44, 9))
+        assertNull(GoalButtons.input(GoalAction.OPEN.broadcast, goal, working, InputChannel.TEXT, 44, 9))
+        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, goal, null, InputChannel.TEXT, 44, 9))
     }
 
     // The review of plan 7E (I2): the owner's pull of the shade is a touch, which holds the goal, so his tap on Stop can
@@ -111,10 +109,10 @@ class GoalNoticesTest {
         val held = GoalNotices.of(view(GoalPhase.INTERRUPTED, GoalHold.TOUCH))
         val working = GoalNotices.of(view(GoalPhase.ACTING))
 
-        assertEquals(InputIntent.Stop, GoalButtons.input(GoalAction.STOP.broadcast, goal, held, InputChannel.TEXT, { 1 }, 0)?.intent)
-        assertEquals(InputIntent.Stop, GoalButtons.input(GoalAction.CANCEL.broadcast, goal, working, InputChannel.TEXT, { 1 }, 0)?.intent)
+        assertEquals(InputIntent.Stop, GoalButtons.input(GoalAction.STOP.broadcast, goal, held, InputChannel.TEXT, 1, 0)?.intent)
+        assertEquals(InputIntent.Stop, GoalButtons.input(GoalAction.CANCEL.broadcast, goal, working, InputChannel.TEXT, 1, 0)?.intent)
         // The notice after the goal's end offers nothing, so nothing stops.
-        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, null, GoalNotices.CLOSING, InputChannel.TEXT, { 1 }, 0))
+        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, null, GoalNotices.CLOSING, InputChannel.TEXT, 1, 0))
     }
 
     // The review of plan 7E (M2): each notice names its goal by its conversation and its record, which outlive a resume and
@@ -125,18 +123,19 @@ class GoalNoticesTest {
         assertEquals(goal, held?.goal)
         assertNull(GoalNotices.CLOSING.goal)
 
-        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, NoticeGoal(id, 1), held, InputChannel.TEXT, { 1 }, 0))
-        assertNull(GoalButtons.input(GoalAction.CANCEL.broadcast, NoticeGoal(ConversationId("fedcba9876543210fedcba9876543210"), 2), held, InputChannel.TEXT, { 1 }, 0))
-        assertNull(GoalButtons.input(GoalAction.CANCEL.broadcast, null, held, InputChannel.TEXT, { 1 }, 0))
+        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, NoticeGoal(id, 1), held, InputChannel.TEXT, 1, 0))
+        assertNull(GoalButtons.input(GoalAction.CANCEL.broadcast, NoticeGoal(ConversationId("fedcba9876543210fedcba9876543210"), 2), held, InputChannel.TEXT, 1, 0))
+        assertNull(GoalButtons.input(GoalAction.CANCEL.broadcast, null, held, InputChannel.TEXT, 1, 0))
     }
 
     // The review of plan 7E (M3): a tap on the held goal's notification that Kestrel posted without the service can start
     // Kestrel's process. The press waits until the conversation is restored, and decides against the restored goal's
-    // notice, so the tap is neither lost nor judged against the empty view before the restore.
+    // notice, so the tap is neither lost nor judged against the empty view before the restore; its input keeps the number
+    // and time that the tap took on its arrival, before the wait.
     @Test
     fun aTapThatStartsKestrelsProcessWaitsForTheRestoreAndCountsForTheRestoredGoal() = runTest {
         val restored = CompletableDeferred<ConversationView>()
-        val pressed = async { GoalButtons.press(GoalAction.CONTINUE.broadcast, goal, { restored.await() }, { 42 }, { 7 }) { _, error -> throw error } }
+        val pressed = async { GoalButtons.press(GoalAction.CONTINUE.broadcast, goal, { restored.await() }, 42, 7) { _, error -> throw error } }
         runCurrent()
         assertFalse(pressed.isCompleted)
 
@@ -146,13 +145,12 @@ class GoalNoticesTest {
     }
 
     // The second review of plan 7E (R2-M1): a restore that does not end in time would hold the broadcast past Android's
-    // limit. The press gives up after RESTORE_WAIT_MILLIS, drops the tap, takes no number and reports only its kind.
+    // limit. The press gives up after RESTORE_WAIT_MILLIS, drops the tap and reports only its kind.
     @Test
     fun aTapWhoseRestoreDoesNotEndInTimeIsDroppedAndReportedByItsKind() = runTest {
         val reports = mutableListOf<String>()
-        var numbers = 0L
         val pressed = async {
-            GoalButtons.press(GoalAction.CANCEL.broadcast, goal, { awaitCancellation() }, { ++numbers }, { 7 }) { what, _ -> reports += what }
+            GoalButtons.press(GoalAction.CANCEL.broadcast, goal, { awaitCancellation() }, 42, 7) { what, _ -> reports += what }
         }
         advanceTimeBy(GoalButtons.RESTORE_WAIT_MILLIS - 1)
         runCurrent()
@@ -160,7 +158,6 @@ class GoalNoticesTest {
         advanceTimeBy(2)
 
         assertNull(pressed.await())
-        assertEquals(0L, numbers)
         assertEquals(listOf("A goal notification's button"), reports)
     }
 

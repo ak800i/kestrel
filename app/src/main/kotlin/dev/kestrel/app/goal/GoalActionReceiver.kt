@@ -23,9 +23,7 @@ class GoalActionReceiver : BroadcastReceiver() {
         val conversations = graph.conversations
         val action = intent.action
         val goal = GoalNotification.goalOf(intent)
-        // The tap is the owner's act of its moment: its number and time are taken as it arrives, before the wait for the
-        // restore, so that an input that he gives during that wait comes after it (plan 7E). A tap that does not count
-        // leaves its number unused, which no other input needs.
+        // The tap's own number and time, taken as it arrives, before the wait for the restore (`GoalButtons`).
         val number = InputIds.next()
         val atMillis = System.currentTimeMillis()
         val pending = goAsync()
@@ -35,7 +33,7 @@ class GoalActionReceiver : BroadcastReceiver() {
                     conversations.awaitRestored()
                     conversations.view.value
                 }
-                GoalButtons.press(action, goal, restored, { number }, { atMillis }, graph::report)?.let(conversations::submit)
+                GoalButtons.press(action, goal, restored, number, atMillis, graph::report)?.let(conversations::submit)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
